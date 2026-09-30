@@ -63,6 +63,10 @@ import {
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 import { moneyToCents } from "@/modules/payments/square-domain";
+import { confirmationEmailStatusFromMessages, describeClubConfirmationEmail } from "@/modules/forms/confirmation-email-status";
+
+// The registrant messages that confirm a club registration (or its waitlist spot).
+const confirmationTemplateKeys = ["REGISTRATION_CONFIRMATION_PAID", "REGISTRATION_CONFIRMATION_UNPAID", "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED", "WAITLIST_JOINED", "WAITLIST_PROMOTED"] as const;
 import { currentPricingSnapshot, perPersonPriceFromSnapshot } from "@/modules/club-registrations/per-person-price";
 import {
   churchOwedCents,
@@ -137,6 +141,7 @@ const clubEventSelect = {
   registrationClosesOn: true,
   waitlistEnabled: true,
   billingMode: true,
+  supportContact: true,
 } satisfies Prisma.EventSelect;
 
 type ClubEvent = Prisma.EventGetPayload<{ select: typeof clubEventSelect }>;
@@ -294,7 +299,7 @@ export type ClubEventRegistrationStep = { key: string; text: string; href: strin
 /**
  * Club home's "What's next" (#478): one item per open club event the club
  * hasn't registered for yet, so a director always sees where to register —
- * not only on the Events & classes tab. A club with a saved draft still gets
+ * not only on the Events tab. A club with a saved draft still gets
  * an item, worded to continue rather than start.
  */
 export function clubEventRegistrationSteps(events: ClubEventSummary[], base: string): ClubEventRegistrationStep[] {
@@ -513,6 +518,13 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
             operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
             location: { select: clubLocationSelect },
             attendees: { orderBy: { position: "asc" }, select: { id: true, profileSnapshot: true, formResponses: true } },
+            // The real delivery state of the confirmation email (#642).
+            messages: {
+              where: { recipientKind: "REGISTRANT", templateKey: { in: [...confirmationTemplateKeys] } },
+              orderBy: { createdAt: "desc" },
+              take: 1,
+              select: { status: true },
+            },
           },
         },
       },
@@ -597,6 +609,11 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         status: clubRegistration.registration.status,
         submittedAt: clubRegistration.createdAt.toISOString(),
         updatedAt: clubRegistration.registration.updatedAt.toISOString(),
+        // Saved and emailed are separate outcomes (#642).
+        confirmationEmail: describeClubConfirmationEmail(
+          confirmationEmailStatusFromMessages(clubRegistration.registration.messages.map((message) => message.status)),
+          event.supportContact,
+        ),
         // Where this club registered (#413), even if the location was deactivated since.
         location: registeredLocation
           ? clubLocationView(event, registeredLocation, seatCounts.get(registeredLocation.id) ?? 0, now)

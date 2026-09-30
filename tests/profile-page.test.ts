@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   getPasskeySettings: vi.fn(),
   currentStaffActingContext: vi.fn(),
   listAccountBannerAnnouncements: vi.fn(),
+  headers: vi.fn(),
   redirect: vi.fn((path: string) => {
     throw new Error(`REDIRECT ${path}`);
   }),
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("next/headers", () => ({ headers: mocks.headers }));
 vi.mock("@/modules/access/current-session", () => ({ getCurrentSession: mocks.getCurrentSession }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
 vi.mock("@/modules/attendee-accounts/portal-second-step", () => ({
@@ -62,24 +64,30 @@ vi.mock("@/components/act-as-banner", () => ({
 vi.mock("@/modules/communications/account-banner", () => ({ listAccountBannerAnnouncements: mocks.listAccountBannerAnnouncements }));
 vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: mocks.currentStaffActingContext }));
 
-import ProfilePage from "@/app/profile/page";
+import ProfilePage from "@/app/(workspace)/profile/page";
+import WorkspaceLayout from "@/app/(workspace)/layout";
+import PortalProfilePage from "@/app/(public)/account/(portal)/profile/page";
 import ProfileSignInPage from "@/app/profile/sign-in/page";
-import AttendeeProfileRedirect from "@/app/(public)/account/(portal)/profile/page";
 import AttendeeSecurityRedirect from "@/app/(public)/account/(portal)/security/page";
 
 const staff = { id: "staff-1", email: "riley@imsda-events.test", displayName: "Riley Staff", globalRole: null };
-const admin = { ...staff, id: "admin-1", email: "casey@imsda-events.test", displayName: "Casey Admin", globalRole: "SYSTEM_ADMIN" };
 const attendee = { id: "att-1", verifiedEmail: "pat@imsda-events.test", displayName: "Pat Attendee" };
 
-function signedIn(input: { staff?: typeof staff | typeof admin | null; attendee?: boolean; sessionVia?: "attendee" | "staff" }) {
+function signedIn(input: { staff?: typeof staff | null; attendee?: boolean; sessionVia?: "attendee" | "staff" }) {
   mocks.getCurrentSession.mockResolvedValue(input.staff ? { user: input.staff, sessionId: "s1" } : { user: null });
   mocks.getCurrentAttendee.mockResolvedValue(input.attendee
     ? { account: attendee, via: input.sessionVia ?? "attendee", sessionId: "a1" }
     : { account: null, via: null, sessionId: null });
 }
 
+/** `/profile`: the staff page, rendered inside the (workspace) layout's shell. */
 async function render(query: { twoStep?: string } = {}) {
   return renderToStaticMarkup(await ProfilePage({ searchParams: Promise.resolve(query) }));
+}
+
+/** `/account/profile`: the same view inside the attendee portal layout. */
+async function renderPortal(query: { twoStep?: string } = {}) {
+  return renderToStaticMarkup(await PortalProfilePage({ searchParams: Promise.resolve(query) }));
 }
 
 beforeEach(() => {
@@ -93,21 +101,17 @@ beforeEach(() => {
   mocks.getPasskeySettings.mockResolvedValue({ available: true, passkeys: [], verification: [] });
 });
 
-describe("/profile", () => {
+describe("/profile (staff, inside the workspace layout)", () => {
   it("renders the staff account with both managers, with no event and no redirect", async () => {
     signedIn({ staff });
     const markup = await render();
     expect(mocks.redirect).not.toHaveBeenCalled();
     expect(markup).toContain("Edit profile");
-    // A staff-only browser gets the staff workspace shell (#623), which lets
-    // staff with no events in too.
-    expect(markup).toContain('data-shell="staff"');
-    expect(markup).toContain('data-any-staff="true"');
     expect(markup).toContain("Riley Staff");
     expect(markup).toContain("riley@imsda-events.test");
+    expect(markup).toContain("cannot be edited here");
     expect(markup).toContain('data-manager="staff-mfa"');
     expect(markup).toContain('data-manager="staff-passkeys"');
-    expect(markup).not.toContain("Back to staff workspace");
     expect(markup).toContain(">Sign out of staff account<");
     expect(markup).not.toContain("Registration account");
     expect(markup).not.toContain("System management");
@@ -115,50 +119,45 @@ describe("/profile", () => {
     expect(mocks.getPasskeySettings).toHaveBeenCalledWith(staff);
   });
 
-  it("leaves the System management link to the staff shell instead of repeating it", async () => {
-    signedIn({ staff: admin, attendee: true });
+  it("does not draw its own shell or portal chrome: the layout above it supplies the shell", async () => {
+    signedIn({ staff, attendee: true });
     const markup = await render();
-    expect(markup).toContain('data-shell="staff"');
+    expect(markup).not.toContain('data-shell="staff"');
+    expect(markup).not.toContain("<main");
     expect(markup).not.toContain("System management");
   });
 
-  it("confirms two-step verification is on only when an authenticator is really active (#568)", async () => {
-    signedIn({ attendee: true });
-    attendeePasskeys.mockResolvedValue({ available: true, passkeys: [] });
-    attendeeMfaStatus.mockResolvedValue({ status: "ACTIVE" });
-    expect(await render({ twoStep: "on" })).toContain("Two-step verification is on.");
-    expect(await render()).not.toContain("Two-step verification is on.");
-    attendeeMfaStatus.mockResolvedValue({ status: "NONE" });
-    expect(await render({ twoStep: "on" })).not.toContain("Two-step verification is on.");
-    attendeeMfaStatus.mockResolvedValue({ status: "PENDING" });
-    expect(await render({ twoStep: "on" })).not.toContain("Two-step verification is on.");
-    // A registered passkey counts too.
-    attendeePasskeys.mockResolvedValue({ available: true, passkeys: [{ id: "pk1" }] });
-    expect(await render({ twoStep: "on" })).toContain("Two-step verification is on.");
-  });
-
-  it("renders only the registration account for an attendee", async () => {
-    signedIn({ attendee: true });
+  it("renders both accounts on one page when both sessions are present", async () => {
+    signedIn({ staff, attendee: true });
     const markup = await render();
+    expect(mocks.redirect).not.toHaveBeenCalled();
     expect(markup).toContain("Registration account");
-    expect(markup).toContain("pat@imsda-events.test");
+    expect(markup).toContain('data-manager="staff-mfa"');
     expect(markup).toContain('data-manager="attendee-settings"');
     expect(markup).toContain('href="/account"');
     expect(markup).toContain("My registrations");
-    expect(markup).not.toContain("Staff account");
-    expect(markup).not.toContain('data-manager="staff-mfa"');
-    expect(markup).not.toContain("Back to staff workspace");
-    expect(mocks.getMfaStatus).not.toHaveBeenCalled();
+    expect(markup.indexOf('data-manager="staff-mfa"')).toBeLessThan(markup.indexOf("Registration account"));
   });
 
-  it("shows the announcement banner to an attendee session past its second step (#590)", async () => {
-    signedIn({ attendee: true });
+  it("labels which session each sign-out button ends when both are signed in", async () => {
+    signedIn({ staff, attendee: true });
+    const markup = await render();
+    expect(markup).toContain(">Sign out of staff account<");
+    expect(markup).toContain(">Sign out of registration account<");
+    signedIn({ staff });
+    const staffOnly = await render();
+    expect(staffOnly).toContain(">Sign out of staff account<");
+    expect(staffOnly).not.toContain("Sign out of registration account");
+  });
+
+  it("shows announcements inside the registration card once the second step is passed (#623)", async () => {
+    signedIn({ staff, attendee: true });
     mocks.listAccountBannerAnnouncements.mockResolvedValue([{
-      id: "ann-1", title: "Synthetic arrival notice", body: "Use the south entrance.", priority: "NORMAL",
+      id: "ann-2", title: "Synthetic shell notice", body: "Bring a jacket.", priority: "NORMAL",
       pinned: false, eventName: "Synthetic Retreat", href: "/account/events/synthetic-retreat",
     }]);
     const markup = await render();
-    expect(markup).toContain("Synthetic arrival notice");
+    expect(markup).toContain("Synthetic shell notice");
     expect(mocks.listAccountBannerAnnouncements).toHaveBeenCalledWith(attendee, []);
   });
 
@@ -173,118 +172,153 @@ describe("/profile", () => {
     expect(mocks.listAccountBannerAnnouncements).not.toHaveBeenCalled();
   });
 
-  it("links a club director to their club", async () => {
-    signedIn({ attendee: true });
-    mocks.listDirectedClubs.mockResolvedValue([{ organizationId: "club-1", name: "Pathfinder Test Club", role: "DIRECTOR" }]);
-    const markup = await render();
-    expect(markup).toContain('href="/account/clubs/club-1"');
-    expect(markup).toContain("Pathfinder Test Club");
-  });
-
-  it("keeps the public-style page, not the staff shell, for an attendee-only session (#623)", async () => {
-    signedIn({ attendee: true });
-    const markup = await render();
-    expect(markup).not.toContain('data-shell="staff"');
-    expect(markup).toContain("Registration account");
-  });
-
-  it("shows announcements inside the registration card once the second step is passed (#623)", async () => {
-    signedIn({ staff, attendee: true });
-    mocks.listAccountBannerAnnouncements.mockResolvedValue([{
-      id: "ann-2", title: "Synthetic shell notice", body: "Bring a jacket.", priority: "NORMAL",
-      pinned: false, eventName: "Synthetic Retreat", href: "/account/events/synthetic-retreat",
-    }]);
-    const markup = await render();
-    expect(markup).toContain('data-shell="staff"');
-    expect(markup).toContain("Synthetic shell notice");
-    expect(mocks.listAccountBannerAnnouncements).toHaveBeenCalledWith(attendee, []);
-  });
-
-  it("hides settings, the verified email and announcements while a second step is pending, inside the shell (#623)", async () => {
+  it("hides settings, the verified email and announcements while a second step is pending, without redirecting staff", async () => {
     signedIn({ staff, attendee: true });
     mocks.attendeeSecondStepPending.mockResolvedValue(true);
     const markup = await render();
-    expect(markup).toContain('data-shell="staff"');
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(markup).toContain('data-manager="staff-mfa"');
     expect(markup).toContain("Confirm your second step");
-    expect(markup).not.toContain('data-manager="attendee-settings"');
-    expect(markup).not.toContain("pat@imsda-events.test");
-    expect(mocks.listAccountBannerAnnouncements).not.toHaveBeenCalled();
-    expect(mocks.redirect).not.toHaveBeenCalled();
-  });
-
-  it("uses the staff shell for staff with events too, and never redirects to /no-access (#623)", async () => {
-    signedIn({ staff });
-    const markup = await render();
-    expect(markup).toContain('data-shell="staff"');
-    expect(mocks.redirect).not.toHaveBeenCalled();
-  });
-
-  it("renders both accounts inside the staff shell when both sessions are present (#623)", async () => {
-    signedIn({ staff, attendee: true });
-    const markup = await render();
-    expect(markup).toContain('data-shell="staff"');
-    expect(markup).toContain("Registration account");
-    expect(markup).toContain('data-manager="staff-mfa"');
-    expect(markup).toContain('data-manager="attendee-settings"');
-    expect(markup).toContain('href="/account"');
-    expect(markup).toContain("My registrations");
-    expect(markup).not.toContain("Back to staff workspace");
-    expect(markup.indexOf('data-manager="staff-mfa"')).toBeLessThan(markup.indexOf("Registration account"));
-  });
-
-  it("labels which session each sign-out button ends when both are signed in", async () => {
-    signedIn({ staff, attendee: true });
-    const markup = await render();
-    expect(markup).toContain(">Sign out of staff account<");
-    expect(markup).toContain(">Sign out of registration account<");
-    expect(markup.indexOf("Sign out of staff account")).toBeLessThan(markup.indexOf("Registration account"));
-    signedIn({ staff });
-    expect(await render()).toContain(">Sign out of staff account<");
-    signedIn({ attendee: true });
-    const attendeeOnly = await render();
-    expect(attendeeOnly).toContain(">Sign out of registration account<");
-    expect(attendeeOnly).not.toContain("Sign out of staff account");
-  });
-
-  it("leaves the act-as banner to the staff shell and never shows it on the attendee-only page", async () => {
-    mocks.currentStaffActingContext.mockResolvedValue({ role: "CLUB_DIRECTOR" });
-    signedIn({ attendee: true });
-    const markup = await render();
-    expect(markup).not.toContain("ACT-AS-BANNER");
-    expect(markup).not.toContain('data-shell="staff"');
-  });
-
-  it("does not treat a staff session that merely matches an attendee email as a registration account", async () => {
-    signedIn({ staff, attendee: true, sessionVia: "staff" });
-    const markup = await render();
-    expect(markup).toContain('data-shell="staff"');
-    expect(markup).not.toContain("Registration account");
-  });
-
-  it("sends an attendee with a pending second step to /account/two-step, but keeps staff on the page", async () => {
-    signedIn({ attendee: true });
-    mocks.attendeeSecondStepPending.mockResolvedValue(true);
-    await expect(render()).rejects.toThrow("REDIRECT /account/two-step");
-
-    mocks.redirect.mockClear();
-    signedIn({ staff, attendee: true });
-    const markup = await render();
-    expect(mocks.redirect).not.toHaveBeenCalled();
-    expect(markup).toContain('data-manager="staff-mfa"');
-    expect(markup).not.toContain('data-manager="attendee-settings"');
     expect(markup).toContain("/account/two-step");
-    // The verified email stays hidden until the second step is passed.
+    expect(markup).not.toContain('data-manager="attendee-settings"');
     expect(markup).not.toContain("pat@imsda-events.test");
     expect(markup).toContain("Sign out of registration account");
+    expect(mocks.listAccountBannerAnnouncements).not.toHaveBeenCalled();
 
     mocks.attendeeSecondStepPending.mockResolvedValue(false);
     expect(await render()).toContain("pat@imsda-events.test");
   });
 
-  it("redirects a signed-out visitor to the sign-in chooser", async () => {
+  it("does not treat a staff session that merely matches an attendee email as a registration account", async () => {
+    signedIn({ staff, attendee: true, sessionVia: "staff" });
+    const markup = await render();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(markup).not.toContain("Registration account");
+    expect(markup).toContain('data-manager="staff-mfa"');
+  });
+
+  it("confirms two-step verification is on only when an authenticator is really active (#568)", async () => {
+    signedIn({ staff, attendee: true });
+    attendeePasskeys.mockResolvedValue({ available: true, passkeys: [] });
+    attendeeMfaStatus.mockResolvedValue({ status: "ACTIVE" });
+    expect(await render({ twoStep: "on" })).toContain("Two-step verification is on.");
+    expect(await render()).not.toContain("Two-step verification is on.");
+    attendeeMfaStatus.mockResolvedValue({ status: "NONE" });
+    expect(await render({ twoStep: "on" })).not.toContain("Two-step verification is on.");
+    attendeePasskeys.mockResolvedValue({ available: true, passkeys: [{ id: "pk1" }] });
+    expect(await render({ twoStep: "on" })).toContain("Two-step verification is on.");
+  });
+
+  it("sends an attendee-only browser to /account/profile, keeping the two-step flag", async () => {
+    signedIn({ attendee: true });
+    await expect(render()).rejects.toThrow("REDIRECT /account/profile");
+    mocks.redirect.mockClear();
+    await expect(render({ twoStep: "on" })).rejects.toThrow("REDIRECT /account/profile?twoStep=on");
+    expect(mocks.getMfaStatus).not.toHaveBeenCalled();
+  });
+
+  it("sends a browser with neither session to the sign-in chooser", async () => {
     signedIn({});
     await expect(render()).rejects.toThrow("REDIRECT /profile/sign-in");
     expect(mocks.getMfaStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe("/account/profile (attendee, inside the portal layout)", () => {
+  it("renders the registration account with no staff sections and no shell of its own", async () => {
+    signedIn({ attendee: true });
+    const markup = await renderPortal();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(markup).toContain("Edit profile");
+    expect(markup).toContain("Registration account");
+    expect(markup).toContain("pat@imsda-events.test");
+    expect(markup).toContain('data-manager="attendee-settings"');
+    expect(markup).toContain('href="/account"');
+    expect(markup).toContain("My registrations");
+    expect(markup).toContain(">Sign out of registration account<");
+    expect(markup).not.toContain("Sign out of staff account");
+    expect(markup).not.toContain('data-shell="staff"');
+    expect(markup).not.toContain("<main");
+    expect(markup).not.toContain('data-manager="staff-mfa"');
+    expect(mocks.getMfaStatus).not.toHaveBeenCalled();
+  });
+
+  it("links a club director to their club, or to My clubs for several", async () => {
+    signedIn({ attendee: true });
+    mocks.listDirectedClubs.mockResolvedValue([{ organizationId: "club-1", name: "Pathfinder Test Club", role: "DIRECTOR" }]);
+    const one = await renderPortal();
+    expect(one).toContain('href="/account/clubs/club-1"');
+    expect(one).toContain("Pathfinder Test Club");
+    mocks.listDirectedClubs.mockResolvedValue([
+      { organizationId: "club-1", name: "Pathfinder Test Club", role: "DIRECTOR" },
+      { organizationId: "club-2", name: "Adventurer Test Club", role: "DIRECTOR" },
+    ]);
+    expect(await renderPortal()).toContain('href="/account/clubs"');
+  });
+
+  it("shows both sections when the browser also carries a staff session", async () => {
+    signedIn({ staff, attendee: true });
+    const markup = await renderPortal();
+    expect(markup).toContain('data-manager="staff-mfa"');
+    expect(markup).toContain('data-manager="attendee-settings"');
+    expect(markup).toContain(">Sign out of staff account<");
+    expect(markup).toContain(">Sign out of registration account<");
+  });
+
+  it("confirms two-step verification is on only when it really is", async () => {
+    signedIn({ attendee: true });
+    attendeePasskeys.mockResolvedValue({ available: true, passkeys: [] });
+    attendeeMfaStatus.mockResolvedValue({ status: "ACTIVE" });
+    expect(await renderPortal({ twoStep: "on" })).toContain("Two-step verification is on.");
+    expect(await renderPortal()).not.toContain("Two-step verification is on.");
+    attendeeMfaStatus.mockResolvedValue({ status: "PENDING" });
+    expect(await renderPortal({ twoStep: "on" })).not.toContain("Two-step verification is on.");
+  });
+
+  it("applies the club second step first", async () => {
+    signedIn({ attendee: true });
+    mocks.requireAttendeeSecondStep.mockImplementation(async () => {
+      mocks.redirect("/account/two-step");
+    });
+    await expect(renderPortal()).rejects.toThrow("REDIRECT /account/two-step");
+    expect(mocks.getMfaStatus).not.toHaveBeenCalled();
+  });
+
+  it("sends staff with no registration account to /profile, keeping the flag", async () => {
+    signedIn({ staff });
+    await expect(renderPortal()).rejects.toThrow("REDIRECT /profile");
+    mocks.redirect.mockClear();
+    signedIn({ staff, attendee: true, sessionVia: "staff" });
+    await expect(renderPortal({ twoStep: "on" })).rejects.toThrow("REDIRECT /profile?twoStep=on");
+  });
+
+  it("sends a browser with neither session to /profile, which sends it on to the sign-in chooser", async () => {
+    signedIn({});
+    await expect(renderPortal()).rejects.toThrow("REDIRECT /profile");
+  });
+});
+
+describe("workspace layout and /profile with no events (#623, #646)", () => {
+  async function layoutFor(target: string | null) {
+    signedIn({ staff });
+    mocks.headers.mockResolvedValue({ get: () => target });
+    return renderToStaticMarkup(await WorkspaceLayout({ children: createElement("p", null, "child") }));
+  }
+
+  it("lets any staff account in for /profile only", async () => {
+    expect(await layoutFor("/profile")).toContain('data-any-staff="true"');
+    expect(await layoutFor("/profile?twoStep=on")).toContain('data-any-staff="true"');
+    expect(await layoutFor("/overview")).toContain('data-any-staff="false"');
+    expect(await layoutFor("/admin/profile")).toContain('data-any-staff="false"');
+    expect(await layoutFor(null)).toContain('data-any-staff="false"');
+  });
+
+  it("still renders the shell when the request header cannot be read", async () => {
+    signedIn({ staff });
+    mocks.headers.mockRejectedValue(new Error("outside a request"));
+    const markup = renderToStaticMarkup(await WorkspaceLayout({ children: createElement("p", null, "child") }));
+    expect(markup).toContain('data-shell="staff"');
+    expect(markup).toContain('data-any-staff="false"');
   });
 });
 
@@ -303,11 +337,8 @@ describe("/profile/sign-in", () => {
 });
 
 describe("old attendee URLs", () => {
-  it.each([
-    ["/account/profile", () => AttendeeProfileRedirect()],
-    ["/account/security", () => AttendeeSecurityRedirect()],
-  ])("%s redirects to /profile", async (_path, page) => {
-    await expect(page()).rejects.toThrow("REDIRECT /profile");
+  it("/account/security redirects to /account/profile", async () => {
+    await expect(AttendeeSecurityRedirect()).rejects.toThrow("REDIRECT /account/profile");
   });
 
   it("still applies the club second step first", async () => {

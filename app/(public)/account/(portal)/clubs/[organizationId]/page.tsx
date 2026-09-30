@@ -18,7 +18,7 @@ import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels, clubRoleDescriptions } from "@/modules/organizations/director-grants-domain";
 
-export const metadata: Metadata = { title: "Club home" };
+export const metadata: Metadata = { title: "Home" };
 export const dynamic = "force-dynamic";
 
 /** Only when there's somewhere else to go (#428): a single-club director has nowhere "all clubs" would take them. */
@@ -84,7 +84,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
     )
     : null;
 
-  const steps: Array<{ key: string; text: string; href: string; action: string }> = [];
+  const steps: Array<{ key: string; text: string; href: string; action: string; danger?: boolean }> = [];
   if (active.length === 0) {
     steps.push({ key: "roster", text: "Add your club members to this year's roster.", href: `${base}/roster`, action: "Add people" });
   }
@@ -105,7 +105,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
   // Flags only, never blocks registration (#405, #479).
   if (compliance) {
     for (const reminder of complianceReminders(compliance, `${base}/roster`)) {
-      steps.push({ key: reminder.key, text: reminder.text, href: reminder.href, action: "Open roster" });
+      steps.push({ key: reminder.key, text: reminder.text, href: reminder.href, action: "Open roster", danger: true });
     }
   }
 
@@ -113,7 +113,8 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
     <>
       {clubsLink}
       <ClubYearTiles
-        compliance={compliance}
+        // Background-check problems live only in "What's next" below, in red (#644); no tile.
+        compliance={null}
         complianceHref={`${base}/roster`}
         events={{ open: open.length, registered: registered.length }}
         eventsHref={`${base}/events`}
@@ -135,9 +136,12 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
         ) : (
           <ul className="public-manage-club-list">
             {steps.map((step) => (
-              <li key={step.key}>
+              <li className={step.danger ? "club-step-danger" : undefined} key={step.key}>
                 <CircleAlert size={17} aria-hidden="true" />
-                <span><strong>{step.text}</strong></span>
+                <span>
+                  {step.danger && <small className="club-step-flag">Background check</small>}
+                  <strong>{step.text}</strong>
+                </span>
                 <Link className="primary-button club-event-action" href={step.href}>
                   {step.action} <ArrowRight size={14} aria-hidden="true" />
                 </Link>

@@ -5,6 +5,7 @@ import { CircleAlert, RefreshCw, Save, Send } from "lucide-react";
 import {
   MAX_HONORS,
   ON_TIME_POINTS,
+  REPORT_CHANGE_REQUEST_EMAIL,
   pickedTotal,
   pointItems,
   reportProblems,
@@ -155,7 +156,7 @@ export function ClubReportForm({
 
   async function reopen() {
     if (!reopenEndpoint) return;
-    if (!window.confirm("Reopen this report as a draft? You can change it and submit again before the due date.")) return;
+    if (!window.confirm(`Reopen this report as a draft? You must resubmit it by ${dueLabel}. After that date you can't submit changes.`)) return;
     setSaving(true);
     setError("");
     setNotice("");
@@ -213,7 +214,14 @@ export function ClubReportForm({
       </div>
 
       {readOnly && (
-        <div className="inline-notice" role="status">{readOnlyNote ?? `This report closed after ${dueLabel}. Ask the conference office if something needs to change.`}</div>
+        <div className="inline-notice" role="status">
+          {readOnlyNote ?? (
+            <>
+              This report closed on {dueLabel}. You can&apos;t submit changes now — email{" "}
+              <a href={`mailto:${REPORT_CHANGE_REQUEST_EMAIL}`}>{REPORT_CHANGE_REQUEST_EMAIL}</a> to request a change.
+            </>
+          )}
+        </div>
       )}
       {!readOnly && allowDraft && !isDraft && report && reopenEndpoint && (
         <div className="inline-notice" role="status">

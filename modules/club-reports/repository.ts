@@ -4,11 +4,11 @@ import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
+  clubReportClosedMessage,
   clubYearMonths,
   isLockedForClub,
   onTimePoints,
   pickedTotal,
-  reportDueDate,
   reportProblems,
   type PickedPoints,
   type ReportHonor,
@@ -121,8 +121,10 @@ export async function getClubReportYear(organizationId: string, clubYear: string
 
 /**
  * Saves a report as a draft or a submission. A club may file a month up to
- * the current one, and may change or reopen it until the due date; after
- * that only staff can. On-time points come from the first time a report
+ * the current one. A never-submitted report may still be submitted late (no
+ * on-time points). Once submitted, the club may change or reopen it until the
+ * due date; after that, including a reopened draft, only staff (not act-as)
+ * can (#640). On-time points come from the first time a report
  * reaches SUBMITTED, and never change on later edits, reopens, or resubmits.
  */
 export async function saveClubReport(
@@ -154,15 +156,13 @@ export async function saveClubReport(
     // the conference office's power to change a report after its due date.
     const isClub = "accountId" in actor || Boolean(actor.actAsId);
     const pastDue = isLockedForClub(reportMonth, now);
-    // Only a submitted report locks for the club after the due date. A draft can
-    // still go in late: a first submission earns no on-time points, and a reopened
-    // report keeps its original credit, with the late change recorded in the
-    // audit log for the office to review.
-    if (existing?.status === "SUBMITTED" && isClub && pastDue) {
-      throw new ClubReportError(
-        "CLUB_REPORT_LOCKED",
-        `This report closed after ${reportDueDate(reportMonth)}. Ask the conference office if something needs to change.`,
-      );
+    // After the due date a club can no longer change a report it has already
+    // submitted, whether it is still SUBMITTED or was reopened to DRAFT (#640).
+    // A report that was never submitted can still go in late; a first
+    // submission earns no on-time points. Only conference staff (not "act as")
+    // can change a closed report.
+    if (existing?.firstSubmittedAt && isClub && pastDue) {
+      throw new ClubReportError("CLUB_REPORT_LOCKED", clubReportClosedMessage(reportMonth));
     }
     const becomingSubmittedNow = input.status === "SUBMITTED" && !existing?.firstSubmittedAt;
     const firstSubmittedAt = input.status === "SUBMITTED" ? (existing?.firstSubmittedAt ?? now) : (existing?.firstSubmittedAt ?? null);
@@ -213,7 +213,7 @@ export async function saveClubReport(
         ...(existing?.status === "SUBMITTED"
           ? { previousTotalPoints: existing.totalPoints, previousOnTimePoints: existing.onTimePoints }
           : {}),
-        ...(isClub && pastDue && input.status === "SUBMITTED" && existing?.firstSubmittedAt && existing.status === "DRAFT"
+        ...(!isClub && pastDue && input.status === "SUBMITTED" && existing?.firstSubmittedAt && existing.status === "DRAFT"
           ? { resubmittedAfterDueDate: true }
           : {}),
         ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : actor.actAsId ? { actAsId: actor.actAsId } : {}),
@@ -231,10 +231,7 @@ export async function saveClubReport(
  */
 export async function reopenClubReport(organizationId: string, reportMonth: string, actor: ClubReportActor, now = new Date()) {
   if (isLockedForClub(reportMonth, now)) {
-    throw new ClubReportError(
-      "CLUB_REPORT_LOCKED",
-      `This report closed after ${reportDueDate(reportMonth)}. Ask the conference office if something needs to change.`,
-    );
+    throw new ClubReportError("CLUB_REPORT_LOCKED", clubReportClosedMessage(reportMonth));
   }
   const prisma = getPrisma();
   return prisma.$transaction(async (tx) => {
