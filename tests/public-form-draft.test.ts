@@ -419,10 +419,37 @@ describe("single-attendee (no roster) drafts (#641)", () => {
       responses: { ...content.responses, ...content.attendees[0].responses, injected: "x" },
       attendees: [],
     }, now);
+    const raw = storage.getItem(publicDraftKey(identity)) ?? "";
+    for (const secret of ["1990-01-01", "synthetic note", "Synthetic Mutual", "injected"]) {
+      expect(raw).not.toContain(secret);
+    }
     const result = loadPublicDraft(storage, identity, flat, later);
     expect(result.status).toBe("restored");
     if (result.status !== "restored") return;
     expect(result.draft.responses).toEqual({ contact_name: "Avery Guest", email: "guest@example.test", first_name: "Blake", shirt_size: "M" });
+  });
+
+  it("prunes an attendee-scope follow-up whose registration-scope condition is not met", () => {
+    const followUp = registrationFormDefinitionSchema.parse({
+      title: "Synthetic form", description: "Synthetic.", confirmationMessage: "Received.",
+      sections: [{ id: "details", title: "Details", description: "", fields: [
+        { ...base, id: "f_first", key: "first_name", label: "First name", type: "TEXT", scope: "ATTENDEE", required: true },
+        { ...base, id: "f_pref", key: "contact_pref", label: "Contact preference", type: "RADIO", scope: "REGISTRATION", required: true, options: ["Email", "Phone"] },
+        { ...base, id: "f_pref_name", key: "preferred_name", label: "Preferred name", type: "TEXT", scope: "ATTENDEE", required: false, conditional: { fieldKey: "contact_pref", operator: "EQUALS", value: "Phone" } },
+      ] }],
+    });
+    const save = (contactPref: string) => {
+      const storage = new FakeStorage();
+      savePublicDraft(storage, identity, followUp, {
+        responses: { first_name: "Blake", contact_pref: contactPref, preferred_name: "Bee" },
+        attendees: [],
+      }, now);
+      return loadPublicDraft(storage, identity, followUp, later);
+    };
+    const hidden = save("Email");
+    expect(hidden.status === "restored" && hidden.draft.responses).toEqual({ first_name: "Blake", contact_pref: "Email" });
+    const shown = save("Phone");
+    expect(shown.status === "restored" && shown.draft.responses).toEqual({ first_name: "Blake", contact_pref: "Phone", preferred_name: "Bee" });
   });
 
   it("roster-enabled drafts keep attendee answers out of the flat responses", () => {
