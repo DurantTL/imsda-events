@@ -62,5 +62,5 @@ export async function directoryForDefinitions(
 ): Promise<OrganizationDirectory> {
   return definitions.some(hasDirectoryOptionSource)
     ? getOrganizationDirectory(client)
-    : { clubs: [], churches: [] };
+    : { clubs: [], churches: [], schools: [] };
 }

@@ -19,6 +19,8 @@ export default async function OrganizationsPage() {
       <div className="intro-actions club-admin-links">
         <BackLink href="/admin" variant="staff">Back to system administration</BackLink>
         <Link className="secondary-button" href="/admin/clubs/import">Import clubs</Link>
+        <Link className="secondary-button" href="/admin/organizations/directory">Organization directory</Link>
+        <Link className="secondary-button" href="/admin/organizations/import">Import from eAdventist</Link>
         <Link className="secondary-button" href="/admin/clubs/invites">Club invites</Link>
         <Link className="secondary-button" href="/admin/clubs/reports">Monthly reports</Link>
         <Link className="secondary-button" href="/admin/clubs/transfers">Member transfers</Link>
