@@ -3862,7 +3862,10 @@ model BackgroundCheckMatch {
 /// when this list replaced it (#527), so nobody's status changed that day.
 /// `NAME_ONLY` (#598): the name is the only person and only row with it and
 /// nothing contradicts it, but the row's site didn't match; recomputed like
-/// `AUTO`, and shown to staff for a spot check.
+/// `AUTO`, and shown to staff for an informational spot check. Since #619 a
+/// `user_id` row's name-only match is remembered like `AUTO`, so the next
+/// upload finds it as `IDENTITY`; a first-name variant with one agreeing
+/// detail is also `NAME_ONLY` (not remembered).
 enum BackgroundCheckMatchSource {
   IDENTITY
   AUTO
@@ -3904,6 +3907,24 @@ model BackgroundCheckRejectedPairing {
   createdAt        DateTime @default(now())
 
   @@unique([identityKey, personId])
+}
+
+/// A name-only or first-name-variant match (#619) of a list row with no roster
+/// `user_id`, remembered by the row's `identityKey` so a later upload matches
+/// it again (as `IDENTITY`, so it isn't listed as new). Rows with a `user_id`
+/// use `ExternalIdentity` instead. `matchedName` is the row's normalized name
+/// when it was made; a later upload uses the memory only while that name, the
+/// person, and the row's email and birth date still fit, and no staff
+/// rejection exists. Deleted by "not the same person" and by a match by hand.
+/// No foreign keys, like `BackgroundCheckRejectedPairing`: a deleted person
+/// just leaves an inert row. Any future person merge must re-point `personId`.
+model BackgroundCheckRememberedMatch {
+  id          String   @id @default(cuid())
+  identityKey String   @unique
+  personId    String
+  matchedName String
+  matchedBy   String
+  createdAt   DateTime @default(now())
 }
 
 /// A background check's compliance mark from a roster import (#427): the
