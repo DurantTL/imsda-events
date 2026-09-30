@@ -372,12 +372,31 @@ describe("club registration edit (H3b, #366)", () => {
       expect(created.formResponses).toMatchObject({ attendee_age: "12" });
       expect(prisma.clubRosterMember.updateMany).toHaveBeenCalledTimes(1);
       expect(prisma.clubRosterMember.updateMany).toHaveBeenCalledWith({
-        where: { id: "m4", organizationId: "club-1", sealedBirthDate: null, NOT: { reportedAge: 12 } },
+        where: { id: "m4", organizationId: "club-1", clubYear: expect.any(String), status: "ACTIVE", sealedBirthDate: null, OR: [{ reportedAge: null }, { reportedAge: { not: 12 } }] },
         data: { reportedAge: 12 },
       });
       const audit = prisma.auditLog.create.mock.calls.map(([call]) => call.data).find((data) => data.action === "CLUB_ROSTER_MEMBER_UPDATED");
       expect(audit).toMatchObject({ entityType: "ClubRosterMember", entityId: "m4", metadata: { organizationId: "club-1", actorAttendeeAccountId: "director-1", fields: ["reportedAge"] } });
       expect(JSON.stringify(prisma.clubRosterMember.updateMany.mock.calls)).not.toMatch(/sealedBirthDate: "|birthDate/);
+    });
+
+    it("saves back only an age the director changed: a kept person's unchanged age writes nothing, a changed one does", async () => {
+      const kept = () => fixture({ activeMembers: ["m1", "m4"], attendees: [attendee("attendee-m4", "m4", "Robin", "Nobirth", 12)] });
+      const keep = (age: number) => ({ ...baseEdit(), selectedMemberIds: ["m4"], rosterAges: { m4: age }, saveAgeToRosterIds: ["m4"] });
+      const first = kept();
+      await amendClubRegistration("club-1", "event-1", director, keep(12), beforeDeadline);
+      expect(first.prisma.clubRosterMember.updateMany).not.toHaveBeenCalled();
+      const second = kept();
+      await amendClubRegistration("club-1", "event-1", director, keep(13), beforeDeadline);
+      expect(second.prisma.clubRosterMember.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not write a newly added person's unchanged reported age back", async () => {
+      const { prisma } = fixtureWithUnknownAges();
+      await amendClubRegistration("club-1", "event-1", director, edit({
+        selectedMemberIds: ["m1", "m5"], rosterAges: { m5: 15 }, saveAgeToRosterIds: ["m5"],
+      }), beforeDeadline);
+      expect(prisma.clubRosterMember.updateMany).not.toHaveBeenCalled();
     });
 
     it("leaves the roster alone when the save-back box is off", async () => {

@@ -484,20 +484,31 @@ async function activeRosterFor(client: Prisma.TransactionClient, organizationId:
 }
 
 /**
- * Saves an age a director typed in back to the roster as the member's
- * reported age (#639), inside the caller's transaction. Only a member with no
- * birth date is ever touched (the `sealedBirthDate: null` guard is part of the
- * write), and a birth date is never written or guessed from an age.
+ * Saves an age a director changed back to the roster as the member's
+ * reported age (#639), inside the caller's transaction. Only an active member
+ * of this club and club year with no birth date is ever touched (the filter is
+ * part of the write), and a birth date is never written or guessed from an age.
  */
 async function saveRosterAgesBack(
   tx: Prisma.TransactionClient,
   organizationId: string,
+  clubYear: string,
   actor: ClubRegistrationActor,
   updates: ReadonlyArray<{ memberId: string; age: number }>,
 ) {
   for (const { memberId, age } of updates) {
+    // Same row filter as the active roster (this club, this club year, ACTIVE), so an erased or
+    // transferred row is never written. `reportedAge IS NULL` is spelled out because
+    // `NOT (reportedAge = age)` is never true for NULL in SQL.
     const result = await tx.clubRosterMember.updateMany({
-      where: { id: memberId, organizationId, sealedBirthDate: null, NOT: { reportedAge: age } },
+      where: {
+        id: memberId,
+        organizationId,
+        clubYear,
+        status: "ACTIVE",
+        sealedBirthDate: null,
+        OR: [{ reportedAge: null }, { reportedAge: { not: age } }],
+      },
       data: { reportedAge: age },
     });
     if (result.count === 0) continue;
@@ -852,8 +863,7 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
       }
       const rosterOnly = rosterPerson(member, eventDate);
       // A roster person with no birth date takes the age typed in for this
-      // registration (#639); a birth date on file always wins.
-      // with the roster's reported age standing in until one is typed in.
+      // registration (#639), else the roster's reported age; a birth date on file always wins.
       const typedAge = rosterOnly.ageOnEventDate === null ? draftRosterAges[member.id] : undefined;
       const effectiveAge = typedAge ?? (rosterOnly.ageOnEventDate === null ? member.reportedAge ?? undefined : undefined);
       if (rosterOnly.ageOnEventDate === null && effectiveAge === undefined) {
@@ -867,12 +877,12 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
         }
       }
       const person = effectiveAge === undefined ? rosterOnly : { ...rosterOnly, ageOnEventDate: effectiveAge };
-      if (typedAge !== undefined && actor && !saveOff.has(member.id)) saveBack.push({ memberId: member.id, age: typedAge });
+      if (typedAge !== undefined && typedAge !== (member.reportedAge ?? undefined) && actor && !saveOff.has(member.id)) saveBack.push({ memberId: member.id, age: typedAge });
       resolved.set(attendee.clientId, { personId: member.personId, rosterMemberId: member.id, ageOnEventDate: person.ageOnEventDate });
       return { ...attendee, responses: { ...attendee.responses, ...rosterOwnedResponses(definition as RegistrationFormDefinition, person) } };
     });
     // Part of the submit transaction: a failed submit saves nothing back (#639).
-    if (actor && saveBack.length > 0) await saveRosterAgesBack(tx, organizationId, actor, saveBack);
+    if (actor && saveBack.length > 0) await saveRosterAgesBack(tx, organizationId, clubYearFor(event.startsAt), actor, saveBack);
     return {
       input: {
         ...input,
@@ -1170,7 +1180,9 @@ export async function amendClubRegistration(
         }
       } else {
         person = { ...rosterOnly, ageOnEventDate: age };
-        if (typedAges[memberId] !== undefined && saveAgeIds.has(memberId)) saveAgeBack.push({ memberId, age });
+        // Only an age the director changed from where it started (the registered age, else the roster's reported age).
+        const startingAge = typeof registeredAge === "number" ? registeredAge : member.reportedAge ?? undefined;
+        if (typedAges[memberId] !== undefined && typedAges[memberId] !== startingAge && saveAgeIds.has(memberId)) saveAgeBack.push({ memberId, age });
       }
     }
     const owned = rosterOwnedResponses(definition, person);
@@ -1270,7 +1282,7 @@ export async function amendClubRegistration(
   const engineOptions: AmendmentServerOptions = {
     attendees: serverOptions,
     // Inside the amendment's own transaction, so a failed save changes nothing (#639).
-    ...(saveAgeBack.length > 0 ? { inTransaction: (tx: Prisma.TransactionClient) => saveRosterAgesBack(tx, organizationId, actor, saveAgeBack) } : {}),
+    ...(saveAgeBack.length > 0 ? { inTransaction: (tx: Prisma.TransactionClient) => saveRosterAgesBack(tx, organizationId, clubYearFor(event.startsAt), actor, saveAgeBack) } : {}),
     requestFingerprint,
     ...(input.locationId ? { locationId: input.locationId } : {}),
     ownedRegistrationResponses: async (hydrated, tx) => (

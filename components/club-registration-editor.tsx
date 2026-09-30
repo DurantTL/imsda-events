@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Pencil, Trash2, UserPlus, X } from "lucide-react";
 import { ClubLocationPicker } from "@/components/club-location-picker";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
-import { parseTypedAge } from "@/modules/club-registrations/roster-ages";
+import { ageInputProblem, ageInputValue, parseTypedAge } from "@/modules/club-registrations/roster-ages";
 import {
   PublicRegistrationForm,
   type FormIssue,
@@ -94,7 +94,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
   const [newGuests, setNewGuests] = useState<ClubGuest[]>([]);
   // Roster people with no birth date need an age for this registration (#639).
   // It starts at the age they were registered with, else the roster's reported age.
-  const [rosterAges, setRosterAges] = useState<Record<string, number>>(() => Object.fromEntries(
+  const [startingAges] = useState<Record<string, number>>(() => Object.fromEntries(
     workspace.roster.flatMap((person) => {
       if (person.ageOnEventDate !== null) return [];
       const registeredAge = registeredByMemberId.get(person.memberId)?.ageOnEventDate ?? null;
@@ -102,21 +102,17 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
       return age === null ? [] : [[person.memberId, age] as const];
     }),
   ));
+  const [rosterAges, setRosterAges] = useState<Record<string, number>>(startingAges);
   const [saveAgeOff, setSaveAgeOff] = useState<string[]>([]);
-  const missingAge = workspace.roster.find((person) => (
-    selectedMemberIds.includes(person.memberId) && person.ageOnEventDate === null && rosterAges[person.memberId] === undefined
+  // The raw text of the age fields, so a half-typed entry is reported rather than read as blank.
+  const [ageText, setAgeText] = useState<Record<string, string>>({});
+  const problemPerson = workspace.roster.find((person) => (
+    selectedMemberIds.includes(person.memberId) && ageInputProblem(person, ageText, rosterAges) !== null
   ));
-
-  function toggleMember(person: (typeof workspace.roster)[number]) {
-    setSelectedMemberIds((current) => toggle(current, person.memberId));
-    // Someone newly ticked with no birth date starts at the roster's reported age, if it has one.
-    if (person.ageOnEventDate === null && person.reportedAge !== null) {
-      setRosterAges((current) => (current[person.memberId] === undefined ? { ...current, [person.memberId]: person.reportedAge! } : current));
-    }
-  }
 
   function changeAge(memberId: string, raw: string) {
     setError("");
+    setAgeText((current) => ({ ...current, [memberId]: raw }));
     const age = parseTypedAge(raw);
     setRosterAges((current) => {
       const next = { ...current };
@@ -234,7 +230,8 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
           keptGuestIds,
           newGuests,
           rosterAges: typedAges,
-          saveAgeToRosterIds: Object.keys(typedAges).filter((memberId) => !saveAgeOff.includes(memberId)),
+          // Only ages the director changed from where they started are saved back to the roster.
+          saveAgeToRosterIds: Object.keys(typedAges).filter((memberId) => !saveAgeOff.includes(memberId) && typedAges[memberId] !== startingAges[memberId]),
           attendeeResponses: Object.fromEntries(attendees.map((attendee) => [attendee.clientId, attendee.responses])),
           ...(locationId && locationId !== currentLocationId ? { locationId } : {}),
         }),
@@ -253,7 +250,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         : { key: issue.key, message: issue.message, attendeeIndex: null }];
     });
     return { ok: false as const, message: result.message ?? "That change couldn't be saved. Refresh and try again.", issues };
-  }, [organizationId, workspace.event.id, workspace.registration.updatedAt, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests, typedAges, saveAgeOff, locationId, currentLocationId]);
+  }, [organizationId, workspace.event.id, workspace.registration.updatedAt, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests, typedAges, startingAges, saveAgeOff, locationId, currentLocationId]);
 
   const club = useMemo(() => ({
     initialAttendees,
@@ -336,7 +333,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
             <label className="checkbox-label">
               <input
                 checked={selectedMemberIds.includes(person.memberId)}
-                onChange={() => toggleMember(person)}
+                onChange={() => setSelectedMemberIds((current) => toggle(current, person.memberId))}
                 type="checkbox"
               />
               <span>
@@ -346,8 +343,8 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
             </label>
             {person.ageOnEventDate === null && selectedMemberIds.includes(person.memberId) && (
               <ClubRosterAgeField
-                age={rosterAges[person.memberId]}
-                invalid={error !== "" && rosterAges[person.memberId] === undefined}
+                error={error !== "" || ageInputValue(person, ageText, rosterAges).trim() !== "" ? ageInputProblem(person, ageText, rosterAges) : null}
+                value={ageInputValue(person, ageText, rosterAges)}
                 onAge={(raw) => changeAge(person.memberId, raw)}
                 onSaveToRoster={(save) => setSaveAgeOff((current) => (save ? current.filter((id) => id !== person.memberId) : [...current.filter((id) => id !== person.memberId), person.memberId]))}
                 organizationId={organizationId}
@@ -445,7 +442,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
           className="primary-button"
           disabled={goingCount === 0}
           onClick={() => {
-            if (missingAge) return setError(`Enter ${missingAge.firstName} ${missingAge.lastName}'s age on the event date.`);
+            if (problemPerson) return setError(ageInputProblem(problemPerson, ageText, rosterAges) ?? "Check the ages above.");
             setError(""); setJustReopened(false); setStep("form");
           }}
           type="button"

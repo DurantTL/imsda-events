@@ -8,8 +8,6 @@ type AgeState = {
   attendeeResponses: Record<string, Record<string, unknown>>;
 };
 
-type RosterAgeSource = { memberId: string; ageOnEventDate: number | null; reportedAge: number | null };
-
 /** Whole years, 0 to 120: the same rule guests have. */
 export function parseTypedAge(raw: string): number | undefined {
   if (raw.trim() === "") return undefined;
@@ -35,38 +33,36 @@ export function withRosterAge<T extends AgeState>(state: T, memberId: string, ag
   return { ...state, rosterAges, attendeeResponses };
 }
 
+type AgeInputPerson = { memberId: string; firstName: string; lastName: string; ageOnEventDate: number | null; reportedAge: number | null };
+
 /**
- * Starts the age field at the roster's reported age for anyone going who has
- * no birth date and no age typed in yet. Still editable, still required.
+ * What an "Age on event date" field shows: the director's own text once they
+ * have edited it, else the age saved in the draft, else the roster's reported age.
  */
-export function withReportedAgePrefill<T extends AgeState>(
-  state: T,
-  roster: readonly RosterAgeSource[],
-  memberIds: readonly string[],
-  ageKey: string | null,
-): T {
-  let next = state;
-  for (const person of roster) {
-    if (!memberIds.includes(person.memberId)) continue;
-    if (person.ageOnEventDate !== null || person.reportedAge === null) continue;
-    if (next.rosterAges[person.memberId] !== undefined) continue;
-    next = withRosterAge(next, person.memberId, person.reportedAge, ageKey);
-  }
-  return next;
+export function ageInputValue(person: AgeInputPerson, text: Readonly<Record<string, string>>, saved: Readonly<Record<string, number>>): string {
+  return text[person.memberId] ?? String(saved[person.memberId] ?? person.reportedAge ?? "");
 }
 
-/** The reported ages that stand in for ages not typed in yet: only for people going with no birth date. */
-export function reportedAgeDefaults(
-  roster: readonly RosterAgeSource[],
-  memberIds: readonly string[],
-  typed: Readonly<Record<string, number>>,
+/** What is wrong with this person's age entry, or null. A blank entry is never read as the reported age. */
+export function ageInputProblem(person: AgeInputPerson, text: Readonly<Record<string, string>>, saved: Readonly<Record<string, number>>): string | null {
+  if (person.ageOnEventDate !== null) return null;
+  const raw = ageInputValue(person, text, saved);
+  if (raw.trim() === "") return `Enter ${`${person.firstName} ${person.lastName}`.trim() || "their"} age on the event date.`;
+  return parseTypedAge(raw) === undefined ? "Enter the age as a whole number from 0 to 120." : null;
+}
+
+/** The age in use for each going person with no birth date. Once edited, the reported age never stands in again. */
+export function effectiveRosterAges(
+  roster: readonly AgeInputPerson[],
+  selectedMemberIds: readonly string[],
+  text: Readonly<Record<string, string>>,
+  saved: Readonly<Record<string, number>>,
 ): Record<string, number> {
-  const defaults: Record<string, number> = {};
+  const result: Record<string, number> = {};
   for (const person of roster) {
-    if (!memberIds.includes(person.memberId)) continue;
-    if (person.ageOnEventDate !== null || person.reportedAge === null) continue;
-    if (typed[person.memberId] !== undefined) continue;
-    defaults[person.memberId] = person.reportedAge;
+    if (person.ageOnEventDate !== null || !selectedMemberIds.includes(person.memberId)) continue;
+    const age = parseTypedAge(ageInputValue(person, text, saved));
+    if (age !== undefined) result[person.memberId] = age;
   }
-  return defaults;
+  return result;
 }

@@ -9,16 +9,18 @@ import Link from "next/link";
  * never written or guessed.
  */
 export function ClubRosterAgeField({
-  age,
-  invalid,
+  error,
+  value,
   onAge,
   onSaveToRoster,
   onNavigate,
   organizationId,
   saveToRoster,
 }: {
-  age: number | undefined;
-  invalid: boolean;
+  /** What the director has typed (or the starting age), as text. */
+  value: string;
+  /** Shown under the field when the age is blank or not a whole number from 0 to 120. */
+  error: string | null;
   onAge: (raw: string) => void;
   onSaveToRoster: (save: boolean) => void;
   onNavigate?: () => void;
@@ -30,8 +32,8 @@ export function ClubRosterAgeField({
       <label>
         Age on event date
         <input
-          aria-invalid={invalid}
-          defaultValue={age ?? ""}
+          aria-invalid={error !== null}
+          value={value}
           inputMode="numeric"
           max={120}
           min={0}
@@ -40,6 +42,7 @@ export function ClubRosterAgeField({
           type="number"
         />
       </label>
+      {error && <small className="inline-notice error" role="alert">{error}</small>}
       <label className="checkbox-label">
         <input checked={saveToRoster} onChange={(event) => onSaveToRoster(event.target.checked)} type="checkbox" />
         <span>Also update their age on the roster</span>

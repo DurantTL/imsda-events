@@ -40,8 +40,9 @@ export const clubGuestSchema = z.object({
 
 /**
  * Ages typed in for roster people whose roster entry has no birth date (#639),
- * by roster member id. For this registration only: the roster itself is not
- * changed, and no birth date is ever guessed from an age.
+ * by roster member id. They are used for this registration and, if the director
+ * leaves the box ticked, saved back as the member's reported age. A birth date
+ * is never written or guessed from an age.
  */
 export const rosterAgesSchema = z.record(
   z.string().min(1).max(64),

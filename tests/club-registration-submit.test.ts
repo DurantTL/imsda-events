@@ -299,13 +299,20 @@ describe("club registration submit", () => {
     ] }, clubAs());
 
     expect(tx.clubRosterMember.updateMany.mock.calls).toEqual([
-      [{ where: { id: "m3", organizationId: "club-1", sealedBirthDate: null, NOT: { reportedAge: 13 } }, data: { reportedAge: 13 } }],
-      [{ where: { id: "m4", organizationId: "club-1", sealedBirthDate: null, NOT: { reportedAge: 16 } }, data: { reportedAge: 16 } }],
+      [{ where: { id: "m3", organizationId: "club-1", clubYear: expect.any(String), status: "ACTIVE", sealedBirthDate: null, OR: [{ reportedAge: null }, { reportedAge: { not: 13 } }] }, data: { reportedAge: 13 } }],
+      [{ where: { id: "m4", organizationId: "club-1", clubYear: expect.any(String), status: "ACTIVE", sealedBirthDate: null, OR: [{ reportedAge: null }, { reportedAge: { not: 16 } }] }, data: { reportedAge: 16 } }],
     ]);
     const audits = tx.auditLog.create.mock.calls.map(([call]) => call.data).filter((data) => data.action === "CLUB_ROSTER_MEMBER_UPDATED");
     expect(audits.map((audit) => audit.entityId)).toEqual(["m3", "m4"]);
     expect(audits[0]).toMatchObject({ entityType: "ClubRosterMember", metadata: { organizationId: "club-1", actorAttendeeAccountId: "director-1", fields: ["reportedAge"] } });
     expect(JSON.stringify(tx.clubRosterMember.updateMany.mock.calls)).not.toMatch(/birthDate"?: *"/);
+  });
+
+  it("does not write back a typed age that equals the roster's reported age (#639)", async () => {
+    const tx = fixture();
+    tx.clubRegistrationDraft.findUnique.mockResolvedValue({ guests: [], rosterAges: { m4: 15 } });
+    await submit({ ...baseInput, attendees: [{ clientId: "member:m4", responses: {} }] }, clubAs());
+    expect(tx.clubRosterMember.updateMany).not.toHaveBeenCalled();
   });
 
   it("leaves the roster alone for a member whose save-back box is off (#639)", async () => {
