@@ -116,6 +116,7 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
       updateMany: vi.fn(async () => ({ count: 0 })),
       findFirst: vi.fn(async () => null),
     },
+    clubFormLink: { updateMany: vi.fn(async () => ({ count: 1 })) },
   };
   const prisma = {
     eventMessageSettings: {
@@ -128,7 +129,7 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
     auditLog: { create: vi.fn() },
     $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
   };
-  return { prisma, message, attempts };
+  return { prisma, message, attempts, tx };
 }
 
 /** The `where` of every claim query the run issued. */
@@ -421,6 +422,44 @@ describe("external email queue", () => {
       status: "FAILED",
       errorCode: "STALE_DELIVERY_LOCK",
     });
+  });
+});
+
+describe("stale claims on the last attempt", () => {
+  it("fails the message and withdraws its club form link in the same transaction (#610)", async () => {
+    const now = new Date("2026-07-23T12:00:00.000Z");
+    const store = fakeDeliveryStore({
+      status: "PROCESSING",
+      templateKey: "CLUB_FORM_LINK",
+      attemptCount: 4,
+      lockToken: "abandoned-lock",
+      lockedAt: new Date(now.getTime() - EMAIL_DELIVERY_LOCK_TIMEOUT_MS - 1),
+    });
+    const result = await processExternalEmailQueue("event-1", {
+      dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail: vi.fn() },
+    });
+    expect(result.recoveredIds).toEqual(["message-1"]);
+    expect(store.message.status).toBe("FAILED");
+    expect(store.tx.clubFormLink.updateMany).toHaveBeenCalledWith({
+      where: { messageId: "message-1", status: "OPEN" },
+      data: expect.objectContaining({ status: "REVOKED", tokenHash: null }),
+    });
+  });
+
+  it("keeps the link while attempts remain", async () => {
+    const now = new Date("2026-07-23T12:00:00.000Z");
+    const store = fakeDeliveryStore({
+      status: "PROCESSING",
+      templateKey: "CLUB_FORM_LINK",
+      attemptCount: 0,
+      lockToken: "abandoned-lock",
+      lockedAt: new Date(now.getTime() - EMAIL_DELIVERY_LOCK_TIMEOUT_MS - 1),
+    });
+    await processExternalEmailQueue("event-1", {
+      dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail: vi.fn() },
+    });
+    expect(store.message.status).toBe("PENDING");
+    expect(store.tx.clubFormLink.updateMany).not.toHaveBeenCalled();
   });
 });
 

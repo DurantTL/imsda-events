@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   templateUpdate: vi.fn(),
   submissionFindMany: vi.fn(),
   submissionUpdate: vi.fn(),
+  queryRaw: vi.fn(),
+  transactionOptions: vi.fn(),
 }));
 
 const client = {
@@ -20,7 +22,11 @@ const client = {
     update: mocks.templateUpdate,
   },
   clubFormSubmission: { findMany: mocks.submissionFindMany, update: mocks.submissionUpdate },
-  $transaction: (work: (tx: unknown) => unknown) => work(client),
+  $queryRaw: mocks.queryRaw,
+  $transaction: (work: (tx: unknown) => unknown, options?: unknown) => {
+    mocks.transactionOptions(options);
+    return work(client);
+  },
 };
 
 vi.mock("server-only", () => ({}));
@@ -33,10 +39,12 @@ import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
 import type { ClubFormsViewer } from "@/modules/club-forms/domain";
 import { openSensitiveAnswers, sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
 import {
+  getClubFormTemplateForStaff,
   getEnabledClubFormTemplate,
   listEnabledClubFormTemplates,
   setClubFormTemplateEnabled,
   syncClubFormTemplates,
+  listClubFormTemplatesForAdmin,
 } from "@/modules/club-forms/templates";
 
 const staffPlain: ClubFormsViewer = { kind: "STAFF", userId: "staff-2", systemAdmin: false };
@@ -53,6 +61,13 @@ const slipRow = {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.writeAuditLog.mockResolvedValue({});
+  mocks.queryRaw.mockResolvedValue([]);
+  // The locked re-read of a template's keys: by default, what the earlier unlocked read returned.
+  mocks.templateFindUnique.mockReset();
+  mocks.templateFindUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => {
+    const rows = (await mocks.templateFindMany()) as Array<{ id?: string }> | undefined;
+    return rows?.find((row) => row.id === where.id) ?? null;
+  });
 });
 
 describe("club form templates are off until a system administrator turns them on (#610)", () => {
@@ -72,11 +87,12 @@ describe("club form templates are off until a system administrator turns them on
     expect(mocks.templateUpdate).not.toHaveBeenCalled();
   });
 
-  const storedRows = (overrides: Record<string, { version?: number; sensitiveFieldKeys?: string[] }> = {}) => clubFormTemplateSeeds.map((seed) => ({
+  const storedRows = (overrides: Record<string, { version?: number; sensitiveFieldKeys?: string[]; birthDateFieldKeys?: string[] }> = {}) => clubFormTemplateSeeds.map((seed) => ({
     id: `id-${seed.key}`,
     key: seed.key,
     version: seed.version - 1,
     sensitiveFieldKeys: seed.sensitiveFieldKeys,
+    birthDateFieldKeys: seed.birthDateFieldKeys,
     ...overrides[seed.key],
   }));
 
@@ -117,6 +133,62 @@ describe("club form templates are off until a system administrator turns them on
     expect(order.indexOf("reseal")).toBeLessThan(order.indexOf(`template:${slip.key}`));
   });
 
+  it("locks the template row FOR UPDATE and gives the re-seal a timeout sized for thousands of rows", async () => {
+    const stored = slip.sensitiveFieldKeys.filter((key) => key !== "physician_name");
+    mocks.templateFindMany.mockResolvedValue(storedRows({ [slip.key]: { sensitiveFieldKeys: stored } }));
+    mocks.submissionFindMany.mockResolvedValueOnce([]);
+    await syncClubFormTemplates(client as never);
+    expect(mocks.queryRaw).toHaveBeenCalled();
+    expect(mocks.queryRaw.mock.calls[0][0].join("?")).toMatch(/FOR UPDATE/);
+    for (const [options] of mocks.transactionOptions.mock.calls) {
+      expect(options.timeout).toBeGreaterThanOrEqual(60_000);
+      expect(options.maxWait).toBeGreaterThanOrEqual(10_000);
+    }
+  });
+
+  it("decides what to seal from the locked row, not from the earlier read", async () => {
+    // The unlocked read says physician_name was already sensitive; a concurrent change made it plain before the lock.
+    mocks.templateFindMany.mockResolvedValue(storedRows());
+    const lockedStored = slip.sensitiveFieldKeys.filter((key) => key !== "physician_name");
+    mocks.templateFindUnique.mockImplementation(async ({ where }: { where: { id: string } }) => ({
+      version: 0,
+      sensitiveFieldKeys: where.id === `id-${slip.key}` ? lockedStored : clubFormTemplateSeeds.find((seed) => `id-${seed.key}` === where.id)?.sensitiveFieldKeys,
+      birthDateFieldKeys: clubFormTemplateSeeds.find((seed) => `id-${seed.key}` === where.id)?.birthDateFieldKeys,
+    }));
+    mocks.submissionFindMany.mockResolvedValueOnce([
+      { id: "sub-1", answers: { physician_name: "Dr. Was Plain" }, sealedSensitiveAnswers: null },
+    ]).mockResolvedValueOnce([]);
+    await syncClubFormTemplates(client as never);
+    expect(mocks.submissionUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a version that would stop a birth-date field being one (ADR 0005 Addendum A)", async () => {
+    const member = clubFormTemplateSeeds.find((seed) => seed.birthDateFieldKeys.length > 0);
+    if (!member) throw new Error("no seed with a birth-date field");
+    mocks.templateFindMany.mockResolvedValue(storedRows({ [member.key]: { birthDateFieldKeys: [...member.birthDateFieldKeys, "extra_birth_date"], sensitiveFieldKeys: [...member.sensitiveFieldKeys, "extra_birth_date"] } }));
+    await expect(syncClubFormTemplates(client as never)).rejects.toMatchObject({ code: "INVALID_TEMPLATE", message: expect.stringMatching(/reviewed change/) });
+    expect(mocks.templateUpdate.mock.calls.map(([call]) => call.where.key)).not.toContain(member.key);
+  });
+
+  it("carries on past a refused form when asked, syncs the others, and reports every refusal", async () => {
+    const other = clubFormTemplateSeeds.find((seed) => seed.key !== slip.key)!;
+    mocks.templateFindMany.mockResolvedValue(storedRows({
+      [slip.key]: { sensitiveFieldKeys: [...slip.sensitiveFieldKeys, "activity"] },
+      [other.key]: { sensitiveFieldKeys: [...other.sensitiveFieldKeys, "extra_stored_only"] },
+    }));
+    const result = await syncClubFormTemplates(client as never, { continueOnRefusal: true });
+    expect(result.refused.map((item) => item.key).sort()).toEqual([slip.key, other.key].sort());
+    const updated = mocks.templateUpdate.mock.calls.map(([call]) => call.where.key);
+    expect(updated).not.toContain(slip.key);
+    expect(updated).not.toContain(other.key);
+    expect(updated.length).toBe(clubFormTemplateSeeds.length - 2);
+  });
+
+  it("still stops at the first refusal by default", async () => {
+    mocks.templateFindMany.mockResolvedValue(storedRows({ [slip.key]: { sensitiveFieldKeys: [...slip.sensitiveFieldKeys, "activity"] } }));
+    await expect(syncClubFormTemplates(client as never)).rejects.toMatchObject({ code: "INVALID_TEMPLATE" });
+  });
+
   it("refuses a version that would make a sensitive field readable again", async () => {
     mocks.templateFindMany.mockResolvedValue(storedRows({ [slip.key]: { sensitiveFieldKeys: [...slip.sensitiveFieldKeys, "activity"] } }));
     await expect(syncClubFormTemplates(client as never)).rejects.toMatchObject({ code: "INVALID_TEMPLATE" });
@@ -140,13 +212,13 @@ describe("club form templates are off until a system administrator turns them on
 
   it("turns a template on and records who and when, then off again", async () => {
     mocks.templateFindMany.mockResolvedValue(clubFormTemplateSeeds.map((seed) => ({ key: seed.key, version: seed.version })));
-    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: false });
+    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: false, version: slip.version });
     const now = new Date("2026-10-05T15:00:00Z");
     await setClubFormTemplateEnabled(slip.key, true, "admin-1", now);
     expect(mocks.templateUpdate).toHaveBeenCalledWith({ where: { id: "template-slip" }, data: { enabled: true, enabledAt: now, enabledByUserId: "admin-1" } });
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_FORM_TEMPLATE_ENABLED", actorUserId: "admin-1", metadata: { templateKey: slip.key } }), client);
 
-    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: true });
+    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: true, version: slip.version });
     await setClubFormTemplateEnabled(slip.key, false, "admin-1", now);
     expect(mocks.templateUpdate).toHaveBeenLastCalledWith({ where: { id: "template-slip" }, data: { enabled: false, enabledAt: null, enabledByUserId: null } });
     expect(mocks.writeAuditLog).toHaveBeenLastCalledWith(expect.objectContaining({ action: "CLUB_FORM_TEMPLATE_DISABLED" }), client);
@@ -154,16 +226,59 @@ describe("club form templates are off until a system administrator turns them on
 
   it("changes and audits nothing when the switch is already where it was asked to be", async () => {
     mocks.templateFindMany.mockResolvedValue(clubFormTemplateSeeds.map((seed) => ({ key: seed.key, version: seed.version })));
-    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: true });
+    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: true, version: slip.version });
     await setClubFormTemplateEnabled(slip.key, true, "admin-1");
     expect(mocks.templateUpdate).not.toHaveBeenCalled();
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("lists templates for the admin page without syncing or re-sealing, and flags one that is behind", async () => {
+    mocks.templateFindMany.mockResolvedValue([
+      { key: slip.key, name: slip.name, description: slip.description, enabled: true, enabledAt: null, version: slip.version - 1, _count: { submissions: 3 } },
+    ]);
+    const listed = await listClubFormTemplatesForAdmin();
+    expect(listed.find((row) => row.key === slip.key)).toMatchObject({ needsSync: true, submissionCount: 3 });
+    // Seeded forms with no row yet are shown too, and need a sync as well.
+    expect(listed.filter((row) => row.needsSync).length).toBe(clubFormTemplateSeeds.length);
+    expect(mocks.templateUpsert).not.toHaveBeenCalled();
+    expect(mocks.templateUpdate).not.toHaveBeenCalled();
+    expect(mocks.submissionFindMany).not.toHaveBeenCalled();
+    expect(mocks.queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("will not turn a form on while its stored version is behind the code, but will turn it off", async () => {
+    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: false, version: slip.version - 1 });
+    await expect(setClubFormTemplateEnabled(slip.key, true, "admin-1")).rejects.toMatchObject({ code: "TEMPLATE_NEEDS_SYNC" });
+    expect(mocks.templateUpdate).not.toHaveBeenCalled();
+    expect(mocks.templateUpsert).not.toHaveBeenCalled();
+    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: true, version: slip.version - 1 });
+    await setClubFormTemplateEnabled(slip.key, false, "admin-1");
+    expect(mocks.templateUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("says a form that does not exist is not found", async () => {
     mocks.templateFindMany.mockResolvedValue(clubFormTemplateSeeds.map((seed) => ({ key: seed.key, version: seed.version })));
     mocks.templateFindUnique.mockResolvedValue(null);
     await expect(setClubFormTemplateEnabled("nope", true, "admin-1")).rejects.toMatchObject({ code: "TEMPLATE_NOT_FOUND" });
+  });
+});
+
+describe("a stored template that lags the code restricts at least what the code restricts (#610)", () => {
+  it("unions the seed's sensitive keys into what readers and the CSV see", async () => {
+    mocks.templateFindUnique.mockResolvedValue({ ...slipRow, sensitiveFieldKeys: [], birthDateFieldKeys: [] });
+    const template = await getClubFormTemplateForStaff(slip.key);
+    expect(new Set(template.sensitiveFieldKeys)).toEqual(new Set(slip.sensitiveFieldKeys));
+  });
+
+  it("keeps a sensitive key out of the CSV even when the stored template lags", async () => {
+    mocks.templateFindUnique.mockResolvedValue({ ...slipRow, sensitiveFieldKeys: [], birthDateFieldKeys: [] });
+    mocks.submissionFindMany.mockResolvedValue([{
+      clubYear: "2026-27", subjectName: "Riley Sample", status: "SUBMITTED", submittedAt: new Date("2026-10-30T12:00:00Z"), enteredVia: "LINK",
+      answers: { child_name: "Riley Sample", physician_name: "Dr. Lagging Plain" }, organization: { name: "Example Pathfinders" },
+    }]);
+    const { csv } = await buildClubFormsCsv(staffSensitive, { templateKey: slip.key });
+    expect(csv).not.toContain("Dr. Lagging Plain");
+    expect(csv).not.toMatch(/physician/i);
   });
 });
 

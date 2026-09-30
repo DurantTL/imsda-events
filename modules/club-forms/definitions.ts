@@ -12,8 +12,11 @@ import type { RegistrationFormDefinition, RegistrationFormField } from "@/module
  *   Coordinators, and left out of CSVs;
  * - `staffOnlyFieldKeys`: office-use fields a private-link filler never sees.
  *
- * Bump `version` when a definition changes; `syncClubFormTemplates` then
- * updates the stored row (it never touches `enabled`).
+ * Bump `version` when a definition changes; `npm run club-forms:sync` (run by
+ * `docker-entrypoint.sh` after migrations, and by hand locally) then updates
+ * the stored row through `syncClubFormTemplates` and, for a field that became
+ * sensitive, re-seals existing answers first. It never touches `enabled`.
+ * Until it has run, saves to the behind form are refused.
  *
  * Wording that #610 summarises rather than quotes (the membership
  * application's statement, waiver and five cooperation points, and the

@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { isSecretEncryptionConfigured } from "@/lib/secret-box";
 import { ClubFormError } from "@/modules/club-forms/errors";
+import { lockClubFormTemplateForReseal } from "@/modules/club-forms/template-lock";
 import { openSensitiveAnswers, sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
 
 /**
@@ -20,6 +21,8 @@ export async function resealClubFormSubmissions(
   newlySensitiveKeys: readonly string[],
 ) {
   if (newlySensitiveKeys.length === 0) return 0;
+  // Waits for in-flight saves (which hold FOR SHARE) and holds off new ones until this transaction commits.
+  await lockClubFormTemplateForReseal(tx, templateId);
   const moving = new Set(newlySensitiveKeys);
   let resealed = 0;
   let cursor: string | undefined;

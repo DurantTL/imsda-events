@@ -305,6 +305,8 @@ async function recoverStaleClaims(
             : "Email delivery stopped before completion and was rescheduled.",
         },
       });
+      // Out of attempts: a club form link that never arrived must not stay live (#610). A message with no link matches nothing.
+      if (terminal) await retireClubFormLinkForMessage(tx, candidate.id, completedAt);
       return true;
     });
     if (recovered) recoveredIds.push(candidate.id);

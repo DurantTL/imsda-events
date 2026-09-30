@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   writeAuditLog: vi.fn(),
   templateFindFirst: vi.fn(),
+  templateFindUnique: vi.fn(),
+  queryRaw: vi.fn(),
+  executeRaw: vi.fn(),
   linkCreate: vi.fn(),
   linkUpdate: vi.fn(),
   linkUpdateMany: vi.fn(),
@@ -19,7 +22,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 const client = {
-  clubFormTemplate: { findFirst: mocks.templateFindFirst },
+  clubFormTemplate: { findFirst: mocks.templateFindFirst, findUnique: mocks.templateFindUnique },
+  $queryRaw: mocks.queryRaw,
+  $executeRaw: mocks.executeRaw,
   clubFormLink: {
     create: mocks.linkCreate,
     update: mocks.linkUpdate,
@@ -127,6 +132,12 @@ beforeEach(() => {
   mocks.organizationFindUnique.mockResolvedValue({ type: "CLUB", isActive: true, name: "Example Pathfinders" });
   mocks.organizationFindMany.mockResolvedValue([]);
   mocks.templateFindFirst.mockResolvedValue(templateRow("off_premises_permission_slip"));
+  mocks.templateFindUnique.mockReset();
+  mocks.templateFindUnique.mockResolvedValue(templateRow("off_premises_permission_slip"));
+  mocks.executeRaw.mockReset();
+  mocks.executeRaw.mockResolvedValue(0);
+  mocks.queryRaw.mockReset();
+  mocks.queryRaw.mockResolvedValue([]);
   mocks.linkCreate.mockResolvedValue({ id: "link-1" });
   mocks.linkUpdate.mockResolvedValue({});
   mocks.linkUpdateMany.mockResolvedValue({ count: 1 });
@@ -304,7 +315,61 @@ describe("opening a private link (#610)", () => {
   });
 });
 
+describe("a template that is behind the code (#610)", () => {
+  const behind = () => ({ ...templateRow("off_premises_permission_slip"), version: templateRow("off_premises_permission_slip").version - 1 });
+
+  it("does not make a link for a form that cannot be saved", async () => {
+    mocks.templateFindFirst.mockResolvedValue(behind());
+    await expect(createClubFormLink(director, { organizationId: "club-a", templateKey: "off_premises_permission_slip", recipientEmail: "parent@example.test" }, now))
+      .rejects.toMatchObject({ code: "FORM_UNAVAILABLE", message: "This form is temporarily unavailable. Please try again later." });
+    expect(mocks.linkCreate).not.toHaveBeenCalled();
+    expect(mocks.outboxCreate).not.toHaveBeenCalled();
+  });
+
+  it("does not open the link page for it, and the link is not spent by looking", async () => {
+    mocks.linkFindUnique.mockResolvedValue(openLink({ template: behind() }));
+    await expect(resolveClubFormLinkForFill(TOKEN, now)).rejects.toMatchObject({ code: "FORM_UNAVAILABLE" });
+    expect(mocks.linkUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not accept a submit for it, and leaves the link unspent", async () => {
+    mocks.linkFindUnique.mockResolvedValue(openLink({ template: behind() }));
+    await expect(submitClubFormViaLink(TOKEN, slipAnswers, now)).rejects.toMatchObject({ code: "FORM_UNAVAILABLE" });
+    expect(mocks.linkUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.submissionCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("a link submit that cannot get the template lock (#610)", () => {
+  it("answers FORM_BUSY and leaves the link unspent, since the lock comes before the spend", async () => {
+    mocks.queryRaw.mockRejectedValue({ code: "P2010", meta: { code: "55P03" }, message: "Raw query failed. Code: `55P03`" });
+    await expect(submitClubFormViaLink(TOKEN, slipAnswers, now)).rejects.toMatchObject({ code: "FORM_BUSY" });
+    expect(mocks.linkUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.submissionCreate).not.toHaveBeenCalled();
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("refuses, link unspent, when the template changed version while it waited", async () => {
+    mocks.templateFindUnique.mockResolvedValue({ ...templateRow("off_premises_permission_slip"), version: templateRow("off_premises_permission_slip").version + 1 });
+    await expect(submitClubFormViaLink(TOKEN, slipAnswers, now)).rejects.toMatchObject({ code: "FORM_BUSY" });
+    expect(mocks.linkUpdateMany).not.toHaveBeenCalled();
+  });
+});
+
 describe("submitting through a private link (#610)", () => {
+  it("takes a share lock on the template row and seals by the keys read under it", async () => {
+    // Between the unlocked read and the lock, a re-seal made "activity" sensitive.
+    mocks.templateFindUnique.mockResolvedValue({
+      ...templateRow("off_premises_permission_slip"),
+      sensitiveFieldKeys: [...templateRow("off_premises_permission_slip").sensitiveFieldKeys, "activity"],
+    });
+    const result = await submitClubFormViaLink(TOKEN, slipAnswers, now);
+    expect(mocks.queryRaw.mock.calls[0][0].join("?")).toMatch(/FOR SHARE/);
+    const data = mocks.submissionCreate.mock.calls[0][0].data;
+    expect(data.answers).not.toHaveProperty("activity");
+    expect(openSensitiveAnswers(result.submissionId, data.sealedSensitiveAnswers)).toMatchObject({ activity: "Canoe trip" });
+  });
+
   it("spends the link and stores the submission in that link's club, sealing sensitive answers", async () => {
     const result = await submitClubFormViaLink(TOKEN, slipAnswers, now);
     expect(result.confirmationMessage).toContain("permission slip");
