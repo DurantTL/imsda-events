@@ -4034,6 +4034,9 @@ model ClubRegistrationDraft {
   guests             Json     @default("[]")
   responses          Json     @default("{}")
   attendeeResponses  Json     @default("{}")
+  /// Honors picked while registering (#618): { [attendee client id]: [offering id] }.
+  /// Only a draft; seats are taken by the enrollment domain after the registration is submitted.
+  honorSelections    Json     @default("{}")
   updatedByAccountId String?
   /// Set instead of `updatedByAccountId` for a staff "act as" director (#442).
   updatedByUserId    String?

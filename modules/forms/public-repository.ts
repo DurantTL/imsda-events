@@ -96,6 +96,12 @@ export type ClubSubmissionContext = {
    * transaction, so it is never trusted from the client's earlier view.
    */
   locationId?: string | null;
+  /**
+   * Told how the submission ended, once it has committed (#618): a replay of an
+   * earlier submission (same idempotency key), and whether the club was
+   * waitlisted. The club module uses it to skip work that must happen once.
+   */
+  report?: (outcome: { replayed: boolean; waitlisted: boolean }) => void;
   prepareAttendees: (
     tx: Prisma.TransactionClient,
     args: {
@@ -586,6 +592,7 @@ async function findExistingConfirmation(
     pendingMessageIds: messages.filter((message) => message.status === "PENDING").map((message) => message.id),
     registrantMessageIds: messages.map((message) => message.id),
     registrationId: existing.registrationId,
+    replayed: true,
   };
 }
 
@@ -1207,6 +1214,7 @@ async function createPublicRegistrationTransaction(
     pendingMessageIds: queuedMessages.pendingMessageIds,
     registrantMessageIds: queuedMessages.registrantMessageIds,
     registrationId: registration.id,
+    replayed: false,
   };
 }
 
@@ -1267,6 +1275,7 @@ export async function submitPublicRegistration(
       const registrantFailed = result.registrantMessageIds.some((messageId) => (
         processed.failedIds.includes(messageId)
       ));
+      club?.report?.({ replayed: result.replayed, waitlisted: result.confirmation.registrationStatus === "WAITLISTED" });
       return {
         ...result.confirmation,
         emailSent: registrantSent,

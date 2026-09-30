@@ -5,11 +5,16 @@ import { clubRegistrationApiError } from "@/modules/club-registrations/api-error
 import { clubRegistrationEditInputSchema } from "@/modules/club-registrations/domain";
 import { amendClubRegistration, submitClubRegistration } from "@/modules/club-registrations/repository";
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
+import { ClassSelectionError, saveRegistrationHonorPicks } from "@/modules/honors/enrollment-repository";
+import { honorSelectionsSchema } from "@/modules/honors/registration-picks";
 import { publicRegistrationInputSchema } from "@/modules/forms/public-domain";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 
 const maximumBodyBytes = 512 * 1024;
+
+const waitlistedHonorsMessage = "This club is waitlisted, so honors weren't saved. Pick classes after you're confirmed.";
+
 
 /** Submits the club's registration. Same idempotency key, same result. */
 async function postHandler(request: Request, context: { params: Promise<{ organizationId: string; eventId: string }> }) {
@@ -23,17 +28,43 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
       return Response.json({ error: "REQUEST_TOO_LARGE", message: "This registration is too large." }, { status: 413 });
     }
     // The picked location travels beside the form answers, never inside them (#413).
-    const { locationId, ...answers } = z.object({ locationId: z.string().trim().min(1).max(100).nullish() }).loose().parse(JSON.parse(body));
+    const { locationId, honorSelections, ...answers } = z.object({
+      locationId: z.string().trim().min(1).max(100).nullish(),
+      honorSelections: honorSelectionsSchema.optional(),
+    }).loose().parse(JSON.parse(body));
     const input = publicRegistrationInputSchema.parse(answers);
+    let outcome = { replayed: false, waitlisted: false };
     const confirmation = await submitClubRegistration(
       organizationId,
       eventId,
       actorAttribution(access.actor),
       input,
       new Date(),
-      { locationId: locationId ?? null },
+      { locationId: locationId ?? null, report: (reported) => { outcome = reported; } },
     );
-    return Response.json({ confirmation }, { status: 201, headers: { "Cache-Control": "no-store" } });
+    // The registration is saved either way. The picks go through the same
+    // enrollment rules as the class picker; if a class filled up meanwhile the
+    // director is told, and picks again on the registered page.
+    let honors: { saved: number } | { error: string } | null = null;
+    // A replay of an earlier submission never re-applies picks, and a waitlisted
+    // club has no seats to take yet.
+    if (!outcome.replayed && honorSelections && Object.values(honorSelections).some((ids) => ids.length > 0)) {
+      if (outcome.waitlisted) {
+        honors = { error: waitlistedHonorsMessage };
+      } else {
+        try {
+          honors = await saveRegistrationHonorPicks(organizationId, eventId, actorAttribution(access.actor), honorSelections);
+        } catch (error) {
+          if (!(error instanceof ClassSelectionError)) logError("Saving honors picked during club registration failed", error);
+          honors = {
+            error: error instanceof ClassSelectionError && error.code !== "NOT_REGISTERED"
+              ? error.message
+              : "Your registration is saved, but your honors were not. Choose them below once the registration is confirmed.",
+          };
+        }
+      }
+    }
+    return Response.json({ confirmation, honors }, { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return clubRegistrationApiError(error, "Submitting the club registration");
   }

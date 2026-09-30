@@ -3,41 +3,13 @@
 import { useMemo, useState } from "react";
 import { Award, Save } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
+import { attendeeTypeLabel as typeLabel, seatsNote, unavailableReason } from "@/modules/honors/class-picker-view";
+import { honorsNoteKey } from "@/modules/honors/registration-picks";
 import { sortHonorSessions } from "@/modules/honors/session-order";
 import type { ClassSelectionWorkspace } from "@/modules/honors/enrollment-repository";
 
 type Offering = ClassSelectionWorkspace["offerings"][number];
 type Attendee = ClassSelectionWorkspace["attendees"][number];
-
-/** What the roster calls this person; underage children are youth but take no seat (#462). */
-function typeLabel(attendee: Attendee) {
-  if (attendee.attendeeType === "STAFF") return "Staff";
-  if (attendee.attendeeType === "ADULT") return "Adult";
-  if (attendee.attendeeType === "UNDERAGE") return "Underage";
-  return "Youth";
-}
-
-function seatsNote(offering: Offering, heldHere: boolean, attendee: Attendee) {
-  if (!attendee.consumesSeat) return "no seat needed";
-  if (heldHere) return "seat held";
-  const left = offering.capacity - offering.seatsTaken;
-  const clubLeft = offering.perClubLimit === null ? null : offering.perClubLimit - offering.clubSeatsTaken;
-  const parts = [`${Math.max(left, 0)} of ${offering.capacity} seats left`];
-  if (clubLeft !== null) parts.push(`${Math.max(clubLeft, 0)} left for your club`);
-  return parts.join(", ");
-}
-
-function unavailableReason(offering: Offering, heldHere: boolean, attendee: Attendee) {
-  if (heldHere) return null;
-  if (!offering.isActive) return "no longer offered";
-  if (offering.minimumAge !== null && (attendee.ageOnEventDate === null || attendee.ageOnEventDate < offering.minimumAge)) {
-    return `ages ${offering.minimumAge}+`;
-  }
-  if (!attendee.consumesSeat) return null;
-  if (offering.seatsTaken >= offering.capacity) return "full";
-  if (offering.perClubLimit !== null && offering.clubSeatsTaken >= offering.perClubLimit) return "club limit reached";
-  return null;
-}
 
 /**
  * Choosing Honors Weekend classes for each person on a club registration.
@@ -76,7 +48,7 @@ export function ClubClassPicker({
       <section className="public-manage-card" aria-labelledby="class-picker-heading">
         <div className="public-manage-card-heading club-roster-heading">
           <div>
-            <p className="public-registration-eyebrow">Step 3 of 3 · Classes</p>
+            <p className="public-registration-eyebrow">Classes</p>
             <h2 id="class-picker-heading"><Award size={18} aria-hidden="true" /> Choose classes</h2>
           </div>
         </div>
@@ -117,6 +89,8 @@ export function ClubClassPicker({
       if (!response.ok || !result.workspace) throw new Error(result.message ?? "Class choices could not be saved.");
       setWorkspace(result.workspace);
       setSelections(result.workspace.selections);
+      // The earlier "your honors weren't saved" note is settled now (#618).
+      try { sessionStorage.removeItem(honorsNoteKey(organizationId, eventId)); } catch { /* storage is optional */ }
       setNotice("Classes saved. Seats are held for your club.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Class choices could not be saved.");
@@ -139,7 +113,7 @@ export function ClubClassPicker({
     <section className="public-manage-card" aria-labelledby="class-picker-heading">
       <div className="public-manage-card-heading club-roster-heading">
         <div>
-          <p className="public-registration-eyebrow">Step 3 of 3 · Classes</p>
+          <p className="public-registration-eyebrow">Classes</p>
           <h2 id="class-picker-heading"><Award size={18} aria-hidden="true" /> Choose classes</h2>
         </div>
       </div>
