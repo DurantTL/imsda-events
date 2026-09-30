@@ -115,11 +115,11 @@ describe("/profile", () => {
     expect(mocks.getPasskeySettings).toHaveBeenCalledWith(staff);
   });
 
-  it("links administrators to System management", async () => {
+  it("leaves the System management link to the staff shell instead of repeating it", async () => {
     signedIn({ staff: admin, attendee: true });
     const markup = await render();
-    expect(markup).toContain("System management");
-    expect(markup).toContain('href="/admin"');
+    expect(markup).toContain('data-shell="staff"');
+    expect(markup).not.toContain("System management");
   });
 
   it("confirms two-step verification is on only when an authenticator is really active (#568)", async () => {
@@ -186,6 +186,30 @@ describe("/profile", () => {
     const markup = await render();
     expect(markup).not.toContain('data-shell="staff"');
     expect(markup).toContain("Registration account");
+  });
+
+  it("shows announcements inside the registration card once the second step is passed (#623)", async () => {
+    signedIn({ staff, attendee: true });
+    mocks.listAccountBannerAnnouncements.mockResolvedValue([{
+      id: "ann-2", title: "Synthetic shell notice", body: "Bring a jacket.", priority: "NORMAL",
+      pinned: false, eventName: "Synthetic Retreat", href: "/account/events/synthetic-retreat",
+    }]);
+    const markup = await render();
+    expect(markup).toContain('data-shell="staff"');
+    expect(markup).toContain("Synthetic shell notice");
+    expect(mocks.listAccountBannerAnnouncements).toHaveBeenCalledWith(attendee, []);
+  });
+
+  it("hides settings, the verified email and announcements while a second step is pending, inside the shell (#623)", async () => {
+    signedIn({ staff, attendee: true });
+    mocks.attendeeSecondStepPending.mockResolvedValue(true);
+    const markup = await render();
+    expect(markup).toContain('data-shell="staff"');
+    expect(markup).toContain("Confirm your second step");
+    expect(markup).not.toContain('data-manager="attendee-settings"');
+    expect(markup).not.toContain("pat@imsda-events.test");
+    expect(mocks.listAccountBannerAnnouncements).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
   it("uses the staff shell for staff with events too, and never redirects to /no-access (#623)", async () => {

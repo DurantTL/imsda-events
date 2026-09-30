@@ -28,6 +28,7 @@ vi.mock("@/components/app-shell", () => ({ AppShell: () => null }));
 vi.mock("@/components/act-as-banner", () => ({ ActAsBanner: () => null }));
 
 import { AppShell } from "@/components/app-shell";
+import { ActAsBanner } from "@/components/act-as-banner";
 import { WorkspaceShell } from "@/components/workspace-shell";
 
 type ShellEvent = { id: string; clubOversight: boolean };
@@ -95,5 +96,19 @@ describe("WorkspaceShell club oversight (#481)", () => {
     expect(shellEvents(tree)).toEqual([]);
     await WorkspaceShell({ children: null });
     expect(mocks.loadWorkspaceEventContext).toHaveBeenLastCalledWith({ anyStaffWithoutEvents: false });
+  });
+
+  it("hands the acting context to the act-as banner (#623)", async () => {
+    const acting = { role: "CLUB_DIRECTOR", organizationName: "Synthetic Club" };
+    mocks.currentStaffActingContext.mockResolvedValue(acting);
+    mocks.loadWorkspaceEventContext.mockResolvedValue({
+      autoSelected: false, defaultEventId: null, events,
+      user: { id: "usr_admin", email: "admin@example.test", displayName: "Admin", globalRole: "SYSTEM_ADMIN" },
+    });
+    const tree = await WorkspaceShell({ children: null });
+    const children = (tree.props as { children: ReactNode }).children;
+    const banner = (Array.isArray(children) ? children : [children])
+      .find((child): child is ReactElement => Boolean(child) && (child as ReactElement).type === ActAsBanner);
+    expect(banner?.props).toEqual({ acting });
   });
 });

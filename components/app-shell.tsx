@@ -86,7 +86,8 @@ export function AppShell({
   // Same rule as the page (#465): no `?event=` and an automatic choice. Not on
   // pages that aren't event-scoped (/admin, the global duplicate review).
   const showAutoSelectNotice = !requestedEventId && !seenEventId && autoSelected && Boolean(defaultEvent)
-    && !pathname.startsWith(systemNavigation.href) && !pathname.startsWith("/people/matches");
+    && !pathname.startsWith(systemNavigation.href) && !pathname.startsWith("/people/matches")
+    && !isProfileRoute;
   const selectedPermissions = new Set(
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
   );
@@ -97,6 +98,9 @@ export function AppShell({
   const workspaceContexts = otherWorkspaceContextsForStaff({ isSystemAdmin, attendeeAccountAvailable });
   const systemAdminContext = workspaceContexts.find((context) => context.kind === "system_admin");
   const canSwitchToAttendee = workspaceContexts.some((context) => context.kind === "attendee");
+  // Staff with no events can still open their profile (#623); every event
+  // control and event-scoped nav item would dead-end for them, so hide them.
+  const eventlessProfile = isProfileRoute && events.length === 0 && !isSystemAdmin;
   const eventQuery = selectedEventId ? `?event=${encodeURIComponent(selectedEventId)}` : "";
   const visibleStatic = navigation.filter((item) => matchesVisibility(item, selectedPermissions));
   const dashboardItem = visibleStatic.find((item) => !item.group && item.href !== "/more");
@@ -126,7 +130,7 @@ export function AppShell({
     desktopOnly: true,
     group: "system",
   } : null;
-  const visibleNavigation: NavigationItem[] = [
+  const visibleNavigation: NavigationItem[] = eventlessProfile ? [] : [
     ...(dashboardItem ? [dashboardItem] : []),
     ...visibleStatic.filter((item) => item.group === "events"),
     ...(clubsEntry ? [clubsEntry] : []),
@@ -204,8 +208,8 @@ export function AppShell({
           </div>
         )}
 
-        <span className="event-workspace-label">Event workspace</span>
-        <div className="event-picker-wrap">
+        {!eventlessProfile && <span className="event-workspace-label">Event workspace</span>}
+        {!eventlessProfile && <div className="event-picker-wrap">
           <label htmlFor="event-picker">Current event</label>
           <div className="select-shell">
             <select
@@ -219,7 +223,7 @@ export function AppShell({
             </select>
             <ChevronDown aria-hidden="true" size={16} />
           </div>
-        </div>
+        </div>}
 
         <nav className="primary-nav" aria-label="Primary navigation">
           {visibleNavigation.map(({ href, icon: Icon, label, group }, index) => {
@@ -248,7 +252,7 @@ export function AppShell({
       <main className="workspace">
         <header className="workspace-header">
           <div><p className="eyebrow">Staff workspace</p><h1>{isProfileRoute ? "Your account" : current.label}</h1></div>
-          {!isSystemRoute && (
+          {!isSystemRoute && !eventlessProfile && (
             <label className="mobile-event-picker">
               <span className="sr-only">Current event</span>
               <select value={selectedEventId} onChange={(event) => selectEvent(event.target.value)}>
@@ -272,7 +276,7 @@ export function AppShell({
                   </button>
                 </form>
               )
-              : (
+              : !eventlessProfile && (
                 <Link
                   className="attendee-preview-switch"
                   href={attendeePreviewHref}
@@ -303,7 +307,7 @@ export function AppShell({
         </div>
       </main>
 
-      <nav className="mobile-nav" aria-label="Mobile navigation">
+      {mobileNavigation.length > 0 && <nav className="mobile-nav" aria-label="Mobile navigation">
         {mobileNavigation.map(({ href, icon: Icon, mobileLabel }) => {
           const isActive = !isProfileRoute && current.href === href;
           return (
@@ -312,7 +316,7 @@ export function AppShell({
             </Link>
           );
         })}
-      </nav>
+      </nav>}
     </div>
   );
 }

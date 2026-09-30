@@ -14,9 +14,6 @@ import { getPasskeySettings as getAttendeePasskeySettings } from "@/modules/atte
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { getMfaStatus } from "@/modules/access/mfa-service";
 import { getPasskeySettings } from "@/modules/access/passkeys";
-import {
-  otherWorkspaceContextsForStaff,
-} from "@/modules/access/workspace-contexts";
 import { listAccountBannerAnnouncements } from "@/modules/communications/account-banner";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
@@ -66,17 +63,10 @@ export default async function ProfilePage({
   }
   const clubs = attendeeAccount && !secondStepPending ? await listDirectedClubs(attendeeAccount.id) : [];
   // The same announcement banner as the account portal, for an attendee
-  // session past its second step only; a staff session gets none.
-  const bannerAnnouncements = !staff && attendeeAccount && !secondStepPending
+  // session past its second step only; a staff-only session gets none.
+  const bannerAnnouncements = attendeeAccount && !secondStepPending
     ? await listAccountBannerAnnouncements(attendeeAccount, clubs)
     : [];
-
-  const systemAdmin = staff
-    ? otherWorkspaceContextsForStaff({
-      isSystemAdmin: staff.globalRole === "SYSTEM_ADMIN",
-      attendeeAccountAvailable: false,
-    }).find((context) => context.kind === "system_admin")
-    : undefined;
 
   // Any browser with a staff session gets the profile inside the staff
   // workspace shell (sidebar, header) like every other staff page (#623), and
@@ -86,7 +76,7 @@ export default async function ProfilePage({
   if (staff && mfaStatus && passkeySettings) {
     return (
       <WorkspaceShell anyStaffWithoutEvents>
-        <section className="page-stack">
+        <section className="page-stack profile-page">
           <div className="page-intro">
             <div>
               <p className="eyebrow">Your account</p>
@@ -124,6 +114,9 @@ export default async function ProfilePage({
                 </div>
                 <AttendeeSignOutButton className="secondary-button" label="Sign out of registration account" />
               </div>
+              {!secondStepPending && (
+                <AccountAnnouncementBanner accountId={attendeeAccount.id} announcements={bannerAnnouncements} />
+              )}
               {showTwoStepOn && <p className="auth-success" role="status">Two-step verification is on.</p>}
               {!secondStepPending && (
                 <p className="field-help">
@@ -138,7 +131,6 @@ export default async function ProfilePage({
                   </Link>
                 )}
                 {clubs.length > 1 && <Link className="secondary-button" href="/account/clubs">My clubs</Link>}
-                {systemAdmin && <Link className="secondary-button" href={systemAdmin.href}>{systemAdmin.label}</Link>}
               </nav>
               {secondStepPending
                 ? (
