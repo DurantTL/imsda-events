@@ -16,11 +16,11 @@ const mocks = vi.hoisted(() => ({
   findAreaGrant: vi.fn(),
   findOrganization: vi.fn(),
   loadOrderWorkspace: vi.fn(),
-  createOrderBatch: vi.fn(),
-  markOrderBatchReceived: vi.fn(),
+  setOrderListQuantity: vi.fn(),
+  listHelperLines: vi.fn(),
+  loadOrderExportHeader: vi.fn(),
   markNeedsAwarded: vi.fn(),
   markNeedsAlreadyAwarded: vi.fn(),
-  listOrderList: vi.fn(),
   listPickList: vi.fn(),
   syncHonorOrderNeeds: vi.fn(),
 }));
@@ -47,27 +47,32 @@ vi.mock("@/modules/club-orders/repository", async () => {
   return {
     ...actual,
     loadOrderWorkspace: mocks.loadOrderWorkspace,
-    createOrderBatch: mocks.createOrderBatch,
-    markOrderBatchReceived: mocks.markOrderBatchReceived,
+    setOrderListQuantity: mocks.setOrderListQuantity,
+    listHelperLines: mocks.listHelperLines,
+    loadOrderExportHeader: mocks.loadOrderExportHeader,
     markNeedsAwarded: mocks.markNeedsAwarded,
     markNeedsAlreadyAwarded: mocks.markNeedsAlreadyAwarded,
-    listOrderList: mocks.listOrderList,
     listPickList: mocks.listPickList,
   };
 });
 
-import { GET, POST } from "@/app/api/attendee/clubs/[organizationId]/orders/route";
-import { POST as POST_RECEIVE } from "@/app/api/attendee/clubs/[organizationId]/orders/[batchId]/receive/route";
+import { GET } from "@/app/api/attendee/clubs/[organizationId]/orders/route";
+import { PUT as PUT_LINE } from "@/app/api/attendee/clubs/[organizationId]/orders/lines/[itemId]/route";
 import { POST as POST_AWARD } from "@/app/api/attendee/clubs/[organizationId]/orders/award/route";
 import { POST as POST_ALREADY } from "@/app/api/attendee/clubs/[organizationId]/orders/already-awarded/route";
 import { GET as GET_CSV } from "@/app/api/attendee/clubs/[organizationId]/orders/csv/route";
-import { buildOrderLines, readableOrderCsv } from "@/modules/club-orders/domain";
+import { buildHelperLines } from "@/modules/club-orders/domain";
 import { ClubOrderError } from "@/modules/club-orders/repository";
 
 const clubFor = (organizationId: string, role: string) => ({ organizationId, name: "Test Pathfinders", role, sponsoringChurch: null });
 const account = { id: "director-1", verifiedEmail: "director@example.test", displayName: "Test Director" };
 const ctx = (organizationId = "club-1") => ({ params: Promise.resolve({ organizationId }) });
-const batchCtx = (organizationId = "club-1", batchId = "batch-1") => ({ params: Promise.resolve({ organizationId, batchId }) });
+const lineCtx = (organizationId = "club-1", itemId = "item-1") => ({ params: Promise.resolve({ organizationId, itemId }) });
+const putRequest = (body: unknown) => new Request("https://events.imsda.test/api/attendee/x", {
+  method: "PUT",
+  headers: { origin: "https://events.imsda.test", "content-type": "application/json" },
+  body: JSON.stringify(body),
+});
 const getRequest = () => new Request("https://events.imsda.test/api/attendee/x");
 const postRequest = (body: unknown) => new Request("https://events.imsda.test/api/attendee/x", {
   method: "POST",
@@ -86,110 +91,128 @@ beforeEach(() => {
   mocks.findAreaGrant.mockResolvedValue(null);
   mocks.findOrganization.mockResolvedValue({ type: "CLUB", isActive: true });
   mocks.syncHonorOrderNeeds.mockResolvedValue({ count: 0 });
-  mocks.loadOrderWorkspace.mockResolvedValue({ lines: [], unmatched: [], batches: [], awardable: [] });
-  mocks.createOrderBatch.mockResolvedValue({ batchId: "batch-1", createdAt: "2026-09-28T00:00:00.000Z", lines: [] });
-  mocks.markOrderBatchReceived.mockResolvedValue({ id: "batch-1", status: "RECEIVED", createdAt: "x", receivedAt: "y", lines: [] });
+  mocks.loadOrderWorkspace.mockResolvedValue({ helper: [], unmatched: [], awardable: [], waiting: [], firstOrderAt: null });
+  mocks.setOrderListQuantity.mockResolvedValue({ itemId: "item-1", quantity: 2 });
+  mocks.loadOrderExportHeader.mockResolvedValue({ clubName: "Test Pathfinders", church: "Sample Church", directorName: "Test Director", directorEmail: "director@example.test", directorPhone: "555-0100", date: "2026-09-30" });
+  mocks.listHelperLines.mockResolvedValue([]);
   mocks.markNeedsAwarded.mockResolvedValue({ awarded: 1, fromStock: 0 });
   mocks.markNeedsAlreadyAwarded.mockResolvedValue({ marked: 2 });
-  mocks.listOrderList.mockResolvedValue({ lines: [], unmatched: [] });
   mocks.listPickList.mockResolvedValue([]);
 });
 
-describe("club order routes (#487): permissioned like club supplies (#531)", () => {
-  it.each(["DIRECTOR", "DEPUTY"])("a %s can view the order list and place an order", async (role) => {
+describe("club order routes (#487, #654): permissioned like club supplies (#531)", () => {
+  it.each(["DIRECTOR", "DEPUTY"])("a %s can view the order list and change a line", async (role) => {
     mocks.listDirectedClubs.mockResolvedValue([clubFor("club-1", role)]);
     const read = await GET(getRequest(), ctx());
     expect(read.status).toBe(200);
     expect(await read.json()).toMatchObject({ canEdit: true });
     expect(mocks.syncHonorOrderNeeds).toHaveBeenCalledWith("club-1");
-    const write = await POST(postRequest({ extras: { "item-1": 2 } }), ctx());
+    const write = await PUT_LINE(putRequest({ quantity: 2 }), lineCtx());
     expect(write.status).toBe(200);
-    expect(mocks.createOrderBatch).toHaveBeenCalledWith("club-1", { "item-1": 2 }, { accountId: "director-1" });
+    expect(mocks.setOrderListQuantity).toHaveBeenCalledWith("club-1", "item-1", 2, { accountId: "director-1" });
   });
 
-  it("a registrar views read-only and is refused placing an order", async () => {
+  it("takes a line off the list with 0 and puts it back with null", async () => {
+    expect((await PUT_LINE(putRequest({ quantity: 0 }), lineCtx())).status).toBe(200);
+    expect(mocks.setOrderListQuantity).toHaveBeenLastCalledWith("club-1", "item-1", 0, { accountId: "director-1" });
+    expect((await PUT_LINE(putRequest({ quantity: null }), lineCtx())).status).toBe(200);
+    expect(mocks.setOrderListQuantity).toHaveBeenLastCalledWith("club-1", "item-1", null, { accountId: "director-1" });
+  });
+
+  it.each([{ quantity: -1 }, { quantity: 1.5 }, { quantity: 10_001 }, { quantity: "3" }, {}, { quantity: 1, extra: 1 }])("refuses the line edit %j with 400", async (body) => {
+    expect((await PUT_LINE(putRequest(body), lineCtx())).status).toBe(400);
+    expect(mocks.setOrderListQuantity).not.toHaveBeenCalled();
+  });
+
+  it("a registrar views read-only and is refused changing a line", async () => {
     mocks.listDirectedClubs.mockResolvedValue([clubFor("club-1", "REGISTRAR")]);
     const read = await GET(getRequest(), ctx());
     expect(read.status).toBe(200);
     expect(await read.json()).toMatchObject({ canEdit: false });
     // A view-only visit reads what's on file and never writes.
     expect(mocks.syncHonorOrderNeeds).not.toHaveBeenCalled();
-    const write = await POST(postRequest({ extras: {} }), ctx());
-    expect(write.status).toBe(403);
-    expect(mocks.createOrderBatch).not.toHaveBeenCalled();
-    expect((await GET_CSV(new Request("https://events.imsda.test/x?view=readable"), ctx())).status).toBe(200);
+    expect((await PUT_LINE(putRequest({ quantity: 1 }), lineCtx())).status).toBe(403);
+    expect(mocks.setOrderListQuantity).not.toHaveBeenCalled();
+    expect((await GET_CSV(new Request("https://events.imsda.test/x?view=list"), ctx())).status).toBe(200);
     expect(mocks.syncHonorOrderNeeds).not.toHaveBeenCalled();
     expect((await POST_ALREADY(postRequest({ needIds: ["need-1"] }), ctx())).status).toBe(403);
     expect(mocks.markNeedsAlreadyAwarded).not.toHaveBeenCalled();
   });
 
   it("another club's director gets 404, and nothing runs", async () => {
-    const write = await POST(postRequest({ extras: {} }), ctx("club-2"));
+    const write = await PUT_LINE(putRequest({ quantity: 1 }), lineCtx("club-2"));
     expect(write.status).toBe(404);
-    expect(mocks.createOrderBatch).not.toHaveBeenCalled();
+    expect(mocks.setOrderListQuantity).not.toHaveBeenCalled();
     expect(mocks.syncHonorOrderNeeds).not.toHaveBeenCalled();
   });
 
-  it("an Area Coordinator views read-only and can't receive or award", async () => {
+  it("an Area Coordinator views read-only and can't change a line or award", async () => {
     mocks.listDirectedClubs.mockResolvedValue([]);
     mocks.findAreaGrant.mockResolvedValue({ revokedAt: null, expiresAt: null });
     const read = await GET(getRequest(), ctx());
     expect(read.status).toBe(200);
     expect(await read.json()).toMatchObject({ canEdit: false });
     expect(mocks.syncHonorOrderNeeds).not.toHaveBeenCalled();
-    expect((await POST_RECEIVE(postRequest({}), batchCtx())).status).toBe(404);
+    expect((await PUT_LINE(putRequest({ quantity: 1 }), lineCtx())).status).toBe(404);
     expect((await POST_AWARD(postRequest({ needIds: ["need-1"] }), ctx())).status).toBe(404);
-    expect(mocks.markOrderBatchReceived).not.toHaveBeenCalled();
+    expect(mocks.setOrderListQuantity).not.toHaveBeenCalled();
     expect(mocks.markNeedsAwarded).not.toHaveBeenCalled();
   });
 
-  it("receives an order and awards needs for a director", async () => {
-    const receive = await POST_RECEIVE(postRequest({}), batchCtx());
-    expect(receive.status).toBe(200);
-    expect(mocks.markOrderBatchReceived).toHaveBeenCalledWith("club-1", "batch-1", { accountId: "director-1" });
+  it("has no route that places an order", async () => {
+    const routes = await import("@/app/api/attendee/clubs/[organizationId]/orders/route");
+    expect("POST" in routes).toBe(false);
+  });
+
+  it("awards needs for a director", async () => {
     const award = await POST_AWARD(postRequest({ needIds: ["need-1", "need-2"] }), ctx());
     expect(award.status).toBe(200);
     expect(mocks.markNeedsAwarded).toHaveBeenCalledWith("club-1", ["need-1", "need-2"], { accountId: "director-1" });
   });
 
-  it("maps NOTHING_TO_ORDER to 409 and BATCH_NOT_FOUND to 404", async () => {
-    mocks.createOrderBatch.mockRejectedValue(new ClubOrderError("NOTHING_TO_ORDER", "Nothing to order."));
-    expect((await POST(postRequest({ extras: {} }), ctx())).status).toBe(409);
-    mocks.markOrderBatchReceived.mockRejectedValue(new ClubOrderError("BATCH_NOT_FOUND", "Not found."));
-    expect((await POST_RECEIVE(postRequest({}), batchCtx())).status).toBe(404);
-  });
-
-  it("marks needs already handed out for a director, and maps ALREADY_RECEIVED / NOT_ENOUGH_STOCK to 409", async () => {
-    const response = await POST_ALREADY(postRequest({ needIds: ["need-1", "need-2"] }), ctx());
-    expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ marked: 2 });
-    expect(mocks.markNeedsAlreadyAwarded).toHaveBeenCalledWith("club-1", ["need-1", "need-2"], { accountId: "director-1" });
-    mocks.markOrderBatchReceived.mockRejectedValue(new ClubOrderError("ALREADY_RECEIVED", "Already received."));
-    expect((await POST_RECEIVE(postRequest({}), batchCtx())).status).toBe(409);
+  it("maps an unknown catalog item to 409 and a stock shortfall to 409", async () => {
+    mocks.setOrderListQuantity.mockRejectedValue(new ClubOrderError("ITEM_NOT_ORDERABLE", "That catalog item could not be found."));
+    expect((await PUT_LINE(putRequest({ quantity: 1 }), lineCtx())).status).toBe(409);
     mocks.markNeedsAwarded.mockRejectedValue(new ClubOrderError("NOT_ENOUGH_STOCK", "Not enough."));
     expect((await POST_AWARD(postRequest({ needIds: ["need-1"] }), ctx())).status).toBe(409);
   });
 
-  it("the top-level order list CSV equals the screen's lines with the typed extras applied", async () => {
-    const item = { itemId: "item-1", name: "Knot Tying", catalogNumber: "002120" };
-    // The repository applies the extras it's given; this stub does the same with the real math.
-    mocks.listOrderList.mockImplementation(async (_organizationId: string, extras: Map<string, number>) => ({
-      lines: buildOrderLines([item], new Map([["item-1", 5]]), new Map([["item-1", 2]]), extras),
-      unmatched: [],
-    }));
-    const response = await GET_CSV(new Request("https://events.imsda.test/x?view=readable&extra=item-1:3"), ctx());
+  it("marks needs already handed out for a director", async () => {
+    const response = await POST_ALREADY(postRequest({ needIds: ["need-1", "need-2"] }), ctx());
     expect(response.status).toBe(200);
-    expect(mocks.listOrderList).toHaveBeenCalledWith("club-1", new Map([["item-1", 3]]));
-    const screen = buildOrderLines([item], new Map([["item-1", 5]]), new Map([["item-1", 2]]), new Map([["item-1", 3]]));
-    expect(await response.text()).toBe(readableOrderCsv(screen));
+    expect(await response.json()).toEqual({ marked: 2 });
+    expect(mocks.markNeedsAlreadyAwarded).toHaveBeenCalledWith("club-1", ["need-1", "need-2"], { accountId: "director-1" });
+  });
+
+  it("the list CSV carries the club details and the saved lines, grouped by section", async () => {
+    const lines = buildHelperLines(
+      [
+        { itemId: "h1", section: "OUTDOOR_INDUSTRIES", name: "Knot Tying", catalogNumber: "002120", sizeLabel: null },
+        { itemId: "u1", section: "CLASS_A_DRESS_APPAREL", name: "Boys' Shirt (M)", catalogNumber: "011112", sizeLabel: "M" },
+      ],
+      new Map([["h1", 3], ["u1", 2]]),
+      new Map(),
+      new Map([["h1", 1]]),
+    );
+    mocks.listHelperLines.mockResolvedValue(lines);
+    const response = await GET_CSV(new Request("https://events.imsda.test/x?view=list"), ctx());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/csv");
+    const text = await response.text();
+    expect(text).toContain('"Club","Test Pathfinders"');
+    expect(text).toContain('"Church","Sample Church"');
+    expect(text).toContain('"Uniforms","Boys\' Shirt","M","011112","2","0","2"');
+    expect(text).toContain('"Honors","Knot Tying","","002120","3","1","2"');
+    expect(text.indexOf("Uniforms")).toBeLessThan(text.indexOf("Honors"));
     // An editor's download syncs first.
     expect(mocks.syncHonorOrderNeeds).toHaveBeenCalledWith("club-1");
   });
 
-  it("refuses malformed extras on an export with 400", async () => {
-    const response = await GET_CSV(new Request("https://events.imsda.test/x?view=adventsource&extra=item-1:-2"), ctx());
-    expect(response.status).toBe(400);
-    expect(mocks.listOrderList).not.toHaveBeenCalled();
+  it("refuses the retired AdventSource and readable exports, and an unknown view, with 400", async () => {
+    for (const view of ["adventsource", "readable", "nonsense"]) {
+      expect((await GET_CSV(new Request(`https://events.imsda.test/x?view=${view}`), ctx())).status).toBe(400);
+    }
+    expect(mocks.listHelperLines).not.toHaveBeenCalled();
   });
 
   it("rejects an empty award list", async () => {

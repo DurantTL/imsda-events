@@ -1,27 +1,26 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ClubOrderWorkspace, orderExportAvailability, orderExportHref, type ClubOrderWorkspaceData } from "@/components/club-order-workspace";
-import { applyExtras } from "@/modules/club-orders/domain";
-import { parseExtrasQuery } from "@/modules/club-orders/schemas";
+import { ADVENTSOURCE_URL, ClubOrderWorkspace, type ClubOrderWorkspaceData } from "@/components/club-order-workspace";
+import type { ClubStockRow } from "@/modules/club-supplies/repository";
 
 /**
- * The club honor order screen (#487), initial-render markup (React renders
- * without a DOM here): what a director or deputy sees versus a registrar or
- * Area Coordinator, the flags, and that no personal field beyond names is
- * shown. Synthetic data only.
+ * The club Orders screen (#487, #654), initial-render markup (React renders
+ * without a DOM here): the helper notice, the sectioned list, what a director
+ * or deputy sees versus a registrar or Area Coordinator, the flags, and that
+ * no personal field beyond names is shown. Synthetic data only.
  */
 
 const data: ClubOrderWorkspaceData = {
-  lines: [
-    { item: { itemId: "i1", name: "Camping Skills", catalogNumber: "005157" }, needed: 3, extra: 0, inStock: 1, toOrder: 2, missingCatalogNumber: false },
-    { item: { itemId: "i2", name: "Wilderness Living", catalogNumber: null }, needed: 1, extra: 0, inStock: 0, toOrder: 1, missingCatalogNumber: true },
+  helper: [
+    { itemId: "u1", section: "UNIFORMS", name: "Boys' Shirt", size: "M", catalogNumber: "011112", computedNeeded: 2, needed: 2, edited: false, onHand: 0, toOrder: 2 },
+    { itemId: "u2", section: "UNIFORMS", name: "Boys' Shirt", size: "L", catalogNumber: "011113", computedNeeded: 2, needed: 1, edited: true, onHand: 0, toOrder: 1 },
+    { itemId: "i1", section: "HONORS", name: "Camping Skills", size: "", catalogNumber: "005157", computedNeeded: 3, needed: 3, edited: false, onHand: 1, toOrder: 2 },
+    { itemId: "i2", section: "HONORS", name: "Wilderness Living", size: "", catalogNumber: null, computedNeeded: 1, needed: 1, edited: false, onHand: 0, toOrder: 1 },
+    { itemId: "o1", section: "OTHER", name: "Good Conduct Star", size: "", catalogNumber: "000123", computedNeeded: 0, needed: 4, edited: true, onHand: 0, toOrder: 4 },
+    { itemId: "i3", section: "HONORS", name: "Orienteering", size: "", catalogNumber: "005200", computedNeeded: 2, needed: 0, edited: true, onHand: 0, toOrder: 0 },
   ],
   unmatched: [{ sourceId: "s1", personId: "p1" }],
-  batches: [
-    { id: "b1", status: "ORDERED", createdAt: "2026-09-20T15:00:00.000Z", receivedAt: null, itemCount: 1, totalQuantity: 4, lines: [] },
-    { id: "b2", status: "RECEIVED", createdAt: "2026-08-20T15:00:00.000Z", receivedAt: "2026-08-25T15:00:00.000Z", itemCount: 1, totalQuantity: 2, lines: [] },
-  ],
   awardable: [
     { needId: "n1", itemId: "i1", itemName: "Camping Skills", firstName: "Alex", lastName: "Sample", fromStock: false },
     { needId: "n2", itemId: "i1", itemName: "Camping Skills", firstName: "Jordan", lastName: "Example", fromStock: true },
@@ -30,69 +29,127 @@ const data: ClubOrderWorkspaceData = {
     { needId: "n2", sourceType: "HONOR", itemName: "Camping Skills", sourceLabel: "Camping Skills", sourceDate: "2025-05-01", firstName: "Jordan", lastName: "Example", beforeFirstOrder: true },
     { needId: "n3", sourceType: "HONOR", itemName: null, sourceLabel: "Orienteering", sourceDate: "2026-09-20", firstName: "Riley", lastName: "Test", beforeFirstOrder: false },
   ],
-  firstOrderAt: "2026-08-20T15:00:00.000Z",
+  firstOrderAt: null,
 };
 
-const render = (readOnly: boolean) => renderToStaticMarkup(
-  createElement(ClubOrderWorkspace, { organizationId: "club-1", initial: data, readOnly }),
+const stock: ClubStockRow[] = [
+  { itemId: "i1", section: "OUTDOOR_INDUSTRIES", name: "Camping Skills", catalogNumber: "005157", sizeLabel: null, isActive: true, quantityOnHand: 1 },
+  { itemId: "x1", section: "MISCELLANEOUS", name: "Knot Tying Patch", catalogNumber: "002120", sizeLabel: null, isActive: true, quantityOnHand: 0 },
+];
+
+const render = (readOnly: boolean, initial = data) => renderToStaticMarkup(
+  createElement(ClubOrderWorkspace, { organizationId: "club-1", initial, stock, printHref: "/account/clubs/club-1/orders/print", readOnly }),
 );
 
-describe("ClubOrderWorkspace (#487)", () => {
-  it("gives a director or deputy the edit controls", () => {
+describe("ClubOrderWorkspace (#654)", () => {
+  it("is one Orders screen with the helper notice and an AdventSource link, not an order form", () => {
     const html = render(false);
-    expect(html).toContain("Place order");
-    expect(html).toContain("Mark received");
-    expect(html).toContain("Mark handed out");
-    expect(html).toContain("Select all");
+    expect(html).toContain("<h2>Orders</h2>");
+    expect(html).toContain("This is a helper to build your list");
+    expect(html).toContain("<strong>not</strong> an official order form");
+    expect(html).toContain("You still need to order the items from");
+    expect(html).toContain(`href="${ADVENTSOURCE_URL}"`);
+    expect(ADVENTSOURCE_URL).toBe("https://www.adventsource.org");
+  });
+
+  it("has no Place order button and no Orders placed history", () => {
+    for (const readOnly of [false, true]) {
+      const html = render(readOnly);
+      expect(html).not.toContain("Place order");
+      expect(html).not.toContain("Orders placed");
+      expect(html).not.toContain("Mark received");
+      expect(html).not.toContain("AdventSource file");
+    }
+  });
+
+  it("lists Uniforms, then Honors, then other supplies, each line with name, size, item number and quantity", () => {
+    const html = render(false);
+    const uniforms = html.indexOf("<strong>Uniforms</strong>");
+    const honors = html.indexOf("<strong>Honors</strong>");
+    const other = html.indexOf("<strong>Other supplies and insignia</strong>");
+    expect(uniforms).toBeGreaterThan(-1);
+    expect(honors).toBeGreaterThan(uniforms);
+    expect(other).toBeGreaterThan(honors);
+    // A sized item is one line per size, each with its own item number.
+    expect(html).toContain("Size M");
+    expect(html).toContain("<code>011112</code>");
+    expect(html).toContain("Size L");
+    expect(html).toContain("<code>011113</code>");
+    expect(html).toContain("Camping Skills");
+    expect(html).toContain("<code>005157</code>");
+    expect(html).toContain("Good Conduct Star");
+  });
+
+  it("shows needed, on hand, and to order on a line", () => {
+    const html = render(true);
+    expect(html).toContain("<dt>Quantity</dt><dd>3</dd>");
+    expect(html).toContain("<dt>On hand</dt><dd>1</dd>");
+    expect(html).toContain("<dt>To order</dt><dd><strong>2</strong></dd>");
+  });
+
+  it("gives a director or deputy the edit controls: quantity, save, remove, add an item, export", () => {
+    const html = render(false);
     expect(html).toContain('type="number"');
-    expect(html).toContain('type="checkbox"');
+    expect(html).toContain("Save quantity: Camping Skills");
+    expect(html).toContain("Remove from the list: Camping Skills");
+    expect(html).toContain("Add an item");
+    expect(html).toContain("Knot Tying Patch · 002120");
+    expect(html).toContain("Mark handed out");
+    expect(html).toContain("Reset to 2");
     expect(html).not.toContain("View only");
   });
 
-  it("shows a registrar or Area Coordinator the same lists with no controls", () => {
+  it("keeps a line a director took off the list visible so it can be put back, and out of the list", () => {
+    const html = render(false);
+    expect(html).toContain("Taken off the list");
+    expect(html).toContain("Put back");
+    expect(html).toContain("Orienteering");
+    expect(html).not.toContain("Remove from the list: Orienteering");
+  });
+
+  it("shows a registrar or Area Coordinator the same list with no controls", () => {
     const html = render(true);
     expect(html).toContain("View only");
     expect(html).toContain("Camping Skills");
     expect(html).toContain("Alex Sample");
-    expect(html).not.toContain("Place order");
-    expect(html).not.toContain("Mark received");
+    expect(html).not.toContain("Add an item");
+    expect(html).not.toContain("Save quantity");
+    expect(html).not.toContain("Remove from the list");
+    expect(html).not.toContain("Put back");
     expect(html).not.toContain("Mark handed out");
     expect(html).not.toContain('type="number"');
-    expect(html).not.toContain('type="checkbox"');
+    // The only checkbox a viewer sees is the Inventory's own "Only items in stock" filter: none to pick people.
+    expect(html.match(/type="checkbox"/g)).toHaveLength(1);
   });
 
-  it("flags an item with no AdventSource number and an honor with no catalog item", () => {
+  it("flags an item with no item number and an honor with no catalog item", () => {
     for (const readOnly of [false, true]) {
       const html = render(readOnly);
-      expect(html).toContain("No AdventSource number");
-      expect(html).toContain("left out of the AdventSource file");
+      expect(html).toContain("No item number");
       expect(html).toContain("no matching catalog item");
     }
   });
 
-  it("offers the three downloads", () => {
+  it("offers the list export (CSV and printable) and the pick list", () => {
     const html = render(true);
-    expect(html).toContain("/api/attendee/clubs/club-1/orders/csv?view=adventsource");
-    expect(html).toContain("/api/attendee/clubs/club-1/orders/csv?view=readable");
+    expect(html).toContain("/api/attendee/clubs/club-1/orders/csv?view=list");
     expect(html).toContain("/api/attendee/clubs/club-1/orders/csv?view=picklist");
+    expect(html).toContain('href="/account/clubs/club-1/orders/print"');
   });
 
-  it("offers each placed order's AdventSource file, readable order list, and pick list", () => {
-    const html = render(true);
-    for (const view of ["adventsource", "readable", "picklist"]) {
-      expect(html).toContain(`/api/attendee/clubs/club-1/orders/csv?view=${view}&amp;batch=b1`);
-    }
+  it("has the Inventory sub-section inside Orders", () => {
+    const html = render(false);
+    expect(html).toContain('id="inventory"');
+    expect(html).toContain("Inventory: supplies on hand");
+    expect(html).toContain("Quantity on hand: Camping Skills");
   });
 
-  it("carries the screen's extras on the top-level AdventSource and readable links", () => {
-    const lines = applyExtras(data.lines, { i1: "2" });
-    const base = "/api/attendee/clubs/club-1/orders";
-    expect(orderExportHref(base, "adventsource", lines)).toBe(`${base}/csv?view=adventsource&extra=i1%3A2`);
-    expect(orderExportHref(base, "readable", lines)).toBe(`${base}/csv?view=readable&extra=i1%3A2`);
-    expect(orderExportHref(base, "picklist", lines)).toBe(`${base}/csv?view=picklist`);
-    // And the round trip: the server's parser reads back exactly the screen's extras.
-    const query = new URL(orderExportHref(base, "readable", lines), "https://events.imsda.test").searchParams;
-    expect(parseExtrasQuery(query)).toEqual({ i1: 2 });
+  it("disables the CSV export when nothing is on the list", () => {
+    const html = render(false, { ...data, helper: [], awardable: [] });
+    expect(html).toContain("Nothing on the list to export yet.");
+    expect(html).not.toContain("/orders/csv?view=list");
+    expect(html).not.toContain("/orders/print");
+    expect(html).toContain('disabled=""');
   });
 
   it("marks a need stock already covers as ready to hand out from stock", () => {
@@ -101,11 +158,10 @@ describe("ClubOrderWorkspace (#487)", () => {
     expect(html).toContain("from stock");
   });
 
-  it("offers editors the one-time 'already handed out' prompt for honors completed before ordering started", () => {
+  it("offers editors the one-time 'already handed out' prompt for honors that may already be handed out", () => {
     const html = render(false);
-    expect(html).toContain("Honors completed before you started ordering here");
-    expect(html).toContain("Mark the ones already handed out.");
-    expect(html).toContain("Already handed out");
+    expect(html).toContain("Honors that may already be handed out");
+    expect(html).toContain("Mark the ones already handed out");
     expect(html).toContain("Select all (1)");
     expect(html).toContain("Completed before");
     // Only the need recorded before the first order is offered, and nothing is pre-checked.
@@ -117,40 +173,5 @@ describe("ClubOrderWorkspace (#487)", () => {
   it("shows names and items only, no other personal field", () => {
     const html = render(false);
     expect(html).not.toMatch(/birth|phone|email|guardian|allerg|medical|address/i);
-  });
-});
-
-describe("empty order exports (#571 F-24)", () => {
-  const empty: ClubOrderWorkspaceData = { ...data, lines: [], awardable: [] };
-  const renderEmpty = () => renderToStaticMarkup(
-    createElement(ClubOrderWorkspace, { organizationId: "club-1", initial: empty, readOnly: false }),
-  );
-
-  it("disables every export with a note when nothing is to order or ready", () => {
-    const html = renderEmpty();
-    expect(html).toContain("Nothing to order yet");
-    expect(html).not.toContain('href="/api/attendee/clubs/club-1/orders/csv?view=adventsource"');
-    expect(html).not.toContain('href="/api/attendee/clubs/club-1/orders/csv?view=readable"');
-    expect(html).not.toContain('href="/api/attendee/clubs/club-1/orders/csv?view=picklist"');
-    expect(html).toContain('aria-describedby="club-order-nothing-to-order"');
-    expect(html).toContain('disabled=""');
-  });
-
-  it("keeps exports available when there is something to order", () => {
-    const html = render(false);
-    expect(html).toContain('href="/api/attendee/clubs/club-1/orders/csv?view=adventsource"');
-    expect(html).not.toContain("Nothing to order yet");
-  });
-
-  it("computes availability from what would actually be in each file", () => {
-    const line = (toOrder: number, catalogNumber: string | null) => ({
-      item: { itemId: "i", name: "Item", catalogNumber },
-      needed: toOrder, extra: 0, inStock: 0, toOrder, missingCatalogNumber: !catalogNumber,
-    });
-    expect(orderExportAvailability([], 0)).toEqual({ adventsource: false, readable: false, picklist: false });
-    expect(orderExportAvailability([line(0, "1")], 0)).toEqual({ adventsource: false, readable: false, picklist: false });
-    expect(orderExportAvailability([line(2, null)], 0)).toEqual({ adventsource: false, readable: true, picklist: true });
-    expect(orderExportAvailability([], 1)).toEqual({ adventsource: false, readable: false, picklist: true });
-    expect(orderExportAvailability([line(2, "005157")], 0)).toEqual({ adventsource: true, readable: true, picklist: true });
   });
 });

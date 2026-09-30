@@ -1766,6 +1766,7 @@ model Organization {
   clubSupplyStock    ClubSupplyStock[]
   clubOrderNeeds     ClubOrderNeed[]
   clubOrderBatches   ClubSupplyOrderBatch[]
+  clubOrderListLines ClubOrderListLine[]
   memberClassCompletions MemberClassCompletion[]
   sponsoredPromoCodes PromoCode[] @relation("PromoCodeSponsor")
   clubFormSubmissions ClubFormSubmission[]
@@ -3458,6 +3459,7 @@ model ClubSupplyItem {
   stock ClubSupplyStock[]
   orderNeeds ClubOrderNeed[]
   orderLines ClubSupplyOrderLine[]
+  orderListLines ClubOrderListLine[]
   eventAwardItems EventAwardItem[]
   masterAwardRules MasterAwardRule[]
 
@@ -3550,6 +3552,27 @@ model ClubOrderNeed {
   @@index([organizationId, status])
   @@index([itemId])
   @@index([batchId])
+}
+
+/// A director's edit to one line of the club's order helper list (#654): the
+/// quantity the club wants on the list for one catalog item, replacing the
+/// count worked out from honors, uniforms and awards. 0 takes the item off
+/// the list; a positive number on an item with no need adds it. Deleting the
+/// row puts the line back to the computed count. It is a planning aid only;
+/// nothing is ordered from it.
+model ClubOrderListLine {
+  id             String   @id @default(cuid())
+  organizationId String
+  itemId         String
+  quantity       Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  item         ClubSupplyItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, itemId])
+  @@index([itemId])
 }
 
 /// A `ClubSupplyOrderBatch`'s own two states: placed, or received.

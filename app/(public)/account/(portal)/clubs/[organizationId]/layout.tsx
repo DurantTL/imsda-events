@@ -57,9 +57,7 @@ export default async function ClubLayout({
               { href: `${base}/roster`, label: "Roster" },
               // Honors open on the roster's own gate (#486), so the tab follows the roster capability.
               ...(access.capabilities.roster ? [{ href: `${base}/honors`, label: "Honors" }] : []),
-              // Supplies open on the roster's gate too (#531): directors and deputies edit, registrars view.
-              ...(access.capabilities.roster ? [{ href: `${base}/supplies`, label: "Supplies" }] : []),
-              // Orders (honors, #487, and uniforms, #497) share the supplies gate.
+              // Orders (#487, #497, #654) hold the order helper list and the club's supplies on hand; they open on the roster's gate.
               ...(access.capabilities.roster ? [{ href: `${base}/orders`, label: "Orders" }] : []),
               // Earned awards (#532) share the same gate: directors and deputies confirm, registrars view.
               ...(access.capabilities.roster ? [{ href: `${base}/awards`, label: "Earned awards" }] : []),

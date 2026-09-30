@@ -5,10 +5,14 @@ import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   availableStock,
+  buildHelperLines,
   buildOrderLines,
   quantityToOrder,
   splitNeedsByStock,
+  type HelperCatalogItem,
+  type HelperLine,
   type OrderCatalogItem,
+  type OrderExportHeader,
   type OrderLine,
   type PickListEntry,
 } from "@/modules/club-orders/domain";
@@ -281,7 +285,7 @@ function groupByItem<T extends { itemId: string | null }>(needs: readonly T[]) {
 
 const neededSelect = {
   id: true, sourceType: true, sourceId: true, personId: true, itemId: true, sourceLabel: true, sourceDate: true, createdAt: true,
-  item: { select: { ...itemSelect, section: true } },
+  item: { select: { ...itemSelect, section: true, sizeLabel: true } },
 } satisfies Prisma.ClubOrderNeedSelect;
 
 type NeededRow = Prisma.ClubOrderNeedGetPayload<{ select: typeof neededSelect }>;
@@ -701,6 +705,109 @@ async function waitingFrom(picture: NeededPicture, firstOrderAt: Date | null): P
 }
 
 /**
+ * The order helper list (#654): one line per catalog item that honors,
+ * uniforms or awards call for, or that a director added, with the director's
+ * quantity edits applied and the club's stock subtracted. Lines a director
+ * took off the list come back with `needed` 0 so they can be put back.
+ */
+async function helperLinesFrom(organizationId: string, picture: NeededPicture): Promise<HelperLine[]> {
+  const overrides = await getPrisma().clubOrderListLine.findMany({
+    where: { organizationId },
+    select: { itemId: true, quantity: true },
+  });
+  const overrideByItem = new Map(overrides.map((row) => [row.itemId, row.quantity]));
+  const itemsById = new Map<string, HelperCatalogItem>();
+  for (const [itemId, group] of picture.byItem) {
+    const item = group[0].item!;
+    itemsById.set(itemId, { itemId, section: item.section, name: item.name, catalogNumber: item.catalogNumber, sizeLabel: item.sizeLabel });
+  }
+  const extraIds = overrides.map((row) => row.itemId).filter((itemId) => !itemsById.has(itemId));
+  if (extraIds.length > 0) {
+    const extra = await getPrisma().clubSupplyItem.findMany({
+      where: { id: { in: extraIds } },
+      select: { id: true, section: true, name: true, catalogNumber: true, sizeLabel: true },
+    });
+    for (const item of extra) {
+      itemsById.set(item.id, { itemId: item.id, section: item.section, name: item.name, catalogNumber: item.catalogNumber, sizeLabel: item.sizeLabel });
+    }
+  }
+  const available = await availableByItem(getPrisma(), organizationId, [...itemsById.keys()]);
+  const computedByItem = new Map([...picture.byItem].map(([itemId, group]) => [itemId, group.length]));
+  return buildHelperLines([...itemsById.values()], computedByItem, overrideByItem, available);
+}
+
+/** The helper list on its own (the export and the print page). */
+export async function listHelperLines(organizationId: string): Promise<HelperLine[]> {
+  return helperLinesFrom(organizationId, await neededPicture(organizationId));
+}
+
+/**
+ * Sets the quantity a club wants on its helper list for one catalog item
+ * (#654): 0 takes the item off the list, a positive number changes it or adds
+ * an item nothing calls for, and `null` puts the line back to the computed
+ * count. Audited with the numbers only.
+ */
+export async function setOrderListQuantity(organizationId: string, itemId: string, quantity: number | null, actor: ClubOrderActor) {
+  return getPrisma().$transaction(async (tx) => {
+    await lockClubOrders(tx, organizationId);
+    const item = await tx.clubSupplyItem.findUnique({ where: { id: itemId }, select: { isActive: true } });
+    if (!item || (!item.isActive && quantity !== null)) {
+      throw new ClubOrderError("ITEM_NOT_ORDERABLE", "That catalog item could not be found.");
+    }
+    if (quantity === null) {
+      await tx.clubOrderListLine.deleteMany({ where: { organizationId, itemId } });
+    } else {
+      await tx.clubOrderListLine.upsert({
+        where: { organizationId_itemId: { organizationId, itemId } },
+        create: { organizationId, itemId, quantity },
+        update: { quantity },
+      });
+    }
+    const who = auditActorFields(actor);
+    await writeAuditLog({
+      ...who.actorFields,
+      action: "CLUB_ORDER_LIST_LINE_SET",
+      entityType: "ClubOrderListLine",
+      summary: quantity === null ? "Reset a club order list line to its computed count." : `Set a club order list line to ${quantity}.`,
+      metadata: { organizationId, itemId, quantity, ...who.metadata },
+    }, tx);
+    return { itemId, quantity };
+  });
+}
+
+/**
+ * The club details printed on the export (#654): the club, its sponsoring
+ * church, and the current director's contact (the director's own account
+ * details, falling back to the club profile's contact). Nothing about
+ * members.
+ */
+export async function loadOrderExportHeader(organizationId: string, now = new Date()): Promise<OrderExportHeader> {
+  const club = await getPrisma().organization.findUnique({
+    where: { id: organizationId },
+    select: {
+      name: true,
+      parentOrganization: { select: { name: true } },
+      clubProfile: { select: { contactEmail: true, contactPhone: true } },
+      directorGrants: {
+        where: { role: "DIRECTOR", revokedAt: null, effectiveFrom: { lte: now }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] },
+        orderBy: { effectiveFrom: "desc" },
+        take: 1,
+        select: { attendeeAccount: { select: { displayName: true, email: true, phone: true } } },
+      },
+    },
+  });
+  const director = club?.directorGrants[0]?.attendeeAccount;
+  return {
+    clubName: club?.name ?? "",
+    church: club?.parentOrganization?.name ?? "",
+    directorName: director?.displayName ?? "",
+    directorEmail: director?.email || club?.clubProfile?.contactEmail || "",
+    directorPhone: director?.phone || club?.clubProfile?.contactPhone || "",
+    date: now.toLocaleDateString("en-CA", { timeZone: "America/Chicago" }),
+  };
+}
+
+/**
  * Everything the order screen shows at once (#487): the order list, past
  * orders, who's ready to hand out, and who's still waiting (NEEDED), with
  * the date of the club's first order so the screen can offer "Already handed
@@ -712,11 +819,12 @@ export async function loadOrderWorkspace(organizationId: string) {
   const [picture, batches] = await Promise.all([neededPicture(organizationId), listOrderBatches(organizationId)]);
   const firstOrder = batches.at(-1)?.createdAt ?? null;
   const { lines, unmatched } = orderListFrom(picture, new Map());
-  const [awardable, waiting] = await Promise.all([
+  const [helper, awardable, waiting] = await Promise.all([
+    helperLinesFrom(organizationId, picture),
     awardableFrom(organizationId, picture),
     waitingFrom(picture, firstOrder ? new Date(firstOrder) : null),
   ]);
-  return { lines, unmatched, batches, awardable, waiting, firstOrderAt: firstOrder };
+  return { lines, helper, unmatched, batches, awardable, waiting, firstOrderAt: firstOrder };
 }
 
 /** The pick list's item and size columns for a catalog row: a uniform's size is split off its name (#497). */

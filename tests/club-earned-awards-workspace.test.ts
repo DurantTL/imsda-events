@@ -135,9 +135,8 @@ describe("the Earned awards screen (#532)", () => {
 
 describe("earned awards on the order screen", () => {
   const orders: ClubOrderWorkspaceData = {
-    lines: [{ item: { itemId: "camp", name: "Fall Camporee Patch", catalogNumber: null }, needed: 2, extra: 0, inStock: 0, toOrder: 2, missingCatalogNumber: true }],
+    helper: [{ itemId: "camp", section: "OTHER", name: "Fall Camporee Patch", size: "", catalogNumber: null, computedNeeded: 2, needed: 2, edited: false, onHand: 0, toOrder: 2 }],
     unmatched: [],
-    batches: [],
     awardable: [],
     waiting: [{ needId: "n1", sourceType: "AWARD", itemName: "Fall Camporee Patch", sourceLabel: "Fall Camporee", sourceDate: "2026-09-19", firstName: "Alex", lastName: "Sample", beforeFirstOrder: true }],
     firstOrderAt: null,
@@ -146,8 +145,8 @@ describe("earned awards on the order screen", () => {
   it("lists an earned item on the same order list, flags its missing number, and never prompts 'already handed out' for it", () => {
     const html = renderToStaticMarkup(createElement(ClubOrderWorkspace, { organizationId: "club-1", initial: orders }));
     expect(html).toContain("Fall Camporee Patch");
-    expect(html).toContain("No AdventSource number");
+    expect(html).toContain("No item number");
     expect(html).toContain("earned awards");
-    expect(html).not.toContain("Honors completed before you started ordering here");
+    expect(html).not.toContain("Honors that may already be handed out");
   });
 });

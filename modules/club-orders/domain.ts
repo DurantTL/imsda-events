@@ -1,3 +1,5 @@
+import { honorCategoryForSection, type ClubSupplySection } from "@/modules/club-supplies/domain";
+import { isUniformSection, itemAndSize } from "@/modules/uniforms/domain";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -151,5 +153,128 @@ export function pickListCsv(entries: readonly PickListEntry[]) {
   const sorted = [...entries].sort((a, b) =>
     a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName) || a.itemName.localeCompare(b.itemName));
   for (const entry of sorted) rows.push([entry.lastName, entry.firstName, entry.itemName, entry.size, entry.status]);
+  return toCsv(rows);
+}
+
+/**
+ * The order helper list (#654): a planning aid, not an order form. Lines are
+ * grouped Uniforms, then Honors, then other supplies and insignia, and each
+ * line is one catalog item (a sized item is one line per size, each with its
+ * own item number).
+ */
+export const ORDER_LIST_SECTIONS = ["UNIFORMS", "HONORS", "OTHER"] as const;
+export type OrderListSection = (typeof ORDER_LIST_SECTIONS)[number];
+
+export const orderListSectionLabels: Record<OrderListSection, string> = {
+  UNIFORMS: "Uniforms",
+  HONORS: "Honors",
+  OTHER: "Other supplies and insignia",
+};
+
+/** Which helper-list section a catalog section belongs to. */
+export function orderListSectionFor(section: string): OrderListSection {
+  if (section === "TEEN_LEADERSHIP_TRAINING") return "OTHER";
+  if (isUniformSection(section)) return "UNIFORMS";
+  return honorCategoryForSection(section as ClubSupplySection) ? "HONORS" : "OTHER";
+}
+
+export type HelperCatalogItem = {
+  itemId: string;
+  section: string;
+  name: string;
+  catalogNumber: string | null;
+  sizeLabel: string | null;
+};
+
+export type HelperLine = {
+  itemId: string;
+  section: OrderListSection;
+  /** The item's name without its size (a uniform's size is split off). */
+  name: string;
+  size: string;
+  catalogNumber: string | null;
+  /** What honors, uniforms and awards call for. */
+  computedNeeded: number;
+  /** Quantity on the list: the director's edit when there is one, else `computedNeeded`. */
+  needed: number;
+  /** A director changed this line (quantity, or added it). */
+  edited: boolean;
+  onHand: number;
+  /** Needed less on hand, never below zero. */
+  toOrder: number;
+};
+
+/**
+ * The helper list's lines. `overrideByItem` holds a director's quantity per
+ * item (0 takes it off the list). Lines are ordered by section, then name,
+ * then size. A line with `needed` 0 is "removed": shown so it can be put back,
+ * never exported.
+ */
+export function buildHelperLines(
+  items: readonly HelperCatalogItem[],
+  computedByItem: ReadonlyMap<string, number>,
+  overrideByItem: ReadonlyMap<string, number>,
+  onHandByItem: ReadonlyMap<string, number>,
+): HelperLine[] {
+  return items
+    .map((item): HelperLine => {
+      const parts = itemAndSize(item);
+      const computedNeeded = computedByItem.get(item.itemId) ?? 0;
+      const override = overrideByItem.get(item.itemId);
+      const needed = override ?? computedNeeded;
+      const onHand = onHandByItem.get(item.itemId) ?? 0;
+      return {
+        itemId: item.itemId,
+        section: orderListSectionFor(item.section),
+        name: parts.itemName,
+        size: parts.size || item.sizeLabel || "",
+        catalogNumber: item.catalogNumber,
+        computedNeeded,
+        needed,
+        edited: override !== undefined,
+        onHand,
+        toOrder: Math.max(0, needed - onHand),
+      };
+    })
+    .sort((a, b) =>
+      ORDER_LIST_SECTIONS.indexOf(a.section) - ORDER_LIST_SECTIONS.indexOf(b.section)
+      || a.name.localeCompare(b.name) || a.size.localeCompare(b.size, undefined, { numeric: true }));
+}
+
+/** Lines that are on the list (quantity above zero). */
+export const activeHelperLines = (lines: readonly HelperLine[]) => lines.filter((line) => line.needed > 0);
+
+export type OrderExportHeader = {
+  clubName: string;
+  church: string;
+  directorName: string;
+  directorEmail: string;
+  directorPhone: string;
+  /** Calendar date shown on the export, `YYYY-MM-DD`. */
+  date: string;
+};
+
+/**
+ * The export (#654): club name, church, director contact and date, then every
+ * line grouped by section with item name, size, item number, quantity, on
+ * hand and to order. Not an AdventSource file: it is a list to order from.
+ */
+export function orderListCsv(header: OrderExportHeader, lines: readonly HelperLine[]) {
+  const rows: Array<Array<string | number>> = [
+    ["Club", header.clubName],
+    ["Church", header.church],
+    ["Director", header.directorName],
+    ["Director email", header.directorEmail],
+    ["Director phone", header.directorPhone],
+    ["Date", header.date],
+    [],
+    ["Section", "Item name", "Size", "Item number", "Quantity needed", "On hand", "To order"],
+  ];
+  const active = activeHelperLines(lines);
+  for (const section of ORDER_LIST_SECTIONS) {
+    for (const line of active.filter((entry) => entry.section === section)) {
+      rows.push([orderListSectionLabels[section], line.name, line.size, line.catalogNumber ?? "", line.needed, line.onHand, line.toOrder]);
+    }
+  }
   return toCsv(rows);
 }
