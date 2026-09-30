@@ -2165,6 +2165,59 @@ export async function clubComplianceReminderCounts(organizationId: string, clubY
 }
 
 /**
+ * Reminder counts for many clubs at once (#657), for the Area Coordinator's
+ * cross-club overview; the same numbers `clubComplianceReminderCounts` gives
+ * per club. One identity-free query reads each adult's organization, person id
+ * and cached check status. Only the adults with a person but no cached match
+ * (the cache is best-effort, #527) take one follow-up query across all clubs
+ * for the evidence `uncachedChecksForRosterMembers` needs, then that lookup
+ * runs once for them, exactly as the per-club function would. That evidence
+ * stays inside this function: only counts are returned.
+ */
+export async function clubsComplianceReminderCounts(organizationIds: string[], clubYear: string) {
+  const today = calendarDateInEventTimeZone(new Date(), "America/Chicago");
+  const prisma = getPrisma();
+  const members = await prisma.clubRosterMember.findMany({
+    where: { organizationId: { in: organizationIds }, clubYear, status: "ACTIVE", attendeeType: { in: ["ADULT", "STAFF"] } },
+    select: {
+      id: true,
+      organizationId: true,
+      personId: true,
+      person: { select: { backgroundCheckMatch: { select: { entry: { select: { complianceStatus: true, expiresOn: true } } } } } },
+    },
+  });
+  const uncachedIds = members.filter((member) => member.personId && member.person && !member.person.backgroundCheckMatch).map((member) => member.id);
+  let uncached = new Map<string, StoredCheck>();
+  if (uncachedIds.length > 0) {
+    const evidence = await prisma.clubRosterMember.findMany({
+      where: { id: { in: uncachedIds } },
+      select: {
+        personId: true,
+        sealedBirthDate: true,
+        organization: clubSelect,
+        person: { select: { firstName: true, lastName: true, ...personEmailSelect } },
+      },
+    });
+    uncached = await uncachedChecksForRosterMembers(evidence, prisma);
+  }
+  const counts = new Map<string, { missing: number; notInCompliance: number; expiringSoon: number }>(
+    organizationIds.map((id) => [id, { missing: 0, notInCompliance: 0, expiringSoon: 0 }]),
+  );
+  for (const member of members) {
+    const check: StoredCheck | null = member.person?.backgroundCheckMatch?.entry
+      ?? (member.personId ? uncached.get(member.personId) : undefined)
+      ?? null;
+    const state = clubComplianceState(check, today);
+    const row = counts.get(member.organizationId);
+    if (!row) continue;
+    if (state === "NOT_COMPLIANT") row.notInCompliance += 1;
+    if (state === "FLAGGED") row.expiringSoon += 1;
+    if (state === "NO_RECORD") row.missing += 1;
+  }
+  return counts;
+}
+
+/**
  * Club home's reminder counts (#479): the same gate as the roster's own
  * compliance column below (directors and deputies only), so the two can't drift.
  */
