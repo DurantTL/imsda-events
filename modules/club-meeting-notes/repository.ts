@@ -336,7 +336,11 @@ export async function deleteClubMeetingNote(organizationId: string, noteId: stri
 export async function monthlyNotesSummary(organizationId: string, reportMonth: string) {
   const notes = await getPrisma().clubMeetingNote.findMany({
     where: { organizationId, meetingDate: { startsWith: reportMonth } },
-    select: { pathfinderCount: true, tltCount: true, staffCount: true, honors: true },
+    select: { pathfinderCount: true, tltCount: true, staffCount: true, honors: true, attendance: { select: { present: true } } },
   });
-  return notesMonthlySummary(notes.map((note) => ({ ...note, honors: (Array.isArray(note.honors) ? note.honors : []) as ReportHonor[] })));
+  return notesMonthlySummary(notes.map(({ attendance, ...note }) => ({
+    ...note,
+    presentPeople: attendance && attendance.length > 0 ? attendance.filter((entry) => entry.present).length : null,
+    honors: (Array.isArray(note.honors) ? note.honors : []) as ReportHonor[],
+  })));
 }

@@ -44,19 +44,26 @@ export function groupAttendanceRoster<T extends AttendanceRosterMember>(members:
 }
 
 /**
- * The head counts a meeting's check-off produces: each present member counts
- * once, in exactly one group, so the three add up to everyone present.
+ * The head counts a meeting's check-off produces, by the same rule as the
+ * roster prefill in `reportPrefill` (modules/club-reports/repository.ts):
+ * Pathfinders are youth and underage members, so a youth TLT counts as a
+ * Pathfinder AND a TLT; TLTs are everyone whose class level is TLT; staff are
+ * staff and adults (an adult with a TLT class level counts as both). The
+ * counts overlap, so they must not be added up: use `presentTotal` for the
+ * number of people.
  */
 export function countsFromAttendance(members: ReadonlyArray<AttendanceMemberKind & { present: boolean }>) {
-  const counts = { pathfinderCount: 0, tltCount: 0, staffCount: 0 };
-  for (const member of members) {
-    if (!member.present) continue;
-    const group = attendanceGroupOf(member);
-    if (group === "TLT") counts.tltCount += 1;
-    else if (group === "STAFF") counts.staffCount += 1;
-    else counts.pathfinderCount += 1;
-  }
-  return counts;
+  const present = members.filter((member) => member.present);
+  return {
+    pathfinderCount: present.filter((member) => member.attendeeType === "YOUTH" || member.attendeeType === "UNDERAGE").length,
+    tltCount: present.filter((member) => member.classLevel === "TLT").length,
+    staffCount: present.filter((member) => member.attendeeType === "STAFF" || member.attendeeType === "ADULT").length,
+  };
+}
+
+/** How many distinct people were present: each person once, however many counts they fall in. */
+export function presentTotal(members: ReadonlyArray<{ present: boolean }>) {
+  return members.filter((member) => member.present).length;
 }
 
 type CountText = { pathfinderCount: string; tltCount: string; staffCount: string };

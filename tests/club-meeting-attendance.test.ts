@@ -50,9 +50,10 @@ import {
   attendanceMarkKey,
   countsFromAttendance,
   countsToSend,
+  presentTotal,
   groupAttendanceRoster,
 } from "@/modules/club-meeting-notes/attendance";
-import { defaultMeetingDate, recordsMonth } from "@/modules/club-meeting-notes/domain";
+import { defaultMeetingDate, meetingAttendanceTotal, notesMonthlySummary, recordsMonth } from "@/modules/club-meeting-notes/domain";
 import { eraseRosterRow } from "@/modules/club-rosters/repository";
 import { createClubMeetingNote, updateClubMeetingNote } from "@/modules/club-meeting-notes/repository";
 import { meetingNoteInputSchema } from "@/modules/club-meeting-notes/schemas";
@@ -80,9 +81,11 @@ describe("attendance groups and derived counts", () => {
     expect(groupAttendanceRoster([roster[0]]).map((group) => group.label)).toEqual(["Pathfinders"]);
   });
 
-  it("counts each present member once, in one group", () => {
+  it("counts a present youth TLT as a Pathfinder and a TLT, like the roster prefill", () => {
     const counts = countsFromAttendance(roster.map((entry, index) => ({ ...entry, present: index !== 3 })));
-    expect(counts).toEqual({ pathfinderCount: 1, tltCount: 1, staffCount: 2 });
+    // Ana (youth) and Ben (youth TLT) are Pathfinders; Di (underage) is absent; Cy and Ed are staff.
+    expect(counts).toEqual({ pathfinderCount: 2, tltCount: 1, staffCount: 2 });
+    expect(presentTotal(roster.map((entry, index) => ({ present: index !== 3 })))).toBe(4);
     expect(countsFromAttendance(roster.map((entry) => ({ ...entry, present: false })))).toEqual({ pathfinderCount: 0, tltCount: 0, staffCount: 0 });
   });
 });
@@ -116,7 +119,7 @@ describe("saving a meeting note with attendance", () => {
       attendance: roster.map((entry) => ({ rosterMemberId: entry.id, present: entry.id !== "m-4" })),
     }), actor);
     const data = mocks.noteCreate.mock.calls[0][0].data;
-    expect(data).toMatchObject({ pathfinderCount: 1, tltCount: 1, staffCount: 2 });
+    expect(data).toMatchObject({ pathfinderCount: 2, tltCount: 1, staffCount: 2 });
     expect(data.attendance.create).toHaveLength(5);
     expect(data.attendance.create).toContainEqual({ rosterMemberId: "m-4", present: false });
     // The roster lookup is scoped to this club and the meeting's club year.
@@ -157,7 +160,8 @@ describe("saving a meeting note with attendance", () => {
     expect(data.attendance.upsert).toHaveLength(1);
     expect(data.attendance.upsert[0]).toMatchObject({ create: { rosterMemberId: "m-2", present: true }, update: { present: true } });
     // Counts derive over the merged marks: m-1 pathfinder, m-2 TLT, m-3 staff.
-    expect(data).toMatchObject({ pathfinderCount: 1, tltCount: 1, staffCount: 1 });
+    // Youth TLT m-2 is a Pathfinder and a TLT.
+    expect(data).toMatchObject({ pathfinderCount: 2, tltCount: 1, staffCount: 1 });
 
     await updateClubMeetingNote("club-1", "note-1", input({ pathfinderCount: 3, attendance: [] }), actor);
     expect(mocks.noteUpdate.mock.calls[1][0].data.attendance).toEqual({ deleteMany: {} });
@@ -376,6 +380,44 @@ describe("attendance needs roster access (ADR 0005)", () => {
     expect(extras.where.status).toEqual({ not: "REMOVED" });
     expect((await EXPORT(request("?from=2026-02-31"), ctx)).status).toBe(400);
     expect((await EXPORT(request("?from=2026-11-01&to=2026-10-01"), ctx)).status).toBe(400);
+  });
+});
+
+describe("TLTs are inside Pathfinders (director decision)", () => {
+  const youth = (id: string, classLevel: string | null) => ({ id, attendeeType: "YOUTH", classLevel, present: true });
+  const tenPlusTwo = [
+    ...Array.from({ length: 10 }, (_, i) => youth(`y-${i}`, "FRIEND")),
+    youth("t-1", "TLT"),
+    youth("t-2", "TLT"),
+  ];
+
+  it("10 youth + 2 youth TLTs all present: Pathfinders 12, TLT 2, and an average total of 12", () => {
+    const counts = countsFromAttendance(tenPlusTwo);
+    expect(counts).toEqual({ pathfinderCount: 12, tltCount: 2, staffCount: 0 });
+    const summary = notesMonthlySummary([{ ...counts, presentPeople: presentTotal(tenPlusTwo), honors: [] }]);
+    expect(summary?.averageAttendance).toBe(12);
+  });
+
+  it("totals typed-only meetings as Pathfinders + staff without double-counting TLTs", () => {
+    expect(meetingAttendanceTotal({ pathfinderCount: 12, tltCount: 2, staffCount: 3 })).toBe(15);
+    expect(meetingAttendanceTotal({ pathfinderCount: null, tltCount: 2, staffCount: 3 })).toBe(5);
+    expect(meetingAttendanceTotal({ pathfinderCount: null, tltCount: null, staffCount: null })).toBeNull();
+    // A check-off's distinct-people count wins over the overlapping typed counts.
+    expect(meetingAttendanceTotal({ pathfinderCount: 12, tltCount: 2, staffCount: 3, presentPeople: 14 })).toBe(14);
+  });
+
+  it("a report prefilled from check-offs matches the roster prefill for the same people", () => {
+    // reportPrefill's rule, applied to the same roster (modules/club-reports/repository.ts).
+    const rosterPrefill = (members: Array<{ attendeeType: string; classLevel: string | null }>) => ({
+      pathfinderCount: members.filter((m) => m.attendeeType === "YOUTH" || m.attendeeType === "UNDERAGE").length,
+      tltCount: members.filter((m) => m.classLevel === "TLT").length,
+      staffCount: members.filter((m) => m.attendeeType === "STAFF" || m.attendeeType === "ADULT").length,
+    });
+    const everyone = [...tenPlusTwo, { id: "s-1", attendeeType: "STAFF", classLevel: null, present: true }, { id: "a-1", attendeeType: "ADULT", classLevel: "TLT", present: true }, { id: "u-1", attendeeType: "UNDERAGE", classLevel: null, present: true }];
+    const counts = countsFromAttendance(everyone);
+    expect(counts).toEqual(rosterPrefill(everyone));
+    const summary = notesMonthlySummary([{ ...counts, presentPeople: presentTotal(everyone), honors: [] }]);
+    expect(summary).toMatchObject({ ...rosterPrefill(everyone), averageAttendance: 15 });
   });
 });
 
