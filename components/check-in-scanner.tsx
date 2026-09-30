@@ -161,6 +161,7 @@ export function CheckInScanner({
   // Bumped by every stop so a start that is still awaiting the camera or the
   // decoder can tell it was cancelled and release what it acquired.
   const startIdRef = useRef(0);
+  const startPendingRef = useRef(false);
   // Escape closes through this same function (see useAccessibleDialog), so a
   // plain `bulkBusy || checkingInId` check in closeScanner would need those
   // state values fresh at keydown time. The ref keeps that guard correct
@@ -173,6 +174,7 @@ export function CheckInScanner({
 
   function stopCamera(updateState = true) {
     startIdRef.current += 1;
+    startPendingRef.current = false;
     scanLoopRef.current?.stop();
     scanLoopRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -210,7 +212,10 @@ export function CheckInScanner({
   // which iOS requires anyway).
   useEffect(() => {
     function onVisibilityChange() {
-      if (document.visibilityState === "hidden" && streamRef.current) {
+      if (
+        document.visibilityState === "hidden"
+        && (streamRef.current || startPendingRef.current)
+      ) {
         stopCamera();
       }
     }
@@ -218,6 +223,19 @@ export function CheckInScanner({
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
     // stopCamera only touches refs and a state setter.
   }, []);
+
+  // Warm the jsQR chunk while the dialog is open so it is cached before the
+  // camera starts. Failures are ignored here; only a real start reports
+  // "decoder-failed", and a later start retries the import.
+  useEffect(() => {
+    if (!open) return;
+    const Detector = (
+      window as typeof window & { BarcodeDetector?: BarcodeDetectorConstructorLike }
+    ).BarcodeDetector;
+    void chooseQrDecoder(Detector)
+      .then((choice) => (choice === "fallback" ? import("jsqr") : null))
+      .catch(() => undefined);
+  }, [open]);
 
   async function resolveLookup(
     kind: "pass" | "confirmation",
@@ -273,8 +291,10 @@ export function CheckInScanner({
     setError("");
     setCameraState("starting");
     const startId = startIdRef.current;
+    startPendingRef.current = true;
 
     if (!navigator.mediaDevices?.getUserMedia) {
+      startPendingRef.current = false;
       setCameraState("unsupported");
       return;
     }
@@ -304,7 +324,16 @@ export function CheckInScanner({
       video.muted = true;
       video.setAttribute("playsinline", "");
       video.srcObject = stream;
-      await video.play();
+      try {
+        await video.play();
+      } catch {
+        // Not a permission problem: show the generic camera error.
+        if (startId === startIdRef.current) {
+          stopCamera(false);
+          setCameraState("error");
+        }
+        return;
+      }
       if (startId !== startIdRef.current) return;
 
       const Detector = (
@@ -319,6 +348,7 @@ export function CheckInScanner({
       if (choice === "native" && Detector) {
         const detector = new Detector({ formats: ["qr_code"] });
         decodeFrame = async () => {
+          if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null;
           const codes = await detector.detect(video);
           return codes
             .map((code) => code.rawValue ?? "")
@@ -343,8 +373,8 @@ export function CheckInScanner({
           if (size.width === 0) return null;
           const canvas = canvasRef.current ?? document.createElement("canvas");
           canvasRef.current = canvas;
-          canvas.width = size.width;
-          canvas.height = size.height;
+          if (canvas.width !== size.width) canvas.width = size.width;
+          if (canvas.height !== size.height) canvas.height = size.height;
           const context = canvas.getContext("2d", { willReadFrequently: true });
           if (!context) throw new Error("Canvas is unavailable.");
           context.drawImage(video, 0, 0, size.width, size.height);
@@ -353,6 +383,7 @@ export function CheckInScanner({
         };
       }
 
+      startPendingRef.current = false;
       setCameraState("active");
       scanLoopRef.current = createScanLoop({
         tick: async () => {
