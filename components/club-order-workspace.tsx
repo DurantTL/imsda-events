@@ -1,16 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Download, Eye, History, PackageCheck, ShoppingCart } from "lucide-react";
+import { useMemo, useState, useSyncExternalStore } from "react";
+import { AlertTriangle, CheckCircle2, Download, Eye, History, PackageCheck, Plus, Printer, RotateCcw, Save, Trash2 } from "lucide-react";
 import styles from "@/components/club-orders.module.css";
-import { applyExtras, type OrderLine } from "@/modules/club-orders/domain";
+import { ClubSupplyStockWorkspace } from "@/components/club-supply-stock-workspace";
 import { ClubUniformSection, emptyUniformData, type ClubUniformData } from "@/components/club-uniform-section";
+import { ORDER_LIST_SECTIONS, activeHelperLines, orderListSectionLabels, type HelperLine } from "@/modules/club-orders/domain";
 import type { AwardableNeed, OrderBatchSummary, UnmatchedNeed, WaitingNeed } from "@/modules/club-orders/repository";
+import type { ClubStockRow } from "@/modules/club-supplies/repository";
 
 export type ClubOrderWorkspaceData = {
-  lines: OrderLine[];
-  unmatched: UnmatchedNeed[];
+  helper: HelperLine[];
+  /** Orders placed before the helper list (#654): only ones still waiting to arrive are shown, to mark received. */
   batches: OrderBatchSummary[];
+  unmatched: UnmatchedNeed[];
   awardable: AwardableNeed[];
   waiting: WaitingNeed[];
   firstOrderAt: string | null;
@@ -33,33 +36,44 @@ const ordersBase = (organizationId: string) => `/api/attendee/clubs/${encodeURIC
 /** The same bulk limit the award routes accept. */
 const BULK_LIMIT = 500;
 
-/**
- * A top-level export link with the extras typed on screen (#487), as
- * `extra=<itemId>:<count>`: the server checks them with the same schema as
- * placing the order, so the file matches the screen exactly.
- */
-export function orderExportHref(base: string, view: "adventsource" | "readable" | "picklist", lines: readonly OrderLine[]) {
-  const params = new URLSearchParams({ view });
-  if (view !== "picklist") {
-    for (const line of lines) if (line.extra > 0) params.append("extra", `${line.item.itemId}:${line.extra}`);
+export const ADVENTSOURCE_URL = "https://www.adventsource.org";
+
+/** Most items the "add an item" picker lists at once. */
+const PICKER_LIMIT = 100;
+
+const promptDismissedKey = (organizationId: string) => `imsda:orders:earlier-honors-dismissed:${organizationId}`;
+
+/** Fallback for this page view when storage is blocked. */
+const dismissedInMemory = new Set<string>();
+
+function readDismissed(organizationId: string) {
+  if (dismissedInMemory.has(organizationId)) return true;
+  try {
+    return window.localStorage.getItem(promptDismissedKey(organizationId)) === "1";
+  } catch {
+    return false;
   }
-  return `${base}/csv?${params.toString()}`;
 }
 
-/**
- * Which "to order" CSV exports have something to download (#571 F-24). An
- * export with nothing in it is a headers-only file, so it is disabled instead.
- * The AdventSource file needs a line with a catalog number; the order list needs
- * a line to order; the pick list covers what is to order and what is ready to
- * hand out, so it stays available while anything is waiting to be handed out.
- */
-export function orderExportAvailability(lines: readonly OrderLine[], readyToHandOutCount: number) {
-  const ordering = lines.filter((line) => line.toOrder > 0);
-  return {
-    adventsource: ordering.some((line) => Boolean(line.item.catalogNumber)),
-    readable: ordering.length > 0,
-    picklist: ordering.length > 0 || readyToHandOutCount > 0,
+const DISMISSED_EVENT = "imsda:orders-prompt-dismissed";
+
+function subscribeDismissed(onChange: () => void) {
+  window.addEventListener(DISMISSED_EVENT, onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    window.removeEventListener(DISMISSED_EVENT, onChange);
+    window.removeEventListener("storage", onChange);
   };
+}
+
+function writeDismissed(organizationId: string) {
+  dismissedInMemory.add(organizationId);
+  try {
+    window.localStorage.setItem(promptDismissedKey(organizationId), "1");
+  } catch {
+    // Storage can be blocked; the prompt then returns next visit.
+  }
+  window.dispatchEvent(new Event(DISMISSED_EVENT));
 }
 
 function formatDate(value: string) {
@@ -67,42 +81,54 @@ function formatDate(value: string) {
 }
 
 /**
- * A club's order screen (#487, #497), one page for honors and uniforms: what's needed (with editable
- * extras, available stock, and what to order), placing the order, past
- * orders with "Mark received", handing out what's arrived or already in
- * stock, and — for honors completed before the club ordered here — marking
- * the ones already handed out. Only names and item names appear for people;
- * no other personal field is ever loaded. A registrar or Area Coordinator
- * gets `readOnly`: the same lists, no controls.
+ * A club's Orders screen (#487, #497, #654): a helper for building the list
+ * of supplies to order from AdventSource. It is not an order form and places
+ * nothing. The list has Uniforms, Honors and other supplies, each line with
+ * item name, size, item number and a quantity the director can change, add or
+ * remove; "to order" is needed less what the club has on hand (the Inventory
+ * below). It exports to CSV and prints. Below the list: who is ready to hand
+ * out, honors that may already be handed out, and the uniform entry. Only
+ * names and item names appear for people; no other personal field is ever
+ * loaded. A registrar or Area Coordinator gets `readOnly`: the same lists, no
+ * controls.
  */
 export function ClubOrderWorkspace({
   organizationId,
   initial,
   initialUniforms = emptyUniformData,
+  stock = [],
+  printHref,
   readOnly = false,
 }: {
   organizationId: string;
   initial: ClubOrderWorkspaceData;
   initialUniforms?: ClubUniformData;
+  /** The catalog with this club's quantities: the add-an-item picker and the Inventory. */
+  stock?: ClubStockRow[];
+  /** The printable page, when the viewer has one. */
+  printHref?: string;
   readOnly?: boolean;
 }) {
   const [data, setData] = useState(initial);
   const [uniforms, setUniforms] = useState(initialUniforms);
-  const [extras, setExtras] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [handedOut, setHandedOut] = useState<Set<string>>(new Set());
   const [beforeDate, setBeforeDate] = useState("");
-  const [promptDismissed, setPromptDismissed] = useState(false);
+  // Remembered per club on this device. The server snapshot is "not dismissed", so the first render matches the server.
+  const promptDismissed = useSyncExternalStore(subscribeDismissed, () => readDismissed(organizationId), () => false);
+  const [pickerQuery, setPickerQuery] = useState("");
+  const [pickerItem, setPickerItem] = useState("");
+  const [pickerQuantity, setPickerQuantity] = useState("1");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const base = ordersBase(organizationId);
   const uniformsBase = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/uniforms`;
 
-  const lines = useMemo(() => applyExtras(data.lines, extras), [data.lines, extras]);
-  const exportAvailability = orderExportAvailability(lines, data.awardable.length);
-  const nothingToOrderId = "club-order-nothing-to-order";
-  const totalToOrder = lines.reduce((sum, line) => sum + line.toOrder, 0);
+  const onList = useMemo(() => activeHelperLines(data.helper), [data.helper]);
+  const takenOff = useMemo(() => data.helper.filter((line) => line.needed === 0 && line.edited && line.computedNeeded > 0), [data.helper]);
+  const totalToOrder = onList.reduce((sum, line) => sum + line.toOrder, 0);
   const awardGroups = useMemo(() => {
     const groups = new Map<string, { itemName: string; needs: AwardableNeed[] }>();
     for (const need of data.awardable) {
@@ -112,21 +138,30 @@ export function ClubOrderWorkspace({
     }
     return [...groups.entries()];
   }, [data.awardable]);
-  // Only honors get the "completed before you started ordering" prompt: a uniform's
-  // "already has one" is chosen when it's recorded (#497).
+  const pickerItems = useMemo(() => {
+    const text = pickerQuery.trim().toLowerCase();
+    const listed = new Set(onList.map((line) => line.itemId));
+    return stock
+      .filter((row) => row.isActive && !listed.has(row.itemId) && (!text || `${row.name} ${row.catalogNumber ?? ""}`.toLowerCase().includes(text)))
+      .slice(0, PICKER_LIMIT);
+  }, [stock, pickerQuery, onList]);
+  // Honors that may have been handed out long ago: the club marks them so they aren't counted as needed.
   const earlier = useMemo(() => data.waiting.filter((need) => need.sourceType === "HONOR" && need.beforeFirstOrder), [data.waiting]);
-  const showPrompt = !readOnly && !promptDismissed && earlier.length > 0;
+  // Shown only while the club hasn't edited the helper list or handed anything out here: a one-time cleanup, never in read-only mode.
+  const showPrompt = !readOnly && !promptDismissed && earlier.length > 0 && !data.helper.some((line) => line.edited);
+  const waitingBatches = data.batches.filter((batch) => batch.status === "ORDERED");
+
+  function dismissPrompt() {
+    writeDismissed(organizationId);
+  }
 
   async function refresh() {
     // Uniforms first: an editor's load drops departed members' needs before the order list is read.
     const uniformResponse = await fetch(uniformsBase, { cache: "no-store" });
     const response = await fetch(base, { cache: "no-store" });
     const result = await response.json().catch(() => ({})) as ApiResult;
-    if (response.ok && result.lines && result.batches && result.awardable && result.unmatched && result.waiting) {
-      setData({
-        lines: result.lines, unmatched: result.unmatched, batches: result.batches, awardable: result.awardable,
-        waiting: result.waiting, firstOrderAt: result.firstOrderAt ?? null,
-      });
+    if (response.ok && result.helper && result.batches && result.awardable && result.unmatched && result.waiting) {
+      setData({ helper: result.helper, batches: result.batches, unmatched: result.unmatched, awardable: result.awardable, waiting: result.waiting, firstOrderAt: result.firstOrderAt ?? null });
     }
     const uniformResult = await uniformResponse.json().catch(() => ({})) as Partial<ClubUniformData>;
     if (uniformResponse.ok && uniformResult.needs && uniformResult.catalog && uniformResult.members) {
@@ -134,8 +169,8 @@ export function ClubOrderWorkspace({
     }
   }
 
-  async function post(url: string, body: unknown) {
-    const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  async function send(url: string, method: "POST" | "PUT", body: unknown) {
+    const response = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const result = await response.json().catch(() => ({})) as ApiResult;
     if (!response.ok) {
       throw new Error(
@@ -146,6 +181,7 @@ export function ClubOrderWorkspace({
     }
     return result;
   }
+  const post = (url: string, body: unknown) => send(url, "POST", body);
 
   async function act(run: () => Promise<string>) {
     setBusy(true);
@@ -163,9 +199,44 @@ export function ClubOrderWorkspace({
     }
   }
 
-  async function placeOrder() {
-    const payload = Object.fromEntries(lines.filter((line) => line.extra > 0).map((line) => [line.item.itemId, line.extra]));
-    if (await act(async () => { await post(base, { extras: payload }); return "Order placed."; })) setExtras({});
+  /** Sets one line's quantity (0 takes it off the list), or `null` to put it back to the computed count. */
+  function setQuantity(itemId: string, quantity: number | null, message: string) {
+    return act(async () => {
+      await send(`${base}/lines/${encodeURIComponent(itemId)}`, "PUT", { quantity });
+      setDrafts((current) => {
+        const next = { ...current };
+        delete next[itemId];
+        return next;
+      });
+      return message;
+    });
+  }
+
+  function saveDraft(line: HelperLine) {
+    const draft = drafts[line.itemId];
+    if (draft === undefined) return;
+    if (!/^\d+$/.test(draft.trim())) {
+      setError("Enter a whole number, 0 or more.");
+      return;
+    }
+    return setQuantity(line.itemId, Number(draft), "Quantity saved.");
+  }
+
+  function removeLine(line: HelperLine) {
+    // A line nothing calls for was added by hand: forget it. Otherwise keep a 0 so it stays off the list.
+    return setQuantity(line.itemId, line.computedNeeded > 0 ? 0 : null, `Took ${line.name} off the list.`);
+  }
+
+  async function addLine() {
+    const quantity = Number(pickerQuantity);
+    if (!pickerItem || !Number.isSafeInteger(quantity) || quantity < 1) {
+      setError("Choose an item and a quantity of 1 or more.");
+      return;
+    }
+    if (await setQuantity(pickerItem, quantity, "Added to the list.")) {
+      setPickerItem("");
+      setPickerQuantity("1");
+    }
   }
 
   async function markAwarded() {
@@ -176,7 +247,10 @@ export function ClubOrderWorkspace({
       const fromStock = result.fromStock ?? 0;
       return `Marked ${result.awarded ?? 0} handed out${fromStock > 0 ? ` (${fromStock} from stock)` : ""}.`;
     });
-    if (ok) setSelected(new Set());
+    if (ok) {
+      setSelected(new Set());
+      dismissPrompt();
+    }
   }
 
   async function markAlreadyHandedOut() {
@@ -190,7 +264,10 @@ export function ClubOrderWorkspace({
       }
       return `Marked ${marked} as already handed out. Stock wasn't changed.`;
     });
-    if (ok) setHandedOut(new Set());
+    if (ok) {
+      setHandedOut(new Set());
+      dismissPrompt();
+    }
   }
 
   async function recordUniforms(input: { personIds: string[]; itemIds: string[]; alreadyHasOne: boolean }) {
@@ -238,7 +315,6 @@ export function ClubOrderWorkspace({
   }
 
   const unmatchedCount = data.unmatched.length;
-  const missingNumberLines = lines.filter((line) => line.missingCatalogNumber);
   const earlierIds = earlier.map((need) => need.needId);
   const beforeDateIds = beforeDate ? earlier.filter((need) => need.sourceDate && need.sourceDate < beforeDate).map((need) => need.needId) : [];
 
@@ -247,22 +323,26 @@ export function ClubOrderWorkspace({
       <div className="section-heading">
         <div>
           <p className="public-registration-eyebrow">Club supplies</p>
-          <h2>Club orders</h2>
+          <h2>Orders</h2>
         </div>
-        <span className="count-badge">{lines.length} to review</span>
+        <span className="count-badge">{onList.length} {onList.length === 1 ? "line" : "lines"}</span>
       </div>
+      <p className="inline-notice" id="club-order-helper-notice" role="note">
+        This is a helper to build your list — it is <strong>not</strong> an official order form. You still need to order the items from{" "}
+        <a href={ADVENTSOURCE_URL} rel="noopener noreferrer" target="_blank">AdventSource</a>.
+      </p>
       {readOnly ? (
-        <p className="inline-notice" role="status"><Eye aria-hidden="true" size={14} /> View only. Shows what&apos;s on file. The club director or deputy places orders.</p>
+        <p className="inline-notice" role="status"><Eye aria-hidden="true" size={14} /> View only. Shows what&apos;s on file. The club director or deputy builds the list.</p>
       ) : (
-        <p className="field-help">Completed honors, uniform needs, and earned awards that haven&apos;t been ordered yet. Add extras for spares, then place one order for everything.</p>
+        <p className="field-help">Completed honors, uniform needs, and earned awards that haven&apos;t been handed out appear here on their own. Change a quantity, add an item, or take one off. Stock on hand comes off what you need.</p>
       )}
       {notice && <p className="inline-notice success" role="status">{notice}</p>}
       {error && <p className="inline-notice error" role="alert">{error}</p>}
 
       {showPrompt && (
         <section aria-labelledby="club-order-earlier" className={`${styles.block} ${styles.prompt}`}>
-          <h3 id="club-order-earlier"><History aria-hidden="true" size={14} /> Honors completed before you started ordering here</h3>
-          <p className={styles.promptCopy}>Mark the ones already handed out. Nothing is marked for you, and stock isn&apos;t changed.</p>
+          <h3 id="club-order-earlier"><History aria-hidden="true" size={14} /> Honors that may already be handed out</h3>
+          <p className={styles.promptCopy}>Mark the ones already handed out so they come off the list. Nothing is marked for you, and stock isn&apos;t changed.</p>
           <div className={styles.actions}>
             <button className="secondary-button" disabled={busy} onClick={() => toggleIn(setHandedOut, earlierIds, true)} type="button">Select all ({earlierIds.length})</button>
             <span className={styles.dateSelect}>
@@ -291,140 +371,214 @@ export function ClubOrderWorkspace({
             <button className="primary-button" disabled={busy || handedOut.size === 0} onClick={markAlreadyHandedOut} type="button">
               <CheckCircle2 aria-hidden="true" size={16} /> Already handed out{handedOut.size > 0 ? ` (${handedOut.size})` : ""}
             </button>
-            <button className="text-button" onClick={() => setPromptDismissed(true)} type="button">Not now</button>
+            <button className="text-button" onClick={dismissPrompt} type="button">Not now</button>
           </div>
         </section>
       )}
 
       <section className={styles.block}>
-        <h3>To order</h3>
+        <h3>Your order list</h3>
         {unmatchedCount > 0 && (
           <p className={styles.flag} role="status">
             <AlertTriangle aria-hidden="true" size={14} /> {unmatchedCount} completed {unmatchedCount === 1 ? "honor has" : "honors have"} no matching catalog item, so {unmatchedCount === 1 ? "it isn't" : "they aren't"} on this list. Conference staff can link the honor in the supply catalog.
           </p>
         )}
-        {lines.length === 0 ? (
-          <p className="quiet-copy">Nothing to order. New completed honors appear here on their own; record uniform needs below, and add earned awards on the Class tracking page.</p>
+        {onList.length === 0 ? (
+          <p className="quiet-copy">Nothing on the list. New completed honors appear here on their own; record uniform needs below, add earned awards on the Class tracking page, or add an item yourself.</p>
         ) : (
-          <ul className={styles.list}>
-            {lines.map((line) => {
-              const inputId = `club-order-extra-${line.item.itemId}`;
-              return (
-                <li className={styles.row} key={line.item.itemId}>
-                  <span className={styles.text}>
-                    <strong translate="no">{line.item.name}</strong>
-                    <small>
-                      {line.item.catalogNumber ? <>No. <code>{line.item.catalogNumber}</code></> : (
-                        <span className={styles.flagInline}><AlertTriangle aria-hidden="true" size={12} /> No AdventSource number</span>
-                      )}
-                    </small>
-                  </span>
-                  <dl className={styles.numbers}>
-                    <div><dt>Needed</dt><dd>{line.needed}</dd></div>
-                    <div>
-                      <dt>Extras</dt>
-                      <dd>
-                        {readOnly ? line.extra : (
-                          <>
-                            <label className="sr-only" htmlFor={inputId}>Extras: {line.item.name}</label>
-                            <input
-                              className={styles.number}
-                              id={inputId}
-                              inputMode="numeric"
-                              min={0}
-                              onChange={(event) => setExtras((current) => ({ ...current, [line.item.itemId]: event.target.value }))}
-                              type="number"
-                              value={extras[line.item.itemId] ?? "0"}
-                            />
-                          </>
+          ORDER_LIST_SECTIONS.map((section) => {
+            const lines = onList.filter((line) => line.section === section);
+            if (lines.length === 0) return null;
+            return (
+              <div className={styles.group} key={section}>
+                <div className={styles.groupHead}><strong>{orderListSectionLabels[section]}</strong></div>
+                <ul className={styles.list}>
+                  {lines.map((line) => {
+                    const inputId = `club-order-quantity-${line.itemId}`;
+                    const draft = drafts[line.itemId];
+                    return (
+                      <li className={styles.row} key={line.itemId}>
+                        <span className={styles.text}>
+                          <strong translate="no">{line.name}</strong>
+                          <small>
+                            {line.size && <>Size {line.size} · </>}
+                            {line.catalogNumber ? <>Item no. <code>{line.catalogNumber}</code></> : (
+                              <span className={styles.flagInline}><AlertTriangle aria-hidden="true" size={12} /> No item number</span>
+                            )}
+                            {line.edited && line.needed !== line.computedNeeded && <> · calculated: {line.computedNeeded}</>}
+                          </small>
+                        </span>
+                        <dl className={styles.numbers}>
+                          <div>
+                            <dt>Quantity</dt>
+                            <dd>
+                              {readOnly ? line.needed : (
+                                <>
+                                  <label className="sr-only" htmlFor={inputId}>Quantity: {line.name}{line.size ? `, ${line.size}` : ""}</label>
+                                  <input
+                                    className={styles.number}
+                                    id={inputId}
+                                    inputMode="numeric"
+                                    min={0}
+                                    onChange={(event) => setDrafts((current) => ({ ...current, [line.itemId]: event.target.value }))}
+                                    type="number"
+                                    value={draft ?? String(line.needed)}
+                                  />
+                                </>
+                              )}
+                            </dd>
+                          </div>
+                          <div><dt>Available</dt><dd>{line.onHand}</dd></div>
+                          <div><dt>To order</dt><dd><strong>{line.toOrder}</strong></dd></div>
+                        </dl>
+                        {!readOnly && (
+                          <span className={styles.actions}>
+                            <button
+                              aria-label={`Save quantity: ${line.name}${line.size ? `, ${line.size}` : ""}`}
+                              className="secondary-button"
+                              disabled={busy || draft === undefined || draft === String(line.needed)}
+                              onClick={() => void saveDraft(line)}
+                              type="button"
+                            >
+                              <Save aria-hidden="true" size={14} /> Save
+                            </button>
+                            {line.edited && line.computedNeeded > 0 && (
+                              <button
+                                aria-label={`Reset to ${line.computedNeeded}: ${line.name}${line.size ? `, ${line.size}` : ""}`}
+                                className="text-button"
+                                disabled={busy}
+                                onClick={() => void setQuantity(line.itemId, null, "Quantity reset.")}
+                                type="button"
+                              >
+                                <RotateCcw aria-hidden="true" size={14} /> Reset
+                              </button>
+                            )}
+                            <button
+                              aria-label={`Remove from the list: ${line.name}${line.size ? `, ${line.size}` : ""}`}
+                              className="text-button"
+                              disabled={busy}
+                              onClick={() => void removeLine(line)}
+                              type="button"
+                            >
+                              <Trash2 aria-hidden="true" size={14} /> Remove
+                            </button>
+                          </span>
                         )}
-                      </dd>
-                    </div>
-                    <div><dt>In stock</dt><dd>{line.inStock}</dd></div>
-                    <div><dt>To order</dt><dd><strong>{line.toOrder}</strong></dd></div>
-                  </dl>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            );
+          })
+        )}
+        {onList.length > 0 && (
+          <p className="field-help">To order is the quantity less what is available, never below zero. Available = in stock minus items set aside for someone. {totalToOrder} to order in all.</p>
+        )}
+
+        {takenOff.length > 0 && (
+          <div className={styles.group}>
+            <div className={styles.groupHead}><strong>Taken off the list</strong></div>
+            <ul className={styles.people}>
+              {takenOff.map((line) => (
+                <li className={styles.rowStatic} key={line.itemId}>
+                  <span translate="no">{line.name}{line.size ? ` (${line.size})` : ""}</span>
+                  {!readOnly && (
+                    <button className="text-button" disabled={busy} onClick={() => void setQuantity(line.itemId, null, "Put back on the list.")} type="button">Put back</button>
+                  )}
                 </li>
-              );
-            })}
-          </ul>
+              ))}
+            </ul>
+          </div>
         )}
-        {lines.length > 0 && (
-          <p className="field-help">In stock counts only what isn&apos;t already set aside for someone. Needs it covers are ready to hand out below.</p>
+
+        {!readOnly && (
+          <div className={styles.group}>
+            <div className={styles.groupHead}><strong>Add an item</strong></div>
+            <div className={styles.pickerRow}>
+              <label className={styles.pickerField} htmlFor="club-order-picker-search">
+                Search the catalog
+                <input className={styles.select} id="club-order-picker-search" onChange={(event) => { setPickerQuery(event.target.value); setPickerItem(""); }} placeholder="Name or item number" type="search" value={pickerQuery} />
+              </label>
+              <label className={styles.pickerField} htmlFor="club-order-picker-item">
+                Item
+                <select className={styles.select} id="club-order-picker-item" onChange={(event) => setPickerItem(event.target.value)} value={pickerItem}>
+                  <option value="">Choose an item</option>
+                  {pickerItems.map((row) => (
+                    <option key={row.itemId} value={row.itemId}>
+                      {row.name}{row.catalogNumber ? ` · ${row.catalogNumber}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className={styles.pickerField} htmlFor="club-order-picker-quantity">
+                Quantity
+                <input className={styles.select} id="club-order-picker-quantity" inputMode="numeric" min={1} onChange={(event) => setPickerQuantity(event.target.value)} type="number" value={pickerQuantity} />
+              </label>
+              <button className="secondary-button" disabled={busy || !pickerItem} onClick={() => void addLine()} type="button">
+                <Plus aria-hidden="true" size={14} /> Add to list
+              </button>
+            </div>
+          </div>
         )}
-        {missingNumberLines.length > 0 && (
-          <p className={styles.flag} role="status">
-            <AlertTriangle aria-hidden="true" size={14} /> {missingNumberLines.length} {missingNumberLines.length === 1 ? "item has" : "items have"} no AdventSource number and {missingNumberLines.length === 1 ? "is" : "are"} left out of the AdventSource file. Order {missingNumberLines.length === 1 ? "it" : "them"} another way.
-          </p>
-        )}
+
         <div className={styles.actions}>
-          {!readOnly && (
-            <button className="primary-button" disabled={busy || lines.length === 0 || totalToOrder === 0} onClick={placeOrder} type="button">
-              <ShoppingCart aria-hidden="true" size={16} /> {busy ? "Working…" : "Place order"}
-            </button>
-          )}
-          {exportAvailability.adventsource ? (
-            <a className="secondary-button" href={orderExportHref(base, "adventsource", lines)}><Download aria-hidden="true" size={14} /> AdventSource file</a>
+          {onList.length > 0 ? (
+            <a className="primary-button" href={`${base}/csv?view=list`}><Download aria-hidden="true" size={14} /> Export list (CSV)</a>
           ) : (
-            <button aria-describedby={nothingToOrderId} className="secondary-button" disabled type="button"><Download aria-hidden="true" size={14} /> AdventSource file</button>
+            <button aria-describedby="club-order-nothing" className="primary-button" disabled type="button"><Download aria-hidden="true" size={14} /> Export list (CSV)</button>
           )}
-          {exportAvailability.readable ? (
-            <a className="secondary-button" href={orderExportHref(base, "readable", lines)}><Download aria-hidden="true" size={14} /> Order list</a>
-          ) : (
-            <button aria-describedby={nothingToOrderId} className="secondary-button" disabled type="button"><Download aria-hidden="true" size={14} /> Order list</button>
+          {printHref && onList.length > 0 && (
+            <a className="secondary-button" href={printHref}><Printer aria-hidden="true" size={14} /> Printable list</a>
           )}
-          {exportAvailability.picklist ? (
-            <a className="secondary-button" href={orderExportHref(base, "picklist", lines)}><Download aria-hidden="true" size={14} /> Pick list (to order and ready)</a>
-          ) : (
-            <button aria-describedby={nothingToOrderId} className="secondary-button" disabled type="button"><Download aria-hidden="true" size={14} /> Pick list (to order and ready)</button>
-          )}
+          {onList.length > 0 || data.awardable.length > 0 ? (
+            <a className="secondary-button" href={`${base}/csv?view=picklist`}><Download aria-hidden="true" size={14} /> Pick list (who gets what)</a>
+          ) : null}
         </div>
-        {!(exportAvailability.adventsource && exportAvailability.readable && exportAvailability.picklist) && (
-          <p className="field-help" id={nothingToOrderId}>
-            {exportAvailability.readable ? "No item has an AdventSource number yet, so there is nothing for the AdventSource file." : "Nothing to order yet."}
-          </p>
-        )}
+        {onList.length === 0 && <p className="field-help" id="club-order-nothing">Nothing on the list to export yet.</p>}
       </section>
 
-      <section className={styles.block}>
-        <h3>Orders placed</h3>
-        {data.batches.length === 0 ? (
-          <p className="quiet-copy">No orders placed yet.</p>
-        ) : (
-          <ul className={styles.list}>
-            {data.batches.map((batch) => {
-              const batchQuery = `batch=${encodeURIComponent(batch.id)}`;
-              return (
-                <li className={styles.row} key={batch.id}>
-                  <span className={styles.text}>
-                    <strong>{formatDate(batch.createdAt)}</strong>
-                    <small>{batch.itemCount} {batch.itemCount === 1 ? "item" : "items"} · {batch.totalQuantity} ordered · {batch.status === "RECEIVED" ? "Received" : "Waiting to arrive"}</small>
-                  </span>
-                  <span className={styles.actions}>
-                    <a className="secondary-button" href={`${base}/csv?view=adventsource&${batchQuery}`}><Download aria-hidden="true" size={14} /> AdventSource file</a>
-                    <a className="secondary-button" href={`${base}/csv?view=readable&${batchQuery}`}><Download aria-hidden="true" size={14} /> Order list</a>
-                    <a className="secondary-button" href={`${base}/csv?view=picklist&${batchQuery}`}><Download aria-hidden="true" size={14} /> Pick list</a>
-                    {!readOnly && batch.status === "ORDERED" && (
-                      <button
-                        className="secondary-button"
-                        disabled={busy}
-                        onClick={() => act(async () => { await post(`${base}/${encodeURIComponent(batch.id)}/receive`, {}); return "Order marked received."; })}
-                        type="button"
-                      >
-                        <PackageCheck aria-hidden="true" size={14} /> Mark received
-                      </button>
-                    )}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+      <section className={styles.block} id="inventory">
+        <ClubSupplyStockWorkspace
+          embedded
+          initialStock={stock}
+          onSaved={() => void refresh().catch(() => undefined)}
+          organizationId={organizationId}
+          readOnly={readOnly}
+        />
       </section>
+
+      {waitingBatches.length > 0 && (
+        <section className={styles.block}>
+          <h3>Orders waiting to arrive</h3>
+          <p className="field-help">Earlier orders, from before this helper list. Mark one received when it arrives and its items join your stock. New orders can&apos;t be placed here.</p>
+          <ul className={styles.list}>
+            {waitingBatches.map((batch) => (
+              <li className={styles.row} key={batch.id}>
+                <span className={styles.text}>
+                  <strong>{formatDate(batch.createdAt)}</strong>
+                  <small>{batch.itemCount} {batch.itemCount === 1 ? "item" : "items"} · {batch.totalQuantity} ordered</small>
+                </span>
+                {!readOnly && (
+                  <button
+                    className="secondary-button"
+                    disabled={busy}
+                    onClick={() => void act(async () => { await post(`${base}/${encodeURIComponent(batch.id)}/receive`, {}); return "Order marked received."; })}
+                    type="button"
+                  >
+                    <PackageCheck aria-hidden="true" size={14} /> Mark received
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className={styles.block}>
         <h3>Ready to hand out</h3>
         {awardGroups.length === 0 ? (
-          <p className="quiet-copy">Nothing has arrived yet, and nothing needed is in stock.</p>
+          <p className="quiet-copy">Nothing in stock covers a need yet.</p>
         ) : (
           <>
             {awardGroups.map(([itemId, group]) => {

@@ -17,7 +17,7 @@ export function clubPortalNavItems({
   role: string;
   capabilities: ClubCapabilities;
 }): AccountNavItem[] {
-  // Honors, Supplies, Orders and Class tracking all open on the roster's own gate (#486, #531, #487, #497, #532).
+  // Honors, Orders (with supplies on hand) and Class tracking all open on the roster's own gate (#486, #531, #487, #497, #532).
   const roster = capabilities.roster;
   return [
     { href: base, label: "Home" },
@@ -32,10 +32,8 @@ export function clubPortalNavItems({
       { href: `${base}/notes`, label: "Meeting notes", matchChildren: true, group: "Records" },
       { href: `${base}/reports`, label: "Monthly reports", matchChildren: true, group: "Records" },
     ] : []),
-    ...(roster ? [
-      { href: `${base}/supplies`, label: "Supplies", group: "Orders" },
-      { href: `${base}/orders`, label: "Orders", group: "Orders" },
-    ] : []),
+    // Supplies on hand live inside Orders (#654), so there is no separate Supplies entry.
+    ...(roster ? [{ href: `${base}/orders`, label: "Orders", group: "Orders" }] : []),
     ...(capabilities.manageTeam || capabilities.editProfile
       ? [{ href: `${base}/club-info`, label: "Club info", group: "Club" }]
       : []),

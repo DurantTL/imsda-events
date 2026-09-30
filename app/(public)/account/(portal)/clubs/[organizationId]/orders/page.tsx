@@ -3,16 +3,18 @@ import { BackLink } from "@/components/back-link";
 import { ClubOrderWorkspace } from "@/components/club-order-workspace";
 import { loadOrderWorkspace } from "@/modules/club-orders/repository";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
+import { listClubStock } from "@/modules/club-supplies/repository";
 import { syncHonorOrderNeeds } from "@/modules/honors/order-source";
 import { loadUniformWorkspace } from "@/modules/uniforms/order-source";
 
-export const metadata: Metadata = { title: "Club orders" };
+export const metadata: Metadata = { title: "Orders" };
 export const dynamic = "force-dynamic";
 
 /**
- * A club's order screen (#487, #497): honors and uniforms in one order list.
- * Opens on the roster's own gate, like Supplies: a director or deputy orders,
- * records uniform needs and hands out, a registrar views.
+ * A club's Orders screen (#487, #497, #654): the order helper list (honors,
+ * uniforms, other supplies) and the club's supplies on hand. Opens on the
+ * roster's own gate: a director or deputy edits the list, records uniform
+ * needs, hands out and records stock; a registrar views.
  */
 export default async function ClubOrdersPage({ params }: { params: Promise<{ organizationId: string }> }) {
   const { organizationId } = await params;
@@ -29,7 +31,9 @@ export default async function ClubOrdersPage({ params }: { params: Promise<{ org
       <ClubOrderWorkspace
         initial={await loadOrderWorkspace(organizationId)}
         initialUniforms={uniforms}
+        stock={await listClubStock(organizationId)}
         organizationId={organizationId}
+        printHref={`/account/clubs/${organizationId}/orders/print`}
         readOnly={!access.capabilities.manageTeam}
       />
     </>
