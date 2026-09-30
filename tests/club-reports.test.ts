@@ -263,20 +263,36 @@ describe("drafts past the due date (#426)", () => {
     expect(mocks.reportUpdate.mock.calls[0][0].data).toMatchObject({ status: "SUBMITTED", onTimePoints: 0, firstSubmittedAt: after });
   });
 
-  it("lets a reopened report be resubmitted late, keeps its credit, and records the late change", async () => {
-    mocks.reportFindUnique.mockResolvedValue({
-      id: "report-1",
-      status: "DRAFT",
-      firstSubmittedAt: new Date("2026-11-05T15:00:00Z"),
-      submittedAt: null,
-      totalPoints: 0,
-      onTimePoints: 0,
-    });
-    await saveClubReport("club-1", "2026-10", input(), { accountId: "account-1" }, after);
+  const reopened = {
+    id: "report-1",
+    status: "DRAFT",
+    firstSubmittedAt: new Date("2026-11-05T15:00:00Z"),
+    submittedAt: null,
+    totalPoints: 0,
+    onTimePoints: 0,
+  };
+
+  it("refuses a club's submit or draft save of a reopened report after the due date (#640)", async () => {
+    mocks.reportFindUnique.mockResolvedValue(reopened);
+    for (const status of ["SUBMITTED", "DRAFT"] as const) {
+      await expect(saveClubReport("club-1", "2026-10", { ...input(), status }, { accountId: "account-1" }, after))
+        .rejects.toMatchObject({ code: "CLUB_REPORT_LOCKED", message: expect.stringContaining("youth@imsda.org") });
+    }
+    expect(mocks.reportUpdate).not.toHaveBeenCalled();
+  });
+
+  it("still lets a club resubmit a reopened report on the due date", async () => {
+    mocks.reportFindUnique.mockResolvedValue(reopened);
+    await saveClubReport("club-1", "2026-10", input(), { accountId: "account-1" }, new Date("2026-11-10T20:00:00Z"));
+    expect(mocks.reportUpdate.mock.calls[0][0].data).toMatchObject({ status: "SUBMITTED", onTimePoints: 25 });
+  });
+
+  it("lets staff change a reopened report after the due date and records it", async () => {
+    mocks.reportFindUnique.mockResolvedValue(reopened);
+    await saveClubReport("club-1", "2026-10", input(), { userId: "staff-1" }, after);
     expect(mocks.reportUpdate.mock.calls[0][0].data).toMatchObject({ status: "SUBMITTED", onTimePoints: 25, submittedAt: after });
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
-      action: "CLUB_REPORT_UPDATED",
-      metadata: expect.objectContaining({ resubmittedAfterDueDate: true, totalPoints: 200, onTimePoints: 25 }),
+      metadata: expect.objectContaining({ resubmittedAfterDueDate: true }),
     }), client);
   });
 
@@ -366,7 +382,7 @@ describe("a staff \"act as\" director gets exactly the club's rules (#442)", () 
     expect(mocks.reportUpdate).not.toHaveBeenCalled();
   });
 
-  it("records a late resubmission, attributed to the staff user and the act-as, never an attendee account", async () => {
+  it("is locked out of a reopened report after the due date too (#640)", async () => {
     mocks.reportFindUnique.mockResolvedValue({
       id: "report-1",
       status: "DRAFT",
@@ -375,15 +391,8 @@ describe("a staff \"act as\" director gets exactly the club's rules (#442)", () 
       totalPoints: 0,
       onTimePoints: 0,
     });
-    await saveClubReport("club-1", "2026-10", input(), acting, pastDue);
-    const data = mocks.reportUpdate.mock.calls[0][0].data;
-    expect(data).toMatchObject({ updatedByUserId: "admin-1", updatedByAccountId: null });
-    expect(data).not.toHaveProperty("submittedByAccountId");
-    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
-      actorUserId: "admin-1",
-      metadata: expect.objectContaining({ resubmittedAfterDueDate: true, actAsId: "act-1" }),
-    }), client);
-    expect(mocks.writeAuditLog.mock.calls[0][0].metadata).not.toHaveProperty("actorAttendeeAccountId");
+    await expect(saveClubReport("club-1", "2026-10", input(), acting, pastDue)).rejects.toMatchObject({ code: "CLUB_REPORT_LOCKED" });
+    expect(mocks.reportUpdate).not.toHaveBeenCalled();
   });
 
   it("is refused through the club route after the due date, with no attendee account involved", async () => {
