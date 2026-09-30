@@ -16,8 +16,9 @@ describe("financial input validation", () => {
   });
 
   it("requires a reason for every refund", () => {
-    expect(() => refundInputSchema.parse({ amountCents: 500, reason: "" })).toThrow();
-    expect(refundInputSchema.parse({ amountCents: 500, reason: "Test correction" })).toEqual({ amountCents: 500, reason: "Test correction" });
+    expect(() => refundInputSchema.parse({ amountCents: 500, reason: "", idempotencyKey: "key-12345" })).toThrow();
+    expect(refundInputSchema.parse({ amountCents: 500, reason: "Test correction", idempotencyKey: "key-12345" })).toEqual({ amountCents: 500, reason: "Test correction", idempotencyKey: "key-12345" });
+    expect(() => refundInputSchema.parse({ amountCents: 500, reason: "Test correction" })).toThrow();
   });
 });
 

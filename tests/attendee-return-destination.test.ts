@@ -217,7 +217,7 @@ describe("second step still owed", () => {
 
 describe("setup finish card", () => {
   it("says two-step verification is on and links to next, else /profile", () => {
-    for (const [next, href] of [[ROSTER, ROSTER], [undefined, "/profile?twoStep=on"]] as const) {
+    for (const [next, href] of [[ROSTER, ROSTER], [undefined, "/account/profile?twoStep=on"]] as const) {
       const markup = renderToStaticMarkup(createElement(TwoStepFinished, { next }));
       expect(markup).toContain("Two-step verification is on.");
       expect(markup).toContain(`href="${href}"`);

@@ -1,7 +1,6 @@
 import {
   evaluateEventRegistrationPhase,
   hasEventEnded,
-  registrationClosedMessage,
   remainingEventCapacity,
   type EventRegistrationPhase,
 } from "@/modules/events/lifecycle";
@@ -21,6 +20,16 @@ export type PublicEventLifecycleSummary = {
   detail: string;
   ctaLabel: string;
   ctaEnabled: boolean;
+  /** The event itself is over (registration is closed for good). */
+  ended: boolean;
+  heroTagline: string;
+  /** Heading above the form list; never invites a choice when none can be made. */
+  formsHeading: string;
+  /** Shown when no forms are listed; "being prepared" only when that is true. */
+  emptyForms: { title: string; body: string };
+  /** Sidebar card text; carries the capacity number only when one may be shown. */
+  availability: { heading: string; body: string };
+  /** Null on closed or ended events. */
   remainingSpots: number | null;
 };
 
@@ -146,38 +155,82 @@ function calendarDateLabel(value: string) {
   }).format(new Date(`${value}T12:00:00.000Z`));
 }
 
-export function describePublicEventLifecycle(
+type LifecyclePresentation = Pick<
+  PublicEventLifecycleSummary,
+  | "state"
+  | "statusLabel"
+  | "detail"
+  | "ctaLabel"
+  | "ctaEnabled"
+  | "ended"
+  | "heroTagline"
+  | "formsHeading"
+  | "emptyForms"
+  | "availability"
+> & { showCapacity: boolean };
+
+function spotsPhrase(remainingSpots: number) {
+  return `${remainingSpots} spot${remainingSpots === 1 ? "" : "s"}`;
+}
+
+/**
+ * One presentation per lifecycle state (#642). The hero, the forms heading and
+ * empty state, the availability card, and the call to action all come from
+ * this single result, so a page can never say "closed" in one place and show a
+ * capacity number or "forms are being prepared" in another.
+ */
+function presentPublicEventLifecycle(
   event: PublicEventLifecycleInput,
-  occupiedSpots: number,
-  now = new Date(),
-): PublicEventLifecycleSummary {
-  const phase = evaluateEventRegistrationPhase(event, now);
-  const remainingSpots = remainingEventCapacity(event.capacity, occupiedSpots);
+  phase: EventRegistrationPhase,
+  remainingSpots: number | null,
+  now: Date,
+): LifecyclePresentation {
+  const preparing = {
+    title: "Registration forms are being prepared",
+    body: "Event details are available now. Please check back or contact the event team for registration help.",
+  };
 
   if (phase === "UPCOMING") {
     const opens = event.registrationOpensOn
       ? calendarDateLabel(event.registrationOpensOn)
       : "soon";
     return {
-      phase,
       state: "UPCOMING",
       statusLabel: `Registration opens ${opens}`,
       detail: "Review the event details now and return when online registration opens.",
       ctaLabel: `Opens ${opens}`,
       ctaEnabled: false,
-      remainingSpots,
+      ended: false,
+      heroTagline: `Registration opens ${opens}. Review the details below in the meantime.`,
+      formsHeading: "Registration options",
+      emptyForms: preparing,
+      availability: {
+        heading: `Registration opens ${opens}`,
+        body: "Online registration has not opened yet.",
+      },
+      showCapacity: true,
     };
   }
 
   if (phase === "CLOSED" && hasEventEnded(event, now)) {
     return {
-      phase,
       state: "CLOSED",
-      statusLabel: registrationClosedMessage,
+      statusLabel: "This event has ended",
       detail: "This event has ended. Contact the event team if you need help.",
-      ctaLabel: "Registration closed",
+      ctaLabel: "This event has ended",
       ctaEnabled: false,
-      remainingSpots,
+      ended: true,
+      heroTagline: "This event has ended.",
+      formsHeading: "Registration is closed",
+      emptyForms: {
+        title: "This event has ended",
+        body: "Online registration is no longer available. Contact the event team if you need help.",
+      },
+      availability: {
+        heading: "This event has ended",
+        body: "Online registration is no longer available.",
+      },
+      showCapacity: false,
     };
   }
 
@@ -186,36 +239,66 @@ export function describePublicEventLifecycle(
       ? ` on ${calendarDateLabel(event.registrationClosesOn)}`
       : "";
     return {
-      phase,
       state: "CLOSED",
       statusLabel: "Registration closed",
       detail: `Online registration is no longer available${closed}. Contact the event team if you need help.`,
       ctaLabel: "Registration closed",
       ctaEnabled: false,
-      remainingSpots,
+      ended: false,
+      heroTagline: "Online registration is closed.",
+      formsHeading: "Registration is closed",
+      emptyForms: {
+        title: "Registration closed",
+        body: "Online registration is no longer available. Contact the event team if you need help.",
+      },
+      availability: {
+        heading: "Registration closed",
+        body: "Online registration is no longer available.",
+      },
+      showCapacity: false,
     };
   }
 
   if (remainingSpots === 0) {
     if (event.waitlistEnabled) {
       return {
-        phase,
         state: "WAITLIST",
         statusLabel: "Event full · waitlist open",
         detail: "The event is currently full, but you can submit a registration to join the waitlist.",
         ctaLabel: "Join the waitlist",
         ctaEnabled: true,
-        remainingSpots,
+        ended: false,
+        heroTagline: "The event is full, but you can join the waitlist.",
+        formsHeading: "Join the waitlist",
+        emptyForms: {
+          title: "Waitlist opening soon",
+          body: "The waitlist form will appear here when it's ready.",
+        },
+        availability: {
+          heading: "Event full · waitlist open",
+          body: "The event-wide capacity has been reached. You can join the waitlist.",
+        },
+        showCapacity: true,
       };
     }
     return {
-      phase,
       state: "FULL",
-      statusLabel: "Event at capacity",
+      statusLabel: "Event full",
       detail: "All available places are currently filled. Contact the event team with questions.",
       ctaLabel: "Event full",
       ctaEnabled: false,
-      remainingSpots,
+      ended: false,
+      heroTagline: "This event is full.",
+      formsHeading: "Event full",
+      emptyForms: {
+        title: "Event full",
+        body: "All available places are filled. Contact the event team with questions.",
+      },
+      availability: {
+        heading: "Event full",
+        body: "The event-wide capacity has been reached.",
+      },
+      showCapacity: true,
     };
   }
 
@@ -224,15 +307,46 @@ export function describePublicEventLifecycle(
     : "";
   const availability = remainingSpots === null
     ? "Choose the form that best matches who you are registering."
-    : `${remainingSpots} spot${remainingSpots === 1 ? "" : "s"} currently remain.`;
+    : `${spotsPhrase(remainingSpots)} currently remain.`;
   return {
-    phase,
     state: "OPEN",
     statusLabel: "Registration open",
     detail: `Online registration is available${closes}. ${availability}`,
     ctaLabel: "Start registration",
     ctaEnabled: true,
-    remainingSpots,
+    ended: false,
+    heroTagline: "Everything you need to choose the right registration path.",
+    formsHeading: "Choose how you\u2019re registering",
+    emptyForms: preparing,
+    availability: {
+      heading: "Registration open",
+      body: remainingSpots === null
+        ? "No event-wide capacity limit is listed."
+        : `${spotsPhrase(remainingSpots)} currently remain.`,
+    },
+    showCapacity: true,
+  };
+}
+
+export function describePublicEventLifecycle(
+  event: PublicEventLifecycleInput,
+  occupiedSpots: number,
+  now = new Date(),
+): PublicEventLifecycleSummary {
+  const phase = evaluateEventRegistrationPhase(event, now);
+  const capacityLeft = remainingEventCapacity(event.capacity, occupiedSpots);
+  const { showCapacity, ...presentation } = presentPublicEventLifecycle(
+    event,
+    phase,
+    capacityLeft,
+    now,
+  );
+
+  return {
+    phase,
+    ...presentation,
+    // A closed or ended event shows no capacity number (#642).
+    remainingSpots: showCapacity ? capacityLeft : null,
   };
 }
 
