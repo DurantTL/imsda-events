@@ -7877,3 +7877,10 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .activity-disclosure[open] > summary {
   margin-bottom: 14px;
 }
+
+/* Area Coordinator points chart (#657): one SVG bar per club, label above, fills the width on a phone. */
+.area-points-chart { margin: 0 0 16px; }
+.area-points-chart figcaption { font-weight: 700; margin-bottom: 8px; }
+.area-points-chart ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; color: var(--navy, #1f4b63); }
+.area-points-chart-label { display: flex; justify-content: space-between; gap: 12px; color: var(--ink, inherit); font-size: 0.85rem; }
+.area-points-chart svg { display: block; width: 100%; height: 12px; margin-top: 3px; }
