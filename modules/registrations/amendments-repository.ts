@@ -723,6 +723,17 @@ async function personIsOnlyThisAttendee(tx: Prisma.TransactionClient, personId: 
     SELECT count(*)::bigint AS count FROM "BackgroundCheck_pre527" WHERE "personId" = ${personId}
   `;
   if (legacy && Number(legacy.count) > 0) return false;
+  // Tables that hold a Person id with no foreign key: a rename must never orphan or redirect them.
+  const [review] = await tx.$queryRaw<Array<{ count: bigint }>>`
+    SELECT count(*)::bigint AS count FROM "BackgroundCheckReview" WHERE "candidatePersonIds"::jsonb @> to_jsonb(${personId}::text)
+  `;
+  if (review && Number(review.count) > 0) return false;
+  const [rejected, remembered, imported] = await Promise.all([
+    tx.backgroundCheckRejectedPairing.count({ where: { personId } }),
+    tx.backgroundCheckRememberedMatch.count({ where: { personId } }),
+    tx.importRecord.count({ where: { matchedPersonId: personId } }),
+  ]);
+  if (rejected > 0 || remembered > 0 || imported > 0) return false;
   if (registrationEvents !== 1) return false;
   const holder = await tx.registrationAttendee.findFirst({ where: { personId }, select: { id: true } });
   return holder?.id === attendeeId;

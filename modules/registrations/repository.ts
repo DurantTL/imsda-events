@@ -10,6 +10,7 @@ import { Prisma, type RegistrationStatus } from "@prisma/client";
 import { withAttendeeTypeOptions } from "@/modules/attendee-types/form-options";
 import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { groupFormDefinition } from "@/modules/group-registrations/domain";
 import { directoryForDefinitions } from "@/modules/forms/form-options-repository";
 import { withDirectoryOptions } from "@/modules/organizations/directory-form-options";
 import type { OrganizationDirectory } from "@/modules/organizations/directory-options";
@@ -223,6 +224,8 @@ function serializeRegistration(registration: RegistrationWithRelations, director
       latestRegistrationResponses,
     )
     : null;
+  // A group registration is shown, and amended, through the group form: staff never see club or church fields (#650).
+  const staffDefinition = publicDefinition && registration.groupRegistration ? groupFormDefinition(publicDefinition) : publicDefinition;
   const balanceCents = Math.max(totalAmountCents - paidCents, 0);
   // Mirrors the attendee-facing checkout eligibility check in
   // modules/payments/square-repository.ts (checkoutFromRegistration): a
@@ -354,7 +357,7 @@ function serializeRegistration(registration: RegistrationWithRelations, director
       responses: latestRegistrationResponses,
       originalResponses: recordFromJson(registration.publicFormSubmission.responses),
       attendeeResponses: recordsFromJson(registration.publicFormSubmission.attendeeResponses),
-      definition: publicDefinition ?? recordFromJson(registration.publicFormSubmission.formVersion.definition),
+      definition: staffDefinition ?? recordFromJson(registration.publicFormSubmission.formVersion.definition),
       attendeeTypeOptions: registration.event.attendeeTypes,
       rosterEnabled: recordFromJson(
         recordFromJson(registration.publicFormSubmission.formVersion.definition).attendeeRoster,

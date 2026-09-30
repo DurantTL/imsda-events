@@ -186,7 +186,7 @@ export async function getGroupRegistrationExperience(eventSlug: string, now = ne
     problem,
     experience: experience ? { ...experience, form: { ...experience.form, definition } } : null,
     locations: locations.map((location) => publicLocation(clubLocationView(event, location, seats.get(location.id) ?? 0, now))),
-    // Public and unauthenticated: classes carry only the seats left, never capacity or seats taken (#650 review).
+    // Public and unauthenticated: classes carry only an availability status, never capacity or seats taken (#650 review).
     honorsCatalog: honorsCatalog && honorsCatalog.offerings.length > 0
       ? { ...honorsCatalog, offerings: honorsCatalog.offerings.map(toPublicSeatView) }
       : null,

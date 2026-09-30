@@ -252,16 +252,21 @@ describe("public group class view (#650)", () => {
   const full = { capacity: 10, seatsTaken: 4, clubSeatsTaken: 2, perClubLimit: 3, minimumAge: null, isActive: true };
   const youth = { attendeeType: "YOUTH", consumesSeat: true, ageOnEventDate: 12 };
 
-  it("keeps only the seats left: no capacity, seats taken, or per-club count", () => {
+  it("keeps only an availability status: no capacity, seats taken, seat count or per-club count", () => {
     const view = toPublicSeatView(full);
-    expect(Object.keys(view).sort()).toEqual(["isActive", "minimumAge", "perClubLimit", "seatsLeft"]);
-    expect(view.seatsLeft).toBe(6);
-    expect(toPublicSeatView({ ...full, seatsTaken: 12 }).seatsLeft).toBe(0);
+    expect(Object.keys(view).sort()).toEqual(["availability", "isActive", "minimumAge", "perClubLimit"]);
+    expect(view.availability).toBe("AVAILABLE");
+    expect(toPublicSeatView({ ...full, seatsTaken: 5 }).availability).toBe("FEW_LEFT");
+    expect(toPublicSeatView({ ...full, seatsTaken: 9 }).availability).toBe("FEW_LEFT");
+    expect(toPublicSeatView({ ...full, seatsTaken: 4, capacity: 10 }).availability).toBe("AVAILABLE");
+    expect(toPublicSeatView({ ...full, seatsTaken: 10 }).availability).toBe("FULL");
+    expect(toPublicSeatView({ ...full, seatsTaken: 12 }).availability).toBe("FULL");
   });
 
-  it("words and gates the picker from the seats left alone", () => {
-    expect(seatsNote(toPublicSeatView(full), false, youth, "group")).toBe("6 seats left, 3 left for your group");
+  it("words and gates the picker from the status alone", () => {
+    expect(seatsNote(toPublicSeatView({ ...full, seatsTaken: 6 }), false, youth, "group")).toBe("Few seats left, 3 left for your group");
+    expect(seatsNote(toPublicSeatView(full), false, youth, "group")).toBe("Seats available, 3 left for your group");
     expect(unavailableReason(toPublicSeatView({ ...full, seatsTaken: 10 }), false, youth)).toBe("full");
-    expect(unavailableReason(toPublicSeatView(full), false, youth)).toBeNull();
+    expect(unavailableReason(toPublicSeatView({ ...full, seatsTaken: 6 }), false, youth)).toBeNull();
   });
 });

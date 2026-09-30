@@ -77,6 +77,7 @@ async function cleanup() {
   await prisma.event.deleteMany({ where: { id: eventId } });
   await prisma.clubRosterMember.deleteMany({ where: { organizationId: clubId } });
   await prisma.organization.deleteMany({ where: { id: clubId } });
+  await prisma.backgroundCheckRejectedPairing.deleteMany({ where: { identityKey: { startsWith: `${P}-` } } });
   await prisma.person.deleteMany({ where: { id: { startsWith: `${P}_` } } });
   await prisma.person.deleteMany({ where: { normalizedEmail: { startsWith: `${P}-` } } });
   await prisma.person.deleteMany({ where: { firstName: { startsWith: "Grp" } } });
@@ -190,7 +191,8 @@ async function main() {
   for (const offering of experience.honorsCatalog.offerings) {
     const keys = Object.keys(offering);
     assert(!keys.includes("capacity") && !keys.includes("seatsTaken") && !keys.includes("clubSeatsTaken"), "a public class carries no capacity or seats taken");
-    assert(typeof (offering as { seatsLeft?: unknown }).seatsLeft === "number", "a public class carries only the seats left");
+    assert(["AVAILABLE", "FEW_LEFT", "FULL"].includes((offering as { availability?: string }).availability ?? ""), "a public class carries only an availability status");
+    assert(!("seatsLeft" in offering), "a public class carries no seat count");
   }
   console.log("ok  public page: no club or church question, locations without seat counts, billing notice");
 
@@ -485,6 +487,23 @@ async function main() {
   const sharedAudit = await prisma.auditLog.findFirstOrThrow({ where: { eventId, action: "REGISTRATION_AMENDED", entityType: "RegistrationOperation" }, orderBy: { createdAt: "desc" } });
   const sharedCounts = sharedAudit.metadata as { personRenamedCount?: number; personReplacedCount?: number };
   assert(sharedCounts.personRenamedCount === 0 && sharedCounts.personReplacedCount === 1 && !JSON.stringify(sharedAudit.metadata).includes("Sharing"), "the replacement is counted in the audit record, without names");
+
+  // A Person that a no-foreign-key table still points at is never renamed in place: a rejected background-check
+  // pairing for them keeps pointing at the old Person, and the attendee moves to a new one.
+  const pairView = await group.getGroupRegistrationWorkspace(token, october);
+  assert(pairView, "workspace reloads for the pairing check");
+  const pairIndex = pairView.registration.attendees.findIndex((person) => person.attendeeId === target.attendeeId);
+  const pairPersonBefore = (await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: target.attendeeId }, select: { personId: true } })).personId;
+  await prisma.backgroundCheckRejectedPairing.create({ data: { identityKey: `${P}-pairing-key`, personId: pairPersonBefore, rejectedByUserId: staffUserId } });
+  await group.amendGroupRegistration(token, edit(pairView.registration.attendees.map((person, index) => ({
+    attendeeId: person.attendeeId, responses: index === pairIndex ? { ...person.responses, first_name: "Paired", last_name: "Away" } : person.responses,
+  })), pairView.registration.updatedAt), october);
+  const pairAfter = await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: target.attendeeId }, select: { personId: true, person: { select: { firstName: true, lastName: true } } } });
+  assert(pairAfter.personId !== pairPersonBefore && pairAfter.person.firstName === "Paired", "a person with a rejected pairing is moved to a new Person");
+  const pairOld = await prisma.person.findUniqueOrThrow({ where: { id: pairPersonBefore }, select: { firstName: true, lastName: true } });
+  assert(pairOld.firstName === "Corrected" && pairOld.lastName === "Spelling", "the old Person keeps its name");
+  assert((await prisma.backgroundCheckRejectedPairing.count({ where: { identityKey: `${P}-pairing-key`, personId: pairPersonBefore } })) === 1, "the pairing still points at the old Person");
+  await prisma.backgroundCheckRejectedPairing.deleteMany({ where: { identityKey: `${P}-pairing-key` } });
 
   // Classes follow the location's own close, not just the event's: a site that has closed takes no class changes.
   const classClosed = new Date("2026-11-20T15:00:00Z");
