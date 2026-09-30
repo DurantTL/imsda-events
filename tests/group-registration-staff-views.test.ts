@@ -17,6 +17,14 @@ import { getHonorRosterData } from "@/modules/honors/roster-repository";
 import { buildPaymentStatusBlock } from "@/modules/communications/message-blocks";
 import { withGroupBilledWording } from "@/modules/communications/templates";
 import { summarizePublicPayment } from "@/modules/public-access/domain";
+import {
+  adjustmentWording,
+  financeDetailFacts,
+  matchesFinanceFilter,
+  summarizeFinanceTotals,
+  type FinanceViewRegistration,
+} from "@/modules/registrations/finance-view";
+import { listRegistrationsForVerifiedEmail } from "@/modules/attendee-accounts/registrations-repository";
 
 // Synthetic data only.
 const at = new Date("2026-10-01T09:00:00Z");
@@ -217,5 +225,74 @@ describe("what a group is told about billing (#650)", () => {
     expect(summary.detail).not.toMatch(/organization/i);
     // A church-billed club keeps its own wording.
     expect(summarizePublicPayment({ status: "SUBMITTED", totalCents: 7500, payments: [], isDeferredOrganizationBilling: true }).state).toBe("ORGANIZATION_BILLED");
+  });
+});
+
+describe("staff finance list words a group truthfully (#650)", () => {
+  const base: FinanceViewRegistration = {
+    status: "SUBMITTED", totalAmountCents: 7500, paidCents: 0, balanceCents: 7500, isDeferredOrganizationBilling: true, payments: [],
+  };
+  const church = { ...base };
+  const group = { ...base, isGroup: true };
+
+  it("lists a group under its own filter, never under the churches'", () => {
+    const rows = [church, group];
+    expect(rows.filter((row) => matchesFinanceFilter(row, "CHURCH_BILLED"))).toEqual([church]);
+    expect(rows.filter((row) => matchesFinanceFilter(row, "GROUP_BILLED"))).toEqual([group]);
+    // Neither is ever an attendee balance.
+    expect(rows.filter((row) => matchesFinanceFilter(row, "BALANCE"))).toEqual([]);
+  });
+
+  it("keeps a group's estimate out of the outstanding balance, as a church's is", () => {
+    expect(summarizeFinanceTotals([church, group]).outstanding).toBe(0);
+  });
+
+  it("says the estimate is billed to the group contact, not to a church", () => {
+    expect(financeDetailFacts({ isDeferredOrganizationBilling: true, isGroup: true, paidCents: 0, payments: [] })[0]!.label)
+      .toBe("Estimated amount (billed to the group contact)");
+    expect(financeDetailFacts({ isDeferredOrganizationBilling: true, paidCents: 0, payments: [] })[0]!.label).toBe("Estimated church amount");
+    expect(adjustmentWording(true, true).title).toBe("Adjust estimated amount");
+    expect(JSON.stringify(adjustmentWording(true, true))).not.toMatch(/church/i);
+    expect(adjustmentWording(true).title).toBe("Adjust estimated church amount");
+  });
+});
+
+describe("a group contact's account page (#650)", () => {
+  function fixture(groupRegistration: { id: string } | null) {
+    dependencies.getPrisma.mockReturnValue({
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "registration-1" }]),
+      registration: {
+        findMany: vi.fn().mockResolvedValue([{
+          id: "registration-1", confirmationCode: "REG-GROUP", status: "SUBMITTED",
+          submittedAt: new Date("2026-08-01T12:00:00.000Z"), updatedAt: new Date("2026-08-01T13:00:00.000Z"),
+          totalAmount: { toString: () => "75" }, contactSnapshot: { email: "jamie@example.test" }, groupRegistration,
+          accountHolderPerson: { firstName: "Jamie", lastName: "Contact", normalizedEmail: "jamie@example.test", phone: null },
+          event: {
+            name: "Honors Weekend", slug: "honors-weekend", startsAt: new Date("2026-12-05T15:00:00.000Z"), endsAt: new Date("2026-12-06T22:00:00.000Z"),
+            timezone: "America/Chicago", location: null, attendeeEditPolicy: "TIERED", billingMode: "DEFERRED_ORGANIZATION_INVOICE",
+            seminarPreferenceClosesOn: null, seminarPreferenceSelfServiceLocked: false, programAssignmentRuns: [],
+          },
+          attendees: [], publicFormSubmission: null, payments: [], waitlistEntry: null, operations: [],
+        }]),
+      },
+    });
+  }
+
+  it("shows the estimated total and the billed-later notice, with no church wording and no payable balance", async () => {
+    fixture({ id: "group-1" });
+    const [registration] = await listRegistrationsForVerifiedEmail("jamie@example.test");
+    expect(registration?.groupBilling).toEqual({
+      billed: true, estimateCents: 7500, notice: "You'll be billed after the event.", label: "You'll be billed after the event.",
+    });
+    expect(registration?.churchBilling).toBeNull();
+    expect(registration?.balanceCents).toBe(0);
+    expect(JSON.stringify(registration?.groupBilling)).not.toMatch(/church/i);
+  });
+
+  it("leaves a club's registration with its church wording and no group billing", async () => {
+    fixture(null);
+    const [registration] = await listRegistrationsForVerifiedEmail("jamie@example.test");
+    expect(registration?.groupBilling).toBeNull();
+    expect(registration?.churchBilling?.billed).toBe(true);
   });
 });

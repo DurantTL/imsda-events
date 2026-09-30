@@ -12,7 +12,8 @@ export type ClubPickableLocation = {
   registrationClosesOn: string | null;
   /** Set only when the location closes on a date other than the event's. */
   ownClosingDate?: string | null;
-  remaining: number | null;
+  /** Seats left. Left out for the public "Group" page (#650), which never shows seat counts. */
+  remaining?: number | null;
   full: boolean;
   /** The event's waitlist is on (#599): a full location can still be picked, and the club joins its waitlist. */
   waitlistOnFull?: boolean;
@@ -55,12 +56,15 @@ export function ClubLocationPicker({
   allowWaitlist = false,
   currentId = null,
   locations,
+  noun = "club",
   onChange,
   value,
 }: {
   allowWaitlist?: boolean;
   currentId?: string | null;
   locations: ClubPickableLocation[];
+  /** Who registers at the location, in the words the page uses (a "Group", #650). */
+  noun?: "club" | "group";
   onChange: (locationId: string) => void;
   value: string | null;
 }) {
@@ -68,7 +72,7 @@ export function ClubLocationPicker({
   return (
     <fieldset className="club-location-picker">
       <legend><MapPin aria-hidden="true" size={15} /> Choose a location</legend>
-      <p className="field-help">Your club registers at one location. Its own dates and space limit apply.</p>
+      <p className="field-help">Your {noun} registers at one location. Its own dates and space limit apply.</p>
       <ul className="club-going-list">
         {locations.map((location) => {
           const unavailable = locationUnavailableLabel(location, currentId, location.id, allowWaitlist);
@@ -92,7 +96,7 @@ export function ClubLocationPicker({
                       ? <> · <strong>{unavailable}</strong></>
                       : joinsWaitlist
                         ? <> · <strong>Full. You can join the waitlist for this location.</strong></>
-                      : location.remaining !== null && location.remaining <= 10
+                      : location.remaining != null && location.remaining <= 10
                         ? ` · ${location.remaining} ${location.remaining === 1 ? "spot" : "spots"} left`
                         : ""}
                     {!unavailable && location.ownClosingDate ? ` · Register by ${formatCalendarDate(location.ownClosingDate)}` : ""}

@@ -27,13 +27,16 @@ export function attendeeTypeLabel(attendee: Pick<ViewAttendee, "attendeeType">) 
   return "Youth";
 }
 
-export function seatsNote(offering: ViewOffering, heldHere: boolean, attendee: ViewAttendee) {
+/** Who the per-club limit counts: a club, or a "Group" registration that is its own club for the limit (#650). */
+export type SeatOwnerNoun = "club" | "group";
+
+export function seatsNote(offering: ViewOffering, heldHere: boolean, attendee: ViewAttendee, noun: SeatOwnerNoun = "club") {
   if (!attendee.consumesSeat) return "no seat needed";
   if (heldHere) return "seat held";
   const left = offering.capacity - offering.seatsTaken;
   const clubLeft = offering.perClubLimit === null ? null : offering.perClubLimit - offering.clubSeatsTaken;
   const parts = [`${Math.max(left, 0)} of ${offering.capacity} seats left`];
-  if (clubLeft !== null) parts.push(`${Math.max(clubLeft, 0)} left for your club`);
+  if (clubLeft !== null) parts.push(`${Math.max(clubLeft, 0)} left for your ${noun}`);
   return parts.join(", ");
 }
 

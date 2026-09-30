@@ -45,6 +45,8 @@ function getRegistrationQuery(
     include: {
       accountHolderPerson: true,
       location: { select: { id: true, name: true } },
+      // A "Group" registration (#650) is billed to its contact, not to a church.
+      groupRegistration: { select: { id: true } },
       waitlistEntry: { select: { status: true } },
       attendees: {
         orderBy: [{ position: "asc" }, { createdAt: "asc" }],
@@ -258,6 +260,8 @@ function serializeRegistration(registration: RegistrationWithRelations, director
     // an attendee balance to collect online (#409). Staff finance screens
     // must say so wherever the amount is shown.
     isDeferredOrganizationBilling: registration.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
+    /** Billed to its contact (the account holder below), not to a church or club (#650). */
+    isGroup: Boolean(registration.groupRegistration),
     submittedAt: registration.submittedAt?.toISOString() ?? null,
     createdAt: registration.createdAt.toISOString(),
     updatedAt: registration.updatedAt.toISOString(),

@@ -35,7 +35,8 @@ async function putHandler(request: Request, context: Context) {
     }
     const { selections } = selectionsSchema.parse(await request.json());
     const classes = await setGroupClassesByToken(token, selections);
-    return applyRateLimitHeaders(Response.json({ classes }, { headers: privateHeaders }), rateLimit);
+    // Same shape as a club's class save, so the one class picker reads both.
+    return applyRateLimitHeaders(Response.json({ workspace: classes }, { headers: privateHeaders }), rateLimit);
   } catch (error) {
     const response = groupRegistrationApiError(error, "Saving class choices");
     Object.entries(privateHeaders).forEach(([name, value]) => response.headers.set(name, value));

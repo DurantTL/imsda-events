@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { RegistrationFormDefinition, RegistrationFormField } from "@/modules/forms/definition";
-import { attendeeAgeKey, clubFormProblem, guestIsAdult } from "@/modules/club-registrations/domain";
+import { attendeeAgeKey, attendeeNameKeys, clubFormProblem, guestIsAdult } from "@/modules/club-registrations/domain";
+import { consumesClassSeat } from "@/modules/honors/enrollment-domain";
+import type { PickingAttendee } from "@/modules/honors/registration-picks";
 
 /**
  * "Group" registration on a club event (#650): people who are not in a club
@@ -105,6 +107,33 @@ export type GroupSeatType = "YOUTH" | "ADULT";
  */
 export function groupSeatType(age: number): GroupSeatType {
   return guestIsAdult({ age }) ? "ADULT" : "YOUTH";
+}
+
+/**
+ * A person on the group's form, as the class picker sees them: their name and age from the answers they
+ * typed, and the seat rule the server will apply to that age. Without an age there is no type yet, so
+ * nothing about classes can be decided; the picker asks for the age first.
+ */
+export function groupPickingAttendee(
+  definition: RegistrationFormDefinition,
+  person: { clientId: string; responses: Record<string, unknown> },
+): PickingAttendee {
+  const names = attendeeNameKeys(definition);
+  const text = (key: string) => (typeof person.responses[key] === "string" ? String(person.responses[key]).trim() : "");
+  let firstName = "";
+  let lastName = "";
+  if (names?.kind === "split") {
+    firstName = text(names.first);
+    lastName = text(names.last);
+  } else if (names) {
+    const [first = "", ...rest] = text(names.key).split(/\s+/);
+    firstName = first;
+    lastName = rest.join(" ");
+  }
+  const ageKey = attendeeAgeKey(definition);
+  const age = ageKey ? parseGroupAge(person.responses[ageKey]) : null;
+  const attendeeType = age === null ? null : groupSeatType(age);
+  return { clientId: person.clientId, firstName, lastName, ageOnEventDate: age, attendeeType, consumesSeat: consumesClassSeat(attendeeType) };
 }
 
 /** Reads the age answer as a whole number of years from 0 to 120, or null. */

@@ -37,7 +37,7 @@ function registrationSummary(registration: Awaited<ReturnType<typeof listRegistr
   if (registration.status === "WAITLISTED") return { label: "Waitlisted", tone: "purple" };
   if (registration.status === "DRAFT") return { label: "Draft", tone: "purple" };
   // A church-billed registration (#409) is never an attendee balance due.
-  if (registration.isDeferredOrganizationBilling) return { label: "Billed to church", tone: "purple" };
+  if (registration.isDeferredOrganizationBilling) return { label: registration.isGroup ? "Billed to group contact" : "Billed to church", tone: "purple" };
   if (registration.balanceCents > 0) return { label: `${money(registration.balanceCents)} due`, tone: "gold" };
   if (registration.totalAmountCents === 0) return { label: "No charge", tone: "purple" };
   return { label: "Paid", tone: "green" };

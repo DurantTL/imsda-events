@@ -146,9 +146,12 @@ function publicLocation(location: ReturnType<typeof clubLocationView>) {
     firstDay: location.firstDay,
     lastDay: location.lastDay,
     registrationClosesOn: location.registrationClosesOn,
+    ownClosingDate: location.ownClosingDate,
     full: location.full,
     waitlistOnFull: location.waitlistOnFull,
+    phase: location.phase,
     open: location.open,
+    isActive: location.isActive,
   };
 }
 
@@ -341,6 +344,9 @@ export async function getGroupRegistrationWorkspace(token: string, now = new Dat
     throw error;
   });
   const definition = form ? groupFormDefinition(form.definition) : null;
+  const experience = form && definition && groupFormProblem(definition) === null
+    ? await getPublicRegistrationExperience(event.slug, form.slug)
+    : null;
   return {
     event: {
       id: event.id,
@@ -374,14 +380,13 @@ export async function getGroupRegistrationWorkspace(token: string, now = new Dat
       notice: GROUP_BILLING_NOTICE,
       estimate,
       lineItems: lineItemsFromPricingSnapshot(snapshot),
-      billingPersonId: loaded.billingPersonId,
     },
     locations: locations.map((location) => publicLocation(clubLocationView(event, location, seats.get(location.id) ?? 0, now))),
-    definition,
+    // The event form as a group sees it: what the people's edit form is built from (#650).
+    experience: experience && definition ? { ...experience, form: { ...experience.form, definition } } : null,
     lockedAttendeeFieldKeys: definition ? lockedNameKeys(definition) : [],
     attendeeAgeKey: definition ? attendeeAgeKey(definition) : null,
     classes,
-    honorsCatalog: await getRegistrationHonorsCatalog(null, event.id),
   };
 }
 
