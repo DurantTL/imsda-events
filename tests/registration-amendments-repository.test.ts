@@ -451,6 +451,29 @@ describe("registration amendments repository", () => {
       .not.toContain("Avery");
   });
 
+  it("hands the update notice the amendment's new pricing before its operation exists (#621)", async () => {
+    const { registration } = repositoryFixture();
+    let operationsWhenQueued = -1;
+    dependencies.enqueueRegistrationUpdatedMessage.mockImplementation(async () => {
+      operationsWhenQueued = registration.operations.length;
+      return { messageIds: ["message-1"], pendingMessageIds: ["message-1"], deliveryMode: "LOCAL_CAPTURE", skippedReason: null };
+    });
+
+    await commitAmendment(
+      "5b0f6a3e-8a4c-4a55-9d0e-4f8a3d9a7c11",
+      initialUpdatedAt.toISOString(),
+      { ...attendeeResponses, notes: "Near the front" },
+      new Date("2026-08-04T13:00:00.000Z"),
+    );
+
+    // The notice is queued before the AMENDMENT operation that stores the new snapshot is created,
+    // so the new snapshot travels with the request instead of being read back from the database.
+    expect(operationsWhenQueued).toBe(0);
+    const queuedInput = dependencies.enqueueRegistrationUpdatedMessage.mock.calls[0][1];
+    expect(queuedInput.pricingSnapshot).toMatchObject({ attendeeCount: 1, lineItems: [], totalCents: 0 });
+    expect(queuedInput.pricingSnapshot.amendedAt).toEqual(expect.any(String));
+  });
+
   it("lets staff amend a registration after the event's last day (#575)", async () => {
     repositoryFixture();
     const amended = await commitAmendment(

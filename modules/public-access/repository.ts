@@ -37,7 +37,8 @@ import {
   publicEventWebsiteLinks,
 } from "@/modules/events/public-domain";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
-import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { getAttendeeRosterConfig, registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { currentPricingSnapshot, isChurchBilledBillingMode, perPersonPriceFromSnapshot } from "@/modules/club-registrations/per-person-price";
 
 export { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
 
@@ -117,6 +118,8 @@ const registrationAccessInclude = {
           },
         },
       },
+      // The latest amendment's pricing wins over the original submission's (#621).
+      operations: { where: { type: "AMENDMENT" as const }, orderBy: { createdAt: "desc" as const }, take: 1, select: { afterSnapshot: true } },
       payments: {
         where: { status: "SUCCEEDED" as const },
         orderBy: { createdAt: "asc" as const },
@@ -315,7 +318,7 @@ function serializeRegistrationAccess(
     registration.status,
     waitlistPosition,
   );
-  const payment = summarizePublicPayment({
+  const paymentSummary = summarizePublicPayment({
     status: registration.status,
     totalCents: moneyToCents(registration.totalAmount),
     payments: registration.payments.map((entry) => ({
@@ -327,6 +330,23 @@ function serializeRegistrationAccess(
     })),
     isDeferredOrganizationBilling: event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
   });
+  // A church-billed event never shows the registrant a total, amount paid, amount
+  // due or balance (#621): the totals are removed here, server-side, and the
+  // per-person price is returned instead.
+  const churchBilled = isChurchBilledBillingMode(event.billingMode);
+  const payment = churchBilled
+    ? {
+        currency: paymentSummary.currency,
+        state: paymentSummary.state,
+        label: paymentSummary.label,
+        detail: paymentSummary.detail,
+        paymentEligible: false,
+        totalCents: null,
+        paidCents: null,
+        refundedCents: null,
+        amountDueCents: null,
+      }
+    : paymentSummary;
   const accountHolder = registration.accountHolderPerson;
   const contact = publicContactFromSnapshot(
     registration.contactSnapshot,
@@ -420,7 +440,14 @@ function serializeRegistrationAccess(
     "subtotalCents",
     moneyToCents(registration.totalAmount),
   );
-  const order = submission ? {
+  const perPerson = churchBilled
+    ? perPersonPriceFromSnapshot(
+        currentPricingSnapshot(registration),
+        parsedDefinition?.success ? getAttendeeRosterConfig(parsedDefinition.data).enabled : undefined,
+        registration.attendees.map((attendee) => publicAttendeeName(attendee.profileSnapshot, attendee.person)),
+      )
+    : null;
+  const order = submission && !churchBilled ? {
     lineItems: pricingLineItems,
     preDiscountSubtotalCents: snapshotCents(
       "preDiscountSubtotalCents",
@@ -501,6 +528,7 @@ function serializeRegistrationAccess(
     },
     payment,
     order,
+    perPerson,
     form: submission ? {
       name: submission.formVersion.form.name,
       slug: submission.formVersion.form.slug,

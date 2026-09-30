@@ -1115,6 +1115,19 @@ export function withChurchBilledLinkWording(body: string, isChurchBilled: boolea
     : body;
 }
 
+/**
+ * On a church-billed event a registrant is shown the per-person price only, never
+ * a total or balance (#621). The default lines that label a total or a balance
+ * become a "Price" line (filled with the per-person notice) or are dropped; only
+ * those exact default lines change, so staff-written wording is left as written.
+ */
+export function withChurchBilledPriceWording(body: string, isChurchBilled: boolean) {
+  if (!isChurchBilled) return body;
+  return body
+    .replace(/^- \*\*(?:Registration total|Total):\*\* \{\{total_amount\}\}$/gm, "- **Price:** {{total_amount}}")
+    .replace(/^- \*\*(?:Balance due|Remaining balance):\*\* \{\{balance_amount\}\}\n/gm, "");
+}
+
 export function renderMessageTemplate(
   template: Pick<MessageTemplateDefinition, "subject" | "body">,
   context: MessageTemplateContext,

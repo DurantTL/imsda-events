@@ -369,7 +369,9 @@ describe("Square payment repository", () => {
     });
 
     expect(checkout).toMatchObject({ state: "NOT_ELIGIBLE" });
-    expect(checkout?.square).toBeNull();
+    // A church-billed registration returns no checkout and no amounts at all (#621).
+    expect(checkout?.square).toBeUndefined();
+    expect(Object.keys(checkout ?? {}).sort()).toEqual(["currency", "message", "state"]);
   });
 
   it("refuses card payment once the form has been withdrawn (no published version), even for a card registration (#564)", async () => {

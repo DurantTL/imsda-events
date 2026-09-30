@@ -196,6 +196,16 @@ function checkoutFromRegistration(
   registration: CheckoutRegistration,
   configuration: SquareRuntimeConfiguration,
 ): SquareCheckoutView {
+  if (registration.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE") {
+    // A deferred-organization event must never take an online card payment, even if a form were
+    // misconfigured with payment enabled: it bills the responsible organization directly. Nothing
+    // about what is owed is returned, so the endpoint cannot leak a total (#621).
+    return {
+      state: "NOT_ELIGIBLE",
+      message: "This event bills the responsible organization directly. No online payment is available.",
+      currency: "USD",
+    };
+  }
   const submission = registration.publicFormSubmission;
   const promotedWaitlist = registration.waitlistEntry?.status === "PROMOTED";
   const promotedQuote = promotedWaitlist && submission
@@ -280,17 +290,6 @@ function checkoutFromRegistration(
     square: null,
     billingContact: billingContact(registration),
   };
-
-  if (registration.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE") {
-    // Defense in depth: a deferred-organization event must never take an
-    // online card payment, even if a form were misconfigured with payment
-    // enabled. This event bills the responsible organization directly.
-    return {
-      ...base,
-      state: "NOT_ELIGIBLE",
-      message: "This event bills the responsible organization directly. No online payment is available.",
-    };
-  }
 
   if (!paymentSelection.configured) {
     return {

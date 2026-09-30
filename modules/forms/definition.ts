@@ -1639,22 +1639,27 @@ export function processingFeeForSubtotal(
   return Math.max(0, grossTotal - subtotalCents);
 }
 
-export function calculateFormTotal(definition: RegistrationFormDefinition, responses: Record<string, unknown>, pricingDate = localCalendarDate()): FormCalculation {
+/** The priced lines of a form with no roster, without any sum (church-billed events never total in the browser, #621). */
+export function calculateFormLineItems(definition: RegistrationFormDefinition, responses: Record<string, unknown>, pricingDate = localCalendarDate()): FormCalculation["lineItems"] {
   // No repeatable roster: the registrant is the one person on it.
   const registrationContext = { attendeeCount: 1 };
-  const lineItems = definition.sections
+  return definition.sections
     .flatMap((section) => section.fields)
     .map((field) => pricedLineItem(field, responses, pricingDate, undefined, registrationContext))
     .filter((item): item is NonNullable<typeof item> => item !== null);
-  return finalizeCalculation(definition, responses, lineItems);
 }
 
-export function calculateRosterTotal(
+export function calculateFormTotal(definition: RegistrationFormDefinition, responses: Record<string, unknown>, pricingDate = localCalendarDate()): FormCalculation {
+  return finalizeCalculation(definition, responses, calculateFormLineItems(definition, responses, pricingDate));
+}
+
+/** The priced lines of a roster form, without any sum (church-billed events never total in the browser, #621). */
+export function calculateRosterLineItems(
   definition: RegistrationFormDefinition,
   registrationResponses: Record<string, unknown>,
   attendeeResponses: Array<Record<string, unknown>>,
   pricingDate = localCalendarDate(),
-): FormCalculation {
+): FormCalculation["lineItems"] {
   const fields = definition.sections.flatMap((section) => section.fields);
   const registrationContext = { attendeeCount: attendeeResponses.length };
   const lineItems: FormCalculation["lineItems"] = fields
@@ -1671,7 +1676,20 @@ export function calculateRosterTotal(
       if (item) lineItems.push(item);
     }
   });
-  return finalizeCalculation(definition, registrationResponses, lineItems);
+  return lineItems;
+}
+
+export function calculateRosterTotal(
+  definition: RegistrationFormDefinition,
+  registrationResponses: Record<string, unknown>,
+  attendeeResponses: Array<Record<string, unknown>>,
+  pricingDate = localCalendarDate(),
+): FormCalculation {
+  return finalizeCalculation(
+    definition,
+    registrationResponses,
+    calculateRosterLineItems(definition, registrationResponses, attendeeResponses, pricingDate),
+  );
 }
 
 export function summarizeChoiceUsage(definition: RegistrationFormDefinition, responseSets: Array<Record<string, unknown>>): ChoiceUsage {

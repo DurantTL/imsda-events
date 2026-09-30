@@ -55,7 +55,9 @@ import {
   type MessageTemplateContext,
   type MessageTemplateKey,
   withChurchBilledLinkWording,
+  withChurchBilledPriceWording,
 } from "@/modules/communications/templates";
+import { perPersonPrice, perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
 import {
   computeBalanceReminderPreview,
   type BalanceReminderCandidate,
@@ -95,7 +97,7 @@ import {
   buildRegistrationCheckinTokens,
   EVENT_LODGING_SELECT,
 } from "@/modules/communications/message-blocks";
-import { resolveBillingContactName, resolveResponsibleOrganization } from "@/modules/forms/definition";
+import { getAttendeeRosterConfig, resolveBillingContactName, resolveResponsibleOrganization } from "@/modules/forms/definition";
 import type { FormCalculation, RegistrationFormDefinition } from "@/modules/forms/definition";
 
 const fallbackSettings = {
@@ -3223,6 +3225,13 @@ export async function enqueuePublicRegistrationMessages(
   const billingContactName = isDeferredOrganizationBilling
     ? resolveBillingContactName(input.responses)
     : null;
+  // A church-billed registrant sees the per-person price only, never a total or
+  // balance (#621). The internal team notice keeps the amounts.
+  const churchBilledNotice = perPersonPriceInline(perPersonPrice({
+    lineItems: input.calculation.lineItems,
+    roster: getAttendeeRosterConfig(input.definition).enabled,
+    attendeeCount: registrationAttendees.length,
+  }));
   const commonContext: MessageTemplateContext = {
     registrant_name: registrantName,
     event_name: input.event.name,
@@ -3266,6 +3275,7 @@ export async function enqueuePublicRegistrationMessages(
       portalUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
       organization: responsibleOrganization,
       billingContact: billingContactName,
+      perPersonNotice: isDeferredOrganizationBilling ? churchBilledNotice : null,
     }),
     ...buildRegistrationCheckinTokens({
       confirmationCode: input.registration.confirmationCode,
@@ -3297,9 +3307,22 @@ export async function enqueuePublicRegistrationMessages(
   const pendingMessageIds: string[] = [];
   for (const recipient of recipients) {
     const source = publishedTemplateSource(templates, recipient.templateKey);
+    const hidesTotals = isDeferredOrganizationBilling && recipient.kind === "REGISTRANT";
     const rendered = renderMessageTemplate(
-      { subject: source.subject, body: withChurchBilledLinkWording(source.body, isDeferredOrganizationBilling) },
-      { ...commonContext, recipient_name: recipient.name },
+      {
+        subject: source.subject,
+        body: withChurchBilledPriceWording(
+          withChurchBilledLinkWording(source.body, isDeferredOrganizationBilling),
+          hidesTotals,
+        ),
+      },
+      {
+        ...commonContext,
+        recipient_name: recipient.name,
+        ...(hidesTotals
+          ? { total_amount: churchBilledNotice, balance_amount: "Nothing is due online." }
+          : {}),
+      },
     );
     if (!rendered.isComplete) {
       throw new MessagingError(

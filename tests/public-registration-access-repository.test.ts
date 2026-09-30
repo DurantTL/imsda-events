@@ -584,6 +584,72 @@ describe("private registration access repository", () => {
     expect(view?.event.supportUrl).toBe("https://imsda.org/contact/");
   });
 
+  it("shows a church-billed registrant the per-person price and no total, paid, due or balance (#621)", async () => {
+    const token = createOpaqueToken();
+    const record = accessRecord();
+    (record.registration.event as unknown as { billingMode: string }).billingMode = "DEFERRED_ORGANIZATION_INVOICE";
+    record.registration.publicFormSubmission.pricingSnapshot = {
+      lineItems: [
+        { label: "Fee — A", amountCents: 2500, attendeeIndex: 0, attendeeLabel: "A" },
+        { label: "Fee — B", amountCents: 2500, attendeeIndex: 1, attendeeLabel: "B" },
+      ],
+      subtotalCents: 5000,
+      totalCents: 5000,
+    } as never;
+    const client = { registrationAccessToken: { findUnique: vi.fn().mockResolvedValue(record) } };
+
+    const view = await resolveRegistrationAccessToken(token, {
+      client: client as never,
+      now: new Date("2026-08-01T12:00:00.000Z"),
+    });
+
+    // This fixture's form has no attendee roster, so nothing is called "per person" (S3).
+    expect(view?.perPerson?.notice).toBe("Your church is billed after the event.");
+    expect(view?.perPerson?.registrationLines.map((entry) => entry.amountCents)).toEqual([2500, 2500]);
+    expect(view?.order).toBeNull();
+    expect(view?.payment).toMatchObject({
+      state: "ORGANIZATION_BILLED",
+      totalCents: null,
+      paidCents: null,
+      refundedCents: null,
+      amountDueCents: null,
+    });
+    expect(JSON.stringify(view)).not.toMatch(/5000|25000|250\.00/);
+  });
+
+  it("prices the private page from the latest amendment, not the original submission (#621)", async () => {
+    const token = createOpaqueToken();
+    const record = accessRecord();
+    (record.registration.event as unknown as { billingMode: string }).billingMode = "DEFERRED_ORGANIZATION_INVOICE";
+    const lines = (amountCents: number) => [
+      { label: "Fee — A", amountCents, attendeeIndex: 0, attendeeLabel: "A" },
+      { label: "Fee — B", amountCents, attendeeIndex: 1, attendeeLabel: "B" },
+    ];
+    record.registration.publicFormSubmission.pricingSnapshot = { lineItems: lines(2500), attendeeCount: 2 } as never;
+    (record.registration as unknown as { operations: unknown[] }).operations = [
+      { afterSnapshot: { pricingSnapshot: { lineItems: lines(3000), attendeeCount: 2 } } },
+    ];
+    const client = { registrationAccessToken: { findUnique: vi.fn().mockResolvedValue(record) } };
+    const view = await resolveRegistrationAccessToken(token, {
+      client: client as never,
+      now: new Date("2026-08-01T12:00:00.000Z"),
+    });
+    expect(view?.perPerson?.registrationLines.map((entry) => entry.amountCents)).toEqual([3000, 3000]);
+  });
+
+  it("keeps the total, paid and due amounts on a self-pay registration (#621)", async () => {
+    const token = createOpaqueToken();
+    const record = accessRecord();
+    (record.registration.event as unknown as { billingMode: string }).billingMode = "ATTENDEE_PAY";
+    const client = { registrationAccessToken: { findUnique: vi.fn().mockResolvedValue(record) } };
+    const view = await resolveRegistrationAccessToken(token, {
+      client: client as never,
+      now: new Date("2026-08-01T12:00:00.000Z"),
+    });
+    expect(view?.perPerson).toBeNull();
+    expect(view?.payment.totalCents).toBe(25000);
+  });
+
   it("rejects malformed, expired, and revoked links with the same null result", async () => {
     const token = createOpaqueToken();
     const findUnique = vi.fn();

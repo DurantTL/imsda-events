@@ -111,6 +111,11 @@ export type PaymentStatusBlockInput = {
   organization?: string | null;
   /** The billing contact for a deferred-organization registration, separate from the submitter. */
   billingContact?: string | null;
+  /**
+   * The per-person price sentence for a deferred-organization registration (#621), e.g.
+   * "$25 per person. Your church is billed after the event." No total is ever printed there.
+   */
+  perPersonNotice?: string | null;
 };
 
 /**
@@ -184,7 +189,7 @@ export function buildPaymentStatusBlock(input: PaymentStatusBlockInput) {
       "",
       "**No payment is due online.** This event bills the responsible organization directly. The organization will receive an invoice after the event based on final attendance.",
       "",
-      `Published rate reference: **${total}**. This is an estimate, not an amount due from you.`,
+      `**${clean(input.perPersonNotice) ?? "Your church is billed after the event."}**`,
     ];
     if (organization) lines.push("", `Responsible organization: **${organization}**`);
     if (billingContact) lines.push(`Billing contact: **${billingContact}**`);

@@ -10,7 +10,9 @@ import {
   renderMessageTemplate,
   type MessageTemplateContext,
   withChurchBilledLinkWording,
+  withChurchBilledPriceWording,
 } from "@/modules/communications/templates";
+import { currentPricingSnapshot, perPersonPriceFromSnapshot, perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
 import {
   buildHotelInformationBlock,
   buildPaymentStatusBlock,
@@ -69,6 +71,11 @@ type TransactionalMessageInput = {
   announcementTitle?: string;
   announcementBody?: string;
   changeCategory?: RegistrationUpdateCategory;
+  /**
+   * The pricing snapshot to show a church-billed registrant when it is not stored yet: an amendment
+   * queues its notice before the AMENDMENT operation that holds the new snapshot exists (#621).
+   */
+  pricingSnapshot?: Record<string, unknown>;
   seminarPreferences?: Array<{
     attendeeName: string;
     seminarLabels: string[];
@@ -280,6 +287,9 @@ async function enqueueTransactionalMessage(
         status: true,
         totalAmount: true,
         contactSnapshot: true,
+        publicFormSubmission: { select: { pricingSnapshot: true } },
+        // The latest amendment's pricing wins over the original submission's (#621).
+        operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
         location: { select: { name: true, address: true } },
         accountHolderPerson: {
           select: {
@@ -414,10 +424,21 @@ async function enqueueTransactionalMessage(
     || settings.replyToEmail
     || settings.senderEmail
     || "the IMSDA event office";
-  const churchWordedBody = withChurchBilledLinkWording(
-    source?.bodyTemplate ?? fallback.body,
+  const churchWordedBody = withChurchBilledPriceWording(
+    withChurchBilledLinkWording(
+      source?.bodyTemplate ?? fallback.body,
+      isDeferredOrganizationBilling,
+    ),
     isDeferredOrganizationBilling,
   );
+  // A church-billed registrant sees the per-person price only, never a total or balance (#621).
+  const perPersonNotice = isDeferredOrganizationBilling
+    ? perPersonPriceInline(perPersonPriceFromSnapshot(
+        input.pricingSnapshot ?? currentPricingSnapshot(registration),
+        undefined,
+        registration.attendees.map((attendee) => attendeeName(attendee)),
+      ))
+    : null;
   // A waitlist email for a club at a location says which location, even when
   // the template (a customized one, or one of the defaults) has no location
   // line of its own (#599).
@@ -448,9 +469,9 @@ async function enqueueTransactionalMessage(
     attendee_summary: registration.attendees
       .map((attendee, index) => `${index + 1}. ${attendeeName(attendee)}`)
       .join("\n") || "No attendee names are recorded.",
-    total_amount: formatMessageMoney(totalCents),
+    total_amount: perPersonNotice ?? formatMessageMoney(totalCents),
     restored_status: registration.status,
-    balance_amount: formatMessageMoney(balanceCents),
+    balance_amount: perPersonNotice ? "Nothing is due online." : formatMessageMoney(balanceCents),
     payment_instructions: instructions,
     portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
     reply_to_email:
@@ -476,6 +497,7 @@ async function enqueueTransactionalMessage(
       paymentInstructions: instructions,
       portalUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
       cancellationNote: cancellationPaymentWording({ paidCents, refundedCents }),
+      perPersonNotice,
     }),
     ...buildRegistrationCheckinTokens({
       confirmationCode: registration.confirmationCode,

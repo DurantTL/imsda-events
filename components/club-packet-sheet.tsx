@@ -1,4 +1,6 @@
 import { CheckSquare, QrCode } from "lucide-react";
+import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
+import { CHURCH_BILLED_NOTICE } from "@/modules/club-registrations/per-person-price";
 import type { ClubPacket } from "@/modules/reporting/club-packet";
 
 const moneyFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -160,9 +162,13 @@ export function ClubPacketSheet({ packet, qrSrc }: { packet: ClubPacket; qrSrc: 
             </dl>
 
             <h3>Billing</h3>
-            <p className="club-packet-owed">
-              Estimated amount billed to the church: <strong translate="no">{money(packet.amountOwedCents)}</strong>
-            </p>
+            {packet.amountOwedCents === null
+              ? <PerPersonPriceNotice className="club-packet-owed" price={packet.perPersonPrice ?? { notice: CHURCH_BILLED_NOTICE, roster: true, attendeeLines: [], registrationLines: [], uniformAmountCents: null }} />
+              : (
+                <p className="club-packet-owed">
+                  Estimated amount billed to the church: <strong translate="no">{money(packet.amountOwedCents)}</strong>
+                </p>
+              )}
           </section>
 
           <section className="club-packet-qr">
