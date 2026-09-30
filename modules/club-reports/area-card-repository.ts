@@ -70,7 +70,7 @@ export async function getAreaCoordinatorCard(accountId: string, now = new Date()
         clubRegistrations: { select: { registration: { select: { status: true, _count: { select: { attendees: true } } } } } },
       },
     }),
-    getAreaClubsSummary(clubYear, now),
+    getAreaClubsSummary(clubYear, now, { backgroundChecks: true }),
   ]);
 
   const locationIds = locations.map((location) => location.id);
