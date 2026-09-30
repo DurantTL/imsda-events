@@ -14,9 +14,10 @@ export default async function StartFromTemplatePage() {
   if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
 
-  // Exactly what `applyEventTemplate` accepts: not archived, with a valid
-  // published version. A published template with a newer draft stays listed.
-  const templates = (await listEventTemplates()).filter((template) => template.canApply);
+  // Every template that is not archived (#617). Starters are added as drafts, so filtering to
+  // published ones alone left the list blank; the picker disables the ones `applyEventTemplate`
+  // would refuse (no valid published version) and says how to publish them.
+  const templates = (await listEventTemplates()).filter((template) => template.status !== "ARCHIVED");
 
   return (
     <main className="event-setup-page">

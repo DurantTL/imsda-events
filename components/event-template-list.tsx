@@ -84,12 +84,14 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
       <section className="panel form-stack event-settings-panel">
         <div className="section-heading"><div><h2>Starter templates</h2></div></div>
         <p>
-          Adds a draft template for each real event that has a built-in form. Nothing is published. Templates set no
+          Adds a published template for each real event that has a built-in form, ready to start an event from. Starter
+          drafts added earlier are published too, unless someone has edited them. Templates set no
           capacity. Some forms (Women&apos;s Retreat, Man Camp, Spring Camporee, Camp Meeting) keep last year&apos;s
           prices, late-price dates and choice limits; Leadership Weekend keeps its 2026 lodging prices and late-price
           date; Hispanic Institute keeps its 2026 semester price; TLT Retreat is free; Honors Weekend, Fall Camporee and
           Outdoor School have a fee with no amount (it is flagged until you set it); the blank starters have no prices.
-          Review each draft event before publishing. Templates that already exist (even renamed, edited, or archived) are left alone.
+          Review each draft event before publishing it. Templates that already exist (even renamed, edited, or archived) are left alone.
+          Your own templates still need publishing by hand.
         </p>
         <ul>
           {starterEventTemplates.map((starter) => (
@@ -104,6 +106,7 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
         </button>
         {starterResult ? (
           <div className="inline-notice" role="status">
+            {(starterResult.published ?? []).length > 0 ? <p>Published {starterResult.published.length} earlier draft{starterResult.published.length === 1 ? "" : "s"}: {starterResult.published.map((entry) => entry.name).join(", ")}.</p> : null}
             <p>Added {starterResult.added.length}: {starterResult.added.map((entry) => entry.name).join(", ") || "none"}.</p>
             <p>Skipped {starterResult.skipped.length} that already exist: {starterResult.skipped.map((entry) => `${entry.name}${entry.reason === "ARCHIVED" ? " (archived)" : ""}`).join(", ") || "none"}.</p>
             {starterResult.stillNeeded.length > 0 ? <p>Still needed: {starterResult.stillNeeded.map((entry) => `${entry.name} (${entry.note})`).join(", ")}.</p> : null}

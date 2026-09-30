@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import type { EventTemplateRecord } from "@/modules/event-templates/repository";
@@ -21,7 +22,10 @@ function slugFromName(value: string) {
 
 export function StartFromTemplate({ templates }: StartFromTemplateProps) {
   const router = useRouter();
-  const [templateId, setTemplateId] = useState(templates[0]?.id ?? "");
+  // Archived templates never appear. A template with no published version is listed
+  // but cannot be chosen yet (#617): starters are added as drafts and need publishing.
+  const applicable = templates.filter((template) => template.canApply);
+  const [templateId, setTemplateId] = useState(applicable[0]?.id ?? "");
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
@@ -57,7 +61,11 @@ export function StartFromTemplate({ templates }: StartFromTemplateProps) {
   }
 
   if (templates.length === 0) {
-    return <p>No published templates are available yet. Publish a template first.</p>;
+    return (
+      <p className="inline-notice" role="status">
+        There are no event templates yet. Open <Link href="/admin/event-templates">Event templates</Link> and choose <strong>Add starter templates</strong>, then publish the one you want.
+      </p>
+    );
   }
 
   return (
@@ -66,11 +74,19 @@ export function StartFromTemplate({ templates }: StartFromTemplateProps) {
       <section className="panel form-stack event-settings-panel">
         <label>Template
           <select value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
+            {applicable.length === 0 ? <option value="">No published templates yet</option> : null}
             {templates.map((template) => (
-              <option key={template.id} value={template.id}>{template.name} ({template.audience === "CLUB" ? "Club" : "General"})</option>
+              <option key={template.id} value={template.id} disabled={!template.canApply}>
+                {template.name} ({template.audience === "CLUB" ? "Club" : "General"}){template.canApply ? "" : template.versions.some((version) => version.status === "PUBLISHED") ? " - published version needs repair" : " - not published yet"}
+              </option>
             ))}
           </select>
         </label>
+        {applicable.length === 0 ? (
+          <p className="inline-notice" role="status">
+            None of these templates is published yet. Open <Link href="/admin/event-templates">Event templates</Link>, edit the one you want, and publish it. Starter templates are added there with <strong>Add starter templates</strong>.
+          </p>
+        ) : null}
         {selectedTemplate?.description ? <p>{selectedTemplate.description}</p> : null}
 
         <div className="form-grid two-column">

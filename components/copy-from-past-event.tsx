@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { postJson } from "@/lib/post-json";
 import type { ClonePlan } from "@/modules/event-clones/domain";
 
 export type CloneSourceOption = { id: string; name: string; startsOn: string; endsOn: string; isPublished: boolean };
@@ -125,13 +126,8 @@ export function CopyFromPastEvent({ sources }: CopyFromPastEventProps) {
     setBusy(true);
     setFailure(null);
     try {
-      const response = await fetch("/api/event-clones/preview", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceEventId: sourceId }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.message ?? "The copy plan could not be prepared.");
+      const { ok, body } = await postJson("/api/event-clones/preview", { sourceEventId: sourceId }, "The copy plan could not be prepared.");
+      if (!ok) throw new Error(typeof body.message === "string" ? body.message : "The copy plan could not be prepared.");
       const next = body.plan as ClonePlan;
       setPlan(next);
       setInclude(Object.fromEntries(next.domains.map((domain) => [domain.key, domain.count > 0])));
@@ -170,10 +166,7 @@ export function CopyFromPastEvent({ sources }: CopyFromPastEventProps) {
     setBusy(true);
     setFailure(null);
     try {
-      const response = await fetch("/api/event-clones", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const { ok, body } = await postJson("/api/event-clones", {
           sourceEventId: plan.source.id,
           expectedFingerprint: plan.fingerprint,
           requestKey,
@@ -196,13 +189,11 @@ export function CopyFromPastEvent({ sources }: CopyFromPastEventProps) {
             const perClub = perClubLimits[offering.offeringId]!;
             return { offeringId: offering.offeringId, capacity: Number(capacities[offering.offeringId]), perClubLimit: perClub.none ? null : Number(perClub.value) };
           }),
-        }),
-      });
-      const body = await response.json();
-      if (!response.ok) {
+      }, "The event could not be copied.");
+      if (!ok) {
         setFailure({
-          message: body.message ?? "The event could not be copied.",
-          issues: Array.isArray(body.issues) && body.error === "CLONE_REVIEW_INCOMPLETE" ? body.issues : [],
+          message: typeof body.message === "string" ? body.message : "The event could not be copied.",
+          issues: Array.isArray(body.issues) && body.error === "CLONE_REVIEW_INCOMPLETE" ? (body.issues as string[]) : [],
           stale: body.error === "SOURCE_CHANGED",
         });
         setBusy(false);
@@ -225,6 +216,7 @@ export function CopyFromPastEvent({ sources }: CopyFromPastEventProps) {
         <section className="panel form-stack event-settings-panel" aria-live="polite">
           <h2>{result.alreadyCloned ? "This draft was already created" : "Draft event created"}</h2>
           <p className="clone-hint">{result.event.name} is an unpublished draft copied from {plan.source.name}.</p>
+          <Link className="primary-button clone-confirm" href={`/more/event-settings?event=${result.event.id}`}>Open the new event</Link>
           {summary?.pricingMessage ? <p className="inline-notice clone-warning" role="status">{summary.pricingMessage} Copied forms are drafts and copied promo codes are inactive until you publish or activate them.</p> : null}
           {summary ? (
             <ul className="clone-plain-list">
@@ -239,7 +231,6 @@ export function CopyFromPastEvent({ sources }: CopyFromPastEventProps) {
               {(summary.skipped.honorOfferingsDuplicate ?? 0) > 0 ? <li><strong>Honors classes skipped as duplicates</strong>: {summary.skipped.honorOfferingsDuplicate}</li> : null}
             </ul>
           ) : null}
-          <Link className="primary-button clone-confirm" href={`/more/event-settings?event=${result.event.id}`}>Open the new event&apos;s settings</Link>
         </section>
       </div>
     );

@@ -479,6 +479,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
         const usedNames = new Set<string>();
         const sessionSites = new Map<string, string | null>();
         let sessionsWithoutSite = 0;
+        const sessionRows: Prisma.HonorSessionCreateManyInput[] = [];
         // Renumbered 0..n in the source's display order: the rows are created
         // in one transaction, so they share a createdAt and a copied tie
         // would fall back to alphabetical (#570).
@@ -493,15 +494,19 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           }
           const normalizedName = normalizeHonorText(name);
           usedNames.add(`${locationId ?? ""}|${normalizedName}`);
-          const created = await tx.honorSession.create({
-            data: { eventId: event.id, locationId, name, normalizedName, sortOrder: position },
-          });
-          sessionIds.set(session.id, created.id);
+          // Ids are made here so the sessions go in with one statement and the offerings can point at them.
+          const newSessionId = randomUUID();
+          sessionRows.push({ id: newSessionId, eventId: event.id, locationId, name, normalizedName, sortOrder: position });
+          sessionIds.set(session.id, newSessionId);
           sessionSites.set(session.id, locationId);
         }
+        // One statement, not one round trip per row: an event with a site-by-site honors program has
+        // hundreds of rows, and a per-row loop held the transaction open until it timed out (#617).
+        if (sessionRows.length > 0) await tx.honorSession.createMany({ data: sessionRows });
         const reviewedOfferings = new Map(input.honorOfferingCapacities.map((entry) => [entry.offeringId, entry]));
         // The same slot rules as setup and copy, per site; a true duplicate is skipped and counted, never thrown.
         const slots: Array<{ honorId: string; span: "SINGLE_SESSION" | "ALL_SESSIONS"; sessionId: string | null; locationId: string | null }> = [];
+        const offeringRows: Prisma.HonorOfferingCreateManyInput[] = [];
         let offeringsCopied = 0;
         let offeringsSkipped = 0;
         for (const offering of config.honorOfferings) {
@@ -519,19 +524,18 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           };
           if (offeringSlotConflict(slot, slots)) { offeringsSkipped += 1; continue; }
           slots.push(slot);
-          await tx.honorOffering.create({
-            data: {
-              eventId: event.id, honorId: offering.honorId,
-              sessionId, locationId,
-              span: offering.span, capacity: reviewedOfferings.get(offering.id)!.capacity,
-              perClubLimit: reviewedOfferings.get(offering.id)!.perClubLimit,
-              // Carried over as it is; shown in the preview.
-              minimumAge: offering.minimumAge,
-              teacherName: offering.teacherName, location: offering.location, isActive: offering.isActive,
-            },
+          offeringRows.push({
+            eventId: event.id, honorId: offering.honorId,
+            sessionId, locationId,
+            span: offering.span, capacity: reviewedOfferings.get(offering.id)!.capacity,
+            perClubLimit: reviewedOfferings.get(offering.id)!.perClubLimit,
+            // Carried over as it is; shown in the preview.
+            minimumAge: offering.minimumAge,
+            teacherName: offering.teacherName, location: offering.location, isActive: offering.isActive,
           });
           offeringsCopied += 1;
         }
+        if (offeringRows.length > 0) await tx.honorOffering.createMany({ data: offeringRows });
         if (sessionsWithoutSite > 0) skipped.honorSessionsWithoutSite = sessionsWithoutSite;
         if (offeringsSkipped > 0) skipped.honorOfferingsDuplicate = offeringsSkipped;
         copied.honors = offeringsCopied;

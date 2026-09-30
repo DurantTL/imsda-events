@@ -4,7 +4,7 @@ import {
   getFeeWarnings,
   getLocationDateWarnings,
   getPaymentOnChurchBilledWarnings,
-  unpricedFeeFieldLabels,
+  unpricedFeeFields,
   type EventReadinessWarning,
 } from "@/modules/events/readiness";
 
@@ -38,9 +38,9 @@ export async function collectEventReadinessWarnings(
   const published = new Map(publishedForms.map((form) => [form.id, form.versions[0]?.definition]));
   const parsedForms = latestForms.flatMap((form) => {
     const parsed = registrationFormDefinitionSchema.safeParse(published.get(form.id) ?? form.versions[0]?.definition);
-    return parsed.success ? [parsed.data] : [];
+    return parsed.success ? [{ formId: form.id, definition: parsed.data }] : [];
   });
-  const feeLabels = parsedForms.flatMap((definition) => unpricedFeeFieldLabels(definition));
-  const paymentFormTitles = parsedForms.filter((definition) => definition.payment?.enabled).map((definition) => definition.title);
-  return [...getLocationDateWarnings(locations), ...getFeeWarnings(feeLabels), ...getPaymentOnChurchBilledWarnings(billingMode, paymentFormTitles)];
+  const feeFields = parsedForms.flatMap(({ formId, definition }) => unpricedFeeFields(definition, formId));
+  const paymentFormTitles = parsedForms.filter(({ definition }) => definition.payment?.enabled).map(({ definition }) => definition.title);
+  return [...getLocationDateWarnings(locations), ...getFeeWarnings(feeFields, eventId), ...getPaymentOnChurchBilledWarnings(billingMode, paymentFormTitles)];
 }

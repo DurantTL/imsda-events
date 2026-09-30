@@ -25,7 +25,7 @@ import { POST } from "@/app/api/event-templates/starters/route";
 const origin = "https://events.imsda.test";
 const staff = { id: "usr_synthetic_staff", email: "staff@imsda-events.test", displayName: "Synthetic Staff", globalRole: null };
 const admin = { ...staff, id: "usr_synthetic_admin", globalRole: "SYSTEM_ADMIN" as const };
-const result = { added: [{ starterKey: "man_camp", name: "Man Camp", templateId: "t1" }], skipped: [], stillNeeded: [] };
+const result = { added: [{ starterKey: "man_camp", name: "Man Camp", templateId: "t1" }], published: [], skipped: [], stillNeeded: [] };
 
 function post(requestOrigin = origin) {
   return POST(new Request(`${origin}/api/event-templates/starters`, { method: "POST", headers: { origin: requestOrigin } }));
