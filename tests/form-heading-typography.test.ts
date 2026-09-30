@@ -88,7 +88,11 @@ describe("heading scale and helper text (issue #645)", () => {
     ) as string[];
     const current = new Set<string>();
     for (const { selector, body } of rules()) {
-      const size = body.match(/font-size:\s*([^;]+)/)?.[1].trim();
+      // #684 writes small sizes as max(var(--type-floor | --type-body-floor, 0px), X):
+      // the floor tokens are 0 outside the phone media query, so the desktop size is
+      // still X. Compare on X so this stays a guard that desktop sizes did not move.
+      const size = body.match(/font-size:\s*([^;]+)/)?.[1].trim()
+        .replace(/^max\(var\(--type-(?:body-)?floor, 0px\), ([\d.]+rem)\)/, "$1");
       if (size) current.add(`${selector} | ${size}`);
     }
     expect(snapshot.filter((entry) => !current.has(entry))).toEqual([]);

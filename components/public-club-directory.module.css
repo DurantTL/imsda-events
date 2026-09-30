@@ -132,7 +132,7 @@
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: max(var(--type-body-floor, 0px), 0.82rem);
   margin: 0;
 }
 
