@@ -1,14 +1,13 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
-import { areaGrantActive } from "@/modules/organizations/area-coordinators";
+import { clubsComplianceReminderCounts } from "@/modules/background-checks/repository";
 import {
   clubsNeedingAttention,
   registrationWindow,
   type RegistrationWindow,
 } from "@/modules/club-reports/area-card-domain";
 import { registrationStatusFor } from "@/modules/club-reports/area-summary-domain";
-import { getAreaClubsSummary } from "@/modules/club-reports/area-summary-repository";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 
 export type AreaCardEvent = {
@@ -24,30 +23,42 @@ export type AreaCardEvent = {
 };
 
 export type AreaCoordinatorCard = {
-  /** Locations this person coordinates, at events that haven't ended. */
+  /** Locations this person coordinates, at published club events that haven't ended. */
   coordinatedLocations: AreaCardEvent[];
   /** Every upcoming club event, because coordinators help at each other's events. */
   clubEvents: AreaCardEvent[];
   needingAttention: ReturnType<typeof clubsNeedingAttention> & { clubYear: string };
 };
 
-/**
- * Read-only data for the home card. Returns null unless the account holds an
- * active Area Coordinator grant, so a revoked or expired coordinator sees no
- * card. Clubs and headcounts only, like the coordinator Clubs section.
- */
-export async function getAreaCoordinatorCard(accountId: string, now = new Date()): Promise<AreaCoordinatorCard | null> {
+/** Counts of active clubs needing attention, without building the full per-club summary. */
+async function loadClubsNeedingAttention(clubYear: string, now: Date) {
   const prisma = getPrisma();
-  const grant = await prisma.areaCoordinatorGrant.findUnique({
-    where: { attendeeAccountId: accountId },
-    select: { revokedAt: true, expiresAt: true, attendeeAccount: { select: { disabledAt: true } } },
-  });
-  if (!grant || grant.attendeeAccount.disabledAt || !areaGrantActive(grant, now)) return null;
+  const clubs = await prisma.organization.findMany({ where: { type: "CLUB", isActive: true }, select: { id: true } });
+  const clubIds = clubs.map((club) => club.id);
+  const [reports, checks] = await Promise.all([
+    prisma.clubMonthlyReport.findMany({
+      where: { clubYear, organizationId: { in: clubIds } },
+      select: { organizationId: true, reportMonth: true, status: true, totalPoints: true, onTimePoints: true },
+    }),
+    clubsComplianceReminderCounts(clubIds, clubYear),
+  ]);
+  return { ...clubsNeedingAttention({ clubIds, clubYear, now, reports, checks }), clubYear };
+}
 
+/**
+ * Read-only data for the home card. The caller MUST resolve the viewer with
+ * `currentAreaCoordinator()` (active grant, second sign-in step, and their own
+ * attendee session, never staff) and pass that account: this loader does no
+ * access check of its own. Clubs and headcounts only, like the coordinator
+ * Clubs section; only active clubs are counted.
+ */
+export async function getAreaCoordinatorCard(account: { id: string }, now = new Date()): Promise<AreaCoordinatorCard> {
+  const prisma = getPrisma();
+  const accountId = account.id;
   const clubYear = clubYearFor(now);
-  const [locations, clubEvents, summary] = await Promise.all([
+  const [locations, clubEvents, needingAttention] = await Promise.all([
     prisma.eventLocation.findMany({
-      where: { coordinatorAccountId: accountId, isActive: true, event: { endsAt: { gte: now } } },
+      where: { coordinatorAccountId: accountId, isActive: true, event: { isPublished: true, audience: "CLUB", endsAt: { gte: now } } },
       orderBy: [{ event: { startsAt: "asc" } }, { sortOrder: "asc" }, { name: "asc" }],
       select: {
         id: true,
@@ -67,15 +78,18 @@ export async function getAreaCoordinatorCard(accountId: string, now = new Date()
         timezone: true,
         registrationOpensOn: true,
         registrationClosesOn: true,
-        clubRegistrations: { select: { registration: { select: { status: true, _count: { select: { attendees: true } } } } } },
+        clubRegistrations: {
+          where: { organization: { isActive: true } },
+          select: { registration: { select: { status: true, _count: { select: { attendees: true } } } } },
+        },
       },
     }),
-    getAreaClubsSummary(clubYear, now, { backgroundChecks: true }),
+    loadClubsNeedingAttention(clubYear, now),
   ]);
 
   const locationIds = locations.map((location) => location.id);
   const locationRegistrations = locationIds.length === 0 ? [] : await prisma.registration.findMany({
-    where: { locationId: { in: locationIds }, status: { in: ["SUBMITTED", "CONFIRMED"] }, clubRegistration: { isNot: null } },
+    where: { locationId: { in: locationIds }, status: { in: ["SUBMITTED", "CONFIRMED"] }, clubRegistration: { organization: { isActive: true } } },
     select: { locationId: true, _count: { select: { attendees: true } } },
   });
 
@@ -110,6 +124,6 @@ export async function getAreaCoordinatorCard(accountId: string, now = new Date()
         headcount: registered.reduce((sum, registration) => sum + registration._count.attendees, 0),
       };
     }),
-    needingAttention: { ...clubsNeedingAttention(summary), clubYear },
+    needingAttention,
   };
 }

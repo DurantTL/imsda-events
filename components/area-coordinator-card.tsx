@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { ArrowRight, MapPinned } from "lucide-react";
 import { areaCardLinks } from "@/modules/club-reports/area-card-domain";
-import type { AreaCardEvent, AreaCoordinatorCard } from "@/modules/club-reports/area-card-repository";
+import { logError } from "@/lib/logger";
+import { getAreaCoordinatorCard, type AreaCardEvent, type AreaCoordinatorCard } from "@/modules/club-reports/area-card-repository";
 
 const dayFormat = (iso: string, timeZone: string) =>
   new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone }).format(new Date(iso));
@@ -22,6 +23,37 @@ function EventList({ events, empty }: { events: AreaCardEvent[]; empty: string }
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Shown while the card streams in, so the portal home never waits on it. */
+export function AreaCoordinatorCardSkeleton() {
+  return (
+    <section className="public-manage-card account-overview-card" aria-busy="true" aria-label="Area coordinator">
+      <p className="public-registration-eyebrow"><MapPinned size={15} aria-hidden="true" /> Area coordinator</p>
+      <p className="field-help">Loading your events…</p>
+    </section>
+  );
+}
+
+/**
+ * Async server component for the portal home, wrapped in `<Suspense>` by the
+ * page. `account` must come from `currentAreaCoordinator()`. A failed load
+ * degrades to one line instead of breaking the page.
+ */
+export async function AreaCoordinatorCardSection({ account }: { account: { id: string } }) {
+  let card: AreaCoordinatorCard | null = null;
+  try {
+    card = await getAreaCoordinatorCard(account);
+  } catch (error) {
+    logError("Area coordinator card failed to load", error);
+  }
+  if (card) return <AreaCoordinatorCardView card={card} />;
+  return (
+    <section className="public-manage-card account-overview-card" aria-label="Area coordinator">
+      <p className="public-registration-eyebrow"><MapPinned size={15} aria-hidden="true" /> Area coordinator</p>
+      <p className="field-help">Summary unavailable right now.</p>
+    </section>
   );
 }
 

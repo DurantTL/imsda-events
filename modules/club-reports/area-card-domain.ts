@@ -1,4 +1,5 @@
-import type { AreaClubSummary } from "@/modules/club-reports/area-summary-domain";
+import { monthCell } from "@/modules/club-reports/area-summary-domain";
+import { clubYearMonths } from "@/modules/club-reports/domain";
 import { calendarDateIn } from "@/modules/calendar/domain";
 
 /**
@@ -30,16 +31,39 @@ export function registrationWindow(
   return { label: closesOn ? `Open, closes ${closesOn}` : "Open", open: true };
 }
 
-function hasBackgroundCheckReminder(club: AreaClubSummary) {
-  const checks = club.backgroundChecks;
-  return checks.missing + checks.notInCompliance + checks.expiringSoon > 0;
-}
+export type ClubChecks = { missing: number; notInCompliance: number; expiringSoon: number };
+export type ClubReportRow = {
+  organizationId: string;
+  reportMonth: string;
+  status: "DRAFT" | "SUBMITTED";
+  totalPoints: number;
+  onTimePoints: number;
+};
 
-/** Clubs with a month past due, or any background-check reminder (counts only). */
-export function clubsNeedingAttention(clubs: readonly AreaClubSummary[]) {
-  return {
-    overdueReports: clubs.filter((club) => club.missing > 0).length,
-    backgroundCheckReminders: clubs.filter(hasBackgroundCheckReminder).length,
-    either: clubs.filter((club) => club.missing > 0 || hasBackgroundCheckReminder(club)).length,
-  };
+/**
+ * Counts of clubs with a past-due monthly report (a month neither filed nor a
+ * draft once its due date passed, the same rule as the overview's "Missing"),
+ * and of clubs with any background-check reminder. Counts only, never a name.
+ */
+export function clubsNeedingAttention(input: {
+  clubIds: readonly string[];
+  clubYear: string;
+  now: Date;
+  reports: readonly ClubReportRow[];
+  checks: ReadonlyMap<string, ClubChecks>;
+}) {
+  const months = clubYearMonths(input.clubYear);
+  let overdueReports = 0;
+  let backgroundCheckReminders = 0;
+  let either = 0;
+  for (const id of input.clubIds) {
+    const byMonth = new Map(input.reports.filter((report) => report.organizationId === id).map((report) => [report.reportMonth, report]));
+    const overdue = months.some((month) => monthCell(month, byMonth.get(month), input.now).status === "MISSING");
+    const checks = input.checks.get(id);
+    const reminder = Boolean(checks && checks.missing + checks.notInCompliance + checks.expiringSoon > 0);
+    if (overdue) overdueReports += 1;
+    if (reminder) backgroundCheckReminders += 1;
+    if (overdue || reminder) either += 1;
+  }
+  return { overdueReports, backgroundCheckReminders, either };
 }
