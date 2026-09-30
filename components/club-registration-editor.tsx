@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Pencil, Trash2, UserPlus, X } from "lucide-react";
 import { ClubLocationPicker } from "@/components/club-location-picker";
+import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
+import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
+import { ClubRosterAgeField } from "@/components/club-roster-age-field";
+import { ageInputProblem, ageInputValue, parseTypedAge } from "@/modules/club-registrations/roster-ages";
 import {
   PublicRegistrationForm,
   type FormIssue,
@@ -90,6 +94,47 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
   const [keptOffRosterIds, setKeptOffRosterIds] = useState<string[]>(() => offRoster.map((attendee) => attendee.attendeeId));
   const [keptGuestIds, setKeptGuestIds] = useState<string[]>(() => existingGuests.map((guest) => guest.guestId!));
   const [newGuests, setNewGuests] = useState<ClubGuest[]>([]);
+  // Roster people with no birth date need an age for this registration (#639).
+  // It starts at the age they were registered with, else the roster's reported age.
+  const [startingAges] = useState<Record<string, number>>(() => Object.fromEntries(
+    workspace.roster.flatMap((person) => {
+      if (person.ageOnEventDate !== null) return [];
+      const registeredAge = registeredByMemberId.get(person.memberId)?.ageOnEventDate ?? null;
+      const age = registeredAge ?? person.reportedAge;
+      return age === null ? [] : [[person.memberId, age] as const];
+    }),
+  ));
+  const [rosterAges, setRosterAges] = useState<Record<string, number>>(startingAges);
+  const [saveAgeOff, setSaveAgeOff] = useState<string[]>([]);
+  // The raw text of the age fields, so a half-typed entry is reported rather than read as blank.
+  const [ageText, setAgeText] = useState<Record<string, string>>({});
+  // A real dirty flag (#643): any edit away from the registration as loaded, while the editor is open.
+  const [startingSelected] = useState<string[]>(selectedMemberIds);
+  const [startingKeptOff] = useState<string[]>(keptOffRosterIds);
+  const [startingKeptGuests] = useState<string[]>(keptGuestIds);
+  const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((id) => b.includes(id));
+  const sameAges = Object.keys(rosterAges).length === Object.keys(startingAges).length
+    && Object.entries(rosterAges).every(([id, age]) => startingAges[id] === age);
+  const dirty = open && !(
+    sameSet(selectedMemberIds, startingSelected) && sameSet(keptOffRosterIds, startingKeptOff)
+    && sameSet(keptGuestIds, startingKeptGuests) && newGuests.length === 0 && sameAges && locationId === currentLocationId
+  );
+  const allowNextNavigation = useUnsavedChangesGuard(dirty);
+  const problemPerson = workspace.roster.find((person) => (
+    selectedMemberIds.includes(person.memberId) && ageInputProblem(person, ageText, rosterAges) !== null
+  ));
+
+  function changeAge(memberId: string, raw: string) {
+    setError("");
+    setAgeText((current) => ({ ...current, [memberId]: raw }));
+    const age = parseTypedAge(raw);
+    setRosterAges((current) => {
+      const next = { ...current };
+      if (age === undefined) delete next[memberId];
+      else next[memberId] = age;
+      return next;
+    });
+  }
   // Answers edited in step two, kept if the director goes back to step one.
   const [answers, setAnswers] = useState<Record<string, FormResponses>>({});
 
@@ -126,7 +171,13 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
       ...workspace.roster.filter((person) => selectedMemberIds.includes(person.memberId)).map((person) => {
         const current = registeredByMemberId.get(person.memberId);
         return {
-          ...withEdits(clubAttendeeClientId(person.memberId), current ? current.responses : person.prefillResponses, person.ownedResponses),
+          ...withEdits(clubAttendeeClientId(person.memberId), current ? current.responses : person.prefillResponses, {
+            ...person.ownedResponses,
+            // The age entered on Who's going, when the roster has no birth date (#639).
+            ...(person.ageOnEventDate === null && rosterAges[person.memberId] !== undefined
+              ? rosterOwnedResponses(definition, { firstName: person.firstName, lastName: person.lastName, ageOnEventDate: rosterAges[person.memberId]!, gender: null })
+              : {}),
+          }),
           // Compact attendee cards (#483): a roster person's card starts
           // collapsed, and a carried-over value that didn't match a form
           // option is prompted for rather than left silently blank.
@@ -170,6 +221,15 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     }));
   }, []);
 
+  // Only for going people the roster has no birth date for; a birth date always wins.
+  const typedAges = useMemo(() => Object.fromEntries(
+    workspace.roster.flatMap((person) => (
+      selectedMemberIds.includes(person.memberId) && person.ageOnEventDate === null && rosterAges[person.memberId] !== undefined
+        ? [[person.memberId, rosterAges[person.memberId]!] as const]
+        : []
+    )),
+  ), [workspace.roster, selectedMemberIds, rosterAges]);
+
   const submitEdit = useCallback(async (attendees: RosterAttendee[]) => {
     const response = await fetch(
       `/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(workspace.event.id)}/registration`,
@@ -183,6 +243,9 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
           keptOffRosterAttendeeIds: keptOffRosterIds,
           keptGuestIds,
           newGuests,
+          rosterAges: typedAges,
+          // Only ages the director changed from where they started are saved back to the roster.
+          saveAgeToRosterIds: Object.keys(typedAges).filter((memberId) => !saveAgeOff.includes(memberId) && typedAges[memberId] !== startingAges[memberId]),
           attendeeResponses: Object.fromEntries(attendees.map((attendee) => [attendee.clientId, attendee.responses])),
           ...(locationId && locationId !== currentLocationId ? { locationId } : {}),
         }),
@@ -201,7 +264,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         : { key: issue.key, message: issue.message, attendeeIndex: null }];
     });
     return { ok: false as const, message: result.message ?? "That change couldn't be saved. Refresh and try again.", issues };
-  }, [organizationId, workspace.event.id, workspace.registration.updatedAt, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests, locationId, currentLocationId]);
+  }, [organizationId, workspace.event.id, workspace.registration.updatedAt, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests, typedAges, startingAges, saveAgeOff, locationId, currentLocationId]);
 
   const club = useMemo(() => ({
     initialAttendees,
@@ -211,12 +274,13 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     submitEdit,
     submitLabel: "Save changes",
     onSubmitted: () => {
+      allowNextNavigation();
       setOpen(false);
       setJustReopened(false);
       setStep("who");
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router, allowNextNavigation]);
 
   // Reopening confirms itself: scroll to and highlight the roster section (#571 F-23).
   useEffect(() => {
@@ -292,6 +356,17 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
                 {person.ageOnEventDate !== null && <small>Age <span translate="no">{person.ageOnEventDate}</span></small>}
               </span>
             </label>
+            {person.ageOnEventDate === null && selectedMemberIds.includes(person.memberId) && (
+              <ClubRosterAgeField
+                error={error !== "" || ageInputValue(person, ageText, rosterAges).trim() !== "" ? ageInputProblem(person, ageText, rosterAges) : null}
+                value={ageInputValue(person, ageText, rosterAges)}
+                onAge={(raw) => changeAge(person.memberId, raw)}
+                onSaveToRoster={(save) => setSaveAgeOff((current) => (save ? current.filter((id) => id !== person.memberId) : [...current.filter((id) => id !== person.memberId), person.memberId]))}
+                href={rosterHrefFromRegistration(organizationId, workspace.event.id)}
+                organizationId={organizationId}
+                saveToRoster={!saveAgeOff.includes(person.memberId)}
+              />
+            )}
           </li>
         ))}
       </ul>
@@ -382,7 +457,10 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         <button
           className="primary-button"
           disabled={goingCount === 0}
-          onClick={() => { setError(""); setJustReopened(false); setStep("form"); }}
+          onClick={() => {
+            if (problemPerson) return setError(ageInputProblem(problemPerson, ageText, rosterAges) ?? "Check the ages above.");
+            setError(""); setJustReopened(false); setStep("form");
+          }}
           type="button"
         >
           Continue with {goingCount} {goingCount === 1 ? "person" : "people"} <ArrowRight aria-hidden="true" size={15} />

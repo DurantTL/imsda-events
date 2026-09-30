@@ -24,6 +24,7 @@ export function clubPortalNavItems({
     { href: `${base}/roster`, label: "Roster", group: "People" },
     ...(roster ? [{ href: `${base}/honors`, label: "Honors", group: "People" }] : []),
     ...(roster ? [{ href: `${base}/class-tracking`, label: "Class tracking", group: "People" }] : []),
+    ...(roster ? [{ href: `${base}/exports`, label: "Honors & class reports", matchChildren: true, group: "People" }] : []),
     { href: `${base}/events`, label: "Events", matchChildren: true, group: "Events" },
     // Club forms (#610) hold health and conduct answers: the club's director and deputy only.
     ...(isClubFormsRole(role) ? [{ href: `${base}/forms`, label: "Forms", matchChildren: true, group: "Events" }] : []),

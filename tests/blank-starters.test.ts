@@ -68,7 +68,7 @@ describe("blank form templates (#592)", () => {
   });
 
   it("can be test-submitted: the club form", () => {
-    const definition = withDirectoryOptions(getFormTemplate(BLANK_CLUB_FORM_KEY)!.definition, { clubs: ["Sample Pathfinders"], churches: ["Sample Church"] });
+    const definition = withDirectoryOptions(getFormTemplate(BLANK_CLUB_FORM_KEY)!.definition, { clubs: ["Sample Pathfinders"], churches: ["Sample Church"], schools: [] });
     const ok = validateTestResponses(definition, {
       club_name: "Sample Pathfinders",
       director_name: "Dana Director",

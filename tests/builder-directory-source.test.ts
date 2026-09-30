@@ -11,7 +11,7 @@ describe("builder directory-sourced fields (#482)", () => {
   it("replaces the choices and description editors with a note for a directory-sourced field", () => {
     const note = builder.indexOf("{isDirectoryOptionSource(field.optionSource) ? <p className=\"field-full inline-notice\"");
     expect(note).toBeGreaterThan(-1);
-    expect(builder).toContain("Options come from the live {field.optionSource === \"CHURCHES_DIRECTORY\" ? \"churches\" : \"clubs\"} directory.");
+    expect(builder).toContain("Options come from the live {directorySourceNoun(field.optionSource)} directory.");
     const choices = builder.indexOf("Choices — one per line", note);
     const descriptions = builder.indexOf("choice-description-editor", note);
     const close = builder.indexOf("</>}", note);
