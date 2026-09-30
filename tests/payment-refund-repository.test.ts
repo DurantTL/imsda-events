@@ -61,6 +61,7 @@ describe("manual refund safety", () => {
       {
         amountCents: 1_000,
         reason: "Registrant request",
+        idempotencyKey: "key-operation-1",
       },
     )).rejects.toMatchObject({
       code: "CARD_REFUND_REQUIRES_SQUARE",
@@ -68,31 +69,46 @@ describe("manual refund safety", () => {
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
-  it("creates one notice intent for a successful manual refund", async () => {
-    const tx = {
-      refund: { create: vi.fn().mockResolvedValue({ id: "refund_manual" }) },
-      auditLog: { create: vi.fn() },
-    };
-    mocks.findFirst.mockResolvedValue({
+  function manualPayment() {
+    return {
       id: "payment_manual",
       eventId: "event_1",
       registrationId: "registration_1",
       amount: 129.3,
       method: "CASH",
-      refunds: [],
       registration: { confirmationCode: "WR26-TEST" },
-    });
+    };
+  }
+
+  function makeTx(overrides: { existing?: unknown; refunded?: number[] } = {}) {
+    return {
+      $queryRaw: vi.fn().mockResolvedValue([{ id: "payment_manual" }]),
+      refund: {
+        findFirst: vi.fn().mockResolvedValue(overrides.existing ?? null),
+        findMany: vi.fn().mockResolvedValue((overrides.refunded ?? []).map((amount) => ({ amount }))),
+        create: vi.fn().mockResolvedValue({ id: "refund_manual" }),
+      },
+      auditLog: { create: vi.fn() },
+    };
+  }
+
+  const input = { amountCents: 1_000, reason: "Registrant request", idempotencyKey: "key-operation-1" };
+
+  it("creates one notice intent for a successful manual refund", async () => {
+    const tx = makeTx();
+    mocks.findFirst.mockResolvedValue(manualPayment());
     mocks.transaction.mockImplementation(async (callback) => callback(tx));
     mocks.enqueueRefundNoticeMessage.mockResolvedValue({
       pendingMessageIds: ["message_manual"],
     });
     mocks.getRegistrationById.mockResolvedValue({ id: "registration_1" });
 
-    await recordRefund("event_1", "payment_manual", "user_1", {
-      amountCents: 1_000,
-      reason: "Registrant request",
-    });
+    await recordRefund("event_1", "payment_manual", "user_1", input);
 
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(tx.refund.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ idempotencyKey: "key-operation-1", amount: 10 }),
+    });
     expect(mocks.enqueueRefundNoticeMessage).toHaveBeenCalledWith(
       tx,
       expect.objectContaining({
@@ -104,5 +120,52 @@ describe("manual refund safety", () => {
     expect(mocks.processQueuedMessageIdsAfterCommit).toHaveBeenCalledWith([
       "message_manual",
     ]);
+  });
+
+  it("records nothing more when the same operation is retried", async () => {
+    const tx = makeTx({ existing: { id: "refund_manual" } });
+    mocks.findFirst.mockResolvedValue(manualPayment());
+    mocks.transaction.mockImplementation(async (callback) => callback(tx));
+    mocks.getRegistrationById.mockResolvedValue({ id: "registration_1" });
+
+    const result = await recordRefund("event_1", "payment_manual", "user_1", input);
+
+    expect(result).toEqual({ id: "registration_1" });
+    expect(tx.refund.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: { paymentId: "payment_manual", idempotencyKey: "key-operation-1" },
+    }));
+    expect(tx.refund.create).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
+    expect(mocks.enqueueRefundNoticeMessage).not.toHaveBeenCalled();
+  });
+
+  it("records distinct operations separately up to the balance", async () => {
+    mocks.findFirst.mockResolvedValue(manualPayment());
+    mocks.enqueueRefundNoticeMessage.mockResolvedValue({ pendingMessageIds: [] });
+    mocks.getRegistrationById.mockResolvedValue({ id: "registration_1" });
+
+    const first = makeTx();
+    mocks.transaction.mockImplementationOnce(async (callback) => callback(first));
+    await recordRefund("event_1", "payment_manual", "user_1", input);
+
+    const second = makeTx({ refunded: [10] });
+    mocks.transaction.mockImplementationOnce(async (callback) => callback(second));
+    await recordRefund("event_1", "payment_manual", "user_1", { ...input, idempotencyKey: "key-operation-2" });
+
+    expect(first.refund.create).toHaveBeenCalledTimes(1);
+    expect(second.refund.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ idempotencyKey: "key-operation-2" }),
+    });
+  });
+
+  it("rejects a new operation that exceeds the balance left inside the transaction", async () => {
+    const tx = makeTx({ refunded: [129.3] });
+    mocks.findFirst.mockResolvedValue(manualPayment());
+    mocks.transaction.mockImplementation(async (callback) => callback(tx));
+
+    await expect(recordRefund("event_1", "payment_manual", "user_1", input)).rejects.toMatchObject({
+      code: "REFUND_EXCEEDS_AVAILABLE",
+    });
+    expect(tx.refund.create).not.toHaveBeenCalled();
   });
 });

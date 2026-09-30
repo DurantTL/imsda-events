@@ -76,23 +76,44 @@ export async function recordRefund(
   eventId: string,
   paymentId: string,
   actorUserId: string,
-  input: { amountCents: number; reason: string },
+  input: { amountCents: number; reason: string; idempotencyKey: string },
 ) {
   const prisma = getPrisma();
   const payment = await prisma.payment.findFirst({
     where: { id: paymentId, eventId, status: "SUCCEEDED" },
-    include: { refunds: { where: { status: "SUCCEEDED" } }, registration: true },
+    include: { registration: true },
   });
   if (!payment) throw new PaymentOperationError("PAYMENT_NOT_FOUND");
   if (payment.method === "CARD_REFERENCE") {
     throw new PaymentOperationError("CARD_REFUND_REQUIRES_SQUARE");
   }
 
-  const refundedCents = payment.refunds.reduce((total, refund) => total + Math.round(Number(refund.amount) * 100), 0);
-  const refundableCents = Math.max(Math.round(Number(payment.amount) * 100) - refundedCents, 0);
-  if (input.amountCents > refundableCents) throw new PaymentOperationError("REFUND_EXCEEDS_AVAILABLE");
-
   const result = await prisma.$transaction(async (tx) => {
+    // Serializes refunds on this payment, so a retry that races the original
+    // waits and then finds its key below, and two distinct refunds cannot
+    // both pass the balance check.
+    await tx.$queryRaw`
+      SELECT "id" FROM "Payment"
+      WHERE "id" = ${paymentId} AND "eventId" = ${eventId}
+      FOR UPDATE
+    `;
+    // A retry of an operation that already committed (a timeout, or a 5xx
+    // after commit) returns what was recorded, before the balance check: the
+    // refund it made is already counted against the balance.
+    const existing = await tx.refund.findFirst({
+      where: { paymentId, idempotencyKey: input.idempotencyKey },
+      select: { id: true },
+    });
+    if (existing) return { pendingMessageIds: [] as string[] };
+
+    const refunds = await tx.refund.findMany({
+      where: { paymentId, status: "SUCCEEDED" },
+      select: { amount: true },
+    });
+    const refundedCents = refunds.reduce((total, refund) => total + Math.round(Number(refund.amount) * 100), 0);
+    const refundableCents = Math.max(Math.round(Number(payment.amount) * 100) - refundedCents, 0);
+    if (input.amountCents > refundableCents) throw new PaymentOperationError("REFUND_EXCEEDS_AVAILABLE");
+
     const refund = await tx.refund.create({
       data: {
         eventId,
@@ -100,6 +121,7 @@ export async function recordRefund(
         amount: input.amountCents / 100,
         status: "SUCCEEDED",
         reason: input.reason,
+        idempotencyKey: input.idempotencyKey,
       },
     });
     await tx.auditLog.create({
