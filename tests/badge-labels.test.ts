@@ -3,6 +3,8 @@ import {
   badgeTemplates,
   buildBadgeLabels,
   normalizeBadgeOrientation,
+  normalizeBadgeShowTitle,
+  normalizeBadgeTextSize,
   normalizeBadgeStartingPosition,
   normalizeBadgeTemplate,
   paginateBadgeLabels,
@@ -30,7 +32,46 @@ describe("printable badge labels", () => {
     expect(normalizeBadgeTemplate("unknown")).toBe("avery-5395");
     expect(normalizeBadgeStartingPosition("6", 8)).toBe(6);
     expect(normalizeBadgeStartingPosition("9", 8)).toBe(1);
-    expect(badgeTemplates["avery-5163"].perSheet).toBe(10);
+    expect(badgeTemplates["avery-presta-94237"].perSheet).toBe(8);
+  });
+
+  it("maps retired Avery 5163 links to Presta 94237", () => {
+    expect(normalizeBadgeTemplate("avery-5163")).toBe("avery-presta-94237");
+    expect(normalizeBadgeTemplate("avery-presta-94237")).toBe("avery-presta-94237");
+    expect(Object.keys(badgeTemplates)).not.toContain("avery-5163");
+    expect(badgeTemplates["avery-presta-94237"]).toMatchObject({
+      product: "Avery Presta 94237",
+      label: "Rectangle labels",
+      dimensions: "2 × 3 inches",
+      slotWidthIn: 3,
+      slotHeightIn: 2,
+    });
+  });
+
+  it("paginates Presta 94237 into sheets of 8 with start positions 1-8", () => {
+    const labels = Array.from({ length: 10 }, (_, index) => label(index + 1));
+    expect(paginateBadgeLabels(labels, "avery-presta-94237")).toHaveLength(2);
+    for (let start = 1; start <= 8; start += 1) {
+      expect(normalizeBadgeStartingPosition(String(start), 8)).toBe(start);
+      const sheets = paginateBadgeLabels(labels, "avery-presta-94237", start);
+      expect(sheets.every((sheet) => sheet.length === 8)).toBe(true);
+      expect(sheets[0].slice(0, start - 1).every((slot) => slot === null)).toBe(true);
+      expect(sheets[0][start - 1]?.attendeeId).toBe("attendee-1");
+      expect(sheets).toHaveLength(Math.ceil((start - 1 + 10) / 8));
+    }
+  });
+
+  it("normalizes the title and text size options", () => {
+    expect(normalizeBadgeShowTitle(undefined)).toBe(true);
+    expect(normalizeBadgeShowTitle("1")).toBe(true);
+    expect(normalizeBadgeShowTitle("0")).toBe(false);
+    expect(normalizeBadgeShowTitle(["0", "1"])).toBe(true);
+    expect(normalizeBadgeShowTitle(["0"])).toBe(false);
+    expect(normalizeBadgeTextSize(undefined)).toBe(100);
+    expect(normalizeBadgeTextSize("80")).toBe(80);
+    expect(normalizeBadgeTextSize("130")).toBe(130);
+    expect(normalizeBadgeTextSize("95")).toBe(100);
+    expect(normalizeBadgeTextSize("huge")).toBe(100);
   });
 
   it("defaults badge orientation to vertical for ID sleeves", () => {

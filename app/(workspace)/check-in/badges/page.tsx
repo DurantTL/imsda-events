@@ -12,7 +12,10 @@ import {
 import {
   badgeTemplates,
   buildBadgeLabels,
+  badgeTextSizes,
   normalizeBadgeOrientation,
+  normalizeBadgeShowTitle,
+  normalizeBadgeTextSize,
   normalizeBadgeStartingPosition,
   normalizeBadgeTemplate,
   paginateBadgeLabels,
@@ -31,6 +34,14 @@ export const metadata: Metadata = {
   },
 };
 
+const sizeLabels = {
+  80: "Extra small",
+  90: "Small",
+  100: "Normal",
+  115: "Large",
+  130: "Extra large",
+} as const;
+
 export default async function PrintableNameBadgesPage({
   searchParams,
 }: {
@@ -39,6 +50,8 @@ export default async function PrintableNameBadgesPage({
     template?: string;
     start?: string;
     orientation?: string;
+    title?: string | string[];
+    size?: string;
   }>;
 }) {
   const query = await searchParams;
@@ -59,6 +72,8 @@ export default async function PrintableNameBadgesPage({
     template.perSheet,
   );
   const orientation = normalizeBadgeOrientation(query.orientation);
+  const showTitle = normalizeBadgeShowTitle(query.title);
+  const textSize = normalizeBadgeTextSize(query.size);
   const registrations = await listRegistrations(event.id, {
     statuses: activeRegistrationStatuses,
   });
@@ -95,6 +110,15 @@ export default async function PrintableNameBadgesPage({
             Back to check-in
           </Link>
           {labels.length > 0 && (
+            <a
+              className="secondary-button"
+              download
+              href={`/api/events/${encodeURIComponent(event.id)}/exports/badge-labels-csv`}
+            >
+              Export CSV for Avery Design &amp; Print
+            </a>
+          )}
+          {labels.length > 0 && (
             <PrintReportButton label="Print name badges" />
           )}
         </div>
@@ -129,6 +153,21 @@ export default async function PrintableNameBadgesPage({
             <option value="portrait">Vertical — for ID sleeves</option>
             <option value="landscape">Horizontal — as printed today</option>
           </select>
+        </label>
+        <label>
+          <span>Text size</span>
+          <select defaultValue={String(textSize)} name="size">
+            {badgeTextSizes.map((size) => (
+              <option key={size} value={size}>
+                {sizeLabels[size]} {size}%
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="badge-print-checkbox">
+          <input name="title" type="hidden" value="0" />
+          <input defaultChecked={showTitle} name="title" type="checkbox" value="1" />
+          <span>Show event title</span>
         </label>
         <button className="primary-button" type="submit">
           Apply layout
@@ -170,11 +209,12 @@ export default async function PrintableNameBadgesPage({
           {sheets.map((sheet, sheetIndex) => (
             <section
               aria-label={`Badge sheet ${sheetIndex + 1}`}
-              className={`badge-sheet badge-sheet-${templateId} badge-sheet-orientation-${orientation}`}
+              className={`badge-sheet badge-sheet-${templateId} badge-sheet-orientation-${orientation}${showTitle ? "" : " is-title-hidden"}`}
               key={`sheet-${sheetIndex + 1}`}
               style={{
                 "--slot-w": `${template.slotWidthIn}in`,
                 "--slot-h": `${template.slotHeightIn}in`,
+                "--badge-font-scale": textSize / 100,
               } as CSSProperties}
             >
               {sheet.map((label, slotIndex) => (
@@ -196,7 +236,7 @@ export default async function PrintableNameBadgesPage({
                       />
                     )}
                     <div className="badge-label-inner">
-                      <header>{event.name}</header>
+                      {showTitle && <header>{event.name}</header>}
                       <div className="badge-label-name">
                         <strong>{label.firstName}</strong>
                         <strong>{label.lastName}</strong>
