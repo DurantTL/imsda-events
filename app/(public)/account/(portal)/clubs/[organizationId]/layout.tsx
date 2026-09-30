@@ -67,7 +67,7 @@ export default async function ClubLayout({
             <ClubAccessGate access={access} />
             {"club" in access && clubCapabilities(access.club.role).submitReports && (
               <p className="field-help club-gate-reports">
-                Monthly reports don&apos;t need this step: <Link href={`${base}/reports`}>open monthly reports</Link>.
+                Monthly Records don&apos;t need this step: <Link href={`${base}/records`}>open Monthly Records</Link>.
               </p>
             )}
           </ClubGateSlot>

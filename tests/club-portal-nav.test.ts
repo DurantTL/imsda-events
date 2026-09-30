@@ -16,7 +16,7 @@ describe("club portal menu (#644)", () => {
       "-:Home",
       "People:Roster", "People:Honors", "People:Class tracking", "People:Honors & class reports",
       "Events:Events", "Events:Forms",
-      "Records:Meeting notes", "Records:Monthly reports",
+      "Records:Monthly Records",
       "Orders:Orders",
       "Club:Club info",
     ]);
@@ -30,11 +30,19 @@ describe("club portal menu (#644)", () => {
   });
 
   it("gives each role exactly the destinations it had before, with Club info standing for team and profile", () => {
-    const everything = ["/", "/roster", "/honors", "/class-tracking", "/exports", "/events", "/forms", "/notes", "/reports", "/orders", "/club-info"];
+    const everything = ["/", "/roster", "/honors", "/class-tracking", "/exports", "/events", "/forms", "/records", "/orders", "/club-info"];
     expect(hrefs("DIRECTOR")).toEqual(everything);
     expect(hrefs("DEPUTY")).toEqual(everything);
     // A registrar: no forms, no notes or reports, no club info.
     expect(hrefs("REGISTRAR")).toEqual(["/", "/roster", "/honors", "/class-tracking", "/exports", "/events", "/orders"]);
+  });
+
+  it("has one Monthly Records item and no separate notes or reports items (#653)", () => {
+    const labels = nav("DIRECTOR").map((item) => item.label);
+    expect(labels).toContain("Monthly Records");
+    expect(labels).not.toContain("Meeting notes");
+    expect(labels).not.toContain("Monthly reports");
+    expect(nav("DIRECTOR").find((item) => item.label === "Honors & class reports")?.href).toBe(`${base}/exports`);
   });
 
   it("hides groups with no visible items for a registrar", () => {
@@ -43,9 +51,9 @@ describe("club portal menu (#644)", () => {
     expect(groups.has("Orders")).toBe(true);
   });
 
-  it("gives a reporter without roster access Home plus the two report screens", () => {
+  it("gives a reporter without roster access Home plus Monthly Records", () => {
     const items = clubReporterNavItems({ base, capabilities: clubCapabilities("REPORTER") });
-    expect(items.map((item) => item.href.replace(base, "") || "/")).toEqual(["/", "/notes", "/reports"]);
-    expect(items.map((item) => item.label)).toEqual(["Home", "Meeting notes", "Monthly reports"]);
+    expect(items.map((item) => item.href.replace(base, "") || "/")).toEqual(["/", "/records"]);
+    expect(items.map((item) => item.label)).toEqual(["Home", "Monthly Records"]);
   });
 });

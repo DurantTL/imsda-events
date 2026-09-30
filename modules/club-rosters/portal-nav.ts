@@ -28,10 +28,7 @@ export function clubPortalNavItems({
     { href: `${base}/events`, label: "Events", matchChildren: true, group: "Events" },
     // Club forms (#610) hold health and conduct answers: the club's director and deputy only.
     ...(isClubFormsRole(role) ? [{ href: `${base}/forms`, label: "Forms", matchChildren: true, group: "Events" }] : []),
-    ...(capabilities.submitReports ? [
-      { href: `${base}/notes`, label: "Meeting notes", matchChildren: true, group: "Records" },
-      { href: `${base}/reports`, label: "Monthly reports", matchChildren: true, group: "Records" },
-    ] : []),
+    ...(capabilities.submitReports ? [{ href: `${base}/records`, label: "Monthly Records", matchChildren: true, group: "Records" }] : []),
     // Supplies on hand live inside Orders (#654), so there is no separate Supplies entry.
     ...(roster ? [{ href: `${base}/orders`, label: "Orders", group: "Orders" }] : []),
     ...(capabilities.manageTeam || capabilities.editProfile
@@ -44,9 +41,6 @@ export function clubPortalNavItems({
 export function clubReporterNavItems({ base, capabilities }: { base: string; capabilities: ClubCapabilities }): AccountNavItem[] {
   return [
     { href: base, label: "Home" },
-    ...(capabilities.submitReports ? [
-      { href: `${base}/notes`, label: "Meeting notes", matchChildren: true, group: "Records" },
-      { href: `${base}/reports`, label: "Monthly reports", matchChildren: true, group: "Records" },
-    ] : []),
+    ...(capabilities.submitReports ? [{ href: `${base}/records`, label: "Monthly Records", matchChildren: true, group: "Records" }] : []),
   ];
 }

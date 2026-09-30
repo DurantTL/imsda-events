@@ -3,6 +3,8 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { clubYearFor } from "@/modules/club-rosters/domain";
+import { attendanceGroupOf, compareByName, countsFromAttendance, type AttendanceGroup } from "@/modules/club-meeting-notes/attendance";
 import { notesMonthlySummary } from "@/modules/club-meeting-notes/domain";
 import type { MeetingNoteInput } from "@/modules/club-meeting-notes/schemas";
 import type { ReportHonor } from "@/modules/club-reports/domain";
@@ -12,7 +14,7 @@ import type { ReportHonor } from "@/modules/club-reports/domain";
  * `organizationId`; a note id from another club never matches.
  */
 
-export type ClubMeetingNoteErrorCode = "CLUB_NOT_FOUND" | "NOTE_NOT_FOUND";
+export type ClubMeetingNoteErrorCode = "CLUB_NOT_FOUND" | "NOTE_NOT_FOUND" | "INVALID_ATTENDANCE";
 
 /** Never an attendee account credited for a staff action (#442): `userId` (with `actAsId`) for a staff "act as" director. */
 export type ClubMeetingNoteActor = { accountId: string } | { userId: string; actAsId: string };
@@ -33,6 +35,7 @@ const noteSelect = {
   staffCount: true,
   honors: true,
   notes: true,
+  attendance: { select: { rosterMemberId: true, present: true } },
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.ClubMeetingNoteSelect;
@@ -42,6 +45,7 @@ type StoredNote = Prisma.ClubMeetingNoteGetPayload<{ select: typeof noteSelect }
 function serializeNote(note: StoredNote) {
   return {
     ...note,
+    attendance: note.attendance ?? [],
     honors: (Array.isArray(note.honors) ? note.honors : []) as ReportHonor[],
     createdAt: note.createdAt.toISOString(),
     updatedAt: note.updatedAt.toISOString(),
@@ -50,9 +54,10 @@ function serializeNote(note: StoredNote) {
 
 export type ClubMeetingNoteRecord = ReturnType<typeof serializeNote>;
 
-export async function listClubMeetingNotes(organizationId: string) {
+/** A club's notes, newest first; `month` ("2026-10") narrows to that month's meetings. */
+export async function listClubMeetingNotes(organizationId: string, month?: string) {
   const notes = await getPrisma().clubMeetingNote.findMany({
-    where: { organizationId },
+    where: { organizationId, ...(month ? { meetingDate: { startsWith: month } } : {}) },
     select: noteSelect,
     orderBy: { meetingDate: "desc" },
   });
@@ -64,15 +69,16 @@ export async function createClubMeetingNote(organizationId: string, input: Meeti
   const club = await prisma.organization.findUnique({ where: { id: organizationId }, select: { type: true } });
   if (!club || club.type !== "CLUB") throw new ClubMeetingNoteError("CLUB_NOT_FOUND", "That club could not be found.");
   const honors = input.honors.filter((honor) => honor.name.trim() || honor.participants !== null);
+  const attendance = await checkedAttendance(organizationId, input);
+  const counts = filledCounts(input, attendance);
   const note = await prisma.clubMeetingNote.create({
     data: {
       organizationId,
       meetingDate: input.meetingDate,
-      pathfinderCount: input.pathfinderCount,
-      tltCount: input.tltCount,
-      staffCount: input.staffCount,
+      ...counts,
       honors,
       notes: input.notes,
+      ...(attendance ? { attendance: { create: attendance.rows } } : {}),
       ...("accountId" in actor
         ? { createdByAccountId: actor.accountId, updatedByAccountId: actor.accountId }
         : { createdByUserId: actor.userId, updatedByUserId: actor.userId }),
@@ -88,10 +94,129 @@ export async function createClubMeetingNote(organizationId: string, input: Meeti
     metadata: {
       organizationId,
       noteId: note.id,
+      ...(attendance ? { attendanceRecorded: attendance.rows.length } : {}),
       ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
     },
   });
   return serializeNote(note);
+}
+
+type CheckedAttendance = {
+  rows: Array<{ rosterMemberId: string; present: boolean }>;
+  counts: { pathfinderCount: number; tltCount: number; staffCount: number };
+};
+
+/**
+ * The check-off a note is saved with (#653), or null when the request leaves
+ * attendance alone. Everyone listed must be on this club's roster for the club
+ * year of the meeting date, so an id from another club or year never matches.
+ */
+async function checkedAttendance(organizationId: string, input: MeetingNoteInput): Promise<CheckedAttendance | null> {
+  if (input.attendance === undefined) return null;
+  const ids = input.attendance.map((entry) => entry.rosterMemberId);
+  if (new Set(ids).size !== ids.length) throw new ClubMeetingNoteError("INVALID_ATTENDANCE", "Each person can be checked off once per meeting.");
+  if (ids.length === 0) return { rows: [], counts: { pathfinderCount: 0, tltCount: 0, staffCount: 0 } };
+  const clubYear = clubYearFor(new Date(`${input.meetingDate}T12:00:00Z`));
+  const members = await getPrisma().clubRosterMember.findMany({
+    where: { id: { in: ids }, organizationId, clubYear },
+    select: { id: true, attendeeType: true, classLevel: true },
+  });
+  if (members.length !== ids.length) {
+    throw new ClubMeetingNoteError("INVALID_ATTENDANCE", "Attendance can only list people on this club's roster for the meeting's club year.");
+  }
+  const byId = new Map(members.map((member) => [member.id, member]));
+  return {
+    rows: input.attendance.map((entry) => ({ rosterMemberId: entry.rosterMemberId, present: entry.present })),
+    counts: countsFromAttendance(input.attendance.map((entry) => ({ ...byId.get(entry.rosterMemberId)!, present: entry.present }))),
+  };
+}
+
+/** Typed head counts stay as typed; a blank count is filled from the check-off when there is one. */
+function filledCounts(input: MeetingNoteInput, attendance: CheckedAttendance | null) {
+  const derived = attendance && attendance.rows.length > 0 ? attendance.counts : null;
+  return {
+    pathfinderCount: input.pathfinderCount ?? derived?.pathfinderCount ?? null,
+    tltCount: input.tltCount ?? derived?.tltCount ?? null,
+    staffCount: input.staffCount ?? derived?.staffCount ?? null,
+  };
+}
+
+export type AttendanceRosterEntry = {
+  id: string;
+  firstName: string;
+  lastName: string;
+  attendeeType: string;
+  classLevel: string | null;
+  group: AttendanceGroup;
+};
+
+/** Who can be checked off for a club year: the active roster, by name. */
+export async function listAttendanceRoster(organizationId: string, clubYear: string): Promise<AttendanceRosterEntry[]> {
+  const members = await getPrisma().clubRosterMember.findMany({
+    where: { organizationId, clubYear, status: "ACTIVE", personId: { not: null } },
+    select: { id: true, attendeeType: true, classLevel: true, person: { select: { firstName: true, lastName: true } } },
+  });
+  return members
+    .flatMap((member) => (member.person ? [{
+      id: member.id,
+      firstName: member.person.firstName,
+      lastName: member.person.lastName,
+      attendeeType: member.attendeeType,
+      classLevel: member.classLevel,
+      group: attendanceGroupOf(member),
+    }] : []))
+    .sort(compareByName);
+}
+
+/** The attendance export's rows: meetings with a check-off in range, and the members and marks on them. */
+export async function loadAttendanceExport(organizationId: string, clubYear: string, range: { from?: string; to?: string }) {
+  const prisma = getPrisma();
+  const [club, notes, active] = await Promise.all([
+    prisma.organization.findUnique({ where: { id: organizationId }, select: { name: true } }),
+    prisma.clubMeetingNote.findMany({
+      where: {
+        organizationId,
+        attendance: { some: {} },
+        meetingDate: { ...(range.from ? { gte: range.from } : {}), ...(range.to ? { lte: range.to } : {}) },
+      },
+      select: { id: true, meetingDate: true, attendance: { select: { rosterMemberId: true, present: true } } },
+      orderBy: { meetingDate: "asc" },
+    }),
+    listAttendanceRoster(organizationId, clubYear),
+  ]);
+  // The club year's meetings, unless the caller chose dates.
+  const inScope = notes.filter((note) => range.from || range.to || clubYearFor(new Date(`${note.meetingDate}T12:00:00Z`)) === clubYear);
+  const marks = new Map<string, boolean>();
+  const markedIds = new Set<string>();
+  for (const note of inScope) {
+    for (const entry of note.attendance) {
+      marks.set(`${note.id}:${entry.rosterMemberId}`, entry.present);
+      markedIds.add(entry.rosterMemberId);
+    }
+  }
+  const known = new Set(active.map((member) => member.id));
+  const extraIds = [...markedIds].filter((id) => !known.has(id));
+  const extra = extraIds.length === 0 ? [] : await prisma.clubRosterMember.findMany({
+    where: { id: { in: extraIds }, organizationId },
+    select: { id: true, attendeeType: true, classLevel: true, person: { select: { firstName: true, lastName: true } } },
+  });
+  const members = [
+    ...active,
+    ...extra.map((member) => ({
+      id: member.id,
+      firstName: member.person?.firstName ?? "Unknown",
+      lastName: member.person?.lastName ?? "",
+      attendeeType: member.attendeeType,
+      classLevel: member.classLevel,
+      group: attendanceGroupOf(member),
+    })),
+  ];
+  return {
+    clubName: club?.name ?? "",
+    meetings: inScope.map((note) => ({ id: note.id, meetingDate: note.meetingDate })),
+    members,
+    marks,
+  };
 }
 
 async function findOwnNote(organizationId: string, noteId: string) {
@@ -104,15 +229,16 @@ async function findOwnNote(organizationId: string, noteId: string) {
 export async function updateClubMeetingNote(organizationId: string, noteId: string, input: MeetingNoteInput, actor: ClubMeetingNoteActor) {
   const prisma = await findOwnNote(organizationId, noteId);
   const honors = input.honors.filter((honor) => honor.name.trim() || honor.participants !== null);
+  const attendance = await checkedAttendance(organizationId, input);
+  const counts = filledCounts(input, attendance);
   const note = await prisma.clubMeetingNote.update({
     where: { id: noteId },
     data: {
       meetingDate: input.meetingDate,
-      pathfinderCount: input.pathfinderCount,
-      tltCount: input.tltCount,
-      staffCount: input.staffCount,
+      ...counts,
       honors,
       notes: input.notes,
+      ...(attendance ? { attendance: { deleteMany: {}, create: attendance.rows } } : {}),
       ...("accountId" in actor ? { updatedByAccountId: actor.accountId } : { updatedByUserId: actor.userId }),
     },
     select: noteSelect,
@@ -126,6 +252,7 @@ export async function updateClubMeetingNote(organizationId: string, noteId: stri
     metadata: {
       organizationId,
       noteId: note.id,
+      ...(attendance ? { attendanceRecorded: attendance.rows.length } : {}),
       ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
     },
   });

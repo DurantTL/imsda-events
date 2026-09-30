@@ -49,8 +49,8 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
           <p className="public-manage-empty">
             <FileText size={17} aria-hidden="true" /> {clubRoleDescriptions[access.club.role]}
           </p>
-          <Link className="primary-button club-event-action" href={`/account/clubs/${organizationId}/reports`}>
-            Open monthly reports <ArrowRight size={14} aria-hidden="true" />
+          <Link className="primary-button club-event-action" href={`/account/clubs/${organizationId}/records`}>
+            Open Monthly Records <ArrowRight size={14} aria-hidden="true" />
           </Link>
         </section>
       </>
@@ -96,7 +96,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
       steps.push({
         key: `report-${month}`,
         text: `The ${reportMonthLabel(month)} monthly report is due ${formatDueDate(reportDueDate(month))}.`,
-        href: `${base}/reports/${month}`,
+        href: `${base}/records?month=${month}`,
         action: "Open report",
       });
     }
@@ -121,7 +121,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
         honors={honors}
         honorsHref={`${base}/honors`}
         reports={reportProgress}
-        reportsHref={`${base}/reports`}
+        reportsHref={`${base}/records`}
         roster={roster}
         rosterHref={`${base}/roster`}
       />

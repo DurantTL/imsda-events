@@ -1,4 +1,5 @@
-import { MAX_HONORS, type ReportHonor } from "@/modules/club-reports/domain";
+import { calendarDateIn } from "@/modules/calendar/domain";
+import { MAX_HONORS, isReportMonth, type ReportHonor } from "@/modules/club-reports/domain";
 
 /**
  * Club meeting notes (#426): one simple record per meeting so the monthly
@@ -20,6 +21,21 @@ export function isMeetingDate(value: string) {
 /** "2026-10-14" → "2026-10". */
 export function meetingNoteMonth(meetingDate: string) {
   return meetingDate.slice(0, 7);
+}
+
+/**
+ * The month Monthly Records (#653) opens on: the `?month=` asked for when it is a
+ * real month up to the current one (an old report link), otherwise this month.
+ */
+export function recordsMonth(param: string | string[] | undefined, now: Date) {
+  const current = calendarDateIn(now).slice(0, 7);
+  return typeof param === "string" && isReportMonth(param) && param <= current ? param : current;
+}
+
+/** A new meeting's starting date within the month being viewed: today when it falls there, else the 1st. */
+export function defaultMeetingDate(month: string, now: Date) {
+  const today = calendarDateIn(now);
+  return today.startsWith(month) ? today : `${month}-01`;
 }
 
 function average(values: readonly number[]) {
