@@ -279,26 +279,79 @@ describe("the synthetic eAdventist export (#649)", () => {
       expect(looseOrganizationKey("SDA Church")).toBe("");
     });
 
-    it("offers a possible match, linking by default and creating a new record on request", () => {
+    it("offers a possible match with no default, and needs a choice before anything is linked", () => {
       const parsed = parseEadventistCsv(fixture);
-      const plan = planEadventistImport(parsed, [church({})]);
-      const item = plan.items.find((entry) => entry.eadventistId === "9002")!;
-      expect(item).toMatchObject({ action: "UPDATED", matchedBy: "POSSIBLE", existingId: "church-1", possibleMatches: [{ id: "church-1", name: "Sample Hills Seventh-day Adventist Church" }] });
-      expect(item.notes[0]).toContain("Possible match");
-      const created = planEadventistImport(parsed, [church({})], { "9002": NEW_RECORD }).items.find((entry) => entry.eadventistId === "9002")!;
-      expect(created).toMatchObject({ action: "NEW", existingId: null });
-      expect(created.possibleMatches).toHaveLength(1);
-      const other = planEadventistImport(parsed, [church({}), church({ id: "church-2", name: "Sample Hills SDA" })], { "9002": "church-2" }).items.find((entry) => entry.eadventistId === "9002")!;
-      expect(other.existingId).toBe("church-2");
-      // A stale or invented choice falls back to the default.
-      expect(planEadventistImport(parsed, [church({})], { "9002": "nope" }).items.find((entry) => entry.eadventistId === "9002")!.existingId).toBe("church-1");
+      const waiting = planEadventistImport(parsed, [church({})]);
+      const item = waiting.items.find((entry) => entry.eadventistId === "9002")!;
+      expect(item).toMatchObject({ needsChoice: true, existingId: null, matchedBy: null, possibleMatches: [{ id: "church-1", name: "Sample Hills Seventh-day Adventist Church" }] });
+      expect(item.notes[0]).toContain("Possible match — choose");
+      expect(waiting.needsChoice).toBe(1);
+
+      const linked = planEadventistImport(parsed, [church({})], { "9002": "church-1" });
+      expect(linked.needsChoice).toBe(0);
+      expect(linked.items.find((entry) => entry.eadventistId === "9002")).toMatchObject({ action: "UPDATED", matchedBy: "POSSIBLE", existingId: "church-1" });
+
+      const created = planEadventistImport(parsed, [church({})], { "9002": NEW_RECORD });
+      expect(created.needsChoice).toBe(0);
+      expect(created.items.find((entry) => entry.eadventistId === "9002")).toMatchObject({ action: "NEW", existingId: null });
+
+      const other = planEadventistImport(parsed, [church({}), church({ id: "church-2", name: "Sample Hills SDA" })], { "9002": "church-2" });
+      expect(other.items.find((entry) => entry.eadventistId === "9002")!.existingId).toBe("church-2");
     });
 
-    it("links one stored church to at most one row", () => {
+    it("skips a row whose choice is no longer a candidate, and never falls back to another church", () => {
+      const parsed = parseEadventistCsv(fixture);
+      for (const stale of ["nope", "church-gone"]) {
+        const plan = planEadventistImport(parsed, [church({})], { "9002": stale });
+        const item = plan.items.find((entry) => entry.eadventistId === "9002")!;
+        expect(item).toMatchObject({ action: "SKIPPED", existingId: null, needsChoice: false });
+        expect(item.notes).toContain("Your choice is no longer available — preview again");
+        expect(plan.needsChoice).toBe(0);
+      }
+      // A choice for a church that has since been linked elsewhere is also stale.
+      const taken = planEadventistImport(parsed, [church({ eadventistId: "5555" })], { "9002": "church-1" });
+      expect(taken.items.find((entry) => entry.eadventistId === "9002")!.action).toBe("SKIPPED");
+    });
+
+    it("lets one stored church go to at most one row", () => {
       const parsed = parseEadventistCsv(fixture);
       const twoRows = { ...parsed, records: [...parsed.records, { ...parsed.records.find((record) => record.eadventistId === "9002")!, eadventistId: "9099", line: 99 }] };
-      const plan = planEadventistImport(twoRows, [church({})]);
+      const plan = planEadventistImport(twoRows, [church({})], { "9002": "church-1", "9099": "church-1" });
       expect(plan.items.filter((entry) => entry.existingId === "church-1")).toHaveLength(1);
+      expect(plan.items.find((entry) => entry.eadventistId === "9099")!.action).toBe("SKIPPED");
+    });
+
+    it("matches whole-file passes in order: an exact name beats an earlier row's loose match (Sampletown)", () => {
+      const base = parseEadventistCsv(fixture).records[0]!;
+      const row = (eadventistId: string, name: string, type: "GROUP" | "CHURCH", line: number) => ({ ...base, eadventistId, name, type, line, subOrgOf: null });
+      const parsed = { rejected: [], records: [row("7001", "Sampletown Group", "GROUP", 2), row("7002", "Sampletown SDA Church", "CHURCH", 3)] };
+      const stored = church({ id: "church-s", name: "Sampletown SDA Church", normalizedName: "sampletown sda church" });
+      const plan = planEadventistImport(parsed, [stored]);
+      expect(plan.items.find((entry) => entry.eadventistId === "7002")).toMatchObject({ matchedBy: "NAME", existingId: "church-s" });
+      const group = plan.items.find((entry) => entry.eadventistId === "7001")!;
+      expect(group).toMatchObject({ action: "NEW", existingId: null, needsChoice: false, possibleMatches: [] });
+    });
+
+    it("never imports into a club, and skips a row whose id a club holds", () => {
+      const parsed = parseEadventistCsv(fixture);
+      const club = church({ id: "club-1", type: "CLUB", name: "Sample Hills Pathfinders", normalizedName: "sample hills pathfinders" });
+      const viaColumn = planEadventistImport(parsed, [{ ...club, eadventistId: "9002" }]);
+      expect(viaColumn.items.find((entry) => entry.eadventistId === "9002")).toMatchObject({ action: "SKIPPED", existingId: null });
+      expect(viaColumn.items.find((entry) => entry.eadventistId === "9002")!.notes).toContain("This eAdventist id belongs to a club; not imported");
+      const viaIdentity = planEadventistImport(parsed, [{ ...club, identityEadventistId: "9002" }]);
+      expect(viaIdentity.items.find((entry) => entry.eadventistId === "9002")!.action).toBe("SKIPPED");
+      // A club is not a name or loose target either, whatever it is called.
+      const byName = planEadventistImport(parsed, [{ ...club, name: "Sample Hills SDA Church", normalizedName: "sample hills sda church" }]);
+      expect(byName.items.find((entry) => entry.eadventistId === "9002")).toMatchObject({ action: "NEW", needsChoice: false });
+    });
+
+    it("skips a row whose id a person or another scope holds, instead of colliding", () => {
+      const parsed = parseEadventistCsv(fixture);
+      const blocked = new Map([["9002", "This eAdventist id is already recorded for a person, so this row was skipped. Resolve it and upload again."]]);
+      const plan = planEadventistImport(parsed, [], {}, blocked);
+      expect(plan.items.find((entry) => entry.eadventistId === "9002")).toMatchObject({ action: "SKIPPED" });
+      expect(plan.items.find((entry) => entry.eadventistId === "9002")!.notes[0]).toContain("recorded for a person");
+      expect(plan.counts.new).toBe(11);
     });
   });
 

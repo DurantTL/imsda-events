@@ -97,6 +97,14 @@ describe("eAdventist import routes (#649)", () => {
     expect(mocks.previewEadventistImport).not.toHaveBeenCalled();
   });
 
+  it("answers 400 NEEDS_CHOICES when a possible match has no choice", async () => {
+    const { EadventistImportError } = await import("@/modules/organizations/eadventist-import");
+    mocks.commitEadventistImport.mockRejectedValue(new EadventistImportError("NEEDS_CHOICES", "1 row needs a choice."));
+    const response = await POST(request("POST", "/api/admin/organizations/eadventist-import", { csv: fixture, confirm: true }));
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "NEEDS_CHOICES" });
+  });
+
   it("changes a status and reports a refusal as a conflict", async () => {
     const ok = await PATCH(request("PATCH", "/api/admin/organizations/org-1/status", { isActive: false }), { params: Promise.resolve({ organizationId: "org-1" }) });
     expect(ok.status).toBe(200);
@@ -112,16 +120,19 @@ describe("the upload preview screen (#649)", () => {
     const html = renderToStaticMarkup(createElement(EadventistImportWorkspace, {
       initialPreview: {
         counts: { new: 1, updated: 2, unchanged: 0, skipped: 0, flagged: 1 },
+        needsChoice: 1,
         rejected: [{ line: 9, name: "Sample Odd", reason: "Unknown organization type \"Spaceport\"." }],
         items: [
-          { line: 2, eadventistId: "9004", name: "Sample Ridge Group", kind: "GROUP", action: "NEW", matchedBy: null, notes: [], disbandedOn: "2024-03-01", possibleMatches: [], selectedMatch: null },
-          { line: 3, eadventistId: "9002", name: "Sample Hills SDA Church", kind: "CHURCH", action: "UPDATED", matchedBy: "NAME", notes: ["Matches the existing church \"Sample Hills SDA Church\" by name."], disbandedOn: null, possibleMatches: [], selectedMatch: null },
-          { line: 4, eadventistId: "9010", name: "Sample Pines Company", kind: "COMPANY", action: "UPDATED", matchedBy: "POSSIBLE", notes: ["Possible match: \"Sample Pines SDA\"."], disbandedOn: null, possibleMatches: [{ id: "church-7", name: "Sample Pines SDA" }], selectedMatch: "church-7" },
+          { line: 2, eadventistId: "9004", name: "Sample Ridge Group", kind: "GROUP", action: "NEW", matchedBy: null, notes: [], disbandedOn: "2024-03-01", possibleMatches: [], needsChoice: false, selectedMatch: null },
+          { line: 3, eadventistId: "9002", name: "Sample Hills SDA Church", kind: "CHURCH", action: "UPDATED", matchedBy: "NAME", notes: ["Matches the existing church \"Sample Hills SDA Church\" by name."], disbandedOn: null, possibleMatches: [], needsChoice: false, selectedMatch: null },
+          { line: 4, eadventistId: "9010", name: "Sample Pines Company", kind: "COMPANY", action: "UPDATED", matchedBy: "POSSIBLE", notes: ["Possible match: \"Sample Pines SDA\"."], disbandedOn: null, possibleMatches: [{ id: "church-7", name: "Sample Pines SDA" }], needsChoice: true, selectedMatch: null },
         ],
       },
     }));
     expect(html).toContain("1 new, 2 updated, 0 unchanged, 0 skipped. 1 with a disbanded date on file to review.");
-    expect(html).toContain("Possible match");
+    expect(html).toContain("Possible match — choose");
+    expect(html).toContain("Choose…");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Save 3 changes/);
     expect(html).toContain("Link to Sample Pines SDA");
     expect(html).toContain("Create new");
     expect(html).toContain("Disbanded 03/01/2024 on file — review");

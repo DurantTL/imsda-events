@@ -5,6 +5,7 @@ import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { normalizeOrganizationName } from "@/modules/organizations/domain";
 import {
+  EadventistImportError,
   parseEadventistCsv,
   planEadventistImport,
   NEW_RECORD,
@@ -27,7 +28,23 @@ type Client = Prisma.TransactionClient;
 
 const isoDay = (date: Date | null) => (date ? date.toISOString().slice(0, 10) : null);
 
-async function loadExisting(client: Client): Promise<ExistingOrganization[]> {
+/**
+ * Stored organizations, plus the eAdventist ids held where an import must not
+ * touch them: by a person, or by an organization at another provider scope.
+ * Those would collide with the unique identity key, so the row is skipped
+ * with a conflict note instead of aborting the whole save.
+ */
+async function loadExisting(client: Client): Promise<{ existing: ExistingOrganization[]; blocked: Map<string, string> }> {
+  const foreign = await client.externalIdentity.findMany({
+    where: { provider: "EADVENTIST", OR: [{ personId: { not: null } }, { providerScope: { not: "" } }] },
+    select: { externalId: true, personId: true },
+  });
+  const blocked = new Map(foreign.map((identity) => [
+    identity.externalId,
+    identity.personId
+      ? "This eAdventist id is already recorded for a person, so this row was skipped. Resolve it and upload again."
+      : "This eAdventist id is already recorded under another provider scope, so this row was skipped. Resolve it and upload again.",
+  ]));
   const rows = await client.organization.findMany({
     where: { OR: [{ eadventistId: { not: null } }, { type: "CHURCH" }, { externalIdentities: { some: { provider: "EADVENTIST", providerScope: "" } } }] },
     select: {
@@ -40,29 +57,31 @@ async function loadExisting(client: Client): Promise<ExistingOrganization[]> {
       _count: { select: { childOrganizations: true, sponsoredPromoCodes: true } },
     },
   });
-  return rows.map(({ affiliatedOrganization, disbandedOn, externalIdentities, churchLocation, _count, ...row }) => ({
+  const existing = rows.map(({ affiliatedOrganization, disbandedOn, externalIdentities, churchLocation, _count, ...row }) => ({
     ...row,
     disbandedOn: isoDay(disbandedOn),
     affiliatedEadventistId: affiliatedOrganization?.eadventistId ?? null,
     identityEadventistId: externalIdentities[0]?.externalId ?? null,
     hasDependents: _count.childOrganizations > 0 || _count.sponsoredPromoCodes > 0 || churchLocation !== null,
   }));
+  return { existing, blocked };
 }
 
 /** What the upload screen shows: no field values beyond the name and kind. */
-export type ImportPreviewItem = Pick<PlanItem, "line" | "eadventistId" | "name" | "kind" | "action" | "matchedBy" | "notes" | "disbandedOn" | "possibleMatches"> & {
+export type ImportPreviewItem = Pick<PlanItem, "line" | "eadventistId" | "name" | "kind" | "action" | "matchedBy" | "notes" | "disbandedOn" | "possibleMatches" | "needsChoice"> & {
   /** For a possible match: the stored organization that will be linked, or `NEW` to create a new record. */
   selectedMatch: string | null;
 };
-export type ImportPreview = { counts: ImportPlan["counts"]; items: ImportPreviewItem[]; rejected: ImportPlan["rejected"] };
+export type ImportPreview = { counts: ImportPlan["counts"]; needsChoice: number; items: ImportPreviewItem[]; rejected: ImportPlan["rejected"] };
 
 function previewOf(plan: ImportPlan): ImportPreview {
   return {
     counts: plan.counts,
+    needsChoice: plan.needsChoice,
     rejected: plan.rejected,
-    items: plan.items.map(({ line, eadventistId, name, kind, action, matchedBy, notes, disbandedOn, possibleMatches, existingId }) => ({
-      line, eadventistId, name, kind, action, matchedBy, notes, disbandedOn, possibleMatches,
-      selectedMatch: possibleMatches.length > 0 ? (matchedBy === "POSSIBLE" ? existingId : NEW_RECORD) : null,
+    items: plan.items.map(({ line, eadventistId, name, kind, action, matchedBy, notes, disbandedOn, possibleMatches, needsChoice, existingId }) => ({
+      line, eadventistId, name, kind, action, matchedBy, notes, disbandedOn, possibleMatches, needsChoice,
+      selectedMatch: possibleMatches.length === 0 || needsChoice || action === "SKIPPED" ? null : matchedBy === "POSSIBLE" ? existingId : NEW_RECORD,
     })),
   };
 }
@@ -70,8 +89,8 @@ function previewOf(plan: ImportPlan): ImportPreview {
 /** Reads the file and reports what committing it would do. Writes nothing. */
 export async function previewEadventistImport(csv: string, choices: LinkChoices = {}): Promise<ImportPreview> {
   const parsed = parseEadventistCsv(csv);
-  const existing = await getPrisma().$transaction((tx) => loadExisting(tx));
-  return previewOf(planEadventistImport(parsed, existing, choices));
+  const { existing, blocked } = await getPrisma().$transaction((tx) => loadExisting(tx));
+  return previewOf(planEadventistImport(parsed, existing, choices, blocked));
 }
 
 export type ImportCommitResult = ImportPreview & { committed: true };
@@ -101,7 +120,11 @@ export async function commitEadventistImport(csv: string, actorUserId: string, c
   const parsed = parseEadventistCsv(csv);
   try {
     return await getPrisma().$transaction(async (tx) => {
-      const plan = planEadventistImport(parsed, await loadExisting(tx), choices);
+      const { existing, blocked } = await loadExisting(tx);
+      const plan = planEadventistImport(parsed, existing, choices, blocked);
+      if (plan.needsChoice > 0) {
+        throw new EadventistImportError("NEEDS_CHOICES", `${plan.needsChoice} ${plan.needsChoice === 1 ? "row needs" : "rows need"} a choice: link to the existing church or create a new record. Nothing was saved.`);
+      }
       const idByEadventistId = new Map<string, string>();
       const now = new Date();
 

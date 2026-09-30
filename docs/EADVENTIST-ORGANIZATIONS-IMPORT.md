@@ -45,22 +45,28 @@ which).
 3. Uploading again updates records matched by `OrganizationID`; it never adds
    duplicates. The same file twice is a no-op.
 
-Matching, in order:
+Matching runs in whole-file passes, so an early row never takes a church a
+later row matches better:
 
 1. **By OrganizationID.** The id is kept in two places that must agree:
    `Organization.eadventistId` and the organization's `EADVENTIST`
-   `ExternalIdentity`. Either one matches a row. If they disagree, or two
-   stored organizations claim the id, the row is **Skipped** with a conflict
-   note. A save writes both.
-2. **By exact name, once.** A Church, Company or Group row is linked to the one
-   stored `CHURCH` with the same normalized name and no eAdventist id. The
-   preview shows each proposed match. Two stored churches with that name make
-   the row **Skipped**.
-3. **Possible match.** When no exact match exists but a stored church matches
-   loosely (ignoring case, punctuation, and the words SDA, Seventh-day
-   Adventist, Church, Company, Group), the row is marked **Possible match** with
-   a choice per row: *Link to {existing name}* (default) or *Create new*. Save
-   applies the choices. Linking only sets the id and updates fields; nothing is
+   `ExternalIdentity`. Either one matches a row. The row is **Skipped** with a
+   note if they disagree, if two organizations claim the id, if the id is held
+   by a person or at another provider scope, or if a **club** holds it ("This
+   eAdventist id belongs to a club; not imported"). Clubs are never import
+   targets. A save writes both places.
+2. **By exact name.** A Church, Company or Group row is linked to the one
+   unclaimed stored `CHURCH` with the same normalized name and no eAdventist id.
+   The preview shows each proposed match. Two such churches make the row
+   **Skipped**.
+3. **Possible match, no default.** When no exact match exists but an unclaimed
+   stored church matches loosely (ignoring case, punctuation, and the words SDA,
+   Seventh-day Adventist, Church, Company, Group), the row is marked **Possible
+   match: choose**. Staff must pick *Link to {existing name}* or *Create new* for
+   every such row; Save is disabled, and the server answers 400 `NEEDS_CHOICES`,
+   until they have. A choice that is no longer a current candidate skips the row
+   ("Your choice is no longer available, preview again"); it never falls back to
+   another church. Linking only sets the id and updates fields; nothing is
    deleted or merged.
 
 A linked `CHURCH` is retyped to Company or Group only if it sponsors no clubs or

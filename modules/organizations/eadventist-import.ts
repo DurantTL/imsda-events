@@ -30,7 +30,7 @@ const REQUIRED_COLUMNS = [
 ] as const;
 
 export class EadventistImportError extends Error {
-  constructor(public readonly code: "INVALID_CSV" | "MISSING_COLUMNS" | "TOO_LARGE" | "TOO_MANY_ROWS", message: string) {
+  constructor(public readonly code: "INVALID_CSV" | "MISSING_COLUMNS" | "TOO_LARGE" | "TOO_MANY_ROWS" | "NEEDS_CHOICES", message: string) {
     super(message);
     this.name = "EadventistImportError";
   }
@@ -251,6 +251,8 @@ export type PlanItem = {
   disbandedOn: string | null;
   /** Stored churches this row loosely resembles; staff choose to link one or create a new record. */
   possibleMatches: PossibleMatch[];
+  /** A possible match with no choice yet: nothing can be saved until staff choose. */
+  needsChoice: boolean;
   record: EadventistRecord | null;
   /** The eAdventist id of the resolved parent inside this file, or null. */
   affiliatedEadventistId: string | null;
@@ -259,6 +261,8 @@ export type PlanItem = {
 export type ImportPlan = {
   items: PlanItem[];
   counts: { new: number; updated: number; unchanged: number; skipped: number; flagged: number };
+  /** Rows still waiting for a "Possible match" choice. */
+  needsChoice: number;
   rejected: EadventistParseResult["rejected"];
 };
 
@@ -303,27 +307,37 @@ type Matched = {
   matchedBy: PlanItem["matchedBy"];
   notes: string[];
   skipped: boolean;
+  needsChoice: boolean;
   possibleMatches: PossibleMatch[];
 };
 
 /**
- * Plans a commit. Matching, in order:
- * - by eAdventist OrganizationID, from `Organization.eadventistId` or the
- *   organization's EADVENTIST ExternalIdentity. If the two disagree, or two
- *   stored organizations claim the id, the row is a skipped conflict;
- * - otherwise a Church, Company or Group row against exactly one stored CHURCH
- *   that has no eAdventist id yet, by normalized name (shown in the preview).
- *   Two such churches make the row a skipped ambiguity rather than a guess;
- * - otherwise, when a stored church matches only loosely (see
- *   `looseOrganizationKey`), a "Possible match": link the first by default, or
- *   whatever `choices` says (another candidate, or `NEW_RECORD`).
+ * Plans a commit. Matching runs in separate passes over the whole file, so an
+ * early row can never take a church a later row matches more exactly:
+ * 1. by eAdventist OrganizationID, from `Organization.eadventistId` or the
+ *    organization's EADVENTIST ExternalIdentity. A club is never an import
+ *    target: a row whose id a club holds is skipped. If the column and the
+ *    identity disagree, two organizations claim the id, or `blocked` says a
+ *    person or another scope holds it, the row is a skipped conflict;
+ * 2. a Church, Company or Group row against exactly one unclaimed stored CHURCH
+ *    without an eAdventist id, by normalized name (shown in the preview);
+ * 3. a stored church that matches only loosely (see `looseOrganizationKey`) is a
+ *    "Possible match" with no default: the row needs an explicit choice in
+ *    `choices` (a candidate's id, or `NEW_RECORD`) before anything can be saved.
+ *    Explicit choices are applied first; a choice that is not a current
+ *    candidate skips the row and never falls back to another church.
  *
  * `isActive` is never part of an update: staff own that switch once a record
  * exists. A stored church keeps its CHURCH kind when it sponsors clubs or promo
  * codes or has a location. The plan records exactly what the commit writes,
  * so planning the same file again after a commit reports nothing to do.
  */
-export function planEadventistImport(parsed: EadventistParseResult, existing: ExistingOrganization[], choices: LinkChoices = {}): ImportPlan {
+export function planEadventistImport(
+  parsed: EadventistParseResult,
+  existing: ExistingOrganization[],
+  choices: LinkChoices = {},
+  blocked: ReadonlyMap<string, string> = new Map(),
+): ImportPlan {
   const byId = new Map<string, Set<ExistingOrganization>>();
   for (const org of existing) {
     for (const id of new Set([org.eadventistId, org.identityEadventistId])) {
@@ -331,58 +345,89 @@ export function planEadventistImport(parsed: EadventistParseResult, existing: Ex
     }
   }
   const unlinked = existing.filter((org) => org.type === "CHURCH" && !org.eadventistId && !org.identityEadventistId);
-  const byExactName = new Map<string, ExistingOrganization[]>();
-  const byLooseName = new Map<string, ExistingOrganization[]>();
-  for (const org of unlinked) {
-    const exact = org.normalizedName || normalizeOrganizationName(org.name);
-    byExactName.set(exact, [...(byExactName.get(exact) ?? []), org]);
-    const loose = looseOrganizationKey(org.name);
-    if (loose) byLooseName.set(loose, [...(byLooseName.get(loose) ?? []), org]);
-  }
   const congregation = (type: OrganizationType) => type === "CHURCH" || type === "COMPANY" || type === "GROUP";
-
+  const records = parsed.records;
+  const results: Array<Matched | undefined> = records.map(() => undefined);
   const claimed = new Set<string>();
-  const matched: Matched[] = parsed.records.map((record) => {
-    const notes: string[] = [];
-    const skip = (note: string): Matched => ({ record, existing: null, matchedBy: null, notes: [...notes, note], skipped: true, possibleMatches: [] });
 
+  const skip = (index: number, note: string, notes: string[] = []) => {
+    results[index] = { record: records[index]!, existing: null, matchedBy: null, notes: [...notes, note], skipped: true, needsChoice: false, possibleMatches: [] };
+  };
+  const plain = (index: number, notes: string[] = [], possibleMatches: PossibleMatch[] = []) => {
+    results[index] = { record: records[index]!, existing: null, matchedBy: null, notes, skipped: false, needsChoice: false, possibleMatches };
+  };
+
+  // Pass 1: ids.
+  records.forEach((record, index) => {
+    const blockedNote = blocked.get(record.eadventistId);
+    if (blockedNote) return skip(index, blockedNote);
     const holders = byId.get(record.eadventistId);
-    if (holders) {
-      const [only] = [...holders];
-      if (holders.size > 1) return skip("Two stored organizations already claim this eAdventist id, so this row was skipped. Resolve the duplicate and upload again.");
-      if (only!.eadventistId && only!.identityEadventistId && only!.eadventistId !== only!.identityEadventistId) {
-        return skip("The stored organization's eAdventist id and its eAdventist external identity disagree, so this row was skipped. Correct one of them and upload again.");
-      }
-      claimed.add(only!.id);
-      return { record, existing: only!, matchedBy: "EADVENTIST_ID", notes, skipped: false, possibleMatches: [] };
+    if (!holders) return;
+    if ([...holders].some((org) => org.type === "CLUB")) return skip(index, "This eAdventist id belongs to a club; not imported");
+    if (holders.size > 1) return skip(index, "Two stored organizations already claim this eAdventist id, so this row was skipped. Resolve the duplicate and upload again.");
+    const [only] = [...holders];
+    if (only!.eadventistId && only!.identityEadventistId && only!.eadventistId !== only!.identityEadventistId) {
+      return skip(index, "The stored organization's eAdventist id and its eAdventist external identity disagree, so this row was skipped. Correct one of them and upload again.");
     }
-
-    if (congregation(record.type)) {
-      const exact = (byExactName.get(normalizeOrganizationName(record.name)) ?? []).filter((org) => !claimed.has(org.id));
-      if (exact.length === 1) {
-        claimed.add(exact[0]!.id);
-        notes.push(`Matches the existing church "${exact[0]!.name}" by name. It will be linked to this eAdventist record.`);
-        return { record, existing: exact[0]!, matchedBy: "NAME", notes, skipped: false, possibleMatches: [] };
-      }
-      if (exact.length > 1) {
-        return skip("More than one existing church has this name, so it wasn't matched. Rename or deactivate the duplicates and upload again.");
-      }
-      const loose = (byLooseName.get(looseOrganizationKey(record.name)) ?? []).filter((org) => !claimed.has(org.id));
-      if (looseOrganizationKey(record.name) && loose.length > 0) {
-        const possibleMatches = loose.map((org) => ({ id: org.id, name: org.name })).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
-        const choice = choices[record.eadventistId];
-        if (choice === NEW_RECORD) {
-          notes.push("Possible match found; a new record will be created instead.");
-          return { record, existing: null, matchedBy: null, notes, skipped: false, possibleMatches };
-        }
-        const chosen = loose.find((org) => org.id === choice) ?? loose.find((org) => org.id === possibleMatches[0]!.id)!;
-        claimed.add(chosen.id);
-        notes.push(`Possible match: "${chosen.name}". It will be linked to this eAdventist record unless you choose to create a new one.`);
-        return { record, existing: chosen, matchedBy: "POSSIBLE", notes, skipped: false, possibleMatches };
-      }
-    }
-    return { record, existing: null, matchedBy: null, notes, skipped: false, possibleMatches: [] };
+    claimed.add(only!.id);
+    results[index] = { record, existing: only!, matchedBy: "EADVENTIST_ID", notes: [], skipped: false, needsChoice: false, possibleMatches: [] };
   });
+
+  // Pass 2: exact normalized names, among what is still unclaimed.
+  records.forEach((record, index) => {
+    if (results[index] || !congregation(record.type)) return;
+    const key = normalizeOrganizationName(record.name);
+    const exact = unlinked.filter((org) => !claimed.has(org.id) && (org.normalizedName || normalizeOrganizationName(org.name)) === key);
+    if (exact.length === 1) {
+      claimed.add(exact[0]!.id);
+      results[index] = {
+        record, existing: exact[0]!, matchedBy: "NAME", skipped: false, needsChoice: false, possibleMatches: [],
+        notes: [`Matches the existing church "${exact[0]!.name}" by name. It will be linked to this eAdventist record.`],
+      };
+    } else if (exact.length > 1) {
+      skip(index, "More than one existing church has this name, so it wasn't matched. Rename or deactivate the duplicates and upload again.");
+    }
+  });
+
+  // Pass 3: loose matches. Explicit choices first, then rows still waiting for one.
+  const candidatesFor = (record: EadventistRecord) => {
+    const key = looseOrganizationKey(record.name);
+    if (!key) return [];
+    return unlinked
+      .filter((org) => !claimed.has(org.id) && looseOrganizationKey(org.name) === key)
+      .map((org) => ({ id: org.id, name: org.name }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  };
+  const open = records.map((_, index) => index).filter((index) => !results[index] && congregation(records[index]!.type));
+  for (const index of open.filter((i) => choices[records[i]!.eadventistId] !== undefined)) {
+    const record = records[index]!;
+    const choice = choices[record.eadventistId]!;
+    const candidates = candidatesFor(record);
+    if (choice === NEW_RECORD) {
+      plain(index, candidates.length > 0 ? ["Possible match found; a new record will be created instead."] : [], candidates);
+      continue;
+    }
+    const chosen = candidates.find((candidate) => candidate.id === choice);
+    if (!chosen) {
+      skip(index, "Your choice is no longer available — preview again");
+      continue;
+    }
+    claimed.add(chosen.id);
+    results[index] = {
+      record, existing: unlinked.find((org) => org.id === chosen.id)!, matchedBy: "POSSIBLE", skipped: false, needsChoice: false, possibleMatches: candidates,
+      notes: [`Linked to "${chosen.name}" by your choice.`],
+    };
+  }
+  for (const index of open.filter((i) => !results[i])) {
+    const candidates = candidatesFor(records[index]!);
+    if (candidates.length === 0) continue;
+    results[index] = {
+      record: records[index]!, existing: null, matchedBy: null, skipped: false, needsChoice: true, possibleMatches: candidates,
+      notes: ["Possible match — choose: link to an existing church or create a new record."],
+    };
+  }
+  records.forEach((_, index) => { if (!results[index]) plain(index); });
+  const matched = results as Matched[];
 
   const skippedIds = new Set(matched.filter((entry) => entry.skipped).map((entry) => entry.record.eadventistId));
   const rowsByName = new Map<string, Array<EadventistParseResult["records"][number]>>();
@@ -393,9 +438,9 @@ export function planEadventistImport(parsed: EadventistParseResult, existing: Ex
   const conferenceNames = new Set(parsed.records.filter((record) => record.type === "CONFERENCE").map((record) => normalizeOrganizationName(record.name)));
 
   const items: PlanItem[] = matched.map((entry) => {
-    const { record, existing: stored, matchedBy, skipped, possibleMatches } = entry;
+    const { record, existing: stored, matchedBy, skipped, possibleMatches, needsChoice } = entry;
     const notes = [...entry.notes];
-    const base = { line: record.line, eadventistId: record.eadventistId, name: record.name, disbandedOn: record.disbandedOn, possibleMatches };
+    const base = { line: record.line, eadventistId: record.eadventistId, name: record.name, disbandedOn: record.disbandedOn, possibleMatches, needsChoice };
     if (skipped) {
       return { ...base, kind: record.type, action: "SKIPPED" as const, matchedBy: null, existingId: null, notes, record: null, affiliatedEadventistId: null };
     }
@@ -433,7 +478,7 @@ export function planEadventistImport(parsed: EadventistParseResult, existing: Ex
     counts[item.action.toLowerCase() as "new" | "updated" | "unchanged" | "skipped"] += 1;
     if (item.disbandedOn && item.action !== "SKIPPED") counts.flagged += 1;
   }
-  return { items, counts, rejected: parsed.rejected };
+  return { items, counts, needsChoice: items.filter((item) => item.needsChoice).length, rejected: parsed.rejected };
 }
 
 /** "Disbanded 03/01/2024 on file — review" (#649): shown wherever a record with a date is active. */

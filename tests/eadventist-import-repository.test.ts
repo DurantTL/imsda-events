@@ -4,14 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** In-memory stand-in for the organization table and audit log. */
 type Row = Record<string, unknown> & { id: string; type: string; name: string; isActive: boolean; eadventistId: string | null; affiliatedOrganizationId: string | null; parentOrganizationId?: string | null };
-const state = vi.hoisted(() => ({ rows: [] as unknown[], audit: [] as unknown[], identities: [] as Array<{ organizationId: string; externalId: string }>, next: 1 }));
+const state = vi.hoisted(() => ({ rows: [] as unknown[], audit: [] as unknown[], identities: [] as Array<{ organizationId?: string; personId?: string; providerScope?: string; externalId: string }>, next: 1 }));
 const rows = () => state.rows as Row[];
 
 const db = vi.hoisted(() => {
   const organization = {
     findMany: async () => rows().map((row) => ({
       ...row,
-      externalIdentities: state.identities.filter((identity) => identity.organizationId === row.id).map((identity) => ({ externalId: identity.externalId })),
+      externalIdentities: state.identities.filter((identity) => identity.organizationId === row.id && (identity.providerScope ?? "") === "").map((identity) => ({ externalId: identity.externalId })),
       churchLocation: null,
       _count: { childOrganizations: rows().filter((other) => other.parentOrganizationId === row.id).length, sponsoredPromoCodes: 0 },
       disbandedOn: (row.disbandedOn as Date | null) ?? null,
@@ -34,6 +34,7 @@ const db = vi.hoisted(() => {
     count: async ({ where }: { where: { parentOrganizationId: string } }) => rows().filter((row) => row.parentOrganizationId === where.parentOrganizationId).length,
   };
   const externalIdentity = {
+    findMany: async () => state.identities.filter((identity) => identity.personId || (identity.providerScope ?? "") !== "").map((identity) => ({ externalId: identity.externalId, personId: identity.personId ?? null })),
     upsert: async ({ where, create, update }: { where: { organizationId_provider_providerScope: { organizationId: string } }; create: { organizationId: string; externalId: string }; update: { externalId: string } }) => {
       const existing = state.identities.find((identity) => identity.organizationId === where.organizationId_provider_providerScope.organizationId);
       if (existing) existing.externalId = update.externalId;
@@ -54,6 +55,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => db }));
 
 import { commitEadventistImport, previewEadventistImport, setDirectoryOrganizationActive } from "@/modules/organizations/eadventist-import-repository";
+import { EadventistImportError } from "@/modules/organizations/eadventist-import";
 import { OrganizationOperationError } from "@/modules/organizations/repository";
 
 const fixture = readFileSync(join(__dirname, "fixtures", "eadventist-organizations-synthetic.csv"), "utf8");
@@ -148,12 +150,18 @@ describe("eAdventist import storage (#649)", () => {
     expect(state.identities.filter((identity) => identity.organizationId === "church-old")).toHaveLength(1);
   });
 
-  it("applies staff choices for a possible match: link by default, or create a new record", async () => {
+  it("refuses to save while a possible match has no choice, then applies the choices", async () => {
     const loose = () => rows().push({ id: "church-old", type: "CHURCH", name: "Sample Hills Seventh-day Adventist Church", normalizedName: "sample hills seventh-day adventist church", isActive: true, eadventistId: null, affiliatedOrganizationId: null } as Row);
     loose();
     const preview = await previewEadventistImport(fixture);
-    expect(preview.items.find((item) => item.eadventistId === "9002")).toMatchObject({ action: "UPDATED", matchedBy: "POSSIBLE", selectedMatch: "church-old" });
-    await commitEadventistImport(fixture, "admin-1");
+    expect(preview.needsChoice).toBe(1);
+    expect(preview.items.find((item) => item.eadventistId === "9002")).toMatchObject({ needsChoice: true, selectedMatch: null });
+    await expect(commitEadventistImport(fixture, "admin-1")).rejects.toMatchObject({ code: "NEEDS_CHOICES" });
+    await expect(commitEadventistImport(fixture, "admin-1")).rejects.toBeInstanceOf(EadventistImportError);
+    expect(rows()).toHaveLength(1);
+    expect(state.audit).toHaveLength(0);
+
+    await commitEadventistImport(fixture, "admin-1", { "9002": "church-old" });
     expect(rows()).toHaveLength(12);
     expect(rows().find((row) => row.id === "church-old")).toMatchObject({ eadventistId: "9002", name: "Sample Hills SDA Church" });
 
@@ -164,6 +172,25 @@ describe("eAdventist import storage (#649)", () => {
     expect(chosen.items.find((item) => item.eadventistId === "9002")).toMatchObject({ action: "NEW", selectedMatch: "NEW" });
     expect(rows()).toHaveLength(13);
     expect(rows().find((row) => row.id === "church-old")).toMatchObject({ eadventistId: null, name: "Sample Hills Seventh-day Adventist Church" });
+  });
+
+  it("skips a row with a stale choice instead of linking another church", async () => {
+    rows().push({ id: "church-old", type: "CHURCH", name: "Sample Hills Seventh-day Adventist Church", normalizedName: "sample hills seventh-day adventist church", isActive: true, eadventistId: null, affiliatedOrganizationId: null } as Row);
+    const result = await commitEadventistImport(fixture, "admin-1", { "9002": "church-gone" });
+    expect(result.items.find((item) => item.eadventistId === "9002")).toMatchObject({ action: "SKIPPED" });
+    expect(rows().find((row) => row.id === "church-old")!.eadventistId).toBeFalsy();
+    expect(rows()).toHaveLength(12);
+  });
+
+  it("skips rows whose id a club, a person, or another scope holds, and imports the rest", async () => {
+    rows().push({ id: "club-1", type: "CLUB", name: "Sample Club", isActive: true, eadventistId: "9003", affiliatedOrganizationId: null } as Row);
+    state.identities.push({ personId: "person-1", externalId: "9004" });
+    state.identities.push({ organizationId: "church-z", providerScope: "other", externalId: "9005" });
+    const result = await commitEadventistImport(fixture, "admin-1");
+    const skipped = result.items.filter((item) => item.action === "SKIPPED").map((item) => item.eadventistId).sort();
+    expect(skipped).toEqual(["9003", "9004", "9005"]);
+    expect(rows().find((row) => row.id === "club-1")).toMatchObject({ name: "Sample Club", type: "CLUB" });
+    expect(rows()).toHaveLength(1 + 9);
   });
 
   it("does not store a Group's street address or phone", async () => {

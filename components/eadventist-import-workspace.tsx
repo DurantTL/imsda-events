@@ -63,6 +63,7 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
 
   const counts = preview?.counts;
   const changes = counts ? counts.new + counts.updated : 0;
+  const waiting = preview?.needsChoice ?? 0;
 
   return (
     <section className="panel" aria-labelledby="eadventist-import-title">
@@ -89,6 +90,7 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
         <>
           <p className="field-help" data-testid="eadventist-import-summary">
             {saved ? <><CheckCircle2 aria-hidden="true" size={14} /> Saved. </> : "Nothing is saved yet. "}
+            {waiting > 0 && <strong>{waiting} possible {waiting === 1 ? "match needs" : "matches need"} a choice before you can save. </strong>}
             {counts.new} new, {counts.updated} updated, {counts.unchanged} unchanged, {counts.skipped} skipped. {counts.flagged} with a disbanded date on file to review.
           </p>
           {preview.rejected.length > 0 && (
@@ -110,7 +112,7 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
                     <td>{organizationKindLabels[item.kind]}</td>
                     <td>
                       <span className={`status-chip ${actionTone[item.action]}`}>{actionLabels[item.action]}</span>
-                      {item.possibleMatches.length > 0 && <span className="status-chip gold">Possible match</span>}
+                      {item.possibleMatches.length > 0 && <span className="status-chip gold">{item.needsChoice ? "Possible match — choose" : "Possible match"}</span>}
                       {item.notes.map((note) => <div className="field-help" key={note}>{note}</div>)}
                       {item.possibleMatches.length > 0 && !saved && (
                         <select
@@ -121,8 +123,9 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
                             setChoices(next);
                             if (csv) void send(csv, false, next);
                           }}
-                          value={item.selectedMatch ?? NEW_RECORD}
+                          value={item.selectedMatch ?? ""}
                         >
+                          {item.selectedMatch === null && <option value="">Choose…</option>}
                           {item.possibleMatches.map((match) => <option key={match.id} value={match.id}>Link to {match.name}</option>)}
                           <option value={NEW_RECORD}>Create new</option>
                         </select>
@@ -139,7 +142,7 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
               {saved ? "Upload another file" : "Cancel"}
             </button>
             {!saved && (
-              <button className="primary-button" disabled={busy || !csv || changes === 0} onClick={() => csv && send(csv, true)} type="button">
+              <button className="primary-button" disabled={busy || !csv || changes === 0 || waiting > 0} onClick={() => csv && send(csv, true)} type="button">
                 <Upload aria-hidden="true" size={16} /> {busy ? "Saving…" : `Save ${changes} change${changes === 1 ? "" : "s"}`}
               </button>
             )}
