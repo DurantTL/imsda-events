@@ -51,7 +51,7 @@ const render = (readOnly: boolean, value: ClubEarnedAwardsData = data) => render
 describe("the Earned awards screen (#532)", () => {
   it("gives a director or deputy the suggestions, each needing a confirming click, with nothing pre-added", () => {
     const html = render(false);
-    expect(html).toContain("Earned awards");
+    expect(html).toContain("Class tracking");
     expect(html).toContain("Suggested (2)");
     expect(html).toContain("Nothing here is added until you confirm it.");
     // Insignia: every catalog item ticked to start with, a confirm button, "Not now", and the missing item flagged.

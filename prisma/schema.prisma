@@ -2471,6 +2471,10 @@ model Refund {
   status            RefundStatus
   externalReference String?
   reason            String?
+  /// One key per reviewed manual refund operation (#525). A retry with the
+  /// same key returns the recorded refund instead of recording another.
+  /// Null for provider-driven and older refunds (nulls never collide).
+  idempotencyKey    String?
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
@@ -2478,6 +2482,7 @@ model Refund {
   payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
 
   @@unique([paymentId, externalReference])
+  @@unique([paymentId, idempotencyKey])
   @@index([eventId, status])
   @@index([paymentId])
 }

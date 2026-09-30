@@ -405,7 +405,7 @@ export function ClubRosterWorkspace({
                                     ))}
                                   </div>
                                 )}
-                                {honorsHref && <Link className="text-button" href={honorsHref}>Edit</Link>}
+                                {honorsHref && <Link className="text-button" href={honorsHref}>Open Honors tab</Link>}
                               </td>
                             )}
                             {!readOnly && <td className="roster-card-actions" data-label="Actions">

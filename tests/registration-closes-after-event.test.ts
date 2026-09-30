@@ -113,7 +113,7 @@ describe("registration closes once the event has ended (#575)", () => {
     const closed = describePublicEventLifecycle(event, 0, nextDayStart);
     expect(closed).toMatchObject({
       state: "CLOSED",
-      statusLabel: "Registration for this event has closed.",
+      statusLabel: "This event has ended",
       ctaEnabled: false,
     });
   });

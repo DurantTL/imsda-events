@@ -13,7 +13,8 @@ import {
 import { BrandMark } from "@/components/brand-mark";
 import { EventAutoSelectNotice } from "@/components/event-auto-select-notice";
 import { rememberLastUsedEvent } from "@/components/remember-last-event";
-import { eventToRemember, resolveShellEvent } from "@/components/shell-event-selection";
+import { guardedNavigate } from "@/components/unsaved-changes-registry";
+import { eventToRemember, resolveShellEvent, switchEvent } from "@/components/shell-event-selection";
 import { StaffAccountMenu } from "@/components/staff-account-menu";
 import type { EventPermission } from "@/modules/access/permissions";
 import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-contexts";
@@ -168,16 +169,20 @@ export function AppShell({
   }, [requestedEventId, knownEventIds]);
 
   function selectEvent(eventId: string) {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("event", eventId);
-    for (const resourceParam of ["q", "status", "template", "version", "message", "new"]) {
-      params.delete(resourceParam);
-    }
-    // Remembered for the next sign-in (#108 queue 1); never blocks the switch.
-    lastRememberedId.current = eventId;
-    setSeenEventId(eventId);
-    void rememberLastUsedEvent(eventId).then(() => router.refresh());
-    router.push(`${pathname}?${params.toString()}`);
+    // Guarded (#647): a dirty form prompts first; Cancel changes nothing.
+    switchEvent({
+      eventId,
+      pathname,
+      currentSearch: searchParams.toString(),
+      guard: guardedNavigate,
+      commit: (id) => {
+        // Remembered for the next sign-in (#108 queue 1); never blocks the switch.
+        lastRememberedId.current = id;
+        setSeenEventId(id);
+        void rememberLastUsedEvent(id).then(() => router.refresh());
+      },
+      push: (href) => router.push(href),
+    });
   }
 
   return (
