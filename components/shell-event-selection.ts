@@ -35,3 +35,32 @@ export function eventToRemember(input: {
   if (!requestedEventId || !knownEventIds.includes(requestedEventId)) return null;
   return requestedEventId === lastRememberedId ? null : requestedEventId;
 }
+
+/** Params tied to the previous event's resources; dropped when switching events. */
+const eventScopedParams = ["q", "status", "template", "version", "message", "new"];
+
+export function eventSwitchHref(pathname: string, currentSearch: string, eventId: string): string {
+  const params = new URLSearchParams(currentSearch);
+  params.set("event", eventId);
+  for (const param of eventScopedParams) params.delete(param);
+  return `${pathname}?${params.toString()}`;
+}
+
+/**
+ * The event picker's change handler (#647). `guard` runs before anything
+ * changes: on cancel the cookie, local state and URL are all left alone.
+ */
+export function switchEvent(input: {
+  eventId: string;
+  pathname: string;
+  currentSearch: string;
+  guard: (navigate: () => void) => boolean;
+  commit: (eventId: string) => void;
+  push: (href: string) => void;
+}): boolean {
+  const { eventId, pathname, currentSearch, guard, commit, push } = input;
+  return guard(() => {
+    commit(eventId);
+    push(eventSwitchHref(pathname, currentSearch, eventId));
+  });
+}
