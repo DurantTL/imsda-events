@@ -1,5 +1,6 @@
 "use client";
 
+import { staffPageTitles } from "@/components/staff-navigation";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, TriangleAlert, X } from "lucide-react";
@@ -286,7 +287,7 @@ export function HonorsSetupWorkspace({
       <div className="page-intro">
         <div>
           <p className="eyebrow">Honors Weekend</p>
-          <h2>Classes for {eventName}</h2>
+          <h2 className="duplicate-page-title">{staffPageTitles.honors}</h2>
           <p>
             Name this site&apos;s sessions, then add the honors it teaches. Capacity
             counts youth seats only. Seats and sign-ups appear here once class

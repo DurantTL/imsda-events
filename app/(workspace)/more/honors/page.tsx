@@ -4,8 +4,9 @@ import { BackLink } from "@/components/back-link";
 import { HonorsSetupWorkspace } from "@/components/honors-setup-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
 import { getEventHonorSetup, listHonors } from "@/modules/honors/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Honors Weekend classes" };
+export const metadata: Metadata = { title: staffPageTitles.honors };
 
 export default async function HonorsSetupPage({ searchParams }: { searchParams: Promise<{ event?: string }> }) {
   const { event: requested } = await searchParams;

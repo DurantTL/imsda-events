@@ -3,8 +3,9 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { FinanceWorkspace } from "@/components/finance-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listRegistrations } from "@/modules/registrations/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Finance" };
+export const metadata: Metadata = { title: staffPageTitles.payments };
 
 export default async function FinancePage({ searchParams }: { searchParams: Promise<{ event?: string; filter?: string; registration?: string }> }) {
   const { event: requested, filter, registration } = await searchParams;

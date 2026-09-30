@@ -3,8 +3,9 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { RegistrationBuilderWorkspace } from "@/components/registration-builder-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listFormTemplates, listRegistrationForms } from "@/modules/forms/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Registration builder" };
+export const metadata: Metadata = { title: staffPageTitles.registrationForm };
 
 export default async function RegistrationBuilderPage({ searchParams }: { searchParams: Promise<{ event?: string; form?: string; field?: string }> }) {
   const { event: requested, form: focusForm, field: focusField } = await searchParams;

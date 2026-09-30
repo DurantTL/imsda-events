@@ -11,10 +11,11 @@ import { listRecentAuditActivity } from "@/modules/audit/audit-service";
 import { resolveEventContext } from "@/modules/events/selection";
 import { eventKindFromAudience, moreCardApplies, selectActivity } from "@/modules/events/settings-sections";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
+import { staffPageTitles } from "@/components/staff-navigation";
 
 const signInAnchors = ["two-step-verification", "passkeys"] as const;
 
-export const metadata: Metadata = { title: "More" };
+export const metadata: Metadata = { title: staffPageTitles.more };
 
 export default async function MorePage({ searchParams }: { searchParams: Promise<{ event?: string; activity?: string }> }) {
   const { event: requested, activity: activityFilter } = await searchParams;
@@ -67,7 +68,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
 
   return (
     <section className="page-stack">
-      <div className="page-intro"><div><p className="eyebrow">Event administration</p><h2>Settings & activity</h2><p>Choose a task or review recent changes for {event.name}.</p></div></div>
+      <div className="page-intro"><div><p className="eyebrow">Event administration</p><h2 className="duplicate-page-title">{staffPageTitles.more}</h2><p>Choose a task or review recent changes for {event.name}.</p></div></div>
       {renderGroups(visibleGroups)}
       {otherGroups.length > 0 && (
         <details className="panel activity-disclosure">

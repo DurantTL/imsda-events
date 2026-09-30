@@ -1,5 +1,6 @@
 "use client";
 
+import { staffPageTitles } from "@/components/staff-navigation";
 import { useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import Link from "next/link";
@@ -69,7 +70,7 @@ export function TagConfigurationWorkspace({
   }
 
   return <div className="settings-stack">
-    <div className="page-intro"><div><p className="eyebrow">Event configuration</p><h2>Tags</h2><p>Configure the tag vocabulary staff can apply to registrations for {eventName}. Free-text tags are not supported — every tag is defined here first, so tagging stays consistent.</p></div></div>
+    <div className="page-intro"><div><p className="eyebrow">Event configuration</p><h2 className="duplicate-page-title">{staffPageTitles.tags}</h2><p>Configure the tag vocabulary staff can apply to registrations for {eventName}. Free-text tags are not supported — every tag is defined here first, so tagging stays consistent.</p></div></div>
     <p className="usage-note"><Info aria-hidden="true" size={16} /><span>Where this shows up: staff add or remove these tags from a registration&rsquo;s notes &amp; tags panel in <Link href={`/people?event=${eventId}`}>People</Link>.</span></p>
     {/* While the deactivate dialog is open, its own alert shows the error; one announcement, not two. */}
     {error && !deactivateTarget && <p className="form-error" role="alert">{error}</p>}

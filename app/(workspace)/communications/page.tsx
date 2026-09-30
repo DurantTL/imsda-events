@@ -4,8 +4,9 @@ import { getMessagingWorkspace } from "@/modules/communications/messaging-reposi
 import { listAnnouncements } from "@/modules/communications/repository";
 import type { CommunicationsView, MessagingWorkspaceData } from "@/modules/communications/types";
 import { resolveEventContext } from "@/modules/events/selection";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Communications" };
+export const metadata: Metadata = { title: staffPageTitles.emails };
 
 const emptyMessaging: MessagingWorkspaceData = {
   settings: {

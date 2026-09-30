@@ -57,7 +57,6 @@ export const navigationGroupLabels: Record<NavigationGroup, string> = {
 export type NavigationItem = {
   href: string;
   label: string;
-  mobileLabel: string;
   icon: LucideIcon;
   desktopOnly?: boolean;
   requiredPermission?: EventPermission;
@@ -79,30 +78,75 @@ export function withCurrentEvent(href: string, eventId: string | null | undefine
   return `${path}?${params.toString()}${hash ? `#${hash}` : ""}`;
 }
 
+/**
+ * One name per staff destination (#685). The nav label, the workspace header
+ * title, the page's own title and its `<title>` all read the name defined here,
+ * so a section can't be "People" in one place and "Registrations" in another.
+ * `staffSubpageTitle` also names the `/more/*` pages that aren't nav items,
+ * which the header used to call "More".
+ */
+export const staffPageTitles = {
+  overview: "Dashboard",
+  checkIn: "Check-in",
+  registrationForm: "Registration form",
+  attendeeSetup: "Attendee setup",
+  tags: "Tags",
+  eventSettings: "Event settings",
+  registrations: "Registrations",
+  imports: "Imports",
+  team: "Team",
+  payments: "Payments",
+  promoCodes: "Promo codes",
+  emails: "Emails",
+  more: "More",
+  systemManagement: "System management",
+  honors: "Honors Weekend classes",
+} as const;
+
+const moreSubpageTitles: readonly (readonly [string, string])[] = [
+  ["/more/honors", staffPageTitles.honors],
+  ["/more/club-assignments", "Club assignments"],
+  ["/more/club-forms", "Club forms"],
+  ["/more/clubs", "Clubs"],
+  ["/more/event-content", "Public content"],
+  ["/more/event-patches", "Event patches"],
+  ["/more/health", "Operational health"],
+  ["/more/merchandise", "Merchandise"],
+  ["/more/program-assignments", "Seminar assignments"],
+  ["/more/reports", "Operational reports"],
+];
+
+/** The title a staff page shows in the workspace header, or `null` to use its nav label. */
+export function staffSubpageTitle(pathname: string): string | null {
+  for (const [prefix, title] of moreSubpageTitles) {
+    if (pathname === prefix || pathname.startsWith(`${prefix}/`)) return title;
+  }
+  return null;
+}
+
 export const systemNavigation: NavigationItem = {
   href: "/admin",
-  label: "System management",
-  mobileLabel: "System",
+  label: staffPageTitles.systemManagement,
   icon: ShieldCheck,
 };
 
 export const navigation: readonly NavigationItem[] = [
-  { href: "/overview", label: "Dashboard", mobileLabel: "Home", icon: LayoutDashboard },
-  { href: "/check-in", label: "Check-in", mobileLabel: "Check-in", icon: CheckCircle2, requiredPermission: "MANAGE_CHECK_IN", group: "events" },
-  { href: "/registration-builder", label: "Registration form", mobileLabel: "Form", icon: PanelsTopLeft, desktopOnly: true, requiredPermission: "MANAGE_FORMS", group: "events" },
-  { href: "/more/attendee-configuration", label: "Attendee setup", mobileLabel: "Types", icon: Tags, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
-  { href: "/more/tags", label: "Tags", mobileLabel: "Tags", icon: Tag, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
-  { href: "/more/event-settings", label: "Event settings", mobileLabel: "Settings", icon: Settings2, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
-  { href: "/people", label: "Registrations", mobileLabel: "People", icon: UsersRound, requiredPermission: "VIEW_SENSITIVE_DATA", group: "people" },
-  { href: "/imports", label: "Imports", mobileLabel: "Imports", icon: FileUp, desktopOnly: true, requiredPermission: "MANAGE_IMPORTS", group: "people" },
-  { href: "/staff", label: "Team", mobileLabel: "Team", icon: UserCog, desktopOnly: true, requiredPermission: "MANAGE_STAFF", group: "people" },
-  { href: "/finance", label: "Payments", mobileLabel: "Payments", icon: WalletCards, requiredPermission: "MANAGE_FINANCE", group: "finance" },
-  { href: "/more/promo-codes", label: "Promo codes", mobileLabel: "Promos", icon: TicketPercent, requiredPermission: "MANAGE_FINANCE", group: "finance" },
-  { href: "/communications", label: "Emails", mobileLabel: "Emails", icon: Megaphone, requiredPermission: "MANAGE_COMMUNICATIONS", group: "communications" },
+  { href: "/overview", label: staffPageTitles.overview, icon: LayoutDashboard },
+  { href: "/check-in", label: staffPageTitles.checkIn, icon: CheckCircle2, requiredPermission: "MANAGE_CHECK_IN", group: "events" },
+  { href: "/registration-builder", label: staffPageTitles.registrationForm, icon: PanelsTopLeft, desktopOnly: true, requiredPermission: "MANAGE_FORMS", group: "events" },
+  { href: "/more/attendee-configuration", label: staffPageTitles.attendeeSetup, icon: Tags, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
+  { href: "/more/tags", label: staffPageTitles.tags, icon: Tag, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
+  { href: "/more/event-settings", label: staffPageTitles.eventSettings, icon: Settings2, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
+  { href: "/people", label: staffPageTitles.registrations, icon: UsersRound, requiredPermission: "VIEW_SENSITIVE_DATA", group: "people" },
+  { href: "/imports", label: staffPageTitles.imports, icon: FileUp, desktopOnly: true, requiredPermission: "MANAGE_IMPORTS", group: "people" },
+  { href: "/staff", label: staffPageTitles.team, icon: UserCog, desktopOnly: true, requiredPermission: "MANAGE_STAFF", group: "people" },
+  { href: "/finance", label: staffPageTitles.payments, icon: WalletCards, requiredPermission: "MANAGE_FINANCE", group: "finance" },
+  { href: "/more/promo-codes", label: staffPageTitles.promoCodes, icon: TicketPercent, requiredPermission: "MANAGE_FINANCE", group: "finance" },
+  { href: "/communications", label: staffPageTitles.emails, icon: Megaphone, requiredPermission: "MANAGE_COMMUNICATIONS", group: "communications" },
   {
     href: "/more",
-    label: "More",
-    mobileLabel: "More",
+    label: staffPageTitles.more,
+   
     icon: MoreHorizontal,
     requiredAnyPermissions: [
       "VIEW_REPORTS",

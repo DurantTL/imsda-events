@@ -5,8 +5,9 @@ import { PromoCodeWorkspace } from "@/components/promo-code-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
 import { eventBillsSponsoredPromoCodes } from "@/modules/promo-codes/church-sponsored";
 import { listPromoCodes, listSponsorChurchOptions } from "@/modules/promo-codes/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Promo codes" };
+export const metadata: Metadata = { title: staffPageTitles.promoCodes };
 
 export default async function PromoCodesPage({
   searchParams,

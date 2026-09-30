@@ -24,6 +24,7 @@ import {
   navigation,
   navigationGroupLabels,
   resolveClubsAndChurchesEntry,
+  staffSubpageTitle,
   systemNavigation,
   withCurrentEvent,
   type NavigationItem,
@@ -69,6 +70,9 @@ export function AppShell({
   const current = isSystemRoute
     ? systemNavigation
     : navigation.find((item) => pathname.startsWith(item.href)) ?? navigation[0];
+  // The header names the page the staff member is on (#685): a `/more/*`
+  // page that isn't a nav item names itself instead of reading "More".
+  const pageTitle = isProfileRoute ? "Your account" : staffSubpageTitle(pathname) ?? current.label;
   const requestedEventId = searchParams.get("event");
   const defaultEvent = defaultEventId
     ? events.find((event) => event.id === defaultEventId)
@@ -118,7 +122,6 @@ export function AppShell({
   const clubsEntry: NavigationItem | null = clubsAndChurches.visible ? {
     href: clubsAndChurches.href,
     label: "Clubs and churches",
-    mobileLabel: "Clubs",
     icon: UsersRound,
     desktopOnly: true,
     group: "clubs",
@@ -126,7 +129,6 @@ export function AppShell({
   const systemEntry: NavigationItem | null = isSystemAdmin ? {
     href: systemNavigation.href,
     label: "System management",
-    mobileLabel: "System",
     icon: ShieldCheck,
     desktopOnly: true,
     group: "system",
@@ -256,7 +258,7 @@ export function AppShell({
 
       <main className="workspace">
         <header className="workspace-header">
-          <div><p className="eyebrow">Staff workspace</p><h1>{isProfileRoute ? "Your account" : current.label}</h1></div>
+          <div><p className="eyebrow">Staff workspace</p><h1>{pageTitle}</h1></div>
           {!isSystemRoute && !eventlessProfile && (
             <label className="mobile-event-picker">
               <span className="sr-only">Current event</span>
@@ -272,6 +274,7 @@ export function AppShell({
               ? (
                 <form action="/api/auth/switch-to-attendee" method="post">
                   <button
+                    aria-label="My attendee account"
                     className="attendee-preview-switch"
                     title="Switch to your matching attendee account"
                     type="submit"
@@ -283,6 +286,7 @@ export function AppShell({
               )
               : !eventlessProfile && (
                 <Link
+                  aria-label="Attendee experience"
                   className="attendee-preview-switch"
                   href={attendeePreviewHref}
                   title={`Preview ${selectedEvent?.name ?? "this event"} as an attendee`}
@@ -313,11 +317,11 @@ export function AppShell({
       </main>
 
       {mobileNavigation.length > 0 && <nav className="mobile-nav" aria-label="Mobile navigation">
-        {mobileNavigation.map(({ href, icon: Icon, mobileLabel }) => {
+        {mobileNavigation.map(({ href, icon: Icon, label }) => {
           const isActive = !isProfileRoute && current.href === href;
           return (
             <Link className={isActive ? "active" : undefined} href={`${href}${eventQuery}`} key={href} aria-current={isActive ? "page" : undefined}>
-              <Icon aria-hidden="true" size={20} /><span>{mobileLabel}</span>
+              <Icon aria-hidden="true" size={20} /><span>{label}</span>
             </Link>
           );
         })}

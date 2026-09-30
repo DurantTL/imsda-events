@@ -17,8 +17,9 @@ import { getEventOverview } from "@/modules/events/repository";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listRegistrations } from "@/modules/registrations/repository";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Overview" };
+export const metadata: Metadata = { title: staffPageTitles.overview };
 
 function formatEventDates(start: Date, end: Date, timeZone: string) {
   const formatter = new Intl.DateTimeFormat("en-US", {

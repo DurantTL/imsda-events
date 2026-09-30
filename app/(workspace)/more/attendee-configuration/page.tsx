@@ -3,8 +3,9 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { AttendeeConfigurationWorkspace } from "@/components/attendee-configuration-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listAttendeeConfiguration } from "@/modules/attendee-types/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Attendee configuration" };
+export const metadata: Metadata = { title: staffPageTitles.attendeeSetup };
 
 export default async function AttendeeConfigurationPage({ searchParams }: { searchParams: Promise<{ event?: string }> }) {
   const { event: requested } = await searchParams;
