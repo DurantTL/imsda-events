@@ -227,7 +227,7 @@ export function FinanceWorkspace({
             {modal === "detail" ? (
               <div className="detail-stack">
                 {selected.isDeferredOrganizationBilling && (
-                  <div className="inline-notice">This registration is billed to the church after the event, not paid online. The total is the estimated amount owed by the church, not an attendee balance. {churchBillingFinalNote}</div>
+                  <div className="inline-notice">This registration is billed to the church after the event, not paid online. The estimated church amount is owed by the church, not an attendee balance. {churchBillingFinalNote}</div>
                 )}
                 <div className="detail-grid">{financeDetailFacts(selected).map((fact) => <span key={fact.value}><small>{fact.label}</small><strong>{fact.value === "payments" ? selected.payments.length : money(fact.value === "total" ? selected.totalAmountCents : fact.value === "received" ? selected.paidCents : selected.balanceCents)}</strong></span>)}</div>
                 <div><p className="eyebrow">Attendees on this registration</p><ul className="finance-attendee-list">{selected.attendees.map((attendee) => <li key={attendee.id}><span><strong>{attendee.firstName} {attendee.lastName}</strong><small>{attendee.attendeeType.toLowerCase()}{attendee.email ? ` · ${attendee.email}` : ""}</small></span></li>)}</ul>{selected.attendees.length === 0 && <p className="quiet-copy">No attendees are recorded on this registration.</p>}</div>
