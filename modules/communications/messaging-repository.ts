@@ -56,6 +56,7 @@ import {
   type MessageTemplateKey,
   withChurchBilledLinkWording,
   withChurchBilledPriceWording,
+  withGroupBilledWording,
 } from "@/modules/communications/templates";
 import { perPersonPrice, perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
 import {
@@ -153,6 +154,11 @@ export type RegistrationMessageInput = {
    * this location's name, address and dates in place of the event's.
    */
   location?: { name: string; address: string | null; firstDay: string; lastDay: string } | null;
+  /**
+   * A "Group" registration (#650): billed to its contact after the event, with
+   * its price and estimated total shown, never the church-billed wording.
+   */
+  billedToGroup?: boolean;
 };
 
 export type QueuedRegistrationMessages = {
@@ -3150,6 +3156,7 @@ export async function enqueuePublicRegistrationMessages(
   input: RegistrationMessageInput,
 ): Promise<QueuedRegistrationMessages> {
   const isDeferredOrganizationBilling = input.event.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
+  const billedToGroup = isDeferredOrganizationBilling && Boolean(input.billedToGroup);
   const registrantTemplateKey = selectRegistrationMessageTemplate({
     isWorker: input.registration.attendeeType === "WORKER",
     balanceCents: input.calculation.totalCents,
@@ -3219,10 +3226,11 @@ export async function enqueuePublicRegistrationMessages(
     : input.calculation.totalCents > 0
       ? eventDetails?.paymentInstructionVersions[0]?.instructions?.trim() || ""
       : "";
-  const responsibleOrganization = isDeferredOrganizationBilling
+  // A group names no organization: its contact is billed (#650).
+  const responsibleOrganization = isDeferredOrganizationBilling && !billedToGroup
     ? resolveResponsibleOrganization(input.responses)
     : null;
-  const billingContactName = isDeferredOrganizationBilling
+  const billingContactName = isDeferredOrganizationBilling && !billedToGroup
     ? resolveBillingContactName(input.responses)
     : null;
   // A church-billed registrant sees the per-person price only, never a total or
@@ -3266,7 +3274,7 @@ export async function enqueuePublicRegistrationMessages(
     // deferred-organization event never creates an attendee balance at all.
     payment_status_block: buildPaymentStatusBlock({
       state: isDeferredOrganizationBilling
-        ? "ORGANIZATION_INVOICED"
+        ? billedToGroup ? "GROUP_INVOICED" : "ORGANIZATION_INVOICED"
         : input.calculation.totalCents > 0 ? "BALANCE_DUE" : "COMPLIMENTARY",
       totalCents: input.calculation.totalCents,
       paidCents: 0,
@@ -3275,7 +3283,7 @@ export async function enqueuePublicRegistrationMessages(
       portalUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
       organization: responsibleOrganization,
       billingContact: billingContactName,
-      perPersonNotice: isDeferredOrganizationBilling ? churchBilledNotice : null,
+      perPersonNotice: isDeferredOrganizationBilling && !billedToGroup ? churchBilledNotice : null,
     }),
     ...buildRegistrationCheckinTokens({
       confirmationCode: input.registration.confirmationCode,
@@ -3307,13 +3315,17 @@ export async function enqueuePublicRegistrationMessages(
   const pendingMessageIds: string[] = [];
   for (const recipient of recipients) {
     const source = publishedTemplateSource(templates, recipient.templateKey);
-    const hidesTotals = isDeferredOrganizationBilling && recipient.kind === "REGISTRANT";
+    // A group is shown its total (#650); a church-billed club registrant the per-person price only (#621).
+    const hidesTotals = isDeferredOrganizationBilling && !billedToGroup && recipient.kind === "REGISTRANT";
     const rendered = renderMessageTemplate(
       {
         subject: source.subject,
-        body: withChurchBilledPriceWording(
-          withChurchBilledLinkWording(source.body, isDeferredOrganizationBilling),
-          hidesTotals,
+        body: withGroupBilledWording(
+          withChurchBilledPriceWording(
+            withChurchBilledLinkWording(source.body, isDeferredOrganizationBilling),
+            hidesTotals,
+          ),
+          billedToGroup && recipient.kind === "REGISTRANT",
         ),
       },
       {

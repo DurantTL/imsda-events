@@ -44,7 +44,7 @@ export default async function ClubEventRegistrationPage({
 
   // A waitlisted or cancelled registration holds no seats, so it has no class picker.
   const classes = workspace.registration ? await getClassSelectionWorkspaceIfRegistered(organizationId, eventId) : null;
-  // The honors step of a new registration (#618); once registered, the class picker below takes over.
+  // Classes chosen while registering (#618); once registered, the class picker below takes over.
   const honorsCatalog = !workspace.registration && workspace.experience ? await getRegistrationHonorsCatalog(
     organizationId,
     eventId,

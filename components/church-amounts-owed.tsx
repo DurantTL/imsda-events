@@ -40,13 +40,17 @@ export function ChurchAmountsOwed({
   rows: ChurchAmountOwedRow[];
   sponsoredLines?: ChurchSponsoredPromoLine[];
 }) {
-  const summary = summarizeChurchAmountsOwed(rows);
+  // "Group" registrations (#650) are billed to their own contact, not a church: listed apart, with the contact.
+  const groupRows = sortChurchAmountsOwed(rows.filter((row) => row.kind === "GROUP"));
+  const churchBilledRows = rows.filter((row) => row.kind !== "GROUP");
+  const summary = summarizeChurchAmountsOwed(churchBilledRows);
+  const groupSummary = summarizeChurchAmountsOwed(groupRows);
   const sponsored = summarizeSponsoredLines(sponsoredLines);
   const churchesBilled = new Set([
     ...summary.churches.filter((church) => church.churchKey !== "none").map((church) => church.churchKey),
     ...sponsored.churches.map((church) => church.churchId),
   ]).size;
-  const sorted = sortChurchAmountsOwed(rows);
+  const sorted = sortChurchAmountsOwed(churchBilledRows);
   const billed = sorted.filter((row) => row.isBilled);
   const notBilled = sorted.filter((row) => !row.isBilled);
   // Registrations with no club (#606: Leadership Weekend, Outdoor School) are grouped by the church or organization the form names.
@@ -82,6 +86,13 @@ export function ChurchAmountsOwed({
           <small>{hasIndividuals ? "Registrations billed" : "Clubs billed"}</small>
           <strong>{summary.billedClubCount}</strong>
         </article>
+        {groupRows.length > 0 && (
+          <article className="finance-stat">
+            <span><Building2 aria-hidden="true" size={18} /></span>
+            <small>Groups billed</small>
+            <strong>{groupSummary.billedClubCount}</strong>
+          </article>
+        )}
         {sponsored.lineCount > 0 && (
           <article className="finance-stat">
             <span><Building2 aria-hidden="true" size={18} /></span>
@@ -92,7 +103,7 @@ export function ChurchAmountsOwed({
         <article className="finance-stat warning">
           <span><Building2 aria-hidden="true" size={18} /></span>
           <small>Estimated amount owed</small>
-          <strong>{money(summary.totalOwedCents + sponsored.totalCents)}</strong>
+          <strong>{money(summary.totalOwedCents + groupSummary.totalOwedCents + sponsored.totalCents)}</strong>
         </article>
       </section>
       {summary.churches.length > 0 && (
@@ -128,6 +139,26 @@ export function ChurchAmountsOwed({
           </div>
         )}
       </section>
+      {groupRows.length > 0 && (
+        <section className="panel finance-list" aria-label="Group registrations billed to their contact">
+          <div className="finance-row finance-head"><span>Group / billing contact</span><span>Confirmation</span><span>Attendees</span><span>Estimated amount owed</span></div>
+          {groupRows.map((row) => (
+            <div className="finance-row" key={`${row.organizationId}-${row.confirmationCode}`}>
+              <span>
+                <strong>{row.billingContact?.name ?? row.organizationName}</strong>
+                <small>
+                  Group · billed to the contact after the event · {row.isBilled ? row.status.toLowerCase() : notBilledLabel(row.status)}
+                  {row.billingContact?.email ? ` · ${row.billingContact.email}` : ""}
+                  {row.locationName ? ` · ${row.locationName}` : ""}
+                </small>
+              </span>
+              <span>{row.confirmationCode}</span>
+              <span>{row.attendeeCount} {row.attendeeCount === 1 ? "person" : "people"}</span>
+              <span>{money(row.amountOwedCents)}</span>
+            </div>
+          ))}
+        </section>
+      )}
       {sponsored.churches.length > 0 && (
         <section className="panel finance-list" aria-label="Church-sponsored promo codes">
           <div className="finance-row finance-head"><span>Church-sponsored promo codes</span><span>Confirmation</span><span>Status</span><span>Discount owed</span></div>

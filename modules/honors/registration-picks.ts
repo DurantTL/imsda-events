@@ -105,12 +105,14 @@ export function firstPickProblem(
  */
 export function picksByAttendeeId(
   picks: Readonly<Record<string, readonly string[]>>,
-  attendees: ReadonlyArray<{ id: string; clubRosterMemberId?: string | null; clubGuestId?: string | null }>,
+  attendees: ReadonlyArray<{ id: string; clubRosterMemberId?: string | null; clubGuestId?: string | null; groupAttendeeId?: string | null }>,
 ) {
   const idByClientId = new Map<string, string>();
   for (const attendee of attendees) {
     if (attendee.clubRosterMemberId) idByClientId.set(clubAttendeeClientId(attendee.clubRosterMemberId), attendee.id);
     if (attendee.clubGuestId) idByClientId.set(clubGuestClientId(attendee.clubGuestId), attendee.id);
+    // A "Group" person is keyed by the client id the registration form gave them (#650).
+    if (attendee.groupAttendeeId) idByClientId.set(attendee.groupAttendeeId, attendee.id);
   }
   const mapped: Record<string, string[]> = {};
   const unknown: string[] = [];

@@ -12,6 +12,7 @@ import {
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
 import { listPublishedEventContentSections } from "@/modules/events/content-repository";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { groupFormDefinition, groupFormProblem } from "@/modules/group-registrations/domain";
 import { logWarn } from "@/lib/logger";
 
 async function loadPublicEventLanding(
@@ -37,6 +38,7 @@ async function loadPublicEventLanding(
       registrationOpensOn: true,
       registrationClosesOn: true,
       waitlistEnabled: true,
+      billingMode: true,
       announcements: {
         where: {
           status: "PUBLISHED",
@@ -68,6 +70,7 @@ async function loadPublicEventLanding(
           id: true,
           name: true,
           slug: true,
+          createdAt: true,
           versions: {
             where: { status: "PUBLISHED" },
             orderBy: { versionNumber: "desc" },
@@ -126,7 +129,20 @@ async function loadPublicEventLanding(
     }];
   });
 
+  // "Register as a group or individual" (#650): a club event also takes people who are not in a
+  // club, when one of its published forms can be used for them. Labelled only "Group".
+  // The club's own form (the first one created, as club registration picks it) is the one a group uses.
+  const primaryForm = [...event.registrationForms].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
+  const primaryDefinition = registrationFormDefinitionSchema.safeParse(primaryForm?.versions[0]?.definition);
+  const groupForm = event.audience === "CLUB" && event.billingMode === "DEFERRED_ORGANIZATION_INVOICE"
+    && primaryDefinition.success && groupFormProblem(groupFormDefinition(primaryDefinition.data)) === null
+    ? primaryForm
+    : undefined;
+
   return {
+    groupRegistration: groupForm
+      ? { href: `/register/${event.slug}/group`, title: "Register as a group or individual", label: "Group" }
+      : null,
     event: {
       slug: event.slug,
       name: event.name,

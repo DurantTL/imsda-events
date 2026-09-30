@@ -27,6 +27,7 @@ import {
 } from "@/modules/public-access/domain";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { currentPricingSnapshot, perPersonPriceFromSnapshot, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
+import { GROUP_BILLING_NOTICE } from "@/modules/group-registrations/domain";
 
 /**
  * Every registration an account may see: those whose contact address is the
@@ -272,6 +273,11 @@ export type AttendeeRegistrationSummary = {
    * owed), and the wording to show.
    */
   churchBilling: { billed: boolean; perPerson: PerPersonPrice; label: string } | null;
+  /**
+   * A "Group" registration (#650) is billed to its contact after the event: the estimated total is
+   * shown (unlike a church-billed club's per-person price), with the billed-later notice.
+   */
+  groupBilling: { billed: boolean; estimateCents: number; notice: string; label: string } | null;
   contact: {
     firstName: string;
     lastName: string;
@@ -318,6 +324,8 @@ export async function listRegistrationsForVerifiedEmail(
       updatedAt: true,
       totalAmount: true,
       contactSnapshot: true,
+      // A "Group" registration (#650) is billed to its contact and is shown its estimated total.
+      groupRegistration: { select: { id: true } },
       accountHolderPerson: {
         select: {
           firstName: true,
@@ -468,7 +476,15 @@ export async function listRegistrationsForVerifiedEmail(
         attendeeEditPolicy: registration.event.attendeeEditPolicy,
         isDeferredOrganizationBilling,
       },
-      churchBilling: isDeferredOrganizationBilling
+      groupBilling: isDeferredOrganizationBilling && registration.groupRegistration
+        ? {
+          estimateCents: isChurchBilledStatus(registration.status) ? totalCents : 0,
+          billed: isChurchBilledStatus(registration.status),
+          notice: GROUP_BILLING_NOTICE,
+          label: isChurchBilledStatus(registration.status) ? GROUP_BILLING_NOTICE : notBilledLabel(registration.status),
+        }
+        : null,
+      churchBilling: isDeferredOrganizationBilling && !registration.groupRegistration
         ? {
           billed: isChurchBilledStatus(registration.status),
           // The per-person price only (#621); the amount the church owes is never shown to a registrant.

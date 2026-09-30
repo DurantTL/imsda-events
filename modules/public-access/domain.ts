@@ -34,7 +34,9 @@ export type PublicPaymentState =
   | "BALANCE_DUE"
   | "PARTIALLY_PAID"
   | "PAID"
-  | "ORGANIZATION_BILLED";
+  | "ORGANIZATION_BILLED"
+  /** A "Group" registration (#650): billed to its contact after the event. */
+  | "GROUP_BILLED";
 
 export type PublicPaymentSummary = {
   currency: "USD";
@@ -122,6 +124,8 @@ export function summarizePublicPayment(input: {
   totalCents: number;
   payments: Array<{ amountCents: number; refundedCents: number }>;
   isDeferredOrganizationBilling?: boolean;
+  /** A "Group" registration (#650) is billed to its contact, not to an organization. */
+  billedToGroup?: boolean;
 }): PublicPaymentSummary {
   const totalCents = cents(input.totalCents);
   const grossPaidCents = input.payments.reduce(
@@ -139,6 +143,19 @@ export function summarizePublicPayment(input: {
   // The recorded amount on a deferred-organization registration is the
   // responsible organization's estimated rate, never an attendee balance:
   // this must never read as "Balance due" to the person who submitted it.
+  if (input.isDeferredOrganizationBilling && input.billedToGroup && input.status !== "CANCELLED" && input.status !== "DRAFT") {
+    return {
+      currency: "USD",
+      state: "GROUP_BILLED",
+      label: "Billed after the event",
+      detail: "No payment is due online. You'll be billed after the event. The total shown is an estimate.",
+      totalCents,
+      paidCents,
+      refundedCents,
+      amountDueCents: 0,
+      paymentEligible: false,
+    };
+  }
   if (input.isDeferredOrganizationBilling && input.status !== "CANCELLED" && input.status !== "DRAFT") {
     return {
       currency: "USD",

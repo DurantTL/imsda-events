@@ -397,7 +397,8 @@ async function removeOfferings(
   const perOrganization = new Map<string, number>();
   for (const row of pickRows) {
     perOffering.set(row.offeringId, (perOffering.get(row.offeringId) ?? 0) + 1);
-    perOrganization.set(row.organizationId, (perOrganization.get(row.organizationId) ?? 0) + 1);
+    // A "Group" registration's picks (#650) have no club; they are in `picks` but name no organization.
+    if (row.organizationId) perOrganization.set(row.organizationId, (perOrganization.get(row.organizationId) ?? 0) + 1);
   }
   const snapshot = {
     offerings: offerings.map((offering) => ({ id: offering.id, honorId: offering.honorId, picks: perOffering.get(offering.id) ?? 0 })),

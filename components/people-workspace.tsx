@@ -217,7 +217,7 @@ function statusLabel(record: RegistrationRecord) {
       : "Waitlisted";
   }
   if (record.status === "DRAFT") return "Draft";
-  if (record.isDeferredOrganizationBilling) return "Billed to church";
+  if (record.isDeferredOrganizationBilling) return record.isGroup ? "Billed to group contact" : "Billed to church";
   if (record.totalAmountCents === 0) return "No charge";
   if (attendeeBalanceCents(record) > 0) return "Balance due";
   return "Paid";

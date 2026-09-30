@@ -56,10 +56,22 @@ export type AmendmentActor =
    * to their staff user id plus the act-as record, never to an attendee
    * account. The club path gives them exactly a director's rules.
    */
-  | { kind: "STAFF_ACTING_DIRECTOR"; id: string; actAsId: string; displayName: string };
+  | { kind: "STAFF_ACTING_DIRECTOR"; id: string; actAsId: string; displayName: string }
+  /**
+   * The contact of a "Group" registration (#650), reopening it from its
+   * private manage link. A person, not an account: recorded on the operation
+   * as `actorPersonId`, never as a staff user or attendee account.
+   */
+  | { kind: "GROUP_CONTACT"; personId: string; displayName: string };
 
 function amendmentActorUserId(actor: AmendmentActor) {
-  return actor.kind === "CLUB_DIRECTOR" ? null : actor.id;
+  return actor.kind === "CLUB_DIRECTOR" || actor.kind === "GROUP_CONTACT" ? null : actor.id;
+}
+
+/** Who the audit calls the actor, without a name. */
+function amendmentActorNoun(actor: AmendmentActor) {
+  if (actor.kind === "STAFF") return "staff member";
+  return actor.kind === "GROUP_CONTACT" ? "group contact" : "director";
 }
 
 type AmendmentInputAttendee = RegistrationAmendmentInput["attendees"][number];
@@ -78,6 +90,8 @@ export type AmendmentProfileMetadata = {
   temporary?: boolean;
   temporaryAttendeeType?: "ADULT" | "YOUTH";
   clubGuestId?: string;
+  /** A "Group" person's id (#650): the client id the registration form gave them. */
+  groupAttendeeId?: string;
 };
 
 /**
@@ -101,6 +115,14 @@ export type AmendmentAttendeeServerOptions = {
    * is unchanged.
    */
   rosterName?: { firstName: string; lastName: string };
+  /**
+   * A renamed kept attendee keeps their Person row in step with the new name
+   * (#650 groups). If the Person belongs only to this attendee it is renamed
+   * in place; otherwise the attendee is pointed at a new Person with the new
+   * name. A Person that anything else uses is never changed and identities
+   * are never merged. Clubs leave this off: their roster owns the Person.
+   */
+  syncPersonName?: boolean;
 };
 
 export type AmendmentServerOptions = {
@@ -127,6 +149,12 @@ export type AmendmentServerOptions = {
     definition: RegistrationFormDefinition,
     tx: Prisma.TransactionClient,
   ) => Promise<Record<string, unknown>>;
+  /**
+   * The form the registration is validated and priced against, given its own
+   * hydrated form. A "Group" registration (#650) sees the club form without
+   * the club and church questions, on amendment as it did on submit.
+   */
+  transformDefinition?: (definition: RegistrationFormDefinition) => RegistrationFormDefinition;
   /**
    * The event location the registration should be at (#413); `undefined`
    * leaves it where it is. The location (the new one on a switch, or the
@@ -157,6 +185,7 @@ function allowedProfileMetadata(metadata: AmendmentProfileMetadata | undefined) 
     allowed.temporaryAttendeeType = metadata.temporaryAttendeeType;
   }
   if (typeof metadata.clubGuestId === "string") allowed.clubGuestId = metadata.clubGuestId;
+  if (typeof metadata.groupAttendeeId === "string") allowed.groupAttendeeId = metadata.groupAttendeeId;
   return allowed;
 }
 
@@ -649,6 +678,90 @@ async function resolveNewAttendeePerson(
   return created;
 }
 
+/**
+ * Whether a Person is used by this one registration attendee and nothing else
+ * (#650): not a contact or billing person, not on another registration, not
+ * linked to an account, household, roster, background check, transfer, honor
+ * record, or anything else that holds a Person id. Anything that might hold the
+ * person makes the answer no, so a shared identity is never edited.
+ */
+async function personIsOnlyThisAttendee(tx: Prisma.TransactionClient, personId: string, attendeeId: string) {
+  const person = await tx.person.findUnique({
+    where: { id: personId },
+    select: {
+      _count: {
+        select: {
+          householdMembers: true,
+          heldRegistrations: true,
+          groupBillingRegistrations: true,
+          groupContactOperations: true,
+          registrationEvents: true,
+          externalIdentities: true,
+          notes: true,
+          attendeeAccountLinks: true,
+          userLinks: true,
+          matchCandidatesAsA: true,
+          matchCandidatesAsB: true,
+          clubRosterMemberships: true,
+          memberHonorEntries: true,
+          memberTransfers: true,
+          clubOrderNeeds: true,
+          memberClassCompletions: true,
+        },
+      },
+      backgroundCheckMatch: { select: { id: true } },
+      driverVerification: { select: { id: true } },
+      pendingMemberTransfer: { select: { id: true } },
+    },
+  });
+  if (!person) return false;
+  const { registrationEvents, ...others } = person._count;
+  if (Object.values(others).some((count) => count > 0)) return false;
+  if (person.backgroundCheckMatch || person.driverVerification || person.pendingMemberTransfer) return false;
+  // The retired pre-#527 background-check table is hidden from the client.
+  const [legacy] = await tx.$queryRaw<Array<{ count: bigint }>>`
+    SELECT count(*)::bigint AS count FROM "BackgroundCheck_pre527" WHERE "personId" = ${personId}
+  `;
+  if (legacy && Number(legacy.count) > 0) return false;
+  // Tables that hold a Person id with no foreign key: a rename must never orphan or redirect them.
+  const [review] = await tx.$queryRaw<Array<{ count: bigint }>>`
+    SELECT count(*)::bigint AS count FROM "BackgroundCheckReview" WHERE "candidatePersonIds"::jsonb @> to_jsonb(${personId}::text)
+  `;
+  if (review && Number(review.count) > 0) return false;
+  const [rejected, remembered, imported] = await Promise.all([
+    tx.backgroundCheckRejectedPairing.count({ where: { personId } }),
+    tx.backgroundCheckRememberedMatch.count({ where: { personId } }),
+    tx.importRecord.count({ where: { matchedPersonId: personId } }),
+  ]);
+  if (rejected > 0 || remembered > 0 || imported > 0) return false;
+  if (registrationEvents !== 1) return false;
+  const holder = await tx.registrationAttendee.findFirst({ where: { personId }, select: { id: true } });
+  return holder?.id === attendeeId;
+}
+
+/**
+ * Keeps an attendee's Person row in step with a corrected name (#650): renamed
+ * in place when only this attendee uses it, else a new Person with the new name
+ * that the attendee is pointed at. Returns which happened, for audit counts.
+ */
+async function syncAttendeePersonName(
+  tx: Prisma.TransactionClient,
+  current: { id: string; personId: string; person: { firstName: string; lastName: string } },
+  name: { firstName: string; lastName: string },
+): Promise<{ personId: string; outcome: "UNCHANGED" | "UPDATED" | "REPLACED" }> {
+  const firstName = name.firstName.trim();
+  const lastName = name.lastName.trim();
+  if (current.person.firstName === firstName && current.person.lastName === lastName) {
+    return { personId: current.personId, outcome: "UNCHANGED" };
+  }
+  if (await personIsOnlyThisAttendee(tx, current.personId, current.id)) {
+    await tx.person.update({ where: { id: current.personId }, data: { firstName, lastName } });
+    return { personId: current.personId, outcome: "UPDATED" };
+  }
+  const created = await tx.person.create({ data: { firstName, lastName } });
+  return { personId: created.id, outcome: "REPLACED" };
+}
+
 function paidCents(registration: AmendmentRegistration) {
   return registration.payments.reduce((total, payment) => (
     total
@@ -849,7 +962,7 @@ async function prepareAmendment(
   // this transaction. The registration's own current club or church stays a
   // valid choice even if it has left the directory since, so an unchanged
   // historical answer keeps validating (like a deactivated attendee type below).
-  const definition = await hydrateFormOptions(
+  const hydratedDefinition = await hydrateFormOptions(
     registrationFormDefinitionSchema.parse(registration.publicFormSubmission.formVersion.definition),
     {
       attendeeTypes: configuredTypes.filter((type) => type.isActive),
@@ -857,6 +970,7 @@ async function prepareAmendment(
       retainedResponses: currentRegistrationResponses,
     },
   );
+  const definition = serverOptions.transformDefinition ? serverOptions.transformDefinition(hydratedDefinition) : hydratedDefinition;
   // Answers the server set itself (e.g. the club renamed in the directory
   // since this registration was submitted), kept apart from the actor's own
   // changes in the audit record.
@@ -1345,6 +1459,8 @@ export async function amendRegistration(
           attendeeId: string;
           responses: Record<string, unknown>;
         }> = [];
+        // Counts only, for the audit: people whose Person row took a corrected name (#650).
+        const personNameSync = { updated: 0, replaced: 0 };
 
         await tx.registrationCapacityReservation.updateMany({
           where: { registrationId, releasedAt: null },
@@ -1380,10 +1496,16 @@ export async function amendRegistration(
                 "One of the attendees changed before the amendment committed.",
               );
             }
+            const personSync = attendeeOptions?.syncPersonName
+              ? await syncAttendeePersonName(tx, current, identity)
+              : null;
+            if (personSync?.outcome === "UPDATED") personNameSync.updated += 1;
+            if (personSync?.outcome === "REPLACED") personNameSync.replaced += 1;
             await tx.registrationAttendee.update({
               where: { id: current.id },
               data: {
                 position,
+                ...(personSync?.outcome === "REPLACED" ? { personId: personSync.personId } : {}),
                 ...resolveAmendmentAttendeeType(
                   prepared.definition,
                   { ...prepared.prepared.registrationResponses, ...attendee.responses },
@@ -1625,6 +1747,7 @@ export async function amendRegistration(
             requestFingerprint,
             actorUserId: amendmentActorUserId(actor),
             actorAttendeeAccountId: actor.kind === "CLUB_DIRECTOR" ? actor.attendeeAccountId : null,
+            actorPersonId: actor.kind === "GROUP_CONTACT" ? actor.personId : null,
             actorNameSnapshot: actor.displayName,
             beforeSnapshot: beforeSnapshot as Prisma.InputJsonValue,
             afterSnapshot: afterSnapshot as Prisma.InputJsonValue,
@@ -1646,13 +1769,14 @@ export async function amendRegistration(
             entityType: "RegistrationOperation",
             entityId: amendmentId,
             correlationId: input.clientRequestId,
-            summary: `Amended registration ${prepared.registration.confirmationCode}: ${prepared.registration.attendees.length} to ${prepared.prepared.attendees.length} attendees and ${cents(prepared.registration.totalAmount) / 100} to ${prepared.finalTotalCents / 100}.${prepared.serverOwnedChangedKeys.length > 0 ? ` Also updated by the system, not the ${actor.kind === "STAFF" ? "staff member" : "director"}: ${prepared.serverOwnedChangedKeys.join(", ")} (to match the live directory).` : ""}`,
+            summary: `Amended registration ${prepared.registration.confirmationCode}: ${prepared.registration.attendees.length} to ${prepared.prepared.attendees.length} attendees and ${cents(prepared.registration.totalAmount) / 100} to ${prepared.finalTotalCents / 100}.${prepared.serverOwnedChangedKeys.length > 0 ? ` Also updated by the system, not the ${amendmentActorNoun(actor)}: ${prepared.serverOwnedChangedKeys.join(", ")} (to match the live directory).` : ""}`,
             metadata: {
               operationId: amendmentId,
               clientRequestId: input.clientRequestId,
               reason: input.reason,
               actorKind: actor.kind,
               actorAttendeeAccountId: actor.kind === "CLUB_DIRECTOR" ? actor.attendeeAccountId : null,
+              ...(actor.kind === "GROUP_CONTACT" ? { actorPersonId: actor.personId } : {}),
               ...(actor.kind === "STAFF_ACTING_DIRECTOR" ? { actAsId: actor.actAsId } : {}),
               priorTotalCents: cents(prepared.registration.totalAmount),
               resultingTotalCents: prepared.finalTotalCents,
@@ -1666,6 +1790,9 @@ export async function amendRegistration(
               // How many kept people took a corrected club roster name (a
               // count only; names stay out of audit metadata).
               rosterNameUpdatedCount: prepared.rosterRenamedCount,
+              // Counts only: Person rows renamed in place, or replaced because something else used them (#650).
+              personRenamedCount: personNameSync.updated,
+              personReplacedCount: personNameSync.replaced,
               // Registration answers the server set (the locked club, when
               // renamed in the directory since), not the actor's edits (#482).
               serverOwnedChangedFields: prepared.serverOwnedChangedKeys,

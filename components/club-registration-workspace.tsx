@@ -28,12 +28,16 @@ import {
 } from "@/modules/club-registrations/domain";
 import { fillMissingAnswers } from "@/modules/club-registrations/contact-prefill";
 import type { ClubEventWorkspace } from "@/modules/club-registrations/repository";
-import { ClubHonorsStep, type HonorPicks } from "@/components/club-honors-step";
+import { ClassPickFields } from "@/components/class-pick-fields";
+import { attendeeTypeLabel } from "@/modules/honors/class-picker-view";
 import { firstPickProblem, honorsNoteKey, offeringsAtLocation, pickingAttendees, prunePicks } from "@/modules/honors/registration-picks";
 import type { RegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
 import type { PublicRegistrationExperience } from "@/modules/forms/public-repository";
 
 type Workspace = ClubEventWorkspace & { experience: PublicRegistrationExperience };
+
+/** Class picks by attendee client id (#618). */
+type HonorPicks = Record<string, string[]>;
 
 type DraftState = {
   selectedMemberIds: string[];
@@ -72,8 +76,7 @@ export function ClubRegistrationWorkspace({
     rosterAges: workspace.draft?.rosterAges ?? {},
     rosterAgeSaveOff: workspace.draft?.rosterAgeSaveOff ?? [],
   }));
-  const [step, setStep] = useState<"who" | "honors" | "form">("who");
-  const [honorsProblem, setHonorsProblem] = useState<string | null>(null);
+  const [step, setStep] = useState<"who" | "form">("who");
   // The event's locations (#413): a location is required before continuing when there are any.
   // Kept in this page's state; the server locks it and counts its seats when the registration is saved.
   const locations = workspace.locations;
@@ -180,8 +183,8 @@ export function ClubRegistrationWorkspace({
     });
   }
 
-  // The honors step (#618): only when the event has classes at the chosen site
-  // (or at no site), so an event without honors goes straight to the form.
+  // Classes (#618, #650): chosen under each person's details, only when the event has classes at the
+  // chosen site (or at no site), so an event without honors shows nothing extra.
   const honorAttendees = useMemo(
     () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests, rosterAges: effectiveRosterAges(workspace.roster, draft.selectedMemberIds, ageText, draft.rosterAges) }),
     [workspace.roster, draft.selectedMemberIds, draft.guests, ageText, draft.rosterAges],
@@ -190,18 +193,18 @@ export function ClubRegistrationWorkspace({
     () => (honorsCatalog ? offeringsAtLocation(honorsCatalog.offerings, locationId) : []),
     [honorsCatalog, locationId],
   );
-  // A club that will be waitlisted holds no seats yet, so it skips the step and is told why on Who's going.
-  const hasHonorsStep = honorOfferings.length > 0 && !chosenLocation?.full;
+  // A club that will be waitlisted holds no seats yet, so it picks no classes and is told why on Who's going.
+  const hasHonors = honorOfferings.length > 0 && !chosenLocation?.full;
   const honorPicks = useMemo(
     () => prunePicks(draft.honorSelections, honorAttendees, honorOfferings),
     [draft.honorSelections, honorAttendees, honorOfferings],
   );
-  const totalSteps = hasHonorsStep ? 4 : 3;
+  // Who's going, each person's details (with their location and classes), then review.
+  const totalSteps = 3;
 
-  function changeHonors(next: HonorPicks) {
-    setHonorsProblem(null);
+  function changeHonors(clientId: string, ids: string[]) {
     setDraft((current) => {
-      const updated = { ...current, honorSelections: next };
+      const updated = { ...current, honorSelections: { ...honorPicks, [clientId]: ids } };
       queueSave(updated);
       return updated;
     });
@@ -214,17 +217,40 @@ export function ClubRegistrationWorkspace({
     }
     setAgeProblem("");
     void flush();
-    setStep(hasHonorsStep ? "honors" : "form");
-  }
-
-  function leaveHonors() {
-    // The same age, session and all-sessions rules the server applies on save.
-    const problem = firstPickProblem(honorPicks, honorAttendees, honorOfferings);
-    if (problem) return setHonorsProblem(problem);
-    setHonorsProblem(null);
-    void flush();
     setStep("form");
   }
+
+  // The same age, session and all-sessions rules the server applies on save, checked before anything is sent.
+  const honorsProblem = hasHonors ? firstPickProblem(honorPicks, honorAttendees, honorOfferings) : null;
+
+  /** A person's location and classes, shown under their name in the event form (C7, #650). */
+  const renderAttendeeExtras = (attendee: RosterAttendee) => {
+    const person = honorAttendees.find((candidate) => candidate.clientId === attendee.clientId);
+    if (!chosenLocation && !hasHonors) return null;
+    return (
+      <section className="public-registration-attendee-section" aria-label={`Location and classes for ${person?.firstName ?? "this person"}`}>
+        {chosenLocation && <p className="field-help">Location: <strong translate="no">{chosenLocation.name}</strong></p>}
+        {hasHonors && honorsCatalog && person && (
+          <fieldset className="club-class-person">
+            <legend>
+              <strong>Classes</strong>
+              <small>
+                {person.ageOnEventDate !== null ? <>Age <span translate="no">{person.ageOnEventDate}</span> · </> : null}
+                {attendeeTypeLabel(person)}{person.consumesSeat ? "" : " · no seat needed"}
+              </small>
+            </legend>
+            <ClassPickFields
+              attendee={person}
+              offerings={honorOfferings}
+              onChange={(ids) => changeHonors(attendee.clientId, ids)}
+              picks={honorPicks[attendee.clientId] ?? []}
+              sessions={honorsCatalog.sessions}
+            />
+          </fieldset>
+        )}
+      </section>
+    );
+  };
 
   function addGuest(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -307,16 +333,14 @@ export function ClubRegistrationWorkspace({
     });
   }, [queueSave]);
 
-  // React Compiler skips this component with "could not preserve existing memoization" at this memo once the #639
-  // age fields (their raw text state and the ages derived from it) are in the component; moving that state into a
-  // hook or pure helpers did not change it, and the cause is not clear. Skipping only loses compiler optimization.
-  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const club = useMemo(() => ({
     initialAttendees,
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
     lockedRegistrationFieldKeys: workspace.directory.lockedFieldKeys,
     locationId,
-    honorSelections: hasHonorsStep ? honorPicks : {},
+    honorSelections: hasHonors ? honorPicks : {},
+    renderAttendeeExtras,
+    blockedReason: honorsProblem,
     submitUrl: `${base}/registration`,
     onDraftChange,
     onSubmitted: (result?: { honors?: { error?: string } | null }) => {
@@ -328,37 +352,20 @@ export function ClubRegistrationWorkspace({
       }
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonorsStep, honorPicks, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonors, honorPicks, honorsProblem, honorAttendees, honorOfferings, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
 
   const saveLabel = saveState === "saving" ? "Saving draft…" : saveState === "saved" ? "Draft saved" : saveState === "error" ? "Draft not saved. Check your connection." : "";
-
-  if (step === "honors" && hasHonorsStep && honorsCatalog) {
-    return (
-      <ClubHonorsStep
-        attendees={honorAttendees}
-        catalog={honorsCatalog}
-        locationId={locationId}
-        locationName={chosenLocation?.name ?? null}
-        onBack={() => { void flush(); setStep("who"); }}
-        onChange={changeHonors}
-        onContinue={leaveHonors}
-        picks={honorPicks}
-        problem={honorsProblem}
-        saveLabel={saveLabel}
-        totalSteps={totalSteps}
-      />
-    );
-  }
 
   if (step === "form") {
     const { experience } = workspace;
     return (
       <div className="club-roster-stack">
         <div className="club-registration-toolbar">
-          <button className="secondary-button" onClick={() => { void flush(); setStep(hasHonorsStep ? "honors" : "who"); }} type="button">
-            <ArrowLeft aria-hidden="true" size={15} /> {hasHonorsStep ? "Back to honors" : "Change who’s going"}
+          <button className="secondary-button" onClick={() => { void flush(); setStep("who"); }} type="button">
+            <ArrowLeft aria-hidden="true" size={15} /> Change who’s going
           </button>
-          <span className="public-registration-eyebrow">Step {totalSteps - 1} of {totalSteps} · Event form{chosenLocation ? ` · ${chosenLocation.name}` : ""}</span>
+          <span className="public-registration-eyebrow">Step 2 of {totalSteps} · Each person&apos;s details{chosenLocation ? ` · ${chosenLocation.name}` : ""}</span>
           <span className="field-help" role="status">{saveLabel}</span>
         </div>
         <PublicRegistrationForm

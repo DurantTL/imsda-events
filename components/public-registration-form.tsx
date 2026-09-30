@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
   ArrowDown,
@@ -223,7 +223,7 @@ export type PublicRegistrationFormProps = {
     lockedRegistrationFieldKeys?: string[];
     /** The event location the club picked (#413), sent beside the answers; the server checks it again. */
     locationId?: string | null;
-    /** Honors picked on the honors step (#618), by attendee client id; saved by the server after the registration. */
+    /** Classes picked under each person's details (#618, #650), by attendee client id; saved by the server after the registration. */
     honorSelections?: Record<string, string[]>;
     submitUrl: string;
     onDraftChange?: (draft: { responses: FormResponses; attendees: RosterAttendee[] }) => void;
@@ -235,6 +235,35 @@ export type PublicRegistrationFormProps = {
      */
     submitEdit?: (attendees: RosterAttendee[]) => Promise<{ ok: true } | { ok: false; message: string; issues: FormIssue[] }>;
     submitLabel?: string;
+    /** Rendered under a person's details: their location and classes, chosen here rather than on a separate step (#650). */
+    renderAttendeeExtras?: (attendee: RosterAttendee, index: number) => ReactNode;
+    /** A reason the form can't be sent yet (a class pick that no longer fits), shown instead of submitting. */
+    blockedReason?: string | null;
+  };
+  /**
+   * "Group" registration on a club event (#650): people who are not in a club,
+   * registered by one contact. The form works as any public form (the contact
+   * adds and removes people), but prices are shown as an estimate with a
+   * billed-later notice and no payment step, and the registration goes to the
+   * group endpoint with the location and each person's classes beside the
+   * answers. The server prices, validates and takes the seats.
+   */
+  group?: {
+    submitUrl: string;
+    locationId: string | null;
+    /** Classes picked under each person, by their client id; people no longer on the form are left out when sending. */
+    honorSelections: Record<string, string[]>;
+    billingNotice: string;
+    /** Rendered under a person's details: their classes (#650). */
+    renderAttendeeExtras?: (attendee: RosterAttendee, index: number) => ReactNode;
+    /** A reason the form can't be sent yet (no location chosen), shown instead of submitting. */
+    blockedReason?: string | null;
+    /** The location the group registers at, shown beside the price, with a way back to change it. */
+    locationName?: string | null;
+    onChangeLocation?: () => void;
+    /** Said when the chosen location is full and the group will join its waitlist. */
+    waitlistNote?: string | null;
+    onSubmitted?: (result?: { honors?: { error?: string } | null }) => void;
   };
 };
 
@@ -389,13 +418,16 @@ export function PublicRegistrationForm({
   topContent,
   disableDrafts = false,
   club,
+  group,
 }: PublicRegistrationFormProps) {
   const { definition } = form;
   const eventsSiteNavigation = embedded
     ? { target: "_blank" as const, rel: "noopener noreferrer" }
     : {};
   const joiningWaitlist = lifecycle.capacityDecision === "WAITLIST";
-  const deferredOrganizationBilling = event.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
+  // A church-billed club registrant sees the per-person price only (#621); a group is billed to its
+  // contact and is shown its price and an estimated total (#650).
+  const deferredOrganizationBilling = event.billingMode === "DEFERRED_ORGANIZATION_INVOICE" && !group;
   const roster = useMemo(() => getAttendeeRosterConfig(definition), [definition]);
   const rosterEnabled = roster.enabled;
   const allFields = useMemo(
@@ -457,6 +489,8 @@ export function PublicRegistrationForm({
   const [rosterAnnouncement, setRosterAnnouncement] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  // Classes that could not be saved with a group registration (#650), said again on the confirmation.
+  const [groupHonorsNote, setGroupHonorsNote] = useState<string | null>(null);
   const [pendingRemoveClientId, setPendingRemoveClientId] = useState<string | null>(null);
   const [promoCodeQuote, setPromoCodeQuote] = useState<PromoCodeQuote | null>(null);
   /** The price the quote was made for; the quote holds while the price does. */
@@ -1979,11 +2013,12 @@ export function PublicRegistrationForm({
                         </div>
                       </section>
                     ))}
-                    {visibleAttendeeSections.length === 0 && (
+                    {visibleAttendeeSections.length === 0 && !group?.renderAttendeeExtras && !club?.renderAttendeeExtras && (
                       <p className="public-registration-attendee-empty">
                         No additional choices apply to this attendee.
                       </p>
                     )}
+                    {(group ?? club)?.renderAttendeeExtras?.(attendee, attendeeIndex)}
                   </div>
                 )}
               </article>
@@ -2244,10 +2279,10 @@ export function PublicRegistrationForm({
 
         <section className="public-registration-review-card public-registration-review-order">
           <p className="public-registration-eyebrow">
-            {joiningWaitlist ? "Estimated cost" : deferredOrganizationBilling ? "Price" : "Price & fees"}
+            {joiningWaitlist ? "Estimated cost" : deferredOrganizationBilling ? "Price" : group ? "Estimated price" : "Price & fees"}
           </p>
           <h3>
-            {joiningWaitlist ? "If space becomes available" : deferredOrganizationBilling ? "Price per person" : "Registration total"}
+            {joiningWaitlist ? "If space becomes available" : deferredOrganizationBilling ? "Price per person" : group ? "Estimated total" : "Registration total"}
           </h3>
           {deferredOrganizationBilling ? (
             <>
@@ -2308,6 +2343,11 @@ export function PublicRegistrationForm({
           {!joiningWaitlist && deferredOrganizationBilling && (
             <p className="public-registration-review-waitlist">
               No payment is due online.
+            </p>
+          )}
+          {!joiningWaitlist && group && (
+            <p className="public-registration-review-waitlist">
+              {group.billingNotice} No payment is due online.
             </p>
           )}
         </section>
@@ -2442,6 +2482,12 @@ export function PublicRegistrationForm({
       continueRegistration();
       return;
     }
+    const blockedReason = group?.blockedReason ?? club?.blockedReason;
+    if (blockedReason && !club?.submitEdit) {
+      setError(blockedReason);
+      window.requestAnimationFrame(() => errorSummaryRef.current?.focus());
+      return;
+    }
     const clientIssues = allClientIssues();
     if (clientIssues.length > 0) {
       showIssues(
@@ -2475,7 +2521,11 @@ export function PublicRegistrationForm({
     const submissionKey = idempotencyKey ?? crypto.randomUUID();
     if (!idempotencyKey) setIdempotencyKey(submissionKey);
     try {
-      const response = await fetch(club?.submitUrl ?? `/api/public/events/${encodeURIComponent(event.slug)}/forms/${encodeURIComponent(form.slug)}/registrations`, {
+      const sentPeople = new Set(attendees.map((attendee) => attendee.clientId));
+      const groupPicks = group
+        ? Object.fromEntries(Object.entries(group.honorSelections).filter(([clientId, ids]) => sentPeople.has(clientId) && ids.length > 0))
+        : {};
+      const response = await fetch(club?.submitUrl ?? group?.submitUrl ?? `/api/public/events/${encodeURIComponent(event.slug)}/forms/${encodeURIComponent(form.slug)}/registrations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2490,6 +2540,8 @@ export function PublicRegistrationForm({
           } : {}),
           ...(club?.locationId ? { locationId: club.locationId } : {}),
           ...(club?.honorSelections && Object.keys(club.honorSelections).length > 0 ? { honorSelections: club.honorSelections } : {}),
+          ...(group?.locationId ? { locationId: group.locationId } : {}),
+          ...(Object.keys(groupPicks).length > 0 ? { honorSelections: groupPicks } : {}),
           website,
         }),
       });
@@ -2519,6 +2571,8 @@ export function PublicRegistrationForm({
       setConfirmation(result.confirmation);
       if (!club) clearPublicDraft(getBrowserDraftStorage(), draftIdentity);
       club?.onSubmitted?.({ honors: result.honors });
+      group?.onSubmitted?.({ honors: result.honors });
+      setGroupHonorsNote(result.honors?.error ?? null);
       window.imsdaEmbedScrollTop?.();
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch {
@@ -2617,6 +2671,8 @@ export function PublicRegistrationForm({
                 {!waitlisted && <p className="public-registration-review-waitlist">No payment is due online.</p>}
               </>
             )}
+            {group && !waitlisted && <p className="public-registration-review-waitlist"><strong>{group.billingNotice}</strong> No payment is due online. The total below is an estimate.</p>}
+            {group && groupHonorsNote && <p className="public-registration-review-waitlist" role="status">{groupHonorsNote}</p>}
             {rosterEnabled && confirmation.attendeeNames.length > 0 && (
               <section className="public-registration-confirmation-attendees" aria-label="Registered attendees">
                 <h2>{waitlisted ? "Waitlisted attendees" : "Registered attendees"}</h2>
@@ -2859,6 +2915,13 @@ export function PublicRegistrationForm({
         <aside className="public-registration-summary" aria-label="Order summary">
           <p className="public-registration-eyebrow">Order summary</p>
           <h2>{joiningWaitlist ? "Your waitlist request" : "Your registration"}</h2>
+          {group?.locationName && (
+            <p className="public-registration-summary-roster">
+              <MapPin size={15} aria-hidden="true" /> <span translate="no">{group.locationName}</span>
+              {group.onChangeLocation && <> · <button className="text-button" type="button" onClick={group.onChangeLocation}>Change</button></>}
+            </p>
+          )}
+          {group?.waitlistNote && <p className="public-registration-summary-empty">{group.waitlistNote}</p>}
           {rosterEnabled && <p className="public-registration-summary-roster"><UsersRound size={15} aria-hidden="true" /> {attendees.length} {attendees.length === 1 ? roster.attendeeLabel.toLowerCase() : `${roster.attendeeLabel.toLowerCase()}s`}</p>}
           {deferredOrganizationBilling ? <PerPersonPriceNotice price={perPerson} className="public-registration-summary-lines" /> : calculation.lineItems.length === 0 ? <p className="public-registration-summary-empty">Select any priced options to see your total.</p> : (
             <div className="public-registration-summary-lines">
@@ -2873,11 +2936,11 @@ export function PublicRegistrationForm({
                 </>
               )}
               {(calculation.processingFeeCents ?? 0) > 0 && <div><span>Card processing</span><strong translate="no">{money(calculation.processingFeeCents ?? 0)}</strong></div>}
-              <div className="is-total"><span>{joiningWaitlist ? "Estimated if promoted" : "Total"}</span><strong translate="no">{money((joiningWaitlist ? calculation.subtotalCents : calculation.totalCents) ?? 0)}</strong></div>
+              <div className="is-total"><span>{joiningWaitlist ? "Estimated if promoted" : group ? "Estimated total" : "Total"}</span><strong translate="no">{money((joiningWaitlist ? calculation.subtotalCents : calculation.totalCents) ?? 0)}</strong></div>
             </div>
           )}
           <small className="public-registration-pricing-date">Pricing verified for {formatPricingDate(pricingDate)}</small>
-          <div className="public-registration-summary-note">{joiningWaitlist ? <Clock3 size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}<span>{joiningWaitlist ? "This estimate is not charged while you are on the waitlist." : deferredOrganizationBilling ? "No payment is due online." : "Final pricing and availability are confirmed securely on submission."}</span></div>
+          <div className="public-registration-summary-note">{joiningWaitlist ? <Clock3 size={15} aria-hidden="true" /> : <LockKeyhole size={15} aria-hidden="true" />}<span>{joiningWaitlist ? "This estimate is not charged while you are on the waitlist." : group ? `${group.billingNotice} No payment is due online.` : deferredOrganizationBilling ? "No payment is due online." : "Final pricing and availability are confirmed securely on submission."}</span></div>
         </aside>
       </form>
       {(() => {

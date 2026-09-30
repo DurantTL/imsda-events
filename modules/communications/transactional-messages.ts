@@ -11,6 +11,7 @@ import {
   type MessageTemplateContext,
   withChurchBilledLinkWording,
   withChurchBilledPriceWording,
+  withGroupBilledWording,
 } from "@/modules/communications/templates";
 import { currentPricingSnapshot, perPersonPriceFromSnapshot, perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
 import {
@@ -214,17 +215,19 @@ function paymentStateForTemplate(
     totalCents: number;
     balanceCents: number;
     billingMode?: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE" | null;
+    /** A "Group" registration (#650): billed to its contact, not to an organization. */
+    billedToGroup?: boolean;
   },
 ): PaymentState {
   if (key === "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED") {
-    return "ORGANIZATION_INVOICED";
+    return input.billedToGroup ? "GROUP_INVOICED" : "ORGANIZATION_INVOICED";
   }
   if (key === "WAITLIST_JOINED") return "WAITLISTED";
   if (key === "REGISTRATION_CANCELLED" || key === "WAITLIST_REMOVED") return "CANCELLED";
   // A church-billed (deferred-organization) event never asks the attendee or
   // director to pay: every other message says the organization is invoiced.
   if (input.billingMode === "DEFERRED_ORGANIZATION_INVOICE") {
-    return "ORGANIZATION_INVOICED";
+    return input.billedToGroup ? "GROUP_INVOICED" : "ORGANIZATION_INVOICED";
   }
   if (key === "WAITLIST_PROMOTED") return "WAITLIST_PROMOTED";
   if (input.totalCents <= 0) return "COMPLIMENTARY";
@@ -346,6 +349,7 @@ async function enqueueTransactionalMessage(
         waitlistEntry: {
           select: { position: true },
         },
+        groupRegistration: { select: { id: true } },
       },
     }),
   ]);
@@ -424,15 +428,22 @@ async function enqueueTransactionalMessage(
     || settings.replyToEmail
     || settings.senderEmail
     || "the IMSDA event office";
-  const churchWordedBody = withChurchBilledPriceWording(
-    withChurchBilledLinkWording(
-      source?.bodyTemplate ?? fallback.body,
-      isDeferredOrganizationBilling,
+  // A "Group" (#650) is billed to its contact and is shown its price and total;
+  // only a church-billed club registrant sees the per-person price alone (#621).
+  const billedToGroup = isDeferredOrganizationBilling && Boolean(registration.groupRegistration);
+  const churchBilled = isDeferredOrganizationBilling && !billedToGroup;
+  const churchWordedBody = withGroupBilledWording(
+    withChurchBilledPriceWording(
+      withChurchBilledLinkWording(
+        source?.bodyTemplate ?? fallback.body,
+        isDeferredOrganizationBilling,
+      ),
+      churchBilled,
     ),
-    isDeferredOrganizationBilling,
+    billedToGroup,
   );
   // A church-billed registrant sees the per-person price only, never a total or balance (#621).
-  const perPersonNotice = isDeferredOrganizationBilling
+  const perPersonNotice = churchBilled
     ? perPersonPriceInline(perPersonPriceFromSnapshot(
         input.pricingSnapshot ?? currentPricingSnapshot(registration),
         undefined,
@@ -471,7 +482,7 @@ async function enqueueTransactionalMessage(
       .join("\n") || "No attendee names are recorded.",
     total_amount: perPersonNotice ?? formatMessageMoney(totalCents),
     restored_status: registration.status,
-    balance_amount: perPersonNotice ? "Nothing is due online." : formatMessageMoney(balanceCents),
+    balance_amount: perPersonNotice || billedToGroup ? "Nothing is due online." : formatMessageMoney(balanceCents),
     payment_instructions: instructions,
     portal_url: REGISTRATION_MANAGE_LINK_SENTINEL,
     reply_to_email:
@@ -489,6 +500,7 @@ async function enqueueTransactionalMessage(
         totalCents,
         balanceCents,
         billingMode: registration.event.billingMode,
+        billedToGroup,
       }),
       totalCents,
       paidCents,

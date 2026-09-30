@@ -255,6 +255,26 @@ export default async function PublicEventPage({
             </div>
           )}
 
+          {landing.groupRegistration && (
+            <div className="public-event-form-list">
+              <article className="public-event-form-card">
+                <div className="public-event-form-number" aria-hidden="true"><UsersRound size={20} /></div>
+                <div className="public-event-form-copy">
+                  <p className="public-registration-eyebrow">{landing.groupRegistration.label}</p>
+                  <h3>{landing.groupRegistration.title}</h3>
+                  <p>Not part of a club? One contact can register several people, each with their own classes. You&apos;ll be billed after the event; there is no payment to make now.</p>
+                </div>
+                {landing.lifecycle.ctaEnabled ? (
+                  <Link className="public-event-form-cta" href={landing.groupRegistration.href}>
+                    {landing.lifecycle.ctaLabel} <ArrowRight size={17} aria-hidden="true" />
+                  </Link>
+                ) : (
+                  <span className="public-event-form-cta is-disabled" aria-disabled="true">{landing.lifecycle.ctaLabel}</span>
+                )}
+              </article>
+            </div>
+          )}
+
           {proseSections.map((section, sectionIndex) => (
             <section
               className="public-event-prose"

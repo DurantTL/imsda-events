@@ -11,6 +11,7 @@ import {
   adjustmentWording,
   attendeeBalanceCents,
   churchBillingFinalNote,
+  groupBillingFinalNote,
   financeDetailFacts,
   financeFilters,
   matchesFinanceFilter,
@@ -67,8 +68,10 @@ export function FinanceWorkspace({
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(modal), () => { if (!pendingRefund) closeModal(); });
 
   const totals = useMemo(() => summarizeFinanceTotals(registrations), [registrations]);
-  const wording = adjustmentWording(Boolean(selected?.isDeferredOrganizationBilling));
+  const wording = adjustmentWording(Boolean(selected?.isDeferredOrganizationBilling), Boolean(selected?.isGroup));
   const hasChurchBilled = registrations.some((registration) => registration.isDeferredOrganizationBilling);
+  // Groups (#650) are billed to their own contacts, and counted with the churches' estimates only in this one total.
+  const hasGroups = registrations.some((registration) => registration.isGroup);
 
   const visible = useMemo(() => registrations.filter((registration) => (
     registrationMatchesSearch(registration, query) && matchesFinanceFilter(registration, filter)
@@ -203,7 +206,7 @@ export function FinanceWorkspace({
         <article className="finance-stat"><span><ReceiptText aria-hidden="true" size={18} /></span><small>Active billed</small><strong>{money(totals.billed)}</strong></article>
         <article className="finance-stat"><span><Banknote aria-hidden="true" size={18} /></span><small>Net received</small><strong>{money(totals.received)}</strong></article>
         <article className="finance-stat warning"><span><CircleDollarSign aria-hidden="true" size={18} /></span><small>Outstanding</small><strong>{money(totals.outstanding)}</strong></article>
-        {hasChurchBilled && <article className="finance-stat"><span><Building2 aria-hidden="true" size={18} /></span><small>Billed to churches (estimated, all registrations)</small><strong>{money(totals.churchBilled)}</strong></article>}
+        {hasChurchBilled && <article className="finance-stat"><span><Building2 aria-hidden="true" size={18} /></span><small>{hasGroups ? "Billed to churches and group contacts (estimated, all registrations)" : "Billed to churches (estimated, all registrations)"}</small><strong>{money(totals.churchBilled)}</strong></article>}
         <article className="finance-stat muted"><span><RotateCcw aria-hidden="true" size={18} /></span><small>Refunded</small><strong>{money(totals.refunded)}</strong></article>
       </section>
       <div className="toolbar panel">
@@ -214,8 +217,8 @@ export function FinanceWorkspace({
         <div className="finance-row finance-head"><span>Registration</span><span>Total</span><span>Received</span><span>Balance</span><span /></div>
         {visible.map((registration) => (
           <button className="finance-row finance-record" type="button" key={registration.id} onClick={() => openDetail(registration)}>
-            <span><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.status.toLowerCase()} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}{registration.isDeferredOrganizationBilling ? " · billed to church" : ""}</small>{attendeeSummaryLabel(registration) && <small className="finance-attendee-names">{attendeeSummaryLabel(registration)}</small>}</span>
-            <span>{money(registration.totalAmountCents)}</span><span>{money(registration.paidCents)}</span>{registration.isDeferredOrganizationBilling ? <span className="paid-balance">Billed to church</span> : <span className={attendeeBalanceCents(registration) > 0 ? "balance-due" : "paid-balance"}>{money(registration.balanceCents)}</span>}<span>View</span>
+            <span><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.status.toLowerCase()} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}{registration.isDeferredOrganizationBilling ? (registration.isGroup ? " · group, billed to the contact" : " · billed to church") : ""}</small>{attendeeSummaryLabel(registration) && <small className="finance-attendee-names">{attendeeSummaryLabel(registration)}</small>}</span>
+            <span>{money(registration.totalAmountCents)}</span><span>{money(registration.paidCents)}</span>{registration.isDeferredOrganizationBilling ? <span className="paid-balance">{registration.isGroup ? "Billed to group contact" : "Billed to church"}</span> : <span className={attendeeBalanceCents(registration) > 0 ? "balance-due" : "paid-balance"}>{money(registration.balanceCents)}</span>}<span>View</span>
           </button>
         ))}
         {visible.length === 0 && <div className="empty-state"><Search aria-hidden="true" size={24} /><h3>No financial records found</h3><p>Search covers the payer, every attendee on the registration, and the confirmation code. Try another term or balance filter.</p></div>}
@@ -227,8 +230,11 @@ export function FinanceWorkspace({
             <div className="modal-head"><div><p className="eyebrow">{selected.confirmationCode}</p><h2 id="finance-modal-title">{modal === "payment" ? "Record a payment" : modal === "refund" ? "Record a refund" : modal === "adjust" ? wording.title : modal === "reverse" ? "Reverse adjustment" : `${selected.accountHolder.firstName} ${selected.accountHolder.lastName}`}</h2></div><button className="icon-button" type="button" onClick={closeModal} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button></div>
             {modal === "detail" ? (
               <div className="detail-stack">
-                {selected.isDeferredOrganizationBilling && (
+                {selected.isDeferredOrganizationBilling && !selected.isGroup && (
                   <div className="inline-notice">This registration is billed to the church after the event, not paid online. The estimated church amount is owed by the church, not an attendee balance. {churchBillingFinalNote}</div>
+                )}
+                {selected.isDeferredOrganizationBilling && selected.isGroup && (
+                  <div className="inline-notice">This group registration is billed to its contact, {selected.accountHolder.firstName} {selected.accountHolder.lastName}{selected.accountHolder.email ? ` (${selected.accountHolder.email})` : ""}, after the event, not paid online. It is not billed to any club or church. The estimated amount is not an attendee balance. {groupBillingFinalNote}</div>
                 )}
                 <div className="detail-grid">{financeDetailFacts(selected).map((fact) => <span key={fact.value}><small>{fact.label}</small><strong>{fact.value === "payments" ? selected.payments.length : money(fact.value === "total" ? selected.totalAmountCents : fact.value === "received" ? selected.paidCents : selected.balanceCents)}</strong></span>)}</div>
                 <div><p className="eyebrow">Attendees on this registration</p><ul className="finance-attendee-list">{selected.attendees.map((attendee) => <li key={attendee.id}><span><strong>{attendee.firstName} {attendee.lastName}</strong><small>{attendee.attendeeType.toLowerCase()}{attendee.email ? ` · ${attendee.email}` : ""}</small></span></li>)}</ul>{selected.attendees.length === 0 && <p className="quiet-copy">No attendees are recorded on this registration.</p>}</div>
@@ -266,7 +272,7 @@ export function FinanceWorkspace({
               </div>
             ) : modal === "adjust" ? (
               <form className="form-stack" onSubmit={saveAdjustment}>
-                <div className="inline-notice">{selected.isDeferredOrganizationBilling ? `Current estimated church amount ${money(selected.totalAmountCents)}. ${churchBillingFinalNote}` : `Current total ${money(selected.totalAmountCents)} · paid ${money(selected.paidCents)} · balance ${money(selected.balanceCents)}`}</div>
+                <div className="inline-notice">{selected.isDeferredOrganizationBilling ? `Current estimated ${selected.isGroup ? "amount" : "church amount"} ${money(selected.totalAmountCents)}. ${selected.isGroup ? groupBillingFinalNote : churchBillingFinalNote}` : `Current total ${money(selected.totalAmountCents)} · paid ${money(selected.paidCents)} · balance ${money(selected.balanceCents)}`}</div>
                 <label>Type
                   <select value={adjustKind} onChange={(event) => { setAdjustKind(event.target.value as AdjustmentKind); setError(""); }}>
                     <option value="SCHOLARSHIP">{`Scholarship — ${wording.lowers}`}</option>

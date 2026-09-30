@@ -14,6 +14,8 @@ export type FinanceViewRegistration = {
   paidCents: number;
   balanceCents: number;
   isDeferredOrganizationBilling?: boolean;
+  /** A "Group" registration (#650): billed to its contact after the event, not to a church. */
+  isGroup?: boolean;
   payments: ReadonlyArray<{ refundedCents: number }>;
 };
 
@@ -23,6 +25,7 @@ export const financeFilters = [
   { value: "BALANCE", label: "Balance due" },
   { value: "PAID", label: "Paid in full" },
   { value: "CHURCH_BILLED", label: "Billed to churches" },
+  { value: "GROUP_BILLED", label: "Billed to group contacts" },
   { value: "REFUNDED", label: "Has refunds" },
   { value: "WAITLISTED", label: "Waitlisted" },
   { value: "CANCELLED", label: "Cancelled" },
@@ -56,7 +59,8 @@ export function matchesFinanceFilter(registration: FinanceViewRegistration, filt
     case "ACTIVE": return activeFinancialStatuses.has(registration.status);
     case "BALANCE": return attendeeBalanceCents(registration) > 0;
     case "PAID": return !churchBilled && registration.balanceCents === 0 && registration.totalAmountCents > 0;
-    case "CHURCH_BILLED": return churchBilled && activeFinancialStatuses.has(registration.status);
+    case "CHURCH_BILLED": return churchBilled && !registration.isGroup && activeFinancialStatuses.has(registration.status);
+    case "GROUP_BILLED": return churchBilled && Boolean(registration.isGroup) && activeFinancialStatuses.has(registration.status);
     case "REFUNDED": return registration.payments.some((payment) => payment.refundedCents > 0);
     case "WAITLISTED": return registration.status === "WAITLISTED";
     case "CANCELLED": return registration.status === "CANCELLED";
@@ -66,6 +70,9 @@ export function matchesFinanceFilter(registration: FinanceViewRegistration, filt
 
 export const churchBillingFinalNote =
   "Final billing follows event reconciliation; the church is invoiced after the event.";
+
+export const groupBillingFinalNote =
+  "Final billing follows event reconciliation; the group contact is invoiced after the event.";
 
 export type FinanceDetailFact = { label: string; value: "total" | "received" | "balance" | "payments" };
 
@@ -77,7 +84,7 @@ export type FinanceDetailFact = { label: string; value: "total" | "received" | "
  * stored amounts and calculations are untouched.
  */
 export function financeDetailFacts(
-  registration: Pick<FinanceViewRegistration, "isDeferredOrganizationBilling" | "paidCents"> & {
+  registration: Pick<FinanceViewRegistration, "isDeferredOrganizationBilling" | "isGroup" | "paidCents"> & {
     payments: ReadonlyArray<unknown>;
   },
 ): FinanceDetailFact[] {
@@ -89,7 +96,7 @@ export function financeDetailFacts(
       { label: "Payments", value: "payments" },
     ];
   }
-  const facts: FinanceDetailFact[] = [{ label: "Estimated church amount", value: "total" }];
+  const facts: FinanceDetailFact[] = [{ label: registration.isGroup ? "Estimated amount (billed to the group contact)" : "Estimated church amount", value: "total" }];
   if (registration.payments.length > 0 || registration.paidCents !== 0) {
     facts.push(
       { label: "Attendee payments recorded (net)", value: "received" },
@@ -100,7 +107,17 @@ export function financeDetailFacts(
 }
 
 /** Adjustment-panel wording; church-billed registrations adjust the estimate, not a balance. */
-export function adjustmentWording(churchBilled: boolean) {
+export function adjustmentWording(churchBilled: boolean, group = false) {
+  if (churchBilled && group) {
+    return {
+      title: "Adjust estimated amount",
+      button: "Adjust estimated amount",
+      lowers: "lowers the estimated amount",
+      lower: "Lower the estimated amount",
+      raise: "Raise the estimated amount",
+      error: "Unable to adjust the estimated amount.",
+    };
+  }
   return churchBilled
     ? {
         title: "Adjust estimated church amount",

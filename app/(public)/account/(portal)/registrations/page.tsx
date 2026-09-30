@@ -95,9 +95,13 @@ function RegistrationCard({
           </dd>
         </div>
         <div>
-          <dt><CircleDollarSign size={17} aria-hidden="true" /> {registration.churchBilling ? "Price" : "Balance"}</dt>
+          <dt><CircleDollarSign size={17} aria-hidden="true" /> {registration.groupBilling ? "Estimated total" : registration.churchBilling ? "Price" : "Balance"}</dt>
           <dd>
-            {registration.churchBilling
+            {registration.groupBilling
+              ? registration.groupBilling.billed
+                ? <><span translate="no">{money(registration.groupBilling.estimateCents)}</span>. {registration.groupBilling.notice}</>
+                : registration.groupBilling.label
+              : registration.churchBilling
               ? registration.churchBilling.billed
                 ? <PerPersonPriceNotice price={registration.churchBilling.perPerson} />
                 : registration.churchBilling.label
