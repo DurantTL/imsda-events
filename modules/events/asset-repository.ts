@@ -244,6 +244,7 @@ export async function removeEventAsset(
                   id: true,
                   kind: true,
                   title: true,
+                  body: true,
                   isPublished: true,
                   _count: { select: { links: true } },
                 },
@@ -278,11 +279,12 @@ export async function removeEventAsset(
       }
 
       const draftLinks = asset.links.filter((link) => !link.section.isPublished);
-      const draftSections = new Map<string, { title: string; kind: string; total: number; removing: number }>();
+      const draftSections = new Map<string, { title: string; kind: string; body: string; total: number; removing: number }>();
       for (const link of draftLinks) {
         const entry = draftSections.get(link.section.id) ?? {
           title: link.section.title,
           kind: link.section.kind,
+          body: link.section.body,
           total: link.section._count.links,
           removing: 0,
         };
@@ -290,7 +292,10 @@ export async function removeEventAsset(
         draftSections.set(link.section.id, entry);
       }
       const emptiedTitles = [...draftSections.values()]
-        .filter((section) => section.kind === "RESOURCE_LINKS" && section.removing >= section.total)
+        .filter((section) => (
+          section.removing >= section.total
+          && (section.kind === "RESOURCE_LINKS" || (section.kind === "NOTICE" && section.body.trim() === ""))
+        ))
         .map((section) => section.title);
       if (emptiedTitles.length > 0) {
         throw new EventAssetError("ASSET_IN_USE", nameEmptiedDrafts([...new Set(emptiedTitles)]));

@@ -7981,3 +7981,4 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   .event-info-card { padding: 16px 14px; }
 }
 .public-registration-form-column .event-info-cards { width: 100%; max-width: none; margin: 0 0 18px; }
+.event-info-card-file-text { display: inline-flex; align-items: flex-start; gap: 8px; font-weight: 700; overflow-wrap: anywhere; }

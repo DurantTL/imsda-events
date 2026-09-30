@@ -8,9 +8,11 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 
 import { EventInfoCards, type EventInfoCardSection } from "@/components/event-info-cards";
-import { replaceEventContent } from "@/modules/events/content-repository";
+import { listPublishedRegistrationInfoCards, replaceEventContent } from "@/modules/events/content-repository";
+import { localAssetImpact } from "@/components/event-content-asset-tiles";
 import {
   eventContentInputSchema,
+  parseEventContentItems,
   eventContentSectionInputSchema,
   safeContentHref,
 } from "@/modules/events/content-schemas";
@@ -191,5 +193,70 @@ describe("replaceEventContent with info cards", () => {
     expect(data[0].links.create).toHaveLength(1);
     expect(data[1]).toMatchObject({ kind: "STEPS", tone: null, placement: "BOTH", items: [{ title: "One", text: "Two" }], body: "" });
     expect(data[2]).toMatchObject({ kind: "CHECKLIST", items: [{ title: "Roster", text: "" }] });
+  });
+});
+
+describe("review follow-ups", () => {
+  it("refuses plain http on a notice but keeps http for resource tiles", () => {
+    expect(eventContentSectionInputSchema.safeParse({
+      ...notice, links: [{ label: "Old", description: "", url: "http://example.org" }],
+    }).success).toBe(false);
+    expect(eventContentSectionInputSchema.safeParse({
+      ...notice, links: [{ label: "Ok", description: "", url: "https://example.org" }],
+    }).success).toBe(true);
+    expect(eventContentSectionInputSchema.safeParse({
+      kind: "RESOURCE_LINKS", title: "Downloads", links: [{ label: "Flyer", description: "", url: "http://example.org/a.pdf" }],
+    }).success).toBe(true);
+  });
+
+  it("skips individually invalid stored entries instead of dropping them all", () => {
+    expect(parseEventContentItems([{ title: "Good", text: "" }, { title: "", text: "x" }, 7, { nope: true }]))
+      .toEqual([{ title: "Good", text: "" }]);
+    expect(parseEventContentItems("not an array")).toEqual([]);
+  });
+
+  it("treats a notice with no text as emptied when its only link is the deleted file", () => {
+    const link = { label: "File", description: "", url: null, assetId: "asset-1" };
+    const base = { kind: "NOTICE" as const, title: "Notice", isPublished: false, links: [link] };
+    expect(localAssetImpact([{ ...base, body: "" }], "asset-1").emptiedTitles).toEqual(["Notice"]);
+    expect(localAssetImpact([{ ...base, body: "Some text" }], "asset-1").emptiedTitles).toEqual([]);
+  });
+
+  it("renders no file link in a preview, and gives each card its own heading id", () => {
+    const file = { label: "Packing list", description: "", url: null, assetId: "asset-1" };
+    const html = renderToStaticMarkup(createElement(EventInfoCards, {
+      sections: [
+        card({ id: "preview-0", title: "A", body: "x", links: [file] }),
+        card({ id: "preview-1", title: "B", body: "y", links: [file] }),
+      ],
+      eventSlug: "preview",
+      placement: "page",
+      preview: true,
+    }));
+    expect(html).not.toContain("<a ");
+    expect(html).toContain("Packing list");
+    const ids = [...html.matchAll(/<h2 id="([^"]+)"/g)].map((match) => match[1]);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("renders nothing for a registration page with no cards", () => {
+    expect(render([], "registration")).toBe("");
+  });
+
+  it("queries only published card kinds placed on the registration form, for published events", async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      { id: "c1", kind: "STEPS", title: "T", body: "", tone: null, placement: "BOTH", items: [{ title: "a", text: "" }], isPublished: true, links: [] },
+    ]);
+    dependencies.getPrisma.mockReturnValue({ eventContentSection: { findMany } });
+    const result = await listPublishedRegistrationInfoCards("synthetic-event");
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        event: { slug: "synthetic-event", isPublished: true },
+        isPublished: true,
+        kind: { in: ["NOTICE", "STEPS", "CHECKLIST"] },
+        placement: { in: ["REGISTRATION_FORM", "BOTH"] },
+      },
+    }));
+    expect(result[0].items).toEqual([{ title: "a", text: "" }]);
   });
 });

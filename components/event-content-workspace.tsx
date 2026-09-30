@@ -625,6 +625,7 @@ export function EventContentWorkspace({
                     }]}
                     eventSlug="preview"
                     placement="page"
+                    preview
                   />
                 </details>
               </>

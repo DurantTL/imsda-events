@@ -420,10 +420,13 @@ export function sanitizeSourceForClone(
   const contentSections = config.contentSections.map((section) => ({
     ...section,
     body: text("contentSections", `Section "${section.title}" text`, section.body),
-    items: section.items?.map((item, index) => ({
-      title: text("contentSections", `Section "${section.title}" entry ${index + 1} title`, item.title),
-      text: text("contentSections", `Section "${section.title}" entry ${index + 1} text`, item.text),
-    })),
+    // An entry whose title was only a private link has nothing left to show.
+    items: section.items
+      ?.map((item, index) => ({
+        title: text("contentSections", `Section "${section.title}" entry ${index + 1} title`, item.title).trim(),
+        text: text("contentSections", `Section "${section.title}" entry ${index + 1} text`, item.text),
+      }))
+      .filter((item) => item.title !== ""),
     links: section.links.flatMap((link) => {
       if (url("contentSections", `Section "${section.title}" link "${link.label}"`, link.url) === null) return [];
       return [{ ...link, description: text("contentSections", `Section "${section.title}" link "${link.label}" description`, link.description) }];

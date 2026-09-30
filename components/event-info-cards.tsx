@@ -51,7 +51,10 @@ export function EventInfoCards({
   sections,
   eventSlug,
   placement,
+  preview = false,
 }: {
+  /** Staff preview: an uploaded file has no public address yet, so show its label as text. */
+  preview?: boolean;
   sections: EventInfoCardSection[];
   eventSlug: string;
   /** Which surface is rendering, so a card placed elsewhere is left out. */
@@ -66,8 +69,8 @@ export function EventInfoCards({
 
   return (
     <div className="event-info-cards" data-placement={placement}>
-      {cards.map((card, index) => {
-        const headingId = `event-info-card-${placement}-${index}`;
+      {cards.map((card) => {
+        const headingId = `event-info-card-${placement}-${card.id}`;
         if (card.kind === "NOTICE") {
           const tone = card.tone ?? "INFO";
           const Icon = toneIcons[tone];
@@ -102,6 +105,16 @@ export function EventInfoCards({
               {card.links.length > 0 && (
                 <ul className="event-info-card-links">
                   {card.links.map((link, linkIndex) => {
+                    if (preview && link.assetId) {
+                      return (
+                        <li key={linkIndex}>
+                          <span className="event-info-card-file-text">
+                            <FileDown size={16} aria-hidden="true" />
+                            <span><strong>{link.label}</strong>{link.description && <small>{link.description}</small>}</span>
+                          </span>
+                        </li>
+                      );
+                    }
                     const href = link.assetId
                       ? `/api/public/events/${encodeURIComponent(eventSlug)}/assets/${encodeURIComponent(link.assetId)}`
                       : safeContentHref(link.url);

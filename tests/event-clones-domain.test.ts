@@ -567,4 +567,18 @@ describe("info cards in a clone (#652)", () => {
     expect(JSON.stringify(section.items)).not.toContain("MARKER-SIG-VALUE");
     expect(findings.some((finding) => finding.location.includes("entry 1 text"))).toBe(true);
   });
+
+  it("drops an entry whose title was only a private link", () => {
+    const { config: clean } = sanitizeSourceForClone(config({
+      contentSections: [{
+        kind: "CHECKLIST", title: "Ready", body: "", position: 1, assetLinkCount: 0, links: [],
+        tone: null, placement: "PUBLIC_PAGE",
+        items: [
+          { title: "https://example.test/help?sig=MARKER-SIG-VALUE", text: "" },
+          { title: "Roster", text: "" },
+        ],
+      }],
+    }), ["https://events.imsda.test"]);
+    expect(clean.contentSections[0]!.items).toEqual([{ title: "Roster", text: "" }]);
+  });
 });

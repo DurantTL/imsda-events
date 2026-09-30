@@ -32,6 +32,14 @@ const mailtoSchema = z.string().max(500).refine((value) => {
 
 const linkUrlSchema = z.union([externalUrlSchema, mailtoSchema]);
 
+const httpsOnlySchema = z.string().refine((value) => {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+});
+
 /**
  * The only way a stored link becomes an href. Anything that is not http(s) or
  * a well-formed mailto: address yields null, so a bad value that somehow
@@ -94,8 +102,11 @@ export type EventContentItem = z.infer<typeof eventContentItemSchema>;
  * shows nothing rather than failing the whole public page.
  */
 export function parseEventContentItems(value: unknown): EventContentItem[] {
-  const parsed = z.array(eventContentItemSchema).safeParse(value);
-  return parsed.success ? parsed.data : [];
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const parsed = eventContentItemSchema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
 }
 
 export const eventContentSectionInputSchema = z.object({
@@ -143,6 +154,16 @@ export const eventContentSectionInputSchema = z.object({
       message: value.kind === "STEPS"
         ? "Add at least one step, or the card would publish empty."
         : "Add at least one item, or the card would publish empty.",
+    });
+  }
+  // Notices are https or mailto only; plain http is refused there.
+  if (value.kind === "NOTICE" && value.links.some((link) => (
+    link.url && !/^mailto:/i.test(link.url) && !httpsOnlySchema.safeParse(link.url).success
+  ))) {
+    context.addIssue({
+      code: "custom",
+      path: ["links"],
+      message: "Notice links must start with https:// or mailto:.",
     });
   }
   // mailto: belongs to notices only; resource tiles stay http(s) or a file.

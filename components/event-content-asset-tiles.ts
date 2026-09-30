@@ -41,7 +41,10 @@ export function localAssetImpact(sections: SectionDraft[], assetId: string) {
   return {
     affectedTitles: [...new Set(affected.map(sectionLabel))],
     emptiedTitles: [...new Set(affected
-      .filter((section) => section.kind === "RESOURCE_LINKS" && section.links.every((link) => link.assetId === assetId))
+      .filter((section) => (
+        section.links.every((link) => link.assetId === assetId)
+        && (section.kind === "RESOURCE_LINKS" || (section.kind === "NOTICE" && section.body.trim() === ""))
+      ))
       .map(sectionLabel))],
   };
 }
