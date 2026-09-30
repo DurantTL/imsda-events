@@ -174,6 +174,22 @@ describe("the honors step of a club registration (#618)", () => {
     expect(firstPickProblem({ "member:member-1": ["adults-only"] }, [alex!], here)).toContain("ages 16 and up");
   });
 
+  it("checks the minimum age against an age typed in for a roster person with no birth date (#639)", async () => {
+    database();
+    const { offerings: all } = await getRegistrationHonorsCatalog("club-1", "event-1");
+    const here = offeringsAtLocation(all, "loc-hr");
+    const roster = [{ memberId: "member-1", firstName: "Alex", lastName: "Youth", ageOnEventDate: null, attendeeType: "YOUTH" as const }];
+    const picks = { "member:member-1": ["adults-only"] };
+    const [young] = pickingAttendees({ roster, selectedMemberIds: ["member-1"], guests: [], rosterAges: { "member-1": 12 } });
+    expect(young!.ageOnEventDate).toBe(12);
+    expect(firstPickProblem(picks, [young!], here)).toContain("ages 16 and up");
+    const [old] = pickingAttendees({ roster, selectedMemberIds: ["member-1"], guests: [], rosterAges: { "member-1": 17 } });
+    expect(firstPickProblem(picks, [old!], here)).toBeNull();
+    // A birth date on the roster wins over a typed-in age.
+    const [dated] = pickingAttendees({ roster: [{ ...roster[0]!, ageOnEventDate: 12 }], selectedMemberIds: ["member-1"], guests: [], rosterAges: { "member-1": 17 } });
+    expect(dated!.ageOnEventDate).toBe(12);
+  });
+
   it("keeps one club's unsaved-honors note apart from another club's, and from another event's", () => {
     const keys = new Set([honorsNoteKey("club-a", "event-1"), honorsNoteKey("club-b", "event-1"), honorsNoteKey("club-a", "event-2")]);
     expect(keys.size).toBe(3);

@@ -38,6 +38,24 @@ export const clubGuestSchema = z.object({
     .or(z.literal("").transform(() => null)),
 }).strict();
 
+/**
+ * Ages typed in for roster people whose roster entry has no birth date (#639),
+ * by roster member id. For this registration only: the roster itself is not
+ * changed, and no birth date is ever guessed from an age.
+ */
+export const rosterAgesSchema = z.record(
+  z.string().min(1).max(64),
+  z.number().int("Enter the age in whole years.").min(0, "Enter an age from 0 to 120.").max(120, "Enter an age from 0 to 120."),
+).refine((ages) => Object.keys(ages).length <= 500, "Too many people in one save.");
+
+export type RosterAges = z.infer<typeof rosterAgesSchema>;
+
+/** Ages saved in a draft, dropping anything that no longer reads as one. */
+export function rosterAgesFromJson(value: unknown): RosterAges {
+  const parsed = rosterAgesSchema.safeParse(value);
+  return parsed.success ? parsed.data : {};
+}
+
 export const clubGuestsSchema = z.array(clubGuestSchema).max(MAX_CLUB_GUESTS, `Add up to ${MAX_CLUB_GUESTS} extra people.`);
 
 /**

@@ -4037,6 +4037,9 @@ model ClubRegistrationDraft {
   /// Honors picked while registering (#618): { [attendee client id]: [offering id] }.
   /// Only a draft; seats are taken by the enrollment domain after the registration is submitted.
   honorSelections    Json     @default("{}")
+  /// Ages typed in for roster people with no birth date on file (#639):
+  /// { [roster member id]: age on the event date }. For this registration only.
+  rosterAges         Json     @default("{}")
   updatedByAccountId String?
   /// Set instead of `updatedByAccountId` for a staff "act as" director (#442).
   updatedByUserId    String?

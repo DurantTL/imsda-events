@@ -16,6 +16,7 @@ import {
   formatCalendarDate,
   guestIdFromClientId,
   guestIsAdult,
+  attendeeAgeKey,
   MAX_CLUB_GUESTS,
   rosterMemberIdFromClientId,
   rosterOwnedResponses,
@@ -37,6 +38,8 @@ type DraftState = {
   responses: FormResponses;
   attendeeResponses: Record<string, FormResponses>;
   honorSelections: HonorPicks;
+  /** Ages typed in for roster people with no birth date on file (#639), by roster member id. */
+  rosterAges: Record<string, number>;
 };
 
 export function ClubRegistrationWorkspace({
@@ -60,6 +63,7 @@ export function ClubRegistrationWorkspace({
     responses: fillMissingAnswers(workspace.draft?.responses, contactPrefill) as FormResponses,
     attendeeResponses: (workspace.draft?.attendeeResponses as Record<string, FormResponses> | undefined) ?? {},
     honorSelections: workspace.draft?.honorSelections ?? {},
+    rosterAges: workspace.draft?.rosterAges ?? {},
   }));
   const [step, setStep] = useState<"who" | "honors" | "form">("who");
   const [honorsProblem, setHonorsProblem] = useState<string | null>(null);
@@ -123,12 +127,38 @@ export function ClubRegistrationWorkspace({
 
   const selected = workspace.roster.filter((person) => draft.selectedMemberIds.includes(person.memberId));
   const goingCount = selected.length + draft.guests.length;
+  // Roster people with no birth date need an age typed in for this registration (#639).
+  const missingAge = selected.filter((person) => person.ageOnEventDate === null && draft.rosterAges[person.memberId] === undefined);
+  const [ageProblem, setAgeProblem] = useState("");
+
+  function changeRosterAge(memberId: string, raw: string) {
+    setAgeProblem("");
+    setDraft((current) => {
+      const rosterAges = { ...current.rosterAges };
+      const age = Number(raw);
+      // A blank or invalid entry clears the age; only whole numbers 0 to 120 are kept, like guests.
+      if (raw.trim() !== "" && Number.isInteger(age) && age >= 0 && age <= 120) rosterAges[memberId] = age;
+      else delete rosterAges[memberId];
+      // The typed age also becomes the event form's age answer for this person,
+      // so the form shows it (the server sets it again from the saved draft).
+      const ageKey = attendeeAgeKey(workspace.experience.form.definition);
+      const attendeeResponses = { ...current.attendeeResponses };
+      if (ageKey) {
+        const { [ageKey]: _previous, ...others } = attendeeResponses[memberId] ?? {};
+        void _previous;
+        attendeeResponses[memberId] = rosterAges[memberId] === undefined ? others : { ...others, [ageKey]: String(rosterAges[memberId]) };
+      }
+      const next = { ...current, rosterAges, attendeeResponses };
+      queueSave(next);
+      return next;
+    });
+  }
 
   // The honors step (#618): only when the event has classes at the chosen site
   // (or at no site), so an event without honors goes straight to the form.
   const honorAttendees = useMemo(
-    () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests }),
-    [workspace.roster, draft.selectedMemberIds, draft.guests],
+    () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests, rosterAges: draft.rosterAges }),
+    [workspace.roster, draft.selectedMemberIds, draft.guests, draft.rosterAges],
   );
   const honorOfferings = useMemo(
     () => (honorsCatalog ? offeringsAtLocation(honorsCatalog.offerings, locationId) : []),
@@ -152,6 +182,11 @@ export function ClubRegistrationWorkspace({
   }
 
   function leaveWho() {
+    if (missingAge.length > 0) {
+      const first = missingAge[0]!;
+      return setAgeProblem(`Enter ${first.firstName} ${first.lastName}'s age on the event date.`);
+    }
+    setAgeProblem("");
     void flush();
     setStep(hasHonorsStep ? "honors" : "form");
   }
@@ -355,9 +390,31 @@ export function ClubRegistrationWorkspace({
                     </small>
                   </span>
                 </label>
+                {person.ageOnEventDate === null && draft.selectedMemberIds.includes(person.memberId) && (
+                  <div className="club-roster-age">
+                    <label>
+                      Age on event date
+                      <input
+                        aria-invalid={ageProblem !== "" && draft.rosterAges[person.memberId] === undefined}
+                        defaultValue={draft.rosterAges[person.memberId] ?? ""}
+                        inputMode="numeric"
+                        max={120}
+                        min={0}
+                        onChange={(event) => changeRosterAge(person.memberId, event.target.value)}
+                        required
+                        type="number"
+                      />
+                    </label>
+                    <small className="field-help">
+                      No birth date on the roster. This age is used for this registration only.{" "}
+                      <Link href={`/account/clubs/${organizationId}`} onClick={() => { void flush(); }}>Add their birth date on the roster</Link>
+                    </small>
+                  </div>
+                )}
               </li>
             ))}
           </ul>
+          {ageProblem && <div className="inline-notice error" role="alert">{ageProblem}</div>}
         </>
       )}
       <section className="club-guest-section" aria-labelledby="club-guests-title">

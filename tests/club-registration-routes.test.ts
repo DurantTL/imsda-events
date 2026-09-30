@@ -185,6 +185,27 @@ describe("club registration routes", () => {
     expect(mocks.draftUpsert.mock.calls[0][0].update.attendeeResponses).toEqual({ m1: { dietary_needs: "None" } });
   });
 
+  it("keeps typed-in ages in the draft only for going people with no birth date on file (#639)", async () => {
+    mocks.rosterFindMany.mockResolvedValue([
+      { id: "m1", sealedBirthDate: "sealed" },
+      { id: "m2", sealedBirthDate: null },
+      { id: "m3", sealedBirthDate: null },
+    ]);
+    const body = { selectedMemberIds: ["m1", "m2"], responses: {}, attendeeResponses: {} };
+    const response = await PUT_DRAFT(request("PUT", { ...body, rosterAges: { m1: 40, m2: 12, m3: 9 } }), ctx("club-a"));
+    expect(response.status).toBe(200);
+    expect(mocks.draftUpsert.mock.calls[0][0].update.rosterAges).toEqual({ m2: 12 });
+    expect(mocks.draftUpsert.mock.calls[0][0].create.rosterAges).toEqual({ m2: 12 });
+  });
+
+  it("rejects typed-in ages that are not whole numbers from 0 to 120 (#639)", async () => {
+    const body = { selectedMemberIds: ["m1"], responses: {}, attendeeResponses: {} };
+    for (const age of [121, -1, 4.5, "12"]) {
+      expect((await PUT_DRAFT(request("PUT", { ...body, rosterAges: { m1: age } }), ctx("club-a"))).status).toBe(400);
+    }
+    expect(mocks.draftUpsert).not.toHaveBeenCalled();
+  });
+
   it("rejects cross-origin writes and malformed drafts", async () => {
     expect((await PUT_DRAFT(request("PUT", { selectedMemberIds: "m1" }), ctx("club-a"))).status).toBe(400);
     mocks.getCurrentAttendee.mockClear();

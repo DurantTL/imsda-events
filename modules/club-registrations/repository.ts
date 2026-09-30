@@ -18,7 +18,9 @@ import {
   formatCalendarDate,
   guestIdFromClientId,
   guestIsAdult,
+  attendeeAgeKey,
   guestsFromJson,
+  rosterAgesFromJson,
   type ClubGuest,
   lockedAttendeeFieldKeys,
   lockedClubDirectoryFieldKeys,
@@ -657,6 +659,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
           : draft.responses as Record<string, unknown>,
         attendeeResponses: draft.attendeeResponses as Record<string, Record<string, unknown>>,
         honorSelections: recordFromJson(draft.honorSelections) as Record<string, string[]>,
+        rosterAges: rosterAgesFromJson(draft.rosterAges),
         updatedAt: draft.updatedAt.toISOString(),
       }
       : null,
@@ -672,6 +675,8 @@ export type ClubRegistrationDraftInput = {
   attendeeResponses: Record<string, Record<string, unknown>>;
   /** Honors picked while registering (#618), by the event form's client id. */
   honorSelections?: Record<string, string[]>;
+  /** Ages typed in for roster people with no birth date on file (#639), by roster member id. */
+  rosterAges?: Record<string, number>;
 };
 
 /** Never an attendee account credited for a staff action (#442): `userId` for a staff "act as" director. */
@@ -704,7 +709,17 @@ export async function saveClubRegistrationDraft(
   const honorSelections = Object.fromEntries(
     Object.entries(input.honorSelections ?? {}).filter(([key, ids]) => pickable.has(key) && ids.length > 0),
   );
+  // Only for people going who really have no birth date: a roster age always wins.
+  const rosterAges = Object.fromEntries(
+    members
+      .filter((member) => !member.sealedBirthDate && input.selectedMemberIds.includes(member.id))
+      .flatMap((member) => {
+        const age = input.rosterAges?.[member.id];
+        return age === undefined ? [] : [[member.id, age] as const];
+      }),
+  );
   const data = {
+    rosterAges: rosterAges as Prisma.InputJsonValue,
     honorSelections: honorSelections as Prisma.InputJsonValue,
     selectedMemberIds: input.selectedMemberIds,
     guests: input.guests as Prisma.InputJsonValue,
@@ -740,8 +755,10 @@ export function clubAttendeePreparer(organizationId: string): ClubSubmissionCont
     // client can only choose them, not change who they are (#388).
     const draft = await tx.clubRegistrationDraft.findUnique({
       where: { eventId_organizationId: { eventId: event.id, organizationId } },
-      select: { guests: true },
+      select: { guests: true, rosterAges: true, honorSelections: true },
     });
+    const draftRosterAges = rosterAgesFromJson(draft?.rosterAges);
+    const draftHonorPicks = recordFromJson(draft?.honorSelections);
     const guestsById = new Map(guestsFromJson(draft?.guests).map((guest) => [guest.id, guest]));
     const eventDate = calendarDateInEventTimeZone(event.startsAt, event.timezone);
     // The club directory field (#482) is locked to this club's own
@@ -781,7 +798,21 @@ export function clubAttendeePreparer(organizationId: string): ClubSubmissionCont
           "Everyone going must be active on your club roster. Refresh the page and choose again.",
         );
       }
-      const person = rosterPerson(member, eventDate);
+      const rosterOnly = rosterPerson(member, eventDate);
+      // A roster person with no birth date takes the age typed in for this
+      // registration (#639); a birth date on file always wins.
+      const typedAge = rosterOnly.ageOnEventDate === null ? draftRosterAges[member.id] : undefined;
+      if (rosterOnly.ageOnEventDate === null && typedAge === undefined) {
+        const picks = draftHonorPicks[attendee.clientId];
+        const needsAge = attendeeAgeKey(definition as RegistrationFormDefinition) !== null || (Array.isArray(picks) && picks.length > 0);
+        if (needsAge) {
+          throw new PublicRegistrationError(
+            "CLUB_ATTENDEES_INVALID",
+            `Enter ${`${rosterOnly.firstName} ${rosterOnly.lastName}`.trim() || "everyone going"}'s age on the event date. Go back to Who's going and add it.`,
+          );
+        }
+      }
+      const person = typedAge === undefined ? rosterOnly : { ...rosterOnly, ageOnEventDate: typedAge };
       resolved.set(attendee.clientId, { personId: member.personId, rosterMemberId: member.id, ageOnEventDate: person.ageOnEventDate });
       return { ...attendee, responses: { ...attendee.responses, ...rosterOwnedResponses(definition as RegistrationFormDefinition, person) } };
     });

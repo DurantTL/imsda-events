@@ -82,6 +82,8 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
   const members = [
     { id: "m1", personId: "person-m1", attendeeType: "YOUTH", role: "Pathfinder", gender: "FEMALE", sealedBirthDate: sealSecret("2014-12-06", "club-roster:birth-date"), person: { firstName: "Alex", lastName: "Sample" } },
     { id: "m2", personId: "person-m2", attendeeType: "STAFF", role: "Counselor", gender: null, sealedBirthDate: sealSecret("1988-03-02", "club-roster:birth-date"), person: { firstName: "Jordan", lastName: "Example" } },
+    // No birth date on the roster (#639).
+    { id: "m3", personId: "person-m3", attendeeType: "YOUTH", role: "Pathfinder", gender: null, sealedBirthDate: null, person: { firstName: "Casey", lastName: "Nobirth" } },
   ];
   const tx = {
     organization: {
@@ -252,6 +254,29 @@ describe("club registration submit", () => {
     expect(tx.person.create).toHaveBeenCalledWith({ data: expect.objectContaining({ firstName: "Pat", lastName: "Driver" }) });
     // The roster is only read, never written.
     expect(Object.keys(tx.clubRosterMember)).toEqual(["findMany"]);
+  });
+
+  it("uses the age typed in for a roster person with no birth date, from the saved draft (#639)", async () => {
+    const tx = fixture();
+    tx.clubRegistrationDraft.findUnique.mockResolvedValue({ guests: [], rosterAges: { m3: 13, m1: 99 } });
+    await submit({ ...baseInput, attendees: [{ clientId: "member:m3", responses: { attendee_age: "1" } }, { clientId: "member:m1", responses: {} }] });
+
+    const [typed, dated] = tx.registrationAttendee.create.mock.calls.map(([call]) => call.data);
+    expect(typed.personId).toBe("person-m3");
+    expect(typed.profileSnapshot).toMatchObject({ clubRosterMemberId: "m3", ageOnEventDate: 13 });
+    expect(typed.formResponses).toMatchObject({ attendee_age: "13" });
+    // A birth date on file always wins over a typed-in age.
+    expect(dated.profileSnapshot).toMatchObject({ ageOnEventDate: 11 });
+    // The roster is only read: no guessed birth date is written back.
+    expect(Object.keys(tx.clubRosterMember)).toEqual(["findMany"]);
+  });
+
+  it("refuses a roster person with no birth date and no typed-in age when the form asks for age (#639)", async () => {
+    const tx = fixture();
+    tx.clubRegistrationDraft.findUnique.mockResolvedValue({ guests: [], rosterAges: {} });
+    await expect(submit({ ...baseInput, attendees: [{ clientId: "member:m3", responses: {} }] }))
+      .rejects.toMatchObject({ code: "CLUB_ATTENDEES_INVALID", message: expect.stringContaining("Casey Nobirth") });
+    expect(tx.registration.create).not.toHaveBeenCalled();
   });
 
   it("refuses an extra person who isn't in the saved draft", async () => {
