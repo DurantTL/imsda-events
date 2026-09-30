@@ -5,8 +5,10 @@ import { AlertCircle, CheckCircle2, Save } from "lucide-react";
 import type { AttendeeProfileInput } from "@/modules/attendee-accounts/profile-service";
 
 export function AttendeeProfileForm({
+  email = null,
   initialProfile,
 }: {
+  email?: string | null;
   initialProfile: AttendeeProfileInput;
 }) {
   const [profile, setProfile] = useState(initialProfile);
@@ -47,12 +49,19 @@ export function AttendeeProfileForm({
   }
 
   return (
-    <form className="public-manage-contact-card" onSubmit={save}>
+    <form aria-busy={state === "saving"} className="public-manage-contact-card profile-details-form" onSubmit={save}>
       <div className="public-manage-card-heading">
         <p className="public-registration-eyebrow">Reusable profile</p>
         <h2>Your usual details</h2>
         <p>These values prefill matching fields on new registrations. You can still change them per event.</p>
       </div>
+      {email && (
+        <label className="public-registration-field profile-readonly-field">
+          <span className="public-registration-field-label">Sign-in email <em>(read-only)</em></span>
+          <input aria-describedby="profile-email-note" readOnly value={email} />
+          <small className="field-help" id="profile-email-note">This is the verified email you sign in with. It cannot be changed here.</small>
+        </label>
+      )}
       <div className="public-manage-contact-grid">
         <label className="public-registration-field">
           <span className="public-registration-field-label">First name</span>
