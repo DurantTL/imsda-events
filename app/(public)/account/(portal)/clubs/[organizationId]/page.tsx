@@ -18,7 +18,7 @@ import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels, clubRoleDescriptions } from "@/modules/organizations/director-grants-domain";
 
-export const metadata: Metadata = { title: "Club home" };
+export const metadata: Metadata = { title: "Home" };
 export const dynamic = "force-dynamic";
 
 /** Only when there's somewhere else to go (#428): a single-club director has nowhere "all clubs" would take them. */

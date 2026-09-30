@@ -294,7 +294,7 @@ export type ClubEventRegistrationStep = { key: string; text: string; href: strin
 /**
  * Club home's "What's next" (#478): one item per open club event the club
  * hasn't registered for yet, so a director always sees where to register —
- * not only on the Events & classes tab. A club with a saved draft still gets
+ * not only on the Events tab. A club with a saved draft still gets
  * an item, worded to continue rather than start.
  */
 export function clubEventRegistrationSteps(events: ClubEventSummary[], base: string): ClubEventRegistrationStep[] {

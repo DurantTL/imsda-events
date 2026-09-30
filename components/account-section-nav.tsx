@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Fragment, useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 
 export type AccountNavItem = {
   href: string;
@@ -43,21 +43,35 @@ export function AccountSectionNav({
     current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [pathname]);
 
+  const groupIdBase = useId();
+  // Consecutive items sharing a group become one section; ungrouped items stay top level.
+  const sections: Array<{ group?: string; items: AccountNavItem[] }> = [];
+  for (const item of items) {
+    const last = sections[sections.length - 1];
+    if (last && last.group === item.group && item.group) last.items.push(item);
+    else sections.push({ group: item.group, items: [item] });
+  }
+  const renderItem = (item: AccountNavItem) => (
+    <li key={item.href}>
+      <Link aria-current={isActive(pathname, item) ? "page" : undefined} href={item.href}>
+        {item.label}
+      </Link>
+    </li>
+  );
+
   return (
     <nav aria-label={label} className={`account-nav account-nav-${variant}`}>
       <ul ref={listRef}>
-        {items.map((item, index) => (
-          <Fragment key={item.href}>
-            {item.group && item.group !== items[index - 1]?.group && (
-              <li className="account-nav-group-label" role="presentation">{item.group}</li>
-            )}
-            <li>
-              <Link aria-current={isActive(pathname, item) ? "page" : undefined} href={item.href}>
-                {item.label}
-              </Link>
+        {sections.map((section, index) =>
+          section.group ? (
+            <li className="account-nav-group" key={`${section.group}-${index}`}>
+              <span className="account-nav-group-label" id={`${groupIdBase}-${index}`}>{section.group}</span>
+              <ul aria-labelledby={`${groupIdBase}-${index}`}>{section.items.map(renderItem)}</ul>
             </li>
-          </Fragment>
-        ))}
+          ) : (
+            section.items.map(renderItem)
+          ),
+        )}
       </ul>
     </nav>
   );

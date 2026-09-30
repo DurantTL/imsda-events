@@ -29,16 +29,12 @@ describe("club portal menu (#644)", () => {
     for (const old of ["Events & classes", "Earned awards", "Club admins", "Club profile", "Club home"]) expect(labels).not.toContain(old);
   });
 
-  it("gives every role the same destinations it had before, with Club info standing for team and profile", () => {
-    for (const role of ["DIRECTOR", "DEPUTY", "REGISTRAR"] as const) {
-      const caps = clubCapabilities(role);
-      const expected = new Set<string>(["/", "/roster", "/events"]);
-      if (caps.roster) ["/honors", "/supplies", "/orders", "/class-tracking"].forEach((h) => expected.add(h));
-      if (caps.submitReports) ["/notes", "/reports"].forEach((h) => expected.add(h));
-      if (role === "DIRECTOR" || role === "DEPUTY") expected.add("/forms");
-      if (caps.manageTeam || caps.editProfile) expected.add("/club-info");
-      expect(new Set(hrefs(role))).toEqual(expected);
-    }
+  it("gives each role exactly the destinations it had before, with Club info standing for team and profile", () => {
+    const everything = ["/", "/roster", "/honors", "/class-tracking", "/events", "/forms", "/notes", "/reports", "/supplies", "/orders", "/club-info"];
+    expect(hrefs("DIRECTOR")).toEqual(everything);
+    expect(hrefs("DEPUTY")).toEqual(everything);
+    // A registrar: no forms, no notes or reports, no club info.
+    expect(hrefs("REGISTRAR")).toEqual(["/", "/roster", "/honors", "/class-tracking", "/events", "/supplies", "/orders"]);
   });
 
   it("hides groups with no visible items for a registrar", () => {
@@ -49,6 +45,7 @@ describe("club portal menu (#644)", () => {
 
   it("gives a reporter without roster access Home plus the two report screens", () => {
     const items = clubReporterNavItems({ base, capabilities: clubCapabilities("REPORTER") });
+    expect(items.map((item) => item.href.replace(base, "") || "/")).toEqual(["/", "/notes", "/reports"]);
     expect(items.map((item) => item.label)).toEqual(["Home", "Meeting notes", "Monthly reports"]);
   });
 });

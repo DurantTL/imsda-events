@@ -7263,11 +7263,12 @@ select:focus-visible {
 .account-nav a:hover { background: var(--imsda-navy-soft); color: var(--imsda-navy); }
 .account-nav a[aria-current="page"] { background: var(--imsda-navy); color: #fff; }
 .account-nav a:focus-visible { outline: 3px solid var(--imsda-purple); outline-offset: 1px; }
+.account-nav-group { display: flex; align-items: center; gap: 4px; margin-left: 10px; padding-left: 12px; border-left: 1px solid var(--line); }
+.account-nav .account-nav-group > ul { overflow: visible; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.account-nav-secondary .account-nav-group > ul { border-width: 0; }
 .account-nav-group-label {
-  align-self: center; margin-left: 10px; padding-left: 12px; border-left: 1px solid var(--line, currentColor);
   color: var(--imsda-navy); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap;
 }
-.account-nav-group-label:first-child { margin-left: 0; padding-left: 0; border-left: 0; }
 .account-nav-secondary { width: 100%; margin: 0; }
 .account-nav-secondary ul { border-width: 0 0 1px; border-radius: 0; background: transparent; padding: 0; gap: 2px; }
 .account-nav-secondary a { min-height: 44px; border-bottom: 3px solid transparent; border-radius: 0; padding: 8px 14px 6px; }
