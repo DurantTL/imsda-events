@@ -162,7 +162,7 @@ async function checkedAttendance(
 
 /** Typed head counts stay as typed; a blank count is filled from the check-off when there is one. */
 function filledCounts(input: MeetingNoteInput, attendance: CheckedAttendance | null) {
-  const derived = attendance && attendance.total > 0 ? attendance.counts : null;
+  const derived = attendance && (attendance.rows.length > 0 || attendance.total > 0) ? attendance.counts : null;
   return {
     pathfinderCount: input.pathfinderCount ?? derived?.pathfinderCount ?? null,
     tltCount: input.tltCount ?? derived?.tltCount ?? null,
@@ -256,6 +256,16 @@ async function findOwnNote(organizationId: string, noteId: string) {
   });
   if (!note || note.organizationId !== organizationId) throw new ClubMeetingNoteError("NOTE_NOT_FOUND", "That meeting note could not be found.");
   return { prisma, note };
+}
+
+/**
+ * Whether saving `meetingDate` would wipe the stored marks: the note has a
+ * check-off and the date moves into another club year (#653). Wiping marks is
+ * a roster-gated change, so the route asks before saving.
+ */
+export async function moveWouldClearAttendance(organizationId: string, noteId: string, meetingDate: string) {
+  const { note } = await findOwnNote(organizationId, noteId);
+  return (note.attendance ?? []).length > 0 && Boolean(note.meetingDate) && clubYearOfDate(note.meetingDate) !== clubYearOfDate(meetingDate);
 }
 
 export async function updateClubMeetingNote(organizationId: string, noteId: string, input: MeetingNoteInput, actor: ClubMeetingNoteActor) {

@@ -49,6 +49,7 @@ import {
   attendanceGroupOf,
   attendanceMarkKey,
   countsFromAttendance,
+  countsToSend,
   groupAttendanceRoster,
 } from "@/modules/club-meeting-notes/attendance";
 import { defaultMeetingDate, recordsMonth } from "@/modules/club-meeting-notes/domain";
@@ -182,6 +183,21 @@ describe("saving a meeting note with attendance", () => {
     expect(mocks.noteUpdate.mock.calls[0][0].data.attendance).toEqual({ deleteMany: {}, create: [{ rosterMemberId: "m-3", present: true }] });
   });
 
+  it("fills counts from the merged marks, including a member the editor's roster doesn't list, and zero when all are absent", async () => {
+    // m-3 (staff) has a mark but, say, is inactive so the editor never listed them.
+    mocks.noteFindUnique.mockResolvedValue({
+      id: "note-1", organizationId: "club-1", meetingDate: "2026-10-07", attendance: [{ rosterMemberId: "m-3", present: true }],
+    });
+    await updateClubMeetingNote("club-1", "note-1", input({
+      attendance: [{ rosterMemberId: "m-1", present: true }, { rosterMemberId: "m-2", present: false }],
+    }), actor);
+    expect(mocks.noteUpdate.mock.calls[0][0].data).toMatchObject({ pathfinderCount: 1, tltCount: 0, staffCount: 1 });
+
+    mocks.noteFindUnique.mockResolvedValue({ id: "note-1", organizationId: "club-1", meetingDate: "2026-10-07", attendance: [] });
+    await updateClubMeetingNote("club-1", "note-1", input({ attendance: [{ rosterMemberId: "m-1", present: false }] }), actor);
+    expect(mocks.noteUpdate.mock.calls[1][0].data).toMatchObject({ pathfinderCount: 0, tltCount: 0, staffCount: 0 });
+  });
+
   it("only accepts named members who haven't been removed from the roster", async () => {
     await createClubMeetingNote("club-1", input({ attendance: [{ rosterMemberId: "m-1", present: true }] }), actor);
     expect(mocks.rosterFindMany.mock.calls[0][0].where).toMatchObject({ status: { not: "REMOVED" }, personId: { not: null } });
@@ -305,6 +321,21 @@ describe("attendance needs roster access (ADR 0005)", () => {
     expect((await POST_NOTE(write("POST", { attendance: check }), ctx)).status).toBe(201);
   });
 
+  it("keeps a reporter from wiping marks by moving a meeting into another club year", async () => {
+    role("REPORTER");
+    mocks.noteFindUnique.mockResolvedValue({ id: "note-1", organizationId: "club-1", meetingDate: "2026-10-07", attendance: [{ rosterMemberId: "m-1", present: true }] });
+    expect((await PUT_NOTE(write("PUT", { meetingDate: "2027-09-15" }), noteCtx)).status).toBe(403);
+    expect(mocks.noteUpdate).not.toHaveBeenCalled();
+    // Same club year, or a note with no marks, is an ordinary head-count edit.
+    expect((await PUT_NOTE(write("PUT", { meetingDate: "2026-11-04" }), noteCtx)).status).toBe(200);
+    mocks.noteFindUnique.mockResolvedValue({ id: "note-1", organizationId: "club-1", meetingDate: "2026-10-07", attendance: [] });
+    expect((await PUT_NOTE(write("PUT", { meetingDate: "2027-09-15" }), noteCtx)).status).toBe(200);
+    // A director with an open roster may move it.
+    role("DIRECTOR");
+    mocks.noteFindUnique.mockResolvedValue({ id: "note-1", organizationId: "club-1", meetingDate: "2026-10-07", attendance: [{ rosterMemberId: "m-1", present: true }] });
+    expect((await PUT_NOTE(write("PUT", { meetingDate: "2027-09-15" }), noteCtx)).status).toBe(200);
+  });
+
   it("downloads the CSV for a director with roster access, with an audit row that has no names", async () => {
     role("DIRECTOR");
     const response = await EXPORT(request("?year=2026-27"), ctx);
@@ -345,6 +376,14 @@ describe("attendance needs roster access (ADR 0005)", () => {
     expect(extras.where.status).toEqual({ not: "REMOVED" });
     expect((await EXPORT(request("?from=2026-02-31"), ctx)).status).toBe(400);
     expect((await EXPORT(request("?from=2026-11-01&to=2026-10-01"), ctx)).status).toBe(400);
+  });
+});
+
+describe("counts the editor leaves for the server to fill", () => {
+  const derived = { pathfinderCount: 4, tltCount: 1, staffCount: 2 };
+  it("sends blank for a count still equal to the editor's own, and keeps what the director changed", () => {
+    expect(countsToSend({ pathfinderCount: "4", tltCount: "1", staffCount: "2" }, derived)).toEqual({ pathfinderCount: null, tltCount: null, staffCount: null });
+    expect(countsToSend({ pathfinderCount: "5", tltCount: "", staffCount: "2" }, derived)).toEqual({ pathfinderCount: 5, tltCount: null, staffCount: null });
   });
 });
 

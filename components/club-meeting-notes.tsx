@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Download, Pencil, Plus, Trash2, X } from "lucide-react";
-import { countsFromAttendance, groupAttendanceRoster } from "@/modules/club-meeting-notes/attendance";
+import { countsFromAttendance, countsToSend, groupAttendanceRoster } from "@/modules/club-meeting-notes/attendance";
 import type { AttendanceRosterEntry, ClubMeetingNoteRecord } from "@/modules/club-meeting-notes/repository";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import type { ReportHonor } from "@/modules/club-reports/domain";
@@ -157,11 +157,22 @@ export function ClubMeetingNotes({
     setSaving(true);
     setError("");
     setNotice("");
-    const body = {
-      meetingDate: draft.meetingDate,
+    const sendAttendance = attendanceAvailable && draft.attendanceTouched && draft.attendanceOn && rosterMatchesDate;
+    const typedCounts = {
       pathfinderCount: toCount(String(draft.pathfinderCount)),
       tltCount: toCount(String(draft.tltCount)),
       staffCount: toCount(String(draft.staffCount)),
+    };
+    // Counts still equal to the editor's own roster-derived ones go blank; the server fills them from the merged marks.
+    const counts = sendAttendance
+      ? countsToSend(
+        { pathfinderCount: String(draft.pathfinderCount), tltCount: String(draft.tltCount), staffCount: String(draft.staffCount) },
+        countsFromAttendance(roster.map((member) => ({ ...member, present: draft.present[member.id] === true }))),
+      )
+      : typedCounts;
+    const body = {
+      meetingDate: draft.meetingDate,
+      ...counts,
       honors: draft.honors.filter((honor) => honor.name.trim() || honor.participants !== null),
       notes: draft.notes,
       // Omitted leaves a meeting's check-off alone; an empty list clears it (#653).
@@ -387,7 +398,11 @@ function AttendanceSection({
       </div>
     );
   }
-  const presentCount = roster.filter((member) => draft.present[member.id] === true).length;
+  // Same basis as the saved list line: every mark on the meeting, including people no longer on the active roster.
+  const rosterIds = new Set(roster.map((member) => member.id));
+  const otherMarks = Object.entries(draft.present).filter(([id]) => !rosterIds.has(id));
+  const presentCount = roster.filter((member) => draft.present[member.id] === true).length + otherMarks.filter(([, present]) => present).length;
+  const totalCount = roster.length + otherMarks.length;
   return (
     <div className="club-report-sub">
       <strong>Attendance (optional)</strong>
@@ -398,7 +413,7 @@ function AttendanceSection({
         </>
       ) : (
         <>
-          <p className="field-help" role="status">{presentCount} of {roster.length} present. The counts above update as you check people off, and you can still change them.</p>
+          <p className="field-help" role="status">{presentCount} of {totalCount} present. The counts above update as you check people off, and you can still change them.</p>
           <div className="intro-actions">
             <button className="secondary-button club-event-action" onClick={() => onMarkAll(true)} type="button">Mark all present</button>
             <button className="secondary-button club-event-action" onClick={() => onMarkAll(false)} type="button">Clear all</button>

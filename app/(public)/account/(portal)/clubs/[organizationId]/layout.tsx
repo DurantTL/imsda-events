@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { AccountSectionNav } from "@/components/account-section-nav";
 import Link from "next/link";
 import { ClubAccessGate } from "@/components/club-access-gate";
-import { ClubGateSlot } from "@/components/club-gate-slot";
+import { ClubGateSlot, ClubRecordsHint } from "@/components/club-gate-slot";
 import { attendeeSignInRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
@@ -66,9 +66,11 @@ export default async function ClubLayout({
           <ClubGateSlot>
             <ClubAccessGate access={access} />
             {"club" in access && clubCapabilities(access.club.role).submitReports && (
-              <p className="field-help club-gate-reports">
-                Monthly Records open without this step, except the attendance check-off: <Link href={`${base}/records`}>open Monthly Records</Link>.
-              </p>
+              <ClubRecordsHint>
+                <p className="field-help club-gate-reports">
+                  Monthly Records open without this step, except the attendance check-off: <Link href={`${base}/records`}>open Monthly Records</Link>.
+                </p>
+              </ClubRecordsHint>
             )}
           </ClubGateSlot>
         )}

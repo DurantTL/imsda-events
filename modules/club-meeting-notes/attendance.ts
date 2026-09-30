@@ -59,6 +59,23 @@ export function countsFromAttendance(members: ReadonlyArray<AttendanceMemberKind
   return counts;
 }
 
+type CountText = { pathfinderCount: string; tltCount: string; staffCount: string };
+
+/**
+ * The head counts the editor sends after a check-off: a count still equal to
+ * what the editor itself derived from its roster is sent blank, so the server
+ * fills it from the merged marks (which may include people the editor doesn't
+ * list). A count the director changed stays as typed.
+ */
+export function countsToSend(typed: CountText, derived: { pathfinderCount: number; tltCount: number; staffCount: number }) {
+  const pick = (text: string, value: number) => (text.trim() === "" || Number(text) === value ? null : Number(text));
+  return {
+    pathfinderCount: pick(typed.pathfinderCount, derived.pathfinderCount),
+    tltCount: pick(typed.tltCount, derived.tltCount),
+    staffCount: pick(typed.staffCount, derived.staffCount),
+  };
+}
+
 // ---------------------------------------------------------------- export
 
 export type AttendanceExportMember = { id: string; firstName: string; lastName: string; group: AttendanceGroup };
