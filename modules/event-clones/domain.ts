@@ -127,6 +127,9 @@ export type SourceEventDetails = {
   timezone: string;
   publicInfoUrl: string | null;
   supportContact: string | null;
+  tagline: string | null;
+  subtitle: string | null;
+  helpEmail: string | null;
   calendarCategory: string | null;
   showOnCalendar: boolean;
   hotelName: string | null;
@@ -250,6 +253,8 @@ export type SourceConfiguration = {
     perClubLimit: number | null;
     teacherName: string;
     location: string;
+    additionalCostCents: number | null;
+    requirementNote: string;
     isActive: boolean;
     locationName: string | null;
     locationNormalizedName: string | null;
@@ -407,6 +412,9 @@ export function sanitizeSourceForClone(
     hotelInstructions: optionalText("eventDetails", "Lodging instructions", config.eventDetails.hotelInstructions),
     location: optionalText("eventDetails", "Location", config.eventDetails.location),
     supportContact: optionalText("eventDetails", "Support contact", config.eventDetails.supportContact),
+    tagline: optionalText("eventDetails", "Tagline", config.eventDetails.tagline),
+    subtitle: optionalText("eventDetails", "Subtitle", config.eventDetails.subtitle),
+    helpEmail: optionalText("eventDetails", "Help email", config.eventDetails.helpEmail),
     hotelName: optionalText("eventDetails", "Lodging name", config.eventDetails.hotelName),
     hotelPhone: optionalText("eventDetails", "Lodging phone", config.eventDetails.hotelPhone),
     hotelGroupName: optionalText("eventDetails", "Lodging group name", config.eventDetails.hotelGroupName),

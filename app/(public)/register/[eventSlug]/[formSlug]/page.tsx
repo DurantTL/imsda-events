@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
+import { AutoEventInfoCards } from "@/components/auto-event-info-cards";
 import { PublicRegistrationForm } from "@/components/public-registration-form";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import {
   attendeeProfilePrefill,
   getAttendeeProfile,
 } from "@/modules/attendee-accounts/profile-service";
+import { getAutoEventInfoCards } from "@/modules/event-info-cards/repository";
 import { getPublicRegistrationExperience } from "@/modules/forms/public-repository";
 
 export const dynamic = "force-dynamic";
@@ -66,8 +68,14 @@ export default async function PublicRegistrationPage({
       }),
   );
 
+  // Auto info cards (#651): club events only. The repository returns null for
+  // any other audience, so a general event's registration page is unchanged.
+  const autoCards = await getAutoEventInfoCards(eventSlug);
+
   return (
-    <PublicRegistrationForm
+    <>
+      {autoCards && <AutoEventInfoCards cards={autoCards} />}
+      <PublicRegistrationForm
       event={{
         ...experience.event,
         startsAt: serializeDate(experience.event.startsAt),
@@ -80,6 +88,7 @@ export default async function PublicRegistrationPage({
       initialResponses={scopedPrefill("REGISTRATION")}
       initialAttendeeResponses={scopedPrefill("ATTENDEE")}
       disableDrafts={Boolean(account)}
-    />
+      />
+    </>
   );
 }
