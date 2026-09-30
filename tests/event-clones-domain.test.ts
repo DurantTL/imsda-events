@@ -361,6 +361,19 @@ describe("event info card fields in a clone (#651)", () => {
     expect(row).toMatchObject({ additionalCostCents: 500, requirementNote: "Bring ID" });
   });
 
+  it("tolerates a source that predates the new columns", () => {
+    const base = config();
+    const oldDetails: Record<string, unknown> = { ...base.eventDetails };
+    for (const key of ["tagline", "subtitle", "helpEmail"]) delete oldDetails[key];
+    const oldOffering: Record<string, unknown> = { ...base.honorOfferings[0]! };
+    for (const key of ["additionalCostCents", "requirementNote"]) delete oldOffering[key];
+    const source = { ...base, eventDetails: oldDetails, honorOfferings: [oldOffering] } as unknown as typeof base;
+    const result = sanitizeSourceForClone(source, appOrigins);
+    expect(result.config.eventDetails).toMatchObject({ tagline: null, subtitle: null, helpEmail: null });
+    expect(result.config.honorOfferings[0]!.requirementNote).toBe("");
+    expect(buildClonePlan(result.config, fingerprint).review.honorOfferings[0]).toMatchObject({ additionalCostCents: null, requirementNote: "" });
+  });
+
   it("clears an empty tagline to null like the other optional details", () => {
     const result = sanitizeSourceForClone(config({ eventDetails: { ...config().eventDetails, tagline: "  " } }), appOrigins);
     expect(result.config.eventDetails.tagline).toBeNull();

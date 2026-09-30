@@ -392,8 +392,9 @@ export function sanitizeSourceForClone(
     return result.text;
   };
   /** A nullable detail: stripped like text, and null when nothing is left. */
-  const optionalText = (domain: CloneDomainKey, location: string, value: string | null) => {
-    if (value === null) return null;
+  const optionalText = (domain: CloneDomainKey, location: string, value: string | null | undefined) => {
+    // A source that predates a column gives undefined; treat it as empty.
+    if (value === null || value === undefined) return null;
     const next = text(domain, location, value).trim();
     return next.length > 0 ? next : null;
   };
@@ -465,7 +466,7 @@ export function sanitizeSourceForClone(
   // A class requirement is free text; it is scanned like the other copied text.
   const honorOfferings = config.honorOfferings.map((offering) => ({
     ...offering,
-    requirementNote: text("honors", `Class ${offering.honorName} requirement`, offering.requirementNote).trim(),
+    requirementNote: text("honors", `Class ${offering.honorName} requirement`, offering.requirementNote ?? "").trim(),
   }));
 
   return { config: { ...config, eventDetails, contentSections, registrationForms, messageTemplates, honorOfferings }, findings };
@@ -714,7 +715,7 @@ export function buildClonePlan(rawConfig: SourceConfiguration, fingerprint: stri
       honorOfferings: config.honorOfferings.map((offering) => ({
         offeringId: offering.id, honorName: offering.honorName, sessionName: offering.sessionName,
         sourceCapacity: offering.capacity, sourcePerClubLimit: offering.perClubLimit, minimumAge: offering.minimumAge,
-        additionalCostCents: offering.additionalCostCents, requirementNote: offering.requirementNote,
+        additionalCostCents: offering.additionalCostCents ?? null, requirementNote: offering.requirementNote ?? "",
       })),
       privateLinks: findings,
     },
