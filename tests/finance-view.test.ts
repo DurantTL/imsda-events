@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  adjustmentWording,
   attendeeBalanceCents,
+  churchBillingFinalNote,
+  financeDetailFacts,
   matchesFinanceFilter,
   summarizeFinanceTotals,
   type FinanceViewRegistration,
@@ -44,5 +47,37 @@ describe("finance workspace figures (#409)", () => {
     expect(rows.filter((row) => matchesFinanceFilter(row, "ALL"))).toHaveLength(4);
     // An unknown filter lists nothing, as the finance screen always did.
     expect(rows.filter((row) => matchesFinanceFilter(row, "junk"))).toEqual([]);
+  });
+});
+
+describe("church-billed finance detail wording (#648)", () => {
+  it("keeps attendee-pay registrations on the standard labels", () => {
+    const facts = financeDetailFacts({ isDeferredOrganizationBilling: false, paidCents: 0, payments: [] });
+    expect(facts.map((fact) => fact.label)).toEqual(["Total", "Net received", "Balance", "Payments"]);
+    expect(adjustmentWording(false).title).toBe("Adjust amount owed");
+    expect(adjustmentWording(false).lowers).toBe("lowers the amount owed");
+  });
+
+  it("shows only the estimate when a church-billed registration has no payments", () => {
+    const facts = financeDetailFacts({ isDeferredOrganizationBilling: true, paidCents: 0, payments: [] });
+    expect(facts).toEqual([{ label: "Estimated church amount", value: "total" }]);
+    expect(churchBillingFinalNote).toBe("Final billing follows event reconciliation; the church is invoiced after the event.");
+  });
+
+  it("labels recorded attendee payments, still without a balance", () => {
+    const facts = financeDetailFacts({ isDeferredOrganizationBilling: true, paidCents: 2_000, payments: [{}] });
+    expect(facts.map((fact) => fact.value)).toEqual(["total", "received", "payments"]);
+    expect(facts.map((fact) => fact.label)).toEqual([
+      "Estimated church amount",
+      "Attendee payments recorded (net)",
+      "Payments recorded",
+    ]);
+  });
+
+  it("words the adjustment panel around the estimated church amount", () => {
+    const wording = adjustmentWording(true);
+    expect(wording.title).toBe("Adjust estimated church amount");
+    expect(wording.button).toBe("Adjust estimated church amount");
+    expect(Object.values(wording).join(" ")).not.toMatch(/balance|paid|amount owed/i);
   });
 });

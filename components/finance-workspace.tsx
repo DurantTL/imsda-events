@@ -8,7 +8,10 @@ import { RefundReviewFacts, refundReasonError } from "@/components/refund-review
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import {
   activeFinancialStatuses,
+  adjustmentWording,
   attendeeBalanceCents,
+  churchBillingFinalNote,
+  financeDetailFacts,
   financeFilters,
   matchesFinanceFilter,
   summarizeFinanceTotals,
@@ -64,6 +67,7 @@ export function FinanceWorkspace({
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(modal), () => { if (!pendingRefund) closeModal(); });
 
   const totals = useMemo(() => summarizeFinanceTotals(registrations), [registrations]);
+  const wording = adjustmentWording(Boolean(selected?.isDeferredOrganizationBilling));
   const hasChurchBilled = registrations.some((registration) => registration.isDeferredOrganizationBilling);
 
   const visible = useMemo(() => registrations.filter((registration) => (
@@ -164,10 +168,10 @@ export function FinanceWorkspace({
         body: JSON.stringify(body),
       });
       const result = await response.json();
-      if (!response.ok) throw new Error(result.message ?? "Unable to adjust the amount owed.");
+      if (!response.ok) throw new Error(result.message ?? wording.error);
       applyRegistration(result.registration);
       setModal("detail");
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Unable to adjust the amount owed."); }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : wording.error); }
     finally { setSaving(false); }
   }
 
@@ -219,13 +223,13 @@ export function FinanceWorkspace({
       {modal && selected && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeModal(); }}>
           <section className="modal-card" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="finance-modal-title" tabIndex={-1}>
-            <div className="modal-head"><div><p className="eyebrow">{selected.confirmationCode}</p><h2 id="finance-modal-title">{modal === "payment" ? "Record a payment" : modal === "refund" ? "Record a refund" : modal === "adjust" ? "Adjust amount owed" : modal === "reverse" ? "Reverse adjustment" : `${selected.accountHolder.firstName} ${selected.accountHolder.lastName}`}</h2></div><button className="icon-button" type="button" onClick={closeModal} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button></div>
+            <div className="modal-head"><div><p className="eyebrow">{selected.confirmationCode}</p><h2 id="finance-modal-title">{modal === "payment" ? "Record a payment" : modal === "refund" ? "Record a refund" : modal === "adjust" ? wording.title : modal === "reverse" ? "Reverse adjustment" : `${selected.accountHolder.firstName} ${selected.accountHolder.lastName}`}</h2></div><button className="icon-button" type="button" onClick={closeModal} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button></div>
             {modal === "detail" ? (
               <div className="detail-stack">
                 {selected.isDeferredOrganizationBilling && (
-                  <div className="inline-notice">This registration is billed to the church after the event, not paid online. The total is the estimated amount owed by the church, not an attendee balance.</div>
+                  <div className="inline-notice">This registration is billed to the church after the event, not paid online. The estimated church amount is owed by the church, not an attendee balance. {churchBillingFinalNote}</div>
                 )}
-                <div className="detail-grid"><span><small>Total</small><strong>{money(selected.totalAmountCents)}</strong></span><span><small>Net received</small><strong>{money(selected.paidCents)}</strong></span><span><small>Balance</small><strong>{money(selected.balanceCents)}</strong></span><span><small>Payments</small><strong>{selected.payments.length}</strong></span></div>
+                <div className="detail-grid">{financeDetailFacts(selected).map((fact) => <span key={fact.value}><small>{fact.label}</small><strong>{fact.value === "payments" ? selected.payments.length : money(fact.value === "total" ? selected.totalAmountCents : fact.value === "received" ? selected.paidCents : selected.balanceCents)}</strong></span>)}</div>
                 <div><p className="eyebrow">Attendees on this registration</p><ul className="finance-attendee-list">{selected.attendees.map((attendee) => <li key={attendee.id}><span><strong>{attendee.firstName} {attendee.lastName}</strong><small>{attendee.attendeeType.toLowerCase()}{attendee.email ? ` · ${attendee.email}` : ""}</small></span></li>)}</ul>{selected.attendees.length === 0 && <p className="quiet-copy">No attendees are recorded on this registration.</p>}</div>
                 <div><p className="eyebrow">Payment history</p>{selected.payments.map((payment) => { const available = payment.amountCents - payment.refundedCents; const squareManaged = payment.method === "CARD_REFERENCE"; return <div className="payment-history" key={payment.id}><span className="payment-icon"><Banknote aria-hidden="true" size={17} /></span><span><strong>{money(payment.amountCents)} · {squareManaged ? "Square card" : payment.method.toLowerCase()}</strong><small>{payment.receivedAt ? new Date(payment.receivedAt).toLocaleString() : "Recorded manually"}{payment.refundedCents ? ` · ${money(payment.refundedCents)} refunded` : ""}{squareManaged && available > 0 ? " · refund through Square Dashboard" : ""}</small></span>{canManage && available > 0 && !squareManaged && <button className="text-button" type="button" onClick={() => { setSelectedPayment(payment); setError(""); setModal("refund"); }}>Refund</button>}</div>; })}{selected.payments.length === 0 && <p className="quiet-copy">No payments have been recorded.</p>}</div>
                 {(selected.adjustments.length > 0 || (canManage && activeFinancialStatuses.has(selected.status))) && (
@@ -251,7 +255,7 @@ export function FinanceWorkspace({
                     {selected.adjustments.length === 0 && <p className="quiet-copy">No scholarships, discounts, or corrections.</p>}
                     {canManage && activeFinancialStatuses.has(selected.status) && (
                       <button className="secondary-button full-button" type="button" onClick={() => { setError(""); setAdjustKind("SCHOLARSHIP"); setModal("adjust"); }}>
-                        <BadgePercent aria-hidden="true" size={17} /> Adjust amount owed
+                        <BadgePercent aria-hidden="true" size={17} /> {wording.button}
                       </button>
                     )}
                   </div>
@@ -261,11 +265,11 @@ export function FinanceWorkspace({
               </div>
             ) : modal === "adjust" ? (
               <form className="form-stack" onSubmit={saveAdjustment}>
-                <div className="inline-notice">Current total {money(selected.totalAmountCents)} · paid {money(selected.paidCents)} · balance {money(selected.balanceCents)}</div>
+                <div className="inline-notice">{selected.isDeferredOrganizationBilling ? `Current estimated church amount ${money(selected.totalAmountCents)}. ${churchBillingFinalNote}` : `Current total ${money(selected.totalAmountCents)} · paid ${money(selected.paidCents)} · balance ${money(selected.balanceCents)}`}</div>
                 <label>Type
                   <select value={adjustKind} onChange={(event) => { setAdjustKind(event.target.value as AdjustmentKind); setError(""); }}>
-                    <option value="SCHOLARSHIP">Scholarship — lowers the amount owed</option>
-                    <option value="DISCOUNT">Discount — lowers the amount owed</option>
+                    <option value="SCHOLARSHIP">{`Scholarship — ${wording.lowers}`}</option>
+                    <option value="DISCOUNT">{`Discount — ${wording.lowers}`}</option>
                     <option value="PROMO_CODE">Promo code — apply an event code now</option>
                     <option value="CORRECTION">Correction — fix a wrong amount either way</option>
                   </select>
@@ -286,7 +290,7 @@ export function FinanceWorkspace({
                 ) : (
                   <>
                     {adjustKind === "CORRECTION" && (
-                      <label>Direction<select name="direction" defaultValue="LOWER"><option value="LOWER">Lower the amount owed</option><option value="RAISE">Raise the amount owed</option></select></label>
+                      <label>Direction<select name="direction" defaultValue="LOWER"><option value="LOWER">{wording.lower}</option><option value="RAISE">{wording.raise}</option></select></label>
                     )}
                     <label>Amount<input name="amount" type="number" min="0.01" step="0.01" required /></label>
                   </>

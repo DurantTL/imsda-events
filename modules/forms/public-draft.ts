@@ -1,5 +1,5 @@
 import { sensitiveFieldPattern } from "@/modules/forms/sensitive-fields";
-import { isBirthDateField, isFieldVisible, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { getAttendeeRosterConfig, isBirthDateField, isFieldVisible, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 
 /**
  * Browser-only drafts for public registration forms (#574).
@@ -159,12 +159,12 @@ export function draftExcludedKeys(definition: RegistrationFormDefinition) {
   return excluded;
 }
 
-function draftFields(definition: RegistrationFormDefinition, scope: "REGISTRATION" | "ATTENDEE") {
+function draftFields(definition: RegistrationFormDefinition, scope: "REGISTRATION" | "ATTENDEE" | "ALL") {
   const excluded = draftExcludedKeys(definition);
   return new Map(
     definition.sections
       .flatMap((section) => section.fields)
-      .filter((field) => field.scope === scope && !excluded.has(field.key))
+      .filter((field) => (scope === "ALL" || field.scope === scope) && !excluded.has(field.key))
       .map((field) => [field.key, field] as const),
   );
 }
@@ -212,7 +212,10 @@ export function sanitizeDraftContent(
   definition: RegistrationFormDefinition,
   content: { responses?: unknown; attendees?: unknown },
 ): PublicDraftContent {
-  const registrationFields = draftFields(definition, "REGISTRATION");
+  // Without a roster the form keeps one flat response set holding both
+  // REGISTRATION and ATTENDEE answers (#641). Every exclusion still applies:
+  // draftFields drops anything isDraftExcludedField (with its ATTENDEE allowlist) rejects.
+  const registrationFields = draftFields(definition, getAttendeeRosterConfig(definition).enabled ? "REGISTRATION" : "ALL");
   const attendeeFields = draftFields(definition, "ATTENDEE");
   const attendees = Array.isArray(content.attendees)
     ? content.attendees.flatMap((attendee: unknown) => {

@@ -95,7 +95,7 @@ export default async function PublicEventPage({
         <div>
           <p className="public-registration-eyebrow">Iowa-Missouri Conference event</p>
           <h1>{landing.event.name}</h1>
-          <p>Everything you need to choose the right registration path.</p>
+          <p>{landing.lifecycle.heroTagline}</p>
         </div>
         <div className="public-registration-event-details">
           <span><CalendarDays size={17} aria-hidden="true" /> {landing.event.dateLabel}</span>
@@ -198,7 +198,7 @@ export default async function PublicEventPage({
             </span>
             <div>
               <p className="public-registration-eyebrow">Online registration</p>
-              <h2 id="registration-options-title">Choose how you’re registering</h2>
+              <h2 id="registration-options-title">{landing.lifecycle.formsHeading}</h2>
               <p>{landing.lifecycle.detail}</p>
             </div>
           </div>
@@ -233,8 +233,8 @@ export default async function PublicEventPage({
           ) : (
             <div className="public-event-empty-forms">
               <CalendarDays size={28} aria-hidden="true" />
-              <h3>Registration forms are being prepared</h3>
-              <p>Event details are available now. Please check back or contact the event team for registration help.</p>
+              <h3>{landing.lifecycle.emptyForms.title}</h3>
+              <p>{landing.lifecycle.emptyForms.body}</p>
             </div>
           )}
 
@@ -284,14 +284,8 @@ export default async function PublicEventPage({
           <section className="public-event-info-card">
             <span className="public-event-side-icon"><UsersRound size={20} aria-hidden="true" /></span>
             <p className="public-registration-eyebrow">Current availability</p>
-            <h2>{landing.lifecycle.statusLabel}</h2>
-            {landing.lifecycle.remainingSpots === null ? (
-              <p>No event-wide capacity limit is listed.</p>
-            ) : landing.lifecycle.remainingSpots > 0 ? (
-              <p><strong>{landing.lifecycle.remainingSpots}</strong> event spot{landing.lifecycle.remainingSpots === 1 ? "" : "s"} currently remain.</p>
-            ) : (
-              <p>The event-wide capacity has been reached.</p>
-            )}
+            <h2>{landing.lifecycle.availability.heading}</h2>
+            <p>{landing.lifecycle.availability.body}</p>
           </section>
 
           <section className="public-event-info-card public-event-help-card">

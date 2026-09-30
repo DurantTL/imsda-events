@@ -63,7 +63,7 @@ export default async function ClubReportPage({ params }: { params: Promise<{ org
         monthLabel={reportMonthLabel(month)}
         notesPrefill={notesPrefill}
         prefill={prefill}
-        readOnly={report?.status === "SUBMITTED" && locked}
+        readOnly={Boolean(report?.firstSubmittedAt) && locked}
         reopenEndpoint={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/reports/${month}/reopen`}
       />
     </>
