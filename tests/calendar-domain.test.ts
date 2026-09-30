@@ -127,6 +127,14 @@ describe("calendar input", () => {
     expect(calendarEntryUpdateSchema.safeParse({ startsOn: "2026-10-09", endsOn: "2026-10-08" }).success).toBe(false);
   });
 
+  it("parses a one-field update to exactly that field, with no defaults added", () => {
+    expect(calendarEntryUpdateSchema.parse({ isPublished: true })).toEqual({ isPublished: true });
+    expect(calendarEntryUpdateSchema.parse({ status: "CANCELLED" })).toEqual({ status: "CANCELLED" });
+    expect(calendarEntryUpdateSchema.parse({ description: "New text" })).toEqual({ description: "New text" });
+    expect(calendarEntryUpdateSchema.parse({ linkUrl: "" })).toEqual({ linkUrl: null });
+    expect(calendarEntryUpdateSchema.parse({})).toEqual({});
+  });
+
   it("clears an event category when sent blank", () => {
     expect(calendarEventSettingsSchema.parse({ calendarCategory: "" })).toEqual({ calendarCategory: null });
     expect(calendarEventSettingsSchema.safeParse({ isPublished: true }).success).toBe(false);

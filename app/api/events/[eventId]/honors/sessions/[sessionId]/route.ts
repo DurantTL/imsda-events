@@ -2,7 +2,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { honorApiError } from "@/modules/honors/api-errors";
 import { requireHonorPermission } from "@/modules/honors/access";
 import { deleteHonorSession, updateHonorSession } from "@/modules/honors/repository";
-import { honorSessionUpdateSchema } from "@/modules/honors/schemas";
+import { honorSessionUpdateSchema, parseDeleteConfirmation } from "@/modules/honors/schemas";
 import { withRequestContext } from "@/lib/request-context";
 
 type RouteContext = { params: Promise<{ eventId: string; sessionId: string }> };
@@ -26,7 +26,8 @@ async function deleteHandler(request: Request, context: RouteContext) {
   try {
     const { eventId, sessionId } = await context.params;
     const access = await requireHonorPermission(eventId);
-    return Response.json(await deleteHonorSession(eventId, sessionId, access.user.id));
+    const confirmPicks = parseDeleteConfirmation(request);
+    return Response.json(await deleteHonorSession(eventId, sessionId, access.user.id, confirmPicks));
   } catch (error) {
     return honorApiError(error, "Removing a session");
   }

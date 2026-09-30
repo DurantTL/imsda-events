@@ -43,9 +43,21 @@ export default async function PublicClubFormPage({ params }: { params: Promise<{
   }
   const view = await resolveClubFormLinkForFill(token).catch((error: unknown) => {
     if (error instanceof ClubFormError && error.code === "LINK_UNAVAILABLE") return null;
+    if (error instanceof ClubFormError && error.code === "FORM_UNAVAILABLE") return "TEMPORARILY_UNAVAILABLE" as const;
     throw error;
   });
   if (!view) notFound();
+  if (view === "TEMPORARILY_UNAVAILABLE") {
+    return (
+      <main className="public-registration-page public-manage-page">
+        <section className="public-registration-not-found">
+          <p className="public-registration-eyebrow">Please try again later</p>
+          <h1>This form is temporarily unavailable</h1>
+          <p>Your link has not been used. Please try it again later.</p>
+        </section>
+      </main>
+    );
+  }
   const { form } = view;
 
   return (

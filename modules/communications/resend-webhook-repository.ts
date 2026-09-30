@@ -71,7 +71,7 @@ export async function recordResendWebhookEvent(
         },
       });
       if (message && transition) {
-        await tx.messageOutbox.updateMany({
+        const applied = await tx.messageOutbox.updateMany({
           where: {
             id: message.id,
             OR: [
@@ -82,9 +82,10 @@ export async function recordResendWebhookEvent(
           },
           data: providerTransitionUpdate(transition),
         });
-        // A bounce, complaint or suppression means a club form link never reached its person (#610):
-        // withdraw it. A message that carries no link matches nothing.
-        if (["BOUNCED", "FAILED", "COMPLAINED", "SUPPRESSED"].includes(transition.status)) {
+        // A bounce, failure or suppression means a club form link never reached its person (#610): withdraw it, but only
+        // when this event actually applied (not an out-of-order one). A spam complaint arrives after delivery,
+        // so it must not kill the parent's link. A message that carries no link matches nothing.
+        if (applied.count > 0 && ["BOUNCED", "FAILED", "SUPPRESSED"].includes(transition.status)) {
           await retireClubFormLinkForMessage(tx, message.id, occurredAt);
         }
       }

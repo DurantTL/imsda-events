@@ -2,7 +2,7 @@ import { ZodError } from "zod";
 import { logError } from "@/lib/logger";
 import { SecretBoxError } from "@/lib/secret-box";
 import { AccessDeniedError } from "@/modules/access/authorization";
-import { ClubFormError } from "@/modules/club-forms/errors";
+import { ClubFormError, formBusyError, isLockTimeoutError } from "@/modules/club-forms/errors";
 import { RosterAccessError } from "@/modules/club-rosters/access";
 import { readRosterJson, RosterBodyError } from "@/modules/club-rosters/api-errors";
 
@@ -22,6 +22,9 @@ const statusByCode: Record<ClubFormError["code"], number> = {
   ENCRYPTION_NOT_CONFIGURED: 503,
   SENSITIVE_UNREADABLE: 500,
   INVALID_TEMPLATE: 500,
+  TEMPLATE_NEEDS_SYNC: 409,
+  FORM_BUSY: 503,
+  FORM_UNAVAILABLE: 503,
 };
 
 /**
@@ -39,12 +42,20 @@ export function clubFormApiError(error: unknown, action: string) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status });
   }
   if (error instanceof ClubFormError) {
+    // Never the request body: an error carries a code and a fixed message only.
+    if (statusByCode[error.code] === 503) logError(action, error);
     return Response.json(
       { error: error.code, message: error.message, ...(error.issues.length > 0 ? { issues: error.issues } : {}) },
-      { status: statusByCode[error.code] },
+      { status: statusByCode[error.code], ...(error.code === "FORM_BUSY" || error.code === "FORM_UNAVAILABLE" ? { headers: { "Retry-After": "60" } } : {}) },
     );
   }
+  if (isLockTimeoutError(error)) {
+    logError(action, error);
+    const busy = formBusyError();
+    return Response.json({ error: busy.code, message: busy.message }, { status: statusByCode.FORM_BUSY, headers: { "Retry-After": "60" } });
+  }
   if (error instanceof SecretBoxError) {
+    logError(action, error);
     return Response.json({ error: "ENCRYPTION_NOT_CONFIGURED", message: "Encryption isn't set up on this server." }, { status: 503 });
   }
   logError(`${action} failed`, error);

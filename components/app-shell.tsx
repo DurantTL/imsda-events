@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Fragment } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   ArrowRightLeft,
   ChevronDown,
@@ -13,6 +13,7 @@ import {
 import { BrandMark } from "@/components/brand-mark";
 import { EventAutoSelectNotice } from "@/components/event-auto-select-notice";
 import { rememberLastUsedEvent } from "@/components/remember-last-event";
+import { eventToRemember, resolveShellEvent } from "@/components/shell-event-selection";
 import { StaffAccountMenu } from "@/components/staff-account-menu";
 import type { EventPermission } from "@/modules/access/permissions";
 import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-contexts";
@@ -23,6 +24,7 @@ import {
   navigationGroupLabels,
   resolveClubsAndChurchesEntry,
   systemNavigation,
+  withCurrentEvent,
   type NavigationItem,
 } from "@/components/staff-navigation";
 
@@ -65,19 +67,23 @@ export function AppShell({
     ? systemNavigation
     : navigation.find((item) => pathname.startsWith(item.href)) ?? navigation[0];
   const requestedEventId = searchParams.get("event");
-  const requestedEvent = requestedEventId
-    ? events.find((event) => event.id === requestedEventId)
-    : undefined;
   const defaultEvent = defaultEventId
     ? events.find((event) => event.id === defaultEventId)
     : undefined;
-  // A `?event=` that matches nothing selects nothing, rather than quietly
-  // showing the default on pages that don't validate the id themselves.
-  const selectedEvent = requestedEventId ? requestedEvent : defaultEvent;
+  // The layout (and so `defaultEventId`) doesn't re-render on client
+  // navigation, so keep the last valid event seen and fall back to the
+  // default only when none has been seen (#616).
+  const [seenEventId, setSeenEventId] = useState<string | null>(null);
+  // Adjusting state during render (not in an effect) so the very render that
+  // sees a new `?event=` also records it.
+  if (requestedEventId && requestedEventId !== seenEventId && events.some((event) => event.id === requestedEventId)) {
+    setSeenEventId(requestedEventId);
+  }
+  const selectedEvent = resolveShellEvent({ requestedEventId, events, seenEventId, defaultEventId });
   const selectedEventId = selectedEvent?.id ?? "";
   // Same rule as the page (#465): no `?event=` and an automatic choice. Not on
   // pages that aren't event-scoped (/admin, the global duplicate review).
-  const showAutoSelectNotice = !requestedEventId && autoSelected && Boolean(defaultEvent)
+  const showAutoSelectNotice = !requestedEventId && !seenEventId && autoSelected && Boolean(defaultEvent)
     && !pathname.startsWith(systemNavigation.href) && !pathname.startsWith("/people/matches");
   const selectedPermissions = new Set(
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
@@ -137,6 +143,24 @@ export function AppShell({
     ? `/account/events/${encodeURIComponent(selectedEvent.slug)}?preview=staff`
     : "/account";
 
+  // An event named in the URL becomes the remembered selection (#616), so the
+  // next page without `?event=` keeps it instead of falling back to the default.
+  const lastRememberedId = useRef<string | null>(defaultEventId);
+  const knownEventIds = events.map((event) => event.id).join("|");
+  useEffect(() => {
+    const toRemember = eventToRemember({
+      requestedEventId,
+      knownEventIds: knownEventIds ? knownEventIds.split("|") : [],
+      lastRememberedId: lastRememberedId.current,
+    });
+    if (toRemember) {
+      lastRememberedId.current = toRemember;
+      // Refresh once the cookie is set so the server default catches up.
+      void rememberLastUsedEvent(toRemember).then(() => router.refresh());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedEventId, knownEventIds]);
+
   function selectEvent(eventId: string) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("event", eventId);
@@ -144,7 +168,9 @@ export function AppShell({
       params.delete(resourceParam);
     }
     // Remembered for the next sign-in (#108 queue 1); never blocks the switch.
-    rememberLastUsedEvent(eventId);
+    lastRememberedId.current = eventId;
+    setSeenEventId(eventId);
+    void rememberLastUsedEvent(eventId).then(() => router.refresh());
     router.push(`${pathname}?${params.toString()}`);
   }
 
@@ -162,7 +188,7 @@ export function AppShell({
             <span className="system-navigation-label">Global administration</span>
             <Link
               className={isSystemRoute ? "system-navigation-link active" : "system-navigation-link"}
-              href={systemNavigation.href}
+              href={withCurrentEvent(systemNavigation.href, selectedEventId)}
               aria-current={isSystemRoute ? "page" : undefined}
             >
               <span className="system-navigation-icon">
@@ -195,14 +221,14 @@ export function AppShell({
 
         <nav className="primary-nav" aria-label="Primary navigation">
           {visibleNavigation.map(({ href, icon: Icon, label, group }, index) => {
-            // /admin routes aren't event-scoped, so they never carry the event query.
+            // Every link carries the current event, /admin included (#616).
             const isActive = href.startsWith("/admin") ? pathname.startsWith(href) : current.href === href;
             const previousGroup = index > 0 ? visibleNavigation[index - 1].group : undefined;
             const startsGroup = group && group !== previousGroup;
             return (
               <Fragment key={href}>
                 {startsGroup && <span className="nav-group-label">{navigationGroupLabels[group]}</span>}
-                <Link className={isActive ? "nav-item active" : "nav-item"} href={href.startsWith("/admin") ? href : `${href}${eventQuery}`} aria-current={isActive ? "page" : undefined}>
+                <Link className={isActive ? "nav-item active" : "nav-item"} href={withCurrentEvent(href, selectedEventId)} aria-current={isActive ? "page" : undefined}>
                   <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
                   <span>{label}</span>
                 </Link>
@@ -260,7 +286,7 @@ export function AppShell({
               canSwitchToAttendee={canSwitchToAttendee}
               displayName={user.displayName}
               email={user.email}
-              systemAdminContext={systemAdminContext}
+              systemAdminContext={systemAdminContext ? { ...systemAdminContext, href: withCurrentEvent(systemAdminContext.href, selectedEventId) } : systemAdminContext}
             />
           </div>
         </header>

@@ -14,6 +14,14 @@ set -e
 echo "[entrypoint] Applying database migrations (prisma migrate deploy)..."
 npx prisma migrate deploy
 
+# Bring the club form templates (#610) to this release's version, re-sealing
+# existing answers for any field that became sensitive, before the app serves
+# a request. A version that would make a sensitive answer readable again is
+# refused: the script exits non-zero, `set -e` stops the container, and the
+# deploy fails loudly instead of running with a stale template.
+echo "[entrypoint] Syncing club form templates (npm run club-forms:sync)..."
+npm run club-forms:sync
+
 if [ "${RUN_DB_SEED}" = "true" ]; then
   echo "[entrypoint] RUN_DB_SEED is no longer supported. Fictitious demo data is local-only;" >&2
   echo "[entrypoint] use 'npm run admin:create' to create a real administrator." >&2

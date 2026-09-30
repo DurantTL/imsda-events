@@ -5,20 +5,32 @@ const text = (max: number) => z.string().trim().max(max);
 const calendarDate = (label: string) =>
   z.string().refine(isCalendarDate, `Enter the ${label} as a date.`);
 
+/** Bare fields, no defaults: the update schema is built from these so a partial PATCH carries only what was sent. */
 const entryFields = {
   title: text(140).min(1, "Enter a title."),
-  description: text(2000).default(""),
+  description: text(2000),
   startsOn: calendarDate("start date"),
   endsOn: calendarDate("end date"),
-  timeLabel: text(80).default(""),
-  location: text(160).default(""),
-  category: text(40).default(""),
+  timeLabel: text(80),
+  location: text(160),
+  category: text(40),
   linkUrl: z.union([
     z.literal("").transform(() => null),
     z.url({ protocol: /^https$/, message: "Links must start with https://." }).max(500),
-  ]).nullable().default(null),
-  status: z.enum(["SCHEDULED", "POSTPONED", "CANCELLED"]).default("SCHEDULED"),
-  isPublished: z.boolean().default(false),
+  ]).nullable(),
+  status: z.enum(["SCHEDULED", "POSTPONED", "CANCELLED"]),
+  isPublished: z.boolean(),
+};
+
+const entryInputFields = {
+  ...entryFields,
+  description: entryFields.description.default(""),
+  timeLabel: entryFields.timeLabel.default(""),
+  location: entryFields.location.default(""),
+  category: entryFields.category.default(""),
+  linkUrl: entryFields.linkUrl.default(null),
+  status: entryFields.status.default("SCHEDULED"),
+  isPublished: entryFields.isPublished.default(false),
 };
 
 function endsAfterStart(input: { startsOn?: string; endsOn?: string }, context: z.RefinementCtx) {
@@ -27,7 +39,7 @@ function endsAfterStart(input: { startsOn?: string; endsOn?: string }, context: 
   }
 }
 
-export const calendarEntryInputSchema = z.object(entryFields).strict().superRefine(endsAfterStart);
+export const calendarEntryInputSchema = z.object(entryInputFields).strict().superRefine(endsAfterStart);
 
 /** Both dates are sent together so the order check always sees the pair. */
 export const calendarEntryUpdateSchema = z.object(entryFields).partial().strict()

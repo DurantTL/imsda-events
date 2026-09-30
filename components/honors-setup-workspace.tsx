@@ -3,14 +3,17 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, TriangleAlert, X } from "lucide-react";
-import { honorOfferingSpanLabels } from "@/modules/honors/domain";
+import { honorOfferingSpanLabels, offeringPlacementPatch, sessionEditPatch } from "@/modules/honors/domain";
 import { siteChangePatch } from "@/modules/honors/locations";
 import type { HonorCopyPlan } from "@/modules/honors/copy";
 import { groupSessionsBySite, nextSessionOrder, sessionClassWarning, sharedSessionsLabel } from "@/modules/honors/session-order";
 import type { EventHonorSetup } from "@/modules/honors/repository";
 
 type Offering = EventHonorSetup["offerings"][number];
+type SetupSession = EventHonorSetup["sessions"][number];
 type ApiResult = Partial<EventHonorSetup> & {
+  error?: string;
+  picks?: number;
   plan?: HonorCopyPlan;
   setup?: EventHonorSetup;
   message?: string;
@@ -39,6 +42,8 @@ export function HonorsSetupWorkspace({
   const [newSessionSite, setNewSessionSite] = useState(initialSetup.locations.find((location) => location.isActive)?.id ?? "");
   const [span, setSpan] = useState<"SINGLE_SESSION" | "ALL_SESSIONS">("SINGLE_SESSION");
   const [editing, setEditing] = useState<Offering | null>(null);
+  const [editSpan, setEditSpan] = useState<"SINGLE_SESSION" | "ALL_SESSIONS">("SINGLE_SESSION");
+  const [editingSession, setEditingSession] = useState<SetupSession | null>(null);
   const [copySource, setCopySource] = useState(otherEvents[0]?.id ?? "");
   const [plan, setPlan] = useState<HonorCopyPlan | null>(null);
   const [saving, setSaving] = useState(false);
@@ -73,7 +78,18 @@ export function HonorsSetupWorkspace({
     .filter((offering) => offering.isActive)
     .reduce((total, offering) => total + offering.capacity, 0);
 
-  async function call(url: string, method: string, body: unknown, success: string) {
+  /**
+   * `needsConfirmation` sees a failed response first; returning true means the
+   * caller handles it (a delete that must first tell the person how many picks
+   * it removes), so no error is shown.
+   */
+  async function call(
+    url: string,
+    method: string,
+    body: unknown,
+    success: string,
+    needsConfirmation?: (result: ApiResult) => boolean,
+  ) {
     setSaving(true);
     setError("");
     setNotice("");
@@ -85,6 +101,7 @@ export function HonorsSetupWorkspace({
       });
       const result = await response.json().catch(() => ({})) as ApiResult;
       if (!response.ok) {
+        if (needsConfirmation?.(result)) return null;
         throw new Error(result.message ?? result.issues?.[0]?.message ?? "The change could not be saved.");
       }
       const next = result.setup ?? (result.sessions && result.offerings ? result as EventHonorSetup : null);
@@ -105,25 +122,80 @@ export function HonorsSetupWorkspace({
     const form = new FormData(formElement);
     const result = await call(`${base}/sessions`, "POST", {
       name: String(form.get("name") ?? ""),
-      sortOrder: Number(form.get("sortOrder") ?? 0),
+      // An empty Order takes the suggested next order for the site, never 0.
+      sortOrder: optionalNumber(form.get("sortOrder"))
+        ?? nextSessionOrder(setup.sessions.filter((session) => (session.locationId ?? "") === newSessionSite)),
       locationId: hasSites ? String(form.get("locationId") ?? "") || null : null,
     }, "Session added.");
     if (result) formElement.reset();
   }
 
-  async function renameSession(sessionId: string, current: string) {
-    const name = window.prompt("Session name", current);
-    if (name === null || name.trim() === current) return;
-    await call(`${base}/sessions/${encodeURIComponent(sessionId)}`, "PATCH", { name }, "Session renamed.");
+  async function saveSession(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingSession) return;
+    const form = new FormData(event.currentTarget);
+    // Only what changed is sent, so a rename never carries (or clears) the site.
+    const patch = sessionEditPatch(editingSession, {
+      name: String(form.get("name") ?? ""),
+      // An empty Order means unchanged, not 0.
+      sortOrder: optionalNumber(form.get("sortOrder")) ?? editingSession.sortOrder,
+      locationId: hasSites ? String(form.get("locationId") ?? "") || null : editingSession.locationId,
+    });
+    if (Object.keys(patch).length === 0) {
+      setEditingSession(null);
+      return;
+    }
+    const result = await call(`${base}/sessions/${encodeURIComponent(editingSession.id)}`, "PATCH", patch, "Session updated.");
+    if (result) setEditingSession(null);
   }
 
-  async function moveSession(sessionId: string, locationId: string) {
-    await call(`${base}/sessions/${encodeURIComponent(sessionId)}`, "PATCH", { locationId: locationId || null }, "Session moved.");
+  /**
+   * Deleting asks once, then, when clubs have picked the class or session's
+   * classes, asks again with the live count the server reports and re-sends
+   * with that number as the confirmation. The server removes the picks only
+   * when the number still matches.
+   */
+  async function confirmedDelete(url: string, label: string, success: string) {
+    if (!window.confirm(`Delete ${label}? This can't be undone.`)) return;
+    const pending: { picks: number | null } = { picks: null };
+    const needsConfirmation = (result: ApiResult) => {
+      if (result.error !== "PICKS_NEED_CONFIRMATION" || typeof result.picks !== "number") return false;
+      pending.picks = result.picks;
+      return true;
+    };
+    let confirmed: number | null = null;
+    // The count can change between asking and deleting (a club saved picks):
+    // every time the server reports a different count, ask again with it.
+    // Each confirmation the person gives is always followed by its request; at the limit the error replaces another question.
+    for (let confirmations = 0; ; confirmations += 1) {
+      pending.picks = null;
+      const result = await call(
+        confirmed === null ? url : `${url}?confirmPicks=${confirmed}`,
+        "DELETE",
+        undefined,
+        success,
+        needsConfirmation,
+      );
+      if (result || pending.picks === null) return result;
+      if (confirmations >= 5) {
+        setError("The number of class picks kept changing, so nothing was deleted. Try again.");
+        return null;
+      }
+      const picks: number = pending.picks;
+      if (!window.confirm(`${picks} class pick${picks === 1 ? "" : "s"} by clubs will be removed from their registrations. Delete ${label} anyway?`)) return null;
+      confirmed = picks;
+    }
   }
 
-  async function removeSession(sessionId: string, name: string) {
-    if (!window.confirm(`Remove the empty session "${name}"?`)) return;
-    await call(`${base}/sessions/${encodeURIComponent(sessionId)}`, "DELETE", undefined, "Session removed.");
+  async function removeSession(session: SetupSession) {
+    const classes = session.offeringCount === 0 ? "" : ` and its ${session.offeringCount} class${session.offeringCount === 1 ? "" : "es"}`;
+    const result = await confirmedDelete(`${base}/sessions/${encodeURIComponent(session.id)}`, `the session "${session.name}"${classes}`, "Session deleted.");
+    if (result && editingSession?.id === session.id) setEditingSession(null);
+  }
+
+  async function removeOffering(offering: Offering) {
+    const result = await confirmedDelete(`${base}/offerings/${encodeURIComponent(offering.id)}`, `the ${offering.honorName} class`, "Class deleted.");
+    if (result && editing?.id === offering.id) setEditing(null);
   }
 
   async function saveOffering(event: React.FormEvent<HTMLFormElement>) {
@@ -139,7 +211,17 @@ export function HonorsSetupWorkspace({
       // Only an all-sessions class has its own site; a single-session class is at its session's.
       // Editing sends the site only when it changed (a legacy no-site class, or one with picks, keeps editing its other fields).
       ...(editing
-        ? siteChangePatch(editing.locationId ?? null, form.get("locationId"))
+        ? {
+          ...offeringPlacementPatch(editing, {
+            honorId: String(form.get("honorId") ?? editing.honorId),
+            span: editSpan,
+            // A disabled select (a class clubs picked) isn't submitted: fall back to the current session so it isn't read as a change.
+            sessionId: editSpan === "SINGLE_SESSION" && !form.has("sessionId")
+              ? editing.sessionId
+              : String(form.get("sessionId") ?? "") || null,
+          }),
+          ...siteChangePatch(editing.locationId ?? null, form.get("locationId")),
+        }
         : span === "ALL_SESSIONS" && hasSites ? { locationId: String(form.get("locationId") ?? "") || null } : {}),
     };
     const result = editing
@@ -239,30 +321,59 @@ export function HonorsSetupWorkspace({
                       <TriangleAlert aria-hidden="true" size={14} /> {sessionClassWarning(session)}
                     </p>
                   )}
-                  {hasSites && (
-                    <label className="honor-session-site">
-                      <span className="sr-only">Site for {session.name}</span>
-                      <select disabled={saving} onChange={(event) => moveSession(session.id, event.target.value)} value={session.locationId ?? ""}>
-                        <option value="">No site</option>
-                        {setup.locations.map((location) => (
-                          <option key={location.id} value={location.id}>{location.name}</option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
-                  <button className="text-button" disabled={saving} onClick={() => renameSession(session.id, session.name)} type="button">
-                    <Pencil aria-hidden="true" size={13} /> Rename
+                  <button
+                    aria-label={`Edit session ${session.name}`}
+                    className="text-button"
+                    disabled={saving}
+                    onClick={() => { setEditingSession(session); setNotice(""); setError(""); }}
+                    type="button"
+                  >
+                    <Pencil aria-hidden="true" size={13} /> Edit
                   </button>
-                  {session.offeringCount === 0 && (
-                    <button className="text-button" disabled={saving} onClick={() => removeSession(session.id, session.name)} type="button">
-                      <Trash2 aria-hidden="true" size={13} /> Remove
-                    </button>
-                  )}
+                  <button
+                    aria-label={`Delete session ${session.name}`}
+                    className="text-button"
+                    disabled={saving}
+                    onClick={() => removeSession(session)}
+                    type="button"
+                  >
+                    <Trash2 aria-hidden="true" size={13} /> Delete
+                  </button>
                 </li>
               ))}
             </ul>
           </div>
         ))}
+        {editingSession && (
+          <form className="form-stack honor-inline-form" key={editingSession.id} onSubmit={saveSession}>
+            <p className="eyebrow">Edit session</p>
+            {hasSites && (
+              <label>
+                Site
+                <select defaultValue={editingSession.locationId ?? ""} name="locationId" required={hasActiveSites && editingSession.locationId !== null}>
+                  <option value="">{hasActiveSites ? "Choose a site" : "No site (shown to every site)"}</option>
+                  {setup.locations.map((location) => (
+                    <option key={location.id} value={location.id}>{location.name}{location.isActive ? "" : " (inactive)"}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label>
+              Session name
+              <input defaultValue={editingSession.name} maxLength={80} name="name" required />
+            </label>
+            <label>
+              Order
+              <input defaultValue={editingSession.sortOrder} max={99} min={0} name="sortOrder" type="number" />
+            </label>
+            <button className="primary-button" disabled={saving} type="submit">
+              <Save aria-hidden="true" size={14} /> Save session
+            </button>
+            <button className="secondary-button" onClick={() => setEditingSession(null)} type="button">
+              <X aria-hidden="true" size={14} /> Cancel
+            </button>
+          </form>
+        )}
         <form className="form-stack honor-inline-form" onSubmit={addSession}>
           {hasSites && (
             <label>
@@ -308,6 +419,42 @@ export function HonorsSetupWorkspace({
             </button>
           )}
         </div>
+        {editing && (
+          <div className="form-grid two-column">
+            <label>
+              Honor
+              <select defaultValue={editing.honorId} disabled={editing.enrolled > 0} name="honorId" required>
+                {!catalog.some((honor) => honor.id === editing.honorId) && (
+                  <option value={editing.honorId}>{editing.honorName} ({editing.honorCode})</option>
+                )}
+                {catalog.map((honor) => (
+                  <option key={honor.id} value={honor.id}>{honor.name} ({honor.code})</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Taught in
+              <select disabled={editing.enrolled > 0} name="span" onChange={(event) => setEditSpan(event.target.value as typeof editSpan)} value={editSpan}>
+                <option value="SINGLE_SESSION">{honorOfferingSpanLabels.SINGLE_SESSION}</option>
+                <option value="ALL_SESSIONS">{honorOfferingSpanLabels.ALL_SESSIONS} (fills every session)</option>
+              </select>
+            </label>
+            {editSpan === "SINGLE_SESSION" && (
+              <label>
+                Session
+                <select defaultValue={editing.sessionId ?? ""} disabled={editing.enrolled > 0} name="sessionId" required>
+                  <option value="">Choose a session</option>
+                  {sessions.map((session) => (
+                    <option key={session.id} value={session.id}>{session.name}{sessionSiteSuffix(session.locationId)}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {editing.enrolled > 0 && (
+              <p className="field-help">Clubs have picked this class, so its honor, session and span are fixed. Its seats, teacher and room can still change.</p>
+            )}
+          </div>
+        )}
         {!editing && (
           <div className="form-grid two-column">
             <label>
@@ -351,8 +498,8 @@ export function HonorsSetupWorkspace({
           </div>
         )}
         <div className="form-grid two-column">
-          {editing && editing.span === "ALL_SESSIONS" && hasSites && (
-            editing.enrolled > 0 ? (
+          {editing && editSpan === "ALL_SESSIONS" && hasSites && (
+            editing.span === "ALL_SESSIONS" && editing.enrolled > 0 ? (
               // Clubs have picked this class, so it can't move: show the site, don't ask for one.
               <p className="field-help" data-testid="class-site-readonly">
                 Site: <strong translate="no">{siteName(editing.locationId) ?? "No site"}</strong> (fixed once clubs have picked this class)
@@ -360,7 +507,7 @@ export function HonorsSetupWorkspace({
             ) : (
               <label>
                 Site
-                <select defaultValue={editing.locationId ?? ""} name="locationId" required={hasActiveSites && editing.locationId !== null}>
+                <select defaultValue={editing.locationId ?? ""} name="locationId" required={hasActiveSites && (editing.span === "SINGLE_SESSION" || editing.locationId !== null)}>
                   <option value="">{hasActiveSites ? "Choose a site" : "No site"}</option>
                   {setup.locations.map((location) => (
                     <option key={location.id} value={location.id}>{location.name}{location.isActive === false ? " (inactive)" : ""}</option>
@@ -453,7 +600,7 @@ export function HonorsSetupWorkspace({
                         aria-label={`Edit ${offering.honorName}`}
                         className="secondary-button"
                         disabled={saving}
-                        onClick={() => { setEditing(offering); setNotice(""); setError(""); }}
+                        onClick={() => { setEditing(offering); setEditSpan(offering.span); setNotice(""); setError(""); }}
                         type="button"
                       >
                         <Pencil aria-hidden="true" size={13} />
@@ -466,6 +613,15 @@ export function HonorsSetupWorkspace({
                         type="button"
                       >
                         <Power aria-hidden="true" size={13} />
+                      </button>
+                      <button
+                        aria-label={`Delete ${offering.honorName}`}
+                        className="secondary-button"
+                        disabled={saving}
+                        onClick={() => removeOffering(offering)}
+                        type="button"
+                      >
+                        <Trash2 aria-hidden="true" size={13} />
                       </button>
                     </td>
                   </tr>

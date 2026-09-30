@@ -16,7 +16,7 @@ export function honorApiError(error: unknown, action: string) {
   }
   if (error instanceof HonorConfigurationError) {
     return Response.json(
-      { error: error.code, message: error.message },
+      { error: error.code, message: error.message, ...(error.picks === undefined ? {} : { picks: error.picks }) },
       { status: error.code.endsWith("_NOT_FOUND") ? 404 : 409 },
     );
   }

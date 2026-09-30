@@ -142,7 +142,7 @@ export function RevokeClubFormLinkButton({ organizationId, linkId }: { organizat
 }
 
 /** A system administrator's on/off switch for one club form. */
-export function ClubFormTemplateToggle({ templateKey, enabled, name }: { templateKey: string; enabled: boolean; name: string }) {
+export function ClubFormTemplateToggle({ templateKey, enabled, name, needsSync = false }: { templateKey: string; enabled: boolean; name: string; needsSync?: boolean }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -175,7 +175,7 @@ export function ClubFormTemplateToggle({ templateKey, enabled, name }: { templat
 
   return (
     <>
-      <button className={enabled ? "secondary-button" : "primary-button"} disabled={saving} onClick={toggle} type="button">
+      <button className={enabled ? "secondary-button" : "primary-button"} disabled={saving || (needsSync && !enabled)} onClick={toggle} type="button">
         {enabled ? "Turn off" : "Turn on"}
       </button>
       {error && <small className="club-report-problem">{error}</small>}

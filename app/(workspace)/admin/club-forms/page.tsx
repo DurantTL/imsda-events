@@ -46,9 +46,9 @@ export default async function AdminClubFormsPage() {
               {templates.map((template) => (
                 <tr key={template.key}>
                   <th scope="row">{template.name}<small className="quiet-copy"> · {template.description}</small></th>
-                  <td>{template.enabled ? "On" : "Off"}</td>
+                  <td>{template.enabled ? "On" : "Off"}{template.needsSync && <small className="club-report-problem"> · Needs sync: an operator must run <code>npm run club-forms:sync</code></small>}</td>
                   <td>{template.submissionCount}</td>
-                  <td><ClubFormTemplateToggle enabled={template.enabled} name={template.name} templateKey={template.key} /></td>
+                  <td><ClubFormTemplateToggle enabled={template.enabled} name={template.name} needsSync={template.needsSync} templateKey={template.key} /></td>
                 </tr>
               ))}
             </tbody>

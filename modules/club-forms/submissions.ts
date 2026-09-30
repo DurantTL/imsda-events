@@ -25,6 +25,7 @@ import {
 } from "@/modules/club-forms/domain";
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { openSensitiveAnswers, sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
+import { assertClubFormTemplateCurrent, lockClubFormTemplateForWrite } from "@/modules/club-forms/template-lock";
 import { getEnabledClubFormTemplate, withLiveDirectory } from "@/modules/club-forms/templates";
 
 /**
@@ -102,6 +103,7 @@ export async function saveClubFormSubmission(viewer: ClubFormsViewer, input: Sav
   if (!club || club.type !== "CLUB" || !club.isActive) throw new ClubFormError("CLUB_NOT_FOUND", "That club could not be found.");
 
   const template = await getEnabledClubFormTemplate(input.templateKey, prisma);
+  assertClubFormTemplateCurrent(template);
   const definition = await withLiveDirectory(template.definition, prisma);
   const memberName = input.rosterMemberId
     ? await resolveRosterMemberName(prisma, input.organizationId, input.rosterMemberId)
@@ -110,16 +112,17 @@ export async function saveClubFormSubmission(viewer: ClubFormsViewer, input: Sav
   const answers = sanitizeClubFormAnswers(definition, input.answers);
   const issues = validateClubFormAnswers(definition, answers, { draft: !input.submit });
   if (issues.length > 0) throw new ClubFormError("VALIDATION_FAILED", issues[0].message, issues);
-  const { plain, sensitive } = splitAnswers(template, answers);
-
-  const hasSensitive = Object.keys(sensitive).length > 0;
-  if (hasSensitive && !isSecretEncryptionConfigured()) {
-    throw new ClubFormError("ENCRYPTION_NOT_CONFIGURED", "Encryption isn't set up on this server, so this form can't be saved yet.");
-  }
   const subjectName = memberName || input.subjectName?.trim().slice(0, 120) || deriveSubjectName(answers);
   const who = attribution(leader.actor);
 
   return prisma.$transaction(async (tx) => {
+    // Which answers are sensitive is decided under a share lock on the template row, so a concurrent re-seal cannot leave this save in plaintext.
+    const keys = await lockClubFormTemplateForWrite(tx, template);
+    const { plain, sensitive } = splitAnswers({ sensitiveFieldKeys: keys.sensitiveFieldKeys }, answers);
+    const hasSensitive = Object.keys(sensitive).length > 0;
+    if (hasSensitive && !isSecretEncryptionConfigured()) {
+      throw new ClubFormError("ENCRYPTION_NOT_CONFIGURED", "Encryption isn't set up on this server, so this form can't be saved yet.");
+    }
     let id = input.submissionId ?? randomUUID();
     const sealed = hasSensitive ? sealSensitiveAnswers(id, sensitive) : null;
     const data = {
@@ -279,7 +282,11 @@ export async function getSubmissionForViewer(
   const reveal = viewerCanRevealSensitive(viewer, row.organizationId);
   const revealBirthDates = viewerCanRevealBirthDates(viewer, row.organizationId);
 
-  if (row.hasSensitiveAnswers) {
+  // A plain answer under a sensitive key (stored before that key became sensitive) counts too: never an unaudited view.
+  const sensitiveKeys = new Set(template.sensitiveFieldKeys);
+  const holdsSensitive = row.hasSensitiveAnswers
+    || Object.keys(row.answers as Record<string, unknown>).some((key) => sensitiveKeys.has(key));
+  if (holdsSensitive) {
     const who = viewerAuditFields(viewer);
     await writeAuditLog({
       actorUserId: who.actorUserId,
@@ -299,6 +306,8 @@ export async function getSubmissionForViewer(
   }
 
   const answers: Record<string, unknown> = { ...(row.answers as Record<string, unknown>) };
+  // Defense in depth: a restricted key never leaves here, even if it was stored in the plain column.
+  for (const key of restricted) delete answers[key];
   if ((reveal || revealBirthDates) && row.sealedSensitiveAnswers) {
     try {
       const opened = openSensitiveAnswers(row.id, row.sealedSensitiveAnswers);
