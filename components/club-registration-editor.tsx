@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Pencil, Trash2, UserPlus, X } from "lucide-react";
 import { ClubLocationPicker } from "@/components/club-location-picker";
+import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
 import { ageInputProblem, ageInputValue, parseTypedAge } from "@/modules/club-registrations/roster-ages";
 import {
@@ -347,6 +348,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
                 value={ageInputValue(person, ageText, rosterAges)}
                 onAge={(raw) => changeAge(person.memberId, raw)}
                 onSaveToRoster={(save) => setSaveAgeOff((current) => (save ? current.filter((id) => id !== person.memberId) : [...current.filter((id) => id !== person.memberId), person.memberId]))}
+                href={rosterHrefFromRegistration(organizationId, workspace.event.id)}
                 organizationId={organizationId}
                 saveToRoster={!saveAgeOff.includes(person.memberId)}
               />
