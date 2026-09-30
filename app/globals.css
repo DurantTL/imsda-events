@@ -7830,3 +7830,19 @@ select:focus-visible {
   .club-form-answers dd, .club-form-answers dt { color: #111; }
   .club-form-restricted { border-color: #555; color: #333; }
 }
+
+/* Collapsed disclosures for settings that do not apply to this event type (#624). */
+.event-more-settings > summary,
+.activity-disclosure > summary {
+  cursor: pointer;
+  display: grid;
+  gap: 2px;
+}
+.event-more-settings[open] > summary,
+.activity-disclosure[open] > summary {
+  margin-bottom: 14px;
+}
+.event-more-settings > summary small,
+.activity-disclosure > summary small {
+  color: var(--muted, inherit);
+}
