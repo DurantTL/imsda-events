@@ -6083,6 +6083,15 @@ select:focus-visible {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.badge-print-controls label.badge-print-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 43px;
+}
+.badge-print-controls label.badge-print-checkbox > span {
+  text-transform: none;
+}
 .badge-print-controls select {
   width: 100%;
   min-height: 43px;
@@ -6147,11 +6156,25 @@ select:focus-visible {
   grid-template-rows: repeat(3, 3in);
   padding: 1in 0.25in;
 }
-.badge-sheet-avery-5163 {
-  grid-template-columns: repeat(2, 4in);
-  grid-template-rows: repeat(5, 2in);
-  column-gap: 0.1875in;
-  padding: 0.5in 0.15625in;
+.badge-sheet-avery-presta-94237 {
+  /* Measured from Avery's Presta 94237 template PDF (US letter):
+     0.85in + 3in + 0.8in + 3in + 0.85in = 8.5in across and
+     1in + 4 x 2in + 3 x 0.333333in + 1in = 11in down. Labels have 0.125in
+     corner radii, which the layout does not need. Change the margins and
+     gaps here only. */
+  /* from Avery's Presta 94237 template PDF; confirm with a test print on plain paper */
+  --sheet-pad-top: 1in;
+  /* from Avery's Presta 94237 template PDF; confirm with a test print on plain paper */
+  --sheet-pad-left: 0.85in;
+  /* from Avery's Presta 94237 template PDF; confirm with a test print on plain paper */
+  --col-gap: 0.8in;
+  /* from Avery's Presta 94237 template PDF; confirm with a test print on plain paper */
+  --row-gap: 0.333333in;
+  grid-template-columns: repeat(2, 3in);
+  grid-template-rows: repeat(4, 2in);
+  column-gap: var(--col-gap);
+  row-gap: var(--row-gap);
+  padding: var(--sheet-pad-top) var(--sheet-pad-left);
 }
 .badge-background-picker {
   display: grid;
@@ -6195,6 +6218,8 @@ select:focus-visible {
   justify-items: center;
   box-sizing: border-box;
   width: 100%;
+  min-height: 0;
+  overflow: hidden;
   padding: 0.14in 0.18in;
 }
 /* Rotates the printed name/footer 90° inside the same physical die-cut slot
@@ -6223,7 +6248,7 @@ select:focus-visible {
 }
 .badge-label-card.has-background > *:not(.badge-label-background) { position: relative; z-index: 1; }
 .badge-label-card.has-background header,
-.badge-label-card.has-background > p,
+.badge-label-card.has-background .badge-label-inner > p,
 .badge-label-card.has-background footer,
 .badge-label-card.has-background .badge-label-name strong {
   /* The artwork is the event's, so its colors are unknown here. A white halo
@@ -6235,7 +6260,7 @@ select:focus-visible {
   overflow: hidden;
   width: 100%;
   color: var(--imsda-purple);
-  font-size: 8pt;
+  font-size: calc(8pt * var(--badge-font-scale, 1));
   font-weight: 800;
   letter-spacing: 0.04em;
   text-overflow: ellipsis;
@@ -6250,22 +6275,22 @@ select:focus-visible {
 .badge-label-name strong {
   overflow: hidden;
   color: var(--imsda-navy);
-  font-size: 18pt;
+  font-size: calc(18pt * var(--badge-font-scale, 1));
   line-height: 1.04;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.badge-label-name strong:first-child { font-size: 20pt; }
+.badge-label-name strong:first-child { font-size: calc(20pt * var(--badge-font-scale, 1)); }
 /* The rotated inner box is narrower than the original landscape card, so
    trim type sizes slightly to keep names from ellipsizing as often. */
-.badge-sheet-orientation-portrait .badge-label-name strong { font-size: 15pt; }
-.badge-sheet-orientation-portrait .badge-label-name strong:first-child { font-size: 17pt; }
-.badge-label-card > p {
+.badge-sheet-orientation-portrait .badge-label-name strong { font-size: calc(15pt * var(--badge-font-scale, 1)); }
+.badge-sheet-orientation-portrait .badge-label-name strong:first-child { font-size: calc(17pt * var(--badge-font-scale, 1)); }
+.badge-label-inner > p {
   overflow: hidden;
   width: 100%;
   margin: 0;
   color: #3e515a;
-  font-size: 8pt;
+  font-size: calc(8pt * var(--badge-font-scale, 1));
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6276,11 +6301,14 @@ select:focus-visible {
   justify-content: center;
   gap: 0.12in;
   margin-top: 0.08in;
+  overflow: hidden;
+  white-space: nowrap;
   color: #5f7078;
-  font-size: 6.5pt;
+  font-size: calc(6.5pt * var(--badge-font-scale, 1));
   font-weight: 700;
   text-transform: capitalize;
 }
+.badge-label-card footer span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .more-back-link { width: fit-content; margin-bottom: -4px; }
 /* Shared BackLink component (#428): a quiet text link to a page's parent. */
