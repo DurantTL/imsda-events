@@ -64,8 +64,13 @@ function isBlockedByItself(field: RegistrationFormField) {
  * anything up its `conditional` / `optionalWhen` controller chain is sensitive
  * or blocked, since showing the answer would reveal the answer it depends on.
  */
-export function isCheckInBookExtraField(field: RegistrationFormField, allFields: readonly RegistrationFormField[] = []) {
-  if (field.scope !== "ATTENDEE" || !extraColumnFieldTypes.has(field.type)) return false;
+export function isCheckInBookExtraField(
+  field: RegistrationFormField,
+  allFields: readonly RegistrationFormField[] = [],
+  options: { scopes?: readonly string[]; types?: ReadonlySet<string> } = {},
+) {
+  const scopes = options.scopes ?? ["ATTENDEE"];
+  if (!scopes.includes(field.scope) || !(options.types ?? extraColumnFieldTypes).has(field.type)) return false;
   if (displayedKeys.has(field.key) || isBlockedByItself(field)) return false;
 
   const byKey = new Map(allFields.map((candidate) => [candidate.key, candidate]));

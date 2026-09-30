@@ -130,7 +130,7 @@
 ".auth-success strong | 0.78rem",
 ".badge-background-heading h3 | 0.86rem",
 ".badge-background-options small | 0.6rem",
-".badge-label-card > p | calc(8pt * var(--badge-font-scale, 1))",
+".badge-label-inner > p | calc(8pt * var(--badge-font-scale, 1))",
 ".badge-label-card footer | calc(6.5pt * var(--badge-font-scale, 1))",
 ".badge-label-card header | calc(8pt * var(--badge-font-scale, 1))",
 ".badge-label-name strong | calc(18pt * var(--badge-font-scale, 1))",

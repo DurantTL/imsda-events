@@ -1,9 +1,9 @@
 import { AccessDeniedError, requirePermission } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { badgeCsvFilename, buildBadgeCsvRows } from "@/modules/checkin/badge-csv";
+import { badgeCsvFilename, buildBadgeCsvRows, eligiblePositionField } from "@/modules/checkin/badge-csv";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
-import { findActiveMembership, getEventSettings } from "@/modules/events/repository";
+import { findActiveMembership, findEventSlug } from "@/modules/events/repository";
 import { listRegistrations } from "@/modules/registrations/repository";
 import { toCsv } from "@/modules/reporting/csv";
 import { logError } from "@/lib/logger";
@@ -15,7 +15,7 @@ import { withRequestContext } from "@/lib/request-context";
  * confirmation code, never an attendee pass token.
  */
 async function getHandler(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ eventId: string }> },
 ) {
   try {
@@ -26,11 +26,21 @@ async function getHandler(
       "MANAGE_CHECK_IN",
       findActiveMembership,
     );
-    const [event, registrations] = await Promise.all([
-      getEventSettings(eventId),
-      listRegistrations(eventId, { statuses: activeRegistrationStatuses }),
-    ]);
-    const rows = buildBadgeCsvRows(registrations);
+    const slug = await findEventSlug(eventId);
+    if (!slug) {
+      return Response.json({ error: "EVENT_NOT_FOUND" }, { status: 404 });
+    }
+    const registrations = await listRegistrations(eventId, { statuses: activeRegistrationStatuses });
+    // Position is an explicit choice from the eligible list; nothing is guessed.
+    const requested = new URL(request.url).searchParams.get("positionField") || undefined;
+    const positionField = eligiblePositionField(registrations, requested);
+    if (requested && !positionField) {
+      return Response.json({
+        error: "POSITION_FIELD_NOT_ELIGIBLE",
+        message: "That field cannot be used as the Position column.",
+      }, { status: 400 });
+    }
+    const rows = buildBadgeCsvRows(registrations, positionField);
     // Counts only: an audit row never carries an attendee's name.
     await writeAuditLog({
       eventId,
@@ -44,7 +54,7 @@ async function getHandler(
     return new Response(toCsv(rows), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${badgeCsvFilename(event?.slug ?? eventId)}"`,
+        "Content-Disposition": `attachment; filename="${badgeCsvFilename(slug)}"`,
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
       },

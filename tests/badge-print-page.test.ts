@@ -65,6 +65,26 @@ describe("printable name badge page layout options", () => {
     expect(markup).toContain("Export CSV for Avery Design &amp; Print");
   });
 
+  it("offers a Position column select defaulting to none, and carries an eligible choice to the export link", async () => {
+    const definition = {
+      title: "Synthetic Form",
+      description: "",
+      confirmationMessage: "Thanks",
+      sections: [{ id: "sec_one", title: "Section", description: "", fields: [
+        { id: "field_church_role", key: "church_role", label: "Church role", helpText: "", type: "TEXT", scope: "ATTENDEE", required: false, options: [] },
+        { id: "field_emergency_role", key: "emergency_role", label: "Emergency contact role", helpText: "", type: "TEXT", scope: "ATTENDEE", required: false, options: [] },
+      ] }],
+    };
+    dependencies.listRegistrations.mockResolvedValue([{ ...registration, publicSubmission: { definition, responses: {} } }]);
+    const plain = await render({});
+    expect(plain).toContain("None (leave blank)");
+    expect(plain).toContain("Church role");
+    expect(plain).not.toContain("Emergency contact role");
+    expect(plain).not.toContain("positionField=");
+    expect(await render({ positionField: "church_role" })).toContain("badge-labels-csv?positionField=church_role");
+    expect(await render({ positionField: "emergency_role" })).not.toContain("positionField=");
+  });
+
   it("omits the event title from every label when title=0", async () => {
     const markup = await render({ title: "0" });
     expect(markup).not.toContain("<header>");

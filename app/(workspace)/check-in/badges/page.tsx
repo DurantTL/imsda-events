@@ -6,6 +6,10 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { BadgeBackgroundPicker } from "@/components/badge-background-picker";
 import { PrintReportButton } from "@/components/print-report-button";
 import {
+  badgePositionOptions,
+  eligiblePositionField,
+} from "@/modules/checkin/badge-csv";
+import {
   getEventBadgeBackground,
   listBadgeBackgroundOptions,
 } from "@/modules/checkin/badge-background-repository";
@@ -51,6 +55,7 @@ export default async function PrintableNameBadgesPage({
     start?: string;
     orientation?: string;
     title?: string | string[];
+    positionField?: string;
     size?: string;
   }>;
 }) {
@@ -78,6 +83,8 @@ export default async function PrintableNameBadgesPage({
     statuses: activeRegistrationStatuses,
   });
   const labels = buildBadgeLabels(registrations);
+  const positionOptions = badgePositionOptions(registrations);
+  const positionField = eligiblePositionField(registrations, query.positionField);
   const canConfigure = permissions.includes("CONFIGURE_EVENT");
   const [background, backgroundOptions] = await Promise.all([
     getEventBadgeBackground(event.id),
@@ -113,7 +120,7 @@ export default async function PrintableNameBadgesPage({
             <a
               className="secondary-button"
               download
-              href={`/api/events/${encodeURIComponent(event.id)}/exports/badge-labels-csv`}
+              href={`/api/events/${encodeURIComponent(event.id)}/exports/badge-labels-csv${positionField ? `?positionField=${encodeURIComponent(positionField)}` : ""}`}
             >
               Export CSV for Avery Design &amp; Print
             </a>
@@ -161,6 +168,15 @@ export default async function PrintableNameBadgesPage({
               <option key={size} value={size}>
                 {sizeLabels[size]} {size}%
               </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Position column (CSV)</span>
+          <select defaultValue={positionField ?? ""} name="positionField">
+            <option value="">None (leave blank)</option>
+            {positionOptions.map((option) => (
+              <option key={option.key} value={option.key}>{option.label}</option>
             ))}
           </select>
         </label>

@@ -1,15 +1,26 @@
+import {
+  registrationFormDefinitionSchema,
+  type RegistrationFormField,
+} from "@/modules/forms/definition";
 import { buildBadgeLabels } from "@/modules/checkin/badge-labels";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
+import { isCheckInBookExtraField } from "@/modules/reporting/check-in-book";
 
 /**
- * CSV for a mail merge in Avery Design & Print (QR code from ID). The header
- * matches the director's sample template exactly. ID is the registration
- * confirmation code, which the check-in lookup accepts; attendee pass tokens
- * are credentials and never leave through this file.
+ * CSV for a mail merge in Avery Design & Print. The header matches the
+ * director's sample template exactly. ID is the registration confirmation
+ * code; attendee pass tokens are credentials and never leave through this file.
+ *
+ * Position is an explicit staff choice, never guessed: only a plain text or
+ * single-choice field that is not sensitive, and not controlled (directly or
+ * through a chain) by a sensitive field, can be chosen.
  */
 export const badgeCsvHeader = ["ID", "Name", "Position"] as const;
 
-const positionPattern = /\b(position|role|title|ministry)\b/i;
+const positionFieldTypes = new Set(["TEXT", "SELECT", "RADIO"]);
+const positionScopes = ["ATTENDEE", "REGISTRATION"] as const;
+
+export type BadgePositionOption = { key: string; label: string };
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -17,75 +28,61 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function words(value: string) {
-  return value.replace(/[_\-.]+/g, " ");
+function eligibleFields(definition: unknown): RegistrationFormField[] {
+  const parsed = registrationFormDefinitionSchema.safeParse(definition);
+  if (!parsed.success) return [];
+  const all = parsed.data.sections.flatMap((section) => section.fields);
+  return all.filter((field) => isCheckInBookExtraField(field, all, {
+    scopes: positionScopes,
+    types: positionFieldTypes,
+  }));
 }
 
-function answerText(value: unknown) {
-  if (typeof value === "string") return value.trim();
-  if (Array.isArray(value)) {
-    return value
-      .filter((entry): entry is string => typeof entry === "string")
-      .map((entry) => entry.trim())
-      .filter(Boolean)
-      .join("; ");
-  }
-  return "";
-}
-
-/** Keys of attendee-level form fields whose key or label reads as a position. */
-export function positionFieldKeys(definition: unknown) {
-  const keys: string[] = [];
-  const sections = record(definition).sections;
-  if (!Array.isArray(sections)) return keys;
-  for (const section of sections) {
-    const fields = record(section).fields;
-    if (!Array.isArray(fields)) continue;
-    for (const raw of fields) {
-      const field = record(raw);
-      if (typeof field.key !== "string" || field.scope !== "ATTENDEE") continue;
-      const label = typeof field.label === "string" ? field.label : "";
-      if (positionPattern.test(words(field.key)) || positionPattern.test(label)) {
-        keys.push(field.key);
-      }
+/** Fields staff may choose as Position, across the event's registration forms. */
+export function badgePositionOptions(
+  registrations: RegistrationRecord[],
+): BadgePositionOption[] {
+  const options = new Map<string, BadgePositionOption>();
+  for (const registration of registrations) {
+    for (const field of eligibleFields(registration.publicSubmission?.definition)) {
+      if (!options.has(field.key)) options.set(field.key, { key: field.key, label: field.label });
     }
   }
-  return keys;
+  return [...options.values()].sort((left, right) => left.label.localeCompare(right.label));
 }
 
-/**
- * The attendee's answer to a position-like field, or "" when the form has
- * none. The attendee type is deliberately not used as a fallback.
- */
-export function badgePosition(
-  responses: unknown,
-  definition: unknown,
+/** The chosen key when it is eligible, otherwise null (blank Position). */
+export function eligiblePositionField(
+  registrations: RegistrationRecord[],
+  key: string | undefined,
 ) {
-  const answers = record(responses);
-  const candidates = positionFieldKeys(definition);
-  // Without a readable definition, fall back to the answer keys themselves,
-  // the way the shirt size is read straight from its known key.
-  const keys = candidates.length > 0
-    ? candidates
-    : Object.keys(answers).filter((key) => positionPattern.test(words(key)));
-  for (const key of keys) {
-    const text = answerText(answers[key]);
-    if (text) return text;
-  }
-  return "";
+  return key && badgePositionOptions(registrations).some((option) => option.key === key)
+    ? key
+    : null;
 }
 
 export function buildBadgeCsvRows(
   registrations: RegistrationRecord[],
+  positionField: string | null = null,
 ): string[][] {
   const positionByAttendee = new Map<string, string>();
-  for (const registration of registrations) {
-    const definition = registration.publicSubmission?.definition;
-    for (const attendee of registration.attendees) {
-      positionByAttendee.set(
-        attendee.id,
-        badgePosition(attendee.responses, definition),
+  if (positionField) {
+    for (const registration of registrations) {
+      // Eligibility is checked against this registration's own form version.
+      const field = eligibleFields(registration.publicSubmission?.definition)
+        .find((candidate) => candidate.key === positionField);
+      if (!field) continue;
+      const registrationAnswer = answerText(
+        record(registration.publicSubmission?.responses)[positionField],
       );
+      for (const attendee of registration.attendees) {
+        positionByAttendee.set(
+          attendee.id,
+          field.scope === "REGISTRATION"
+            ? registrationAnswer
+            : answerText(record(attendee.responses)[positionField]),
+        );
+      }
     }
   }
   return [
@@ -96,6 +93,10 @@ export function buildBadgeCsvRows(
       positionByAttendee.get(label.attendeeId) ?? "",
     ]),
   ];
+}
+
+function answerText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export function badgeCsvFilename(eventSlug: string) {

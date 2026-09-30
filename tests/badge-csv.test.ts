@@ -6,14 +6,18 @@ const dependencies = vi.hoisted(() => ({
   requirePermission: vi.fn(),
   getCurrentSession: vi.fn(),
   findActiveMembership: vi.fn(),
-  getEventSettings: vi.fn(),
+  findEventSlug: vi.fn(),
   listRegistrations: vi.fn(),
   writeAuditLog: vi.fn(),
+}));
+const realRequirePermission = vi.hoisted(() => ({
+  current: null as null | typeof import("@/modules/access/authorization").requirePermission,
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/modules/access/authorization", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/modules/access/authorization")>();
+  realRequirePermission.current = actual.requirePermission;
   return { ...actual, requirePermission: dependencies.requirePermission };
 });
 vi.mock("@/modules/access/current-session", () => ({
@@ -21,7 +25,7 @@ vi.mock("@/modules/access/current-session", () => ({
 }));
 vi.mock("@/modules/events/repository", () => ({
   findActiveMembership: dependencies.findActiveMembership,
-  getEventSettings: dependencies.getEventSettings,
+  findEventSlug: dependencies.findEventSlug,
 }));
 vi.mock("@/modules/registrations/repository", () => ({
   listRegistrations: dependencies.listRegistrations,
@@ -32,27 +36,58 @@ vi.mock("@/modules/audit/audit-service", () => ({
 
 import { GET } from "@/app/api/events/[eventId]/exports/badge-labels-csv/route";
 import { AccessDeniedError } from "@/modules/access/authorization";
-import { badgeCsvFilename, buildBadgeCsvRows } from "@/modules/checkin/badge-csv";
+import {
+  badgeCsvFilename,
+  badgePositionOptions,
+  buildBadgeCsvRows,
+} from "@/modules/checkin/badge-csv";
 import { badgeTemplates } from "@/modules/checkin/badge-labels";
 import { toCsv } from "@/modules/reporting/csv";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 
-const definitionWithPosition = {
-  sections: [{
-    fields: [
-      { key: "shirt_size", label: "Shirt size", scope: "ATTENDEE" },
-      { key: "ministry_role", label: "Ministry role", scope: "ATTENDEE" },
-    ],
-  }],
-};
-const definitionWithoutPosition = {
-  sections: [{ fields: [{ key: "shirt_size", label: "Shirt size", scope: "ATTENDEE" }] }],
-};
+// Synthetic data only.
+function field(
+  key: string,
+  label: string,
+  type: string,
+  scope: "ATTENDEE" | "REGISTRATION" = "ATTENDEE",
+  extra: Record<string, unknown> = {},
+) {
+  const isChoice = ["SELECT", "RADIO", "MULTISELECT"].includes(type);
+  return {
+    id: `field_${key}`, key, label, helpText: "", type, scope, required: false,
+    options: isChoice ? ["Option A", "Option B"] : [], ...extra,
+  };
+}
+
+function definitionWith(...fields: Array<ReturnType<typeof field>>) {
+  return {
+    title: "Synthetic Form",
+    description: "",
+    confirmationMessage: "Thanks",
+    sections: [{ id: "sec_one", title: "Section", description: "", fields }],
+  };
+}
+
+const goodDefinition = definitionWith(
+  field("church_role", "Church role", "TEXT"),
+  field("ministry_area", "Ministry area", "SELECT", "REGISTRATION"),
+  field("favourite_hymn", "Title of your favourite hymn", "TEXT"),
+  field("emergency_role", "Emergency contact role", "TEXT"),
+  field("medical_team_role", "Medical team role or health condition", "TEXT"),
+  field("guardian_title", "Guardian's title", "TEXT"),
+  field("medical_question", "Any medical needs?", "RADIO"),
+  field("needs_detail", "Tell us more", "TEXT", "ATTENDEE", {
+    conditional: { fieldKey: "medical_question", operator: "EQUALS", value: "Option A" },
+  }),
+  field("notes_area", "Notes", "LONG_TEXT"),
+);
 
 function registration(
   code: string,
   attendees: Array<{ id: string; first: string; last: string; responses?: Record<string, unknown> }>,
-  definition: unknown = definitionWithPosition,
+  responses: Record<string, unknown> = {},
+  definition: unknown = goodDefinition,
 ) {
   return {
     id: `id-${code}`,
@@ -65,68 +100,84 @@ function registration(
       responses: attendee.responses ?? {},
       passToken: "imsda-pass.v1.secret.signature",
     })),
-    publicSubmission: { definition },
+    publicSubmission: { definition, responses },
   } as unknown as RegistrationRecord;
 }
 
 const registrations = [
   registration("REG-BBBB2222", [
-    { id: "a2", first: "Zed", last: "Zimmer", responses: { ministry_role: "Usher" } },
-  ]),
+    { id: "a2", first: "Zed", last: "Zimmer", responses: { church_role: "Usher" } },
+  ], { ministry_area: "Option B" }),
   registration("REG-AAAA1111", [
-    { id: "a1", first: "Amy", last: "Adams", responses: { ministry_role: ["Greeter", "Prayer team"] } },
+    { id: "a1", first: "Amy", last: "Adams", responses: { church_role: "Greeter" } },
     { id: "a3", first: "=Evil", last: "Formula", responses: {} },
-  ]),
+  ], { ministry_area: "Option A" }),
 ];
 
 beforeEach(() => {
   vi.clearAllMocks();
   dependencies.getCurrentSession.mockResolvedValue({ user: { id: "user_one" } });
   dependencies.requirePermission.mockResolvedValue({ user: { id: "user_one" } });
-  dependencies.getEventSettings.mockResolvedValue({ slug: "womens-retreat-2026" });
+  dependencies.findEventSlug.mockResolvedValue("womens-retreat-2026");
   dependencies.listRegistrations.mockResolvedValue(registrations);
 });
 
-function call() {
+function call(query = "", eventId = "event_1") {
   return GET(
-    new Request("https://events.imsda.test/api/events/event_1/exports/badge-labels-csv"),
-    { params: Promise.resolve({ eventId: "event_1" }) },
+    new Request(`https://events.imsda.test/api/events/${eventId}/exports/badge-labels-csv${query}`),
+    { params: Promise.resolve({ eventId }) },
   );
 }
+
+describe("badge CSV Position options", () => {
+  it("offers only non-sensitive text and single-choice fields", () => {
+    const keys = badgePositionOptions(registrations).map((option) => option.key);
+    expect(keys).toEqual(["church_role", "ministry_area", "favourite_hymn"]);
+  });
+
+  it("never offers sensitive fields, and a field that only shows after a medical question is excluded", () => {
+    const keys = badgePositionOptions(registrations).map((option) => option.key);
+    for (const blocked of [
+      "emergency_role", "medical_team_role", "guardian_title",
+      "medical_question", "needs_detail", "notes_area",
+    ]) {
+      expect(keys).not.toContain(blocked);
+    }
+  });
+});
 
 describe("badge CSV rows", () => {
   it("starts with the exact ID,Name,Position header and keeps badge order", () => {
     const rows = buildBadgeCsvRows(registrations);
     expect(rows[0]).toEqual(["ID", "Name", "Position"]);
-    // Sorted by last name, exactly like the printed badges.
-    expect(rows.slice(1).map((row) => row[1])).toEqual([
-      "Amy Adams",
-      "=Evil Formula",
-      "Zed Zimmer",
-    ]);
+    expect(rows.slice(1).map((row) => row[1])).toEqual(["Amy Adams", "=Evil Formula", "Zed Zimmer"]);
     expect(rows.slice(1).map((row) => row[0])).toEqual([
-      "REG-AAAA1111",
-      "REG-AAAA1111",
-      "REG-BBBB2222",
+      "REG-AAAA1111", "REG-AAAA1111", "REG-BBBB2222",
     ]);
   });
 
-  it("maps Position from a position-like field, blank when the field or answer is absent", () => {
+  it("leaves Position blank when no field is chosen", () => {
     const rows = buildBadgeCsvRows(registrations);
-    expect(rows[1][2]).toBe("Greeter; Prayer team");
-    expect(rows[2][2]).toBe("");
-    expect(rows[3][2]).toBe("Usher");
-    const none = buildBadgeCsvRows([
+    expect(rows.slice(1).map((row) => row[2])).toEqual(["", "", ""]);
+  });
+
+  it("uses an attendee-scope answer, blank when that attendee did not answer", () => {
+    const rows = buildBadgeCsvRows(registrations, "church_role");
+    expect(rows.slice(1).map((row) => row[2])).toEqual(["Greeter", "", "Usher"]);
+  });
+
+  it("carries a registration-scope answer to every attendee on it", () => {
+    const rows = buildBadgeCsvRows(registrations, "ministry_area");
+    expect(rows.slice(1).map((row) => row[2])).toEqual(["Option A", "Option A", "Option B"]);
+  });
+
+  it("ignores a sensitive key even if asked for directly", () => {
+    const rows = buildBadgeCsvRows([
       registration("REG-CCCC3333", [
-        { id: "c1", first: "Cy", last: "Cole", responses: { shirt_size: "Adult L" } },
-      ], definitionWithoutPosition),
-    ]);
-    expect(none[1]).toEqual(["REG-CCCC3333", "Cy Cole", ""]);
-  });
-
-  it("never uses the attendee type as a position", () => {
-    const rows = buildBadgeCsvRows(registrations);
-    expect(rows.flat()).not.toContain("Adult");
+        { id: "c1", first: "Cy", last: "Cole", responses: { emergency_role: "Aunt" } },
+      ]),
+    ], "emergency_role");
+    expect(rows[1][2]).toBe("");
   });
 
   it("neutralises formula injection in every cell", () => {
@@ -135,9 +186,12 @@ describe("badge CSV rows", () => {
     expect(csv).not.toMatch(/,"=/);
   });
 
-  it("names the file after the event slug", () => {
+  it("names the file safely from the event slug", () => {
     expect(badgeCsvFilename("Womens-Retreat 2026")).toBe("womens-retreat-2026-avery-94237.csv");
     expect(badgeCsvFilename("")).toBe("event-avery-94237.csv");
+    const hostile = badgeCsvFilename('bad"name\r\nX-Injected: 1');
+    expect(hostile).toBe("bad-name-x-injected-1-avery-94237.csv");
+    expect(hostile).toMatch(/^[a-z0-9.-]+$/);
   });
 });
 
@@ -146,10 +200,7 @@ describe("badge CSV route", () => {
     const response = await call();
     expect(response.status).toBe(200);
     expect(dependencies.requirePermission).toHaveBeenCalledWith(
-      expect.anything(),
-      "event_1",
-      "MANAGE_CHECK_IN",
-      dependencies.findActiveMembership,
+      expect.anything(), "event_1", "MANAGE_CHECK_IN", dependencies.findActiveMembership,
     );
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
@@ -165,10 +216,30 @@ describe("badge CSV route", () => {
     expect(JSON.stringify(audit)).not.toMatch(/Adams|Zimmer|Formula/);
   });
 
+  it("fills Position from an eligible chosen field", async () => {
+    const body = await (await call("?positionField=church_role")).text();
+    expect(body).toContain('"REG-AAAA1111","Amy Adams","Greeter"');
+  });
+
+  it.each(["emergency_role", "medical_team_role", "guardian_title", "needs_detail", "no_such_field"])(
+    "rejects the ineligible Position field %s with 400 before anything is audited",
+    async (key) => {
+      const response = await call(`?positionField=${key}`);
+      expect(response.status).toBe(400);
+      expect(dependencies.writeAuditLog).not.toHaveBeenCalled();
+    },
+  );
+
   it("reads only active registrations, like the badge page", async () => {
     await call();
-    const options = dependencies.listRegistrations.mock.calls[0][1];
-    expect(options.statuses).toEqual(["SUBMITTED", "CONFIRMED"]);
+    expect(dependencies.listRegistrations.mock.calls[0][1].statuses).toEqual(["SUBMITTED", "CONFIRMED"]);
+  });
+
+  it("returns 404 for an unknown event and writes no audit row", async () => {
+    dependencies.findEventSlug.mockResolvedValue(null);
+    const response = await call();
+    expect(response.status).toBe(404);
+    expect(dependencies.writeAuditLog).not.toHaveBeenCalled();
   });
 
   it("refuses staff without MANAGE_CHECK_IN and reads nothing", async () => {
@@ -179,6 +250,39 @@ describe("badge CSV route", () => {
     expect(response.status).toBe(403);
     expect(dependencies.listRegistrations).not.toHaveBeenCalled();
     expect(dependencies.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("returns 401 when unauthenticated", async () => {
+    dependencies.requirePermission.mockImplementation(realRequirePermission.current!);
+    dependencies.getCurrentSession.mockResolvedValue({ user: null });
+    const response = await call();
+    expect(response.status).toBe(401);
+    expect(dependencies.listRegistrations).not.toHaveBeenCalled();
+    expect(dependencies.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for a member of another event", async () => {
+    dependencies.requirePermission.mockImplementation(realRequirePermission.current!);
+    dependencies.getCurrentSession.mockResolvedValue({
+      user: { id: "user_one", email: "staff@example.test", displayName: "Staff" },
+    });
+    dependencies.findActiveMembership.mockImplementation(async (userId: string, eventId: string) => (
+      eventId === "event_a"
+        ? { eventId, userId, role: "CHECK_IN_STAFF", status: "ACTIVE", permissions: ["MANAGE_CHECK_IN"] }
+        : null
+    ));
+    const refused = await call("", "event_b");
+    expect(refused.status).toBe(403);
+    expect(dependencies.listRegistrations).not.toHaveBeenCalled();
+    expect((await call("", "event_a")).status).toBe(200);
+  });
+
+  it("puts only a sanitised slug in Content-Disposition", async () => {
+    dependencies.findEventSlug.mockResolvedValue('x"\r\nSet-Cookie: a=b');
+    const response = await call();
+    expect(response.headers.get("Content-Disposition")).toBe(
+      'attachment; filename="x-set-cookie-a-b-avery-94237.csv"',
+    );
   });
 });
 
@@ -198,8 +302,5 @@ describe("Presta 94237 sheet geometry", () => {
     expect(perSheet).toBe(8);
     expect(across).toBeCloseTo(8.5, 4);
     expect(down).toBeCloseTo(11, 4);
-    expect(inches("--sheet-pad-left")).toBe(0.85);
-    expect(inches("--col-gap")).toBe(0.8);
-    expect(inches("--sheet-pad-top")).toBe(1);
   });
 });

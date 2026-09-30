@@ -6248,7 +6248,7 @@ select:focus-visible {
 }
 .badge-label-card.has-background > *:not(.badge-label-background) { position: relative; z-index: 1; }
 .badge-label-card.has-background header,
-.badge-label-card.has-background > p,
+.badge-label-card.has-background .badge-label-inner > p,
 .badge-label-card.has-background footer,
 .badge-label-card.has-background .badge-label-name strong {
   /* The artwork is the event's, so its colors are unknown here. A white halo
@@ -6285,7 +6285,7 @@ select:focus-visible {
    trim type sizes slightly to keep names from ellipsizing as often. */
 .badge-sheet-orientation-portrait .badge-label-name strong { font-size: calc(15pt * var(--badge-font-scale, 1)); }
 .badge-sheet-orientation-portrait .badge-label-name strong:first-child { font-size: calc(17pt * var(--badge-font-scale, 1)); }
-.badge-label-card > p {
+.badge-label-inner > p {
   overflow: hidden;
   width: 100%;
   margin: 0;
@@ -6301,11 +6301,14 @@ select:focus-visible {
   justify-content: center;
   gap: 0.12in;
   margin-top: 0.08in;
+  overflow: hidden;
+  white-space: nowrap;
   color: #5f7078;
   font-size: calc(6.5pt * var(--badge-font-scale, 1));
   font-weight: 700;
   text-transform: capitalize;
 }
+.badge-label-card footer span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .more-back-link { width: fit-content; margin-bottom: -4px; }
 /* Shared BackLink component (#428): a quiet text link to a page's parent. */
