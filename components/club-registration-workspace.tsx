@@ -9,6 +9,8 @@ import {
   type FormResponses,
   type RosterAttendee,
 } from "@/components/public-registration-form";
+import { ClubRosterAgeField } from "@/components/club-roster-age-field";
+import { ageInputProblem, ageInputValue, effectiveRosterAges, parseTypedAge, withRosterAge } from "@/modules/club-registrations/roster-ages";
 import { ClubLocationPicker } from "@/components/club-location-picker";
 import { clubRosterAttendeeTypeLabels } from "@/modules/club-rosters/domain";
 import {
@@ -37,6 +39,10 @@ type DraftState = {
   responses: FormResponses;
   attendeeResponses: Record<string, FormResponses>;
   honorSelections: HonorPicks;
+  /** Ages typed in for roster people with no birth date on file (#639), by roster member id. */
+  rosterAges: Record<string, number>;
+  /** Roster people whose typed-in age is NOT also saved to the roster at submit (#639); saving is the default. */
+  rosterAgeSaveOff: string[];
 };
 
 export function ClubRegistrationWorkspace({
@@ -52,6 +58,7 @@ export function ClubRegistrationWorkspace({
   workspace: Workspace;
 }) {
   const router = useRouter();
+  const ageKey = workspace.attendeeAgeKey;
   const rosterIds = useMemo(() => new Set(workspace.roster.map((person) => person.memberId)), [workspace.roster]);
   const [draft, setDraft] = useState<DraftState>(() => ({
     selectedMemberIds: (workspace.draft?.selectedMemberIds ?? []).filter((memberId) => rosterIds.has(memberId)),
@@ -60,6 +67,8 @@ export function ClubRegistrationWorkspace({
     responses: fillMissingAnswers(workspace.draft?.responses, contactPrefill) as FormResponses,
     attendeeResponses: (workspace.draft?.attendeeResponses as Record<string, FormResponses> | undefined) ?? {},
     honorSelections: workspace.draft?.honorSelections ?? {},
+    rosterAges: workspace.draft?.rosterAges ?? {},
+    rosterAgeSaveOff: workspace.draft?.rosterAgeSaveOff ?? [],
   }));
   const [step, setStep] = useState<"who" | "honors" | "form">("who");
   const [honorsProblem, setHonorsProblem] = useState<string | null>(null);
@@ -123,12 +132,36 @@ export function ClubRegistrationWorkspace({
 
   const selected = workspace.roster.filter((person) => draft.selectedMemberIds.includes(person.memberId));
   const goingCount = selected.length + draft.guests.length;
+  // Roster people with no birth date need an age typed in for this registration (#639).
+  // The raw text of the age fields, so a half-typed entry is reported rather than read as blank.
+  const [ageText, setAgeText] = useState<Record<string, string>>({});
+  const [ageProblem, setAgeProblem] = useState("");
+
+  function changeRosterAge(memberId: string, raw: string) {
+    setAgeProblem("");
+    setAgeText((current) => ({ ...current, [memberId]: raw }));
+    setDraft((current) => {
+      // A blank or invalid entry clears the age; only whole numbers 0 to 120 are kept, like guests.
+      const next = withRosterAge(current, memberId, parseTypedAge(raw), ageKey);
+      queueSave(next);
+      return next;
+    });
+  }
+
+  function changeSaveToRoster(memberId: string, save: boolean) {
+    setDraft((current) => {
+      const off = current.rosterAgeSaveOff.filter((id) => id !== memberId);
+      const next = { ...current, rosterAgeSaveOff: save ? off : [...off, memberId] };
+      queueSave(next);
+      return next;
+    });
+  }
 
   // The honors step (#618): only when the event has classes at the chosen site
   // (or at no site), so an event without honors goes straight to the form.
   const honorAttendees = useMemo(
-    () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests }),
-    [workspace.roster, draft.selectedMemberIds, draft.guests],
+    () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests, rosterAges: effectiveRosterAges(workspace.roster, draft.selectedMemberIds, ageText, draft.rosterAges) }),
+    [workspace.roster, draft.selectedMemberIds, draft.guests, ageText, draft.rosterAges],
   );
   const honorOfferings = useMemo(
     () => (honorsCatalog ? offeringsAtLocation(honorsCatalog.offerings, locationId) : []),
@@ -152,6 +185,11 @@ export function ClubRegistrationWorkspace({
   }
 
   function leaveWho() {
+    for (const person of selected) {
+      const problem = ageInputProblem(person, ageText, draft.rosterAges);
+      if (problem) return setAgeProblem(problem);
+    }
+    setAgeProblem("");
     void flush();
     setStep(hasHonorsStep ? "honors" : "form");
   }
@@ -246,6 +284,10 @@ export function ClubRegistrationWorkspace({
     });
   }, [queueSave]);
 
+  // React Compiler skips this component with "could not preserve existing memoization" at this memo once the #639
+  // age fields (their raw text state and the ages derived from it) are in the component; moving that state into a
+  // hook or pure helpers did not change it, and the cause is not clear. Skipping only loses compiler optimization.
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const club = useMemo(() => ({
     initialAttendees,
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
@@ -351,13 +393,27 @@ export function ClubRegistrationWorkspace({
                     <small>
                       {clubRosterAttendeeTypeLabels[person.attendeeType]}
                       {person.role ? ` · ${person.role}` : ""}
-                      {person.ageOnEventDate !== null ? <> · Age <span translate="no">{person.ageOnEventDate}</span></> : ""}
+                      {person.ageOnEventDate !== null
+                        ? <> · Age <span translate="no">{person.ageOnEventDate}</span></>
+                        : person.reportedAge !== null ? <> · Age <span translate="no">{person.reportedAge}</span> (reported)</> : ""}
                     </small>
                   </span>
                 </label>
+                {person.ageOnEventDate === null && draft.selectedMemberIds.includes(person.memberId) && (
+                  <ClubRosterAgeField
+                    error={ageProblem !== "" || ageInputValue(person, ageText, draft.rosterAges).trim() !== "" ? ageInputProblem(person, ageText, draft.rosterAges) : null}
+                    value={ageInputValue(person, ageText, draft.rosterAges)}
+                    onAge={(raw) => changeRosterAge(person.memberId, raw)}
+                    onNavigate={() => { void flush(); }}
+                    onSaveToRoster={(save) => changeSaveToRoster(person.memberId, save)}
+                    organizationId={organizationId}
+                    saveToRoster={!draft.rosterAgeSaveOff.includes(person.memberId)}
+                  />
+                )}
               </li>
             ))}
           </ul>
+          {ageProblem && <div className="inline-notice error" role="alert">{ageProblem}</div>}
         </>
       )}
       <section className="club-guest-section" aria-labelledby="club-guests-title">
