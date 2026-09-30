@@ -19,12 +19,14 @@ type Draft = {
   notes: string;
   /** Whether the optional check-off is in use for this meeting (#653). */
   attendanceOn: boolean;
+  /** Set once the check-off is changed, so an untouched edit never rewrites its history. */
+  attendanceTouched: boolean;
   /** Roster member id → present. Unlisted means absent. */
   present: Record<string, boolean>;
 };
 
 const emptyDraft = (meetingDate: string): Draft => ({
-  meetingDate, pathfinderCount: "", tltCount: "", staffCount: "", honors: [], notes: "", attendanceOn: false, present: {},
+  meetingDate, pathfinderCount: "", tltCount: "", staffCount: "", honors: [], notes: "", attendanceOn: false, attendanceTouched: false, present: {},
 });
 
 function toCount(value: string) {
@@ -47,6 +49,7 @@ function draftFromNote(note: ClubMeetingNoteRecord): Draft {
     honors: note.honors,
     notes: note.notes,
     attendanceOn: note.attendance.length > 0,
+    attendanceTouched: false,
     present: Object.fromEntries(note.attendance.map((entry) => [entry.rosterMemberId, entry.present])),
   } as Draft;
 }
@@ -64,6 +67,7 @@ export function ClubMeetingNotes({
   newMeetingDate,
   roster,
   rosterClubYear,
+  attendanceAvailable,
   exportHref,
 }: {
   initialNotes: ClubMeetingNoteRecord[];
@@ -73,10 +77,19 @@ export function ClubMeetingNotes({
   newMeetingDate: string;
   roster: AttendanceRosterEntry[];
   rosterClubYear: string;
-  exportHref: string;
+  /** False without an open roster (a reporter, or an expired unlock): head counts only. */
+  attendanceAvailable: boolean;
+  /** Null when this month's club year can't be exported. */
+  exportHref: string | null;
 }) {
   const router = useRouter();
   const [notes, setNotes] = useState(initialNotes);
+  // Follow the server's list after a refresh (React's "adjust state while rendering" pattern).
+  const [seenNotes, setSeenNotes] = useState(initialNotes);
+  if (seenNotes !== initialNotes) {
+    setSeenNotes(initialNotes);
+    setNotes(initialNotes);
+  }
   const [editingId, setEditingId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Draft>(emptyDraft(newMeetingDate));
@@ -122,6 +135,7 @@ export function ClubMeetingNotes({
       return {
         ...current,
         attendanceOn: true,
+        attendanceTouched: true,
         present: next,
         pathfinderCount: String(counts.pathfinderCount),
         tltCount: String(counts.tltCount),
@@ -136,7 +150,7 @@ export function ClubMeetingNotes({
 
   const hadAttendance = editingId !== null && (notes.find((note) => note.id === editingId)?.attendance.length ?? 0) > 0;
   // The roster shown is for one club year; a meeting dated in another year can't be checked off here.
-  const rosterMatchesDate = roster.length > 0 && isRealDate(draft.meetingDate) && clubYearFor(new Date(`${draft.meetingDate}T12:00:00Z`)) === rosterClubYear;
+  const rosterMatchesDate = attendanceAvailable && roster.length > 0 && isRealDate(draft.meetingDate) && clubYearFor(new Date(`${draft.meetingDate}T12:00:00Z`)) === rosterClubYear;
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -151,9 +165,12 @@ export function ClubMeetingNotes({
       honors: draft.honors.filter((honor) => honor.name.trim() || honor.participants !== null),
       notes: draft.notes,
       // Omitted leaves a meeting's check-off alone; an empty list clears it (#653).
-      ...(draft.attendanceOn && rosterMatchesDate
-        ? { attendance: roster.map((member) => ({ rosterMemberId: member.id, present: draft.present[member.id] === true })) }
-        : !draft.attendanceOn && hadAttendance ? { attendance: [] } : {}),
+      // Only a touched check-off is sent; the server merges it into the marks already there.
+      ...(attendanceAvailable && draft.attendanceTouched
+        ? draft.attendanceOn && rosterMatchesDate
+          ? { attendance: roster.map((member) => ({ rosterMemberId: member.id, present: draft.present[member.id] === true })) }
+          : !draft.attendanceOn && hadAttendance ? { attendance: [] } : {}
+        : {}),
     };
     try {
       const response = await fetch(editingId ? `${base}/${encodeURIComponent(editingId)}` : base, {
@@ -213,9 +230,11 @@ export function ClubMeetingNotes({
             <h2 id="club-notes-heading">Meetings in {monthLabel}</h2>
           </div>
           <span className="club-team-invite-actions">
-            <a className="secondary-button club-event-action" href={exportHref}>
-              <Download aria-hidden="true" size={14} /> Attendance export (CSV)
-            </a>
+            {exportHref && attendanceAvailable && (
+              <a className="secondary-button club-event-action" href={exportHref}>
+                <Download aria-hidden="true" size={14} /> Attendance export (CSV)
+              </a>
+            )}
             {!formOpen && (
               <button className="primary-button" disabled={saving} onClick={startAdd} type="button">
                 <Plus aria-hidden="true" size={16} /> Add meeting note
@@ -277,11 +296,12 @@ export function ClubMeetingNotes({
           <AttendanceSection
             draft={draft}
             onMarkAll={markAll}
-            onSkip={() => setDraft((current) => ({ ...current, attendanceOn: false, present: {} }))}
+            onSkip={() => setDraft((current) => ({ ...current, attendanceOn: false, attendanceTouched: true, present: {} }))}
             onStart={() => setDraft((current) => ({ ...current, attendanceOn: true }))}
             onToggle={(id, value) => setPresent({ ...draft.present, [id]: value })}
             roster={roster}
             rosterMatchesDate={rosterMatchesDate}
+            attendanceAvailable={attendanceAvailable}
           />
 
           <div className="club-report-sub">
@@ -338,6 +358,7 @@ function AttendanceSection({
   draft,
   roster,
   rosterMatchesDate,
+  attendanceAvailable,
   onStart,
   onSkip,
   onMarkAll,
@@ -346,6 +367,7 @@ function AttendanceSection({
   draft: Draft;
   roster: AttendanceRosterEntry[];
   rosterMatchesDate: boolean;
+  attendanceAvailable: boolean;
   onStart: () => void;
   onSkip: () => void;
   onMarkAll: (value: boolean) => void;
@@ -356,7 +378,9 @@ function AttendanceSection({
       <div className="club-report-sub">
         <strong>Attendance (optional)</strong>
         <p className="field-help">
-          {roster.length === 0
+          {!attendanceAvailable
+            ? "The attendance check-off needs roster access. Type the head counts above, or ask your club director."
+            : roster.length === 0
             ? "Add members to this year's roster to check off who came. You can still type the head counts above."
             : "Attendance uses the roster for the club year shown, so this date can't be checked off here."}
         </p>

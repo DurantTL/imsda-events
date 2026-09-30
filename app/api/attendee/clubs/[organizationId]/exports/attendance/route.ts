@@ -4,7 +4,7 @@ import { attendanceExportCsv, attendanceExportFileName, attendanceGroupOf } from
 import { clubMeetingNoteApiError } from "@/modules/club-meeting-notes/api-errors";
 import { isMeetingDate } from "@/modules/club-meeting-notes/domain";
 import { loadAttendanceExport } from "@/modules/club-meeting-notes/repository";
-import { actorAttribution, requireClubCapability } from "@/modules/club-rosters/access";
+import { actorAttribution, requireRosterAccess } from "@/modules/club-rosters/access";
 import { rosterYearView } from "@/modules/club-rosters/domain";
 
 type RouteContext = { params: Promise<{ organizationId: string }> };
@@ -12,13 +12,14 @@ type RouteContext = { params: Promise<{ organizationId: string }> };
 /**
  * Meeting attendance export (#653): CSV with the club name and year, one row
  * per member, one column per meeting that took attendance, then totals and
- * percent attended. Same gate as the monthly report (`submitReports`).
+ * percent attended. Names come from the roster, so the gate is the roster's: any club role with
+ * roster access, MFA and an open unlock (a reporter gets 403).
  * Filters: `year` (club year), `from` and `to` (YYYY-MM-DD). Names only.
  */
 async function getHandler(request: Request, context: RouteContext) {
   try {
     const { organizationId } = await context.params;
-    const access = await requireClubCapability(organizationId, "submitReports");
+    const access = await requireRosterAccess(organizationId);
     const params = new URL(request.url).searchParams;
     const from = params.get("from") || undefined;
     const to = params.get("to") || undefined;

@@ -94,46 +94,75 @@ export async function createClubMeetingNote(organizationId: string, input: Meeti
     metadata: {
       organizationId,
       noteId: note.id,
-      ...(attendance ? { attendanceRecorded: attendance.rows.length } : {}),
+      ...(attendance ? { attendanceRecorded: attendance.total } : {}),
       ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
     },
   });
   return serializeNote(note);
 }
 
+type ExistingMark = { rosterMemberId: string; present: boolean };
 type CheckedAttendance = {
+  /** Replace everything first (a clear, or a meeting moved to another club year). */
+  replace: boolean;
   rows: Array<{ rosterMemberId: string; present: boolean }>;
+  /** Head counts over the marks the meeting will end up with. */
   counts: { pathfinderCount: number; tltCount: number; staffCount: number };
+  /** Marks that will exist after the save, for the audit count. */
+  total: number;
 };
+
+function clubYearOfDate(meetingDate: string) {
+  return clubYearFor(new Date(`${meetingDate}T12:00:00Z`));
+}
 
 /**
  * The check-off a note is saved with (#653), or null when the request leaves
- * attendance alone. Everyone listed must be on this club's roster for the club
- * year of the meeting date, so an id from another club or year never matches.
+ * attendance alone. Everyone listed must be an active, named member of this
+ * club's roster for the club year of the meeting date, so an id from another
+ * club or year, or an erased member, never matches. A list merges into the
+ * marks already on the meeting (ids not listed keep their mark); an empty list
+ * clears them; a meeting moved to another club year starts over.
  */
-async function checkedAttendance(organizationId: string, input: MeetingNoteInput): Promise<CheckedAttendance | null> {
+async function checkedAttendance(
+  organizationId: string,
+  input: MeetingNoteInput,
+  existing: readonly ExistingMark[] = [],
+  movedYear = false,
+): Promise<CheckedAttendance | null> {
   if (input.attendance === undefined) return null;
   const ids = input.attendance.map((entry) => entry.rosterMemberId);
   if (new Set(ids).size !== ids.length) throw new ClubMeetingNoteError("INVALID_ATTENDANCE", "Each person can be checked off once per meeting.");
-  if (ids.length === 0) return { rows: [], counts: { pathfinderCount: 0, tltCount: 0, staffCount: 0 } };
-  const clubYear = clubYearFor(new Date(`${input.meetingDate}T12:00:00Z`));
-  const members = await getPrisma().clubRosterMember.findMany({
-    where: { id: { in: ids }, organizationId, clubYear },
+  if (ids.length === 0) return { replace: true, rows: [], counts: { pathfinderCount: 0, tltCount: 0, staffCount: 0 }, total: 0 };
+  const prisma = getPrisma();
+  const members = await prisma.clubRosterMember.findMany({
+    where: { id: { in: ids }, organizationId, clubYear: clubYearOfDate(input.meetingDate), status: { not: "REMOVED" }, personId: { not: null } },
     select: { id: true, attendeeType: true, classLevel: true },
   });
   if (members.length !== ids.length) {
     throw new ClubMeetingNoteError("INVALID_ATTENDANCE", "Attendance can only list people on this club's roster for the meeting's club year.");
   }
-  const byId = new Map(members.map((member) => [member.id, member]));
+  const kept = movedYear ? [] : existing.filter((mark) => !ids.includes(mark.rosterMemberId));
+  const keptKinds = kept.length === 0 ? [] : await prisma.clubRosterMember.findMany({
+    where: { id: { in: kept.map((mark) => mark.rosterMemberId) }, organizationId },
+    select: { id: true, attendeeType: true, classLevel: true },
+  });
+  const kindById = new Map([...members, ...keptKinds].map((member) => [member.id, member]));
+  const merged = [...kept, ...input.attendance.map((entry) => ({ rosterMemberId: entry.rosterMemberId, present: entry.present }))];
   return {
+    replace: movedYear,
     rows: input.attendance.map((entry) => ({ rosterMemberId: entry.rosterMemberId, present: entry.present })),
-    counts: countsFromAttendance(input.attendance.map((entry) => ({ ...byId.get(entry.rosterMemberId)!, present: entry.present }))),
+    counts: countsFromAttendance(merged.flatMap((mark) => {
+      const kind = kindById.get(mark.rosterMemberId);
+      return kind ? [{ ...kind, present: mark.present }] : [];
+    })),
+    total: merged.length,
   };
 }
 
 /** Typed head counts stay as typed; a blank count is filled from the check-off when there is one. */
 function filledCounts(input: MeetingNoteInput, attendance: CheckedAttendance | null) {
-  const derived = attendance && attendance.rows.length > 0 ? attendance.counts : null;
+  const derived = attendance && attendance.total > 0 ? attendance.counts : null;
   return {
     pathfinderCount: input.pathfinderCount ?? derived?.pathfinderCount ?? null,
     tltCount: input.tltCount ?? derived?.tltCount ?? null,
@@ -197,7 +226,7 @@ export async function loadAttendanceExport(organizationId: string, clubYear: str
   const known = new Set(active.map((member) => member.id));
   const extraIds = [...markedIds].filter((id) => !known.has(id));
   const extra = extraIds.length === 0 ? [] : await prisma.clubRosterMember.findMany({
-    where: { id: { in: extraIds }, organizationId },
+    where: { id: { in: extraIds }, organizationId, status: { not: "REMOVED" } },
     select: { id: true, attendeeType: true, classLevel: true, person: { select: { firstName: true, lastName: true } } },
   });
   const members = [
@@ -221,15 +250,20 @@ export async function loadAttendanceExport(organizationId: string, clubYear: str
 
 async function findOwnNote(organizationId: string, noteId: string) {
   const prisma = getPrisma();
-  const note = await prisma.clubMeetingNote.findUnique({ where: { id: noteId }, select: { id: true, organizationId: true } });
+  const note = await prisma.clubMeetingNote.findUnique({
+    where: { id: noteId },
+    select: { id: true, organizationId: true, meetingDate: true, attendance: { select: { rosterMemberId: true, present: true } } },
+  });
   if (!note || note.organizationId !== organizationId) throw new ClubMeetingNoteError("NOTE_NOT_FOUND", "That meeting note could not be found.");
-  return prisma;
+  return { prisma, note };
 }
 
 export async function updateClubMeetingNote(organizationId: string, noteId: string, input: MeetingNoteInput, actor: ClubMeetingNoteActor) {
-  const prisma = await findOwnNote(organizationId, noteId);
+  const { prisma, note: current } = await findOwnNote(organizationId, noteId);
   const honors = input.honors.filter((honor) => honor.name.trim() || honor.participants !== null);
-  const attendance = await checkedAttendance(organizationId, input);
+  // A meeting moved into another club year can't keep marks for that year's other roster (#653).
+  const movedYear = Boolean(current.meetingDate) && clubYearOfDate(current.meetingDate) !== clubYearOfDate(input.meetingDate);
+  const attendance = await checkedAttendance(organizationId, input, current.attendance ?? [], movedYear);
   const counts = filledCounts(input, attendance);
   const note = await prisma.clubMeetingNote.update({
     where: { id: noteId },
@@ -238,7 +272,19 @@ export async function updateClubMeetingNote(organizationId: string, noteId: stri
       ...counts,
       honors,
       notes: input.notes,
-      ...(attendance ? { attendance: { deleteMany: {}, create: attendance.rows } } : {}),
+      ...(attendance
+        ? {
+            attendance: attendance.replace
+              ? { deleteMany: {}, ...(attendance.rows.length > 0 ? { create: attendance.rows } : {}) }
+              : {
+                  upsert: attendance.rows.map((row) => ({
+                    where: { meetingNoteId_rosterMemberId: { meetingNoteId: noteId, rosterMemberId: row.rosterMemberId } },
+                    create: row,
+                    update: { present: row.present },
+                  })),
+                },
+          }
+        : movedYear ? { attendance: { deleteMany: {} } } : {}),
       ...("accountId" in actor ? { updatedByAccountId: actor.accountId } : { updatedByUserId: actor.userId }),
     },
     select: noteSelect,
@@ -252,7 +298,7 @@ export async function updateClubMeetingNote(organizationId: string, noteId: stri
     metadata: {
       organizationId,
       noteId: note.id,
-      ...(attendance ? { attendanceRecorded: attendance.rows.length } : {}),
+      ...(attendance ? { attendanceRecorded: attendance.total } : {}),
       ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
     },
   });
@@ -260,7 +306,7 @@ export async function updateClubMeetingNote(organizationId: string, noteId: stri
 }
 
 export async function deleteClubMeetingNote(organizationId: string, noteId: string, actor: ClubMeetingNoteActor) {
-  const prisma = await findOwnNote(organizationId, noteId);
+  const { prisma } = await findOwnNote(organizationId, noteId);
   await prisma.clubMeetingNote.delete({ where: { id: noteId } });
   await writeAuditLog({
     ...("userId" in actor ? { actorUserId: actor.userId } : {}),

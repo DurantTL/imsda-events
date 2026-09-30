@@ -33,7 +33,7 @@ const youth = {
 
 function fakeDatabase() {
   let sequence = 0;
-  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], blankedTransferWhere: [] as unknown[], classCompletions: [] as Row[], calls: [] as string[], transferBlanks: [] as unknown[] };
+  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], blankedTransferWhere: [] as unknown[], classCompletions: [] as Row[], attendanceErased: [] as string[], calls: [] as string[], transferBlanks: [] as unknown[] };
   const matches = (row: Row, where: Record<string, unknown> = {}) => Object.entries(where).every(([key, value]) => {
     if (value === undefined) return true;
     if (value && typeof value === "object" && "not" in value) return row[key] !== (value as { not: unknown }).not;
@@ -76,6 +76,9 @@ function fakeDatabase() {
     },
     memberTransferRegistrationMove: {
       updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 0 }; },
+    },
+    clubMeetingAttendance: {
+      deleteMany: async ({ where }: { where: { rosterMemberId: string } }) => { db.attendanceErased.push(where.rosterMemberId); return { count: 1 }; },
     },
     memberClassCompletion: {
       deleteMany: async ({ where }: { where: Row }) => {
@@ -260,6 +263,8 @@ describe("club roster storage", () => {
       expect(member).toMatchObject({ status: "REMOVED", sealedBirthDate: null, personId: null, gender: null, role: "", removedAt: now });
     }
     expect(db.people.map((person) => person.firstName)).toEqual(["Other"]);
+    // Meeting attendance (#653) names the member by roster row, so it goes with them.
+    expect(db.attendanceErased).toEqual([lone, registered]);
     // Contact fields are registration data (claiming, dedupe, matching): a registered person keeps them.
     expect(db.people[0]).toMatchObject({ normalizedEmail: "other@example.test", phone: "555-0103" });
     // A deleted person's transfer records (#489) keep no free text; a kept, registered person's are untouched.
