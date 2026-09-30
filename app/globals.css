@@ -8343,3 +8343,78 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 @media (max-width: 400px) {
   .workspace-header h1 { font-size: 1rem; }
 }
+
+/* Issue #686 - mobile pass 3: report and overview tables as stacked cards on
+   phones. `table.table-cards` is the opt-in; components/table-card-labels.tsx
+   adds data-label to each cell plus ARIA roles (so the real <table> keeps its
+   semantics when display changes), then sets data-table-cards-ready. Until
+   that attribute exists the table keeps its normal horizontally scrolling
+   layout, so a table is never stacked without its labels. Desktop untouched. */
+@media screen and (max-width: 600px) {
+  .report-table-wrap:has(> table.table-cards[data-table-cards-ready]),
+  .table-wrap:has(> table.table-cards[data-table-cards-ready]),
+  .reminder-recipient-table-wrap:has(> table.table-cards[data-table-cards-ready]) { overflow: visible; }
+
+  table.table-cards[data-table-cards-ready],
+  table.table-cards[data-table-cards-ready] > tbody,
+  table.table-cards[data-table-cards-ready] > tbody > tr,
+  table.table-cards[data-table-cards-ready] > tbody > tr > th,
+  table.table-cards[data-table-cards-ready] > tbody > tr > td { display: block; width: 100%; box-sizing: border-box; min-width: 0; }
+
+  /* Visually hidden but still in the accessibility tree: the column headers
+     stay announced, and never clip. */
+  table.table-cards[data-table-cards-ready] > thead {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+    clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  table.table-cards[data-table-cards-ready] > caption { display: block; }
+
+  table.table-cards[data-table-cards-ready] > tbody > tr {
+    margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--line, #d6dee2); border-radius: 12px; background: #fff;
+  }
+  table.table-cards[data-table-cards-ready] > tbody > tr > th,
+  table.table-cards[data-table-cards-ready] > tbody > tr > td { border: 0; padding: 4px 0; text-align: left; }
+
+  /* Row header is the card title: full width, names wrap by phrase, not by word. */
+  table.table-cards[data-table-cards-ready] > tbody > tr > th[scope="row"] {
+    margin-bottom: 4px; padding-bottom: 8px; border-bottom: 1px solid #eaf0f2;
+    font-size: max(var(--type-body-floor, 0px), 0.9rem); overflow-wrap: break-word; word-break: normal;
+  }
+
+  /* "Header: value" lines: the label sits in a fixed left gutter and any mix of
+     text, <small> and inline content flows beside it. */
+  table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label] {
+    position: relative; padding-left: 8.5rem; min-height: 1.5em;
+    font-size: max(var(--type-body-floor, 0px), 0.8rem); overflow-wrap: anywhere; white-space: normal;
+  }
+  table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label]::before {
+    content: attr(data-label); position: absolute; left: 0; top: 4px; width: 7.75rem;
+    color: var(--muted); font-weight: 700; font-size: max(var(--type-floor, 0px), 0.68rem);
+    overflow-wrap: break-word; text-transform: none; letter-spacing: 0;
+  }
+  /* Cells that hold controls, or have a long label: label above, value full width. */
+  table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label]:is(:has(button, .team-account-actions), [data-label-long]) { padding-left: 0; }
+  table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label]:is(:has(button, .team-account-actions), [data-label-long])::before {
+    position: static; display: block; width: auto; margin-bottom: 4px;
+  }
+  table.table-cards[data-table-cards-ready] .team-account-actions { flex-wrap: wrap; }
+  table.table-cards[data-table-cards-ready] > tbody > tr > td:not([data-label]) { display: flex; flex-wrap: wrap; gap: 8px; }
+  table.table-cards[data-table-cards-ready] > tbody > tr > td:empty { display: none; }
+
+  /* Reset fixed desktop column widths and centring. */
+  .report-table.table-cards td:last-child,
+  .seminar-table.table-cards td:not(:first-child),
+  .seminar-table.table-cards th:not(:first-child) { width: 100%; }
+  .seminar-table.table-cards[data-table-cards-ready] td { text-align: left; }
+  .roster-table.table-cards[data-table-cards-ready] td,
+  .roster-table.table-cards[data-table-cards-ready] th { white-space: normal; }
+  .roster-table.table-cards th:first-child { min-width: 0; }
+
+  /* Wide month grids: two short cells per line inside the card. */
+  .club-reports-grid table.table-cards[data-table-cards-ready] > tbody > tr {
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 14px;
+  }
+  .club-reports-grid table.table-cards[data-table-cards-ready] > tbody > tr > th[scope="row"] { grid-column: 1 / -1; }
+  .club-reports-grid table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label] { padding-left: 0; display: flex; justify-content: space-between; gap: 8px; }
+  .club-reports-grid table.table-cards[data-table-cards-ready] > tbody > tr > td[data-label]::before { position: static; width: auto; }
+}

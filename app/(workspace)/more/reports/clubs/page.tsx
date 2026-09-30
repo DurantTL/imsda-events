@@ -69,7 +69,7 @@ export default async function ClubEventReportsPage({
         </div>
         {reports.camping.length === 0 ? <p className="report-empty">No active club registrations yet.</p> : (
           <div className="report-table-wrap">
-            <table className="report-table">
+            <table className="report-table table-cards">
               <caption className="sr-only">Club camping summary</caption>
               <thead>
                 <tr>
@@ -112,7 +112,7 @@ export default async function ClubEventReportsPage({
         </div>
         {reports.dutiesActivities.length === 0 ? <p className="report-empty">No active club registrations yet.</p> : (
           <div className="report-table-wrap">
-            <table className="report-table">
+            <table className="report-table table-cards">
               <caption className="sr-only">Club duties and activities</caption>
               <thead>
                 <tr><th scope="col">Club</th>{showLocation && <th scope="col">Location</th>}<th scope="col">Duty areas</th><th scope="col">Activities</th><th scope="col">Assigned campsite</th><th scope="col">Assigned duty</th><th scope="col">Assigned activity</th></tr>
@@ -144,7 +144,7 @@ export default async function ClubEventReportsPage({
         </div>
         {reports.milestones.length === 0 ? <p className="report-empty">No club has submitted a baptism or Bible read-through name yet.</p> : (
           <div className="report-table-wrap">
-            <table className="report-table">
+            <table className="report-table table-cards">
               <caption className="sr-only">Club spiritual milestones</caption>
               <thead><tr><th scope="col">Club</th>{showLocation && <th scope="col">Location</th>}<th scope="col">Baptism interest</th><th scope="col">Bible read-through</th></tr></thead>
               <tbody>
@@ -171,7 +171,7 @@ export default async function ClubEventReportsPage({
         </div>
         {reports.specialRoles.length === 0 ? <p className="report-empty">No club has flagged medical personnel or a Master Guide candidate yet.</p> : (
           <div className="report-table-wrap">
-            <table className="report-table">
+            <table className="report-table table-cards">
               <caption className="sr-only">Special roles</caption>
               <thead><tr><th scope="col">Role</th><th scope="col">Name</th><th scope="col">Club</th>{showLocation && <th scope="col">Location</th>}</tr></thead>
               <tbody>

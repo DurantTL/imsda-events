@@ -31,7 +31,7 @@ export function AreaClubsOverview({ clubs, clubYear, links }: { clubs: AreaClubS
   if (clubs.length === 0) return <p className="report-empty">No active clubs yet.</p>;
   return (
     <div className="report-table-wrap">
-      <table className="report-table">
+      <table className="report-table table-cards">
         <caption className="sr-only">Club overview for {clubYear}</caption>
         <thead>
           <tr>
@@ -72,7 +72,7 @@ export function AreaMonthlyReportsTable({ clubs, clubYear, links }: { clubs: Are
   const months = clubs[0]!.months.map((cell) => cell.month);
   return (
     <div className="report-table-wrap club-reports-grid">
-      <table className="report-table">
+      <table className="report-table table-cards">
         <caption className="sr-only">Monthly report status and points by club for {clubYear}</caption>
         <thead>
           <tr>
@@ -150,7 +150,7 @@ export function AreaPointsChart({ clubs, clubYear, sort, basePath }: { clubs: Ar
             </ul>
           </figure>
           <div className="report-table-wrap">
-            <table className="report-table">
+            <table className="report-table table-cards">
               <caption className="sr-only">Total points per club for {clubYear}, in chart order</caption>
               <thead>
                 <tr>
@@ -196,7 +196,7 @@ export function AreaClubEvents({ events, clubHref }: { events: AreaClubEvent[]; 
             </div>
           </div>
           <div className="report-table-wrap">
-            <table className="report-table">
+            <table className="report-table table-cards">
               <caption className="sr-only">Club registrations for {event.name}</caption>
               <thead>
                 <tr><th scope="col">Club</th><th scope="col">Status</th><th scope="col">Headcount</th></tr>

@@ -121,7 +121,7 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
           <p className="report-empty">No accounts match.</p>
         ) : (
           <div className="report-table-wrap">
-            <table className="report-table">
+            <table className="report-table table-cards">
               <thead><tr><th>Account</th><th>Club roles</th><th>Two-step</th><th>Last sign-in</th><th><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
                 {accounts.map((account) => (

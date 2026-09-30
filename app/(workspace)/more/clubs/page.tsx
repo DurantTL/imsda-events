@@ -50,7 +50,7 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
           <p className="quiet-copy"><UsersRound aria-hidden="true" size={15} /> No clubs have registered yet.</p>
         ) : (
           <div className="report-table-wrap">
-            <table className="report-table">
+            <table className="report-table table-cards">
               <caption className="sr-only">Registered clubs</caption>
               <thead><tr><th scope="col">Club</th><th scope="col">Going</th>{backgroundFlags && <th scope="col">Background checks</th>}<th scope="col">Registration</th><th scope="col"><span className="sr-only">Open</span></th></tr></thead>
               <tbody>

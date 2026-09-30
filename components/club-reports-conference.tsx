@@ -73,7 +73,7 @@ export function ClubReportsConference({
         <div className="panel"><p className="report-empty">No active clubs yet.</p></div>
       ) : (
         <div className="report-table-wrap club-reports-grid">
-          <table className="report-table">
+          <table className="report-table table-cards">
             <caption className="sr-only">Monthly report points by club for {clubYear}</caption>
             <thead>
               <tr>

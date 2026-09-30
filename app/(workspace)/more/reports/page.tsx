@@ -70,7 +70,7 @@ function CountFields({
             <span>{displayCount(field.total)} total</span>
           </div>
           <div className="report-table-wrap">
-            <table className="report-table">
+            <table className="report-table table-cards">
               <caption className="sr-only">{field.label} counts</caption>
               <thead><tr><th scope="col">Choice or quantity</th><th scope="col">Count</th></tr></thead>
               <tbody>
@@ -102,7 +102,7 @@ function SeminarFields({ fields }: { fields: OperationalSeminarField[] }) {
             <span>{displayCount(field.totalInterest)} choices</span>
           </div>
           <div className="report-table-wrap">
-            <table className="report-table seminar-table">
+            <table className="report-table seminar-table table-cards">
               <caption className="sr-only">{field.label} ranked interest</caption>
               <thead>
                 <tr><th scope="col">Option</th><th scope="col">1st</th><th scope="col">2nd</th><th scope="col">Total interest</th></tr>
@@ -269,7 +269,7 @@ export default async function OperationalReportsPage({
                     <span>{group.attendees.length} {group.attendees.length === 1 ? "person" : "people"}</span>
                   </header>
                   <div className="report-table-wrap">
-                    <table className="report-table roster-table">
+                    <table className="report-table roster-table table-cards">
                       <caption className="sr-only">Attendees in {group.label}</caption>
                       <thead><tr><th scope="col">Attendee</th><th scope="col">Type</th><th scope="col">Registration</th><th scope="col">Account holder</th></tr></thead>
                       <tbody>
@@ -307,7 +307,7 @@ export default async function OperationalReportsPage({
                     <span>{group.attendees.length} {group.attendees.length === 1 ? "person" : "people"}</span>
                   </header>
                   <div className="report-table-wrap">
-                    <table className="report-table roster-table">
+                    <table className="report-table roster-table table-cards">
                       <caption className="sr-only">{group.label} attendees</caption>
                       <thead><tr><th scope="col">Attendee</th><th scope="col">Group</th><th scope="col">Registration</th><th scope="col">Account holder</th></tr></thead>
                       <tbody>
@@ -398,7 +398,7 @@ export default async function OperationalReportsPage({
           {report.volunteerRoster.length === 0
             ? <EmptyReport>No one has said yes to a volunteer question yet.</EmptyReport>
             : <div className="report-table-wrap">
-                <table className="report-table roster-table">
+                <table className="report-table roster-table table-cards">
                   <caption className="sr-only">Volunteers</caption>
                   <thead><tr><th scope="col">Volunteer</th><th scope="col">Answer</th><th scope="col">Phone</th><th scope="col">Group</th><th scope="col">Registration</th></tr></thead>
                   <tbody>
