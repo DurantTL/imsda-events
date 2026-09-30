@@ -6,8 +6,9 @@ import { resolveLocationFilter } from "@/modules/event-locations/filter";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listRegistrations } from "@/modules/registrations/repository";
 import { backgroundFlaggedAttendeeIds } from "@/modules/background-checks/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "People" };
+export const metadata: Metadata = { title: staffPageTitles.registrations };
 
 export default async function PeoplePage({ searchParams }: { searchParams: Promise<{ event?: string; filter?: string; registration?: string; location?: string }> }) {
   const { event: requested, filter, registration, location: requestedLocation } = await searchParams;

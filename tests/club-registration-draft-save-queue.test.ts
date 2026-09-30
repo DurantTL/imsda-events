@@ -86,6 +86,37 @@ describe("draft save queue (#643)", () => {
     expect(sent).toEqual(["old", "new"]);
   });
 
+  it("rapid edits never regress the saved draft, even with a server that refuses stale revisions (#659)", async () => {
+    // A server with slow, varying latency that refuses a save based on an old revision.
+    const server = { revision: 0, value: "" };
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let known = 0;
+    const queue = createDraftSaveQueue<string>({
+      send: async (draft) => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        const base = known;
+        await new Promise((r) => setTimeout(r, draft === "a" ? 20 : 1));
+        inFlight -= 1;
+        if (base !== server.revision) return false;
+        server.revision += 1;
+        server.value = draft;
+        known = server.revision;
+        return true;
+      },
+    });
+    queue.set("a");
+    const first = queue.flush(false);
+    queue.set("b");
+    queue.set("c");
+    const rest = queue.flush();
+    expect(await Promise.all([first, rest])).toEqual([true, true]);
+    expect(maxInFlight).toBe(1);
+    expect(server.value).toBe("c");
+    expect(queue.hasPending()).toBe(false);
+  });
+
   it("a timer-style flush does not send edits queued during the save", async () => {
     const gate = deferred();
     const sent: string[] = [];

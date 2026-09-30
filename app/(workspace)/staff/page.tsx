@@ -3,8 +3,9 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { StaffWorkspace } from "@/components/staff-workspace";
 import { listStaffMemberships } from "@/modules/access/membership-repository";
 import { resolveEventContext } from "@/modules/events/selection";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Staff access" };
+export const metadata: Metadata = { title: staffPageTitles.team };
 
 export default async function StaffPage({ searchParams }: { searchParams: Promise<{ event?: string }> }) {
   const { event: requested } = await searchParams;

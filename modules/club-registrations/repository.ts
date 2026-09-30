@@ -95,6 +95,7 @@ export class ClubRegistrationError extends Error {
       | "FORM_UNAVAILABLE"
       | "MEMBER_NOT_ON_ROSTER"
       | "DRAFT_TOO_LARGE"
+      | "DRAFT_CONFLICT"
       | "GUEST_INVALID"
       | "REGISTRATION_NOT_FOUND"
       | "REGISTRATION_CLOSED"
@@ -776,6 +777,9 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         honorSelections: recordFromJson(draft.honorSelections) as Record<string, string[]>,
         rosterAges: rosterAgesFromJson(draft.rosterAges),
         rosterAgeSaveOff: rosterAgeSaveOffFromJson(draft.rosterAgeSaveOff),
+        // The page revalidates this against the locations above (#659).
+        locationId: draft.locationId,
+        revision: draft.revision,
         updatedAt: draft.updatedAt.toISOString(),
       }
       : null,
@@ -795,6 +799,12 @@ export type ClubRegistrationDraftInput = {
   rosterAges?: Record<string, number>;
   /** Roster members whose typed-in age is not also saved to the roster at submit (#639). */
   rosterAgeSaveOff?: string[];
+  /** The location picked so far (#659). A draft reserves no seats; it is checked again on restore. */
+  locationId?: string | null;
+  /** The revision this save was based on (0 when the page loaded with no draft). An older one is refused (#659). */
+  baseRevision: number;
+  /** Names one logical snapshot; a retry of the same snapshot reuses it, so a save whose response was lost isn't a conflict (#659). */
+  saveId: string;
 };
 
 /** Never an attendee account credited for a staff action (#442): `userId` for a staff "act as" director. */
@@ -847,13 +857,49 @@ export async function saveClubRegistrationDraft(
     attendeeResponses: attendeeResponses as Prisma.InputJsonValue,
     ...("accountId" in actor ? { updatedByAccountId: actor.accountId, updatedByUserId: null } : { updatedByUserId: actor.userId, updatedByAccountId: null }),
   };
-  const draft = await getPrisma().clubRegistrationDraft.upsert({
-    where: { eventId_organizationId: { eventId, organizationId } },
-    create: { eventId, organizationId, ...data },
-    update: data,
-    select: { updatedAt: true },
-  });
-  return { updatedAt: draft.updatedAt.toISOString() };
+  // Only a location of this event is kept; anything else is dropped, not an error.
+  const location = input.locationId
+    ? await getPrisma().eventLocation.findFirst({ where: { id: input.locationId, eventId, isActive: true }, select: { id: true } })
+    : null;
+  const fields = { ...data, locationId: location?.id ?? null, lastSaveId: input.saveId };
+  const where = { eventId_organizationId: { eventId, organizationId } };
+  const select = { updatedAt: true, revision: true, lastSaveId: true } as const;
+  const done = (draft: { updatedAt: Date; revision: number }) => ({ updatedAt: draft.updatedAt.toISOString(), revision: draft.revision });
+  const conflict = new ClubRegistrationError(
+    "DRAFT_CONFLICT",
+    "This draft changed in another tab or window. Reload the page to see the latest version.",
+  );
+  // A save whose response was lost and is now being retried already landed: same save id, one revision on.
+  const alreadySaved = (draft: { revision: number; lastSaveId: string | null }, revision: number) =>
+    draft.lastSaveId === input.saveId && draft.revision === revision;
+  // Optimistic revision (#659): only a save based on the current revision lands,
+  // and the write and the read-back are one statement.
+  try {
+    return done(await getPrisma().clubRegistrationDraft.update({
+      where: { ...where, revision: input.baseRevision },
+      data: { ...fields, revision: { increment: 1 } },
+      select,
+    }));
+  } catch (error) {
+    if ((error as { code?: string } | null)?.code !== "P2025") throw error;
+  }
+  const existing = await getPrisma().clubRegistrationDraft.findUnique({ where, select });
+  if (existing) {
+    if (alreadySaved(existing, input.baseRevision + 1)) return done(existing);
+    throw conflict;
+  }
+  // No draft. Only a page that loaded with none may create one: any other base means the draft
+  // existed and was submitted or deleted, and must not come back (#659).
+  if (input.baseRevision !== 0) throw conflict;
+  try {
+    return done(await getPrisma().clubRegistrationDraft.create({ data: { eventId, organizationId, ...fields, revision: 1 }, select }));
+  } catch (error) {
+    if ((error as { code?: string } | null)?.code !== "P2002") throw error;
+    // Another tab created the first draft at the same moment, or this save landed and its response was lost.
+    const winner = await getPrisma().clubRegistrationDraft.findUnique({ where, select });
+    if (winner && alreadySaved(winner, 1)) return done(winner);
+    throw conflict;
+  }
 }
 
 /**

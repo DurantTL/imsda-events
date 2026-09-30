@@ -2,6 +2,7 @@
 
 /* The asset API returns already-authorized event URLs; next/image cannot optimize these event-scoped responses. */
 /* eslint-disable @next/next/no-img-element */
+import { staffPageTitles } from "@/components/staff-navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
@@ -367,7 +368,7 @@ export function MerchandiseAdminWorkspace({ eventId }: { eventId: string }) {
   return (
     <section className={`page-stack ${styles.workspace}`}>
       <div className="page-intro">
-        <div><p className="eyebrow">Event commerce</p><h2>Merchandise catalog</h2><p>Configure reusable products for this event. Archived products stay in history and cannot be deleted.</p></div>
+        <div><p className="eyebrow">Event commerce</p><h2 className="duplicate-page-title">{staffPageTitles.merchandise}</h2><p>Configure reusable products for this event. Archived products stay in history and cannot be deleted.</p></div>
         <div className={styles.actions}><button className="secondary-button" type="button" onClick={() => void mutate(merchandiseEndpoint(eventId), "PATCH", { isEnabled: !catalog.isEnabled }, catalog.isEnabled ? "Merchandise disabled for this event." : "Merchandise enabled for this event.")} disabled={saving} aria-pressed={catalog.isEnabled}>{catalog.isEnabled ? "Disable catalog" : "Enable catalog"}</button><button className="primary-button" type="button" onClick={() => { setEditing("new"); setError(""); }}><Plus size={16} aria-hidden="true" /> Add product</button></div>
       </div>
       {notice && <div className="inline-notice success" role="status">{notice}</div>}

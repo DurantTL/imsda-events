@@ -74,7 +74,7 @@ export default async function DuplicateFinderPage({
             className="secondary-button"
             href={`/people?event=${encodeURIComponent(event.id)}`}
           >
-            Back to people
+            Back to Registrations
           </Link>
         </div>
       </div>

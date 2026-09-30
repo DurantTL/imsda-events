@@ -5,9 +5,10 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { PrintReportButton } from "@/components/print-report-button";
 import { resolveEventContext } from "@/modules/events/selection";
 import { getRetreatPackets } from "@/modules/reporting/retreat-packets-repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
 export const metadata: Metadata = {
-  title: "Grouped retreat packets",
+  title: staffPageTitles.groupedPackets,
   robots: { index: false, follow: false, nocache: true },
 };
 
@@ -48,7 +49,7 @@ export default async function RetreatPacketsPage({
       <div className="page-intro retreat-packet-intro">
         <div>
           <p className="eyebrow">Event-day preparation</p>
-          <h2>Grouped retreat packets</h2>
+          <h2 className="duplicate-page-title">{staffPageTitles.groupedPackets}</h2>
           <p>Print a cover and one operational packet per church, club, household, or registration group.</p>
         </div>
         <div className="intro-actions">

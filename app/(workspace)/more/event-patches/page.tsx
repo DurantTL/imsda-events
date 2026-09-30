@@ -5,8 +5,9 @@ import { EventPatchesWorkspace } from "@/components/event-patches-workspace";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 import { listEventAwardItems } from "@/modules/earned-awards/event-items";
 import { resolveEventContext } from "@/modules/events/selection";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Event patches" };
+export const metadata: Metadata = { title: staffPageTitles.eventPatches };
 
 /** Links catalog patches and pins to a club event (#532): event configuration, so CONFIGURE_EVENT. */
 export default async function EventPatchesPage({ searchParams }: { searchParams: Promise<{ event?: string }> }) {

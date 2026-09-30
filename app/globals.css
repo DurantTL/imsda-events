@@ -670,6 +670,9 @@ select:focus-visible {
 }
 
 .mobile-event-picker { display: none; }
+/* The workspace header already names the page (#685); a page's own title
+   block must not repeat the same name under it. */
+.duplicate-page-title { display: none; }
 
 .workspace-header h1,
 .page-intro h2,
@@ -682,7 +685,13 @@ select:focus-visible {
   letter-spacing: -0.02em;
 }
 
-.workspace-header h1 { font-size: clamp(1.35rem, 2vw, 1.7rem); }
+.workspace-header h1 { overflow: hidden; font-size: clamp(1.35rem, 2vw, 1.7rem); text-overflow: ellipsis; white-space: nowrap; }
+.workspace-header > div:first-child { min-width: 0; }
+/* Tablet widths share the header with the sidebar: the attendee button keeps
+   its icon and accessible name, and the title keeps room to show in full. */
+@media (max-width: 1100px) {
+  .workspace-header .attendee-preview-switch span { display: none; }
+}
 
 .eyebrow,
 .hero-eyebrow {
@@ -740,6 +749,8 @@ select:focus-visible {
 }
 
 .staff-pill {
+  flex: none;
+  white-space: nowrap;
   border: 1px solid #cddde4;
   border-radius: 999px;
   background: var(--imsda-navy-soft);
@@ -977,7 +988,8 @@ select:focus-visible {
 /* Actions sitting alongside a page heading, beside its count badge. */
 .page-intro-actions {
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   align-items: center;
   gap: 9px;
 }
@@ -1100,11 +1112,11 @@ select:focus-visible {
 .safe-boundary > span { display: inline-flex; align-items: center; gap: 6px; color: var(--green); font-size: max(var(--type-floor, 0px), 0.68rem); font-weight: 700; }
 
 .page-stack { display: grid; gap: 18px; padding-top: 28px; }
-.page-intro { align-items: center; }
+.page-intro { flex-wrap: wrap; align-items: center; }
 .page-intro h2 { font-size: clamp(1.35rem, 2.4vw, 1.8rem); }
 .page-intro p:not(.eyebrow) { max-width: 700px; margin: 6px 0 0; color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.78rem); }
 .count-badge { border: 1px solid #cddde4; background: var(--imsda-navy-soft); color: var(--imsda-navy); padding: 7px 11px; font-size: max(var(--type-floor, 0px), 0.68rem); white-space: nowrap; }
-.intro-actions { display: flex; align-items: center; gap: 9px; }
+.intro-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
 
 .toolbar { display: flex; align-items: center; gap: 10px; padding: 12px; }
 .search-field { display: flex; min-width: 0; flex: 1; align-items: center; gap: 9px; color: #5a6e79; }
@@ -2384,26 +2396,39 @@ select:focus-visible {
   body { padding-bottom: 73px; }
   .sidebar { display: none; }
   .workspace { margin: 0; padding: 0 16px 35px; }
-  .workspace-header { min-height: 72px; }
+  /* Staff shell header (#685): title and controls share one row, and the event
+     picker gets its own full-width row so the whole event name stays visible
+     and the picker is the same width on every staff page. */
+  .workspace-header { min-height: 0; flex-wrap: wrap; gap: 8px 10px; padding: 10px 0 12px; }
+  .workspace-header > div:first-child { flex: 1 1 0; min-width: 0; }
   .workspace-header .eyebrow { display: none; }
   .workspace-header h1 { font-size: 1.18rem; }
+  .header-actions { display: contents; }
+  .header-actions > form { display: contents; }
+  .staff-pill { order: 1; }
+  /* Pages without an event picker (System management) keep the pill on its own
+     row too, so the longer page titles have the whole first row. */
+  .workspace-header:not(:has(.mobile-event-picker))::after { content: ""; flex: 0 0 100%; height: 0; margin-top: -8px; }
+  .attendee-preview-switch { min-width: 44px; min-height: 44px; justify-content: center; }
   .preview-pill { display: none; }
   .mobile-event-picker {
     position: relative;
     display: flex;
+    /* Wide enough that it always drops to its own row; "Staff mode" shares it. */
+    flex: 1 0 calc(100% - 100px);
     min-width: 0;
-    max-width: 42vw;
     align-items: center;
   }
   .mobile-event-picker select {
     width: 100%;
+    min-height: 44px;
     appearance: none;
     overflow: hidden;
     border: 1px solid var(--line);
     border-radius: 10px;
     background: white;
     color: var(--imsda-navy);
-    padding: 8px 28px 8px 10px;
+    padding: 8px 34px 8px 12px;
     font-size: max(var(--type-body-floor, 0px), 0.72rem);
     font-weight: 700;
     text-overflow: ellipsis;
@@ -2411,16 +2436,23 @@ select:focus-visible {
   }
   .mobile-event-picker svg {
     position: absolute;
-    right: 9px;
+    right: 12px;
     pointer-events: none;
   }
+  /* One button height on phones: every primary and secondary button is a 44px target. */
+  .primary-button,
+  .secondary-button,
+  .preview-step-actions .primary-button,
+  .preview-step-actions .secondary-button,
+  .check-in-manual-form .secondary-button { min-height: 44px; }
   .event-hero { margin-top: 16px; }
   .event-hero,
   .checkin-hero { display: block; border-radius: 20px; padding: 22px; }
   .hero-capacity { margin-top: 20px; }
   .record-grid { grid-template-columns: 1fr; }
   .mobile-nav { position: fixed; inset: auto 0 0; z-index: 40; display: flex; height: 67px; border-top: 1px solid var(--line); background: white; padding: 5px 4px max(5px, env(safe-area-inset-bottom)); box-shadow: 0 -8px 24px rgba(0, 59, 92, 0.07); }
-  .mobile-nav a { display: flex; min-width: 0; flex: 1; align-items: center; justify-content: center; flex-direction: column; gap: 2px; color: #566a75; font-size: max(var(--type-floor, 0px), 0.58rem); font-weight: 700; text-decoration: none; }
+  .mobile-nav a { display: flex; min-width: 0; flex: 1 1 0; min-width: max-content; padding: 0 1px; align-items: center; justify-content: center; flex-direction: column; gap: 2px; color: #566a75; font-size: max(var(--type-floor, 0px), 0.58rem); font-weight: 700; text-decoration: none; }
+  .mobile-nav a span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-nav a.active { color: var(--imsda-navy); }
   .mobile-nav a.active svg { color: var(--imsda-purple); }
   .staff-row { grid-template-columns: minmax(180px, 1fr) minmax(200px, 1fr) 80px; }
@@ -6087,6 +6119,15 @@ select:focus-visible {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.badge-print-controls label.badge-print-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 43px;
+}
+.badge-print-controls label.badge-print-checkbox > span {
+  text-transform: none;
+}
 .badge-print-controls select {
   width: 100%;
   min-height: 43px;
@@ -6151,11 +6192,25 @@ select:focus-visible {
   grid-template-rows: repeat(3, 3in);
   padding: 1in 0.25in;
 }
-.badge-sheet-avery-5163 {
-  grid-template-columns: repeat(2, 4in);
-  grid-template-rows: repeat(5, 2in);
-  column-gap: 0.1875in;
-  padding: 0.5in 0.15625in;
+.badge-sheet-avery-presta-94237 {
+  /* Measured from Avery's Presta 94237 template PDF (US letter):
+     0.85in + 3in + 0.8in + 3in + 0.85in = 8.5in across and
+     1in + 4 x 2in + 3 x 0.333333in + 1in = 11in down. Labels have 0.125in
+     corner radii, which the layout does not need. Change the margins and
+     gaps here only. */
+  /* from Avery's Presta 94237 template PDF; confirm with a test print on plain paper */
+  --sheet-pad-top: 1in;
+  /* from Avery's Presta 94237 template PDF; confirm with a test print on plain paper */
+  --sheet-pad-left: 0.85in;
+  /* from Avery's Presta 94237 template PDF; confirm with a test print on plain paper */
+  --col-gap: 0.8in;
+  /* from Avery's Presta 94237 template PDF; confirm with a test print on plain paper */
+  --row-gap: 0.333333in;
+  grid-template-columns: repeat(2, 3in);
+  grid-template-rows: repeat(4, 2in);
+  column-gap: var(--col-gap);
+  row-gap: var(--row-gap);
+  padding: var(--sheet-pad-top) var(--sheet-pad-left);
 }
 .badge-background-picker {
   display: grid;
@@ -6199,6 +6254,8 @@ select:focus-visible {
   justify-items: center;
   box-sizing: border-box;
   width: 100%;
+  min-height: 0;
+  overflow: hidden;
   padding: 0.14in 0.18in;
 }
 /* Rotates the printed name/footer 90° inside the same physical die-cut slot
@@ -6227,7 +6284,7 @@ select:focus-visible {
 }
 .badge-label-card.has-background > *:not(.badge-label-background) { position: relative; z-index: 1; }
 .badge-label-card.has-background header,
-.badge-label-card.has-background > p,
+.badge-label-card.has-background .badge-label-inner > p,
 .badge-label-card.has-background footer,
 .badge-label-card.has-background .badge-label-name strong {
   /* The artwork is the event's, so its colors are unknown here. A white halo
@@ -6239,7 +6296,7 @@ select:focus-visible {
   overflow: hidden;
   width: 100%;
   color: var(--imsda-purple);
-  font-size: 8pt;
+  font-size: calc(8pt * var(--badge-font-scale, 1));
   font-weight: 800;
   letter-spacing: 0.04em;
   text-overflow: ellipsis;
@@ -6254,22 +6311,22 @@ select:focus-visible {
 .badge-label-name strong {
   overflow: hidden;
   color: var(--imsda-navy);
-  font-size: 18pt;
+  font-size: calc(18pt * var(--badge-font-scale, 1));
   line-height: 1.04;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.badge-label-name strong:first-child { font-size: 20pt; }
+.badge-label-name strong:first-child { font-size: calc(20pt * var(--badge-font-scale, 1)); }
 /* The rotated inner box is narrower than the original landscape card, so
    trim type sizes slightly to keep names from ellipsizing as often. */
-.badge-sheet-orientation-portrait .badge-label-name strong { font-size: 15pt; }
-.badge-sheet-orientation-portrait .badge-label-name strong:first-child { font-size: 17pt; }
-.badge-label-card > p {
+.badge-sheet-orientation-portrait .badge-label-name strong { font-size: calc(15pt * var(--badge-font-scale, 1)); }
+.badge-sheet-orientation-portrait .badge-label-name strong:first-child { font-size: calc(17pt * var(--badge-font-scale, 1)); }
+.badge-label-inner > p {
   overflow: hidden;
   width: 100%;
   margin: 0;
   color: #3e515a;
-  font-size: 8pt;
+  font-size: calc(8pt * var(--badge-font-scale, 1));
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -6280,11 +6337,14 @@ select:focus-visible {
   justify-content: center;
   gap: 0.12in;
   margin-top: 0.08in;
+  overflow: hidden;
+  white-space: nowrap;
   color: #5f7078;
-  font-size: 6.5pt;
+  font-size: calc(6.5pt * var(--badge-font-scale, 1));
   font-weight: 700;
   text-transform: capitalize;
 }
+.badge-label-card footer span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .more-back-link { width: fit-content; margin-bottom: -4px; }
 /* Shared BackLink component (#428): a quiet text link to a page's parent. */
@@ -8210,7 +8270,7 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 
   /* 44px tap targets for text buttons and links. Inline-flex keeps a link that
      sits alone in a line or a cell from collapsing back to its text height. */
-  :root :is(.primary-button, .secondary-button, .text-button, .text-link, .auth-back-link, .auth-form-row a,
+  :root :is(.text-button, .text-link, .auth-back-link, .auth-form-row a,
     .field-help a, .report-record-link, .public-manage-inline-link, .public-event-details-link,
     .public-event-help-card a, .calendar-view-toggle a, .calendar-subscribe, .skip-link,
     .more-back-link, .public-registration-secondary-button, .public-registration-account-prompt a) {
@@ -8267,4 +8327,19 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 :root:root:root :is(.searchable-select-control, .money-input, .event-slug-input, .input-with-icon):focus-within {
   outline: 2px solid var(--imsda-purple);
   outline-offset: 2px;
+}
+
+/* Registration form builder on phones (#685): a notice replaces it under 768px. */
+.builder-phone-notice { display: none; }
+@media (max-width: 767px) {
+  .builder-phone-notice { display: grid; justify-items: start; gap: 10px; margin-top: 16px; padding: 20px; border-color: var(--imsda-gold); background: #fff9e8; color: var(--imsda-navy); }
+  .builder-phone-notice h2 { margin: 0; font-size: 1.05rem; }
+  .builder-phone-notice p { margin: 0; line-height: 1.5; }
+  .builder-phone-notice .primary-button { text-decoration: none; }
+  .builder-phone-hidden { display: none; }
+}
+
+/* Narrow phones: keep long page titles in the header on one line (#685). */
+@media (max-width: 400px) {
+  .workspace-header h1 { font-size: 1rem; }
 }

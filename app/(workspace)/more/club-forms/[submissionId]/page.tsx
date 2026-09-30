@@ -7,8 +7,9 @@ import { PrintFormButton } from "@/components/club-forms-actions";
 import { resolveStaffViewer } from "@/modules/club-forms/access";
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { getSubmissionForViewer } from "@/modules/club-forms/submissions";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Club form" };
+export const metadata: Metadata = { title: staffPageTitles.clubForm };
 export const dynamic = "force-dynamic";
 
 /** One submitted club form for conference staff (#610). Opening one with sensitive answers is audited. */

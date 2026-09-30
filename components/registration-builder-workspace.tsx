@@ -1,5 +1,6 @@
 "use client";
 
+import { staffPageTitles } from "@/components/staff-navigation";
 import { PUBLIC_DRAFT_STAFF_HELP } from "@/modules/forms/public-draft";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -893,7 +894,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
   const previewAllowedFieldKeys = new Set(previewStep?.fieldKeys ?? []);
 
   return <section className="page-stack builder-workspace">
-    <div className="page-intro"><div><p className="eyebrow">Public registration setup</p><h2>Registration builder</h2><p>Create, arrange, preview, test, and publish versioned registration forms for {eventName} without code.</p></div><div className="intro-actions"><span className="count-badge"><ShieldCheck size={16} /> Safe draft editing</span>{definition && <button className="secondary-button" type="button" onClick={showPreview}><Eye size={16} /> Preview &amp; test</button>}<button className="primary-button" type="button" onClick={() => setShowTemplates((value) => !value)}><CopyPlus size={16} /> New from template</button></div></div>
+    <div className="page-intro"><div><p className="eyebrow">Public registration setup</p><h2 className="duplicate-page-title">{staffPageTitles.registrationForm}</h2><p>Create, arrange, preview, test, and publish versioned registration forms for {eventName} without code.</p></div><div className="intro-actions"><span className="count-badge"><ShieldCheck size={16} /> Safe draft editing</span>{definition && <button className="secondary-button" type="button" onClick={showPreview}><Eye size={16} /> Preview &amp; test</button>}<button className="primary-button" type="button" onClick={() => setShowTemplates((value) => !value)}><CopyPlus size={16} /> New from template</button></div></div>
 
     {showTemplates && <section className="panel builder-template-panel"><div className="section-heading"><div><p className="eyebrow">Start with a safe foundation</p><h2>Choose a template</h2></div><button className="icon-button" aria-label="Close templates" type="button" onClick={() => setShowTemplates(false)}><X size={18} /></button></div><div className="template-card-grid">{templatesForPicker(templates, eventAudience, eventBillingMode).map((template) => <article className="template-card" key={template.key}><span><Layers3 size={20} /></span><small>{template.audience}</small><h3>{template.name}</h3><p>{template.description}</p><div>{template.sectionCount} sections · {template.fieldCount} fields</div><button className="secondary-button" type="button" disabled={busy !== null} onClick={() => createFromTemplate(template.key)}>Use template <ChevronRight size={15} /></button></article>)}</div></section>}
 

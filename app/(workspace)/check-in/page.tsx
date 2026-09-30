@@ -11,9 +11,10 @@ import { resolveEventContext } from "@/modules/events/selection";
 import { listRegistrations } from "@/modules/registrations/repository";
 import { backgroundFlaggedAttendeeIds } from "@/modules/background-checks/repository";
 import { listClubCheckInInfo } from "@/modules/club-registrations/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
 export const metadata: Metadata = {
-  title: "Check-in",
+  title: staffPageTitles.checkIn,
   robots: {
     index: false,
     follow: false,

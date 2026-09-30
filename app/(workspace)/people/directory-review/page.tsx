@@ -36,7 +36,7 @@ export default async function DirectoryReviewPage({ searchParams }: { searchPara
           </p>
         </div>
         <div className="page-intro-actions">
-          <Link className="secondary-button" href={`/people?event=${encodeURIComponent(event.id)}`}>Back to people</Link>
+          <Link className="secondary-button" href={`/people?event=${encodeURIComponent(event.id)}`}>Back to Registrations</Link>
         </div>
       </div>
       {entries.length === 0 ? (

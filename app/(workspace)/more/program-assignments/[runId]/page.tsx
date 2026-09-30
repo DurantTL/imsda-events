@@ -6,8 +6,9 @@ import { PrintReportButton } from "@/components/print-report-button";
 import { resolveEventContext } from "@/modules/events/selection";
 import { canManageProgramAssignments } from "@/modules/program-assignments/access";
 import { getAppliedAssignmentRoster } from "@/modules/program-assignments/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Assignment roster" };
+export const metadata: Metadata = { title: staffPageTitles.assignmentRoster };
 
 function rankLabel(rank: number | null) {
   if (rank === 1) return "1st choice";

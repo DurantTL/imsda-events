@@ -5,8 +5,9 @@ import { EventSettingsWorkspace } from "@/components/event-settings-workspace";
 import { listActiveAreaCoordinators, listEventLocations } from "@/modules/event-locations/repository";
 import { getEventSettings } from "@/modules/events/repository";
 import { resolveEventContext } from "@/modules/events/selection";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Event settings" };
+export const metadata: Metadata = { title: staffPageTitles.eventSettings };
 
 export default async function EventSettingsPage({
   searchParams,

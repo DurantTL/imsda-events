@@ -31,8 +31,9 @@ import type { SetupWarningKind } from "@/modules/system-admin/dashboard";
 import { getReleaseIdentity } from "@/lib/release";
 import packageInfo from "@/package.json";
 import styles from "./system-admin.module.css";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "System administration" };
+export const metadata: Metadata = { title: staffPageTitles.systemManagement };
 
 /** Where the build plan lives. The command center shows live state, not the plan. */
 const ROADMAP_URL = "https://github.com/DurantTL/imsda-events/issues/98";

@@ -17,9 +17,10 @@ import {
 } from "@/modules/honors/roster-domain";
 import { getHonorRosterData } from "@/modules/honors/roster-repository";
 import { backgroundFlaggedAttendeeIds } from "@/modules/background-checks/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
 export const metadata: Metadata = {
-  title: "Honors Weekend rosters",
+  title: staffPageTitles.honorsRosters,
   robots: { index: false, follow: false, nocache: true },
 };
 

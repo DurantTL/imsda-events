@@ -8,7 +8,7 @@ import {
 export const badgeTemplateIds = [
   "avery-5395",
   "avery-5392",
-  "avery-5163",
+  "avery-presta-94237",
 ] as const;
 
 export type BadgeTemplateId = typeof badgeTemplateIds[number];
@@ -44,13 +44,13 @@ export const badgeTemplates: Record<BadgeTemplateId, {
     slotWidthIn: 4,
     slotHeightIn: 3,
   },
-  "avery-5163": {
-    id: "avery-5163",
-    product: "Avery 5163",
-    label: "Adhesive labels",
-    dimensions: "2 × 4 inches",
-    perSheet: 10,
-    slotWidthIn: 4,
+  "avery-presta-94237": {
+    id: "avery-presta-94237",
+    product: "Avery Presta 94237",
+    label: "Rectangle labels",
+    dimensions: "2 × 3 inches",
+    perSheet: 8,
+    slotWidthIn: 3,
     slotHeightIn: 2,
   },
 };
@@ -72,7 +72,28 @@ export type BadgeLabel = {
   shirtSizeConfirmed: boolean;
 };
 
+export const badgeTextSizes = [80, 90, 100, 115, 130] as const;
+export type BadgeTextSize = typeof badgeTextSizes[number];
+
+/** Text size percentage for the whole layout; unknown values print at 100. */
+export function normalizeBadgeTextSize(value: string | undefined): BadgeTextSize {
+  const size = Number(value);
+  return badgeTextSizes.includes(size as BadgeTextSize)
+    ? size as BadgeTextSize
+    : 100;
+}
+
+/** The event title prints unless the query explicitly sends `title=0`. */
+export function normalizeBadgeShowTitle(value: string | string[] | undefined) {
+  // The form sends a hidden title=0 followed by the checkbox's title=1, so an
+  // unchecked box leaves only "0" and a checked one ends with "1".
+  const last = Array.isArray(value) ? value[value.length - 1] : value;
+  return last !== "0";
+}
+
 export function normalizeBadgeTemplate(value: string | undefined) {
+  // Avery 5163 was retired in favor of Presta 94237; keep old links working.
+  if (value === "avery-5163") return "avery-presta-94237";
   return badgeTemplateIds.includes(value as BadgeTemplateId)
     ? value as BadgeTemplateId
     : "avery-5395";

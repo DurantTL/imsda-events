@@ -7,8 +7,9 @@ import { resolveStaffViewer } from "@/modules/club-forms/access";
 import { listSubmissionsForViewer } from "@/modules/club-forms/submissions";
 import { listClubFormTemplateNames } from "@/modules/club-forms/templates";
 import { listClubsForArea } from "@/modules/organizations/area-coordinators";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Club forms" };
+export const metadata: Metadata = { title: staffPageTitles.clubForms };
 export const dynamic = "force-dynamic";
 
 function formatDate(value: string | null) {
@@ -47,7 +48,7 @@ export default async function StaffClubFormsPage({
       <div className="page-intro">
         <div>
           <p className="eyebrow">Conference staff</p>
-          <h2>Club forms</h2>
+          <h2 className="duplicate-page-title">{staffPageTitles.clubForms}</h2>
           <p>
             Submitted forms by club. You can read health, conduct, physician and emergency-contact answers; each time
             you open a form that has them, it is recorded.{" "}

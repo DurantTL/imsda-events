@@ -3,8 +3,9 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { TagConfigurationWorkspace } from "@/components/tag-configuration-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listTags } from "@/modules/tags/repository";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Tags" };
+export const metadata: Metadata = { title: staffPageTitles.tags };
 
 export default async function TagConfigurationPage({ searchParams }: { searchParams: Promise<{ event?: string }> }) {
   const { event: requested } = await searchParams;

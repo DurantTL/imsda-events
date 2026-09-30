@@ -745,3 +745,12 @@ export async function getEventLifecycle(eventId: string, now = new Date()) {
     waiting,
   };
 }
+
+/** Just the slug, for callers that only need a file name. Null when the event does not exist. */
+export async function findEventSlug(eventId: string) {
+  const event = await getPrisma().event.findUnique({
+    where: { id: eventId },
+    select: { slug: true },
+  });
+  return event?.slug ?? null;
+}

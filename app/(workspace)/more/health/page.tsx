@@ -25,8 +25,9 @@ import {
 } from "@/modules/operations/operational-health";
 import { getOperationalHealth } from "@/modules/operations/repository";
 import styles from "./operational-health.module.css";
+import { staffPageTitles } from "@/components/staff-navigation";
 
-export const metadata: Metadata = { title: "Operational health" };
+export const metadata: Metadata = { title: staffPageTitles.operationalHealth };
 
 const visibleRowLimit = 20;
 
@@ -155,7 +156,7 @@ export default async function OperationalHealthPage({
       <div className="page-intro">
         <div>
           <p className="eyebrow">Exceptions, not another inbox</p>
-          <h2>Operational health</h2>
+          <h2 className="duplicate-page-title">{staffPageTitles.operationalHealth}</h2>
           <p>See what may need attention for {event.name}, then go straight to the workspace that can resolve it. This page never changes event data.</p>
         </div>
         <div className={styles.introActions}>
