@@ -47,6 +47,7 @@ import {
 } from "@/modules/honors/enrollment-repository";
 import { consumesClassSeat } from "@/modules/honors/enrollment-domain";
 import { picksByAttendeeId } from "@/modules/honors/registration-picks";
+import { toPublicSeatView } from "@/modules/honors/class-picker-view";
 import {
   amendRegistration,
   currentRegistrationAnswers,
@@ -185,7 +186,10 @@ export async function getGroupRegistrationExperience(eventSlug: string, now = ne
     problem,
     experience: experience ? { ...experience, form: { ...experience.form, definition } } : null,
     locations: locations.map((location) => publicLocation(clubLocationView(event, location, seats.get(location.id) ?? 0, now))),
-    honorsCatalog: honorsCatalog && honorsCatalog.offerings.length > 0 ? honorsCatalog : null,
+    // Public and unauthenticated: classes carry only the seats left, never capacity or seats taken (#650 review).
+    honorsCatalog: honorsCatalog && honorsCatalog.offerings.length > 0
+      ? { ...honorsCatalog, offerings: honorsCatalog.offerings.map(toPublicSeatView) }
+      : null,
     billingNotice: GROUP_BILLING_NOTICE,
   };
 }
@@ -519,7 +523,7 @@ export async function amendGroupRegistration(token: string, input: GroupRegistra
     }
     amendmentAttendees.push({ attendeeId: current?.id ?? null, clientId, responses });
     serverOptions.set(clientId, {
-      ...(current ? { rosterName: { firstName: name.firstName, lastName: name.lastName } } : {}),
+      ...(current ? { rosterName: { firstName: name.firstName, lastName: name.lastName }, syncPersonName: true } : {}),
       profileMetadata: { ageOnEventDate: age, temporaryAttendeeType: groupSeatType(age), groupAttendeeId: clientId },
     });
   }
@@ -573,6 +577,49 @@ export async function amendGroupRegistration(token: string, input: GroupRegistra
   }
 }
 
+/**
+ * The group options for a staff member's amendment of a group registration
+ * (#650), so staff edits run under the same rules as the contact's: the
+ * club/church-free form, each person's age and seat type read from the
+ * answers, the group attendee ids, and the class picks re-checked in the
+ * same transaction. Null when the registration is not a group's, so the
+ * ordinary staff amendment runs unchanged.
+ */
+export async function groupStaffAmendmentOptions(
+  eventId: string,
+  registrationId: string,
+  input: Pick<RegistrationAmendmentInput, "attendees">,
+): Promise<AmendmentServerOptions | null> {
+  const group = await getPrisma().groupEventRegistration.findUnique({
+    where: { registrationId },
+    select: { registration: { select: { eventId: true, attendees: { select: { id: true, profileSnapshot: true } } } } },
+  });
+  if (!group || group.registration.eventId !== eventId) return null;
+  const form = await publishedClubForm(eventId);
+  const ageKey = form ? attendeeAgeKey(groupFormDefinition(form.definition)) : null;
+  const currentById = new Map(group.registration.attendees.map((attendee) => [attendee.id, attendee]));
+  const attendees = new Map<string, AmendmentAttendeeServerOptions>();
+  for (const [index, attendee] of input.attendees.entries()) {
+    const current = attendee.attendeeId ? currentById.get(attendee.attendeeId) : undefined;
+    const groupAttendeeId = current
+      ? attendeeGroupId(current)
+      : isValidGroupAttendeeClientId(attendee.clientId) ? attendee.clientId : `staff-added-${index + 1}`;
+    // No readable age: the amendment's own validation reports it; nothing is guessed here.
+    const age = ageKey ? parseGroupAge(attendee.responses[ageKey]) : null;
+    attendees.set(attendee.clientId, {
+      profileMetadata: {
+        groupAttendeeId,
+        ...(age === null ? {} : { ageOnEventDate: age, temporaryAttendeeType: groupSeatType(age) }),
+      },
+    });
+  }
+  return {
+    attendees,
+    transformDefinition: groupFormDefinition,
+    inTransaction: (tx) => assertClassPicksStillValid(tx, registrationId),
+  };
+}
+
 /** What the contact sees after an edit: enough to confirm it saved, never the staff view of the registration. */
 function groupEditResult(response: unknown) {
   const record = recordFromJson(response);
@@ -599,6 +646,10 @@ function groupEditResult(response: unknown) {
 export async function setGroupClassesByToken(token: string, selections: Record<string, string[]>, now = new Date()) {
   const loaded = await loadGroupByToken(token, now);
   if (!loaded) throw new GroupRegistrationError("REGISTRATION_NOT_FOUND", "This registration link is no longer valid.");
+  // The location's own close applies to classes too, as it does to the people (#650 review).
+  const event: ClubEvent = await requireClubEvent(loaded.registration.eventId);
+  const window = clubEditWindow(event, loaded.registration.location, now);
+  if (!window.open) throw new GroupRegistrationError("REGISTRATION_CLOSED", window.message);
   return setGroupClassSelections(
     loaded.registration.id,
     loaded.registration.eventId,

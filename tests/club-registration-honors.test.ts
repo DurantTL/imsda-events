@@ -12,7 +12,7 @@ import {
   getRegistrationHonorsCatalog,
   saveRegistrationHonorPicks,
 } from "@/modules/honors/enrollment-repository";
-import { seatsNote, unavailableReason } from "@/modules/honors/class-picker-view";
+import { seatsNote, toPublicSeatView, unavailableReason } from "@/modules/honors/class-picker-view";
 import {
   firstPickProblem,
   honorsNoteKey,
@@ -245,5 +245,23 @@ describe("saving the honors picked while registering (#618)", () => {
       { "member:m1": ["a"], "guest:g1": ["b"], "member:zzz": ["c"], "member:m2": [] },
       [{ id: "att-1", clubRosterMemberId: "m1" }, { id: "att-2", clubGuestId: "g1" }, { id: "att-3", clubRosterMemberId: "m2" }],
     )).toEqual({ mapped: { "att-1": ["a"], "att-2": ["b"] }, unknown: ["member:zzz"] });
+  });
+});
+
+describe("public group class view (#650)", () => {
+  const full = { capacity: 10, seatsTaken: 4, clubSeatsTaken: 2, perClubLimit: 3, minimumAge: null, isActive: true };
+  const youth = { attendeeType: "YOUTH", consumesSeat: true, ageOnEventDate: 12 };
+
+  it("keeps only the seats left: no capacity, seats taken, or per-club count", () => {
+    const view = toPublicSeatView(full);
+    expect(Object.keys(view).sort()).toEqual(["isActive", "minimumAge", "perClubLimit", "seatsLeft"]);
+    expect(view.seatsLeft).toBe(6);
+    expect(toPublicSeatView({ ...full, seatsTaken: 12 }).seatsLeft).toBe(0);
+  });
+
+  it("words and gates the picker from the seats left alone", () => {
+    expect(seatsNote(toPublicSeatView(full), false, youth, "group")).toBe("6 seats left, 3 left for your group");
+    expect(unavailableReason(toPublicSeatView({ ...full, seatsTaken: 10 }), false, youth)).toBe("full");
+    expect(unavailableReason(toPublicSeatView(full), false, youth)).toBeNull();
   });
 });

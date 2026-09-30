@@ -71,6 +71,9 @@ export function matchesFinanceFilter(registration: FinanceViewRegistration, filt
 export const churchBillingFinalNote =
   "Final billing follows event reconciliation; the church is invoiced after the event.";
 
+export const groupBillingFinalNote =
+  "Final billing follows event reconciliation; the group contact is invoiced after the event.";
+
 export type FinanceDetailFact = { label: string; value: "total" | "received" | "balance" | "payments" };
 
 /**

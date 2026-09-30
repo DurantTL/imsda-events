@@ -250,7 +250,8 @@ export function churchAmountsOwedCsvRows(
       row.isBilled ? "Yes" : "No",
       row.attendeeCount,
       money(row.amountOwedCents),
-      row.isBilled ? money(subtotalByChurch.get(row.churchId ?? "none") ?? 0) : "",
+      // A group is billed on its own, so its cell is its own amount, never a sum across groups.
+      row.isBilled ? money(row.kind === "GROUP" ? row.amountOwedCents : subtotalByChurch.get(row.churchId ?? "none") ?? 0) : "",
       row.isBilled
         ? row.kind === "GROUP" ? "Billed to the group's contact after the event, not paid online" : "Billed to the church after the event, not paid online"
         : notBilledLabel(row.status),

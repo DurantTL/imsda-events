@@ -11,7 +11,7 @@ import {
   MAX_GROUP_ATTENDEES,
   parseGroupAge,
 } from "@/modules/group-registrations/domain";
-import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { getFormTemplate, registrationFormDefinitionSchema } from "@/modules/forms/definition";
 
 // Synthetic forms only.
 const field = (
@@ -102,6 +102,23 @@ describe("group form (#650)", () => {
     const group = groupFormDefinition(clubForm());
     expect(group.sections.flatMap((section) => section.fields).find((entry) => entry.key === "director_name")?.label).toBe("Contact name");
     expect(group.sections.find((section) => section.id === "s_people")?.fields).toHaveLength(3);
+  });
+
+  it("shows a group no club, church, Pathfinder or director wording, and the billing notice as the confirmation (Honors Weekend template)", () => {
+    const template = getFormTemplate("honors_weekend");
+    expect(template).toBeTruthy();
+    const group = groupFormDefinition(registrationFormDefinitionSchema.parse(template!.definition));
+    expect(group.description).toBe("");
+    expect(group.confirmationMessage).toContain(GROUP_BILLING_NOTICE);
+    expect(group.sections[0]).toMatchObject({ title: "Contact", description: "Enter the contact person's information." });
+    expect(group.attendeeRoster).toMatchObject({ attendeeLabel: "Person", addButtonLabel: "Add another person" });
+    const shown = JSON.stringify({
+      description: group.description,
+      confirmationMessage: group.confirmationMessage,
+      roster: group.attendeeRoster,
+      sections: group.sections.map((section) => ({ title: section.title, description: section.description, fields: section.fields.map((entry) => ({ label: entry.label, helpText: entry.helpText })) })),
+    });
+    expect(shown).not.toMatch(/club|church|pathfinder|director|invoiced/i);
   });
 
   it("removes a section left with no questions, and never changes the source form", () => {

@@ -119,6 +119,14 @@ describe("staff finance view shows group registrations with their billing contac
     expect(clubOnly[0]).not.toContain("Billing contact");
   });
 
+  it("gives each group row its own estimated total, not the sum across groups", async () => {
+    mockFinance([groupLink("GRP-1", "SUBMITTED", "75", 3), groupLink("GRP-3", "SUBMITTED", "20", 1)]);
+    const table = churchAmountsOwedCsvRows(await listChurchAmountsOwed("event-1"));
+    const totalColumn = table[0]!.indexOf("Church or group estimated total");
+    expect(table.find((row) => row.includes("GRP-1"))![totalColumn]).toBe("75.00");
+    expect(table.find((row) => row.includes("GRP-3"))![totalColumn]).toBe("20.00");
+  });
+
   it("reads groups only for a church-billed club event", async () => {
     const groupFind = vi.fn().mockResolvedValue([]);
     dependencies.getPrisma.mockReturnValue({

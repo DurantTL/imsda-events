@@ -115,6 +115,14 @@ export type AmendmentAttendeeServerOptions = {
    * is unchanged.
    */
   rosterName?: { firstName: string; lastName: string };
+  /**
+   * A renamed kept attendee keeps their Person row in step with the new name
+   * (#650 groups). If the Person belongs only to this attendee it is renamed
+   * in place; otherwise the attendee is pointed at a new Person with the new
+   * name. A Person that anything else uses is never changed and identities
+   * are never merged. Clubs leave this off: their roster owns the Person.
+   */
+  syncPersonName?: boolean;
 };
 
 export type AmendmentServerOptions = {
@@ -668,6 +676,79 @@ async function resolveNewAttendeePerson(
   });
   usedPersonIds.add(created.id);
   return created;
+}
+
+/**
+ * Whether a Person is used by this one registration attendee and nothing else
+ * (#650): not a contact or billing person, not on another registration, not
+ * linked to an account, household, roster, background check, transfer, honor
+ * record, or anything else that holds a Person id. Anything that might hold the
+ * person makes the answer no, so a shared identity is never edited.
+ */
+async function personIsOnlyThisAttendee(tx: Prisma.TransactionClient, personId: string, attendeeId: string) {
+  const person = await tx.person.findUnique({
+    where: { id: personId },
+    select: {
+      _count: {
+        select: {
+          householdMembers: true,
+          heldRegistrations: true,
+          groupBillingRegistrations: true,
+          groupContactOperations: true,
+          registrationEvents: true,
+          externalIdentities: true,
+          notes: true,
+          attendeeAccountLinks: true,
+          userLinks: true,
+          matchCandidatesAsA: true,
+          matchCandidatesAsB: true,
+          clubRosterMemberships: true,
+          memberHonorEntries: true,
+          memberTransfers: true,
+          clubOrderNeeds: true,
+          memberClassCompletions: true,
+        },
+      },
+      backgroundCheckMatch: { select: { id: true } },
+      driverVerification: { select: { id: true } },
+      pendingMemberTransfer: { select: { id: true } },
+    },
+  });
+  if (!person) return false;
+  const { registrationEvents, ...others } = person._count;
+  if (Object.values(others).some((count) => count > 0)) return false;
+  if (person.backgroundCheckMatch || person.driverVerification || person.pendingMemberTransfer) return false;
+  // The retired pre-#527 background-check table is hidden from the client.
+  const [legacy] = await tx.$queryRaw<Array<{ count: bigint }>>`
+    SELECT count(*)::bigint AS count FROM "BackgroundCheck_pre527" WHERE "personId" = ${personId}
+  `;
+  if (legacy && Number(legacy.count) > 0) return false;
+  if (registrationEvents !== 1) return false;
+  const holder = await tx.registrationAttendee.findFirst({ where: { personId }, select: { id: true } });
+  return holder?.id === attendeeId;
+}
+
+/**
+ * Keeps an attendee's Person row in step with a corrected name (#650): renamed
+ * in place when only this attendee uses it, else a new Person with the new name
+ * that the attendee is pointed at. Returns which happened, for audit counts.
+ */
+async function syncAttendeePersonName(
+  tx: Prisma.TransactionClient,
+  current: { id: string; personId: string; person: { firstName: string; lastName: string } },
+  name: { firstName: string; lastName: string },
+): Promise<{ personId: string; outcome: "UNCHANGED" | "UPDATED" | "REPLACED" }> {
+  const firstName = name.firstName.trim();
+  const lastName = name.lastName.trim();
+  if (current.person.firstName === firstName && current.person.lastName === lastName) {
+    return { personId: current.personId, outcome: "UNCHANGED" };
+  }
+  if (await personIsOnlyThisAttendee(tx, current.personId, current.id)) {
+    await tx.person.update({ where: { id: current.personId }, data: { firstName, lastName } });
+    return { personId: current.personId, outcome: "UPDATED" };
+  }
+  const created = await tx.person.create({ data: { firstName, lastName } });
+  return { personId: created.id, outcome: "REPLACED" };
 }
 
 function paidCents(registration: AmendmentRegistration) {
@@ -1367,6 +1448,8 @@ export async function amendRegistration(
           attendeeId: string;
           responses: Record<string, unknown>;
         }> = [];
+        // Counts only, for the audit: people whose Person row took a corrected name (#650).
+        const personNameSync = { updated: 0, replaced: 0 };
 
         await tx.registrationCapacityReservation.updateMany({
           where: { registrationId, releasedAt: null },
@@ -1402,10 +1485,16 @@ export async function amendRegistration(
                 "One of the attendees changed before the amendment committed.",
               );
             }
+            const personSync = attendeeOptions?.syncPersonName
+              ? await syncAttendeePersonName(tx, current, identity)
+              : null;
+            if (personSync?.outcome === "UPDATED") personNameSync.updated += 1;
+            if (personSync?.outcome === "REPLACED") personNameSync.replaced += 1;
             await tx.registrationAttendee.update({
               where: { id: current.id },
               data: {
                 position,
+                ...(personSync?.outcome === "REPLACED" ? { personId: personSync.personId } : {}),
                 ...resolveAmendmentAttendeeType(
                   prepared.definition,
                   { ...prepared.prepared.registrationResponses, ...attendee.responses },
@@ -1690,6 +1779,9 @@ export async function amendRegistration(
               // How many kept people took a corrected club roster name (a
               // count only; names stay out of audit metadata).
               rosterNameUpdatedCount: prepared.rosterRenamedCount,
+              // Counts only: Person rows renamed in place, or replaced because something else used them (#650).
+              personRenamedCount: personNameSync.updated,
+              personReplacedCount: personNameSync.replaced,
               // Registration answers the server set (the locked club, when
               // renamed in the directory since), not the actor's edits (#482).
               serverOwnedChangedFields: prepared.serverOwnedChangedKeys,

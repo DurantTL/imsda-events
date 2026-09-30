@@ -11,6 +11,7 @@ import {
   adjustmentWording,
   attendeeBalanceCents,
   churchBillingFinalNote,
+  groupBillingFinalNote,
   financeDetailFacts,
   financeFilters,
   matchesFinanceFilter,
@@ -233,7 +234,7 @@ export function FinanceWorkspace({
                   <div className="inline-notice">This registration is billed to the church after the event, not paid online. The estimated church amount is owed by the church, not an attendee balance. {churchBillingFinalNote}</div>
                 )}
                 {selected.isDeferredOrganizationBilling && selected.isGroup && (
-                  <div className="inline-notice">This group registration is billed to its contact, {selected.accountHolder.firstName} {selected.accountHolder.lastName}{selected.accountHolder.email ? ` (${selected.accountHolder.email})` : ""}, after the event, not paid online. It is not billed to any club or church. The estimated amount is not an attendee balance. {churchBillingFinalNote}</div>
+                  <div className="inline-notice">This group registration is billed to its contact, {selected.accountHolder.firstName} {selected.accountHolder.lastName}{selected.accountHolder.email ? ` (${selected.accountHolder.email})` : ""}, after the event, not paid online. It is not billed to any club or church. The estimated amount is not an attendee balance. {groupBillingFinalNote}</div>
                 )}
                 <div className="detail-grid">{financeDetailFacts(selected).map((fact) => <span key={fact.value}><small>{fact.label}</small><strong>{fact.value === "payments" ? selected.payments.length : money(fact.value === "total" ? selected.totalAmountCents : fact.value === "received" ? selected.paidCents : selected.balanceCents)}</strong></span>)}</div>
                 <div><p className="eyebrow">Attendees on this registration</p><ul className="finance-attendee-list">{selected.attendees.map((attendee) => <li key={attendee.id}><span><strong>{attendee.firstName} {attendee.lastName}</strong><small>{attendee.attendeeType.toLowerCase()}{attendee.email ? ` · ${attendee.email}` : ""}</small></span></li>)}</ul>{selected.attendees.length === 0 && <p className="quiet-copy">No attendees are recorded on this registration.</p>}</div>
@@ -271,7 +272,7 @@ export function FinanceWorkspace({
               </div>
             ) : modal === "adjust" ? (
               <form className="form-stack" onSubmit={saveAdjustment}>
-                <div className="inline-notice">{selected.isDeferredOrganizationBilling ? `Current estimated ${selected.isGroup ? "amount" : "church amount"} ${money(selected.totalAmountCents)}. ${churchBillingFinalNote}` : `Current total ${money(selected.totalAmountCents)} · paid ${money(selected.paidCents)} · balance ${money(selected.balanceCents)}`}</div>
+                <div className="inline-notice">{selected.isDeferredOrganizationBilling ? `Current estimated ${selected.isGroup ? "amount" : "church amount"} ${money(selected.totalAmountCents)}. ${selected.isGroup ? groupBillingFinalNote : churchBillingFinalNote}` : `Current total ${money(selected.totalAmountCents)} · paid ${money(selected.paidCents)} · balance ${money(selected.balanceCents)}`}</div>
                 <label>Type
                   <select value={adjustKind} onChange={(event) => { setAdjustKind(event.target.value as AdjustmentKind); setError(""); }}>
                     <option value="SCHOLARSHIP">{`Scholarship — ${wording.lowers}`}</option>

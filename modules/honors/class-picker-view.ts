@@ -5,13 +5,36 @@
  */
 
 type ViewOffering = {
-  capacity: number;
-  seatsTaken: number;
   perClubLimit: number | null;
-  clubSeatsTaken: number;
   minimumAge: number | null;
   isActive: boolean;
-};
+} & (
+  | { capacity: number; seatsTaken: number; clubSeatsTaken: number }
+  // The public group catalog (#650): only how many seats are left, never the capacity or who holds them.
+  | { seatsLeft: number }
+);
+
+/**
+ * A class as the public group page gets it: the class itself, plus only how
+ * many seats are left. The capacity and the number taken stay on the server.
+ * (Teacher and per-group limit are already public on the event's info cards.)
+ */
+export type PublicSeatView<T extends { capacity: number; seatsTaken: number; clubSeatsTaken: number }> =
+  Omit<T, "capacity" | "seatsTaken" | "clubSeatsTaken"> & { seatsLeft: number };
+
+export function toPublicSeatView<T extends { capacity: number; seatsTaken: number; clubSeatsTaken: number }>(offering: T): PublicSeatView<T> {
+  const { capacity, seatsTaken, clubSeatsTaken: _clubSeatsTaken, ...rest } = offering;
+  void _clubSeatsTaken;
+  return { ...rest, seatsLeft: Math.max(capacity - seatsTaken, 0) };
+}
+
+function seatsLeftOf(offering: ViewOffering) {
+  return "seatsLeft" in offering ? offering.seatsLeft : offering.capacity - offering.seatsTaken;
+}
+
+function clubSeatsTakenOf(offering: ViewOffering) {
+  return "clubSeatsTaken" in offering ? offering.clubSeatsTaken : 0;
+}
 
 type ViewAttendee = {
   attendeeType: string | null;
@@ -33,9 +56,9 @@ export type SeatOwnerNoun = "club" | "group";
 export function seatsNote(offering: ViewOffering, heldHere: boolean, attendee: ViewAttendee, noun: SeatOwnerNoun = "club") {
   if (!attendee.consumesSeat) return "no seat needed";
   if (heldHere) return "seat held";
-  const left = offering.capacity - offering.seatsTaken;
-  const clubLeft = offering.perClubLimit === null ? null : offering.perClubLimit - offering.clubSeatsTaken;
-  const parts = [`${Math.max(left, 0)} of ${offering.capacity} seats left`];
+  const left = seatsLeftOf(offering);
+  const clubLeft = offering.perClubLimit === null ? null : offering.perClubLimit - clubSeatsTakenOf(offering);
+  const parts = [`${Math.max(left, 0)}${"capacity" in offering ? ` of ${offering.capacity}` : ""} seats left`];
   if (clubLeft !== null) parts.push(`${Math.max(clubLeft, 0)} left for your ${noun}`);
   return parts.join(", ");
 }
@@ -47,7 +70,7 @@ export function unavailableReason(offering: ViewOffering, heldHere: boolean, att
     return `ages ${offering.minimumAge}+`;
   }
   if (!attendee.consumesSeat) return null;
-  if (offering.seatsTaken >= offering.capacity) return "full";
-  if (offering.perClubLimit !== null && offering.clubSeatsTaken >= offering.perClubLimit) return "club limit reached";
+  if (seatsLeftOf(offering) <= 0) return "full";
+  if (offering.perClubLimit !== null && clubSeatsTakenOf(offering) >= offering.perClubLimit) return "club limit reached";
   return null;
 }

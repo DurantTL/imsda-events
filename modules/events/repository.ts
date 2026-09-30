@@ -629,6 +629,7 @@ export async function getEventOverview(eventId: string) {
       where: { eventId, status: { in: [...activeRegistrationStatuses] } },
       select: {
         totalAmount: true,
+        groupRegistration: { select: { id: true } },
         payments: {
           where: { status: "SUCCEEDED" },
           select: { amount: true, refunds: { where: { status: "SUCCEEDED" }, select: { amount: true } } },
@@ -659,9 +660,14 @@ export async function getEventOverview(eventId: string) {
   let outstandingCents = 0;
   let pendingPaymentCount = 0;
   let churchBilledCents = 0;
+  // Group registrations (#650) are billed to their contact, never to a church,
+  // so their totals stay out of churchBilledCents.
+  let groupBilledCents = 0;
   for (const registration of registrations) {
     if (isDeferredOrganizationBilling) {
-      churchBilledCents += Math.max(Math.round(Number(registration.totalAmount) * 100), 0);
+      const cents = Math.max(Math.round(Number(registration.totalAmount) * 100), 0);
+      if (registration.groupRegistration) groupBilledCents += cents;
+      else churchBilledCents += cents;
       continue;
     }
     const paid = registration.payments.reduce((paymentTotal, payment) => {
@@ -687,6 +693,7 @@ export async function getEventOverview(eventId: string) {
       outstandingCents,
       isDeferredOrganizationBilling,
       churchBilledCents,
+      groupBilledCents,
       // Discounts from church-sponsored promo codes billed to churches on a
       // GENERAL attendee-paid event (#545); 0 on any event that already bills
       // churches, so a church is never billed twice.

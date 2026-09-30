@@ -96,6 +96,8 @@ async function main() {
   const { lineItemsFromPricingSnapshot, currentPricingSnapshot } = await import("../modules/club-registrations/per-person-price");
   const { getClassSelectionWorkspace, setClassSelections, setGroupClassSelections, ClassSelectionError } = await import("../modules/honors/enrollment-repository");
   const { issueRegistrationAccessToken } = await import("../modules/public-access/repository");
+  const amendments = await import("../modules/registrations/amendments-repository");
+  const { buildCandidateIndex } = await import("../modules/background-checks/repository");
 
   await cleanup();
   await prisma.user.create({ data: { id: staffUserId, email: `${P}-staff@example.test`, displayName: "Group Check Staff", globalRole: "SYSTEM_ADMIN" } });
@@ -184,6 +186,12 @@ async function main() {
   assert(visibleKeys.includes("attendee_age"), "a group is asked for each person's age");
   assert(experience.locations.length === 2 && experience.locations.every((location) => !("remaining" in location) && !("capacity" in location)), "locations show no seat counts to the public");
   assert(experience.billingNotice === "You'll be billed after the event.", "the billing notice is shown");
+  assert(experience.honorsCatalog && experience.honorsCatalog.offerings.length === 4, "the public page lists the event's classes");
+  for (const offering of experience.honorsCatalog.offerings) {
+    const keys = Object.keys(offering);
+    assert(!keys.includes("capacity") && !keys.includes("seatsTaken") && !keys.includes("clubSeatsTaken"), "a public class carries no capacity or seats taken");
+    assert(typeof (offering as { seatsLeft?: unknown }).seatsLeft === "number", "a public class carries only the seats left");
+  }
   console.log("ok  public page: no club or church question, locations without seat counts, billing notice");
 
   // 2. A real group submit: three people, one contact, at Site A, with classes.
@@ -395,6 +403,7 @@ async function main() {
   const target = workspaceNow.registration.attendees[targetIndex]!;
   const picksBefore = await prisma.honorEnrollment.count({ where: { registrationAttendeeId: target.attendeeId } });
   assert(picksBefore > 0, "the person being renamed holds a class pick");
+  const targetPersonBefore = (await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: target.attendeeId }, select: { personId: true } })).personId;
   const renamed = workspaceNow.registration.attendees.map((person, index) => ({
     attendeeId: person.attendeeId, responses: index === targetIndex ? { ...person.responses, first_name: "Corrected", last_name: "Spelling" } : person.responses,
   }));
@@ -407,6 +416,14 @@ async function main() {
   const renameAudit = await prisma.auditLog.findFirstOrThrow({ where: { eventId, action: "REGISTRATION_AMENDED", entityType: "RegistrationOperation" }, orderBy: { createdAt: "desc" } });
   assert((renameAudit.metadata as { rosterNameUpdatedCount?: number }).rosterNameUpdatedCount === 1, "the rename is counted in the audit record");
   assert(!JSON.stringify(renameAudit.metadata).includes("Corrected"), "the audit record keeps names out");
+  // The Person row follows the corrected name: only this person uses it, so it is renamed in place.
+  const targetAfter = await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: target.attendeeId }, select: { personId: true, person: { select: { firstName: true, lastName: true } } } });
+  assert(targetAfter.personId === targetPersonBefore && targetAfter.person.firstName === "Corrected" && targetAfter.person.lastName === "Spelling", "a Person used only by this attendee is renamed in place");
+  const renameCounts = renameAudit.metadata as { personRenamedCount?: number; personReplacedCount?: number };
+  assert(renameCounts.personRenamedCount === 1 && renameCounts.personReplacedCount === 0, "the Person rename is counted in the audit record");
+  // The background-check candidate pool reads the Person row, so it carries the corrected name.
+  const candidates = await buildCandidateIndex(prisma, october, { personIds: [targetPersonBefore] });
+  assert(candidates.byPerson.get(targetPersonBefore)?.name === "Corrected Spelling", `the background-check candidate name reflects the rename: ${String(candidates.byPerson.get(targetPersonBefore)?.name)}`);
   // A blank name is refused, and nothing is saved.
   const blank = afterRename.registration.attendees.map((person, index) => ({ attendeeId: person.attendeeId, responses: index === targetIndex ? { ...person.responses, first_name: "" } : person.responses }));
   await expectCode(group.amendGroupRegistration(token, edit(blank, afterRename.registration.updatedAt), october), "ATTENDEES_INVALID", "a blank name is refused");
@@ -422,6 +439,60 @@ async function main() {
     "REGISTRATION_CLOSED",
     "a closed registration can't be changed by the contact",
   );
+  // Staff amending a renamed group registration: succeeds under the group's options, and a pick-breaking change is refused.
+  const staffActor = { kind: "STAFF" as const, id: staffUserId, displayName: "Group Check Staff" };
+  const staffView = await group.getGroupRegistrationWorkspace(token, october);
+  assert(staffView, "workspace reloads for the staff check");
+  const staffAnswers = await amendments.currentRegistrationAnswers(eventId, reg1.id);
+  assert(staffAnswers, "the registration's answers load");
+  const staffAttendees = (ages: Record<number, number>) => staffView.registration.attendees.map((person, index) => ({
+    attendeeId: person.attendeeId, clientId: `staff-${index}`,
+    responses: ages[index] === undefined ? person.responses : { ...person.responses, attendee_age: ages[index] },
+  }));
+  async function staffAmend(attendees: ReturnType<typeof staffAttendees>) {
+    const input = { clientRequestId: randomUUID(), expectedUpdatedAt: staffAnswers!.updatedAt, reason: "Staff check", responses: staffAnswers!.responses, attendees, previewOnly: true as boolean };
+    const options = await group.groupStaffAmendmentOptions(eventId, reg1.id, input);
+    assert(options, "a group registration is amended under the group's options");
+    const quote = await amendments.previewRegistrationAmendment(eventId, reg1.id, input, options);
+    return amendments.amendRegistration(eventId, reg1.id, { ...input, previewOnly: false, quoteFingerprint: quote.quoteFingerprint }, staffActor, october, options);
+  }
+  const addedIndex = staffView.registration.attendees.findIndex((person) => person.attendeeId !== target.attendeeId && !holders.has(person.attendeeId));
+  assert(addedIndex >= 0, "someone without classes can be changed by staff");
+  await expectCode(staffAmend(staffAttendees({ [targetIndex]: 12 })), "CLASS_PICKS_CONFLICT", "staff cannot change an age so a class seat rule breaks, same as the contact");
+  assert((await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: target.attendeeId } })).personId === targetPersonBefore, "a refused staff change saved nothing");
+  await staffAmend(staffAttendees({ [addedIndex]: 9 }));
+  const staffSnapshot = (await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: target.attendeeId } })).profileSnapshot as Record<string, unknown>;
+  assert(staffSnapshot.firstName === "Corrected" && staffSnapshot.source === "GROUP_REGISTRATION" && typeof staffSnapshot.groupAttendeeId === "string", "a staff amendment after a rename succeeds and keeps the group markers");
+  assert(!("clubOrganizationId" in staffSnapshot) && !("clubRosterMemberId" in staffSnapshot), "a staff amendment adds no club to a group person");
+
+  // A person who shares the contact's Person row is moved to a new Person; the contact's own row is untouched.
+  const shareView = await group.getGroupRegistrationWorkspace(token, october);
+  assert(shareView, "workspace reloads for the shared-person check");
+  const sharedIndex = addedIndex;
+  const shared = shareView.registration.attendees[sharedIndex]!;
+  const contactPerson = await prisma.person.findUniqueOrThrow({ where: { id: reg1.accountHolderPersonId }, select: { firstName: true, lastName: true, normalizedEmail: true } });
+  const sharedFormerPerson = (await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: shared.attendeeId }, select: { personId: true } })).personId;
+  assert(!(await prisma.registrationAttendee.findFirst({ where: { registrationId: reg1.id, personId: reg1.accountHolderPersonId } })), "the contact is not already a person on the registration");
+  await prisma.registrationAttendee.update({ where: { id: shared.attendeeId }, data: { personId: reg1.accountHolderPersonId } });
+  await group.amendGroupRegistration(token, edit(shareView.registration.attendees.map((person, index) => ({
+    attendeeId: person.attendeeId, responses: index === sharedIndex ? { ...person.responses, first_name: "Sharing", last_name: "Renamed" } : person.responses,
+  })), shareView.registration.updatedAt), october);
+  const sharedAfter = await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: shared.attendeeId }, select: { personId: true, person: { select: { firstName: true, lastName: true, normalizedEmail: true } } } });
+  assert(sharedAfter.personId !== reg1.accountHolderPersonId && sharedAfter.personId !== sharedFormerPerson, "a renamed person who shared the contact's Person is moved to a new Person");
+  assert(sharedAfter.person.firstName === "Sharing" && sharedAfter.person.lastName === "Renamed" && sharedAfter.person.normalizedEmail === null, "the new Person carries the new name and no email");
+  const contactAfter = await prisma.person.findUniqueOrThrow({ where: { id: reg1.accountHolderPersonId }, select: { firstName: true, lastName: true, normalizedEmail: true } });
+  assert(JSON.stringify(contactAfter) === JSON.stringify(contactPerson), "the contact's own Person is unchanged");
+  const sharedAudit = await prisma.auditLog.findFirstOrThrow({ where: { eventId, action: "REGISTRATION_AMENDED", entityType: "RegistrationOperation" }, orderBy: { createdAt: "desc" } });
+  const sharedCounts = sharedAudit.metadata as { personRenamedCount?: number; personReplacedCount?: number };
+  assert(sharedCounts.personRenamedCount === 0 && sharedCounts.personReplacedCount === 1 && !JSON.stringify(sharedAudit.metadata).includes("Sharing"), "the replacement is counted in the audit record, without names");
+
+  // Classes follow the location's own close, not just the event's: a site that has closed takes no class changes.
+  const classClosed = new Date("2026-11-20T15:00:00Z");
+  await prisma.eventLocation.update({ where: { id: siteA.id }, data: { registrationClosesOn: "2026-11-15" } });
+  await expectCode(group.setGroupClassesByToken(token, {}, classClosed), "REGISTRATION_CLOSED", "a group cannot change classes after its location closed");
+  await prisma.eventLocation.update({ where: { id: siteA.id }, data: { registrationClosesOn: null } });
+  console.log("ok  Person rows follow renames (in place, or a new Person when shared), staff amendments run under group options, classes follow the location's own close");
+
   console.log("ok  contact edits: stale/invalid/closed refused, ages and seat use re-validated, people added, removed and renamed, recorded against the contact");
 
   // 10. A link is only ever a group's own: a club's link can't be used here, and another group's link sees only its own registration.

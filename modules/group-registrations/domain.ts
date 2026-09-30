@@ -31,6 +31,9 @@ export function isValidGroupAttendeeClientId(clientId: string) {
   return CLIENT_ID_PATTERN.test(clientId);
 }
 
+/** Club-only vocabulary that must not reach a group's form. */
+const CLUB_WORDING = /\b(club|church|churches|pathfinders?|director|tlt|invoiced)\b/i;
+
 const CLUB_TEXT_KEYS = new Set(["club_name", "club"]);
 const CHURCH_TEXT_KEYS = new Set(["church", "church_name"]);
 const CLUB_TEXT_LABEL = /^(pathfinder\s+)?club(\s+name)?$/i;
@@ -67,18 +70,39 @@ export function groupFormDefinition(definition: RegistrationFormDefinition): Reg
       }
     }
   }
+  const sections = definition.sections
+    .map((section) => {
+      const kept = section.fields.filter((field) => !removed.has(field.key));
+      const asksForContact = kept.length !== section.fields.length || kept.some((field) => field.scope === "REGISTRATION" && field.key === "director_name");
+      const clubWorded = asksForContact || CLUB_WORDING.test(`${section.title} ${section.description}`);
+      return {
+        ...section,
+        ...(clubWorded
+          ? asksForContact
+            ? { title: "Contact", description: "Enter the contact person's information." }
+            : { title: "People", description: "Add each person attending using their full first and last name." }
+          : {}),
+        fields: kept.map((field) => {
+          const relabeled = field.scope === "REGISTRATION" && field.key === "director_name"
+            ? { ...field, label: "Contact name" }
+            : CLUB_WORDING.test(field.label)
+              ? { ...field, label: field.label.replace(/\bthe (club|church) director\b/i, "the contact") }
+              : field;
+          return relabeled.helpText && CLUB_WORDING.test(relabeled.helpText) ? { ...relabeled, helpText: "" } : relabeled;
+        }),
+      };
+    })
+    .filter((section) => section.fields.length > 0);
   return {
     ...definition,
-    sections: definition.sections
-      .map((section) => ({
-        ...section,
-        fields: section.fields
-          .filter((field) => !removed.has(field.key))
-          .map((field) => (field.scope === "REGISTRATION" && field.key === "director_name"
-            ? { ...field, label: "Contact name" }
-            : field)),
-      }))
-      .filter((section) => section.fields.length > 0),
+    // The club form's introduction and confirmation talk about clubs and
+    // churches; a group is told only what is true for it.
+    description: "",
+    confirmationMessage: `Your registration has been received. ${GROUP_BILLING_NOTICE}`,
+    ...(definition.attendeeRoster
+      ? { attendeeRoster: { ...definition.attendeeRoster, attendeeLabel: "Person", addButtonLabel: "Add another person" } }
+      : {}),
+    sections,
   };
 }
 

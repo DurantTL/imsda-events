@@ -196,6 +196,6 @@ describe("the group page's first step", () => {
   it("goes straight to the form when the event has no locations", () => {
     const markup = render([]);
     expect(markup).not.toContain("Register as a group or individual");
-    expect(markup).toContain("Add a person");
+    expect(markup).toContain("Add another person");
   });
 });

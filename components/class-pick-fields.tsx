@@ -1,12 +1,12 @@
 "use client";
 
 import { useMemo } from "react";
-import { seatsNote, unavailableReason, type SeatOwnerNoun } from "@/modules/honors/class-picker-view";
+import { seatsNote, unavailableReason, type PublicSeatView, type SeatOwnerNoun } from "@/modules/honors/class-picker-view";
 import type { PickingAttendee } from "@/modules/honors/registration-picks";
 import { sortHonorSessions } from "@/modules/honors/session-order";
 import type { RegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
 
-type Offering = RegistrationHonorsCatalog["offerings"][number];
+type Offering = RegistrationHonorsCatalog["offerings"][number] | PublicSeatView<RegistrationHonorsCatalog["offerings"][number]>;
 
 /**
  * One person's class choices while registering: one class per session, or one

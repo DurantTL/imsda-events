@@ -306,7 +306,7 @@ function formBirthDate(responses: Record<string, unknown>) {
  * a full pass over the whole list, or scoped to the people who share a name
  * group for a targeted refresh, so neither path scans more than it needs.
  */
-async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personIds: string[] }): Promise<NameIndex> {
+export async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { personIds: string[] }): Promise<NameIndex> {
   if (scope && scope.personIds.length === 0) return { byName: new Map(), byLastName: new Map(), byPerson: new Map(), directoryStems: new Set() };
   // The current club year and the one before it: rosters imported before the
   // September rollover (#541) still describe the same adults (#572).

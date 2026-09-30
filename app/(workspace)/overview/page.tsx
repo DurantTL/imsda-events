@@ -76,6 +76,9 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
     metrics.isDeferredOrganizationBilling
       ? { label: "Billed to churches", value: money(metrics.churchBilledCents + metrics.churchSponsoredCents), detail: "Estimated, all registrations · billed after the event, not paid online", tone: "gold", visible: canViewReports }
       : { label: "Pending payment", value: metrics.pendingPaymentCount, detail: `${money(metrics.outstandingCents)} outstanding`, tone: "gold", visible: canViewReports },
+    metrics.isDeferredOrganizationBilling && metrics.groupBilledCents > 0
+      ? { label: "Billed to group contacts", value: money(metrics.groupBilledCents), detail: "Estimated, group registrations · billed after the event, not paid online", tone: "gold", visible: canViewReports }
+      : null,
     !metrics.isDeferredOrganizationBilling && metrics.churchSponsoredCents > 0
       ? { label: "Billed to churches", value: money(metrics.churchSponsoredCents), detail: "Church-sponsored promo codes · billed after the event, not paid online", tone: "gold", visible: canViewReports }
       : null,
