@@ -1,6 +1,6 @@
 # ADR 0003: Attendee accounts
 
-Status: Accepted
+Status: Accepted; account separation and "attendee mode" proposed to be superseded by [ADR 0013](0013-one-account-per-person.md)
 Date: 2026-07-28
 
 ## Context
