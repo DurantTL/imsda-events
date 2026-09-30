@@ -7844,3 +7844,5 @@ select:focus-visible {
 
 /* Buttons sitting directly in a workspace card get breathing room (#623). */
 .page-stack > .panel > button.secondary-button { align-self: flex-start; margin: 10px 0; }
+.profile-shell-attendee .account-page-body { max-width: none; margin: 16px 0 0; }
+.profile-shell-attendee .profile-back-links { margin: 12px 0; }

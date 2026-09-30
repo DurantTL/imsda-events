@@ -195,15 +195,17 @@ describe("/profile", () => {
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
-  it("shows both labelled sections when both sessions are present", async () => {
+  it("renders both accounts inside the staff shell when both sessions are present (#623)", async () => {
     signedIn({ staff, attendee: true });
     const markup = await render();
-    expect(markup).toContain("Staff account");
+    expect(markup).toContain('data-shell="staff"');
     expect(markup).toContain("Registration account");
     expect(markup).toContain('data-manager="staff-mfa"');
     expect(markup).toContain('data-manager="attendee-settings"');
-    expect(markup).toContain("Back to staff workspace");
+    expect(markup).toContain('href="/account"');
     expect(markup).toContain("My registrations");
+    expect(markup).not.toContain("Back to staff workspace");
+    expect(markup.indexOf('data-manager="staff-mfa"')).toBeLessThan(markup.indexOf("Registration account"));
   });
 
   it("labels which session each sign-out button ends when both are signed in", async () => {
@@ -220,13 +222,12 @@ describe("/profile", () => {
     expect(attendeeOnly).not.toContain("Sign out of staff account");
   });
 
-  it("shows the act-as banner only when a staff act-as context is active", async () => {
-    signedIn({ staff, attendee: true });
-    expect(await render()).not.toContain("ACT-AS-BANNER");
+  it("leaves the act-as banner to the staff shell and never shows it on the attendee-only page", async () => {
     mocks.currentStaffActingContext.mockResolvedValue({ role: "CLUB_DIRECTOR" });
-    expect(await render()).toContain("ACT-AS-BANNER");
     signedIn({ attendee: true });
-    expect(await render()).not.toContain("ACT-AS-BANNER");
+    const markup = await render();
+    expect(markup).not.toContain("ACT-AS-BANNER");
+    expect(markup).not.toContain('data-shell="staff"');
   });
 
   it("does not treat a staff session that merely matches an attendee email as a registration account", async () => {

@@ -1,9 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
 import { AccountAnnouncementBanner } from "@/components/account-announcement-banner";
 import { AttendeeAccountSettings } from "@/components/attendee-account-settings";
-import { ActAsBanner } from "@/components/act-as-banner";
 import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
 import { BrandMark } from "@/components/brand-mark";
 import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
@@ -17,14 +15,12 @@ import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { getMfaStatus } from "@/modules/access/mfa-service";
 import { getPasskeySettings } from "@/modules/access/passkeys";
 import {
-  otherWorkspaceContextsForAttendee,
   otherWorkspaceContextsForStaff,
 } from "@/modules/access/workspace-contexts";
 import { listAccountBannerAnnouncements } from "@/modules/communications/account-banner";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
-import { currentStaffActingContext } from "@/modules/organizations/staff-act-as";
 
 export const dynamic = "force-dynamic";
 
@@ -58,10 +54,36 @@ export default async function ProfilePage({
   const [mfaStatus, passkeySettings] = staff
     ? await Promise.all([getMfaStatus(staff.id) as Promise<MfaStatus>, getPasskeySettings(staff)])
     : [null, null];
-  // A staff-only browser gets the profile inside the staff workspace shell
-  // (sidebar, header) like every other staff page (#623), and reaches it even
-  // with no events. Attendee sessions keep the public-style page below.
-  if (staff && !attendeeAccount && mfaStatus && passkeySettings) {
+  // The confirmation banner is only true when a second step really is on: an
+  // active authenticator or a registered passkey (#568).
+  let showTwoStepOn = false;
+  if (twoStep === "on" && attendeeAccount && !secondStepPending) {
+    const [authenticator, passkeys] = await Promise.all([
+      getAttendeeMfaStatus(attendeeAccount.id),
+      getAttendeePasskeySettings(attendeeAccount.id, sessionId),
+    ]);
+    showTwoStepOn = authenticator.status === "ACTIVE" || passkeys.passkeys.length > 0;
+  }
+  const clubs = attendeeAccount && !secondStepPending ? await listDirectedClubs(attendeeAccount.id) : [];
+  // The same announcement banner as the account portal, for an attendee
+  // session past its second step only; a staff session gets none.
+  const bannerAnnouncements = !staff && attendeeAccount && !secondStepPending
+    ? await listAccountBannerAnnouncements(attendeeAccount, clubs)
+    : [];
+
+  const systemAdmin = staff
+    ? otherWorkspaceContextsForStaff({
+      isSystemAdmin: staff.globalRole === "SYSTEM_ADMIN",
+      attendeeAccountAvailable: false,
+    }).find((context) => context.kind === "system_admin")
+    : undefined;
+
+  // Any browser with a staff session gets the profile inside the staff
+  // workspace shell (sidebar, header) like every other staff page (#623), and
+  // reaches it even with no events. A registration account, when this browser
+  // has one too, is a card on the same page. Attendee-only sessions keep the
+  // public-style page below.
+  if (staff && mfaStatus && passkeySettings) {
     return (
       <WorkspaceShell anyStaffWithoutEvents>
         <section className="page-stack">
@@ -93,39 +115,45 @@ export default async function ProfilePage({
             initialPasskeys={passkeySettings.passkeys}
             verification={passkeySettings.verification}
           />
+          {attendeeAccount && (
+            <section aria-labelledby="profile-registration-heading" className="panel profile-shell-attendee">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">Registration account</p>
+                  <h2 id="profile-registration-heading">Registration account</h2>
+                </div>
+                <AttendeeSignOutButton className="secondary-button" label="Sign out of registration account" />
+              </div>
+              {showTwoStepOn && <p className="auth-success" role="status">Two-step verification is on.</p>}
+              {!secondStepPending && (
+                <p className="field-help">
+                  Signed in as <strong>{attendeeAccount.verifiedEmail}</strong>. Saved details fill in new registration forms for you.
+                </p>
+              )}
+              <nav aria-label="Registration account links" className="profile-back-links">
+                <Link className="secondary-button" href="/account">My registrations</Link>
+                {clubs.length === 1 && (
+                  <Link className="secondary-button" href={`/account/clubs/${encodeURIComponent(clubs[0].organizationId)}`}>
+                    {clubs[0].name}
+                  </Link>
+                )}
+                {clubs.length > 1 && <Link className="secondary-button" href="/account/clubs">My clubs</Link>}
+                {systemAdmin && <Link className="secondary-button" href={systemAdmin.href}>{systemAdmin.label}</Link>}
+              </nav>
+              {secondStepPending
+                ? (
+                  <p className="public-manage-empty">
+                    Confirm your second step to see your registration account.{" "}
+                    <Link href="/account/two-step">Continue</Link>
+                  </p>
+                )
+                : <AttendeeAccountSettings account={attendeeAccount} sessionId={sessionId} />}
+            </section>
+          )}
         </section>
       </WorkspaceShell>
     );
   }
-
-  // The confirmation banner is only true when a second step really is on: an
-  // active authenticator or a registered passkey (#568).
-  let showTwoStepOn = false;
-  if (twoStep === "on" && attendeeAccount && !secondStepPending) {
-    const [authenticator, passkeys] = await Promise.all([
-      getAttendeeMfaStatus(attendeeAccount.id),
-      getAttendeePasskeySettings(attendeeAccount.id, sessionId),
-    ]);
-    showTwoStepOn = authenticator.status === "ACTIVE" || passkeys.passkeys.length > 0;
-  }
-  const clubs = attendeeAccount && !secondStepPending ? await listDirectedClubs(attendeeAccount.id) : [];
-  // The same announcement banner as the account portal, for an attendee
-  // session past its second step only; staff-only sessions get none.
-  const bannerAnnouncements = attendeeAccount && !secondStepPending
-    ? await listAccountBannerAnnouncements(attendeeAccount, clubs)
-    : [];
-
-  // The same banner the workspace and portal layouts show while a system
-  // administrator is acting as a club role (#442); staff sessions only.
-  const acting = staff ? await currentStaffActingContext() : null;
-
-  const staffWorkspace = staff ? otherWorkspaceContextsForAttendee({ hasStaffSession: true })[0] : undefined;
-  const systemAdmin = staff
-    ? otherWorkspaceContextsForStaff({
-      isSystemAdmin: staff.globalRole === "SYSTEM_ADMIN",
-      attendeeAccountAvailable: false,
-    }).find((context) => context.kind === "system_admin")
-    : undefined;
 
   return (
     <main className="public-registration-page public-manage-page account-portal">
@@ -137,7 +165,6 @@ export default async function ProfilePage({
           </Link>
         </div>
       </header>
-      <ActAsBanner acting={acting} />
       {attendeeAccount && !secondStepPending && (
         <AccountAnnouncementBanner accountId={attendeeAccount.id} announcements={bannerAnnouncements} />
       )}
@@ -152,13 +179,7 @@ export default async function ProfilePage({
 
       <div className="account-page-body">
         <nav aria-label="Back" className="profile-back-links">
-          {staffWorkspace && (
-            <Link className="secondary-button" href={staffWorkspace.href}>
-              <ArrowLeft aria-hidden="true" size={15} /> Back to staff workspace
-            </Link>
-          )}
-          {systemAdmin && <Link className="secondary-button" href={systemAdmin.href}>{systemAdmin.label}</Link>}
-          {attendeeAccount && <Link className="secondary-button" href="/account">My registrations</Link>}
+          <Link className="secondary-button" href="/account">My registrations</Link>
           {clubs.length === 1 && (
             <Link className="secondary-button" href={`/account/clubs/${encodeURIComponent(clubs[0].organizationId)}`}>
               {clubs[0].name}
@@ -167,33 +188,6 @@ export default async function ProfilePage({
           {clubs.length > 1 && <Link className="secondary-button" href="/account/clubs">My clubs</Link>}
         </nav>
       </div>
-
-      {staff && mfaStatus && passkeySettings && (
-        <section aria-labelledby="profile-staff-heading" className="profile-account-section">
-          <div className="account-page-body profile-staff-body">
-            <h2 className="profile-account-heading" id="profile-staff-heading">Staff account</h2>
-            <section className="panel">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">Profile</p>
-                  <h2>{staff.displayName}</h2>
-                </div>
-                <SignOutButton className="secondary-button" label="Sign out of staff account" />
-              </div>
-              <div className="profile-identity">
-                <span>{staff.email}</span>
-                <small>Your name and email are managed by a system administrator.</small>
-              </div>
-            </section>
-            <MfaManager initialStatus={mfaStatus} />
-            <StaffPasskeyManager
-              available={passkeySettings.available}
-              initialPasskeys={passkeySettings.passkeys}
-              verification={passkeySettings.verification}
-            />
-          </div>
-        </section>
-      )}
 
       {attendeeAccount && (
         <section aria-labelledby="profile-registration-heading" className="profile-account-section">
