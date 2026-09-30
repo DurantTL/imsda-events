@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { AccessDeniedError } from "@/modules/access/authorization";
+import { EadventistImportError } from "@/modules/organizations/eadventist-import";
 import { OrganizationOperationError } from "@/modules/organizations/repository";
 import { logError } from "@/lib/logger";
 
@@ -17,6 +18,12 @@ export function organizationApiError(error: unknown, action: string) {
     return Response.json(
       { error: error.code, message: error.message },
       { status: error.status },
+    );
+  }
+  if (error instanceof EadventistImportError) {
+    return Response.json(
+      { error: error.code, message: error.message },
+      { status: error.code === "TOO_LARGE" ? 413 : 400 },
     );
   }
   if (error instanceof OrganizationOperationError) {

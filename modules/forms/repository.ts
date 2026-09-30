@@ -43,7 +43,7 @@ async function formWriteTransaction<T>(operation: (tx: Prisma.TransactionClient)
   }
 }
 
-const emptyDirectory: OrganizationDirectory = { clubs: [], churches: [] };
+const emptyDirectory: OrganizationDirectory = { clubs: [], churches: [], schools: [] };
 
 export class FormOperationError extends Error {
   constructor(

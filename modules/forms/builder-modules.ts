@@ -1,4 +1,4 @@
-import { imsdaChurchOptions, localCalendarDate, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { DIRECTORY_NOT_LISTED_VALUE, localCalendarDate, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import { fullNameKeys, splitNameKeyPairs } from "@/modules/forms/public-domain";
 import { shirtSizeOptions } from "@/modules/registrations/shirt-sizes";
 
@@ -474,8 +474,8 @@ export const builderFieldModules: BuilderModuleDefinition[] = [
     fields: [
       { key: "club_name", label: "Club name", helpText: "", placeholder: "Pathfinder club or group", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
       { key: "director_name", label: "Club director", helpText: "", placeholder: "Full name", type: "TEXT", scope: "REGISTRATION", required: true, options: [] },
-      { key: "church_name", label: "Home church", helpText: "Start typing to search the IMSDA church directory.", type: "SELECT", scope: "REGISTRATION", required: true, options: [...imsdaChurchOptions] },
-      { key: "church_other", label: "Home church — other", helpText: "", placeholder: "Church or organization name", type: "TEXT", scope: "REGISTRATION", required: true, options: [], conditional: { fieldKey: "church_name", operator: "EQUALS", value: "Other" } },
+      { key: "church_name", label: "Home church", helpText: "Start typing to search the IMSDA church directory.", type: "SELECT", scope: "REGISTRATION", required: true, options: [], optionSource: "CHURCHES_DIRECTORY" },
+      { key: "church_other", label: "Home church — not listed", helpText: "", placeholder: "Church or organization name", type: "TEXT", scope: "REGISTRATION", required: true, options: [], conditional: { fieldKey: "church_name", operator: "EQUALS", value: DIRECTORY_NOT_LISTED_VALUE } },
       { key: "email", label: "Contact email", helpText: "", placeholder: "name@example.com", type: "EMAIL", scope: "REGISTRATION", required: true, options: [] },
       { key: "phone", label: "Contact phone", helpText: "", placeholder: "Phone number", type: "PHONE", scope: "REGISTRATION", required: true, options: [] },
     ],

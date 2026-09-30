@@ -1,12 +1,13 @@
-import { DIRECTORY_NOT_LISTED_VALUE, isDirectoryOptionSource, type RegistrationFormDefinition } from "@/modules/forms/definition";
+import { DIRECTORY_NOT_LISTED_VALUE, isDirectoryOptionSource, type DirectoryOptionSource, type RegistrationFormDefinition } from "@/modules/forms/definition";
 import type { OrganizationDirectory } from "@/modules/organizations/directory-options";
 
 /** Mirrors `modules/attendee-types/form-options.ts`: stored form JSON records
  * only the source designation, so hydration at read/validation time is
  * authoritative and a club or church rename or deactivation reaches every
  * form immediately. */
-function namesFor(source: "CLUBS_DIRECTORY" | "CHURCHES_DIRECTORY", directory: OrganizationDirectory) {
-  return source === "CLUBS_DIRECTORY" ? directory.clubs : directory.churches;
+function namesFor(source: DirectoryOptionSource, directory: OrganizationDirectory) {
+  if (source === "CLUBS_DIRECTORY") return directory.clubs;
+  return source === "SCHOOLS_DIRECTORY" ? directory.schools : directory.churches;
 }
 
 /** Replaces a directory-sourced field's choices with the live directory plus
@@ -27,7 +28,7 @@ export function withDirectoryOptions(
   retainedResponses: Record<string, unknown> = {},
 ): RegistrationFormDefinition {
   if (!hasDirectoryOptionSource(definition)) return definition;
-  const optionsFor = (source: "CLUBS_DIRECTORY" | "CHURCHES_DIRECTORY", key: string) => {
+  const optionsFor = (source: DirectoryOptionSource, key: string) => {
     const options = namesFor(source, directory).filter((name) => name !== DIRECTORY_NOT_LISTED_VALUE);
     const retained = retainedResponses[key];
     if (typeof retained === "string" && retained.trim() && retained !== DIRECTORY_NOT_LISTED_VALUE && !options.includes(retained)) {
