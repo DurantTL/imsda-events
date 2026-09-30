@@ -290,6 +290,8 @@ export async function updateRosterMember(
  * key, which is what lets the same person transfer back later in the year.
  */
 export async function eraseRosterRow(tx: Prisma.TransactionClient, memberId: string, now: Date) {
+  // A meeting check-off names the member by roster row; it goes with them (#653).
+  await tx.clubMeetingAttendance.deleteMany({ where: { rosterMemberId: memberId } });
   await tx.clubRosterMember.update({
     where: { id: memberId },
     data: {

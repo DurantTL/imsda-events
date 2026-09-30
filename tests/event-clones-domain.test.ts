@@ -26,7 +26,7 @@ function config(overrides: Partial<SourceConfiguration> = {}): SourceConfigurati
   return {
     event: { id: "event-src", name: "Annual 2027", slug: "annual-2027", startsOn: "2027-05-05", endsOn: "2027-05-07", isPublished: true },
     eventDetails: {
-      location: "Synthetic Lodge", timezone: "America/Denver", publicInfoUrl: null, supportContact: null, calendarCategory: null, showOnCalendar: false,
+      location: "Synthetic Lodge", timezone: "America/Denver", publicInfoUrl: null, supportContact: null, tagline: null, subtitle: null, helpEmail: null, calendarCategory: null, showOnCalendar: false,
       hotelName: null, hotelBookingUrl: null, hotelPhone: null, hotelGroupName: null, hotelRate: null, hotelInstructions: null,
       audience: "GENERAL", billingMode: "ATTENDEE_PAY",
     },
@@ -52,7 +52,7 @@ function config(overrides: Partial<SourceConfiguration> = {}): SourceConfigurati
     honorSessions: [{ id: "session-1", name: "Friday", normalizedName: "friday", sortOrder: 0, locationName: null, locationNormalizedName: null }],
     honorOfferings: [{
       id: "offering-1", honorId: "honor-1", honorName: "Knots", sessionId: "session-1", sessionName: "Friday", span: "SINGLE_SESSION",
-      capacity: 30, minimumAge: null, perClubLimit: null, teacherName: "", location: "", isActive: true,
+      capacity: 30, minimumAge: null, perClubLimit: null, teacherName: "", location: "", additionalCostCents: null, requirementNote: "", isActive: true,
       locationName: null, locationNormalizedName: null,
     }],
     locations: [],
@@ -334,6 +334,49 @@ describe("private links in copied text", () => {
     expect(result.config.eventDetails.hotelPhone).toBeNull();
     expect(result.config.eventDetails.location).toBe("Synthetic Lodge");
     expect(result.findings.map((finding) => finding.location)).toEqual(["Support contact", "Lodging phone"]);
+  });
+});
+
+describe("event info card fields in a clone (#651)", () => {
+  const appOrigins = ["https://events.imsda.test"];
+
+  it("carries the tagline, subtitle and help email and each offering's cost and requirement", () => {
+    const source = config({
+      eventDetails: { ...config().eventDetails, tagline: "Lest We Forget", subtitle: "One form for your club", helpEmail: "help@example.test" },
+      honorOfferings: [{ ...config().honorOfferings[0]!, additionalCostCents: 500, requirementNote: "Bring a flashlight" }],
+    });
+    const result = sanitizeSourceForClone(source, appOrigins);
+    expect(result.config.eventDetails).toMatchObject({ tagline: "Lest We Forget", subtitle: "One form for your club", helpEmail: "help@example.test" });
+    expect(result.config.honorOfferings[0]).toMatchObject({ additionalCostCents: 500, requirementNote: "Bring a flashlight" });
+  });
+
+  it("strips a private link from a class requirement and shows cost and requirement in the review rows", () => {
+    const source = config({
+      honorOfferings: [{ ...config().honorOfferings[0]!, additionalCostCents: 500, requirementNote: "Bring ID https://events.imsda.test/manage/MARKER-MANAGE-TOKEN" }],
+    });
+    const result = sanitizeSourceForClone(source, appOrigins);
+    expect(result.config.honorOfferings[0]!.requirementNote).not.toContain("MARKER-MANAGE-TOKEN");
+    expect(result.findings.some((finding) => finding.domain === "honors")).toBe(true);
+    const row = buildClonePlan(result.config, fingerprint).review.honorOfferings[0]!;
+    expect(row).toMatchObject({ additionalCostCents: 500, requirementNote: "Bring ID" });
+  });
+
+  it("tolerates a source that predates the new columns", () => {
+    const base = config();
+    const oldDetails: Record<string, unknown> = { ...base.eventDetails };
+    for (const key of ["tagline", "subtitle", "helpEmail"]) delete oldDetails[key];
+    const oldOffering: Record<string, unknown> = { ...base.honorOfferings[0]! };
+    for (const key of ["additionalCostCents", "requirementNote"]) delete oldOffering[key];
+    const source = { ...base, eventDetails: oldDetails, honorOfferings: [oldOffering] } as unknown as typeof base;
+    const result = sanitizeSourceForClone(source, appOrigins);
+    expect(result.config.eventDetails).toMatchObject({ tagline: null, subtitle: null, helpEmail: null });
+    expect(result.config.honorOfferings[0]!.requirementNote).toBe("");
+    expect(buildClonePlan(result.config, fingerprint).review.honorOfferings[0]).toMatchObject({ additionalCostCents: null, requirementNote: "" });
+  });
+
+  it("clears an empty tagline to null like the other optional details", () => {
+    const result = sanitizeSourceForClone(config({ eventDetails: { ...config().eventDetails, tagline: "  " } }), appOrigins);
+    expect(result.config.eventDetails.tagline).toBeNull();
   });
 });
 

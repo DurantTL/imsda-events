@@ -2,7 +2,7 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { clubMeetingNoteApiError } from "@/modules/club-meeting-notes/api-errors";
 import { createClubMeetingNote, listClubMeetingNotes } from "@/modules/club-meeting-notes/repository";
 import { meetingNoteInputSchema } from "@/modules/club-meeting-notes/schemas";
-import { actorAttribution, requireClubCapability } from "@/modules/club-rosters/access";
+import { actorAttribution, requireClubCapability, requireRosterAccess } from "@/modules/club-rosters/access";
 import { withRequestContext } from "@/lib/request-context";
 
 type RouteContext = { params: Promise<{ organizationId: string }> };
@@ -25,6 +25,8 @@ async function postHandler(request: Request, context: RouteContext) {
     const { organizationId } = await context.params;
     const access = await requireClubCapability(organizationId, "submitReports");
     const input = meetingNoteInputSchema.parse(await request.json());
+    // Names on the roster need the roster's own gate (MFA and an open unlock), so a reporter can't save a check-off (#653).
+    if (input.attendance !== undefined) await requireRosterAccess(organizationId);
     const note = await createClubMeetingNote(organizationId, input, actorAttribution(access.actor));
     return Response.json({ note }, { status: 201 });
   } catch (error) {

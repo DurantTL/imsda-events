@@ -98,6 +98,9 @@ export function ClubReportForm({
   const [classLevels, setClassLevels] = useState<ClubClassLevel[]>(initial?.classLevels ?? []);
   const [honors, setHonors] = useState<ReportHonor[]>(() => padHonors(initial?.honors ?? (initial ? [] : prefill.honors)));
   const [countsRefresh, setCountsRefresh] = useState<Pick<NotesPrefill, "averageAttendance" | "pathfinderCount" | "tltCount" | "staffCount"> | null>(null);
+  // The meeting-note averages this form was opened with; a change means notes were edited since.
+  const [openedNotes] = useState(() => JSON.stringify(notesPrefill ?? null));
+  const notesChanged = JSON.stringify(notesPrefill ?? null) !== openedNotes;
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -228,8 +231,9 @@ export function ClubReportForm({
           Submitted. <button className="text-button" disabled={saving} onClick={reopen} type="button">Reopen as draft</button> to change it.
         </div>
       )}
-      {!readOnly && notesPrefill && report && isDraft && (
+      {!readOnly && notesPrefill && (report ? isDraft : notesChanged) && (
         <div className="inline-notice" role="status">
+          {notesChanged && "Meeting notes changed after you opened this report. "}
           <button className="text-button" disabled={saving} onClick={refreshFromNotes} type="button">
             <RefreshCw aria-hidden="true" size={14} /> Refresh from meeting notes
           </button>

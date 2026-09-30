@@ -1,4 +1,5 @@
-import { MAX_HONORS, type ReportHonor } from "@/modules/club-reports/domain";
+import { calendarDateIn } from "@/modules/calendar/domain";
+import { MAX_HONORS, isReportMonth, type ReportHonor } from "@/modules/club-reports/domain";
 
 /**
  * Club meeting notes (#426): one simple record per meeting so the monthly
@@ -7,6 +8,22 @@ import { MAX_HONORS, type ReportHonor } from "@/modules/club-reports/domain";
  */
 
 export type MeetingNoteCounts = { pathfinderCount: number | null; tltCount: number | null; staffCount: number | null };
+
+/** `presentPeople` is the number of distinct people checked off present, or null when the meeting kept head counts only. */
+export type MeetingNoteTotals = MeetingNoteCounts & { presentPeople?: number | null };
+
+/**
+ * One meeting's attendance total with each person counted once (#653). A
+ * check-off gives it exactly. Typed counts overlap (a TLT is also a Pathfinder,
+ * as in the roster prefill), so they add up as Pathfinders + staff, taking the
+ * TLT count as a subset of Pathfinders: a meeting that typed only TLTs counts
+ * at least that many. Null when the meeting recorded nothing.
+ */
+export function meetingAttendanceTotal(note: MeetingNoteTotals) {
+  if (note.presentPeople !== null && note.presentPeople !== undefined) return note.presentPeople;
+  if (note.pathfinderCount === null && note.tltCount === null && note.staffCount === null) return null;
+  return Math.max(note.pathfinderCount ?? 0, note.tltCount ?? 0) + (note.staffCount ?? 0);
+}
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -22,6 +39,21 @@ export function meetingNoteMonth(meetingDate: string) {
   return meetingDate.slice(0, 7);
 }
 
+/**
+ * The month Monthly Records (#653) opens on: the `?month=` asked for when it is a
+ * real month up to the current one (an old report link), otherwise this month.
+ */
+export function recordsMonth(param: string | string[] | undefined, now: Date) {
+  const current = calendarDateIn(now).slice(0, 7);
+  return typeof param === "string" && isReportMonth(param) && param <= current ? param : current;
+}
+
+/** A new meeting's starting date within the month being viewed: today when it falls there, else the 1st. */
+export function defaultMeetingDate(month: string, now: Date) {
+  const today = calendarDateIn(now);
+  return today.startsWith(month) ? today : `${month}-01`;
+}
+
 function average(values: readonly number[]) {
   if (values.length === 0) return null;
   return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
@@ -29,20 +61,18 @@ function average(values: readonly number[]) {
 
 /**
  * What a new monthly report prefills from a month's meeting notes: average
- * attendance and the Pathfinder/TLT/staff counts, each averaged over the
+ * attendance (distinct people per meeting) and the Pathfinder/TLT/staff counts, each averaged over the
  * meetings that recorded it, and the month's honors worked on. A month with
  * no notes, or no notes with a given count, prefills nothing for that field.
  */
-export function notesMonthlySummary(notes: ReadonlyArray<MeetingNoteCounts & { honors: readonly ReportHonor[] }>) {
+export function notesMonthlySummary(notes: ReadonlyArray<MeetingNoteTotals & { honors: readonly ReportHonor[] }>) {
   if (notes.length === 0) return null;
   const only = (pick: (note: MeetingNoteCounts) => number | null) =>
     notes.map(pick).filter((value): value is number => value !== null);
   const pathfinderValues = only((note) => note.pathfinderCount);
   const tltValues = only((note) => note.tltCount);
   const staffValues = only((note) => note.staffCount);
-  const attendanceValues = notes
-    .filter((note) => note.pathfinderCount !== null || note.tltCount !== null || note.staffCount !== null)
-    .map((note) => (note.pathfinderCount ?? 0) + (note.tltCount ?? 0) + (note.staffCount ?? 0));
+  const attendanceValues = notes.map(meetingAttendanceTotal).filter((value): value is number => value !== null);
 
   // Honors match case-insensitively; the first spelling seen is kept.
   const honorParticipants = new Map<string, ReportHonor>();

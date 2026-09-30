@@ -50,6 +50,10 @@ const offeringDetails = {
   perClubLimit: wholeNumber("Per-club limit", 1, 1_000).nullable().default(null),
   teacherName: text(120).default(""),
   location: text(120).default(""),
+  /** Extra cost of the class in cents (#651); null means none. Shown on the public class grid. */
+  additionalCostCents: wholeNumber("Additional cost", 1, 1_000_000).nullable().default(null),
+  /** A special requirement shown as a badge (#651). Plain text. */
+  requirementNote: text(200).default(""),
   isActive: z.boolean().default(true),
 };
 
@@ -85,6 +89,8 @@ export const honorOfferingUpdateSchema = z.object({
   perClubLimit: wholeNumber("Per-club limit", 1, 1_000).nullable(),
   teacherName: text(120),
   location: text(120),
+  additionalCostCents: wholeNumber("Additional cost", 1, 1_000_000).nullable(),
+  requirementNote: text(200),
   isActive: z.boolean(),
   /** Only for an all-sessions class (#589). */
   locationId: z.string().min(1).max(64).nullable(),

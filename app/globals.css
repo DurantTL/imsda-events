@@ -1,6 +1,14 @@
 @import "tailwindcss";
 
 :root {
+  /* #645 heading scale. rem resolves against the html root (16px), not body. */
+  --text-helper-min: 0.875rem;
+  --text-badge: 0.75rem;
+  --heading-section: 1.3rem;
+  --heading-sub: 1.075rem;
+  --heading-group: 1rem;
+  --heading-gap: 0.625rem;
+  --heading-space-above: 1.5rem;
   --imsda-navy: #003b5c;
   --imsda-navy-deep: #002c45;
   --imsda-navy-soft: #e6f0f4;
@@ -2889,7 +2897,7 @@ select:focus-visible {
 .public-registration-brand > span strong,
 .public-registration-brand > span small { display: block; }
 .public-registration-brand > span strong { font-size: 1.04rem; letter-spacing: 0.08em; }
-.public-registration-brand > span small { color: var(--muted); font-size: 0.62rem; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; }
+.public-registration-brand > span small { color: var(--muted); font-size: var(--text-helper-min); font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; }
 
 .public-registration-secure {
   display: inline-flex;
@@ -2900,7 +2908,7 @@ select:focus-visible {
   background: var(--green-soft);
   color: var(--green);
   padding: 7px 11px;
-  font-size: 0.72rem;
+  font-size: var(--text-badge);
   font-weight: 700;
 }
 
@@ -2939,7 +2947,7 @@ select:focus-visible {
 .public-registration-eyebrow {
   margin: 0 0 6px;
   color: var(--imsda-purple);
-  font-size: 0.7rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -2958,7 +2966,7 @@ select:focus-visible {
   backdrop-filter: blur(4px);
 }
 
-.public-registration-event-details span { display: flex; align-items: flex-start; gap: 9px; color: #e6f0f4; font-size: 0.76rem; font-weight: 600; }
+.public-registration-event-details span { display: flex; align-items: flex-start; gap: 9px; color: #e6f0f4; font-size: var(--text-helper-min); font-weight: 600; }
 .public-registration-event-details svg { flex: 0 0 auto; margin-top: 1px; color: #ffd878; }
 
 .public-registration-layout {
@@ -2982,7 +2990,7 @@ select:focus-visible {
   background: white;
   color: var(--imsda-navy);
   padding: 12px 16px;
-  font-size: 0.8rem;
+  font-size: var(--text-helper-min);
 }
 .public-registration-draft-notice button {
   border: 1px solid var(--line);
@@ -3010,9 +3018,9 @@ select:focus-visible {
 .public-registration-waitlist-banner > span,
 .public-registration-waitlist-payment > span { display: grid; gap: 3px; }
 .public-registration-waitlist-banner strong,
-.public-registration-waitlist-payment strong { font-size: 0.8rem; }
+.public-registration-waitlist-payment strong { font-size: var(--text-helper-min); }
 .public-registration-waitlist-banner small,
-.public-registration-waitlist-payment small { color: var(--muted); font-size: 0.69rem; line-height: 1.5; }
+.public-registration-waitlist-payment small { color: var(--muted); font-size: var(--text-helper-min); line-height: 1.5; }
 
 .public-registration-intro,
 .public-registration-section,
@@ -3028,7 +3036,7 @@ select:focus-visible {
 .public-registration-intro { min-width: 0; max-width: 100%; overflow-wrap: anywhere; border-radius: 20px; padding: 25px 27px; }
 .public-registration-intro h2 { margin: 0; color: var(--ink); font-size: clamp(1.45rem, 3vw, 2rem); letter-spacing: -0.025em; }
 .public-registration-intro > p:not(.public-registration-eyebrow) { max-width: 700px; margin: 9px 0 0; color: var(--muted); font-size: 0.9rem; line-height: 1.65; }
-.public-registration-intro > span { display: block; margin-top: 15px; color: var(--muted); font-size: 0.72rem; }
+.public-registration-intro > span { display: block; margin-top: 15px; color: var(--muted); font-size: var(--text-helper-min); }
 .public-registration-intro > span > span { color: var(--coral); font-weight: 800; }
 
 .public-registration-progress {
@@ -3050,14 +3058,14 @@ select:focus-visible {
 }
 .public-registration-progress-heading > span {
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
   letter-spacing: 0.07em;
   text-transform: uppercase;
 }
 .public-registration-progress-heading > strong {
   color: var(--imsda-purple);
-  font-size: 0.72rem;
+  font-size: var(--text-helper-min);
 }
 .public-registration-progress-track {
   height: 7px;
@@ -3089,19 +3097,19 @@ select:focus-visible {
 }
 .public-registration-progress li > span {
   display: grid;
-  width: 23px;
-  height: 23px;
+  width: 1.917em;
+  height: 1.917em;
   flex: 0 0 auto;
   place-items: center;
   border: 1px solid #c5d2d7;
   border-radius: 50%;
   background: white;
-  font-size: 0.59rem;
+  font-size: var(--text-badge);
   font-weight: 900;
 }
 .public-registration-progress li > small {
   overflow: hidden;
-  font-size: 0.6rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3128,8 +3136,8 @@ select:focus-visible {
 }
 
 .public-registration-error-summary:focus { outline: 3px solid rgba(169, 85, 73, 0.2); outline-offset: 3px; }
-.public-registration-error-summary strong { display: block; font-size: 0.86rem; }
-.public-registration-error-summary ul { margin: 9px 0 0; padding-left: 20px; font-size: 0.78rem; line-height: 1.8; }
+.public-registration-error-summary strong { display: block; font-size: var(--text-helper-min); }
+.public-registration-error-summary ul { margin: 9px 0 0; padding-left: 20px; font-size: var(--text-helper-min); line-height: 1.8; }
 .public-registration-error-summary a { color: #71372f; font-weight: 700; }
 
 .public-registration-step-shell {
@@ -3158,7 +3166,7 @@ select:focus-visible {
 .public-registration-step-heading > p:last-child {
   margin: 7px 0 0;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: var(--text-helper-min);
   line-height: 1.55;
 }
 .public-registration-step-content {
@@ -3167,10 +3175,10 @@ select:focus-visible {
 }
 
 .public-registration-section { overflow: hidden; border-radius: 20px; }
-.public-registration-section > header { display: grid; grid-template-columns: auto 1fr; gap: 13px; border-bottom: 1px solid var(--line); background: linear-gradient(135deg, #fbfcfd, #f4f8f9); padding: 20px 24px; }
-.public-registration-section > header > span { display: grid; width: 34px; height: 34px; place-items: center; border-radius: 10px; background: var(--imsda-navy); color: white; font-size: 0.78rem; font-weight: 800; }
+.public-registration-section > header { display: grid; grid-template-columns: auto 1fr; gap: 13px; border-bottom: 1px solid var(--line); background: linear-gradient(135deg, #fbfcfd, #f4f8f9); padding: 24px 24px 20px; }
+.public-registration-section > header > span { display: grid; width: 2.724em; height: 2.724em; place-items: center; border-radius: 10px; background: var(--imsda-navy); color: white; font-size: 0.78rem; font-weight: 800; }
 .public-registration-section > header h2 { margin: 0; color: var(--ink); font-size: 1.12rem; letter-spacing: -0.015em; }
-.public-registration-section > header p { margin: 4px 0 0; color: var(--muted); font-size: 0.76rem; line-height: 1.55; }
+.public-registration-section > header p { margin: 4px 0 0; color: var(--muted); font-size: var(--text-helper-min); line-height: 1.55; }
 .public-registration-fields { display: grid; gap: 22px; padding: 24px; }
 .public-registration-linked-section .public-registration-fields { padding-top: 26px; }
 
@@ -3189,12 +3197,12 @@ select:focus-visible {
   gap: 13px;
   border-bottom: 1px solid var(--line);
   background: linear-gradient(135deg, #fbfcfd, #f4f8f9);
-  padding: 20px 24px;
+  padding: 24px 24px 20px;
 }
 .public-registration-roster-heading > span:first-child {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 2.724em;
+  height: 2.724em;
   place-items: center;
   border-radius: 10px;
   background: var(--imsda-navy);
@@ -3202,16 +3210,16 @@ select:focus-visible {
   font-size: 0.78rem;
   font-weight: 800;
 }
-.public-registration-roster-heading .public-registration-eyebrow { margin-bottom: 3px; font-size: 0.61rem; }
+.public-registration-roster-heading .public-registration-eyebrow { margin-bottom: 3px; font-size: var(--text-helper-min); }
 .public-registration-roster-heading h2 { margin: 0; color: var(--ink); font-size: 1.12rem; letter-spacing: -0.015em; }
-.public-registration-roster-heading p:last-child { max-width: 640px; margin: 5px 0 0; color: var(--muted); font-size: 0.76rem; line-height: 1.55; }
+.public-registration-roster-heading p:last-child { max-width: 640px; margin: 5px 0 0; color: var(--muted); font-size: var(--text-helper-min); line-height: 1.55; }
 .public-registration-roster-heading > strong {
   border: 1px solid #c9dae1;
   border-radius: 999px;
   background: white;
   color: var(--imsda-navy);
   padding: 7px 10px;
-  font-size: 0.68rem;
+  font-size: var(--text-badge);
   white-space: nowrap;
 }
 .public-registration-attendee-list { display: grid; gap: 15px; padding: 20px 24px; }
@@ -3244,20 +3252,20 @@ select:focus-visible {
 }
 .public-registration-attendee-number {
   display: grid;
-  width: 32px;
-  height: 32px;
+  width: 2.667em;
+  height: 2.667em;
   place-items: center;
   border-radius: 10px;
   background: var(--imsda-purple-soft);
   color: var(--imsda-purple);
-  font-size: 0.72rem;
+  font-size: var(--text-badge);
   font-weight: 900;
 }
 .public-registration-attendee-heading > div:nth-child(2) { min-width: 0; }
 .public-registration-attendee-heading small {
   display: block;
   color: var(--muted);
-  font-size: 0.6rem;
+  font-size: var(--text-helper-min);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -3275,7 +3283,7 @@ select:focus-visible {
   display: inline-block;
   margin-top: 3px;
   color: var(--imsda-purple);
-  font-size: 0.66rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
   text-transform: none;
   letter-spacing: normal;
@@ -3296,7 +3304,7 @@ select:focus-visible {
   cursor: pointer;
   padding: 7px 9px;
   font: inherit;
-  font-size: 0.63rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
 }
 .public-registration-attendee-actions button:hover:not(:disabled) { border-color: #9bb9c5; background: var(--imsda-navy-soft); }
@@ -3310,19 +3318,19 @@ select:focus-visible {
   background: #fbf8fe;
   color: var(--imsda-purple);
   padding: 9px 11px;
-  font-size: 0.68rem;
+  font-size: var(--text-helper-min);
   line-height: 1.5;
 }
 .public-registration-attendee-section + .public-registration-attendee-section { border-top: 1px solid #e4ecef; }
-.public-registration-attendee-section-heading { padding: 18px 20px 0; }
-.public-registration-attendee-section-heading h4 { margin: 0; color: var(--ink); font-size: 0.86rem; }
-.public-registration-attendee-section-heading p { margin: 4px 0 0; color: var(--muted); font-size: 0.69rem; line-height: 1.5; }
+.public-registration-attendee-section-heading { padding: 26px 20px 0; }
+.public-registration-attendee-section-heading h4 { margin: 0; color: var(--ink); font-size: var(--text-helper-min); }
+.public-registration-attendee-section-heading p { margin: 4px 0 0; color: var(--muted); font-size: var(--text-helper-min); line-height: 1.5; }
 .public-registration-attendee-section > .public-registration-fields { padding: 18px 20px 22px; }
 .public-registration-attendee-empty {
   margin: 0;
   color: var(--muted);
   padding: 20px;
-  font-size: 0.72rem;
+  font-size: var(--text-helper-min);
 }
 .public-registration-roster-footer {
   display: flex;
@@ -3352,7 +3360,7 @@ select:focus-visible {
   cursor: pointer;
   padding: 10px 14px;
   font: inherit;
-  font-size: 0.76rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
 }
 .public-registration-roster-footer button:hover:not(:disabled) { border-color: var(--imsda-purple); background: #eee6f5; }
@@ -3364,16 +3372,16 @@ select:focus-visible {
   color: var(--muted);
   text-align: right;
 }
-.public-registration-roster-help small { font-size: 0.65rem; line-height: 1.45; }
+.public-registration-roster-help small { font-size: var(--text-helper-min); line-height: 1.45; }
 
-.public-registration-field { display: grid; min-width: 0; gap: 7px; margin: 0; color: var(--ink); font-size: 0.84rem; font-weight: 700; }
+.public-registration-field { display: grid; min-width: 0; gap: 7px; margin: 0; color: var(--ink); font-size: var(--text-helper-min); font-weight: 700; }
 .public-registration-field:is(fieldset) { border: 0; padding: 0; }
 .public-registration-field legend { width: 100%; margin: 0 0 2px; padding: 0; }
 .public-registration-field-label { display: block; }
 .public-registration-optional-mark { color: var(--muted); }
 .public-registration-optional-note { display: block; margin-top: 2px; color: var(--muted); font-size: 0.72em; font-weight: 600; }
 .public-registration-field-label > span:first-of-type { color: var(--coral); }
-.public-registration-field > small { color: var(--muted); font-size: 0.7rem; font-weight: 500; line-height: 1.5; }
+.public-registration-field > small { color: var(--muted); font-size: var(--text-helper-min); font-weight: 500; line-height: 1.5; }
 
 .public-registration-field input:not([type="checkbox"]):not([type="radio"]),
 .public-registration-field select,
@@ -3486,12 +3494,12 @@ select:focus-visible {
 .public-registration-option:has(input:checked) { border-color: #ad92c6; background: var(--imsda-purple-soft); box-shadow: inset 0 0 0 1px rgba(88, 44, 131, 0.08); }
 .public-registration-option input { width: 17px; height: 17px; flex: 0 0 auto; margin: 2px 0 0; accent-color: var(--imsda-purple); }
 .public-registration-option > span { display: grid; min-width: 0; flex: 1; gap: 3px; }
-.public-registration-option > span > strong { font-size: 0.8rem; line-height: 1.35; }
-.public-registration-option > span > small { color: var(--muted); font-size: 0.65rem; font-weight: 500; line-height: 1.4; }
+.public-registration-option > span > strong { font-size: var(--text-helper-min); line-height: 1.35; }
+.public-registration-option > span > small { color: var(--muted); font-size: var(--text-helper-min); font-weight: 500; line-height: 1.4; }
 .public-registration-option > span > .public-registration-option-description,
-.public-registration-ranking-list button > span > .public-registration-option-description { color: #40545e; font-size: 0.72rem; line-height: 1.55; }
+.public-registration-ranking-list button > span > .public-registration-option-description { color: #40545e; font-size: var(--text-helper-min); line-height: 1.55; }
 .public-registration-option > span > .public-registration-option-details,
-.public-registration-ranking-list button > span > .public-registration-option-details { color: var(--imsda-purple); font-size: 0.63rem; font-weight: 700; }
+.public-registration-ranking-list button > span > .public-registration-option-details { color: var(--imsda-purple); font-size: var(--text-helper-min); font-weight: 700; }
 .public-registration-option.is-full { border-color: #e5c7c1; background: #fff7f5; }
 .public-registration-option.is-full > span > small { color: var(--coral); font-weight: 700; }
 .public-registration-option:has(input:disabled) { cursor: not-allowed; opacity: 0.65; transform: none; }
@@ -3503,11 +3511,11 @@ select:focus-visible {
 .public-registration-ranking-list button.is-full { border-color: #e5c7c1; background: #fff7f5; }
 .public-registration-ranking-list button:disabled { cursor: not-allowed; opacity: 0.62; }
 .public-registration-ranking-list button > span { display: grid; gap: 3px; }
-.public-registration-ranking-list button > span strong { font-size: 0.82rem; }
-.public-registration-ranking-list button > span small { color: var(--muted); font-size: 0.66rem; line-height: 1.4; }
-.public-registration-ranking-list button > b { flex: 0 0 auto; border-radius: 999px; background: white; color: var(--imsda-purple); padding: 5px 9px; font-size: 0.66rem; }
+.public-registration-ranking-list button > span strong { font-size: var(--text-helper-min); }
+.public-registration-ranking-list button > span small { color: var(--muted); font-size: var(--text-helper-min); line-height: 1.4; }
+.public-registration-ranking-list button > b { flex: 0 0 auto; border-radius: 999px; background: white; color: var(--imsda-purple); padding: 5px 9px; font-size: var(--text-badge); }
 .public-registration-select-descriptions { display: grid; gap: 7px; border-left: 3px solid #d8c8e6; padding: 2px 0 2px 11px; }
-.public-registration-select-descriptions small { color: #40545e; font-size: 0.7rem; line-height: 1.5; }
+.public-registration-select-descriptions small { color: #40545e; font-size: var(--text-helper-min); line-height: 1.5; }
 .public-registration-select-descriptions strong { color: var(--ink); }
 
 .public-registration-check { display: flex; align-items: flex-start; gap: 10px; border: 1px solid #d2dfe4; border-radius: 12px; background: #fbfcfd; cursor: pointer; padding: 13px; font-weight: 500; line-height: 1.5; }
@@ -3516,8 +3524,8 @@ select:focus-visible {
 
 .public-registration-calculated { display: flex; align-items: center; justify-content: space-between; gap: 18px; border: 1px solid #d8c8e6; border-radius: 13px; background: var(--imsda-purple-soft); padding: 14px 16px; }
 .public-registration-calculated > span { display: grid; gap: 3px; }
-.public-registration-calculated > span strong { font-size: 0.82rem; }
-.public-registration-calculated > span small { color: var(--muted); font-size: 0.68rem; font-weight: 500; }
+.public-registration-calculated > span strong { font-size: var(--text-helper-min); }
+.public-registration-calculated > span small { color: var(--muted); font-size: var(--text-helper-min); font-weight: 500; }
 .public-registration-calculated > strong { color: var(--imsda-purple); font-size: 1rem; }
 
 .public-registration-honeypot { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
@@ -3540,7 +3548,7 @@ select:focus-visible {
   cursor: pointer;
   padding: 11px 18px;
   font: inherit;
-  font-size: 0.79rem;
+  font-size: var(--text-helper-min);
   font-weight: 900;
 }
 .public-registration-step-actions .is-back {
@@ -3592,7 +3600,7 @@ select:focus-visible {
 .public-registration-roster-summary-totals > div { min-width: 88px; }
 .public-registration-roster-summary-totals dt {
   color: var(--muted);
-  font-size: 0.62rem;
+  font-size: var(--text-helper-min);
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -3607,7 +3615,7 @@ select:focus-visible {
 .public-registration-review-account > p:not(.public-registration-eyebrow) {
   margin: 8px 0 0;
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: var(--text-helper-min);
   line-height: 1.55;
 }
 .public-registration-review-account fieldset {
@@ -3621,7 +3629,7 @@ select:focus-visible {
 .public-registration-review-account legend {
   margin-bottom: 7px;
   color: var(--ink);
-  font-size: 0.7rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
 }
 .public-registration-review-account label {
@@ -3641,18 +3649,18 @@ select:focus-visible {
   background: var(--imsda-purple-soft);
 }
 .public-registration-review-account label > span { display: grid; gap: 3px; }
-.public-registration-review-account label strong { color: var(--ink); font-size: 0.7rem; }
+.public-registration-review-account label strong { color: var(--ink); font-size: var(--text-helper-min); }
 .public-registration-review-account label small,
 .public-registration-review-account > small {
   color: var(--muted);
-  font-size: 0.62rem;
+  font-size: var(--text-helper-min);
   line-height: 1.5;
 }
 .public-registration-review-order { border-top: 4px solid var(--imsda-gold); }
 .public-registration-review-empty {
   margin: 12px 0 0;
   color: var(--muted);
-  font-size: 0.69rem;
+  font-size: var(--text-helper-min);
   line-height: 1.5;
 }
 .public-registration-review-answers {
@@ -3669,13 +3677,13 @@ select:focus-visible {
 }
 .public-registration-review-answers dt {
   color: var(--muted);
-  font-size: 0.64rem;
+  font-size: var(--text-helper-min);
 }
 .public-registration-review-answers dd {
   overflow-wrap: anywhere;
   margin: 0;
   color: var(--ink);
-  font-size: 0.68rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
   text-align: right;
 }
@@ -3693,7 +3701,7 @@ select:focus-visible {
 }
 .public-registration-review-attendees > li > strong {
   color: var(--imsda-purple);
-  font-size: 0.72rem;
+  font-size: var(--text-helper-min);
 }
 .public-registration-review-attendees .public-registration-review-answers {
   margin-top: 7px;
@@ -3708,12 +3716,12 @@ select:focus-visible {
   justify-content: space-between;
   gap: 12px;
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: var(--text-helper-min);
 }
 .public-registration-review-lines > div > span { display: grid; gap: 2px; }
 .public-registration-review-lines small {
   color: var(--imsda-purple);
-  font-size: 0.6rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
 }
 .public-registration-review-lines strong { color: var(--ink); }
@@ -3722,7 +3730,7 @@ select:focus-visible {
   border-top: 1px solid var(--line);
   padding-top: 11px;
   color: var(--ink);
-  font-size: 0.84rem;
+  font-size: var(--text-helper-min);
   font-weight: 900;
 }
 
@@ -3745,7 +3753,7 @@ select:focus-visible {
 
 .public-registration-promo-field > label {
   color: var(--ink);
-  font-size: 0.82rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
 }
 
@@ -3799,7 +3807,7 @@ select:focus-visible {
   background: var(--imsda-purple-soft);
   color: var(--imsda-purple);
   padding: 10px;
-  font-size: 0.67rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
 }
 .public-registration-review-acknowledgements {
@@ -3829,8 +3837,8 @@ select:focus-visible {
   display: grid;
   gap: 2px;
 }
-.public-registration-review-acknowledgements strong { font-size: 0.68rem; }
-.public-registration-review-acknowledgements small { font-size: 0.6rem; }
+.public-registration-review-acknowledgements strong { font-size: var(--text-helper-min); }
+.public-registration-review-acknowledgements small { font-size: var(--text-helper-min); }
 .public-registration-review-acknowledgements li.is-accepted {
   background: var(--green-soft);
   color: var(--green);
@@ -3849,10 +3857,10 @@ select:focus-visible {
 .public-registration-submit-card > div { display: flex; align-items: flex-start; gap: 11px; }
 .public-registration-submit-card > div > svg { flex: 0 0 auto; margin-top: 1px; color: var(--imsda-gold); }
 .public-registration-submit-card > div span { display: grid; gap: 3px; }
-.public-registration-submit-card > div strong { font-size: 0.84rem; }
-.public-registration-submit-card > div small { color: #c5d9e2; font-size: 0.7rem; line-height: 1.5; }
-.public-registration-submit-card > p { margin: 0; border-radius: 10px; background: rgba(240, 179, 35, 0.13); color: #ffe4a2; padding: 10px 12px; font-size: 0.7rem; line-height: 1.5; }
-.public-registration-submit-card > button { display: inline-flex; min-height: 50px; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--imsda-gold); border-radius: 12px; background: var(--imsda-gold); color: var(--imsda-navy-deep); cursor: pointer; padding: 12px 17px; font: inherit; font-size: 0.84rem; font-weight: 800; }
+.public-registration-submit-card > div strong { font-size: var(--text-helper-min); }
+.public-registration-submit-card > div small { color: #c5d9e2; font-size: var(--text-helper-min); line-height: 1.5; }
+.public-registration-submit-card > p { margin: 0; border-radius: 10px; background: rgba(240, 179, 35, 0.13); color: #ffe4a2; padding: 10px 12px; font-size: var(--text-helper-min); line-height: 1.5; }
+.public-registration-submit-card > button { display: inline-flex; min-height: 50px; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--imsda-gold); border-radius: 12px; background: var(--imsda-gold); color: var(--imsda-navy-deep); cursor: pointer; padding: 12px 17px; font: inherit; font-size: var(--text-helper-min); font-weight: 800; }
 .public-registration-submit-card > button:hover:not(:disabled) { background: #f6c24a; }
 .public-registration-submit-card > button:disabled { cursor: wait; opacity: 0.7; }
 
@@ -3868,23 +3876,23 @@ select:focus-visible {
   background: var(--imsda-purple-soft);
   color: var(--imsda-purple);
   padding: 6px 9px;
-  font-size: 0.68rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
 }
-.public-registration-summary-empty { margin: 16px 0 0; color: var(--muted); font-size: 0.75rem; line-height: 1.55; }
+.public-registration-summary-empty { margin: 16px 0 0; color: var(--muted); font-size: var(--text-helper-min); line-height: 1.55; }
 .public-registration-summary-lines { display: grid; gap: 10px; margin-top: 18px; }
 .public-registration-summary-lines > div,
-.public-registration-confirmation-order > div { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: 0.74rem; }
+.public-registration-confirmation-order > div { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: var(--text-helper-min); }
 .public-registration-summary-lines > div > span,
 .public-registration-confirmation-order > div > span { display: grid; gap: 2px; }
 .public-registration-summary-lines > div small,
-.public-registration-confirmation-order > div small { color: var(--imsda-purple); font-size: 0.62rem; font-weight: 700; }
+.public-registration-confirmation-order > div small { color: var(--imsda-purple); font-size: var(--text-helper-min); font-weight: 700; }
 .public-registration-summary-lines > div strong,
 .public-registration-confirmation-order > div strong { color: var(--ink); }
 .public-registration-summary-lines > .is-total,
 .public-registration-confirmation-order > .is-total { margin-top: 2px; border-top: 1px solid var(--line); padding-top: 12px; color: var(--ink); font-size: 0.88rem; font-weight: 800; }
-.public-registration-pricing-date { display: block; margin-top: 17px; color: var(--muted); font-size: 0.65rem; }
-.public-registration-summary-note { display: flex; align-items: flex-start; gap: 7px; margin-top: 15px; border-radius: 11px; background: var(--green-soft); color: var(--green); padding: 10px; font-size: 0.66rem; line-height: 1.45; }
+.public-registration-pricing-date { display: block; margin-top: 17px; color: var(--muted); font-size: var(--text-helper-min); }
+.public-registration-summary-note { display: flex; align-items: flex-start; gap: 7px; margin-top: 15px; border-radius: 11px; background: var(--green-soft); color: var(--green); padding: 10px; font-size: var(--text-helper-min); line-height: 1.45; }
 .public-registration-summary-note svg { flex: 0 0 auto; margin-top: 1px; }
 
 .public-registration-confirmation-wrap { max-width: 780px; margin: 48px auto; padding: 0 20px 60px; }
@@ -3894,36 +3902,36 @@ select:focus-visible {
 .public-registration-confirmation h1 { margin: 4px 0 9px; color: var(--ink); font-size: clamp(1.8rem, 5vw, 2.6rem); letter-spacing: -0.03em; }
 .public-registration-confirmation-message { max-width: 590px; margin: 0 auto; color: var(--muted); font-size: 0.9rem; line-height: 1.65; }
 .public-registration-code { display: grid; max-width: 390px; gap: 3px; margin: 24px auto; border: 1px dashed #9db9c5; border-radius: 14px; background: #f7fafb; padding: 14px; }
-.public-registration-code small { color: var(--muted); font-size: 0.66rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.public-registration-code small { color: var(--muted); font-size: var(--text-badge); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .public-registration-code strong { color: var(--imsda-navy); font-size: 1.35rem; letter-spacing: 0.07em; }
 .public-registration-local-warning { display: flex; max-width: 620px; align-items: flex-start; gap: 11px; margin: 0 auto 22px; border: 1px solid #e7d297; border-radius: 14px; background: var(--imsda-gold-soft); color: #6f5316; padding: 14px; text-align: left; }
 .public-registration-local-warning svg { flex: 0 0 auto; margin-top: 1px; }
 .public-registration-local-warning span { display: grid; gap: 3px; }
-.public-registration-local-warning strong { font-size: 0.78rem; }
-.public-registration-local-warning small { font-size: 0.68rem; line-height: 1.5; }
+.public-registration-local-warning strong { font-size: var(--text-helper-min); }
+.public-registration-local-warning small { font-size: var(--text-helper-min); line-height: 1.5; }
 .public-registration-confirmation-details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin: 0; text-align: left; }
 .public-registration-confirmation-details > div { border-radius: 12px; background: var(--paper); padding: 12px; }
-.public-registration-confirmation-details dt { color: var(--muted); font-size: 0.65rem; }
-.public-registration-confirmation-details dd { overflow-wrap: anywhere; margin: 3px 0 0; color: var(--imsda-navy); font-size: 0.76rem; font-weight: 700; }
+.public-registration-confirmation-details dt { color: var(--muted); font-size: var(--text-helper-min); }
+.public-registration-confirmation-details dd { overflow-wrap: anywhere; margin: 3px 0 0; color: var(--imsda-navy); font-size: var(--text-helper-min); font-weight: 700; }
 .public-registration-confirmation-order { display: grid; max-width: 620px; gap: 9px; margin: 22px auto 0; border: 1px solid var(--line); border-radius: 14px; padding: 16px; text-align: left; }
 .public-registration-confirmation-order h2 { margin: 0 0 3px; color: var(--ink); font-size: 0.88rem; }
 .public-registration-confirmation-attendees { max-width: 620px; margin: 18px auto 0; border-radius: 14px; background: var(--imsda-purple-soft); padding: 15px 17px; text-align: left; }
-.public-registration-confirmation-attendees h2 { margin: 0; color: var(--imsda-purple); font-size: 0.82rem; }
-.public-registration-confirmation-attendees ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 18px; margin: 10px 0 0; padding-left: 18px; color: var(--ink); font-size: 0.72rem; line-height: 1.5; }
-.public-registration-secondary-button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 6px; margin: 24px 4px 0; border: 1px solid #b9ccd4; border-radius: 11px; background: #f8fafb; color: var(--imsda-navy); cursor: pointer; padding: 10px 14px; font: inherit; font-size: 0.76rem; font-weight: 800; text-decoration: none; }
+.public-registration-confirmation-attendees h2 { margin: 0; color: var(--imsda-purple); font-size: var(--text-helper-min); }
+.public-registration-confirmation-attendees ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 18px; margin: 10px 0 0; padding-left: 18px; color: var(--ink); font-size: var(--text-helper-min); line-height: 1.5; }
+.public-registration-secondary-button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 6px; margin: 24px 4px 0; border: 1px solid #b9ccd4; border-radius: 11px; background: #f8fafb; color: var(--imsda-navy); cursor: pointer; padding: 10px 14px; font: inherit; font-size: var(--text-helper-min); font-weight: 800; text-decoration: none; }
 .public-registration-manage-link { display: grid; gap: 8px; margin-top: 22px; border-radius: 14px; background: var(--imsda-purple-soft); padding: 14px; text-align: left; }
-.public-registration-manage-link > a { display: inline-flex; min-height: 46px; align-items: center; justify-content: center; gap: 7px; border-radius: 11px; background: var(--imsda-purple); color: white; padding: 11px 15px; font-size: 0.78rem; font-weight: 800; text-decoration: none; }
-.public-registration-manage-link > small { color: #5b4c66; font-size: 0.62rem; line-height: 1.5; }
+.public-registration-manage-link > a { display: inline-flex; min-height: 46px; align-items: center; justify-content: center; gap: 7px; border-radius: 11px; background: var(--imsda-purple); color: white; padding: 11px 15px; font-size: var(--text-helper-min); font-weight: 800; text-decoration: none; }
+.public-registration-manage-link > small { color: #5b4c66; font-size: var(--text-helper-min); line-height: 1.5; }
 .public-registration-account-prompt { display: grid; grid-template-columns: auto 1fr; gap: 12px; margin-top: 14px; border: 1px solid #d8cce2; border-radius: 14px; background: #fbf8fd; padding: 15px; text-align: left; }
 .public-registration-account-prompt > span { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 11px; background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .public-registration-account-prompt h2 { margin: 2px 0 5px; font-size: 0.94rem; }
-.public-registration-account-prompt p:not(.public-registration-eyebrow) { margin: 0; color: #5b4c66; font-size: 0.7rem; line-height: 1.55; }
+.public-registration-account-prompt p:not(.public-registration-eyebrow) { margin: 0; color: #5b4c66; font-size: var(--text-helper-min); line-height: 1.55; }
 .public-registration-account-prompt p + p { margin-top: 7px; }
 .public-registration-account-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.public-registration-account-prompt a { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; border-radius: 9px; background: white; box-shadow: inset 0 0 0 1px #bda9ce; color: var(--imsda-purple); padding: 8px 12px; font-size: 0.7rem; font-weight: 800; text-decoration: none; }
+.public-registration-account-prompt a { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; border-radius: 9px; background: white; box-shadow: inset 0 0 0 1px #bda9ce; color: var(--imsda-purple); padding: 8px 12px; font-size: var(--text-helper-min); font-weight: 800; text-decoration: none; }
 .public-registration-account-actions a { flex: 1 1 180px; margin-top: 0; text-align: center; }
 .public-registration-account-prompt a:focus-visible { outline: 2px solid var(--imsda-purple); outline-offset: 2px; }
-.public-registration-account-prompt small { display: block; margin-top: 7px; color: #77677f; font-size: 0.6rem; line-height: 1.45; }
+.public-registration-account-prompt small { display: block; margin-top: 7px; color: #77677f; font-size: var(--text-helper-min); line-height: 1.45; }
 .public-registration-confirmation-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .public-registration-confirmation-actions .public-registration-secondary-button { flex: 1 1 180px; margin: 16px 0 0; }
 
@@ -3934,7 +3942,7 @@ select:focus-visible {
 .public-registration-loading h1,
 .public-registration-not-found h1 { margin: 4px 0 8px; color: var(--ink); font-size: 1.65rem; }
 .public-registration-loading p,
-.public-registration-not-found > p:last-child { max-width: 470px; margin: 0 auto; color: var(--muted); font-size: 0.8rem; line-height: 1.65; }
+.public-registration-not-found > p:last-child { max-width: 470px; margin: 0 auto; color: var(--muted); font-size: var(--text-helper-min); line-height: 1.65; }
 
 /* Public event landing and registration selection */
 .public-event-brand-link { text-decoration: none; }
@@ -3949,7 +3957,7 @@ select:focus-visible {
   background: #f8fafb;
   color: var(--imsda-navy);
   padding: 9px 12px;
-  font-size: 0.72rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
   text-decoration: none;
 }
@@ -4017,7 +4025,7 @@ select:focus-visible {
   align-items: center;
   gap: 6px 10px;
   color: #667982;
-  font-size: 0.66rem;
+  font-size: var(--text-helper-min);
   line-height: 1.4;
 }
 .public-event-announcement-meta > span:not(.public-event-announcement-priority) {
@@ -4048,7 +4056,7 @@ select:focus-visible {
   max-width: 900px;
   margin: 6px 0 0;
   color: #4f626b;
-  font-size: 0.78rem;
+  font-size: var(--text-helper-min);
   line-height: 1.65;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -4076,7 +4084,7 @@ select:focus-visible {
   box-shadow: 0 12px 36px rgba(0, 59, 92, 0.06);
 }
 .public-event-registration-state h2 { margin: 0; color: var(--ink); font-size: clamp(1.35rem, 3vw, 1.8rem); letter-spacing: -0.025em; }
-.public-event-registration-state > div > p:last-child { margin: 6px 0 0; color: var(--muted); font-size: 0.8rem; line-height: 1.6; }
+.public-event-registration-state > div > p:last-child { margin: 6px 0 0; color: var(--muted); font-size: var(--text-helper-min); line-height: 1.6; }
 .public-event-status {
   display: inline-flex;
   width: fit-content;
@@ -4087,7 +4095,7 @@ select:focus-visible {
   background: var(--green-soft);
   color: var(--green);
   padding: 8px 12px;
-  font-size: 0.7rem;
+  font-size: var(--text-badge);
   font-weight: 900;
   text-align: center;
 }
@@ -4119,21 +4127,21 @@ select:focus-visible {
 }
 .public-event-form-number {
   display: grid;
-  width: 45px;
-  height: 45px;
+  width: 3.75em;
+  height: 3.75em;
   place-items: center;
   border-radius: 13px;
   background: var(--imsda-purple-soft);
   color: var(--imsda-purple);
-  font-size: 0.72rem;
+  font-size: var(--text-badge);
   font-weight: 900;
   letter-spacing: 0.07em;
 }
 .public-event-form-copy { min-width: 0; }
 .public-event-form-copy h3 { margin: 0; color: var(--ink); font-size: 1.1rem; letter-spacing: -0.015em; }
-.public-event-form-copy > p:not(.public-registration-eyebrow) { max-width: 620px; margin: 6px 0 0; color: var(--muted); font-size: 0.76rem; line-height: 1.55; }
+.public-event-form-copy > p:not(.public-registration-eyebrow) { max-width: 620px; margin: 6px 0 0; color: var(--muted); font-size: var(--text-helper-min); line-height: 1.55; }
 .public-event-form-copy ul { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; padding: 0; list-style: none; }
-.public-event-form-copy li { border-radius: 999px; background: var(--paper); color: var(--imsda-navy); padding: 5px 8px; font-size: 0.61rem; font-weight: 700; }
+.public-event-form-copy li { border-radius: 999px; background: var(--paper); color: var(--imsda-navy); padding: 5px 8px; font-size: var(--text-helper-min); font-weight: 700; }
 .public-event-form-cta {
   display: inline-flex;
   min-width: 160px;
@@ -4146,7 +4154,7 @@ select:focus-visible {
   background: var(--imsda-gold);
   color: var(--imsda-navy-deep);
   padding: 10px 13px;
-  font-size: 0.73rem;
+  font-size: var(--text-helper-min);
   font-weight: 900;
   text-decoration: none;
 }
@@ -4166,7 +4174,7 @@ select:focus-visible {
 }
 .public-event-empty-forms > svg { color: var(--imsda-purple); }
 .public-event-empty-forms h3 { margin: 10px 0 5px; color: var(--ink); font-size: 1.05rem; }
-.public-event-empty-forms p { max-width: 560px; margin: 0 auto; font-size: 0.76rem; line-height: 1.6; }
+.public-event-empty-forms p { max-width: 560px; margin: 0 auto; font-size: var(--text-helper-min); line-height: 1.6; }
 
 .public-event-sidebar { display: grid; gap: 13px; }
 .public-event-info-card,
@@ -4190,14 +4198,14 @@ select:focus-visible {
 .public-event-side-icon.purple { background: var(--imsda-purple-soft); color: var(--imsda-purple); }
 .public-event-info-card h2 { margin: 0; color: var(--ink); font-size: 1.05rem; }
 .public-event-info-card > p:last-child,
-.public-event-help-card > p:not(.public-registration-eyebrow) { margin: 7px 0 0; color: var(--muted); font-size: 0.73rem; line-height: 1.55; }
+.public-event-help-card > p:not(.public-registration-eyebrow) { margin: 7px 0 0; color: var(--muted); font-size: var(--text-helper-min); line-height: 1.55; }
 .public-event-info-card p strong { color: var(--imsda-navy); font-size: 1rem; }
 .public-event-support-contact {
   display: block;
   overflow-wrap: anywhere;
   margin-top: 11px;
   color: var(--imsda-navy);
-  font-size: 0.72rem;
+  font-size: var(--text-helper-min);
 }
 .public-event-help-card > a {
   display: inline-flex;
@@ -4205,7 +4213,7 @@ select:focus-visible {
   gap: 6px;
   margin-top: 14px;
   color: var(--imsda-purple);
-  font-size: 0.72rem;
+  font-size: var(--text-helper-min);
   font-weight: 900;
   text-decoration: none;
 }
@@ -4221,8 +4229,8 @@ select:focus-visible {
   text-decoration: none;
 }
 .public-event-full-details-card span { display: grid; gap: 3px; }
-.public-event-full-details-card small { color: var(--muted); font-size: 0.61rem; }
-.public-event-full-details-card strong { font-size: 0.76rem; }
+.public-event-full-details-card small { color: var(--muted); font-size: var(--text-helper-min); }
+.public-event-full-details-card strong { font-size: var(--text-helper-min); }
 .public-event-full-details-card:hover { border-color: #b194c9; background: #eae0f3; }
 .public-event-not-found-link {
   display: inline-flex;
@@ -4230,7 +4238,7 @@ select:focus-visible {
   gap: 7px;
   margin-top: 20px;
   color: var(--imsda-purple);
-  font-size: 0.75rem;
+  font-size: var(--text-helper-min);
   font-weight: 900;
   text-decoration: none;
 }
@@ -4246,7 +4254,7 @@ select:focus-visible {
 .public-manage-hero > div:first-child > p:last-child {
   margin: 9px 0 0;
   color: #d8e8ef;
-  font-size: 0.79rem;
+  font-size: var(--text-helper-min);
 }
 .public-manage-hero > div:first-child > p:last-child strong {
   color: #ffe09a;
@@ -4269,7 +4277,7 @@ select:focus-visible {
 .public-manage-status strong { display: block; }
 .public-manage-status small {
   color: #bed5df;
-  font-size: 0.61rem;
+  font-size: var(--text-badge);
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -4311,7 +4319,7 @@ select:focus-visible {
 .public-manage-card-heading > p:last-child {
   margin: 7px 0 0;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: var(--text-helper-min);
   line-height: 1.6;
 }
 
@@ -4341,7 +4349,7 @@ select:focus-visible {
 .public-manage-status-card > div > p:last-child {
   margin: 0;
   color: var(--muted);
-  font-size: 0.78rem;
+  font-size: var(--text-helper-min);
   line-height: 1.6;
 }
 .public-manage-tone-positive { border-left-color: var(--green); }
@@ -4368,7 +4376,7 @@ select:focus-visible {
   align-items: center;
   gap: 7px;
   color: var(--muted);
-  font-size: 0.63rem;
+  font-size: var(--text-helper-min);
   font-weight: 700;
 }
 .public-manage-event-grid dt svg { flex: 0 0 auto; color: var(--imsda-purple); }
@@ -4376,7 +4384,7 @@ select:focus-visible {
   overflow-wrap: anywhere;
   margin: 6px 0 0;
   color: var(--imsda-navy);
-  font-size: 0.73rem;
+  font-size: var(--text-helper-min);
   font-weight: 800;
   line-height: 1.45;
 }
@@ -4386,7 +4394,7 @@ select:focus-visible {
   gap: 6px;
   margin-top: 16px;
   color: var(--imsda-purple);
-  font-size: 0.72rem;
+  font-size: var(--text-helper-min);
   font-weight: 900;
   text-decoration: none;
 }
@@ -4441,7 +4449,7 @@ select:focus-visible {
 .public-manage-attendees strong { display: block; }
 .public-manage-attendees small {
   color: var(--muted);
-  font-size: 0.57rem;
+  font-size: var(--text-helper-min);
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -4449,7 +4457,7 @@ select:focus-visible {
   overflow: hidden;
   margin-top: 2px;
   color: var(--ink);
-  font-size: 0.72rem;
+  font-size: var(--text-helper-min);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4457,18 +4465,18 @@ select:focus-visible {
   display: block;
   margin-top: 3px;
   color: var(--imsda-purple);
-  font-size: 0.59rem;
+  font-size: var(--text-helper-min);
   font-style: normal;
   font-weight: 700;
 }
-.public-manage-empty { margin: 18px 0 0; color: var(--muted); font-size: 0.74rem; }
+.public-manage-empty { margin: 18px 0 0; color: var(--muted); font-size: var(--text-helper-min); }
 .public-manage-readonly-note {
   margin-top: 15px;
   border-radius: 11px;
   background: var(--imsda-gold-soft);
   color: #6f5316;
   padding: 11px 12px;
-  font-size: 0.67rem;
+  font-size: var(--text-helper-min);
   line-height: 1.55;
 }
 /*
@@ -4557,14 +4565,14 @@ select:focus-visible {
 .public-manage-club-list li { display: flex; align-items: flex-start; gap: 10px; color: var(--imsda-purple); }
 .public-manage-club-list strong,
 .public-manage-club-list small { display: block; }
-.public-manage-club-list strong { color: var(--ink); font-size: 0.82rem; }
+.public-manage-club-list strong { color: var(--ink); font-size: var(--text-helper-min); }
 .public-manage-club-list li > span { flex: 1; }
 .public-manage-club-list li.club-step-danger { color: #a3271b; }
 .public-manage-club-list li.club-step-danger strong { color: #a3271b; }
 .public-manage-club-list li.club-step-danger .club-step-flag { color: #a3271b; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
 .public-manage-club-list li > a,
 .public-manage-club-list li > button { align-self: center; white-space: nowrap; }
-.public-manage-club-list small { margin-top: 2px; color: var(--muted); font-size: 0.7rem; }
+.public-manage-club-list small { margin-top: 2px; color: var(--muted); font-size: var(--text-helper-min); }
 
 .public-attendee-pass-section { border-top: 4px solid var(--green); }
 .public-attendee-pass-grid {
@@ -4712,7 +4720,7 @@ select:focus-visible {
 }
 .public-manage-payment-grid dt {
   color: var(--muted);
-  font-size: 0.61rem;
+  font-size: var(--text-helper-min);
   font-weight: 700;
   line-height: 1.4;
 }
@@ -4741,7 +4749,7 @@ select:focus-visible {
   justify-content: space-between;
   gap: 12px;
   color: var(--muted);
-  font-size: 0.68rem;
+  font-size: var(--text-helper-min);
 }
 .public-manage-order-breakdown > div > span {
   display: grid;
@@ -4749,7 +4757,7 @@ select:focus-visible {
 }
 .public-manage-order-breakdown small {
   color: var(--imsda-purple);
-  font-size: 0.58rem;
+  font-size: var(--text-helper-min);
   font-weight: 700;
 }
 .public-manage-order-breakdown strong { color: var(--ink); }
@@ -5045,7 +5053,7 @@ select:focus-visible {
   cursor: pointer;
   padding: 11px 14px;
   font: inherit;
-  font-size: 0.76rem;
+  font-size: var(--text-helper-min);
   font-weight: 900;
 }
 .public-manage-contact-actions > button:hover:not(:disabled) { background: #4a2470; }
@@ -5057,7 +5065,7 @@ select:focus-visible {
   gap: 6px;
   margin: 0;
   color: var(--muted);
-  font-size: 0.66rem;
+  font-size: var(--text-helper-min);
   line-height: 1.45;
 }
 .public-manage-contact-actions > p svg { flex: 0 0 auto; margin-top: 1px; }
@@ -5129,7 +5137,7 @@ select:focus-visible {
 .public-manage-help-card > p:not(.public-registration-eyebrow) {
   margin: 0;
   color: var(--muted);
-  font-size: 0.71rem;
+  font-size: var(--text-helper-min);
   line-height: 1.6;
 }
 .public-manage-help-card > strong {
@@ -5137,7 +5145,7 @@ select:focus-visible {
   overflow-wrap: anywhere;
   margin-top: 13px;
   color: var(--imsda-navy);
-  font-size: 0.73rem;
+  font-size: var(--text-helper-min);
 }
 .public-manage-help-card > a {
   display: inline-flex;
@@ -5145,7 +5153,7 @@ select:focus-visible {
   gap: 6px;
   margin-top: 14px;
   color: var(--imsda-purple);
-  font-size: 0.71rem;
+  font-size: var(--text-helper-min);
   font-weight: 900;
   text-decoration: none;
 }
@@ -5161,8 +5169,8 @@ select:focus-visible {
   padding: 15px;
 }
 .public-manage-security-note > svg { margin-top: 1px; }
-.public-manage-security-note strong { display: block; font-size: 0.72rem; }
-.public-manage-security-note p { margin: 4px 0 0; font-size: 0.65rem; line-height: 1.5; }
+.public-manage-security-note strong { display: block; font-size: var(--text-helper-min); }
+.public-manage-security-note p { margin: 4px 0 0; font-size: var(--text-helper-min); line-height: 1.5; }
 
 @media (max-width: 1228px) {
   .public-registration-hero,
@@ -5216,8 +5224,8 @@ select:focus-visible {
   .public-registration-progress li { flex: 1 1 0; gap: 4px; }
   /* With 5-6 steps the other labels ellipsize first; the current step keeps the most room, and the heading above always reads "Step N of M". */
   .public-registration-progress li.is-current { flex-grow: 2.5; }
-  .public-registration-progress li > span { width: 19px; height: 19px; font-size: 0.54rem; }
-  .public-registration-progress li > small { font-size: 0.6rem; }
+  .public-registration-progress li > span { width: 1.583em; height: 1.583em; font-size: var(--text-badge); }
+  .public-registration-progress li > small { font-size: var(--text-helper-min); }
   .public-registration-step-heading { padding: 18px; }
   .public-registration-section,
   .public-registration-roster { border-radius: 17px; }
@@ -5264,7 +5272,7 @@ select:focus-visible {
   .public-event-layout { gap: 12px; margin: 0 12px; padding-bottom: 35px; }
   .public-event-registration-state { grid-template-columns: 1fr; gap: 14px; border-radius: 17px; padding: 19px; }
   .public-event-form-card { grid-template-columns: auto minmax(0, 1fr); gap: 13px; border-radius: 17px; padding: 18px 17px; }
-  .public-event-form-number { width: 39px; height: 39px; }
+  .public-event-form-number { width: 3.25em; height: 3.25em; }
   .public-event-form-cta { grid-column: 1 / -1; width: 100%; min-width: 0; }
   .public-event-sidebar { grid-template-columns: 1fr; }
   .public-event-full-details-card { grid-column: auto; }
@@ -6584,8 +6592,8 @@ select:focus-visible {
 }
 .public-event-resources strong,
 .public-event-resources small { display: block; overflow-wrap: anywhere; }
-.public-event-resources strong { font-size: 0.86rem; line-height: 1.35; }
-.public-event-resources small { margin-top: 4px; color: #5d7079; font-size: 0.7rem; line-height: 1.45; }
+.public-event-resources strong { font-size: var(--text-helper-min); line-height: 1.35; }
+.public-event-resources small { margin-top: 4px; color: #5d7079; font-size: var(--text-helper-min); line-height: 1.45; }
 .public-event-prose {
   margin-top: 6px;
   padding: 24px;
@@ -7056,9 +7064,9 @@ select:focus-visible {
 .club-roster-stack { display: grid; gap: 16px; }
 .club-roster-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .club-roster-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
-.club-roster-tools label:not(.checkbox-label) { display: grid; gap: 4px; color: var(--ink); font-size: 0.68rem; font-weight: 700; }
+.club-roster-tools label:not(.checkbox-label) { display: grid; gap: 4px; color: var(--ink); font-size: var(--text-helper-min); font-weight: 700; }
 .club-roster-tools label:not(.checkbox-label) input,
-.club-roster-tools label:not(.checkbox-label) select { border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 8px 10px; font-size: 0.76rem; }
+.club-roster-tools label:not(.checkbox-label) select { border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 8px 10px; font-size: var(--text-helper-min); }
 .honor-bulk-actions { align-items: flex-end; background: var(--panel-tint, #f7faf9); border-radius: 12px; padding: 12px; margin-top: 12px; }
 .roster-dialog-status-action { margin-right: auto; }
 .roster-birth-date-notice { margin: 12px 0 0; }
@@ -7092,7 +7100,7 @@ select:focus-visible {
 .club-invite-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .club-invite-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
 .club-invite-list li > span:first-child { display: grid; flex: 1; gap: 2px; min-width: 180px; }
-.club-invite-list small { color: var(--muted); font-size: 0.72rem; }
+.club-invite-list small { color: var(--muted); font-size: var(--text-helper-min); }
 .club-invite-actions { display: flex; gap: 6px; }
 .club-admin-links { display: flex; flex-wrap: wrap; gap: 8px; }
 .club-invite-card { margin-bottom: 16px; }
@@ -7152,7 +7160,7 @@ select:focus-visible {
 .club-team-list li { flex-wrap: wrap; align-items: center; }
 .club-team-list li > span:first-child { min-width: 180px; }
 .club-team-list li > .status-chip { flex: 0 0 auto; }
-.club-team-note { color: var(--muted); font-size: 0.7rem; }
+.club-team-note { color: var(--muted); font-size: var(--text-helper-min); }
 .club-team-invite-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; flex: 0 0 auto; }
 .club-role-help { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
 .roster-unlock-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
@@ -7160,9 +7168,9 @@ select:focus-visible {
 .roster-unlock-form .form-error { flex-basis: 100%; margin: 0; }
 .club-going-list { display: grid; gap: 6px; margin: 8px 0 16px; padding: 0; list-style: none; }
 .club-going-list li { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; }
-.club-going-list label { align-items: flex-start !important; font-size: 0.78rem !important; color: var(--ink) !important; }
+.club-going-list label { align-items: flex-start !important; font-size: var(--text-helper-min) !important; color: var(--ink) !important; }
 .club-going-list strong, .club-going-list small { display: block; }
-.club-going-list small { margin-top: 2px; color: var(--muted); font-size: 0.7rem; font-weight: 500; }
+.club-going-list small { margin-top: 2px; color: var(--muted); font-size: var(--text-helper-min); font-weight: 500; }
 .event-location-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .event-location-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; padding: 10px 12px; border: 1px solid var(--line, #d8dde6); border-radius: 8px; }
 .event-location-list li.is-inactive { opacity: 0.7; }
@@ -7181,9 +7189,9 @@ select:focus-visible {
 .club-class-person { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin: 0; }
 .club-class-person legend { padding: 0 4px; }
 .club-class-person legend strong, .club-class-person legend small { display: block; }
-.club-class-person legend small { color: var(--muted); font-size: 0.68rem; }
-.club-class-person label { display: grid; gap: 4px; color: var(--ink); font-size: 0.72rem; font-weight: 700; }
-.club-class-person select { border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 8px 10px; font-size: 0.76rem; }
+.club-class-person legend small { color: var(--muted); font-size: var(--text-helper-min); }
+.club-class-person label { display: grid; gap: 4px; color: var(--ink); font-size: var(--text-helper-min); font-weight: 700; }
+.club-class-person select { border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 8px 10px; font-size: var(--text-helper-min); }
 
 /* Director experience polish: phones first */
 .club-roster-layout > *, .club-roster-stack > * { min-width: 0; }
@@ -7196,15 +7204,15 @@ select:focus-visible {
 .club-going-list input { width: 20px; height: 20px; flex: none; }
 .club-guest-section { display: grid; gap: 8px; margin: 4px 0 16px; padding-top: 12px; border-top: 1px solid var(--line); }
 .club-guest-section .club-roster-tools small { display: block; margin-top: 2px; }
-.club-guest-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: 0.78rem; }
+.club-guest-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; font-size: var(--text-helper-min); }
 .club-guest-form { display: grid; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
 /* Standard field styling (#478): the "Add a person" inputs were unstyled
    browser defaults, well under the standard field height and at least
    16px required on phones (#469) to avoid iOS zoom-on-focus. */
-.club-guest-form label { display: grid; gap: 6px; color: var(--ink); font-size: 0.7rem; font-weight: 700; }
+.club-guest-form label { display: grid; gap: 6px; color: var(--ink); font-size: var(--text-helper-min); font-weight: 700; }
 .club-guest-form input {
   width: 100%; border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd;
-  color: var(--ink); padding: 10px 11px; font-size: 0.78rem; font-family: inherit; outline: 0;
+  color: var(--ink); padding: 10px 11px; font-size: var(--text-helper-min); font-family: inherit; outline: 0;
 }
 @media (pointer: coarse) { .club-guest-form input { font-size: 1rem; } }
 .club-guest-form input:focus { border-color: var(--imsda-purple); box-shadow: 0 0 0 3px rgba(88, 44, 131, 0.1); }
@@ -7307,7 +7315,7 @@ select:focus-visible {
 .club-home-stat:hover { border-color: var(--imsda-navy); }
 .club-home-stat svg { grid-row: 1 / 3; color: var(--imsda-navy); }
 .club-home-stat strong { font-size: 1.5rem; line-height: 1.1; }
-.club-home-stat span { color: var(--muted); font-size: 0.72rem; font-weight: 700; }
+.club-home-stat span { color: var(--muted); font-size: var(--text-helper-min); font-weight: 700; }
 .club-event-heading { display: grid; gap: 4px; }
 .club-event-heading .text-button { justify-self: start; display: inline-flex; align-items: center; gap: 4px; }
 .club-event-heading h2 { margin: 2px 0 0; }
@@ -7317,10 +7325,10 @@ select:focus-visible {
   display: flex; flex-direction: column; gap: 6px;
   border: 1px solid var(--line); border-radius: 16px; background: #fff; padding: 14px 16px;
 }
-.club-year-tile-heading { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--imsda-navy); font-size: 0.78rem; font-weight: 800; }
+.club-year-tile-heading { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--imsda-navy); font-size: var(--text-helper-min); font-weight: 800; }
 .club-year-tile-stat { margin: 0; font-size: 1.5rem; font-weight: 800; line-height: 1.1; color: var(--ink); }
-.club-year-tile-detail { display: flex; align-items: center; gap: 4px; margin: 0; color: var(--muted); font-size: 0.72rem; }
-.club-year-tile-list { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 0.7rem; }
+.club-year-tile-detail { display: flex; align-items: center; gap: 4px; margin: 0; color: var(--muted); font-size: var(--text-helper-min); }
+.club-year-tile-list { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: var(--text-helper-min); }
 .club-year-tile-list li { display: flex; align-items: center; gap: 3px; }
 .club-year-tile-link { margin-top: auto; align-self: flex-start; }
 .club-year-tiles-points { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; }
@@ -7339,7 +7347,7 @@ select:focus-visible {
   .club-home-stat { grid-template-columns: 1fr; padding: 10px 12px; }
   .club-home-stat svg { display: none; }
   .club-home-stat strong { font-size: 1.3rem; }
-  .club-home-stat span { font-size: 0.66rem; line-height: 1.3; }
+  .club-home-stat span { font-size: var(--text-helper-min); line-height: 1.3; }
   .account-nav-primary ul { mask-image: linear-gradient(to right, #000 88%, transparent); }
 }
 @media (max-width: 580px) {
@@ -7511,7 +7519,7 @@ select:focus-visible {
 .club-schedule-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .club-schedule-actions > div { display: flex; flex-wrap: wrap; gap: 8px; }
 .club-schedule-actions .text-button { display: inline-flex; align-items: center; gap: 4px; }
-.club-schedule-table th small, .club-schedule-table td small { display: block; color: var(--muted); font-size: 0.7rem; font-weight: 500; }
+.club-schedule-table th small, .club-schedule-table td small { display: block; color: var(--muted); font-size: var(--text-helper-min); font-weight: 500; }
 .club-schedule-link { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .club-schedule-link p { display: flex; align-items: center; gap: 8px; margin: 0; }
 @media (max-width: 640px) {
@@ -7597,7 +7605,7 @@ select:focus-visible {
 .club-assignment-preview > p { margin: 0; }
 .club-assignment-preview .primary-button { justify-self: start; }
 .club-assignment-sample { display: grid; gap: 6px; }
-.club-assignment-sample p { margin: 0; font-size: 0.7rem; }
+.club-assignment-sample p { margin: 0; font-size: var(--text-helper-min); }
 .club-assignments-block { margin-top: 16px; }
 .club-assignments-block h3 { margin: 0; font-size: 0.9rem; }
 .club-assignments-block .public-manage-club-list { margin-top: 10px; }
@@ -7916,3 +7924,155 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   .profile-staff-card .section-heading, .profile-account-heading-row { flex-direction: column; align-items: stretch; }
   .profile-staff-card .section-heading .secondary-button, .profile-account-heading-row .secondary-button { width: 100%; }
 }
+
+/* Auto-built event info cards for club events (#651). Mobile first: one column under 600px. */
+.auto-info-header { max-width: 1100px; margin: 0 auto; padding: 28px 16px 12px; }
+.auto-info-header h1 { margin: 4px 0; color: var(--imsda-navy); font-size: clamp(1.6rem, 6vw, 2.4rem); }
+.auto-info-tagline { margin: 0; color: var(--imsda-purple); font-size: 1.2rem; font-weight: 700; }
+.auto-info-meta { margin: 6px 0 0; color: var(--muted); }
+.auto-info-subtitle { margin: 8px 0 0; color: var(--ink); }
+.auto-info-cards { display: grid; gap: 16px; max-width: 1100px; margin: 0 auto; padding: 8px 16px 20px; }
+.auto-info-card { border: 1px solid var(--line); border-radius: 18px; background: var(--card); padding: 20px; box-shadow: 0 12px 36px rgba(0, 59, 92, 0.06); }
+.auto-info-card h2 { margin: 0 0 10px; color: var(--imsda-navy); font-size: 1.2rem; }
+.auto-info-card h3 { margin: 14px 0 6px; color: var(--ink); font-size: 1rem; }
+.auto-info-card h4 { margin: 10px 0 6px; color: var(--muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.auto-info-card dl { display: grid; gap: 8px; margin: 0; }
+.auto-info-card dl > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.auto-info-card dt { font-weight: 700; }
+.auto-info-card dd { margin: 0; display: grid; gap: 2px; text-align: right; }
+.auto-info-card small { display: block; color: var(--muted); }
+.auto-info-card dt small, .auto-info-card dd small { display: inline; }
+.auto-info-card ol { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.auto-info-notes { margin: 12px 0 0; padding-left: 18px; font-weight: 700; color: var(--imsda-navy); }
+.auto-info-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 8px; padding: 0; list-style: none; font-size: 0.8rem; }
+.auto-info-legend li { display: flex; align-items: center; gap: 6px; }
+.auto-info-swatch { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line); background: var(--card); }
+.auto-info-class-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.auto-info-class { display: grid; gap: 2px; align-content: start; border: 1px solid var(--line); border-left-width: 6px; border-radius: 10px; padding: 10px; background: var(--card); }
+.auto-info-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.auto-info-badge { border-radius: 999px; padding: 2px 8px; font-size: 0.72rem; font-weight: 700; background: var(--paper); border: 1px solid var(--line); }
+.auto-info-swatch.is-limited, .auto-info-class.is-limited, .auto-info-badge.is-limited { border-color: var(--imsda-gold); background: var(--imsda-gold-soft); }
+.auto-info-swatch.is-age, .auto-info-class.is-age, .auto-info-badge.is-age { border-color: var(--imsda-navy); background: var(--imsda-navy-soft); }
+.auto-info-swatch.is-cost, .auto-info-class.is-cost, .auto-info-badge.is-cost { border-color: var(--green); background: var(--green-soft); }
+.auto-info-swatch.is-special, .auto-info-class.is-special, .auto-info-badge.is-special { border-color: var(--imsda-purple); background: var(--imsda-purple-soft); }
+@media (max-width: 600px) {
+  .auto-info-class-list { grid-template-columns: 1fr; }
+  .auto-info-card dd { text-align: left; }
+}
+
+/* Issue #645: one heading scale and vertical rhythm for public registration
+   forms, Honors Weekend, and the club portal (pages, cards, Forms tab).
+   Section h2 1.3rem, sub-section h3 1.075rem, attendee/group heading 1rem
+   semibold. Space above a heading exceeds the gap below it (>= 10px); helper
+   text is at least --text-helper-min (0.875rem); counters and badges use
+   --text-badge (0.75rem) and em-sized boxes so they grow with text zoom.
+   Everything here is scoped to the public pages or the club portal, so staff
+   screens and the staff club-form viewer and print are unchanged. */
+.public-registration-section > header h2,
+.public-registration-roster-heading h2,
+.public-manage-card-heading h2,
+.account-overview-card h2,
+.public-registration-summary h2,
+.public-event-info-card h2 {
+  font-size: var(--heading-section);
+  font-weight: 700;
+  line-height: 1.25;
+}
+.public-registration-step-heading h2 { line-height: 1.2; }
+.public-registration-review-card h3,
+.public-event-form-copy h3,
+.public-event-empty-forms h3,
+.public-registration-account-prompt h2 {
+  margin-top: 0;
+  font-size: var(--heading-sub);
+  font-weight: 700;
+  line-height: 1.3;
+}
+.public-registration-attendee-heading h3,
+.public-registration-attendee-section-heading h4,
+.public-registration-confirmation-order h2,
+.public-registration-confirmation-attendees h2,
+.club-year-tile-heading {
+  font-size: var(--heading-group);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.public-registration-section > header h2 + p,
+.public-registration-roster-heading h2 + p,
+.public-registration-roster-heading p:last-child { margin-top: var(--heading-gap); }
+.public-registration-step-heading > p:last-child,
+.public-manage-card-heading h2 + p,
+.public-manage-card-heading > p:last-child { margin-top: var(--heading-gap); line-height: 1.55; }
+.public-manage-card-heading h2 { margin-top: 4px; }
+.public-registration-attendee-section-heading p { margin-top: 6px; line-height: 1.5; }
+.public-registration-attendee-heading h3 { margin-top: 4px; }
+.public-registration-review-card h3 { margin-bottom: var(--heading-gap); }
+.account-overview-card h2 { margin: 6px 0 var(--heading-gap); }
+.public-registration-page .section-heading { margin-bottom: 1.1rem; }
+.public-registration-page .section-heading h2,
+.public-registration-page .panel h2 { font-size: var(--heading-section); line-height: 1.25; }
+.public-registration-page .section-heading p:not(.eyebrow) { margin-top: 6px; }
+.public-registration-step-content { row-gap: 1.5rem; }
+@media (min-width: 581px) {
+  .public-manage-layout,
+  .account-page-body { row-gap: 1.5rem; }
+}
+
+/* Card-level spacing: room under the toolbar and heading before the content. */
+.public-manage-card > .club-registration-toolbar { margin-bottom: 1.25rem; }
+.public-manage-card > .public-manage-card-heading { margin-bottom: var(--heading-gap); }
+.public-manage-card > .public-manage-card-heading + .field-help,
+.public-manage-card > .public-manage-card-heading + p { margin: 0 0 var(--heading-gap); }
+.public-manage-card > .public-manage-card-heading ~ .club-class-grid,
+.public-manage-card > .public-manage-card-heading ~ .club-registration-toolbar { margin-top: 1rem; }
+.public-registration-page .public-registration-eyebrow { margin-bottom: 8px; }
+
+/* Bare headings inside portal cards (Forms tab, club home "To do", etc.).
+   :where() keeps specificity at zero so every classed heading rule above wins. */
+:where(.public-registration-page .public-manage-card) > h2 {
+  margin: 0 0 var(--heading-gap);
+  font-size: var(--heading-section);
+  font-weight: 700;
+  line-height: 1.25;
+}
+:where(.public-registration-page .public-manage-card) h3 {
+  margin: 0 0 0.5rem;
+  font-size: var(--heading-sub);
+  font-weight: 700;
+  line-height: 1.3;
+}
+.club-form-template { gap: 1rem; }
+.club-form-template .field-help { margin: 0; }
+
+/* Helper text that shares a global class: floored only inside the public/portal pages. */
+.public-registration-page :is(.field-help, .quiet-copy, .text-button, .club-form-note, .account-nav a, .account-nav-group-label, .club-form-private),
+.public-registration-page :is(.club-form-choice legend, .club-form-filter label),
+.public-registration-page :is(.primary-button, .secondary-button),
+.translate-hint { font-size: var(--text-helper-min); }
+
+/* Helper text is larger now; keep long labels from widening their grid track
+   (selects size to their longest option, flex/grid items default to min-content). */
+.club-class-grid { grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); }
+.club-class-grid > *,
+.club-class-person > * { min-width: 0; }
+.club-class-person label,
+.club-class-person select { width: 100%; max-width: 100%; }
+.club-class-person select { text-overflow: ellipsis; }
+.public-registration-progress,
+.public-registration-progress ol,
+.public-registration-layout > *,
+.public-registration-form-column > * { min-width: 0; max-width: 100%; }
+.public-registration-ranking-list button > span { min-width: 0; overflow-wrap: anywhere; }
+.club-home-stats { grid-template-columns: repeat(auto-fit, minmax(min(8.5rem, 100%), 1fr)); }
+.club-home-stat { min-width: 0; }
+.club-home-stat span { overflow-wrap: anywhere; }
+@media (max-width: 480px) { .primary-button.club-event-action, .secondary-button.club-event-action { white-space: normal; max-width: 100%; flex-wrap: wrap; } }
+
+/* Club form viewer and fill-in inside the portal: screen only, so print and the
+   staff viewer (outside .public-registration-page) are unchanged. */
+@media screen {
+  .public-registration-page :is(.club-form-answers dt, .club-form-answers dd, .club-form-sheet-meta, .club-form-restricted-note, .club-form-roll-table, .form-stack label) { font-size: var(--text-helper-min); }
+  .public-registration-page .checkbox-label { font-size: var(--text-helper-min) !important; }
+  .public-registration-page .club-form-sheet-header h2 { font-size: var(--heading-section); font-weight: 700; line-height: 1.25; }
+}
+.club-class-person legend strong { font-size: var(--heading-group); font-weight: 600; }

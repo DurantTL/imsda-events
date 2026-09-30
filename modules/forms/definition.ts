@@ -1546,6 +1546,19 @@ function attendeeDisplayName(responses: Record<string, unknown>, index: number, 
   return `${attendeeLabel} ${index + 1}`;
 }
 
+/**
+ * The prices a field charges in one pricing state, exactly as `pricedLineItem`
+ * resolves them. A field is choice-priced whenever `choicePricesCents` is
+ * defined (even empty), or the late map is defined while late pricing is active.
+ * Shared so a display of prices can never disagree with what is charged.
+ */
+export function resolveFieldPrices(field: RegistrationFormField, latePricingActive: boolean) {
+  const priceCents = latePricingActive ? field.latePricing?.priceCents ?? field.priceCents : field.priceCents;
+  const hasChoicePrices = field.choicePricesCents !== undefined || (latePricingActive && field.latePricing?.choicePricesCents !== undefined);
+  const choicePricesCents = hasChoicePrices ? { ...(field.choicePricesCents ?? {}), ...(latePricingActive ? field.latePricing?.choicePricesCents ?? {} : {}) } : undefined;
+  return { priceCents, choicePricesCents };
+}
+
 function pricedLineItem(
   field: RegistrationFormField,
   responses: Record<string, unknown>,
@@ -1569,9 +1582,7 @@ function pricedLineItem(
     return { key: field.key, label: field.label, amountCents: Math.round(creditCents) };
   }
   const latePricingActive = isLatePricingActive(field, pricingDate);
-  const priceCents = latePricingActive ? field.latePricing?.priceCents ?? field.priceCents : field.priceCents;
-  const hasChoicePrices = field.choicePricesCents !== undefined || (latePricingActive && field.latePricing?.choicePricesCents !== undefined);
-  const choicePricesCents = hasChoicePrices ? { ...(field.choicePricesCents ?? {}), ...(latePricingActive ? field.latePricing?.choicePricesCents ?? {} : {}) } : undefined;
+  const { priceCents, choicePricesCents } = resolveFieldPrices(field, latePricingActive);
   let amountCents = 0;
   if (choicePricesCents) {
     const selections = Array.isArray(value) ? value.map(String) : hasValue(value) ? [String(value)] : [];

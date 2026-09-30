@@ -14,6 +14,15 @@ export const meetingNoteInputSchema = z.object({
     participants: count,
   }).strict()).max(20, "List at most 20 honors.").default([]),
   notes: z.string().trim().max(4000).default(""),
+  /**
+   * Optional check-off (#653). Omitted leaves the meeting's attendance as it
+   * is; a list replaces it (an empty list clears it). Head counts left blank
+   * are filled from it.
+   */
+  attendance: z.array(z.object({
+    rosterMemberId: z.string().min(1).max(64),
+    present: z.boolean(),
+  }).strict()).max(500, "Attendance lists at most 500 people.").optional(),
 }).strict();
 
 export type MeetingNoteInput = z.infer<typeof meetingNoteInputSchema>;
