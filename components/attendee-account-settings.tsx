@@ -17,7 +17,7 @@ export async function AttendeeAccountSettings({
   account,
   sessionId,
 }: {
-  account: { id: string };
+  account: { id: string; verifiedEmail?: string | null };
   sessionId: string | null;
 }) {
   const [profile, mfaStatus, clubs, passkeySettings] = await Promise.all([
@@ -30,7 +30,7 @@ export async function AttendeeAccountSettings({
   return (
     <>
       <div className="account-page-body">
-        <AttendeeProfileForm initialProfile={profile} />
+        <AttendeeProfileForm email={account.verifiedEmail ?? null} initialProfile={profile} />
       </div>
       <div className="account-page-body account-security-grid">
         <div className="account-security-main">

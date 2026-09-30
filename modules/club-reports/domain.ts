@@ -101,6 +101,13 @@ export function isLockedForClub(reportMonth: string, now: Date) {
   return calendarDateIn(now) > reportDueDate(reportMonth);
 }
 
+export const REPORT_CHANGE_REQUEST_EMAIL = "youth@imsda.org";
+
+/** The message a club sees when it tries to change a report after the due date (#640). */
+export function clubReportClosedMessage(reportMonth: string) {
+  return `This report closed on ${formatDueDate(reportDueDate(reportMonth))}. You can't submit changes now — email ${REPORT_CHANGE_REQUEST_EMAIL} to request a change.`;
+}
+
 const MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/;
 
 export function isReportMonth(value: string) {
