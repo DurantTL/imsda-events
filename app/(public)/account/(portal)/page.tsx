@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, CalendarDays, CircleDollarSign, ShieldAlert, ShieldCheck, UserRound, UsersRound } from "lucide-react";
+import { AreaCoordinatorCardView } from "@/components/area-coordinator-card";
 import { ClubInviteAccept } from "@/components/club-invite-accept";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { listRegistrationsForVerifiedEmail, type AttendeeRegistrationSummary } from "@/modules/attendee-accounts/registrations-repository";
+import { getAreaCoordinatorCard } from "@/modules/club-reports/area-card-repository";
 import { listInvitesForAccount } from "@/modules/club-imports/invites";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
@@ -38,12 +40,15 @@ export default async function AttendeeAccountOverviewPage() {
   const { account, via } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
 
-  const [registrations, mfaStatus, clubs, invites] = await Promise.all([
+  const [registrations, mfaStatus, clubs, invites, areaCard] = await Promise.all([
     listRegistrationsForVerifiedEmail(account.verifiedEmail),
     getAttendeeMfaStatus(account.id),
     listDirectedClubs(account.id),
     // Only the person themselves may accept, so staff viewing an account don't see them.
     via === "attendee" ? listInvitesForAccount(account.verifiedEmail) : Promise.resolve([]),
+    // Null unless the account holds an active Area Coordinator grant (#656).
+    // Only for the person themselves, like the coordinator pages.
+    via === "attendee" ? getAreaCoordinatorCard(account.id) : Promise.resolve(null),
   ]);
   const upcoming = upcomingOnly(registrations);
   const next = upcoming[0];
@@ -88,6 +93,8 @@ export default async function AttendeeAccountOverviewPage() {
             View registrations <ArrowRight size={14} aria-hidden="true" />
           </Link>
         </section>
+
+        {areaCard && <AreaCoordinatorCardView card={areaCard} />}
 
         {clubs.length > 0 && (
           <section className="public-manage-card account-overview-card">
