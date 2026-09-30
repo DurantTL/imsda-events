@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   saveRegistrationHonorPicks: vi.fn(),
   eventFindFirst: vi.fn(),
   rosterFindMany: vi.fn(),
-  draftUpsert: vi.fn(),
+  draftUpdate: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -21,7 +21,7 @@ vi.mock("@/lib/prisma", () => ({
     platformSettings: { findUnique: async () => ({ passkeyRpId: null }) },
     event: { findFirst: mocks.eventFindFirst },
     clubRosterMember: { findMany: mocks.rosterFindMany },
-    clubRegistrationDraft: { upsert: mocks.draftUpsert },
+    clubRegistrationDraft: { update: mocks.draftUpdate },
   }),
 }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
@@ -54,7 +54,8 @@ function request(method: string, body: unknown) {
   return new Request("https://events.imsda.test/api/attendee/clubs/x/events/y", {
     method,
     headers: { origin: "https://events.imsda.test", "content-type": "application/json" },
-    body: JSON.stringify(body),
+    // A draft save always names its base revision and save id (#659).
+    body: JSON.stringify(method === "PUT" && body && typeof body === "object" ? { baseRevision: 1, saveId: "save-00000001", ...body } : body),
   });
 }
 
@@ -67,7 +68,7 @@ beforeEach(() => {
   mocks.saveRegistrationHonorPicks.mockResolvedValue({ saved: 1 });
   mocks.eventFindFirst.mockResolvedValue({ id: "event-1", startsAt: new Date("2026-12-05T15:00:00Z") });
   mocks.rosterFindMany.mockResolvedValue([{ id: "m1" }, { id: "m2" }]);
-  mocks.draftUpsert.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z") });
+  mocks.draftUpdate.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 2, lastSaveId: "save-00000001" });
 });
 
 describe("honors picked during club registration (#618)", () => {
@@ -136,7 +137,7 @@ describe("honors picked during club registration (#618)", () => {
       selectedMemberIds: ["m1"], guests: [], responses: {}, attendeeResponses: {}, honorSelections: many,
     }), ctx);
     expect(response.status).toBeGreaterThanOrEqual(400);
-    expect(mocks.draftUpsert).not.toHaveBeenCalled();
+    expect(mocks.draftUpdate).not.toHaveBeenCalled();
   });
 
   it("saves picks in the draft only for people going, and refuses malformed ones", async () => {
@@ -145,7 +146,7 @@ describe("honors picked during club registration (#618)", () => {
       honorSelections: { "member:m1": ["knots"], "member:m2": ["birds"], "member:nobody": ["x"] },
     }), ctx);
     expect(ok.status).toBe(200);
-    expect(mocks.draftUpsert.mock.calls[0]![0].update.honorSelections).toEqual({ "member:m1": ["knots"] });
+    expect(mocks.draftUpdate.mock.calls[0]![0].data.honorSelections).toEqual({ "member:m1": ["knots"] });
 
     const bad = await PUT_DRAFT(request("PUT", {
       selectedMemberIds: ["m1"], guests: [], responses: {}, attendeeResponses: {},
