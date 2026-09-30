@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { MouseEvent } from "react";
 
 /**
  * The "Age on event date" field for a roster person with no birth date (#639).
@@ -13,6 +14,7 @@ export function ClubRosterAgeField({
   value,
   onAge,
   onSaveToRoster,
+  href,
   onNavigate,
   organizationId,
   saveToRoster,
@@ -23,7 +25,9 @@ export function ClubRosterAgeField({
   error: string | null;
   onAge: (raw: string) => void;
   onSaveToRoster: (save: boolean) => void;
-  onNavigate?: () => void;
+  /** Where the roster link goes; defaults to the plain roster page. */
+  href?: string;
+  onNavigate?: (event: MouseEvent<HTMLAnchorElement>) => void;
   organizationId: string;
   saveToRoster: boolean;
 }) {
@@ -49,7 +53,7 @@ export function ClubRosterAgeField({
       </label>
       <small className="field-help">
         No birth date on the roster.{" "}
-        <Link href={`/account/clubs/${organizationId}/roster`} onClick={onNavigate}>Add their birth date on the roster</Link>
+        <Link href={href ?? `/account/clubs/${organizationId}/roster`} onClick={onNavigate}>Add their birth date on the roster</Link>
       </small>
     </div>
   );

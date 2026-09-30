@@ -9,6 +9,8 @@ import {
   type FormResponses,
   type RosterAttendee,
 } from "@/components/public-registration-form";
+import { createDraftSaveQueue } from "@/modules/club-registrations/draft-save-queue";
+import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
 import { ageInputProblem, ageInputValue, effectiveRosterAges, parseTypedAge, withRosterAge } from "@/modules/club-registrations/roster-ages";
 import { ClubLocationPicker } from "@/components/club-location-picker";
@@ -82,32 +84,53 @@ export function ClubRegistrationWorkspace({
   const [addingGuest, setAddingGuest] = useState(false);
   const [guestError, setGuestError] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">(workspace.draft ? "saved" : "idle");
-  const pending = useRef<DraftState | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(workspace.event.id)}`;
 
-  const flush = useCallback(async () => {
-    const next = pending.current;
-    if (!next) return;
-    pending.current = null;
-    setSaveState("saving");
-    try {
+  const [leaveHref, setLeaveHref] = useState<string | null>(null);
+  const [queue] = useState(() => createDraftSaveQueue<DraftState>({
+    onState: (state) => {
+      setSaveState(state);
+      if (state === "saved") setLeaveHref(null);
+    },
+    send: async (next) => {
       const response = await fetch(`${base}/draft`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(next),
       });
-      setSaveState(response.ok ? "saved" : "error");
-    } catch {
-      setSaveState("error");
-    }
-  }, [base]);
+      return response.ok;
+    },
+  }));
+
+  /** Saves the pending draft now; true when nothing is left unsaved. */
+  const flush = useCallback(async (): Promise<boolean> => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    return queue.flush();
+  }, [queue]);
+
+  // Leaving for the roster (#643): save first, and warn instead of silently dropping an unsaved edit.
+  const rosterHref = rosterHrefFromRegistration(organizationId, workspace.event.id);
+  const [leaving, setLeaving] = useState(false);
+  async function goToRoster(href: string) {
+    if (leaving) return;
+    setLeaving(true);
+    setLeaveHref(null);
+    const saved = await flush();
+    if (saved) router.push(href);
+    else { setLeaveHref(href); setLeaving(false); }
+  }
+  function followRosterLink(event: { preventDefault: () => void; altKey?: boolean; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; button?: number }, href: string) {
+    if (event.altKey || event.metaKey || event.ctrlKey || event.shiftKey || (event.button ?? 0) !== 0) return;
+    event.preventDefault();
+    void goToRoster(href);
+  }
 
   const queueSave = useCallback((next: DraftState) => {
-    pending.current = next;
+    queue.set(next);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { void flush(); }, 1200);
-  }, [flush]);
+    timer.current = setTimeout(() => { timer.current = null; void queue.flush(false); }, 1200);
+  }, [queue]);
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
@@ -298,14 +321,14 @@ export function ClubRegistrationWorkspace({
     onDraftChange,
     onSubmitted: (result?: { honors?: { error?: string } | null }) => {
       if (timer.current) clearTimeout(timer.current);
-      pending.current = null;
+      queue.submitted();
       // The registration is saved even when a class filled up meanwhile; the class picker on the next screen says so.
       if (result?.honors?.error) {
         try { sessionStorage.setItem(honorsNoteKey(organizationId, workspace.event.id), result.honors.error); } catch { /* the picker still shows the picks */ }
       }
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonorsStep, honorPicks, base, onDraftChange, router, organizationId, workspace.event.id]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonorsStep, honorPicks, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
 
   const saveLabel = saveState === "saving" ? "Saving draft…" : saveState === "saved" ? "Draft saved" : saveState === "error" ? "Draft not saved. Check your connection." : "";
 
@@ -367,7 +390,7 @@ export function ClubRegistrationWorkspace({
       </p>
       {workspace.roster.length === 0 ? (
         <p className="public-manage-empty">
-          <UsersRound size={17} aria-hidden="true" /> Your roster is empty. Add your club members first.
+          <UsersRound size={17} aria-hidden="true" /> Your roster is empty. Add regular members using Add to roster on the roster page, or import a CSV. You can add event-only guests when registering.
         </p>
       ) : (
         <>
@@ -404,7 +427,8 @@ export function ClubRegistrationWorkspace({
                     error={ageProblem !== "" || ageInputValue(person, ageText, draft.rosterAges).trim() !== "" ? ageInputProblem(person, ageText, draft.rosterAges) : null}
                     value={ageInputValue(person, ageText, draft.rosterAges)}
                     onAge={(raw) => changeRosterAge(person.memberId, raw)}
-                    onNavigate={() => { void flush(); }}
+                    href={rosterHref}
+                    onNavigate={(event) => followRosterLink(event, rosterHref)}
                     onSaveToRoster={(save) => changeSaveToRoster(person.memberId, save)}
                     organizationId={organizationId}
                     saveToRoster={!draft.rosterAgeSaveOff.includes(person.memberId)}
@@ -467,12 +491,19 @@ export function ClubRegistrationWorkspace({
         )}
       </section>
 
+      {leaveHref && (
+        <div className="inline-notice error" role="alert">
+          Your latest changes aren&apos;t saved yet.{" "}
+          <button className="text-button" onClick={() => { const href = leaveHref; setLeaveHref(null); void goToRoster(href); }} type="button">Retry</button>{" "}
+          <button className="text-button" onClick={() => router.push(leaveHref)} type="button">Leave anyway</button>
+        </div>
+      )}
       {honorsCatalog && chosenLocation?.full && (
         <p className="inline-notice" role="status">This club will be waitlisted; pick classes after you&apos;re confirmed.</p>
       )}
       <div className="club-registration-toolbar club-sticky-bar">
-        <Link className="secondary-button" href={`/account/clubs/${organizationId}`} onClick={() => { void flush(); }}>
-          <UserPlus aria-hidden="true" size={15} /> Add someone new to the roster
+        <Link className="secondary-button" href={rosterHref} onClick={(event) => followRosterLink(event, rosterHref)}>
+          <UserPlus aria-hidden="true" size={15} /> {leaving ? "Saving…" : "Add someone new to the roster"}
         </Link>
         <button
           className="primary-button"
