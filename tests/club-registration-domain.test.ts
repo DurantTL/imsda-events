@@ -14,6 +14,7 @@ import {
   rosterGenderPrefill,
   rosterMemberIdFromClientId,
   rosterOwnedResponses,
+  rosterAgesFromJson,
   rosterRolePrefill,
   unmatchedRosterGender,
   unmatchedRosterRole,
@@ -273,5 +274,14 @@ describe("club and church directory lock (#482)", () => {
 
   it("reports no locked fields for a form with no directory sources", () => {
     expect(lockedClubDirectoryFieldKeys(form([field("first_name"), field("last_name")]))).toEqual([]);
+  });
+});
+
+describe("roster ages typed in for people with no birth date (#639)", () => {
+  it("round-trips a draft's ages and drops anything malformed", () => {
+    expect(rosterAgesFromJson({ m1: 13, m2: 0 })).toEqual({ m1: 13, m2: 0 });
+    expect(rosterAgesFromJson({ m1: 121 })).toEqual({});
+    expect(rosterAgesFromJson({ m1: "13" })).toEqual({});
+    expect(rosterAgesFromJson(null)).toEqual({});
   });
 });

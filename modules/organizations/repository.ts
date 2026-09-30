@@ -132,6 +132,9 @@ async function validateParentOrganization(
 
 export async function listOrganizations() {
   const organizations = await getPrisma().organization.findMany({
+    // Clubs and churches only: the other kinds from the eAdventist import
+    // (#649) have their own list at /admin/organizations/directory.
+    where: { type: { in: ["CHURCH", "CLUB"] } },
     include: organizationInclude,
     orderBy: [
       { isActive: "desc" },

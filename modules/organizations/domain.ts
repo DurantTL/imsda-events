@@ -1,6 +1,16 @@
+/** CHURCH and CLUB are the original kinds; the rest arrive with the eAdventist import (#649). */
 export const organizationTypeLabels = {
   CHURCH: "Church",
   CLUB: "Club",
+  COMPANY: "Company",
+  GROUP: "Group",
+  SCHOOL: "School",
+  EARLY_CHILDHOOD: "Early childhood program",
+  BOOKSTORE: "Bookstore",
+  COMMUNITY_CENTER: "Community center",
+  CAMP: "Camp or conference center",
+  CONFERENCE: "Conference",
+  ASSOCIATION: "Association",
 } as const;
 
 export const externalSystemLabels = {

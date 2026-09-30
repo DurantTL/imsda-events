@@ -9,6 +9,10 @@ import {
   type FormResponses,
   type RosterAttendee,
 } from "@/components/public-registration-form";
+import { createDraftSaveQueue } from "@/modules/club-registrations/draft-save-queue";
+import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
+import { ClubRosterAgeField } from "@/components/club-roster-age-field";
+import { ageInputProblem, ageInputValue, effectiveRosterAges, parseTypedAge, withRosterAge } from "@/modules/club-registrations/roster-ages";
 import { ClubLocationPicker } from "@/components/club-location-picker";
 import { clubRosterAttendeeTypeLabels } from "@/modules/club-rosters/domain";
 import {
@@ -37,6 +41,10 @@ type DraftState = {
   responses: FormResponses;
   attendeeResponses: Record<string, FormResponses>;
   honorSelections: HonorPicks;
+  /** Ages typed in for roster people with no birth date on file (#639), by roster member id. */
+  rosterAges: Record<string, number>;
+  /** Roster people whose typed-in age is NOT also saved to the roster at submit (#639); saving is the default. */
+  rosterAgeSaveOff: string[];
 };
 
 export function ClubRegistrationWorkspace({
@@ -52,6 +60,7 @@ export function ClubRegistrationWorkspace({
   workspace: Workspace;
 }) {
   const router = useRouter();
+  const ageKey = workspace.attendeeAgeKey;
   const rosterIds = useMemo(() => new Set(workspace.roster.map((person) => person.memberId)), [workspace.roster]);
   const [draft, setDraft] = useState<DraftState>(() => ({
     selectedMemberIds: (workspace.draft?.selectedMemberIds ?? []).filter((memberId) => rosterIds.has(memberId)),
@@ -60,6 +69,8 @@ export function ClubRegistrationWorkspace({
     responses: fillMissingAnswers(workspace.draft?.responses, contactPrefill) as FormResponses,
     attendeeResponses: (workspace.draft?.attendeeResponses as Record<string, FormResponses> | undefined) ?? {},
     honorSelections: workspace.draft?.honorSelections ?? {},
+    rosterAges: workspace.draft?.rosterAges ?? {},
+    rosterAgeSaveOff: workspace.draft?.rosterAgeSaveOff ?? [],
   }));
   const [step, setStep] = useState<"who" | "honors" | "form">("who");
   const [honorsProblem, setHonorsProblem] = useState<string | null>(null);
@@ -73,32 +84,53 @@ export function ClubRegistrationWorkspace({
   const [addingGuest, setAddingGuest] = useState(false);
   const [guestError, setGuestError] = useState("");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">(workspace.draft ? "saved" : "idle");
-  const pending = useRef<DraftState | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(workspace.event.id)}`;
 
-  const flush = useCallback(async () => {
-    const next = pending.current;
-    if (!next) return;
-    pending.current = null;
-    setSaveState("saving");
-    try {
+  const [leaveHref, setLeaveHref] = useState<string | null>(null);
+  const [queue] = useState(() => createDraftSaveQueue<DraftState>({
+    onState: (state) => {
+      setSaveState(state);
+      if (state === "saved") setLeaveHref(null);
+    },
+    send: async (next) => {
       const response = await fetch(`${base}/draft`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(next),
       });
-      setSaveState(response.ok ? "saved" : "error");
-    } catch {
-      setSaveState("error");
-    }
-  }, [base]);
+      return response.ok;
+    },
+  }));
+
+  /** Saves the pending draft now; true when nothing is left unsaved. */
+  const flush = useCallback(async (): Promise<boolean> => {
+    if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+    return queue.flush();
+  }, [queue]);
+
+  // Leaving for the roster (#643): save first, and warn instead of silently dropping an unsaved edit.
+  const rosterHref = rosterHrefFromRegistration(organizationId, workspace.event.id);
+  const [leaving, setLeaving] = useState(false);
+  async function goToRoster(href: string) {
+    if (leaving) return;
+    setLeaving(true);
+    setLeaveHref(null);
+    const saved = await flush();
+    if (saved) router.push(href);
+    else { setLeaveHref(href); setLeaving(false); }
+  }
+  function followRosterLink(event: { preventDefault: () => void; altKey?: boolean; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; button?: number }, href: string) {
+    if (event.altKey || event.metaKey || event.ctrlKey || event.shiftKey || (event.button ?? 0) !== 0) return;
+    event.preventDefault();
+    void goToRoster(href);
+  }
 
   const queueSave = useCallback((next: DraftState) => {
-    pending.current = next;
+    queue.set(next);
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => { void flush(); }, 1200);
-  }, [flush]);
+    timer.current = setTimeout(() => { timer.current = null; void queue.flush(false); }, 1200);
+  }, [queue]);
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
@@ -123,12 +155,36 @@ export function ClubRegistrationWorkspace({
 
   const selected = workspace.roster.filter((person) => draft.selectedMemberIds.includes(person.memberId));
   const goingCount = selected.length + draft.guests.length;
+  // Roster people with no birth date need an age typed in for this registration (#639).
+  // The raw text of the age fields, so a half-typed entry is reported rather than read as blank.
+  const [ageText, setAgeText] = useState<Record<string, string>>({});
+  const [ageProblem, setAgeProblem] = useState("");
+
+  function changeRosterAge(memberId: string, raw: string) {
+    setAgeProblem("");
+    setAgeText((current) => ({ ...current, [memberId]: raw }));
+    setDraft((current) => {
+      // A blank or invalid entry clears the age; only whole numbers 0 to 120 are kept, like guests.
+      const next = withRosterAge(current, memberId, parseTypedAge(raw), ageKey);
+      queueSave(next);
+      return next;
+    });
+  }
+
+  function changeSaveToRoster(memberId: string, save: boolean) {
+    setDraft((current) => {
+      const off = current.rosterAgeSaveOff.filter((id) => id !== memberId);
+      const next = { ...current, rosterAgeSaveOff: save ? off : [...off, memberId] };
+      queueSave(next);
+      return next;
+    });
+  }
 
   // The honors step (#618): only when the event has classes at the chosen site
   // (or at no site), so an event without honors goes straight to the form.
   const honorAttendees = useMemo(
-    () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests }),
-    [workspace.roster, draft.selectedMemberIds, draft.guests],
+    () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests, rosterAges: effectiveRosterAges(workspace.roster, draft.selectedMemberIds, ageText, draft.rosterAges) }),
+    [workspace.roster, draft.selectedMemberIds, draft.guests, ageText, draft.rosterAges],
   );
   const honorOfferings = useMemo(
     () => (honorsCatalog ? offeringsAtLocation(honorsCatalog.offerings, locationId) : []),
@@ -152,6 +208,11 @@ export function ClubRegistrationWorkspace({
   }
 
   function leaveWho() {
+    for (const person of selected) {
+      const problem = ageInputProblem(person, ageText, draft.rosterAges);
+      if (problem) return setAgeProblem(problem);
+    }
+    setAgeProblem("");
     void flush();
     setStep(hasHonorsStep ? "honors" : "form");
   }
@@ -246,6 +307,10 @@ export function ClubRegistrationWorkspace({
     });
   }, [queueSave]);
 
+  // React Compiler skips this component with "could not preserve existing memoization" at this memo once the #639
+  // age fields (their raw text state and the ages derived from it) are in the component; moving that state into a
+  // hook or pure helpers did not change it, and the cause is not clear. Skipping only loses compiler optimization.
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization
   const club = useMemo(() => ({
     initialAttendees,
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
@@ -256,14 +321,14 @@ export function ClubRegistrationWorkspace({
     onDraftChange,
     onSubmitted: (result?: { honors?: { error?: string } | null }) => {
       if (timer.current) clearTimeout(timer.current);
-      pending.current = null;
+      queue.submitted();
       // The registration is saved even when a class filled up meanwhile; the class picker on the next screen says so.
       if (result?.honors?.error) {
         try { sessionStorage.setItem(honorsNoteKey(organizationId, workspace.event.id), result.honors.error); } catch { /* the picker still shows the picks */ }
       }
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonorsStep, honorPicks, base, onDraftChange, router, organizationId, workspace.event.id]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonorsStep, honorPicks, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
 
   const saveLabel = saveState === "saving" ? "Saving draft…" : saveState === "saved" ? "Draft saved" : saveState === "error" ? "Draft not saved. Check your connection." : "";
 
@@ -325,7 +390,7 @@ export function ClubRegistrationWorkspace({
       </p>
       {workspace.roster.length === 0 ? (
         <p className="public-manage-empty">
-          <UsersRound size={17} aria-hidden="true" /> Your roster is empty. Add your club members first.
+          <UsersRound size={17} aria-hidden="true" /> Your roster is empty. Add regular members using Add to roster on the roster page, or import a CSV. You can add event-only guests when registering.
         </p>
       ) : (
         <>
@@ -351,13 +416,28 @@ export function ClubRegistrationWorkspace({
                     <small>
                       {clubRosterAttendeeTypeLabels[person.attendeeType]}
                       {person.role ? ` · ${person.role}` : ""}
-                      {person.ageOnEventDate !== null ? <> · Age <span translate="no">{person.ageOnEventDate}</span></> : ""}
+                      {person.ageOnEventDate !== null
+                        ? <> · Age <span translate="no">{person.ageOnEventDate}</span></>
+                        : person.reportedAge !== null ? <> · Age <span translate="no">{person.reportedAge}</span> (reported)</> : ""}
                     </small>
                   </span>
                 </label>
+                {person.ageOnEventDate === null && draft.selectedMemberIds.includes(person.memberId) && (
+                  <ClubRosterAgeField
+                    error={ageProblem !== "" || ageInputValue(person, ageText, draft.rosterAges).trim() !== "" ? ageInputProblem(person, ageText, draft.rosterAges) : null}
+                    value={ageInputValue(person, ageText, draft.rosterAges)}
+                    onAge={(raw) => changeRosterAge(person.memberId, raw)}
+                    href={rosterHref}
+                    onNavigate={(event) => followRosterLink(event, rosterHref)}
+                    onSaveToRoster={(save) => changeSaveToRoster(person.memberId, save)}
+                    organizationId={organizationId}
+                    saveToRoster={!draft.rosterAgeSaveOff.includes(person.memberId)}
+                  />
+                )}
               </li>
             ))}
           </ul>
+          {ageProblem && <div className="inline-notice error" role="alert">{ageProblem}</div>}
         </>
       )}
       <section className="club-guest-section" aria-labelledby="club-guests-title">
@@ -411,12 +491,19 @@ export function ClubRegistrationWorkspace({
         )}
       </section>
 
+      {leaveHref && (
+        <div className="inline-notice error" role="alert">
+          Your latest changes aren&apos;t saved yet.{" "}
+          <button className="text-button" onClick={() => { const href = leaveHref; setLeaveHref(null); void goToRoster(href); }} type="button">Retry</button>{" "}
+          <button className="text-button" onClick={() => router.push(leaveHref)} type="button">Leave anyway</button>
+        </div>
+      )}
       {honorsCatalog && chosenLocation?.full && (
         <p className="inline-notice" role="status">This club will be waitlisted; pick classes after you&apos;re confirmed.</p>
       )}
       <div className="club-registration-toolbar club-sticky-bar">
-        <Link className="secondary-button" href={`/account/clubs/${organizationId}`} onClick={() => { void flush(); }}>
-          <UserPlus aria-hidden="true" size={15} /> Add someone new to the roster
+        <Link className="secondary-button" href={rosterHref} onClick={(event) => followRosterLink(event, rosterHref)}>
+          <UserPlus aria-hidden="true" size={15} /> {leaving ? "Saving…" : "Add someone new to the roster"}
         </Link>
         <button
           className="primary-button"

@@ -166,7 +166,8 @@ describe("the club home page builds the director's tiles (#488)", () => {
       active: 3, staff: 1, members: 2,
       byClass: [{ classLevel: "FRIEND", label: "Friend", count: 1 }, { classLevel: "RANGER", label: "Ranger", count: 1 }],
     });
-    expect(props.compliance).toEqual({ notInCompliance: 1, expiringSoon: 0, missing: 2 });
+    // No background-check tile on club home (#644): those problems are red to-dos instead.
+    expect(props.compliance).toBeNull();
     // One in-progress honor, and one of two completed honors falls inside this club year (started 2026-09-01).
     expect(props.honors).toEqual({ inProgress: 1, completedThisYear: 1 });
     expect(props.events).toEqual({ open: 1, registered: 1 });
@@ -181,6 +182,25 @@ describe("the club home page builds the director's tiles (#488)", () => {
     // The existing "What's next" list stays.
     const headings = allElements(tree).filter((element) => element.type === "h2").map((element) => element.props.children);
     expect(headings).toContain("To do");
+  });
+
+  it("shows background-check problems only as red to-dos, and nothing when none are due (#644)", async () => {
+    mocks.getRosterAccessStateForPage.mockResolvedValue({
+      state: "OPEN",
+      club: { organizationId: "club-1", name: "Test Pathfinders", role: "DIRECTOR", sponsoringChurch: null },
+      capabilities: { roster: true, registerForEvents: true, seeBirthDates: true, manageTeam: true, editProfile: true, submitReports: true },
+      actor: { kind: "ATTENDEE", accountId: "account-1", sessionId: "session-1" },
+    });
+    const dangerItems = (tree: ReactNode) => allElements(tree).filter((element) => element.type === "li" && element.props.className === "club-step-danger");
+
+    mocks.clubPortalComplianceReminderCounts.mockResolvedValue({ notInCompliance: 1, expiringSoon: 0, missing: 2 });
+    const withProblems = await ClubHomePage({ params: Promise.resolve({ organizationId: "club-1" }) });
+    expect(dangerItems(withProblems)).toHaveLength(2);
+    expect(tilesProps(withProblems).compliance).toBeNull();
+
+    mocks.clubPortalComplianceReminderCounts.mockResolvedValue({ notInCompliance: 0, expiringSoon: 0, missing: 0 });
+    const clean = await ClubHomePage({ params: Promise.resolve({ organizationId: "club-1" }) });
+    expect(dangerItems(clean)).toHaveLength(0);
   });
 
   it("doesn't call an unfiled month missing before it's due — matching 'What's next' on the same page (review fix)", async () => {

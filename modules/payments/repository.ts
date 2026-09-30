@@ -5,9 +5,11 @@ import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/mes
 import { logError } from "@/lib/logger";
 
 export class PaymentOperationError extends Error {
-  constructor(public readonly code: "REGISTRATION_NOT_FOUND" | "REGISTRATION_NOT_PAYABLE" | "PAYMENT_NOT_FOUND" | "PAYMENT_EXCEEDS_BALANCE" | "REFUND_EXCEEDS_AVAILABLE" | "CARD_REFUND_REQUIRES_SQUARE") {
+  constructor(public readonly code: "REGISTRATION_NOT_FOUND" | "REGISTRATION_NOT_PAYABLE" | "PAYMENT_NOT_FOUND" | "PAYMENT_EXCEEDS_BALANCE" | "REFUND_EXCEEDS_AVAILABLE" | "CARD_REFUND_REQUIRES_SQUARE" | "REFUND_IDEMPOTENCY_KEY_REUSED") {
     super(
-      code === "CARD_REFUND_REQUIRES_SQUARE"
+      code === "REFUND_IDEMPOTENCY_KEY_REUSED"
+        ? "This refund key was already used for a different amount or reason. Review the refund again to start a new one."
+        : code === "CARD_REFUND_REQUIRES_SQUARE"
         ? "Card refunds must be issued in Square. IMSDA Events will update automatically after Square confirms the refund."
         : code === "REFUND_EXCEEDS_AVAILABLE"
         ? "The refund exceeds the remaining refundable amount."
@@ -72,27 +74,76 @@ export async function recordManualPayment(
   return getRegistrationById(eventId, registrationId);
 }
 
+function isRefundKeyConflict(error: unknown) {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002";
+}
+
+type RefundKeyLookup = {
+  refund: {
+    findFirst: (args: {
+      where: { paymentId: string; idempotencyKey: string };
+      select: { amount: true; reason: true };
+    }) => Promise<{ amount: unknown; reason: string | null } | null>;
+  };
+};
+
+/** True when this key already recorded a refund; throws if the retry differs. */
+async function isRefundReplay(
+  db: RefundKeyLookup,
+  paymentId: string,
+  input: { amountCents: number; reason: string; idempotencyKey: string },
+) {
+  const existing = await db.refund.findFirst({
+    where: { paymentId, idempotencyKey: input.idempotencyKey },
+    select: { amount: true, reason: true },
+  });
+  if (!existing) return false;
+  if (Math.round(Number(existing.amount) * 100) !== input.amountCents || existing.reason !== input.reason) {
+    throw new PaymentOperationError("REFUND_IDEMPOTENCY_KEY_REUSED");
+  }
+  return true;
+}
+
 export async function recordRefund(
   eventId: string,
   paymentId: string,
   actorUserId: string,
-  input: { amountCents: number; reason: string },
+  input: { amountCents: number; reason: string; idempotencyKey: string },
 ) {
   const prisma = getPrisma();
   const payment = await prisma.payment.findFirst({
     where: { id: paymentId, eventId, status: "SUCCEEDED" },
-    include: { refunds: { where: { status: "SUCCEEDED" } }, registration: true },
+    include: { registration: true },
   });
   if (!payment) throw new PaymentOperationError("PAYMENT_NOT_FOUND");
   if (payment.method === "CARD_REFERENCE") {
     throw new PaymentOperationError("CARD_REFUND_REQUIRES_SQUARE");
   }
 
-  const refundedCents = payment.refunds.reduce((total, refund) => total + Math.round(Number(refund.amount) * 100), 0);
-  const refundableCents = Math.max(Math.round(Number(payment.amount) * 100) - refundedCents, 0);
-  if (input.amountCents > refundableCents) throw new PaymentOperationError("REFUND_EXCEEDS_AVAILABLE");
+  let result: { pendingMessageIds: string[] };
+  try {
+  result = await prisma.$transaction(async (tx) => {
+    // Serializes refunds on this payment, so a retry that races the original
+    // waits and then finds its key below, and two distinct refunds cannot
+    // both pass the balance check.
+    await tx.$queryRaw`
+      SELECT "id" FROM "Payment"
+      WHERE "id" = ${paymentId} AND "eventId" = ${eventId}
+      FOR NO KEY UPDATE
+    `;
+    // A retry of an operation that already committed (a timeout, or a 5xx
+    // after commit) returns what was recorded, before the balance check: the
+    // refund it made is already counted against the balance.
+    if (await isRefundReplay(tx, paymentId, input)) return { pendingMessageIds: [] as string[] };
 
-  const result = await prisma.$transaction(async (tx) => {
+    const refunds = await tx.refund.findMany({
+      where: { paymentId, status: "SUCCEEDED" },
+      select: { amount: true },
+    });
+    const refundedCents = refunds.reduce((total, refund) => total + Math.round(Number(refund.amount) * 100), 0);
+    const refundableCents = Math.max(Math.round(Number(payment.amount) * 100) - refundedCents, 0);
+    if (input.amountCents > refundableCents) throw new PaymentOperationError("REFUND_EXCEEDS_AVAILABLE");
+
     const refund = await tx.refund.create({
       data: {
         eventId,
@@ -100,6 +151,7 @@ export async function recordRefund(
         amount: input.amountCents / 100,
         status: "SUCCEEDED",
         reason: input.reason,
+        idempotencyKey: input.idempotencyKey,
       },
     });
     await tx.auditLog.create({
@@ -124,6 +176,13 @@ export async function recordRefund(
     });
     return { pendingMessageIds: notice.pendingMessageIds };
   });
+  } catch (error) {
+    // The row lock makes this unreachable in practice; if the unique index
+    // still fires, the transaction is aborted, so re-read outside it and
+    // treat the winner as the original (same mismatch rule as a retry).
+    if (!isRefundKeyConflict(error) || !(await isRefundReplay(prisma, paymentId, input))) throw error;
+    result = { pendingMessageIds: [] };
+  }
   try {
     await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
   } catch (error) {

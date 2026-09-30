@@ -304,7 +304,7 @@ export function ClubRosterWorkspace({
               ? "No one matches this filter."
               : readOnly
                 ? "No one is on this club's roster yet."
-                : "No one is on the roster yet. Add people below, or they'll be added when you register your club for an event."}
+                : "No one is on the roster yet. Add regular members using Add to roster above, or import a CSV. You can add event-only guests when registering."}
           </p>
         ) : (
           <div className="report-table-wrap">
@@ -405,7 +405,7 @@ export function ClubRosterWorkspace({
                                     ))}
                                   </div>
                                 )}
-                                {honorsHref && <Link className="text-button" href={honorsHref}>Edit</Link>}
+                                {honorsHref && <Link className="text-button" href={honorsHref}>Open Honors tab</Link>}
                               </td>
                             )}
                             {!readOnly && <td className="roster-card-actions" data-label="Actions">

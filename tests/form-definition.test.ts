@@ -164,9 +164,10 @@ describe("registration form definitions", () => {
     const rankedSessions = fields.filter((field) => field.type === "RANKED_CHOICE");
 
     expect(definition.attendeeRoster).toMatchObject({ enabled: true, maxAttendees: 50 });
-    expect(church.options).toContain("Other");
-    expect(church.options.length).toBeGreaterThan(130);
-    expect(churchOther.conditional).toEqual({ fieldKey: "church", operator: "EQUALS", value: "Other" });
+    // The church list comes from the live directory (#649), not a hard-coded list.
+    expect(church.optionSource).toBe("CHURCHES_DIRECTORY");
+    expect(church.options).toEqual([]);
+    expect(churchOther.conditional).toEqual({ fieldKey: "church", operator: "EQUALS", value: "Not listed" });
     expect(attendeeType.options).toEqual(["Adult", "Teen", "Child"]);
     expect(shirtSize).toMatchObject({
       type: "SELECT",
@@ -397,7 +398,7 @@ describe("registration form definitions", () => {
 
     // Club/church directory sources (#482) hold no options until hydrated
     // against the live directory — the same as `ATTENDEE_TYPES` fields do.
-    const hydrated = withDirectoryOptions(definition, { clubs: ["Test Pathfinders"], churches: [] });
+    const hydrated = withDirectoryOptions(definition, { clubs: ["Test Pathfinders"], churches: [], schools: [] });
     const registrationResult = validateTestResponses(hydrated, {
       club_name: "Test Pathfinders", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100",
     }, {}, "REGISTRATION");

@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma, RegistrationFormStatus } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { writeAuditLog } from "@/modules/audit/audit-service";
 import { openBirthDate } from "@/modules/club-rosters/birth-dates";
 import { ageOn, clubYearFor } from "@/modules/club-rosters/domain";
 import {
@@ -18,7 +19,10 @@ import {
   formatCalendarDate,
   guestIdFromClientId,
   guestIsAdult,
+  attendeeAgeKey,
   guestsFromJson,
+  rosterAgeSaveOffFromJson,
+  rosterAgesFromJson,
   type ClubGuest,
   lockedAttendeeFieldKeys,
   lockedClubDirectoryFieldKeys,
@@ -299,7 +303,7 @@ export type ClubEventRegistrationStep = { key: string; text: string; href: strin
 /**
  * Club home's "What's next" (#478): one item per open club event the club
  * hasn't registered for yet, so a director always sees where to register —
- * not only on the Events & classes tab. A club with a saved draft still gets
+ * not only on the Events tab. A club with a saved draft still gets
  * an item, worded to continue rather than start.
  */
 export function clubEventRegistrationSteps(events: ClubEventSummary[], base: string): ClubEventRegistrationStep[] {
@@ -478,9 +482,55 @@ async function activeRosterFor(client: Prisma.TransactionClient, organizationId:
       role: true,
       gender: true,
       sealedBirthDate: true,
+      reportedAge: true,
       person: { select: { firstName: true, lastName: true } },
     },
   });
+}
+
+/**
+ * Saves an age a director changed back to the roster as the member's
+ * reported age (#639), inside the caller's transaction. Only an active member
+ * of this club and club year with no birth date is ever touched (the filter is
+ * part of the write), and a birth date is never written or guessed from an age.
+ */
+async function saveRosterAgesBack(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  clubYear: string,
+  actor: ClubRegistrationActor,
+  updates: ReadonlyArray<{ memberId: string; age: number }>,
+) {
+  for (const { memberId, age } of updates) {
+    // Same row filter as the active roster (this club, this club year, ACTIVE), so an erased or
+    // transferred row is never written. `reportedAge IS NULL` is spelled out because
+    // `NOT (reportedAge = age)` is never true for NULL in SQL.
+    const result = await tx.clubRosterMember.updateMany({
+      where: {
+        id: memberId,
+        organizationId,
+        clubYear,
+        status: "ACTIVE",
+        sealedBirthDate: null,
+        OR: [{ reportedAge: null }, { reportedAge: { not: age } }],
+      },
+      data: { reportedAge: age },
+    });
+    if (result.count === 0) continue;
+    await writeAuditLog({
+      ...("userId" in actor ? { actorUserId: actor.userId } : {}),
+      action: "CLUB_ROSTER_MEMBER_UPDATED",
+      entityType: "ClubRosterMember",
+      entityId: memberId,
+      summary: "Updated a person on a club roster.",
+      metadata: {
+        organizationId,
+        ...("accountId" in actor ? { actorAttendeeAccountId: actor.accountId } : { actAsId: actor.actAsId }),
+        fields: ["reportedAge"],
+        source: "CLUB_REGISTRATION",
+      },
+    }, tx);
+  }
 }
 
 /** The director edit window (#366) for a registration, on its location's dates when it has one (#413). */
@@ -558,11 +608,17 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         firstName: person.firstName,
         lastName: person.lastName,
         ageOnEventDate: person.ageOnEventDate,
+        // An age a form reported for someone with no birth date (#376); prefills the age field (#639).
+        reportedAge: member.sealedBirthDate ? null : member.reportedAge,
         attendeeType: member.attendeeType,
         role: member.role,
         ownedResponses: experience ? rosterOwnedResponses(experience.form.definition, person) : {},
         prefillResponses: experience
           ? {
+            // The reported age starts the form's age answer until one is typed in (#639).
+            ...(person.ageOnEventDate === null && member.reportedAge !== null && attendeeAgeKey(experience.form.definition)
+              ? { [attendeeAgeKey(experience.form.definition)!]: String(member.reportedAge) }
+              : {}),
             ...rosterGenderPrefill(experience.form.definition, person),
             ...rosterRolePrefill(experience.form.definition, { ...person, role: member.role, attendeeType: member.attendeeType }),
           }
@@ -595,6 +651,8 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
     problem,
     experience,
     lockedAttendeeFieldKeys: experience ? lockedAttendeeFieldKeys(experience.form.definition) : [],
+    /** The event form's attendee age question, if it has one (#639). */
+    attendeeAgeKey: experience ? attendeeAgeKey(experience.form.definition) : null,
     // The directory fields (#482): the club is always the director's own and
     // locked (enforced again server-side by `clubDirectoryOwnedResponses`);
     // the church starts as the club's sponsoring church but stays editable.
@@ -674,6 +732,8 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
           : draft.responses as Record<string, unknown>,
         attendeeResponses: draft.attendeeResponses as Record<string, Record<string, unknown>>,
         honorSelections: recordFromJson(draft.honorSelections) as Record<string, string[]>,
+        rosterAges: rosterAgesFromJson(draft.rosterAges),
+        rosterAgeSaveOff: rosterAgeSaveOffFromJson(draft.rosterAgeSaveOff),
         updatedAt: draft.updatedAt.toISOString(),
       }
       : null,
@@ -689,6 +749,10 @@ export type ClubRegistrationDraftInput = {
   attendeeResponses: Record<string, Record<string, unknown>>;
   /** Honors picked while registering (#618), by the event form's client id. */
   honorSelections?: Record<string, string[]>;
+  /** Ages typed in for roster people with no birth date on file (#639), by roster member id. */
+  rosterAges?: Record<string, number>;
+  /** Roster members whose typed-in age is not also saved to the roster at submit (#639). */
+  rosterAgeSaveOff?: string[];
 };
 
 /** Never an attendee account credited for a staff action (#442): `userId` for a staff "act as" director. */
@@ -721,7 +785,19 @@ export async function saveClubRegistrationDraft(
   const honorSelections = Object.fromEntries(
     Object.entries(input.honorSelections ?? {}).filter(([key, ids]) => pickable.has(key) && ids.length > 0),
   );
+  // Only for people going who really have no birth date: a roster age always wins.
+  const rosterAges = Object.fromEntries(
+    members
+      .filter((member) => !member.sealedBirthDate && input.selectedMemberIds.includes(member.id))
+      .flatMap((member) => {
+        const age = input.rosterAges?.[member.id];
+        return age === undefined ? [] : [[member.id, age] as const];
+      }),
+  );
+  const rosterAgeSaveOff = (input.rosterAgeSaveOff ?? []).filter((memberId) => memberId in rosterAges);
   const data = {
+    rosterAges: rosterAges as Prisma.InputJsonValue,
+    rosterAgeSaveOff: rosterAgeSaveOff as Prisma.InputJsonValue,
     honorSelections: honorSelections as Prisma.InputJsonValue,
     selectedMemberIds: input.selectedMemberIds,
     guests: input.guests as Prisma.InputJsonValue,
@@ -743,7 +819,7 @@ export async function saveClubRegistrationDraft(
  * transaction: names and age are overwritten from the roster, so the client
  * can only choose who, never change who they are.
  */
-export function clubAttendeePreparer(organizationId: string): ClubSubmissionContext["prepareAttendees"] {
+export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistrationActor): ClubSubmissionContext["prepareAttendees"] {
   return async (tx, { definition, event, input }) => {
     const problem = clubFormProblem(definition);
     if (problem) throw new PublicRegistrationError("CLUB_REGISTRATION_UNAVAILABLE", problem);
@@ -757,8 +833,12 @@ export function clubAttendeePreparer(organizationId: string): ClubSubmissionCont
     // client can only choose them, not change who they are (#388).
     const draft = await tx.clubRegistrationDraft.findUnique({
       where: { eventId_organizationId: { eventId: event.id, organizationId } },
-      select: { guests: true },
+      select: { guests: true, rosterAges: true, rosterAgeSaveOff: true, honorSelections: true },
     });
+    const draftRosterAges = rosterAgesFromJson(draft?.rosterAges);
+    const saveOff = new Set(rosterAgeSaveOffFromJson(draft?.rosterAgeSaveOff));
+    const saveBack: Array<{ memberId: string; age: number }> = [];
+    const draftHonorPicks = recordFromJson(draft?.honorSelections);
     const guestsById = new Map(guestsFromJson(draft?.guests).map((guest) => [guest.id, guest]));
     const eventDate = calendarDateInEventTimeZone(event.startsAt, event.timezone);
     // The club directory field (#482) is locked to this club's own
@@ -798,10 +878,28 @@ export function clubAttendeePreparer(organizationId: string): ClubSubmissionCont
           "Everyone going must be active on your club roster. Refresh the page and choose again.",
         );
       }
-      const person = rosterPerson(member, eventDate);
+      const rosterOnly = rosterPerson(member, eventDate);
+      // A roster person with no birth date takes the age typed in for this
+      // registration (#639), else the roster's reported age; a birth date on file always wins.
+      const typedAge = rosterOnly.ageOnEventDate === null ? draftRosterAges[member.id] : undefined;
+      const effectiveAge = typedAge ?? (rosterOnly.ageOnEventDate === null ? member.reportedAge ?? undefined : undefined);
+      if (rosterOnly.ageOnEventDate === null && effectiveAge === undefined) {
+        const picks = draftHonorPicks[attendee.clientId];
+        const needsAge = attendeeAgeKey(definition as RegistrationFormDefinition) !== null || (Array.isArray(picks) && picks.length > 0);
+        if (needsAge) {
+          throw new PublicRegistrationError(
+            "CLUB_ATTENDEES_INVALID",
+            `Enter ${`${rosterOnly.firstName} ${rosterOnly.lastName}`.trim() || "everyone going"}'s age on the event date. Go back to Who's going and add it.`,
+          );
+        }
+      }
+      const person = effectiveAge === undefined ? rosterOnly : { ...rosterOnly, ageOnEventDate: effectiveAge };
+      if (typedAge !== undefined && typedAge !== (member.reportedAge ?? undefined) && actor && !saveOff.has(member.id)) saveBack.push({ memberId: member.id, age: typedAge });
       resolved.set(attendee.clientId, { personId: member.personId, rosterMemberId: member.id, ageOnEventDate: person.ageOnEventDate });
       return { ...attendee, responses: { ...attendee.responses, ...rosterOwnedResponses(definition as RegistrationFormDefinition, person) } };
     });
+    // Part of the submit transaction: a failed submit saves nothing back (#639).
+    if (actor && saveBack.length > 0) await saveRosterAgesBack(tx, organizationId, clubYearFor(event.startsAt), actor, saveBack);
     return {
       input: {
         ...input,
@@ -837,7 +935,7 @@ export async function submitClubRegistration(
     // Picked, locked, and capacity-checked inside the submit transaction (#413).
     locationId: options.locationId ?? null,
     ...(options.report ? { report: options.report } : {}),
-    prepareAttendees: clubAttendeePreparer(organizationId),
+    prepareAttendees: clubAttendeePreparer(organizationId, actor),
   });
 }
 
@@ -1058,6 +1156,9 @@ export async function amendClubRegistration(
     .map((field) => field.key);
   const amendmentAttendees: RegistrationAmendmentInput["attendees"] = [];
   const serverOptions = new Map<string, AmendmentAttendeeServerOptions>();
+  const saveAgeBack: Array<{ memberId: string; age: number }> = [];
+  const typedAges = input.rosterAges ?? {};
+  const saveAgeIds = new Set(input.saveAgeToRosterIds ?? []);
 
   /** The answers to keep for an attendee already registered: sent ones, or theirs as they stand. */
   function keptAnswers(clientId: string, current: CurrentClubAttendee) {
@@ -1078,9 +1179,29 @@ export async function amendClubRegistration(
 
   for (const memberId of input.selectedMemberIds) {
     const member = membersById.get(memberId)!;
-    const person = rosterPerson(member, eventDate);
+    const rosterOnly = rosterPerson(member, eventDate);
     const clientId = clubAttendeeClientId(memberId);
     const current = currentByMemberId.get(memberId);
+    // A roster person with no birth date needs an age entered for this
+    // registration (#639); a kept person's registered age stands until changed.
+    let person = rosterOnly;
+    if (rosterOnly.ageOnEventDate === null) {
+      const registeredAge = current ? recordFromJson(current.profileSnapshot).ageOnEventDate : undefined;
+      const age = typedAges[memberId] ?? (typeof registeredAge === "number" ? registeredAge : member.reportedAge ?? undefined);
+      if (age === undefined) {
+        if (attendeeAgeKey(definition) !== null) {
+          throw new ClubRegistrationError(
+            "ATTENDEES_INVALID",
+            `Enter ${`${rosterOnly.firstName} ${rosterOnly.lastName}`.trim() || "everyone going"}'s age on the event date.`,
+          );
+        }
+      } else {
+        person = { ...rosterOnly, ageOnEventDate: age };
+        // Only an age the director changed from where it started (the registered age, else the roster's reported age).
+        const startingAge = typeof registeredAge === "number" ? registeredAge : member.reportedAge ?? undefined;
+        if (typedAges[memberId] !== undefined && typedAges[memberId] !== startingAge && saveAgeIds.has(memberId)) saveAgeBack.push({ memberId, age });
+      }
+    }
     const owned = rosterOwnedResponses(definition, person);
     const responses = {
       ...(current ? keptAnswers(clientId, current) : (input.attendeeResponses[clientId] ?? {})),
@@ -1177,6 +1298,8 @@ export async function amendClubRegistration(
   // preview and the commit can't leave a stale club name to fail on.
   const engineOptions: AmendmentServerOptions = {
     attendees: serverOptions,
+    // Inside the amendment's own transaction, so a failed save changes nothing (#639).
+    ...(saveAgeBack.length > 0 ? { inTransaction: (tx: Prisma.TransactionClient) => saveRosterAgesBack(tx, organizationId, clubYearFor(event.startsAt), actor, saveAgeBack) } : {}),
     requestFingerprint,
     ...(input.locationId ? { locationId: input.locationId } : {}),
     ownedRegistrationResponses: async (hydrated, tx) => (

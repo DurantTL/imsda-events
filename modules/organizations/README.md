@@ -15,6 +15,11 @@ Current foundation:
 - database constraints that assign each external identity to exactly one IMSDA
   person or organization.
 
+- eAdventist organizations import (#649): churches, companies, groups, schools
+  and other kinds loaded from the eAdventist CSV with a preview, matched on
+  re-upload by eAdventist OrganizationID (see
+  `docs/EADVENTIST-ORGANIZATIONS-IMPORT.md`).
+
 Names, email addresses, and phone numbers are never automatic synchronization
 keys. Connector work must use `ExternalIdentity`, preview proposed changes,
 surface conflicts, and preserve an audit history before applying them.
