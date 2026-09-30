@@ -24,6 +24,16 @@ import {
   ClubCheckInPanel,
   type ClubCheckInProgress,
 } from "@/components/club-check-in-panel";
+import {
+  chooseQrDecoder,
+  classifyCameraError,
+  createScanLoop,
+  decodeQrFromPixels,
+  downscaledSize,
+  type BarcodeDetectorConstructorLike,
+  type JsQrFunction,
+  type ScanLoop,
+} from "@/components/check-in-qr-decoding";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { CheckInActionResult } from "@/components/use-offline-check-in-queue";
 import type { ClubCheckInInfo } from "@/modules/club-registrations/repository";
@@ -55,15 +65,9 @@ type CameraState =
   | "active"
   | "unsupported"
   | "denied"
+  | "no-camera"
+  | "decoder-failed"
   | "error";
-
-type DetectedBarcode = { rawValue?: string };
-type BarcodeDetectorInstance = {
-  detect(source: HTMLVideoElement): Promise<DetectedBarcode[]>;
-};
-type BarcodeDetectorConstructor = new (
-  options: { formats: string[] },
-) => BarcodeDetectorInstance;
 
 /**
  * Q1 (#412): a club's own QR ("imsda-club-pass.v1…") is a distinct token
@@ -100,6 +104,12 @@ function cameraMessage(state: CameraState) {
   }
   if (state === "denied") {
     return "Camera access was denied. You can allow it in browser settings or use the confirmation code below.";
+  }
+  if (state === "no-camera") {
+    return "No camera was found on this device. Use the confirmation code below.";
+  }
+  if (state === "decoder-failed") {
+    return "The QR scanning component could not load. Check the connection and try again, or use the confirmation code below.";
   }
   if (state === "error") {
     return "The camera could not start. Close other camera apps or use the confirmation code below.";
@@ -146,24 +156,27 @@ export function CheckInScanner({
   const [bulkProgress, setBulkProgress] = useState<ClubCheckInProgress | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
-  const scanLoopActiveRef = useRef(false);
-  const detectingRef = useRef(false);
+  const scanLoopRef = useRef<ScanLoop | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Bumped by every stop so a start that is still awaiting the camera or the
+  // decoder can tell it was cancelled and release what it acquired.
+  const startIdRef = useRef(0);
+  const startPendingRef = useRef(false);
   // Escape closes through this same function (see useAccessibleDialog), so a
   // plain `bulkBusy || checkingInId` check in closeScanner would need those
   // state values fresh at keydown time. The ref keeps that guard correct
   // regardless of when the key fires mid bulk run.
   const bulkGuardRef = useRef({ bulkBusy: false, checkingInId: null as string | null });
-  bulkGuardRef.current = { bulkBusy, checkingInId };
+  useEffect(() => {
+    bulkGuardRef.current = { bulkBusy, checkingInId };
+  }, [bulkBusy, checkingInId]);
   const dialogRef = useAccessibleDialog<HTMLElement>(open, closeScanner);
 
   function stopCamera(updateState = true) {
-    scanLoopActiveRef.current = false;
-    detectingRef.current = false;
-    if (animationFrameRef.current !== null) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
+    startIdRef.current += 1;
+    startPendingRef.current = false;
+    scanLoopRef.current?.stop();
+    scanLoopRef.current = null;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
@@ -189,12 +202,40 @@ export function CheckInScanner({
   }
 
   useEffect(() => () => {
-    scanLoopActiveRef.current = false;
-    if (animationFrameRef.current !== null) {
-      cancelAnimationFrame(animationFrameRef.current);
-    }
+    startIdRef.current += 1;
+    scanLoopRef.current?.stop();
     streamRef.current?.getTracks().forEach((track) => track.stop());
   }, []);
+
+  // Phones keep the camera lit in the background; release it when the page
+  // is hidden. Staff press "Start camera" again on return (a user gesture,
+  // which iOS requires anyway).
+  useEffect(() => {
+    function onVisibilityChange() {
+      if (
+        document.visibilityState === "hidden"
+        && (streamRef.current || startPendingRef.current)
+      ) {
+        stopCamera();
+      }
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+    // stopCamera only touches refs and a state setter.
+  }, []);
+
+  // Warm the jsQR chunk while the dialog is open so it is cached before the
+  // camera starts. Failures are ignored here; only a real start reports
+  // "decoder-failed", and a later start retries the import.
+  useEffect(() => {
+    if (!open) return;
+    const Detector = (
+      window as typeof window & { BarcodeDetector?: BarcodeDetectorConstructorLike }
+    ).BarcodeDetector;
+    void chooseQrDecoder(Detector)
+      .then((choice) => (choice === "fallback" ? import("jsqr") : null))
+      .catch(() => undefined);
+  }, [open]);
 
   async function resolveLookup(
     kind: "pass" | "confirmation",
@@ -235,35 +276,13 @@ export function CheckInScanner({
     }
   }
 
-  async function scanFrames(detector: BarcodeDetectorInstance) {
-    if (!scanLoopActiveRef.current) return;
-    const video = videoRef.current;
-    if (video && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-      detectingRef.current = true;
-      try {
-        const codes = await detector.detect(video);
-        const token = codes
-          .map((code) => extractAttendeePassToken(code.rawValue ?? ""))
-          .find((value): value is string => Boolean(value));
-        if (token) {
-          stopCamera(false);
-          setCameraState("idle");
-          await resolveLookup("pass", token);
-          return;
-        }
-      } catch {
-        stopCamera(false);
-        setCameraState("error");
-        return;
-      } finally {
-        detectingRef.current = false;
-      }
-    }
-    if (scanLoopActiveRef.current) {
-      animationFrameRef.current = requestAnimationFrame(
-        () => void scanFrames(detector),
-      );
-    }
+  async function handleScannedText(rawValue: string) {
+    const token = extractAttendeePassToken(rawValue);
+    if (!token) return false;
+    stopCamera(false);
+    setCameraState("idle");
+    await resolveLookup("pass", token);
+    return true;
   }
 
   async function startCamera() {
@@ -271,18 +290,18 @@ export function CheckInScanner({
     setResolution(null);
     setError("");
     setCameraState("starting");
+    const startId = startIdRef.current;
+    startPendingRef.current = true;
 
-    const Detector = (
-      window as typeof window & {
-        BarcodeDetector?: BarcodeDetectorConstructor;
-      }
-    ).BarcodeDetector;
-    if (!Detector || !navigator.mediaDevices?.getUserMedia) {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      startPendingRef.current = false;
       setCameraState("unsupported");
       return;
     }
 
     try {
+      // getUserMedia is requested first, straight from the click handler, so
+      // iOS Safari still sees the user gesture.
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
@@ -291,23 +310,98 @@ export function CheckInScanner({
           height: { ideal: 720 },
         },
       });
-      streamRef.current = stream;
-      if (!videoRef.current) {
+      if (startId !== startIdRef.current) {
         stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      streamRef.current = stream;
+      const video = videoRef.current;
+      if (!video) {
+        stopCamera(false);
         setCameraState("error");
         return;
       }
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
-      const detector = new Detector({ formats: ["qr_code"] });
-      scanLoopActiveRef.current = true;
+      video.muted = true;
+      video.setAttribute("playsinline", "");
+      video.srcObject = stream;
+      try {
+        await video.play();
+      } catch {
+        // Not a permission problem: show the generic camera error.
+        if (startId === startIdRef.current) {
+          stopCamera(false);
+          setCameraState("error");
+        }
+        return;
+      }
+      if (startId !== startIdRef.current) return;
+
+      const Detector = (
+        window as typeof window & {
+          BarcodeDetector?: BarcodeDetectorConstructorLike;
+        }
+      ).BarcodeDetector;
+      const choice = await chooseQrDecoder(Detector);
+      if (startId !== startIdRef.current) return;
+
+      let decodeFrame: () => Promise<string | null>;
+      if (choice === "native" && Detector) {
+        const detector = new Detector({ formats: ["qr_code"] });
+        decodeFrame = async () => {
+          if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null;
+          const codes = await detector.detect(video);
+          return codes
+            .map((code) => code.rawValue ?? "")
+            .find((value) => extractAttendeePassToken(value)) ?? null;
+        };
+      } else {
+        let jsQR: JsQrFunction;
+        try {
+          // Loaded only when the browser has no usable BarcodeDetector.
+          jsQR = (await import("jsqr")).default as JsQrFunction;
+        } catch {
+          if (startId === startIdRef.current) {
+            stopCamera(false);
+            setCameraState("decoder-failed");
+          }
+          return;
+        }
+        if (startId !== startIdRef.current) return;
+        decodeFrame = async () => {
+          if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null;
+          const size = downscaledSize(video.videoWidth, video.videoHeight);
+          if (size.width === 0) return null;
+          const canvas = canvasRef.current ?? document.createElement("canvas");
+          canvasRef.current = canvas;
+          if (canvas.width !== size.width) canvas.width = size.width;
+          if (canvas.height !== size.height) canvas.height = size.height;
+          const context = canvas.getContext("2d", { willReadFrequently: true });
+          if (!context) throw new Error("Canvas is unavailable.");
+          context.drawImage(video, 0, 0, size.width, size.height);
+          const image = context.getImageData(0, 0, size.width, size.height);
+          return decodeQrFromPixels(jsQR, image.data, size.width, size.height);
+        };
+      }
+
+      startPendingRef.current = false;
       setCameraState("active");
-      void scanFrames(detector);
+      scanLoopRef.current = createScanLoop({
+        tick: async () => {
+          const rawValue = await decodeFrame();
+          if (!rawValue || startId !== startIdRef.current) return false;
+          return handleScannedText(rawValue);
+        },
+        onError: () => {
+          if (startId !== startIdRef.current) return;
+          stopCamera(false);
+          setCameraState("error");
+        },
+      });
     } catch (caught) {
+      if (startId !== startIdRef.current) return;
       stopCamera(false);
-      const denied = caught instanceof DOMException
-        && (caught.name === "NotAllowedError" || caught.name === "SecurityError");
-      setCameraState(denied ? "denied" : "error");
+      const failure = classifyCameraError(caught);
+      setCameraState(failure === "no-camera" ? "no-camera" : failure === "denied" ? "denied" : "error");
     }
   }
 
@@ -488,6 +582,8 @@ export function CheckInScanner({
                       ? <LoaderCircle className="is-spinning" size={31} aria-hidden="true" />
                       : cameraState === "denied"
                         || cameraState === "unsupported"
+                        || cameraState === "no-camera"
+                        || cameraState === "decoder-failed"
                         || cameraState === "error"
                         ? <CameraOff size={31} aria-hidden="true" />
                         : <Camera size={31} aria-hidden="true" />}
