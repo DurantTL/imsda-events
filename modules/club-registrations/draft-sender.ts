@@ -52,20 +52,27 @@ export function createDraftSender<T extends object>({
     }
     if (response.ok) {
       const saved = await response.json().catch(() => null) as { revision?: number } | null;
-      if (typeof saved?.revision === "number") revision = saved.revision;
-      if (unconfirmed === snapshot) unconfirmed = null;
+      if (typeof saved?.revision === "number") {
+        revision = saved.revision;
+        if (unconfirmed === snapshot) unconfirmed = null;
+      } else {
+        // Saved, but the revision is unknown: resend with the same save id to learn it before anything newer.
+        unconfirmed = snapshot;
+      }
       return "ok";
     }
-    if (response.status >= 500) { unconfirmed = snapshot; return "failed"; }
-    if (unconfirmed === snapshot) unconfirmed = null;
     if (response.status === 409) {
       const problem = await response.json().catch(() => null) as { error?: string } | null;
       if (problem?.error === "DRAFT_CONFLICT") {
+        if (unconfirmed === snapshot) unconfirmed = null;
         conflicted = true;
         onConflict?.();
         return "conflict";
       }
     }
+    // Any other refusal (401, 403, 404, 410, other 4xx, 5xx) doesn't say whether the save landed,
+    // so the snapshot stays unconfirmed and is resent with the same save id.
+    unconfirmed = snapshot;
     return "failed";
   }
 

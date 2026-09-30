@@ -61,6 +61,24 @@ describe("draft sender (#659)", () => {
     expect(conflicts()).toBe(1);
   });
 
+  it("keeps an unconfirmed snapshot through a 401/403/404/410 so it is resent first with the same id", async () => {
+    const { sender, sent } = harness(["throw", { ok: false, status: 401, body: {} }, ok(4), ok(5)]);
+    expect(await sender.send({ value: "a" })).toBe(false);
+    // The resend of "a" is refused with a 401: "a" must stay unconfirmed, and "b" must not go out yet.
+    expect(await sender.send({ value: "b" })).toBe(false);
+    expect(await sender.send({ value: "b" })).toBe(true);
+    expect(sent.map((s) => [s.value, s.baseRevision])).toEqual([["a", 3], ["a", 3], ["a", 3], ["b", 4]]);
+    expect(new Set(sent.slice(0, 3).map((s) => s.saveId)).size).toBe(1);
+  });
+
+  it("resends a snapshot whose 200 carried no revision, so the next save has the right base", async () => {
+    const { sender, sent } = harness([{ ok: true, status: 200, body: {} }, ok(4), ok(5)]);
+    expect(await sender.send({ value: "a" })).toBe(true);
+    expect(await sender.send({ value: "b" })).toBe(true);
+    expect(sent.map((s) => [s.value, s.baseRevision])).toEqual([["a", 3], ["a", 3], ["b", 4]]);
+    expect(sent[0]!.saveId).toBe(sent[1]!.saveId);
+  });
+
   it("does not treat other 409s or server errors as a conflict", async () => {
     const { sender } = harness([{ ok: false, status: 409, body: { error: "MEMBER_NOT_ON_ROSTER" } }, { ok: false, status: 503, body: {} }]);
     expect(await sender.send({ value: "a" })).toBe(false);
