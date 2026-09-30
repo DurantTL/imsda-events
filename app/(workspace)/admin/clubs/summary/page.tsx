@@ -3,11 +3,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BackLink } from "@/components/back-link";
-import { AreaClubsOverview, AreaExportLinks, AreaMonthlyReportsTable, AreaPointsChart } from "@/components/area-clubs-views";
+import { AreaClubEvents, AreaClubsOverview, AreaExportLinks, AreaMonthlyReportsTable, AreaPointsChart } from "@/components/area-clubs-views";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { parseLeaderboardSort } from "@/modules/club-reports/area-summary-domain";
 import { resolveAreaClubYear } from "@/modules/club-reports/area-export";
-import { getAreaClubsSummary } from "@/modules/club-reports/area-summary-repository";
+import { getAreaClubsSummary, listAreaClubEvents } from "@/modules/club-reports/area-summary-repository";
 
 export const metadata: Metadata = { title: "Club summary" };
 export const dynamic = "force-dynamic";
@@ -19,7 +19,7 @@ export default async function ClubSummaryAdminPage({ searchParams }: { searchPar
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
   const params = await searchParams;
   const clubYear = resolveAreaClubYear(params.year);
-  const clubs = await getAreaClubsSummary(clubYear);
+  const [clubs, events] = await Promise.all([getAreaClubsSummary(clubYear), listAreaClubEvents(clubYear)]);
   const links = {
     clubHref: (id: string) => `/admin/organizations/${id}/club`,
     reportHref: (id: string, month: string) => `/admin/clubs/reports/${id}/${month}`,
@@ -48,6 +48,8 @@ export default async function ClubSummaryAdminPage({ searchParams }: { searchPar
       <AreaMonthlyReportsTable clubYear={clubYear} clubs={clubs} links={links} />
       <h3>Points</h3>
       <AreaPointsChart basePath="/admin/clubs/summary" clubYear={clubYear} clubs={clubs} sort={parseLeaderboardSort(params.sort)} />
+      <h3>Club events</h3>
+      <AreaClubEvents clubHref={links.clubHref} events={events} />
     </section>
   );
 }

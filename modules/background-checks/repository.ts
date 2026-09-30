@@ -2165,6 +2165,42 @@ export async function clubComplianceReminderCounts(organizationId: string, clubY
 }
 
 /**
+ * Reminder counts for many clubs in one query (#657), for the Area
+ * Coordinator's cross-club overview. Selects only the roster row's
+ * organization and person ids plus the cached check's status fields: no
+ * names, emails, birth dates or notes are loaded. The states come from the
+ * same `clubComplianceState` as `clubComplianceReminderCounts`, so counts
+ * match for every adult with a cached check match (kept current by roster
+ * writes, #527). An adult with no cached match is counted as missing here
+ * instead of triggering the per-person identity lookup, which needs the
+ * very fields this deliberately doesn't read.
+ */
+export async function clubsComplianceReminderCounts(organizationIds: string[], clubYear: string) {
+  const today = calendarDateInEventTimeZone(new Date(), "America/Chicago");
+  const members = await getPrisma().clubRosterMember.findMany({
+    where: { organizationId: { in: organizationIds }, clubYear, status: "ACTIVE", attendeeType: { in: ["ADULT", "STAFF"] } },
+    select: {
+      organizationId: true,
+      personId: true,
+      person: { select: { backgroundCheckMatch: { select: { entry: { select: { complianceStatus: true, expiresOn: true } } } } } },
+    },
+  });
+  const counts = new Map<string, { missing: number; notInCompliance: number; expiringSoon: number }>(
+    organizationIds.map((id) => [id, { missing: 0, notInCompliance: 0, expiringSoon: 0 }]),
+  );
+  for (const member of members) {
+    const entry = member.person?.backgroundCheckMatch?.entry ?? null;
+    const state = clubComplianceState(entry, today);
+    const row = counts.get(member.organizationId);
+    if (!row) continue;
+    if (state === "NOT_COMPLIANT") row.notInCompliance += 1;
+    if (state === "FLAGGED") row.expiringSoon += 1;
+    if (state === "NO_RECORD") row.missing += 1;
+  }
+  return counts;
+}
+
+/**
  * Club home's reminder counts (#479): the same gate as the roster's own
  * compliance column below (directors and deputies only), so the two can't drift.
  */

@@ -13,7 +13,7 @@ export function resolveAreaClubYear(requested: string | undefined, now = new Dat
 export async function areaExportResponse(url: URL) {
   const clubYear = resolveAreaClubYear(url.searchParams.get("year") ?? undefined);
   const report = url.searchParams.get("report") === "points" ? "points" : "summary";
-  const clubs = await getAreaClubsSummary(clubYear);
+  const clubs = await getAreaClubsSummary(clubYear, new Date(), { backgroundChecks: false });
   const csv = report === "points" ? areaPointsCsv(clubYear, clubs) : areaSummaryCsv(clubYear, clubs);
   return new Response(csv, {
     headers: {
