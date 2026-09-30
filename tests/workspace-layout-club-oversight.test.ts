@@ -28,7 +28,7 @@ vi.mock("@/components/app-shell", () => ({ AppShell: () => null }));
 vi.mock("@/components/act-as-banner", () => ({ ActAsBanner: () => null }));
 
 import { AppShell } from "@/components/app-shell";
-import WorkspaceLayout from "@/app/(workspace)/layout";
+import { WorkspaceShell } from "@/components/workspace-shell";
 
 type ShellEvent = { id: string; clubOversight: boolean };
 
@@ -51,13 +51,13 @@ beforeEach(() => {
   mocks.currentStaffActingContext.mockResolvedValue(null);
 });
 
-describe("WorkspaceLayout club oversight (#481)", () => {
+describe("WorkspaceShell club oversight (#481)", () => {
   it("gives a system admin club oversight only on the CLUB-audience event", async () => {
     mocks.loadWorkspaceEventContext.mockResolvedValue({
       autoSelected: false, defaultEventId: null, events,
       user: { id: "usr_admin", email: "admin@example.test", displayName: "Admin", globalRole: "SYSTEM_ADMIN" },
     });
-    const tree = await WorkspaceLayout({ children: null });
+    const tree = await WorkspaceShell({ children: null });
     expect(shellEvents(tree)).toEqual([
       expect.objectContaining({ id: "evt_general_billed", clubOversight: false }),
       expect.objectContaining({ id: "evt_club_paid", clubOversight: true }),
@@ -75,11 +75,25 @@ describe("WorkspaceLayout club oversight (#481)", () => {
       ["evt_club_paid", "EVENT_ADMIN"],
       ["evt_club_other", "REGISTRATION_MANAGER"],
     ]));
-    const tree = await WorkspaceLayout({ children: null });
+    const tree = await WorkspaceShell({ children: null });
     expect(shellEvents(tree)).toEqual([
       expect.objectContaining({ id: "evt_general_billed", clubOversight: false }),
       expect.objectContaining({ id: "evt_club_paid", clubOversight: true }),
       expect.objectContaining({ id: "evt_club_other", clubOversight: false }),
     ]);
+  });
+
+  it("passes the no-events allowance through to the event context (#623)", async () => {
+    mocks.loadWorkspaceEventContext.mockResolvedValue({
+      autoSelected: false, defaultEventId: null, events: [],
+      user: { id: "usr_staff", email: "staff@example.test", displayName: "Staff", globalRole: null },
+    });
+    mocks.listActiveEventPermissionsForUser.mockResolvedValue(new Map());
+    mocks.listActiveEventRolesForUser.mockResolvedValue(new Map());
+    const tree = await WorkspaceShell({ anyStaffWithoutEvents: true, children: null });
+    expect(mocks.loadWorkspaceEventContext).toHaveBeenCalledWith({ anyStaffWithoutEvents: true });
+    expect(shellEvents(tree)).toEqual([]);
+    await WorkspaceShell({ children: null });
+    expect(mocks.loadWorkspaceEventContext).toHaveBeenLastCalledWith({ anyStaffWithoutEvents: false });
   });
 });

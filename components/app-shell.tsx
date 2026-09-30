@@ -62,6 +62,8 @@ export function AppShell({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  // The staff-only profile page (#623) lives inside the shell but is no nav item.
+  const isProfileRoute = pathname === "/profile" || pathname.startsWith("/profile/");
   const isSystemRoute = pathname.startsWith(systemNavigation.href);
   const current = isSystemRoute
     ? systemNavigation
@@ -222,7 +224,7 @@ export function AppShell({
         <nav className="primary-nav" aria-label="Primary navigation">
           {visibleNavigation.map(({ href, icon: Icon, label, group }, index) => {
             // Every link carries the current event, /admin included (#616).
-            const isActive = href.startsWith("/admin") ? pathname.startsWith(href) : current.href === href;
+            const isActive = isProfileRoute ? false : href.startsWith("/admin") ? pathname.startsWith(href) : current.href === href;
             const previousGroup = index > 0 ? visibleNavigation[index - 1].group : undefined;
             const startsGroup = group && group !== previousGroup;
             return (
@@ -245,7 +247,7 @@ export function AppShell({
 
       <main className="workspace">
         <header className="workspace-header">
-          <div><p className="eyebrow">Staff workspace</p><h1>{current.label}</h1></div>
+          <div><p className="eyebrow">Staff workspace</p><h1>{isProfileRoute ? "Your account" : current.label}</h1></div>
           {!isSystemRoute && (
             <label className="mobile-event-picker">
               <span className="sr-only">Current event</span>
@@ -303,7 +305,7 @@ export function AppShell({
 
       <nav className="mobile-nav" aria-label="Mobile navigation">
         {mobileNavigation.map(({ href, icon: Icon, mobileLabel }) => {
-          const isActive = current.href === href;
+          const isActive = !isProfileRoute && current.href === href;
           return (
             <Link className={isActive ? "active" : undefined} href={`${href}${eventQuery}`} key={href} aria-current={isActive ? "page" : undefined}>
               <Icon aria-hidden="true" size={20} /><span>{mobileLabel}</span>

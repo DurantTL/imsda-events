@@ -9,6 +9,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { MfaManager, type MfaStatus } from "@/components/mfa-manager";
 import { SignOutButton } from "@/components/sign-out-button";
 import { StaffPasskeyManager } from "@/components/staff-passkey-manager";
+import { WorkspaceShell } from "@/components/workspace-shell";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { twoStepRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { getPasskeySettings as getAttendeePasskeySettings } from "@/modules/attendee-accounts/passkeys";
@@ -57,6 +58,46 @@ export default async function ProfilePage({
   const [mfaStatus, passkeySettings] = staff
     ? await Promise.all([getMfaStatus(staff.id) as Promise<MfaStatus>, getPasskeySettings(staff)])
     : [null, null];
+  // A staff-only browser gets the profile inside the staff workspace shell
+  // (sidebar, header) like every other staff page (#623), and reaches it even
+  // with no events. Attendee sessions keep the public-style page below.
+  if (staff && !attendeeAccount && mfaStatus && passkeySettings) {
+    return (
+      <WorkspaceShell anyStaffWithoutEvents>
+        <section className="page-stack">
+          <div className="page-intro">
+            <div>
+              <p className="eyebrow">Your account</p>
+              <h2>Edit profile</h2>
+              <p>Your details, two-step verification and passkeys.</p>
+            </div>
+            <div className="page-intro-actions">
+              <SignOutButton className="secondary-button" label="Sign out of staff account" />
+            </div>
+          </div>
+          <section aria-labelledby="profile-staff-heading" className="panel">
+            <div className="section-heading">
+              <div>
+                <p className="eyebrow">Profile</p>
+                <h2 id="profile-staff-heading">{staff.displayName}</h2>
+              </div>
+            </div>
+            <div className="profile-identity">
+              <span>{staff.email}</span>
+              <small>Your name and email are managed by a system administrator.</small>
+            </div>
+          </section>
+          <MfaManager initialStatus={mfaStatus} />
+          <StaffPasskeyManager
+            available={passkeySettings.available}
+            initialPasskeys={passkeySettings.passkeys}
+            verification={passkeySettings.verification}
+          />
+        </section>
+      </WorkspaceShell>
+    );
+  }
+
   // The confirmation banner is only true when a second step really is on: an
   // active authenticator or a registered passkey (#568).
   let showTwoStepOn = false;
