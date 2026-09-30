@@ -6,7 +6,12 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 
-import { getRegistrationHonorsCatalog, saveRegistrationHonorPicks } from "@/modules/honors/enrollment-repository";
+import {
+  getClassSelectionWorkspace,
+  getClassSelectionWorkspaceIfRegistered,
+  getRegistrationHonorsCatalog,
+  saveRegistrationHonorPicks,
+} from "@/modules/honors/enrollment-repository";
 import { seatsNote, unavailableReason } from "@/modules/honors/class-picker-view";
 import {
   firstPickProblem,
@@ -47,7 +52,7 @@ const sessions = [
   { id: "s-shared", name: "Sunday", locationId: null, sortOrder: 1, createdAt: now },
 ];
 
-function database(options: { taken?: Array<[string, number]>; clubTaken?: Array<[string, number]>; offerings?: unknown[] } = {}) {
+function database(options: { taken?: Array<[string, number]>; clubTaken?: Array<[string, number]>; offerings?: unknown[]; status?: string } = {}) {
   const created: Array<{ offeringId: string; registrationAttendeeId: string }> = [];
   const groups = (rows: Array<[string, number]> = []) => rows.map(([offeringId, count]) => ({ offeringId, _count: { _all: count } }));
   const db = {
@@ -55,7 +60,7 @@ function database(options: { taken?: Array<[string, number]>; clubTaken?: Array<
       findUnique: vi.fn().mockResolvedValue({
         event,
         registration: {
-          id: "registration-1", status: "SUBMITTED",
+          id: "registration-1", status: options.status ?? "SUBMITTED",
           locationId: "loc-hr", location: { id: "loc-hr", name: "Camp Heritage 1" },
           attendees: [
             { id: "attendee-1", position: 0, profileSnapshot: { firstName: "Alex", lastName: "Youth", ageOnEventDate: 12, clubRosterMemberId: "member-1" } },
@@ -111,6 +116,26 @@ describe("the honors step of a club registration (#618)", () => {
     expect(offeringsAtLocation(all, "loc-dm").map((row) => row.id)).toEqual(["birds-dm", "camp-shared", "adults-only"]);
     // Before a location is picked only classes with no site show.
     expect(offeringsAtLocation(all, null).map((row) => row.id)).toEqual(["camp-shared", "adults-only"]);
+  });
+
+  it("sends only the known site's classes, plus those with no site, and everything when the site isn't known", async () => {
+    database();
+    const everything = await getRegistrationHonorsCatalog("club-1", "event-1");
+    expect(everything.offerings.map((row) => row.id)).toContain("birds-dm");
+    const heritage = await getRegistrationHonorsCatalog("club-1", "event-1", "loc-hr");
+    expect(heritage.offerings.map((row) => row.id)).toEqual(["knots-hr", "camp-shared", "all-hr", "adults-only"]);
+    expect(heritage.sessions.map((session) => session.id)).toEqual(["s-hr", "s-shared"]);
+    // An event with no sites: only classes with no site.
+    const none = await getRegistrationHonorsCatalog("club-1", "event-1", null);
+    expect(none.offerings.map((row) => row.id)).toEqual(["camp-shared", "adults-only"]);
+  });
+
+  it("gives the registered page no class picker, instead of crashing, for a waitlisted registration", async () => {
+    database({ status: "WAITLISTED" });
+    await expect(getClassSelectionWorkspace("club-1", "event-1", now)).rejects.toMatchObject({ code: "NOT_REGISTERED" });
+    await expect(getClassSelectionWorkspaceIfRegistered("club-1", "event-1", now)).resolves.toBeNull();
+    database({ status: "SUBMITTED" });
+    await expect(getClassSelectionWorkspaceIfRegistered("club-1", "event-1", now)).resolves.toMatchObject({ locationRequired: false });
   });
 
   it("has no honors step for an event with no honors", async () => {

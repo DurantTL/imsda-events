@@ -29,6 +29,7 @@ export function ClubHonorsStep({
   picks,
   problem,
   saveLabel,
+  totalSteps,
 }: {
   attendees: PickingAttendee[];
   catalog: RegistrationHonorsCatalog;
@@ -40,6 +41,7 @@ export function ClubHonorsStep({
   picks: HonorPicks;
   problem: string | null;
   saveLabel: string;
+  totalSteps: number;
 }) {
   const offerings = useMemo(() => offeringsAtLocation(catalog.offerings, locationId), [catalog.offerings, locationId]);
   const offeringById = useMemo(() => new Map(offerings.map((offering) => [offering.id, offering])), [offerings]);
@@ -87,7 +89,7 @@ export function ClubHonorsStep({
       </div>
       <div className="public-manage-card-heading club-roster-heading">
         <div>
-          <p className="public-registration-eyebrow">Step 2 of 4 · Honors</p>
+          <p className="public-registration-eyebrow">Step 2 of {totalSteps} · Honors</p>
           <h2 id="honors-step-heading"><Award size={18} aria-hidden="true" /> Choose honors</h2>
         </div>
       </div>

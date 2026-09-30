@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Award, Save } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { attendeeTypeLabel as typeLabel, seatsNote, unavailableReason } from "@/modules/honors/class-picker-view";
@@ -29,17 +29,6 @@ export function ClubClassPicker({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  // Honors picked while registering that couldn't be saved (a class filled up meanwhile, #618).
-  useEffect(() => {
-    try {
-      const key = `club-honors-note:${eventId}`;
-      const note = sessionStorage.getItem(key);
-      if (!note) return;
-      sessionStorage.removeItem(key);
-      setError(note);
-    } catch { /* storage is optional */ }
-  }, [eventId]);
-
   const bySession = useMemo(() => {
     const groups = new Map<string, Offering[]>();
     for (const offering of workspace.offerings) {
@@ -58,7 +47,7 @@ export function ClubClassPicker({
       <section className="public-manage-card" aria-labelledby="class-picker-heading">
         <div className="public-manage-card-heading club-roster-heading">
           <div>
-            <p className="public-registration-eyebrow">Step 3 of 3 · Classes</p>
+            <p className="public-registration-eyebrow">Classes</p>
             <h2 id="class-picker-heading"><Award size={18} aria-hidden="true" /> Choose classes</h2>
           </div>
         </div>
@@ -121,7 +110,7 @@ export function ClubClassPicker({
     <section className="public-manage-card" aria-labelledby="class-picker-heading">
       <div className="public-manage-card-heading club-roster-heading">
         <div>
-          <p className="public-registration-eyebrow">Step 3 of 3 · Classes</p>
+          <p className="public-registration-eyebrow">Classes</p>
           <h2 id="class-picker-heading"><Award size={18} aria-hidden="true" /> Choose classes</h2>
         </div>
       </div>

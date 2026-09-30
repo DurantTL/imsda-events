@@ -245,6 +245,31 @@ export function clubDirectoryOwnedResponses(
   return responses;
 }
 
+const CLUB_TEXT_KEYS = new Set(["club_name", "club"]);
+const CHURCH_TEXT_KEYS = new Set(["church", "church_name"]);
+const CLUB_TEXT_LABEL = /^(pathfinder\s+)?club(\s+name)?$/i;
+const CHURCH_TEXT_LABEL = /^(sponsoring\s+)?church(\s+name)?$/i;
+
+/**
+ * Plain TEXT fields for the club or its church (#618), for forms that ask by
+ * typing rather than by picking from the directory: matched by key
+ * (`club_name`, `club`, `church`, `church_name`) or label. A "not listed"
+ * companion (it has a show-only-when rule) is never filled. Editable.
+ */
+export function clubDirectoryTextPrefill(
+  definition: RegistrationFormDefinition,
+  identity: ClubDirectoryIdentity,
+): Record<string, string> {
+  const prefill: Record<string, string> = {};
+  for (const field of registrationFields(definition)) {
+    if (field.type !== "TEXT" || field.optionSource || field.conditional) continue;
+    const label = field.label.trim();
+    if (identity.clubName && (CLUB_TEXT_KEYS.has(field.key) || CLUB_TEXT_LABEL.test(label))) prefill[field.key] = identity.clubName;
+    else if (identity.churchName && (CHURCH_TEXT_KEYS.has(field.key) || CHURCH_TEXT_LABEL.test(label))) prefill[field.key] = identity.churchName;
+  }
+  return prefill;
+}
+
 /**
  * What a new club registration opens with (#482): the locked club, plus the
  * club's sponsoring church as an editable default in any "Churches
@@ -264,7 +289,7 @@ export function clubDirectoryPrefillResponses(
       if (field.optionSource === "CHURCHES_DIRECTORY") prefill[field.key] = directoryChoice(field, identity.churchName);
     }
   }
-  return prefill;
+  return { ...prefill, ...clubDirectoryTextPrefill(definition, identity) };
 }
 
 /**
@@ -289,6 +314,10 @@ export function clubDraftResponsesWithDirectory(
     if (field.optionSource !== "CHURCHES_DIRECTORY" || !prefill[field.key]) continue;
     const current = next[field.key];
     if (current === undefined || current === null || current === "") next[field.key] = prefill[field.key];
+  }
+  // Typed club and church names fill in only when the draft has no such key at all (#618).
+  for (const [key, value] of Object.entries(clubDirectoryTextPrefill(definition, identity))) {
+    if (next[key] === undefined) next[key] = value;
   }
   return next;
 }

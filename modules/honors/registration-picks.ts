@@ -4,9 +4,14 @@
  * session, minimum age, per-site visibility) live in `enrollment-domain.ts`,
  * `locations.ts` and `enrollment-repository.ts`; nothing here repeats them.
  */
+import { z } from "zod";
 import { clubAttendeeClientId, clubGuestClientId, guestIsAdult } from "@/modules/club-registrations/domain";
 import { consumesClassSeat, selectionProblem, type SelectableOffering } from "@/modules/honors/enrollment-domain";
 import { sessionVisibleAtLocation } from "@/modules/honors/locations";
+
+/** The picks as sent by the browser: client id to class ids, for at most 60 people (the same cap as the class save). */
+export const honorSelectionsSchema = z.record(z.string().min(1).max(80), z.array(z.string().min(1).max(64)).max(6))
+  .refine((picks) => Object.keys(picks).length <= 60, "Too many people in one save.");
 
 /** A person on the not-yet-submitted registration, keyed by the same client id the event form uses. */
 export type PickingAttendee = {

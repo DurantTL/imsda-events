@@ -97,6 +97,48 @@ describe("honors picked during club registration (#618)", () => {
     });
   });
 
+  it("gives a director who submits picks for another club a 404, and touches nothing", async () => {
+    const other = { params: Promise.resolve({ organizationId: "club-b", eventId: "event-1" }) };
+    const response = await SUBMIT(request("POST", { ...submission, honorSelections: { "member:m1": ["knots"] } }), other);
+    expect(response.status).toBe(404);
+    expect(mocks.submitClubRegistration).not.toHaveBeenCalled();
+    expect(mocks.saveRegistrationHonorPicks).not.toHaveBeenCalled();
+  });
+
+  it("does not re-apply picks when the submit was a replay of an earlier one", async () => {
+    mocks.submitClubRegistration.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[5] as { report: (outcome: { replayed: boolean; waitlisted: boolean }) => void }).report({ replayed: true, waitlisted: false });
+      return { confirmationCode: "REG-1" };
+    });
+    const response = await SUBMIT(request("POST", { ...submission, honorSelections: { "member:m1": ["knots"] } }), ctx);
+    expect(response.status).toBe(201);
+    expect(mocks.saveRegistrationHonorPicks).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({ honors: null });
+  });
+
+  it("tells a waitlisted club that its honors weren't saved, and takes no seats", async () => {
+    mocks.submitClubRegistration.mockImplementationOnce(async (...args: unknown[]) => {
+      (args[5] as { report: (outcome: { replayed: boolean; waitlisted: boolean }) => void }).report({ replayed: false, waitlisted: true });
+      return { confirmationCode: "REG-1", registrationStatus: "WAITLISTED" };
+    });
+    const response = await SUBMIT(request("POST", { ...submission, honorSelections: { "member:m1": ["knots"] } }), ctx);
+    expect(response.status).toBe(201);
+    expect(mocks.saveRegistrationHonorPicks).not.toHaveBeenCalled();
+    await expect(response.json()).resolves.toMatchObject({
+      confirmation: { registrationStatus: "WAITLISTED" },
+      honors: { error: expect.stringContaining("Pick classes after you're confirmed") },
+    });
+  });
+
+  it("caps the draft's honor picks at 60 people", async () => {
+    const many = Object.fromEntries(Array.from({ length: 61 }, (_, index) => [`member:m${index}`, ["knots"]]));
+    const response = await PUT_DRAFT(request("PUT", {
+      selectedMemberIds: ["m1"], guests: [], responses: {}, attendeeResponses: {}, honorSelections: many,
+    }), ctx);
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(mocks.draftUpsert).not.toHaveBeenCalled();
+  });
+
   it("saves picks in the draft only for people going, and refuses malformed ones", async () => {
     const ok = await PUT_DRAFT(request("PUT", {
       selectedMemberIds: ["m1"], guests: [], responses: {}, attendeeResponses: {},

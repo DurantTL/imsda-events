@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { ArrowRight, CalendarDays, CheckCircle2, MapPin, Printer, QrCode } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { BackLink } from "@/components/back-link";
+import { ClubHonorsNote } from "@/components/club-honors-note";
 import { ClubClassPicker } from "@/components/club-class-picker";
 import { ClubPassQr } from "@/components/club-pass-qr";
 import { clubPassIsAvailable } from "@/modules/checkin/club-pass-token";
@@ -18,7 +19,7 @@ import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { activeRegistrationStatuses, registrationClosedMessage } from "@/modules/events/lifecycle";
-import { getClassSelectionWorkspace, getRegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
+import { getClassSelectionWorkspaceIfRegistered, getRegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
 
 export const metadata: Metadata = { title: "Club registration" };
 export const dynamic = "force-dynamic";
@@ -41,9 +42,15 @@ export default async function ClubEventRegistrationPage({
     throw error;
   }
 
-  const classes = workspace.registration ? await getClassSelectionWorkspace(organizationId, eventId) : null;
+  // A waitlisted or cancelled registration holds no seats, so it has no class picker.
+  const classes = workspace.registration ? await getClassSelectionWorkspaceIfRegistered(organizationId, eventId) : null;
   // The honors step of a new registration (#618); once registered, the class picker below takes over.
-  const honorsCatalog = !workspace.registration && workspace.experience ? await getRegistrationHonorsCatalog(organizationId, eventId) : null;
+  const honorsCatalog = !workspace.registration && workspace.experience ? await getRegistrationHonorsCatalog(
+    organizationId,
+    eventId,
+    // Known without asking the browser: no locations, or exactly one.
+    workspace.locations.length === 0 ? null : workspace.locations.length === 1 ? workspace.locations[0]!.id : undefined,
+  ) : null;
   // #410: only shown once staff have set something — an empty section would
   // tell a director less than nothing. The loader re-checks this club's
   // roster access itself rather than trusting the check above.
@@ -85,6 +92,7 @@ export default async function ClubEventRegistrationPage({
             <p className="public-registration-eyebrow">Registered</p>
             <h2><CheckCircle2 size={20} aria-hidden="true" /> Your club is registered</h2>
           </div>
+          <ClubHonorsNote eventId={eventId} />
           <p>
             Confirmation <strong translate="no">{workspace.registration.confirmationCode}</strong> ·{" "}
             {workspace.registration.attendees.length} going. A confirmation email was sent to the contact on the registration.

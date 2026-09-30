@@ -334,7 +334,16 @@ export async function setClassSelections(
  * narrows it to the site the club picks with `offeringsAtLocation`; the
  * server narrows it again on save (`setClassSelections`), so this is guidance.
  */
-export async function getRegistrationHonorsCatalog(organizationId: string, eventId: string) {
+export async function getRegistrationHonorsCatalog(
+  organizationId: string,
+  eventId: string,
+  /**
+   * The site, when the server already knows it (a single-site event, or none):
+   * only that site's classes, and those with no site, are sent. Left out, every
+   * site's classes are sent and the screen narrows them once a site is picked.
+   */
+  knownLocationId?: string | null,
+) {
   const prisma = getPrisma();
   const [offerings, counts, sessions] = await Promise.all([
     loadOfferings(prisma, eventId),
@@ -345,16 +354,31 @@ export async function getRegistrationHonorsCatalog(organizationId: string, event
       select: { id: true, name: true, locationId: true, sortOrder: true, createdAt: true },
     }),
   ]);
+  const visible = (siteId: string | null) => knownLocationId === undefined || sessionVisibleAtLocation(siteId, knownLocationId);
   return {
-    sessions,
+    sessions: sessions.filter((session) => visible(session.locationId)),
     offerings: offerings
-      .filter((offering) => offering.isActive)
+      .filter((offering) => offering.isActive && visible(offering.siteId))
       .map((offering) => ({
         ...offering,
         seatsTaken: counts.taken.get(offering.id) ?? 0,
         clubSeatsTaken: counts.clubTaken.get(offering.id) ?? 0,
       })),
   };
+}
+
+/**
+ * The class picker's workspace, or null while the club has no seated
+ * registration (none yet, waitlisted, or cancelled), so a page can call it for
+ * any registration without crashing (#618).
+ */
+export async function getClassSelectionWorkspaceIfRegistered(organizationId: string, eventId: string, now = new Date()) {
+  try {
+    return await getClassSelectionWorkspace(organizationId, eventId, now);
+  } catch (error) {
+    if (error instanceof ClassSelectionError && error.code === "NOT_REGISTERED") return null;
+    throw error;
+  }
 }
 
 export type RegistrationHonorsCatalog = Awaited<ReturnType<typeof getRegistrationHonorsCatalog>>;

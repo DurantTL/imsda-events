@@ -809,7 +809,7 @@ export async function submitClubRegistration(
   actor: ClubRegistrationActor,
   input: PublicRegistrationInput,
   now = new Date(),
-  options: { locationId?: string | null } = {},
+  options: { locationId?: string | null; report?: ClubSubmissionContext["report"] } = {},
 ) {
   const event = await requireClubEvent(eventId);
   const form = await publishedClubForm(event.id);
@@ -819,6 +819,7 @@ export async function submitClubRegistration(
     ...clubSubmissionAttribution(actor),
     // Picked, locked, and capacity-checked inside the submit transaction (#413).
     locationId: options.locationId ?? null,
+    ...(options.report ? { report: options.report } : {}),
     prepareAttendees: clubAttendeePreparer(organizationId),
   });
 }

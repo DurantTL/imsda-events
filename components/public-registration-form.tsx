@@ -2741,7 +2741,7 @@ export function PublicRegistrationForm({
           >
             <div className="public-registration-progress-heading">
               <span>
-                Step {currentStepIndex + 1} of {registrationSteps.length}
+                {club ? "Event form" : `Step ${currentStepIndex + 1} of ${registrationSteps.length}`}
               </span>
               <strong>{currentStep.shortLabel}</strong>
             </div>
@@ -2797,7 +2797,7 @@ export function PublicRegistrationForm({
           >
             <header className="public-registration-step-heading">
               <p className="public-registration-eyebrow">
-                Step {currentStepIndex + 1}
+                {club ? "Event form" : `Step ${currentStepIndex + 1}`}
               </p>
               <h2
                 id="public_registration_step_heading"

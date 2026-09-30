@@ -6,15 +6,15 @@ import { clubRegistrationEditInputSchema } from "@/modules/club-registrations/do
 import { amendClubRegistration, submitClubRegistration } from "@/modules/club-registrations/repository";
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
 import { ClassSelectionError, saveRegistrationHonorPicks } from "@/modules/honors/enrollment-repository";
+import { honorSelectionsSchema } from "@/modules/honors/registration-picks";
 import { publicRegistrationInputSchema } from "@/modules/forms/public-domain";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 
 const maximumBodyBytes = 512 * 1024;
 
-/** Honors picked while registering (#618), by the event form's client id. Beside the answers, never inside them. */
-const honorSelectionsSchema = z.record(z.string().min(1).max(80), z.array(z.string().min(1).max(64)).max(6))
-  .refine((picks) => Object.keys(picks).length <= 60, "Too many people in one save.");
+const waitlistedHonorsMessage = "This club is waitlisted, so honors weren't saved. Pick classes after you're confirmed.";
+
 
 /** Submits the club's registration. Same idempotency key, same result. */
 async function postHandler(request: Request, context: { params: Promise<{ organizationId: string; eventId: string }> }) {
@@ -33,28 +33,35 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
       honorSelections: honorSelectionsSchema.optional(),
     }).loose().parse(JSON.parse(body));
     const input = publicRegistrationInputSchema.parse(answers);
+    let outcome = { replayed: false, waitlisted: false };
     const confirmation = await submitClubRegistration(
       organizationId,
       eventId,
       actorAttribution(access.actor),
       input,
       new Date(),
-      { locationId: locationId ?? null },
+      { locationId: locationId ?? null, report: (reported) => { outcome = reported; } },
     );
     // The registration is saved either way. The picks go through the same
     // enrollment rules as the class picker; if a class filled up meanwhile the
     // director is told, and picks again on the registered page.
     let honors: { saved: number } | { error: string } | null = null;
-    if (honorSelections && Object.values(honorSelections).some((ids) => ids.length > 0)) {
-      try {
-        honors = await saveRegistrationHonorPicks(organizationId, eventId, actorAttribution(access.actor), honorSelections);
-      } catch (error) {
-        if (!(error instanceof ClassSelectionError)) logError("Saving honors picked during club registration failed", error);
-        honors = {
-          error: error instanceof ClassSelectionError && error.code !== "NOT_REGISTERED"
-            ? error.message
-            : "Your registration is saved, but your honors were not. Choose them below once the registration is confirmed.",
-        };
+    // A replay of an earlier submission never re-applies picks, and a waitlisted
+    // club has no seats to take yet.
+    if (!outcome.replayed && honorSelections && Object.values(honorSelections).some((ids) => ids.length > 0)) {
+      if (outcome.waitlisted) {
+        honors = { error: waitlistedHonorsMessage };
+      } else {
+        try {
+          honors = await saveRegistrationHonorPicks(organizationId, eventId, actorAttribution(access.actor), honorSelections);
+        } catch (error) {
+          if (!(error instanceof ClassSelectionError)) logError("Saving honors picked during club registration failed", error);
+          honors = {
+            error: error instanceof ClassSelectionError && error.code !== "NOT_REGISTERED"
+              ? error.message
+              : "Your registration is saved, but your honors were not. Choose them below once the registration is confirmed.",
+          };
+        }
       }
     }
     return Response.json({ confirmation, honors }, { status: 201, headers: { "Cache-Control": "no-store" } });

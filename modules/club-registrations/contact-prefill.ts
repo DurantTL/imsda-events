@@ -98,14 +98,14 @@ export function directorContactPrefill(definition: RegistrationFormDefinition, c
 }
 
 /**
- * Lays a prefill under answers a person already has: a value they typed (or a
- * saved draft holds) is never replaced, only blank or missing answers fill in.
+ * Lays a prefill under answers a person already has: only keys the answers
+ * don't have at all are filled. A value they typed, or a field they cleared
+ * (saved as blank), is never replaced (#618).
  */
-export function fillBlankAnswers<T extends Record<string, unknown>>(typed: T | undefined | null, prefill: Record<string, string>): Record<string, unknown> {
+export function fillMissingAnswers<T extends Record<string, unknown>>(typed: T | undefined | null, prefill: Record<string, string>): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...(typed ?? {}) };
   for (const [key, value] of Object.entries(prefill)) {
-    const current = merged[key];
-    if (current === undefined || current === null || (typeof current === "string" && current.trim() === "")) merged[key] = value;
+    if (merged[key] === undefined) merged[key] = value;
   }
   return merged;
 }

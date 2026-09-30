@@ -22,7 +22,7 @@ import {
   rosterRolePrefill,
   type ClubGuest,
 } from "@/modules/club-registrations/domain";
-import { fillBlankAnswers } from "@/modules/club-registrations/contact-prefill";
+import { fillMissingAnswers } from "@/modules/club-registrations/contact-prefill";
 import type { ClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { ClubHonorsStep, type HonorPicks } from "@/components/club-honors-step";
 import { firstPickProblem, offeringsAtLocation, pickingAttendees, prunePicks } from "@/modules/honors/registration-picks";
@@ -57,7 +57,7 @@ export function ClubRegistrationWorkspace({
     selectedMemberIds: (workspace.draft?.selectedMemberIds ?? []).filter((memberId) => rosterIds.has(memberId)),
     guests: workspace.draft?.guests ?? [],
     // The director's own details fill in only what the draft (or the person) left blank (#618).
-    responses: fillBlankAnswers(workspace.draft?.responses, contactPrefill) as FormResponses,
+    responses: fillMissingAnswers(workspace.draft?.responses, contactPrefill) as FormResponses,
     attendeeResponses: (workspace.draft?.attendeeResponses as Record<string, FormResponses> | undefined) ?? {},
     honorSelections: workspace.draft?.honorSelections ?? {},
   }));
@@ -134,7 +134,8 @@ export function ClubRegistrationWorkspace({
     () => (honorsCatalog ? offeringsAtLocation(honorsCatalog.offerings, locationId) : []),
     [honorsCatalog, locationId],
   );
-  const hasHonorsStep = honorOfferings.length > 0;
+  // A club that will be waitlisted holds no seats yet, so it skips the step and is told why on Who's going.
+  const hasHonorsStep = honorOfferings.length > 0 && !chosenLocation?.full;
   const honorPicks = useMemo(
     () => prunePicks(draft.honorSelections, honorAttendees, honorOfferings),
     [draft.honorSelections, honorAttendees, honorOfferings],
@@ -250,7 +251,7 @@ export function ClubRegistrationWorkspace({
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
     lockedRegistrationFieldKeys: workspace.directory.lockedFieldKeys,
     locationId,
-    honorSelections: honorPicks,
+    honorSelections: hasHonorsStep ? honorPicks : {},
     submitUrl: `${base}/registration`,
     onDraftChange,
     onSubmitted: (result?: { honors?: { error?: string } | null }) => {
@@ -262,7 +263,7 @@ export function ClubRegistrationWorkspace({
       }
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, honorPicks, base, onDraftChange, router, workspace.event.id]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonorsStep, honorPicks, base, onDraftChange, router, workspace.event.id]);
 
   const saveLabel = saveState === "saving" ? "Saving draft…" : saveState === "saved" ? "Draft saved" : saveState === "error" ? "Draft not saved. Check your connection." : "";
 
@@ -279,6 +280,7 @@ export function ClubRegistrationWorkspace({
         picks={honorPicks}
         problem={honorsProblem}
         saveLabel={saveLabel}
+        totalSteps={totalSteps}
       />
     );
   }
@@ -409,6 +411,9 @@ export function ClubRegistrationWorkspace({
         )}
       </section>
 
+      {honorsCatalog && chosenLocation?.full && (
+        <p className="inline-notice" role="status">This club will be waitlisted; pick classes after you&apos;re confirmed.</p>
+      )}
       <div className="club-registration-toolbar club-sticky-bar">
         <Link className="secondary-button" href={`/account/clubs/${organizationId}`} onClick={() => { void flush(); }}>
           <UserPlus aria-hidden="true" size={15} /> Add someone new to the roster
