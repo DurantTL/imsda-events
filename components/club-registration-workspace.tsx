@@ -14,7 +14,8 @@ import { createDraftSender, DRAFT_CONFLICT_MESSAGE, draftBlockedReason } from "@
 import { restoreDraftLocation } from "@/modules/club-registrations/draft-location";
 import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
-import { ageFieldId, ageInputProblem, ageInputValue, agesNeededLabel, effectiveRosterAges, parseTypedAge, peopleMissingAges, withRosterAge } from "@/modules/club-registrations/roster-ages";
+import { ageFieldId, ageInputProblem, ageInputValue, effectiveRosterAges, parseTypedAge, peopleMissingAges, withRosterAge } from "@/modules/club-registrations/roster-ages";
+import { continueButtonLabel, focusFirstMissingAge, leaveAfterSave } from "@/modules/club-registrations/roster-age-flow";
 import { ClubLocationPicker } from "@/components/club-location-picker";
 import { clubRosterAttendeeTypeLabels } from "@/modules/club-rosters/domain";
 import {
@@ -127,9 +128,12 @@ export function ClubRegistrationWorkspace({
     if (leaving) return;
     setLeaving(true);
     setLeaveHref(null);
-    const saved = await flush();
-    if (saved) router.push(href);
-    else { setLeaveHref(href); setLeaving(false); }
+    await leaveAfterSave({
+      flush,
+      href,
+      push: (to) => router.push(to),
+      onUnsaved: (to) => { setLeaveHref(to); setLeaving(false); },
+    });
   }
   function followRosterLink(event: { preventDefault: () => void; altKey?: boolean; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; button?: number }, href: string) {
     if (event.altKey || event.metaKey || event.ctrlKey || event.shiftKey || (event.button ?? 0) !== 0) return;
@@ -239,9 +243,7 @@ export function ClubRegistrationWorkspace({
     const first = missingAges[0];
     if (first) {
       setAgesAttempted(true);
-      const input = document.getElementById(ageFieldId(first.memberId));
-      input?.scrollIntoView({ block: "center" });
-      input?.focus({ preventScroll: true });
+      focusFirstMissingAge(ageFieldId(first.memberId), (id) => document.getElementById(id));
       return;
     }
     setAgesAttempted(false);
@@ -446,6 +448,11 @@ export function ClubRegistrationWorkspace({
             </span>
             <span className="field-help" role="status">{saveLabel}{saveAction && <> {saveAction}</>}</span>
           </div>
+          {agesAttempted && missingAges.length > 0 && (
+            <div className="inline-notice error club-age-summary" role="alert">
+              {missingAges.length === 1 ? "1 person still needs an age on the event date." : `${missingAges.length} people still need an age on the event date.`}
+            </div>
+          )}
           <ul className="club-going-list">
             {workspace.roster.map((person) => (
               <li key={person.memberId}>
@@ -483,11 +490,6 @@ export function ClubRegistrationWorkspace({
               </li>
             ))}
           </ul>
-          {agesAttempted && missingAges.length > 0 && (
-            <div className="inline-notice error club-age-summary" role="alert">
-              {missingAges.length === 1 ? "1 person still needs an age on the event date." : `${missingAges.length} people still need an age on the event date.`}
-            </div>
-          )}
         </>
       )}
       <section className="club-guest-section" aria-labelledby="club-guests-title">
@@ -562,7 +564,7 @@ export function ClubRegistrationWorkspace({
           title={needsLocation ? "Choose a location first" : undefined}
           type="button"
         >
-          {missingAges.length > 0 ? agesNeededLabel(missingAges.length) : <>Continue with {goingCount} {goingCount === 1 ? "person" : "people"}</>} <ArrowRight aria-hidden="true" size={15} />
+          {continueButtonLabel({ missingAges: missingAges.length, goingCount, otherwiseDisabled: goingCount === 0 || needsLocation })} <ArrowRight aria-hidden="true" size={15} />
         </button>
       </div>
     </section>

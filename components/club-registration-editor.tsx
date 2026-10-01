@@ -7,7 +7,8 @@ import { ClubLocationPicker } from "@/components/club-location-picker";
 import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
-import { ageInputProblem, ageInputValue, parseTypedAge, ageFieldId, agesNeededLabel, peopleMissingAges } from "@/modules/club-registrations/roster-ages";
+import { ageInputProblem, ageInputValue, parseTypedAge, ageFieldId, peopleMissingAges } from "@/modules/club-registrations/roster-ages";
+import { continueButtonLabel, focusFirstMissingAge } from "@/modules/club-registrations/roster-age-flow";
 import {
   PublicRegistrationForm,
   type FormIssue,
@@ -342,12 +343,12 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         <span className="count-badge">{goingCount} chosen</span>
       </div>
       {error && <div className="inline-notice error" role="alert">{error}</div>}
+      <ClubLocationPicker currentId={currentLocationId} locations={locationChoices} onChange={setLocationId} value={locationId} />
       {agesAttempted && missingAges.length > 0 && (
         <div className="inline-notice error club-age-summary" role="alert">
           {missingAges.length === 1 ? "1 person still needs an age on the event date." : `${missingAges.length} people still need an age on the event date.`}
         </div>
       )}
-      <ClubLocationPicker currentId={currentLocationId} locations={locationChoices} onChange={setLocationId} value={locationId} />
       <ul className="club-going-list">
         {workspace.roster.map((person) => (
           <li key={person.memberId}>
@@ -371,6 +372,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
                 onAge={(raw) => changeAge(person.memberId, raw)}
                 onSaveToRoster={(save) => setSaveAgeOff((current) => (save ? current.filter((id) => id !== person.memberId) : [...current.filter((id) => id !== person.memberId), person.memberId]))}
                 href={rosterHrefFromRegistration(organizationId, workspace.event.id)}
+                newTab
                 organizationId={organizationId}
                 saveToRoster={!saveAgeOff.includes(person.memberId)}
               />
@@ -469,16 +471,14 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
             if (problemPerson) {
               setError("");
               setAgesAttempted(true);
-              const input = document.getElementById(ageFieldId(problemPerson.memberId));
-              input?.scrollIntoView({ block: "center" });
-              input?.focus({ preventScroll: true });
+              focusFirstMissingAge(ageFieldId(problemPerson.memberId), (id) => document.getElementById(id));
               return;
             }
             setAgesAttempted(false); setError(""); setJustReopened(false); setStep("form");
           }}
           type="button"
         >
-          {missingAges.length > 0 ? agesNeededLabel(missingAges.length) : <>Continue with {goingCount} {goingCount === 1 ? "person" : "people"}</>} <ArrowRight aria-hidden="true" size={15} />
+          {continueButtonLabel({ missingAges: missingAges.length, goingCount, otherwiseDisabled: goingCount === 0 })} <ArrowRight aria-hidden="true" size={15} />
         </button>
       </div>
     </section>

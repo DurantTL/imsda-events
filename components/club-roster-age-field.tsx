@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type MouseEvent } from "react";
 import { ageFieldId } from "@/modules/club-registrations/roster-ages";
+import { shownAgeError } from "@/modules/club-registrations/roster-age-flow";
 
 /**
  * The "Age on event date" field for a roster person with no birth date (#639).
@@ -21,6 +22,7 @@ export function ClubRosterAgeField({
   onAge,
   onSaveToRoster,
   href,
+  newTab = false,
   onNavigate,
   organizationId,
   saveToRoster,
@@ -36,6 +38,8 @@ export function ClubRosterAgeField({
   onSaveToRoster: (save: boolean) => void;
   /** Where the roster link goes; defaults to the plain roster page. */
   href?: string;
+  /** Open the roster in a new tab, so edits that are not saved yet stay on this page. */
+  newTab?: boolean;
   onNavigate?: (event: MouseEvent<HTMLAnchorElement>) => void;
   organizationId: string;
   saveToRoster: boolean;
@@ -43,7 +47,7 @@ export function ClubRosterAgeField({
   const [touched, setTouched] = useState(false);
   const inputId = ageFieldId(memberId);
   const errorId = `${inputId}-error`;
-  const shownError = error !== null && (attempted || touched) ? error : null;
+  const shownError = shownAgeError(error, attempted, touched);
   return (
     <div className="club-roster-age">
       <label className="club-roster-age-label" htmlFor={inputId}>Age on event date</label>
@@ -64,14 +68,18 @@ export function ClubRosterAgeField({
         />
         <span aria-hidden="true">years</span>
       </div>
-      {shownError && <small className="inline-notice error" id={errorId} role="alert">{shownError}</small>}
+      {shownError && <small className="inline-notice error" id={errorId}>{shownError}</small>}
       <label className="checkbox-label">
         <input checked={saveToRoster} onChange={(event) => onSaveToRoster(event.target.checked)} type="checkbox" />
         <span>Also update their age on the roster</span>
       </label>
       <small className="field-help">
         No birth date on the roster. Enter their age on the event date, or{" "}
-        <Link href={href ?? `/account/clubs/${organizationId}/roster`} onClick={onNavigate}>add a birth date on the roster</Link>.
+        <Link
+          href={href ?? `/account/clubs/${organizationId}/roster`}
+          onClick={onNavigate}
+          {...(newTab ? { target: "_blank", rel: "noopener" } : {})}
+        >add a birth date on the roster</Link>{newTab && <> (opens in a new tab)</>}.
       </small>
     </div>
   );

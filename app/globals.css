@@ -8545,7 +8545,8 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
    .club-going-list label/input/small rules (full-width, 20px, flush) are
    overridden here on purpose. */
 .club-going-list .club-roster-age { display: grid; gap: 8px; padding: 0 14px 14px 48px; }
-.club-going-list .club-roster-age label { width: auto; padding: 0; cursor: default; color: var(--ink) !important; font-weight: 700 !important; }
+.club-going-list .club-roster-age label { width: auto; padding: 0; cursor: default; }
+.club-going-list .club-roster-age .club-roster-age-label { color: var(--ink) !important; font-weight: 700 !important; }
 .club-going-list .club-roster-age label.checkbox-label { cursor: pointer; align-items: center; min-height: 44px; }
 .club-going-list .club-roster-age-control { display: flex; align-items: center; gap: 8px; }
 .club-going-list .club-roster-age-input {
