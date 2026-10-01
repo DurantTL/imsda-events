@@ -1,6 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { clubFormIsDirty, dropStaleRankedChoices, clubFormUnsavedMessage, rankLabel, rankedMaximum, toggleRankedChoice } from "@/components/club-form-state";
+import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { LockKeyhole } from "lucide-react";
 import { addressComponentKeys, addressComponentLabels } from "@/modules/forms/address";
 import {
@@ -47,7 +49,9 @@ function textOf(value: unknown) {
  */
 export function ClubFormFillIn(props: Props) {
   const { definition, sectionNotes, sensitiveFieldKeys } = props;
-  const [answers, setAnswers] = useState<Answers>(props.initialAnswers ?? {});
+  // Saved ranked choices no longer offered are dropped up front; the saved baseline matches, so this is not a change.
+  const [initialAnswers] = useState<Answers>(() => dropStaleRankedChoices(props.definition, props.initialAnswers ?? {}));
+  const [answers, setAnswers] = useState<Answers>(initialAnswers);
   const [rosterMemberId, setRosterMemberId] = useState(props.mode === "club" ? props.initialRosterMemberId ?? "" : "");
   const [subjectName, setSubjectName] = useState(props.mode === "club" ? props.initialSubjectName ?? "" : "");
   const [saving, setSaving] = useState(false);
@@ -57,6 +61,15 @@ export function ClubFormFillIn(props: Props) {
   const [doneMessage, setDoneMessage] = useState("");
   const [savedId, setSavedId] = useState(props.mode === "club" ? props.submissionId : undefined);
   const sensitive = useMemo(() => new Set(sensitiveFieldKeys), [sensitiveFieldKeys]);
+  // Last saved state (#703): the guard is on only while the form differs from it.
+  const [saved, setSaved] = useState({
+    answers: initialAnswers,
+    rosterMemberId: props.mode === "club" ? props.initialRosterMemberId ?? "" : "",
+    subjectName: props.mode === "club" ? props.initialSubjectName ?? "" : "",
+  });
+  const current = { answers, rosterMemberId, subjectName };
+  const dirty = !doneMessage && clubFormIsDirty(current, saved);
+  const allowNavigation = useUnsavedChangesGuard(dirty, clubFormUnsavedMessage);
 
   function set(key: string, value: unknown) {
     setAnswers((current) => ({ ...current, [key]: value }));
@@ -97,11 +110,13 @@ export function ClubFormFillIn(props: Props) {
         setIssues(result.issues ?? []);
         return;
       }
+      setSaved(current);
       if (props.mode === "link") {
         setDoneMessage(result.confirmationMessage ?? "Thank you. Your form has been received.");
         return;
       }
       if (submit) {
+        allowNavigation();
         window.location.assign(props.doneHref);
         return;
       }
@@ -216,7 +231,7 @@ function FieldInput({
     </span>
   );
   const help = field.helpText ? <small className="field-help">{field.helpText}</small> : null;
-  const wide = field.type === "LONG_TEXT" || field.type === "ADDRESS" || field.type === "RADIO" || field.type === "MULTISELECT" || field.label.length > 60;
+  const wide = field.type === "LONG_TEXT" || field.type === "ADDRESS" || field.type === "RADIO" || field.type === "MULTISELECT" || field.type === "RANKED_CHOICE" || field.label.length > 60;
   const className = wide ? "club-form-field-wide" : undefined;
 
   switch (field.type) {
@@ -252,8 +267,39 @@ function FieldInput({
           {help}
         </fieldset>
       );
-    case "MULTISELECT":
     case "RANKED_CHOICE": {
+      const selected = Array.isArray(value) ? value.map(String).filter((item) => field.options.includes(item)) : [];
+      const maximum = rankedMaximum(field);
+      const minimum = field.minSelections ?? (required ? Math.min(2, maximum) : 0);
+      return (
+        <fieldset className={`club-form-choice ${className ?? ""}`}>
+          <legend>{label}</legend>
+          <small className="field-help">
+            {minimum > 0 ? `Choose ${minimum} and rank up to ${maximum}.` : `Optional — rank up to ${maximum} if you'd like.`} Tap choices in preference order; tap a ranked choice again to remove it and re-rank.
+          </small>
+          <div className="club-form-ranking-list">
+            {field.options.map((option) => {
+              const rank = selected.indexOf(option);
+              return (
+                <button
+                  aria-pressed={rank >= 0}
+                  className={rank >= 0 ? "is-selected" : undefined}
+                  disabled={rank < 0 && selected.length >= maximum}
+                  key={option}
+                  onClick={() => onChange(toggleRankedChoice(selected, option, maximum))}
+                  type="button"
+                >
+                  <span>{field.optionLabels?.[option] ?? option}</span>
+                  <b>{rankLabel(rank)}</b>
+                </button>
+              );
+            })}
+          </div>
+          {help}
+        </fieldset>
+      );
+    }
+    case "MULTISELECT": {
       const selected = Array.isArray(value) ? value.map(String) : [];
       return (
         <fieldset className={`club-form-choice ${className ?? ""}`}>

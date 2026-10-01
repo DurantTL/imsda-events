@@ -14,7 +14,7 @@ export default async function AreaOverviewPage({ searchParams }: { searchParams:
   const clubYear = resolveAreaClubYear((await searchParams).year);
   const clubs = await getAreaClubsSummary(clubYear);
   return (
-    <section className="public-manage-card page-stack">
+    <section className="public-manage-card page-stack area-overview-page">
       <h2>Overview, {clubYear}</h2>
       <p className="field-help">Every active club. Background checks show counts only, never names or notes.</p>
       <AreaExportLinks

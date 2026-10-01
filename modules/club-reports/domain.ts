@@ -135,6 +135,11 @@ export function reportMonthLabel(reportMonth: string) {
   return new Date(Date.UTC(year, month - 1, 1)).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
+/** What an Area Coordinator sees for a real club and month with no submitted report (#703). */
+export function noSubmittedReportMessage(reportMonth: string) {
+  return `No submitted report for ${reportMonthLabel(reportMonth)} yet.`;
+}
+
 export function formatDueDate(date: string) {
   const [year, month, day] = date.split("-").map(Number);
   return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
