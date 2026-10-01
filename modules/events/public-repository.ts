@@ -13,6 +13,7 @@ import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
 import { listPublishedEventContentSections } from "@/modules/events/content-repository";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { groupFormDefinition, groupFormProblem } from "@/modules/group-registrations/domain";
+import { clubFormProblem } from "@/modules/club-registrations/domain";
 import { logWarn } from "@/lib/logger";
 import { publicFormDifferentiators } from "@/modules/forms/duplicate-public-forms";
 import { clubRegistrationEntryPath } from "@/modules/club-registrations/entry-path";
@@ -112,6 +113,14 @@ async function loadPublicEventLanding(
   // through the club portal (the director's roster, the club's own sign-in),
   // never the anonymous public form (#720).
   const clubPortalEvent = event.audience === "CLUB" && event.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
+  // The portal serves exactly one form per event: the oldest published one, and
+  // only when it passes `clubFormProblem` (the same pick as `publishedClubForm`).
+  // Only that card may open the portal; every other form keeps its public link.
+  const portalForm = [...event.registrationForms].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
+  const portalDefinition = registrationFormDefinitionSchema.safeParse(portalForm?.versions[0]?.definition);
+  const portalFormId = clubPortalEvent && portalForm && portalDefinition.success && clubFormProblem(portalDefinition.data) === null
+    ? portalForm.id
+    : null;
   const publicForms = event.registrationForms.flatMap((form) => {
     const version = form.versions[0];
     if (!version) return [];
@@ -124,7 +133,7 @@ async function loadPublicEventLanding(
       return [];
     }
     const summary = summarizePublicRegistrationForm(parsed.data);
-    const viaClubPortal = clubPortalEvent && summary.isRoster;
+    const viaClubPortal = portalFormId === form.id;
     return [{
       id: form.id,
       slug: form.slug,

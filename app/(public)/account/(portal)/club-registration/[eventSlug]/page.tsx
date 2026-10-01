@@ -4,7 +4,11 @@ import { notFound, redirect } from "next/navigation";
 import { ArrowRight } from "lucide-react";
 import { getPrisma } from "@/lib/prisma";
 import { CLUB_REGISTRATION_NOT_A_DIRECTOR_MESSAGE } from "@/modules/club-registrations/entry-path";
-import { getDirectedClubsForCurrentAttendee } from "@/modules/organizations/director-access";
+import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { attendeeSignInRedirectPath, twoStepRedirectPath } from "@/modules/attendee-accounts/return-redirect";
+import { accountNeedsSecondStep } from "@/modules/attendee-accounts/sign-in-gate";
+import { listDirectedClubs } from "@/modules/organizations/director-access";
+import { currentStaffActingContext } from "@/modules/organizations/staff-act-as";
 import { clubCapabilities, clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 
 export const metadata: Metadata = {
@@ -32,7 +36,20 @@ export default async function ClubRegistrationEntryPage({
   });
   if (!event) notFound();
 
-  const clubs = (await getDirectedClubsForCurrentAttendee()).filter((club) => clubCapabilities(club.role).registerForEvents);
+  // Staff acting as a club director go straight to that club, as the roster checks do.
+  const acting = await currentStaffActingContext();
+  if (acting && acting.role === "CLUB_DIRECTOR") {
+    redirect(`/account/clubs/${acting.organizationId}/events/${event.id}`);
+  }
+
+  // This page checks sign-in and the second step itself; it does not rely on the layout.
+  const { account, via, sessionId } = await getCurrentAttendee();
+  if (!account) redirect(await attendeeSignInRedirectPath());
+  if (via === "attendee" && sessionId && (await accountNeedsSecondStep(account.id, sessionId)) !== "OK") {
+    redirect(await twoStepRedirectPath());
+  }
+
+  const clubs = (await listDirectedClubs(account.id)).filter((club) => clubCapabilities(club.role).registerForEvents);
   if (clubs.length === 1) {
     redirect(`/account/clubs/${clubs[0]!.organizationId}/events/${event.id}`);
   }

@@ -7,6 +7,9 @@ const mocks = vi.hoisted(() => ({
   attendeeCount: vi.fn(),
   getPublicEventLanding: vi.fn(),
   directedClubs: vi.fn(),
+  currentAttendee: vi.fn(),
+  needsSecondStep: vi.fn(),
+  acting: vi.fn(),
   redirect: vi.fn((path: string) => { throw new Error(`REDIRECT:${path}`); }),
   notFound: vi.fn(() => { throw new Error("NOT_FOUND"); }),
 }));
@@ -21,8 +24,13 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound, redirect: mocks.redirect }));
 vi.mock("@/modules/event-info-cards/repository", () => ({ getAutoEventInfoCards: vi.fn().mockResolvedValue(null) }));
-vi.mock("@/modules/organizations/director-access", () => ({
-  getDirectedClubsForCurrentAttendee: mocks.directedClubs,
+vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.directedClubs }));
+vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.currentAttendee }));
+vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({ accountNeedsSecondStep: mocks.needsSecondStep }));
+vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: mocks.acting }));
+vi.mock("@/modules/attendee-accounts/return-redirect", () => ({
+  attendeeSignInRedirectPath: async () => "/account/sign-in?next=%2Fx",
+  twoStepRedirectPath: async () => "/account/two-step?next=%2Fx",
 }));
 
 import { getFormTemplate, type RegistrationFormDefinition } from "@/modules/forms/definition";
@@ -32,6 +40,7 @@ import {
 } from "@/modules/forms/duplicate-public-forms";
 import { getDuplicatePublicFormWarnings } from "@/modules/events/readiness";
 import { collectEventReadinessWarnings } from "@/modules/events/readiness-warnings";
+import { clubFormProblem } from "@/modules/club-registrations/domain";
 import { clubRegistrationEntryPath } from "@/modules/club-registrations/entry-path";
 
 function honorsDefinition(overrides: Partial<RegistrationFormDefinition> = {}): RegistrationFormDefinition {
@@ -77,6 +86,9 @@ function eventRow(forms: ReturnType<typeof formRow>[], overrides: Record<string,
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.attendeeCount.mockResolvedValue(0);
+  mocks.currentAttendee.mockResolvedValue({ account: { id: "acct-1" }, via: "attendee", sessionId: "sess-1" });
+  mocks.needsSecondStep.mockResolvedValue("OK");
+  mocks.acting.mockResolvedValue(null);
 });
 
 describe("public event cards are distinguishable (#720)", () => {
@@ -146,26 +158,76 @@ describe("public event cards are distinguishable (#720)", () => {
 });
 
 describe("club roster cards open club registration, not the anonymous form (#720)", () => {
-  it("links each club roster card to the club entry and keeps non-roster and non-club links", async () => {
-    const { getPublicEventLanding } = await import("@/modules/events/public-repository");
-    const roster = honorsDefinition({ title: "Club roster registration" });
-    const plain = honorsDefinition({ title: "Volunteer sign-up" });
-    plain.attendeeRoster = undefined;
-    mocks.eventFindFirst.mockResolvedValue(eventRow([
-      formRow("f1", "club-roster", roster, "2027-01-01"),
-      formRow("f2", "volunteer", plain, "2027-01-02"),
-    ]));
-    const club = await getPublicEventLanding("honors-weekend-test");
-    expect(club?.forms.map((form) => [form.registrationPath, form.href])).toEqual([
-      ["CLUB_PORTAL", "/account/club-registration/honors-weekend-test"],
-      ["PUBLIC_FORM", "/register/honors-weekend-test/volunteer"],
-    ]);
+  const rosterDef = () => honorsDefinition({ title: "Club roster registration" });
+  const plainDef = () => { const d = honorsDefinition({ title: "Volunteer sign-up" }); d.attendeeRoster = undefined; return d; };
+  const paths = (landing: { forms: { slug: string; registrationPath: string; href: string }[] } | null) =>
+    landing?.forms.map((form) => [form.slug, form.registrationPath, form.href]);
 
+  it("gives the portal link to the single form the portal serves", async () => {
+    const { getPublicEventLanding } = await import("@/modules/events/public-repository");
+    mocks.eventFindFirst.mockResolvedValue(eventRow([formRow("f1", "club-roster", rosterDef(), "2027-01-01")]));
+    expect(paths(await getPublicEventLanding("honors-weekend-test"))).toEqual([
+      ["club-roster", "CLUB_PORTAL", "/account/club-registration/honors-weekend-test"],
+    ]);
+  });
+
+  it("with two roster forms, only the oldest opens the portal; the other keeps its public link", async () => {
+    const { getPublicEventLanding } = await import("@/modules/events/public-repository");
     mocks.eventFindFirst.mockResolvedValue(eventRow([
-      formRow("f1", "club-roster", roster, "2027-01-01"),
-    ], { audience: "GENERAL", billingMode: "ATTENDEE_PAY" }));
-    const general = await getPublicEventLanding("honors-weekend-test");
-    expect(general?.forms[0]).toMatchObject({ registrationPath: "PUBLIC_FORM", href: "/register/honors-weekend-test/club-roster" });
+      formRow("f2", "a-newer", rosterDef(), "2027-02-01"),
+      formRow("f1", "b-oldest", rosterDef(), "2027-01-01"),
+    ]));
+    expect(paths(await getPublicEventLanding("honors-weekend-test"))).toEqual([
+      ["a-newer", "PUBLIC_FORM", "/register/honors-weekend-test/a-newer"],
+      ["b-oldest", "CLUB_PORTAL", "/account/club-registration/honors-weekend-test"],
+    ]);
+  });
+
+  it("with a non-roster oldest form, no card opens the portal", async () => {
+    const { getPublicEventLanding } = await import("@/modules/events/public-repository");
+    mocks.eventFindFirst.mockResolvedValue(eventRow([
+      formRow("f1", "volunteer", plainDef(), "2027-01-01"),
+      formRow("f2", "club-roster", rosterDef(), "2027-02-01"),
+    ]));
+    expect(paths(await getPublicEventLanding("honors-weekend-test"))).toEqual([
+      ["volunteer", "PUBLIC_FORM", "/register/honors-weekend-test/volunteer"],
+      ["club-roster", "PUBLIC_FORM", "/register/honors-weekend-test/club-roster"],
+    ]);
+  });
+
+  it("when the portal would reject the oldest roster form (clubFormProblem), it keeps its public link", async () => {
+    const { getPublicEventLanding } = await import("@/modules/events/public-repository");
+    const rejected = rosterDef();
+    rejected.sections[0]!.fields[0]!.label = "Birth date";
+    expect(clubFormProblem(rejected)).not.toBeNull();
+    mocks.eventFindFirst.mockResolvedValue(eventRow([formRow("f1", "club-roster", rejected, "2027-01-01")]));
+    expect(paths(await getPublicEventLanding("honors-weekend-test"))).toEqual([
+      ["club-roster", "PUBLIC_FORM", "/register/honors-weekend-test/club-roster"],
+    ]);
+  });
+
+  it("keeps public links on a general or attendee-pay event", async () => {
+    const { getPublicEventLanding } = await import("@/modules/events/public-repository");
+    mocks.eventFindFirst.mockResolvedValue(eventRow([formRow("f1", "club-roster", rosterDef(), "2027-01-01")], { audience: "GENERAL", billingMode: "ATTENDEE_PAY" }));
+    expect(paths(await getPublicEventLanding("honors-weekend-test"))).toEqual([
+      ["club-roster", "PUBLIC_FORM", "/register/honors-weekend-test/club-roster"],
+    ]);
+  });
+
+  it("shows the club-directors note only on the portal card", async () => {
+    const { getPublicEventLanding } = await import("@/modules/events/public-repository");
+    mocks.eventFindFirst.mockResolvedValue(eventRow([
+      formRow("f1", "oldest", rosterDef(), "2027-01-01"),
+      formRow("f2", "newer", honorsDefinition({ title: "Other roster" }), "2027-02-01"),
+    ]));
+    mocks.getPublicEventLanding.mockResolvedValue(await getPublicEventLanding("honors-weekend-test"));
+    vi.doMock("@/modules/events/public-repository", () => ({ getPublicEventLanding: mocks.getPublicEventLanding }));
+    vi.resetModules();
+    const { default: Page } = await import("@/app/(public)/events/[eventSlug]/page");
+    const markup = renderToStaticMarkup(await Page({ params: Promise.resolve({ eventSlug: "honors-weekend-test" }) }));
+    expect(markup.split("For club directors. Sign in with your club account").length - 1).toBe(1);
+    vi.doUnmock("@/modules/events/public-repository");
+    vi.resetModules();
   });
 
   it("builds the entry path from the slug only", () => {
@@ -184,6 +246,32 @@ describe("club roster cards open club registration, not the anonymous form (#720
       const Page = await entry();
       await expect(Page({ params: Promise.resolve({ eventSlug: "honors-weekend-test" }) }))
         .rejects.toThrow("REDIRECT:/account/clubs/club-1/events/event-honors");
+    });
+
+    it("redirects a signed-out visitor to sign-in without relying on the layout", async () => {
+      mocks.eventFindFirst.mockResolvedValue(event);
+      mocks.currentAttendee.mockResolvedValue({ account: null, via: null, sessionId: null });
+      const Page = await entry();
+      await expect(Page({ params: Promise.resolve({ eventSlug: "honors-weekend-test" }) }))
+        .rejects.toThrow("REDIRECT:/account/sign-in?next=%2Fx");
+    });
+
+    it("redirects to the two-step page when the second step is pending", async () => {
+      mocks.eventFindFirst.mockResolvedValue(event);
+      mocks.needsSecondStep.mockResolvedValue("VERIFY");
+      const Page = await entry();
+      await expect(Page({ params: Promise.resolve({ eventSlug: "honors-weekend-test" }) }))
+        .rejects.toThrow("REDIRECT:/account/two-step?next=%2Fx");
+      expect(mocks.directedClubs).not.toHaveBeenCalled();
+    });
+
+    it("sends staff acting as a club director to that club's registration", async () => {
+      mocks.eventFindFirst.mockResolvedValue(event);
+      mocks.acting.mockResolvedValue({ role: "CLUB_DIRECTOR", organizationId: "club-act", userId: "u1" });
+      mocks.currentAttendee.mockResolvedValue({ account: null, via: null, sessionId: null });
+      const Page = await entry();
+      await expect(Page({ params: Promise.resolve({ eventSlug: "honors-weekend-test" }) }))
+        .rejects.toThrow("REDIRECT:/account/clubs/club-act/events/event-honors");
     });
 
     it("lets a visitor with several clubs choose, and tells a non-director why they cannot continue", async () => {
@@ -216,7 +304,6 @@ describe("club roster cards open club registration, not the anonymous form (#720
     it("sits under the account portal layout, which sends signed-out visitors to sign-in and back", () => {
       const layout = readFileSync("app/(public)/account/(portal)/layout.tsx", "utf8");
       expect(layout).toContain("attendeeSignInRedirectPath");
-      expect(layout).toContain("if (!account && !acting) redirect(await attendeeSignInRedirectPath())");
     });
   });
 });
@@ -285,11 +372,39 @@ describe("duplicate published form detection (#720)", () => {
 });
 
 describe("builder warning (#720)", () => {
-  it("renders the duplicate warning from the shared message", () => {
-    const source = readFileSync("components/registration-builder-workspace.tsx", "utf8");
-    expect(source).toContain("duplicatePublicFormGroups(forms.flatMap");
-    expect(source).toContain('version.status === "PUBLISHED"');
-    expect(source).toContain("{DUPLICATE_PUBLIC_FORMS_MESSAGE}");
+  async function renderBuilder(statuses: string[]) {
+    const { createElement } = await import("react");
+    const { RegistrationBuilderWorkspace } = await import("@/components/registration-builder-workspace");
+    const definition = honorsDefinition({ title: "Honors Weekend registration", description: "Same." });
+    const forms = statuses.map((status, index) => {
+      const version = {
+        id: `v${index}`, versionNumber: 1, status, definition: structuredClone(definition),
+        publishedAt: status === "PUBLISHED" ? "2028-08-01T00:00:00.000Z" : null,
+        createdAt: "2028-08-01T00:00:00.000Z", updatedAt: "2028-08-01T00:00:00.000Z", createdBy: "Synthetic Staff",
+        testSubmissionCount: 0, choiceUsage: {}, testSubmissions: [],
+      };
+      return {
+        id: `form-${index}`, eventId: "event-1", name: `Copy ${index + 1}`, slug: `copy-${index + 1}`, status,
+        createdAt: "2028-08-01T00:00:00.000Z", updatedAt: "2028-08-01T00:00:00.000Z", createdBy: "Synthetic Staff",
+        activeVersion: version, versions: [version],
+      };
+    });
+    return renderToStaticMarkup(createElement(RegistrationBuilderWorkspace, {
+      eventId: "event-1", eventSlug: "honors-test", eventName: "Honors Test", initialForms: forms, templates: [],
+    }));
+  }
+
+  it("shows for two published duplicates", async () => {
+    const markup = await renderBuilder(["PUBLISHED", "PUBLISHED"]);
+    expect(markup).toContain('data-testid="duplicate-public-forms-warning"');
+    expect(markup).toContain("Two forms look the same to the public. Rename one or unpublish it.");
+    expect(markup).toContain("Copy 1, Copy 2");
+  });
+
+  it("is hidden when one of the two is only a draft", async () => {
+    const markup = await renderBuilder(["PUBLISHED", "DRAFT"]);
+    expect(markup).not.toContain("duplicate-public-forms-warning");
+    expect(markup).not.toContain("look the same to the public");
   });
 });
 
