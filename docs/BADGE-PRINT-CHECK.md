@@ -20,19 +20,19 @@ emulated and `page.pdf({ format: "Letter", preferCSSPageSize: true })`:
   the top and 0.85 in from the left, within 0.02 in) and all labels sit on the
   template's column and row pitch.
 
-Print width (#732): at Scale Default, Chrome shrinks the whole page to fit when
-the printed document is wider than the paper, so the sheet printed at about 77%
-and sat up and to the left of the die-cuts. Playwright's `page.pdf` at scale 1
-never shrinks, so the script measures the layout instead, with print media
-emulated, at the 816 px page width and at 1088 px (4/3 of it, the wider width
-Chrome lays print out at before it fits the page):
+Print scale (#732): the script also proves the PDF is printed at 100%. It
+compares the first label name's font size in the PDF (read with pdfjs) with its
+computed font size on the page; the ratio must be 1 +/- 0.005. Chromium shrinks
+a page to fit when something in it is wider than the paper, so an overflowing
+element would fail this. To see the check catch a real shrink, run it with
+`BADGE_PRINT_INJECT_WIDTH_PX=1060`, which adds a 1060 px absolutely positioned
+block before printing; that run must fail.
 
-- `document.documentElement.scrollWidth` is at most 816 and the shrink factor
-  (page width / max(page width, scrollWidth)) is 1;
-- at both widths, no element and not `body` reaches past 816 px (the print CSS
-  pins `html`, `body` to 8.5 in and gives every ancestor of the sheets
-  `width: auto`, `min-width: 0` and no sidebar track);
-- `.badge-sheet` is exactly 8.5 x 11 in.
+The script cannot see the print dialog. The first Presta 94237 test print came
+out at about 77% (8.5 / 11 = 0.773), anchored top-left, although the page
+itself prints at 100%. Chrome's dialog at Scale "Default" (or a printer
+driver's "fit to page") can scale the sheet. Choose **Scale: Custom 100**,
+which bypasses it.
 
 The paper is always portrait letter: Avery sheets feed upright. The page's
 "Badge orientation" option only turns the text inside each label.
@@ -77,8 +77,8 @@ panel). Acting as another user is not covered.
 
 For exact label alignment print from Chrome or Edge, open More settings and set
 Paper size Letter, Margins None, **Scale: Custom 100** (not Default), and
-headers and footers off. Keep Custom 100 until a plain-paper test print
-confirms the width fix below. The badges page shows this tip on screen
+headers and footers off. Always use Custom 100: Default can scale the
+sheet. The badges page shows this tip on screen
 next to the Print button; it is hidden when printing.
 
 ## Avery CSV

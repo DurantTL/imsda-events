@@ -9,9 +9,12 @@
  *  - no page chrome text ("Skip to main content", "Badge artwork", ...);
  *  - every PDF page is a portrait US Letter page (the sheet is always 8.5 x 11
  *    in, whatever the badge orientation option says);
- *  - the print layout is no wider than the 816 px page, so Chrome's print
- *    preview has nothing to shrink (#732): scrollWidth <= 816, shrink factor 1,
- *    and .badge-sheet exactly 8.5 x 11 in;
+ *  - the PDF is printed at 100% (#732): the first label name's font size in
+ *    the PDF (pdfjs) equals its computed font size in the page, ratio 1
+ *    +/- 0.005. Chromium shrinks a page to fit when something in it is wider
+ *    than the paper, so this catches an overflowing element. It cannot catch
+ *    the print dialog's own "Default" scale or a printer driver's "fit to
+ *    page"; those are avoided by printing at Scale: Custom 100;
  *  - the first label sits where the Avery template says (Presta 94237 is
  *    1 in from the top and 0.85 in from the left, +/- 0.02 in), and the whole
  *    2 x 4 grid lands on the measured pitch.
@@ -64,8 +67,11 @@ const targetAttendees = Number(process.env.BADGE_PRINT_ATTENDEES ?? 30);
 const eventId = "evt_wr26";
 const staffEmail = process.env.BADGE_PRINT_STAFF_EMAIL ?? "admin@imsda-events.test";
 const toleranceIn = 0.02;
-const pagePx = 816; // 8.5 in at 96 dpi
-const blinkPrintLayoutPx = 1088; // Blink lays print out at 4/3 of the page width
+const fontRatioTolerance = 0.005;
+// Self-test of the 100% check: BADGE_PRINT_INJECT_WIDTH_PX=1060 adds an
+// absolutely positioned block that wide before printing, which makes Chromium
+// shrink the PDF, so the run must FAIL.
+const injectWidthPx = Number(process.env.BADGE_PRINT_INJECT_WIDTH_PX ?? 0);
 const forbiddenText = ["Skip to main content", "Badge artwork", "Upload artwork", "No background selected"];
 
 /** First-label offsets and pitch, in inches, from each template's sheet layout. */
@@ -172,7 +178,8 @@ async function seedSyntheticAttendees(prisma: PrismaClient) {
   });
 }
 
-type PdfInfo = { pages: number; text: string; pageSizesIn: Array<[number, number]>; textPerPage: string[] };
+type PdfItem = { str: string; sizePt: number; pageIndex: number };
+type PdfInfo = { items: PdfItem[]; pages: number; text: string; pageSizesIn: Array<[number, number]>; textPerPage: string[] };
 
 /** Dynamic import by variable name so tsc and eslint do not need the package. */
 async function loadOptional(name: string) {
@@ -190,14 +197,19 @@ async function readPdf(data: Uint8Array): Promise<PdfInfo> {
   const document = await pdfjs.getDocument({ data, useSystemFonts: true }).promise;
   const textPerPage: string[] = [];
   const pageSizesIn: Array<[number, number]> = [];
+  const items: PdfItem[] = [];
   for (let number = 1; number <= document.numPages; number += 1) {
     const page = await document.getPage(number);
     const [x0, y0, x1, y1] = page.view;
     pageSizesIn.push([(x1 - x0) / 72, (y1 - y0) / 72]);
     const content = await page.getTextContent();
+    for (const item of content.items as Array<{ str?: string; transform: number[] }>) {
+      // Font size in pt from the text matrix (also right for rotated text).
+      items.push({ str: item.str ?? "", sizePt: Math.hypot(item.transform[0], item.transform[1]), pageIndex: number - 1 });
+    }
     textPerPage.push(content.items.map((item: { str?: string }) => (item.str ?? "")).join(" "));
   }
-  return { pages: document.numPages, text: textPerPage.join("\n"), pageSizesIn, textPerPage };
+  return { items, pages: document.numPages, text: textPerPage.join("\n"), pageSizesIn, textPerPage };
 }
 
 /**
@@ -263,9 +275,11 @@ async function main() {
 
       if (variant.omitEvent) {
         const notices = await page.locator(".event-auto-select-notice").count();
-        // Only some accounts get the notice (the administrator does, a
-        // single-event check-in account does not); when it renders, the
-        // hidden-in-print check below covers it.
+        // The shell shows the notice only when the server auto-chose the
+        // event (`autoSelected`: the account has several events and no
+        // remembered choice), which the DOM cannot reveal. The administrator
+        // does get it; a single-event check-in account does not. Where it
+        // renders, the hidden-in-print check below covers it.
         if (staffEmail === "admin@imsda-events.test") {
           check(notices > 0, "auto-select notice renders on screen (it must then be hidden in print)");
         } else {
@@ -273,9 +287,6 @@ async function main() {
         }
       }
 
-      // Chrome's print preview lays the document out at the page width (8.5 in
-      // = 816 px at 96 dpi), so measure at that viewport.
-      await page.setViewportSize({ width: pagePx, height: 1056 });
       await page.emulateMedia({ media: "print" });
       const sheetCount = Math.ceil((labelCount + start - 1) / template.perSheet);
 
@@ -292,51 +303,6 @@ async function main() {
           .map(([selector]) => selector);
       });
       check(hidden.length === 0, `chrome is display:none in print (${hidden.join(", ") || "all hidden"})`);
-
-      // Print width (#732): Chrome shrinks the whole page to fit at Scale
-      // "Default" when the document is wider than the paper, which moves every
-      // label off its die-cut. Playwright's page.pdf at scale 1 never does
-      // this, so measure the layout width directly. Chrome's print layout is
-      // not exactly the page width: Blink lays the document out wider than the
-      // paper (up to 4/3 of it) and then fits it, so every auto-width ancestor
-      // of the sheets has to stay at 8.5 in at both widths.
-      for (const layoutPx of [pagePx, blinkPrintLayoutPx]) {
-        await page.setViewportSize({ width: layoutPx, height: 1056 });
-        const width = await page.evaluate(() => {
-          // No helper functions in here: tsx would inject a __name call that
-          // the browser does not have.
-          let widest: Element | undefined;
-          let widestRight = 0;
-          for (const element of document.querySelectorAll("body *")) {
-            if (getComputedStyle(element).display === "none") continue;
-            const right = element.getBoundingClientRect().right;
-            if (right > widestRight) { widestRight = right; widest = element; }
-          }
-          const sheet = document.querySelector(".badge-sheet")?.getBoundingClientRect();
-          return {
-            scrollWidth: document.documentElement.scrollWidth,
-            bodyWidth: document.body.getBoundingClientRect().width,
-            widest: widest
-              ? widest.tagName.toLowerCase() + String(widest.getAttribute("class") ?? "").split(/\s+/).filter(Boolean).map((name) => `.${name}`).join("")
-              : "none",
-            widestRight,
-            sheetWidthIn: (sheet?.width ?? 0) / 96,
-            sheetHeightIn: (sheet?.height ?? 0) / 96,
-          };
-        });
-        const layout = `layout ${layoutPx}px`;
-        check(width.widestRight <= pagePx + 0.5,
-          `${layout}: widest element ${width.widest} reaches ${Math.round(width.widestRight)}px (want <= ${pagePx}px)`);
-        check(width.bodyWidth <= pagePx + 0.5, `${layout}: body is ${Math.round(width.bodyWidth)}px wide (want <= ${pagePx}px)`);
-        if (layoutPx === pagePx) {
-          check(width.scrollWidth <= pagePx, `${layout}: print scrollWidth ${width.scrollWidth}px (want <= ${pagePx}px)`);
-          const shrink = pagePx / Math.max(pagePx, width.scrollWidth);
-          check(shrink === 1, `${layout}: Chrome shrink-to-fit factor at Scale Default is ${shrink.toFixed(3)} (want 1)`);
-          check(Math.abs(width.sheetWidthIn - 8.5) <= 0.005 && Math.abs(width.sheetHeightIn - 11) <= 0.005,
-            `${layout}: .badge-sheet is ${width.sheetWidthIn.toFixed(3)} x ${width.sheetHeightIn.toFixed(3)} in (want 8.5 x 11)`);
-        }
-      }
-      await page.setViewportSize({ width: pagePx, height: 1056 });
 
       // Label geometry at 96 dpi, in inches from the paper's top-left corner.
       const boxes = await page.evaluate(() => [...document.querySelectorAll(".badge-sheet:first-child .badge-label-card")]
@@ -358,6 +324,13 @@ async function main() {
       });
       check(gridOk, `all ${boxes.length} labels on the ${grid.columns} x ${grid.rows} grid`);
 
+      if (injectWidthPx > 0) {
+        await page.evaluate((width: number) => {
+          const wide = document.createElement("div");
+          wide.setAttribute("style", `position:absolute;top:0;left:0;height:1px;width:${width}px`);
+          document.body.appendChild(wide);
+        }, injectWidthPx);
+      }
       const pdf = await page.pdf({ format: "Letter", preferCSSPageSize: true, printBackground: true });
       const stem = path.join(outDir, variant.name);
       writeFileSync(`${stem}.pdf`, pdf);
@@ -369,7 +342,25 @@ async function main() {
       check(blank.length === 0, `no blank pages${blank.length ? ` (blank: ${blank.join(", ")})` : ""}`);
       const oddSize = info.pageSizesIn.filter(([w, h]) => Math.abs(w - 8.5) > 0.02 || Math.abs(h - 11) > 0.02);
       check(oddSize.length === 0, `every page is 8.5 x 11 in (${info.pageSizesIn[0]?.map((n) => n.toFixed(2)).join(" x ")})`);
+      // 100% check: font size of the first label's name in the PDF vs the page.
+      const domName = await page.evaluate(() => {
+        const element = document.querySelector(".badge-sheet:first-child .badge-label-name strong:first-child");
+        return element
+          ? { text: (element.textContent ?? "").trim(), px: Number.parseFloat(getComputedStyle(element).fontSize) }
+          : null;
+      });
+      const pdfName = domName ? info.items.find((item) => item.str.trim() === domName.text && item.pageIndex === 0) : undefined;
+      if (!domName || !pdfName) {
+        check(false, "first label name found in both the page and the PDF for the font-size check");
+      } else {
+        const ratio = pdfName.sizePt / (domName.px * 0.75);
+        check(
+          Math.abs(ratio - 1) <= fontRatioTolerance,
+          `PDF prints at 100%: "${domName.text}" is ${pdfName.sizePt.toFixed(2)} pt in the PDF, ${(domName.px * 0.75).toFixed(2)} pt on the page (ratio ${ratio.toFixed(4)}, want 1 +/- ${fontRatioTolerance})`,
+        );
+      }
       // A PNG of the page-1 render for the eye (print emulation, one sheet wide).
+      await page.setViewportSize({ width: 816, height: 1056 });
       await page.screenshot({ path: `${stem}-page1.png`, clip: { x: 0, y: 0, width: 816, height: 1056 } });
       await page.setViewportSize({ width: 1280, height: 900 });
     }
