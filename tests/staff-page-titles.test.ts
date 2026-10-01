@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  mobileNavigationLabels,
   mobileNavigationOrder,
   navigation,
   staffPageTitles,
@@ -21,11 +22,14 @@ describe("staff page names (#685)", () => {
     expect(labelByHref["/registration-builder"]).toBe("Registration form");
   });
 
-  it("shows the same label on the phone tab bar as in the sidebar", () => {
-    // The tab bar renders each item's `label`; there is no separate short name to drift.
+  it("keeps five phone tabs with short labels while the sidebar keeps full labels (#711)", () => {
+    expect([...mobileNavigationOrder]).toEqual(["/overview", "/people", "/check-in", "/communications", "/more"]);
+    expect(mobileNavigationOrder.map((href) => mobileNavigationLabels[href])).toEqual(["Home", "People", "Check-in", "Emails", "More"]);
     for (const href of mobileNavigationOrder) {
       expect(navigation.find((item) => item.href === href)?.label).toBeTruthy();
     }
+    expect(navigation.find((item) => item.href === "/overview")?.label).toBe("Dashboard");
+    expect(navigation.find((item) => item.href === "/people")?.label).toBe("Registrations");
     expect(navigation.every((item) => !("mobileLabel" in item))).toBe(true);
   });
 

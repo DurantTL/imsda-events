@@ -101,7 +101,7 @@ describe("event settings sections by event type (#624)", () => {
   it("collapses directory cards that do not apply and keeps unknown cards visible", () => {
     expect(moreCardApplies("honors", "club")).toBe(true);
     expect(moreCardApplies("honors", "general")).toBe(true);
-    expect(moreCardApplies("promo-codes", "club")).toBe(false);
+    expect(moreCardApplies("promo-codes", "club")).toBe(true); // #711: one tap from More on club events too
     expect(moreCardApplies("promo-codes", "general")).toBe(true);
     expect(moreCardApplies("event-patches", "general")).toBe(false);
     expect(moreCardApplies("event-patches", "club")).toBe(true);
