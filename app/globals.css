@@ -8626,6 +8626,7 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   font-size: var(--text-helper-min);
   font-weight: 700;
   line-height: 1.5;
+}
 
 /* Organization search, filter bar and directory table (#723).
    Root cause of the overlapping cells: the directory put its second line in
