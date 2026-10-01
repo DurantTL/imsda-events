@@ -30,7 +30,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
   const allActivity = permissions.includes("VIEW_REPORTS") ? await listRecentAuditActivity(event.id, 40) : [];
   const activity = selectActivity(allActivity, kind, showAllActivity);
 
-  // Every page the desktop sidebar can reach that isn't one of the six
+  // Every page the desktop sidebar can reach that isn't one of the five
   // bottom tabs (#475): built from `buildMoreDirectoryCards`, the same
   // permission and navigation source `AppShell`'s sidebar reads, so the two
   // can't drift — see `tests/mobile-directory-parity.test.ts`.

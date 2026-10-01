@@ -1,3 +1,4 @@
+import { moreCardApplies } from "@/modules/events/settings-sections";
 import { createElement } from "react";
 import type { ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -333,10 +334,28 @@ describe("phone navigation reaches every page the desktop sidebar reaches (#475)
       ),
     );
     const mobileNav = markup.slice(markup.indexOf('<nav class="mobile-nav"'));
-    // Still exactly the six operational tabs plus More (#475 keeps them).
-    for (const href of ["/overview?", "/people?", "/finance?", "/more/promo-codes?", "/check-in?", "/communications?", "/more?"]) {
-      expect(mobileNav).toContain(`href="${href}`);
+    // At most five tabs (#711); Payments and Promo codes live in More.
+    const hrefs = [...mobileNav.matchAll(/<a [^>]*href="([^"?]+)\?/g)].map((match) => match[1]);
+    expect(hrefs).toEqual(["/overview", "/people", "/check-in", "/communications", "/more"]);
+    const labels = [...mobileNav.matchAll(/<span>([^<]+)<\/span>/g)].map((match) => match[1]);
+    expect(labels).toEqual(["Home", "People", "Check-in", "Emails", "More"]);
+    expect(mobileNav).not.toContain("/finance");
+    expect(mobileNav).not.toContain("promo-codes");
+  });
+
+  it("keeps Payments and Promo codes one tap from More, behind MANAGE_FINANCE (#711)", () => {
+    const base = { clubOversight: false, clubEvent: false, isSystemAdmin: false, clubFormsAccess: false, eventQuery: "?event=e1" };
+    const withFinance = buildMoreDirectoryCards({ ...base, permissions: ["MANAGE_FINANCE"] }).filter((card) => card.allowed);
+    expect(withFinance.map((card) => card.href)).toEqual(expect.arrayContaining(["/finance?event=e1", "/more/promo-codes?event=e1"]));
+    const without = buildMoreDirectoryCards({ ...base, permissions: ["VIEW_REPORTS"] }).filter((card) => card.allowed);
+    expect(without.map((card) => card.href)).not.toContain("/finance?event=e1");
+    expect(without.map((card) => card.href)).not.toContain("/more/promo-codes?event=e1");
+  });
+
+  it("keeps Payments and Promo codes in the main More list on every event kind, never collapsed (#711)", () => {
+    for (const kind of ["general", "club"] as const) {
+      expect(moreCardApplies("payments", kind), `payments on ${kind}`).toBe(true);
+      expect(moreCardApplies("promo-codes", kind), `promo-codes on ${kind}`).toBe(true);
     }
-    expect((mobileNav.match(/<a /g) ?? []).length).toBe(7);
   });
 });

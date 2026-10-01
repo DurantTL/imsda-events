@@ -305,10 +305,10 @@ describe("application shell navigation", () => {
     );
 
     const mobileNav = markup.slice(markup.indexOf('<nav class="mobile-nav"'));
-    // Home, People, Payments, Promos, Check-in, Emails, More — the old tab order,
-    // unaffected by the sidebar's Events/People/Finance/… grouping or by the new
+    // Home, People, Check-in, Emails, More (#711: Payments and Promo codes moved
+    // into More) — unaffected by the sidebar's Events/People/Finance/… grouping or by the new
     // Clubs and churches / System entries (neither ever appears in the mobile bar).
-    const order = ["/overview?", "/people?", "/finance?", "/more/promo-codes?", "/check-in?", "/communications?", "/more?"];
+    const order = ["/overview?", "/people?", "/check-in?", "/communications?", "/more?"];
     let lastIndex = -1;
     for (const href of order) {
       const index = mobileNav.indexOf(`href="${href}`);
@@ -317,6 +317,8 @@ describe("application shell navigation", () => {
     }
     expect(mobileNav).not.toContain("/admin/organizations");
     expect(mobileNav).not.toContain('href="/admin"');
+    expect(mobileNav).not.toContain('href="/finance');
+    expect(mobileNav).not.toContain("/more/promo-codes");
   });
 
   it("offers a real attendee-session switch when the staff email has an account", () => {
