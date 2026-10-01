@@ -66,3 +66,23 @@ export function effectiveRosterAges(
   }
   return result;
 }
+
+/** Going people whose age is blank or invalid, in roster order: who still blocks Continue (#718). */
+export function peopleMissingAges<T extends AgeInputPerson>(
+  roster: readonly T[],
+  selectedMemberIds: readonly string[],
+  text: Readonly<Record<string, string>>,
+  saved: Readonly<Record<string, number>>,
+): T[] {
+  return roster.filter((person) => selectedMemberIds.includes(person.memberId) && ageInputProblem(person, text, saved) !== null);
+}
+
+/** The id of a person's "Age on event date" input, so Continue can scroll to and focus it. */
+export function ageFieldId(memberId: string): string {
+  return `club-age-${memberId}`;
+}
+
+/** What Continue says while ages are still needed, e.g. "Enter 3 ages to continue". */
+export function agesNeededLabel(count: number): string {
+  return `Enter ${count} ${count === 1 ? "age" : "ages"} to continue`;
+}

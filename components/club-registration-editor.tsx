@@ -7,7 +7,7 @@ import { ClubLocationPicker } from "@/components/club-location-picker";
 import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
-import { ageInputProblem, ageInputValue, parseTypedAge } from "@/modules/club-registrations/roster-ages";
+import { ageInputProblem, ageInputValue, parseTypedAge, ageFieldId, agesNeededLabel, peopleMissingAges } from "@/modules/club-registrations/roster-ages";
 import {
   PublicRegistrationForm,
   type FormIssue,
@@ -120,9 +120,10 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     && sameSet(keptGuestIds, startingKeptGuests) && newGuests.length === 0 && sameAges && locationId === currentLocationId
   );
   const allowNextNavigation = useUnsavedChangesGuard(dirty);
-  const problemPerson = workspace.roster.find((person) => (
-    selectedMemberIds.includes(person.memberId) && ageInputProblem(person, ageText, rosterAges) !== null
-  ));
+  // Age problems show only after Continue was pressed and blocked, or once a field is touched (#718).
+  const [agesAttempted, setAgesAttempted] = useState(false);
+  const missingAges = peopleMissingAges(workspace.roster, selectedMemberIds, ageText, rosterAges);
+  const problemPerson = missingAges[0];
 
   function changeAge(memberId: string, raw: string) {
     setError("");
@@ -341,6 +342,11 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         <span className="count-badge">{goingCount} chosen</span>
       </div>
       {error && <div className="inline-notice error" role="alert">{error}</div>}
+      {agesAttempted && missingAges.length > 0 && (
+        <div className="inline-notice error club-age-summary" role="alert">
+          {missingAges.length === 1 ? "1 person still needs an age on the event date." : `${missingAges.length} people still need an age on the event date.`}
+        </div>
+      )}
       <ClubLocationPicker currentId={currentLocationId} locations={locationChoices} onChange={setLocationId} value={locationId} />
       <ul className="club-going-list">
         {workspace.roster.map((person) => (
@@ -358,7 +364,9 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
             </label>
             {person.ageOnEventDate === null && selectedMemberIds.includes(person.memberId) && (
               <ClubRosterAgeField
-                error={error !== "" || ageInputValue(person, ageText, rosterAges).trim() !== "" ? ageInputProblem(person, ageText, rosterAges) : null}
+                attempted={agesAttempted}
+                error={ageInputProblem(person, ageText, rosterAges)}
+                memberId={person.memberId}
                 value={ageInputValue(person, ageText, rosterAges)}
                 onAge={(raw) => changeAge(person.memberId, raw)}
                 onSaveToRoster={(save) => setSaveAgeOff((current) => (save ? current.filter((id) => id !== person.memberId) : [...current.filter((id) => id !== person.memberId), person.memberId]))}
@@ -458,12 +466,19 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
           className="primary-button"
           disabled={goingCount === 0}
           onClick={() => {
-            if (problemPerson) return setError(ageInputProblem(problemPerson, ageText, rosterAges) ?? "Check the ages above.");
-            setError(""); setJustReopened(false); setStep("form");
+            if (problemPerson) {
+              setError("");
+              setAgesAttempted(true);
+              const input = document.getElementById(ageFieldId(problemPerson.memberId));
+              input?.scrollIntoView({ block: "center" });
+              input?.focus({ preventScroll: true });
+              return;
+            }
+            setAgesAttempted(false); setError(""); setJustReopened(false); setStep("form");
           }}
           type="button"
         >
-          Continue with {goingCount} {goingCount === 1 ? "person" : "people"} <ArrowRight aria-hidden="true" size={15} />
+          {missingAges.length > 0 ? agesNeededLabel(missingAges.length) : <>Continue with {goingCount} {goingCount === 1 ? "person" : "people"}</>} <ArrowRight aria-hidden="true" size={15} />
         </button>
       </div>
     </section>
