@@ -4,6 +4,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { BuilderPhoneNotice } from "@/components/builder-phone-notice";
 import { ClubFormBuilder } from "@/components/club-form-builder";
+import { ClubFormDraftDiscard } from "@/components/club-form-draft-discard";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getClubFormBuilderView } from "@/modules/club-forms/builder";
 import { ClubFormError } from "@/modules/club-forms/errors";
@@ -41,15 +42,23 @@ export default async function ClubFormBuilderPage({ params }: { params: Promise<
           </p>
         </div>
       </div>
+      {view.customized
+        ? <p className="field-help">Edited in the app; code updates no longer apply to this form.</p>
+        : view.draft !== null || view.draftUnreadable
+          ? <p className="field-help">Code updates are paused while a draft exists. Discarding a draft of a form that was never published from the app lets code updates apply again.</p>
+          : null}
       <BuilderPhoneNotice backHref="/admin/club-forms" backLabel="Back to club forms" builderName="club form builder" />
       <div className="builder-phone-hidden">
-        {view.needsSync ? (
+        {view.draftUnreadable ? (
+          <ClubFormDraftDiscard templateKey={view.key} />
+        ) : view.needsSync ? (
           <div className="inline-notice error" role="alert">
             This form is behind the code and needs a sync first. An operator must run <code>npm run club-forms:sync</code>, then reload this page.
           </div>
         ) : (
           <ClubFormBuilder
             draftUpdatedAt={view.draftUpdatedAt}
+            draftWarnings={view.draftWarnings}
             enabled={view.enabled}
             hasDraft={view.draft !== null}
             initial={view.draft ?? view.published}

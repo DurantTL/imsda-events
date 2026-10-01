@@ -46,8 +46,11 @@ const templateSelect = {
  * Makes sure every seeded template exists and is current. New ones are
  * created disabled; a changed definition (higher `version`) is written over
  * the stored one. The `enabled` switch is never touched. A template that has
- * been edited or created in the app (`customizedAt`, #712) is never written
- * over: it is skipped and reported. Safe to call often.
+ * been published or created in the app (`customizedAt`, #712) is never written
+ * over, and neither is one with an unpublished draft: each is skipped and
+ * reported. For a customized one, sensitive or birth-date keys the code seed
+ * has added are still sealed in existing answers (the definition is untouched).
+ * Safe to call often.
  */
 export async function syncClubFormTemplates(
   client: Client = getPrisma(),
@@ -55,12 +58,27 @@ export async function syncClubFormTemplates(
 ) {
   const refused: Array<{ key: string; message: string }> = [];
   const skipped: Array<{ key: string; reason: string }> = [];
-  const existing = await client.clubFormTemplate.findMany({ select: { id: true, key: true, version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true, customizedAt: true } });
+  const existing = await client.clubFormTemplate.findMany({ select: { id: true, key: true, version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true, customizedAt: true, draftUpdatedAt: true } });
   const stored = new Map(existing.map((row) => [row.key, row]));
   for (const seed of clubFormTemplateSeeds) {
-    if (stored.get(seed.key)?.customizedAt) {
+    const row = stored.get(seed.key);
+    if (row?.customizedAt) {
       skipped.push({ key: seed.key, reason: "edited in the app" });
       logInfo("Club form sync skipped a template that was edited in the app.", { templateKey: seed.key });
+      try {
+        await sealSeedKeysForCustomized(client, seed, row.id);
+      } catch (error) {
+        if (options.continueOnRefusal && error instanceof ClubFormError) {
+          refused.push({ key: seed.key, message: `${seed.key}: ${error.message}` });
+          continue;
+        }
+        throw error;
+      }
+      continue;
+    }
+    if (row?.draftUpdatedAt) {
+      skipped.push({ key: seed.key, reason: "draft in progress" });
+      logInfo("Club form sync skipped a template with an unpublished draft.", { templateKey: seed.key });
       continue;
     }
     try {
@@ -78,6 +96,33 @@ export async function syncClubFormTemplates(
 }
 
 type Seed = (typeof clubFormTemplateSeeds)[number];
+
+/**
+ * A customized template ignores the code's definition, but a sensitive or
+ * birth-date key the seed has since added must still be sealed (#712):
+ * existing plain answers are moved into the sealed value and the stored key
+ * lists gain the keys, in one transaction. The definition is not touched.
+ */
+async function sealSeedKeysForCustomized(client: Client, seed: Seed, templateId: string) {
+  const apply = async (tx: Prisma.TransactionClient) => {
+    const locked = await lockClubFormTemplateForReseal(tx, templateId);
+    const newlySensitive = seed.sensitiveFieldKeys.filter((key) => !locked.sensitiveFieldKeys.includes(key));
+    const newlyBirthDate = seed.birthDateFieldKeys.filter((key) => !locked.birthDateFieldKeys.includes(key));
+    if (newlySensitive.length === 0 && newlyBirthDate.length === 0) return;
+    await resealClubFormSubmissions(tx, templateId, newlySensitive);
+    await tx.clubFormTemplate.update({
+      where: { id: templateId },
+      data: {
+        sensitiveFieldKeys: [...new Set([...locked.sensitiveFieldKeys, ...newlySensitive])],
+        birthDateFieldKeys: [...new Set([...locked.birthDateFieldKeys, ...newlyBirthDate])],
+      },
+    });
+    const sealedKeyCount = newlySensitive.length + newlyBirthDate.length;
+    logInfo("Club form sync sealed extra keys for a template edited in the app.", { templateKey: seed.key, keys: sealedKeyCount });
+  };
+  if ("$transaction" in client) await client.$transaction(apply, RESEAL_TRANSACTION);
+  else await apply(client);
+}
 
 function versionSpec(seed: Seed, definition: RegistrationFormDefinition) {
   return {
@@ -127,8 +172,8 @@ async function syncOneTemplate(
       // Lock, then decide from the locked row: a concurrent save or sync cannot change the keys under us.
       const locked = await lockClubFormTemplateForReseal(tx, current.id);
       if (locked.version >= seed.version) return;
-      // Edited in the app since the check above: the code no longer owns it.
-      if (locked.customizedAt) return;
+      // Edited or drafted in the app since the check above: the code no longer owns it.
+      if (locked.customizedAt || locked.draftUpdatedAt) return;
       assertNotLoosened(seed, locked);
       const newlySensitive = seed.sensitiveFieldKeys.filter((key) => !locked.sensitiveFieldKeys.includes(key));
       // A newly sensitive field must be sealed in existing submissions in the same transaction as the update.

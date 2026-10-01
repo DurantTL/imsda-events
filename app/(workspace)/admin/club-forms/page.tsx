@@ -52,8 +52,9 @@ export default async function AdminClubFormsPage() {
                   <td>{template.submissionCount}</td>
                   <td>
                     {template.version}
-                    {template.customized && <small className="quiet-copy"> · edited in the app</small>}
-                    {template.hasDraft && <small className="quiet-copy"> · draft waiting</small>}
+                    {template.customized && <small className="quiet-copy"> · Edited in the app; code updates no longer apply</small>}
+                    {template.hasDraft && !template.customized && <small className="quiet-copy"> · Code updates are paused while a draft exists</small>}
+                    {template.hasDraft && template.customized && <small className="quiet-copy"> · draft waiting</small>}
                   </td>
                   <td>
                     {template.version > 0 && <Link className="secondary-button" href={`/admin/club-forms/${encodeURIComponent(template.key)}`}>Edit</Link>}{" "}

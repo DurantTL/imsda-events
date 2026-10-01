@@ -39,6 +39,8 @@ export type ClubFormBuilderProps = {
   initial: ClubFormDraftSpec;
   hasDraft: boolean;
   draftUpdatedAt: string | null;
+  /** Problems the stored draft already has: shown inline, and publish refuses until they are fixed. */
+  draftWarnings?: BuilderIssue[];
   lockedSensitiveKeys: string[];
   lockedBirthDateKeys: string[];
   /** Keys that existed in the published version: their key text cannot change. */
@@ -84,7 +86,7 @@ export function ClubFormBuilder(props: ClubFormBuilderProps) {
   const [saved, setSaved] = useState(() => specSignature(props.initial));
   const [draftStamp, setDraftStamp] = useState(props.hasDraft ? props.draftUpdatedAt : null);
   const [hasDraft, setHasDraft] = useState(props.hasDraft);
-  const [issues, setIssues] = useState<BuilderIssue[]>([]);
+  const [issues, setIssues] = useState<BuilderIssue[]>(props.draftWarnings ?? []);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -130,21 +132,32 @@ export function ClubFormBuilder(props: ClubFormBuilderProps) {
 
   const base = `/api/admin/club-forms/${encodeURIComponent(props.templateKey)}`;
 
+  /** Saves the draft, unfinished or not. Returns null when the save failed, else the problems still to fix before publishing. */
   async function saveDraft() {
     const result = await call(`${base}/draft`, {
       method: "PUT",
       body: JSON.stringify({ draft: spec, baseVersion: props.version, expectedDraftUpdatedAt: draftStamp }),
     });
-    if (!result) return false;
+    if (!result) return null;
+    const warnings = Array.isArray(result.warnings) ? result.warnings as BuilderIssue[] : [];
     setSaved(specSignature(spec));
     setHasDraft(true);
+    setIssues(warnings);
     setDraftStamp(typeof result.draftUpdatedAt === "string" ? result.draftUpdatedAt : null);
-    setMessage("Draft saved. Clubs still see the published version until you publish.");
-    return true;
+    setMessage(warnings.length > 0
+      ? `Draft saved with ${warnings.length} thing${warnings.length === 1 ? "" : "s"} to fix before it can be published. Clubs still see the published version.`
+      : "Draft saved. Clubs still see the published version until you publish.");
+    return warnings;
   }
 
   async function publish() {
-    if (dirty && !(await saveDraft())) return;
+    if (dirty) {
+      const warnings = await saveDraft();
+      if (!warnings || warnings.length > 0) return;
+    } else if (issues.length > 0) {
+      setError("Fix the problems shown before publishing.");
+      return;
+    }
     if (!window.confirm(`Publish version ${props.version + 1}? New fills will use it right away. Forms already filled in keep the version they were filled in on.`)) return;
     const result = await call(`${base}/publish`, { method: "POST", body: JSON.stringify({ baseVersion: props.version }) });
     if (!result) return;

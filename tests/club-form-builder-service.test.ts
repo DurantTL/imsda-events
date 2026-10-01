@@ -20,15 +20,14 @@ const client = {
   $executeRaw: vi.fn(async () => 0),
   $transaction: async (work: (tx: unknown) => unknown) => {
     // Roll back on failure, like a real transaction.
-    const snapshot = JSON.stringify({ t: state.templates, v: state.versions, s: state.submissions, a: state.audit });
+    const snapshot = structuredClone({ t: state.templates, v: state.versions, s: state.submissions, a: state.audit });
     try {
       return await work(client);
     } catch (error) {
-      const restored = JSON.parse(snapshot) as { t: typeof state.templates; v: typeof state.versions; s: typeof state.submissions; a: typeof state.audit };
-      state.templates.splice(0, state.templates.length, ...restored.t);
-      state.versions.splice(0, state.versions.length, ...restored.v);
-      state.submissions.splice(0, state.submissions.length, ...restored.s);
-      state.audit.splice(0, state.audit.length, ...restored.a);
+      state.templates.splice(0, state.templates.length, ...snapshot.t);
+      state.versions.splice(0, state.versions.length, ...snapshot.v);
+      state.submissions.splice(0, state.submissions.length, ...snapshot.s);
+      state.audit.splice(0, state.audit.length, ...snapshot.a);
       throw error;
     }
   },
@@ -66,7 +65,17 @@ const client = {
     findUnique: async ({ where }: { where: { templateId_version: { templateId: string; version: number } } }) =>
       state.versions.find((row) => row.templateId === where.templateId_version.templateId && row.version === where.templateId_version.version) ?? null,
   },
+  organization: {
+    findUnique: async () => ({ type: "CLUB", isActive: true }),
+    findMany: async () => [],
+  },
   clubFormSubmission: {
+    create: async ({ data }: { data: Record<string, unknown> & { id: string } }) => { state.submissions.push({ ...data }); return data; },
+    updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+      const rows = state.submissions.filter((row) => matches(row, where));
+      for (const row of rows) Object.assign(row, data);
+      return { count: rows.length };
+    },
     count: async ({ where }: { where?: Record<string, unknown> } = {}) => state.submissions.filter((row) => matches(row, where)).length,
     findMany: async ({ where, cursor, skip = 0, take }: { where?: Record<string, unknown>; cursor?: { id: string }; skip?: number; take?: number } = {}) => {
       const rows = state.submissions.filter((row) => matches(row, where)).sort((left, right) => left.id.localeCompare(right.id));
@@ -99,9 +108,13 @@ import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { allFields, type ClubFormsViewer } from "@/modules/club-forms/domain";
 import { openSensitiveAnswers, sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
-import { getSubmissionForViewer } from "@/modules/club-forms/submissions";
+import { getSubmissionForViewer, saveClubFormSubmission } from "@/modules/club-forms/submissions";
 import { syncClubFormTemplates } from "@/modules/club-forms/templates";
 import { buildClubFormsCsv } from "@/modules/club-forms/csv";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ClubFormSubmissionView } from "@/components/club-form-submission-view";
+import { renameFieldKey } from "@/components/club-form-builder-state";
 import type { ClubFormDraftSpec } from "@/modules/club-forms/builder-domain";
 
 const slipSeed = clubFormTemplateSeeds.find((seed) => seed.key === "off_premises_permission_slip")!;
@@ -178,19 +191,45 @@ describe("saving and publishing a draft (#712)", () => {
     expect(JSON.stringify(state.audit)).not.toContain("Synthetic label");
   });
 
-  it("marks the template as edited in the app on the first save", async () => {
+  it("marks the template as edited in the app at its first publish, not at a draft save", async () => {
     const published = await currentSpec();
     await saveClubFormDraft(slipSeed.key, { draft: published, baseVersion: slipSeed.version }, "admin-1", now);
+    expect(state.templates[0].customizedAt).toBeNull();
+    await publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now);
     expect(state.templates[0].customizedAt).toEqual(now);
   });
 
-  it("refuses an invalid draft with field-level issues and stores nothing", async () => {
+  it("saves an unfinished draft with field-level warnings, and refuses to publish it", async () => {
     const published = await currentSpec();
     const broken = updateField(published, idOf(published, "activity"), { label: "" });
-    const error = await saveClubFormDraft(slipSeed.key, { draft: broken, baseVersion: slipSeed.version }, "admin-1", now).catch((caught: unknown) => caught);
+    const saved = await saveClubFormDraft(slipSeed.key, { draft: broken, baseVersion: slipSeed.version }, "admin-1", now);
+    expect(saved.warnings).toEqual(expect.arrayContaining([expect.objectContaining({ key: `field:${idOf(published, "activity")}` })]));
+    expect(state.templates[0].draft).not.toBeNull();
+    const error = await publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now).catch((caught: unknown) => caught);
     expect(error).toMatchObject({ code: "VALIDATION_FAILED", issues: [{ key: `field:${idOf(published, "activity")}` }] });
+    expect(state.templates[0].version).toBe(slipSeed.version);
+    const view = await getClubFormBuilderView(slipSeed.key);
+    expect(view.draft).not.toBeNull();
+    expect(view.draftWarnings.length).toBeGreaterThan(0);
+  });
+
+  it("refuses a draft that is not even structurally a draft, or is too large", async () => {
+    await expect(saveClubFormDraft(slipSeed.key, { draft: { nope: true }, baseVersion: slipSeed.version }, "admin-1", now)).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    const published = await currentSpec();
+    const huge = { ...published, description: "x".repeat(450_000) };
+    await expect(saveClubFormDraft(slipSeed.key, { draft: huge, baseVersion: slipSeed.version }, "admin-1", now)).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
     expect(state.templates[0].draft).toBeNull();
-    expect(state.audit).toEqual([]);
+  });
+
+  it("shows a stored draft that no longer parses as unreadable, and lets it be discarded", async () => {
+    state.templates[0].draft = { name: 42 };
+    state.templates[0].draftUpdatedAt = now;
+    const view = await getClubFormBuilderView(slipSeed.key);
+    expect(view.draft).toBeNull();
+    expect(view.draftUnreadable).toBe(true);
+    await discardClubFormDraft(slipSeed.key, "admin-1");
+    expect(state.templates[0].draft).toBeNull();
+    expect((await getClubFormBuilderView(slipSeed.key)).draftUnreadable).toBe(false);
   });
 
   it("refuses a save or publish built on a version that has since changed, or a stale draft", async () => {
@@ -215,21 +254,27 @@ describe("saving and publishing a draft (#712)", () => {
 });
 
 describe("sensitive-flag protection on the server (#712)", () => {
-  it("refuses a save that clears a sensitive flag", async () => {
+  it("warns on save about a cleared sensitive flag, and refuses to publish it", async () => {
     const published = await currentSpec();
     const key = slipSeed.sensitiveFieldKeys[0];
     const loosened = setFieldFlag(published, idOf(published, key), "sensitive", false);
-    await expect(saveClubFormDraft(slipSeed.key, { draft: loosened, baseVersion: slipSeed.version }, "admin-1", now)).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
-    expect(state.templates[0].draft).toBeNull();
+    const saved = await saveClubFormDraft(slipSeed.key, { draft: loosened, baseVersion: slipSeed.version }, "admin-1", now);
+    expect(saved.warnings[0]).toMatchObject({ key: `field:${idOf(published, key)}` });
+    await expect(publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now)).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+    expect(state.templates[0].sensitiveFieldKeys).toContain(key);
+    expect(state.templates[0].version).toBe(slipSeed.version);
   });
 
   it("refuses to delete a sensitive field once forms exist, but allows hiding it", async () => {
     state.submissions.push({ id: "sub-1", templateId: "tpl-slip", answers: {}, sealedSensitiveAnswers: null, templateVersion: slipSeed.version });
     const published = await currentSpec();
     const key = slipSeed.sensitiveFieldKeys[0];
-    await expect(saveClubFormDraft(slipSeed.key, { draft: removeField(published, idOf(published, key)), baseVersion: slipSeed.version }, "admin-1", now))
+    const removedSave = await saveClubFormDraft(slipSeed.key, { draft: removeField(published, idOf(published, key)), baseVersion: slipSeed.version }, "admin-1", now);
+    expect(removedSave.warnings).toEqual([expect.objectContaining({ key: `removed:${key}` })]);
+    await expect(publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now))
       .rejects.toMatchObject({ code: "VALIDATION_FAILED", issues: [{ key: `removed:${key}` }] });
-    await saveClubFormDraft(slipSeed.key, { draft: setFieldFlag(published, idOf(published, key), "hidden", true), baseVersion: slipSeed.version }, "admin-1", now);
+    const stored = state.templates[0] as unknown as { draftUpdatedAt: Date };
+    await saveClubFormDraft(slipSeed.key, { draft: setFieldFlag(published, idOf(published, key), "hidden", true), baseVersion: slipSeed.version, expectedDraftUpdatedAt: stored.draftUpdatedAt.toISOString() }, "admin-1", now);
     const result = await publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now);
     expect(result.version).toBe(slipSeed.version + 1);
     expect(state.templates[0].hiddenFieldKeys).toEqual([key]);
@@ -321,6 +366,7 @@ describe("the sync leaves edited templates alone (#712)", () => {
   it("skips a template that was edited in the app, and reports it", async () => {
     const published = await currentSpec();
     await saveClubFormDraft(slipSeed.key, { draft: updateField(published, idOf(published, "activity"), { label: "Synthetic label" }), baseVersion: slipSeed.version }, "admin-1", now);
+    await publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now);
     // The code's seed moves ahead.
     state.templates[0].version = 0;
     const before = JSON.stringify(state.templates[0]);
@@ -330,6 +376,49 @@ describe("the sync leaves edited templates alone (#712)", () => {
     expect(JSON.stringify(state.templates[0])).toBe(before);
     // The other seeds are still created.
     expect(state.templates.length).toBe(clubFormTemplateSeeds.length);
+  });
+
+  it("skips a template with a draft in progress, and manages it again once the draft is discarded", async () => {
+    const published = await currentSpec();
+    await saveClubFormDraft(slipSeed.key, { draft: updateField(published, idOf(published, "activity"), { label: "Synthetic label" }), baseVersion: slipSeed.version }, "admin-1", now);
+    expect(state.templates[0].customizedAt).toBeNull();
+    state.templates[0].version = 0;
+    const first = await syncClubFormTemplates(client as never, { continueOnRefusal: true });
+    expect(first.skipped).toEqual([{ key: slipSeed.key, reason: "draft in progress" }]);
+    expect(state.templates[0].version).toBe(0);
+    await discardClubFormDraft(slipSeed.key, "admin-1");
+    const second = await syncClubFormTemplates(client as never, { continueOnRefusal: true });
+    expect(second.skipped).toEqual([]);
+    expect(state.templates[0].version).toBe(slipSeed.version);
+  });
+
+  it("still seals keys the code seed added for a template edited in the app, without touching its definition", async () => {
+    const published = await currentSpec();
+    const added = slipSeed.sensitiveFieldKeys[0];
+    // The app-edited template's stored list lacks a key the code now marks sensitive; an answer to it sits in plain text.
+    state.templates[0].sensitiveFieldKeys = slipSeed.sensitiveFieldKeys.filter((key) => key !== added);
+    state.templates[0].customizedAt = now;
+    state.submissions.push({ id: "sub-1", templateId: "tpl-slip", answers: { [added]: "Synthetic plain value" }, sealedSensitiveAnswers: null, hasSensitiveAnswers: false, templateVersion: slipSeed.version });
+    const definitionBefore = JSON.stringify(state.templates[0].definition);
+    const { skipped } = await syncClubFormTemplates(client as never, { continueOnRefusal: true });
+    expect(skipped).toEqual([{ key: slipSeed.key, reason: "edited in the app" }]);
+    expect(JSON.stringify(state.templates[0].definition)).toBe(definitionBefore);
+    expect(state.templates[0].sensitiveFieldKeys).toContain(added);
+    const row = state.submissions[0];
+    expect(JSON.stringify(row)).not.toContain("Synthetic plain value");
+    expect(openSensitiveAnswers("sub-1", row.sealedSensitiveAnswers as string)).toEqual({ [added]: "Synthetic plain value" });
+    expect(published.name).toBeTruthy();
+  });
+
+  it("publishing seals only keys newly sensitive against the stored list, not the seed-merged one", async () => {
+    const published = await currentSpec();
+    const key = slipSeed.sensitiveFieldKeys[0];
+    // Stored list lacks the key (the sync has not run); the draft keeps it sensitive. Publish must seal it.
+    state.templates[0].sensitiveFieldKeys = slipSeed.sensitiveFieldKeys.filter((candidate) => candidate !== key);
+    state.submissions.push({ id: "sub-1", templateId: "tpl-slip", answers: { [key]: "Synthetic plain value" }, sealedSensitiveAnswers: null, hasSensitiveAnswers: false, templateVersion: slipSeed.version });
+    await saveClubFormDraft(slipSeed.key, { draft: { ...published, sensitiveFieldKeys: slipSeed.sensitiveFieldKeys }, baseVersion: slipSeed.version }, "admin-1", now);
+    await publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now);
+    expect(JSON.stringify(state.submissions[0])).not.toContain("Synthetic plain value");
   });
 
   it("keeps updating a template that was never edited, and records the version it writes", async () => {
@@ -391,5 +480,102 @@ describe("the builder view never carries answers (#712)", () => {
     expect(JSON.stringify(view)).not.toContain("Riley Sample");
     expect(JSON.stringify(view)).not.toContain("Dr. Synthetic Physician");
     expect(view.lockedSensitiveKeys).toEqual(expect.arrayContaining(slipSeed.sensitiveFieldKeys));
+  });
+});
+
+describe("hidden fields on every new-fill path (#712)", () => {
+  async function hide(keys: string[]) {
+    let spec = await currentSpec();
+    for (const key of keys) spec = setFieldFlag(spec, idOf(spec, key), "hidden", true);
+    const base = (await getClubFormBuilderView(slipSeed.key)).version;
+    await saveClubFormDraft(slipSeed.key, { draft: spec, baseVersion: base }, "admin-1", now);
+    await publishClubFormDraft(slipSeed.key, { baseVersion: base }, "admin-1", now);
+  }
+  const fillAnswers = { child_name: "Riley Sample", street: "6 Example Road", city: "Exampleville", state: "IA", zip: "50001", phone: "555-0110", activity_date: "2026-11-07", ride_with: "Pat Sample", parent_signature: "Pat Sample", parent_signature_date: "2026-10-30", relationship: "Parent", emergency_contact_phone: "555-0111" };
+  const draftRow = () => ({
+    id: "sub-d", templateId: "tpl-slip", organizationId: "club-a", clubYear: "2026-27", rosterMemberId: null, subjectName: "Riley Sample",
+    status: "DRAFT", submittedAt: null, enteredVia: "ATTENDEE", answers: { child_name: "Riley Sample", activity: "Canoe trip" },
+    sealedSensitiveAnswers: sealSensitiveAnswers("sub-d", { physician_name: "Dr. Synthetic Physician" }), hasSensitiveAnswers: true, templateVersion: slipSeed.version,
+  });
+
+  it("does not require or take an answer to a hidden field when a director fills in a new form", async () => {
+    await hide(["activity", "physician_name"]);
+    const saved = await saveClubFormSubmission(director, { organizationId: "club-a", templateKey: slipSeed.key, answers: { ...fillAnswers, activity: "Hand-sent value", physician_name: "Dr. Hand Sent" }, submit: true }, now);
+    const row = state.submissions.find((candidate) => candidate.id === saved.id)!;
+    expect(JSON.stringify(row)).not.toContain("Hand-sent value");
+    expect(JSON.stringify(row)).not.toContain("Dr. Hand Sent");
+    expect(openSensitiveAnswers(saved.id, row.sealedSensitiveAnswers as string)).not.toHaveProperty("physician_name");
+  });
+
+  it("offers a draft being edited only the fields the form still shows, and never returns answers to the others", async () => {
+    state.submissions.push(draftRow());
+    await hide(["activity", "physician_name"]);
+    const view = await getSubmissionForViewer(director, "sub-d", "EDIT");
+    const keys = allFields(view.template.definition).map((field) => field.key);
+    expect(keys).not.toContain("activity");
+    expect(keys).not.toContain("physician_name");
+    expect(view.answers).toEqual({ child_name: "Riley Sample" });
+    expect(JSON.stringify(view)).not.toContain("Canoe trip");
+    expect(JSON.stringify(view)).not.toContain("Dr. Synthetic Physician");
+  });
+
+  it("keeps the stored plain and sealed answers to a hidden field when the draft is saved again", async () => {
+    state.submissions.push(draftRow());
+    await hide(["activity", "physician_name"]);
+    await saveClubFormSubmission(director, { organizationId: "club-a", templateKey: slipSeed.key, submissionId: "sub-d", answers: { child_name: "Riley Sample", street: "7 Example Road" }, submit: false }, now);
+    const row = state.submissions.find((candidate) => candidate.id === "sub-d")!;
+    expect(row.answers).toMatchObject({ child_name: "Riley Sample", street: "7 Example Road", activity: "Canoe trip" });
+    expect(openSensitiveAnswers("sub-d", row.sealedSensitiveAnswers as string)).toEqual({ physician_name: "Dr. Synthetic Physician" });
+    expect(row.hasSensitiveAnswers).toBe(true);
+    expect(row.templateVersion).toBe(slipSeed.version + 1);
+    // The director's own view of the saved draft (not editing) still reads them on their version... of the draft's new version.
+    const view = await getSubmissionForViewer(director, "sub-d");
+    expect(view.answers).toMatchObject({ activity: "Canoe trip", physician_name: "Dr. Synthetic Physician" });
+  });
+
+  it("carries answers to a removed field forward too", async () => {
+    state.submissions.push(draftRow());
+    let spec = await currentSpec();
+    spec = removeField(spec, idOf(spec, "activity"));
+    await saveClubFormDraft(slipSeed.key, { draft: spec, baseVersion: slipSeed.version }, "admin-1", now);
+    await publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now);
+    // A plain field with no sealed history can be removed; its stored answer is carried by the next save.
+    await saveClubFormSubmission(director, { organizationId: "club-a", templateKey: slipSeed.key, submissionId: "sub-d", answers: { child_name: "Riley Sample" }, submit: false }, now);
+    const row = state.submissions.find((candidate) => candidate.id === "sub-d")!;
+    expect(row.answers).toMatchObject({ activity: "Canoe trip" });
+  });
+
+  it("omits a hidden field with no answer when a form is viewed or printed, but shows it where it has one", async () => {
+    await hide(["activity"]);
+    state.submissions.push({ ...draftRow(), id: "sub-new", status: "SUBMITTED", submittedAt: now, sealedSensitiveAnswers: null, hasSensitiveAnswers: false, answers: { child_name: "Riley Sample" }, templateVersion: slipSeed.version + 1 });
+    state.submissions.push({ ...draftRow(), id: "sub-has", status: "SUBMITTED", submittedAt: now, sealedSensitiveAnswers: null, hasSensitiveAnswers: false, answers: { child_name: "Riley Sample", activity: "Canoe trip" }, templateVersion: slipSeed.version + 1 });
+    const render = async (id: string) => renderToStaticMarkup(createElement(ClubFormSubmissionView, { submission: await getSubmissionForViewer(director, id) }));
+    expect(await render("sub-new")).not.toContain(seedActivityLabel);
+    expect(await render("sub-has")).toContain(seedActivityLabel);
+  });
+});
+
+describe("the export formats each row by its own version (#712)", () => {
+  it("uses unique headings when a key was renamed, and each row's own version of the field", async () => {
+    const published = await currentSpec();
+    state.submissions.push({
+      id: "sub-1", templateId: "tpl-slip", organizationId: "club-a", clubYear: "2026-27", subjectName: "Riley", status: "SUBMITTED", submittedAt: now, enteredVia: "ATTENDEE",
+      answers: { activity: "Canoe trip" }, templateVersion: slipSeed.version, organization: { name: "Example Pathfinders" },
+    });
+    const renamed = renameFieldKey(published, idOf(published, "activity"), "activity_name");
+    await saveClubFormDraft(slipSeed.key, { draft: renamed, baseVersion: slipSeed.version }, "admin-1", now);
+    await publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now);
+    state.submissions.push({
+      id: "sub-2", templateId: "tpl-slip", organizationId: "club-a", clubYear: "2026-27", subjectName: "Sam", status: "SUBMITTED", submittedAt: now, enteredVia: "ATTENDEE",
+      answers: { activity_name: "Hike" }, templateVersion: slipSeed.version + 1, organization: { name: "Example Pathfinders" },
+    });
+    const { csv } = await buildClubFormsCsv(staff, { templateKey: slipSeed.key });
+    const header = csv.split("\n")[0];
+    expect(header).toContain(`${seedActivityLabel} (activity)`);
+    expect(header).toContain(`${seedActivityLabel} (activity_name)`);
+    const headings = header.split(",");
+    expect(new Set(headings).size).toBe(headings.length);
+    expect(csv).toContain("Canoe trip");
+    expect(csv).toContain("Hike");
   });
 });

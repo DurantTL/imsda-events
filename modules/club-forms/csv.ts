@@ -38,6 +38,7 @@ export async function buildClubFormsCsv(
     select: {
       clubYear: true,
       subjectName: true,
+      templateVersion: true,
       status: true,
       submittedAt: true,
       enteredVia: true,
@@ -46,7 +47,7 @@ export async function buildClubFormsCsv(
     },
   });
 
-  const header = ["Form", "Club", "Club year", "Member or subject", "Status", "Submitted at", "Entered by", ...columns.map((field) => field.label)];
+  const header = ["Form", "Club", "Club year", "Member or subject", "Status", "Submitted at", "Entered by", ...columns.map((column) => column.heading)];
   const body = rows.map((row) => {
     const answers = row.answers as Record<string, unknown>;
     return [
@@ -57,7 +58,7 @@ export async function buildClubFormsCsv(
       row.status,
       row.submittedAt?.toISOString() ?? "",
       row.enteredVia === "LINK" ? "Private link" : "Club director",
-      ...columns.map((field) => formatClubFormAnswer(field, answers[field.key])),
+      ...columns.map((column) => formatClubFormAnswer(column.byVersion.get(row.templateVersion) ?? column.latest, answers[column.key])),
     ];
   });
 

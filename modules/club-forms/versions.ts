@@ -124,15 +124,43 @@ export async function listClubFormTemplateVersions(current: ClubFormTemplateReco
   return [...records, current].sort((left, right) => left.version - right.version);
 }
 
-/** The columns a staff export needs: every non-sensitive field that any version had, oldest first, labelled by its newest version. */
-export function exportColumnsAcrossVersions(versions: readonly ClubFormTemplateRecord[], sensitiveKeys: ReadonlySet<string>) {
-  const columns = new Map<string, RegistrationFormField>();
+export type ExportColumn = {
+  key: string;
+  heading: string;
+  /** The field as the newest version that had it defines it. */
+  latest: RegistrationFormField;
+  /** The field as each version defines it, so a row is formatted by its own version. */
+  byVersion: Map<number, RegistrationFormField>;
+};
+
+/**
+ * The columns a staff export needs: every non-sensitive field any version had,
+ * oldest first. A key keeps one column; headings are unique, so two columns
+ * that carry the same label (a key that was renamed) get the key appended.
+ */
+export function exportColumnsAcrossVersions(versions: readonly ClubFormTemplateRecord[], sensitiveKeys: ReadonlySet<string>): ExportColumn[] {
+  const columns = new Map<string, ExportColumn>();
   for (const record of versions) {
     for (const field of allFields(record.definition)) {
-      if (!sensitiveKeys.has(field.key)) columns.set(field.key, field);
+      if (sensitiveKeys.has(field.key)) continue;
+      const column = columns.get(field.key) ?? { key: field.key, heading: field.label, latest: field, byVersion: new Map() };
+      column.latest = field;
+      column.heading = field.label;
+      column.byVersion.set(record.version, field);
+      columns.set(field.key, column);
     }
   }
-  return [...columns.values()];
+  const list = [...columns.values()];
+  const counts = new Map<string, number>();
+  for (const column of list) counts.set(column.heading, (counts.get(column.heading) ?? 0) + 1);
+  const used = new Set<string>();
+  for (const column of list) {
+    let heading = (counts.get(column.heading) ?? 0) > 1 ? `${column.heading} (${column.key})` : column.heading;
+    while (used.has(heading)) heading = `${heading} (${column.key})`;
+    used.add(heading);
+    column.heading = heading;
+  }
+  return list;
 }
 
 /** What earlier versions fix in place, read inside the publishing transaction. */

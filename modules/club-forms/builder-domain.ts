@@ -6,7 +6,7 @@ import {
   templateSpecProblems,
   type ClubFormTemplateRecord,
 } from "@/modules/club-forms/domain";
-import { registrationFormDefinitionSchema, type RegistrationFormDefinition } from "@/modules/forms/definition";
+import { formFieldScopes, formFieldTypes, registrationFormDefinitionSchema, type RegistrationFormDefinition } from "@/modules/forms/definition";
 
 /**
  * Pure rules for the club form builder (#712): the draft shape, the checks a
@@ -33,6 +33,59 @@ export const clubFormDraftSchema = z.object({
 }).strict();
 
 export type ClubFormDraftSpec = z.infer<typeof clubFormDraftSchema>;
+
+/** The largest draft stored, in bytes of JSON. */
+export const CLUB_FORM_DRAFT_MAX_BYTES = 400_000;
+
+const looseText = z.string().max(5000);
+const looseField = z.object({
+  id: z.string().min(1).max(80),
+  key: looseText,
+  label: looseText,
+  helpText: looseText.default(""),
+  type: z.enum(formFieldTypes),
+  scope: z.enum(formFieldScopes),
+  required: z.boolean(),
+  options: z.array(looseText).max(400).default([]),
+}).passthrough();
+const looseKeys = z.array(z.string().max(120)).max(800).default([]);
+
+/**
+ * What an unfinished draft must still be (#712): enough structure for the
+ * builder to open it, nothing more. Saves accept anything that parses here
+ * and report the full check's problems as warnings; publish runs the full
+ * check (`clubFormDraftSchema` and the protection rules) under the lock.
+ */
+export const clubFormDraftShapeSchema = z.object({
+  name: looseText,
+  description: looseText.default(""),
+  sortOrder: z.number().int().min(0).max(10000).default(0),
+  printLayout: z.enum(clubFormPrintLayouts).default("STANDARD"),
+  definition: z.object({
+    title: looseText,
+    description: looseText.default(""),
+    confirmationMessage: looseText.default(""),
+    sections: z.array(z.object({
+      id: z.string().min(1).max(80),
+      title: looseText,
+      description: looseText.default(""),
+      fields: z.array(looseField).max(100),
+    }).passthrough()).max(40),
+  }).passthrough(),
+  sectionNotes: z.record(z.string(), z.array(looseText).max(40)).default({}),
+  sensitiveFieldKeys: looseKeys,
+  birthDateFieldKeys: looseKeys,
+  staffOnlyFieldKeys: looseKeys,
+  hiddenFieldKeys: looseKeys,
+}).strict();
+
+/** Reads a stored or incoming draft for the builder to show; null when it is not even structurally a draft. */
+export function readDraftShape(raw: unknown): ClubFormDraftSpec | null {
+  if (!raw || typeof raw !== "object") return null;
+  if (Buffer.byteLength(JSON.stringify(raw), "utf8") > CLUB_FORM_DRAFT_MAX_BYTES) return null;
+  const parsed = clubFormDraftShapeSchema.safeParse(raw);
+  return parsed.success ? (parsed.data as unknown as ClubFormDraftSpec) : null;
+}
 
 /** What earlier published versions fix in place for a template. */
 export type ClubFormProtectionHistory = {

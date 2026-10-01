@@ -33,7 +33,7 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 
 loadEnvConfig(process.cwd());
 // Outbox rows are only written, never delivered, here: placeholders turn the
@@ -662,6 +662,7 @@ async function main() {
   assert(await prisma.clubFormTemplateVersion.count({ where: { templateId: copyRow.id, version: 1 } }) === 1, "version 1 of a new form is recorded");
   await templates.setClubFormTemplateEnabled(copy.key, true, users.admin);
   const oldFill = await submissions.saveClubFormSubmission(directorA, { organizationId: clubs.a, templateKey: copy.key, answers: slipAnswers, submit: true });
+  const draftFill = await submissions.saveClubFormSubmission(directorA, { organizationId: clubs.a, templateKey: copy.key, answers: slipAnswers, submit: false });
 
   const builderIdOf = (spec: import("../modules/club-forms/builder-domain").ClubFormDraftSpec, key: string) => allFields(spec.definition).find((field) => field.key === key)!.id;
   const viewOf = async () => builder.getClubFormBuilderView(copy.key);
@@ -690,18 +691,23 @@ async function main() {
   // The protection rules, against the real tables.
   const v2 = await viewOf();
   const physicianId = builderIdOf(v2.published, "physician_name");
-  await expectCode(
-    builder.saveClubFormDraft(copy.key, { draft: builderState.setFieldFlag(v2.published, physicianId, "sensitive", false), baseVersion: 2, expectedDraftUpdatedAt: null }, users.admin),
-    "VALIDATION_FAILED",
-    "a published sensitive flag cannot be cleared",
-  );
-  await expectCode(
-    builder.saveClubFormDraft(copy.key, { draft: builderState.removeField(v2.published, physicianId), baseVersion: 2, expectedDraftUpdatedAt: null }, users.admin),
-    "VALIDATION_FAILED",
-    "a sensitive field cannot be deleted once forms exist",
-  );
-  await builder.saveClubFormDraft(copy.key, { draft: builderState.setFieldFlag(v2.published, physicianId, "hidden", true), baseVersion: 2, expectedDraftUpdatedAt: null }, users.admin);
+  // An unfinished draft saves with warnings; publish enforces the protection rules under the lock.
+  const loosened = await builder.saveClubFormDraft(copy.key, { draft: builderState.setFieldFlag(v2.published, physicianId, "sensitive", false), baseVersion: 2, expectedDraftUpdatedAt: null }, users.admin);
+  assert(loosened.warnings.length > 0, "a cleared sensitive flag is flagged when the draft is saved");
+  await expectCode(builder.publishClubFormDraft(copy.key, { baseVersion: 2 }, users.admin), "VALIDATION_FAILED", "a published sensitive flag cannot be cleared");
+  const removedDraft = await builder.saveClubFormDraft(copy.key, { draft: builderState.removeField(v2.published, physicianId), baseVersion: 2, expectedDraftUpdatedAt: loosened.draftUpdatedAt }, users.admin);
+  assert(removedDraft.warnings.some((warning) => warning.key === "removed:physician_name"), "deleting a sensitive field is flagged when the draft is saved");
+  await expectCode(builder.publishClubFormDraft(copy.key, { baseVersion: 2 }, users.admin), "VALIDATION_FAILED", "a sensitive field cannot be deleted once forms exist");
+  assert((await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: copy.key } })).version === 2, "a refused publish changes nothing");
+  await builder.saveClubFormDraft(copy.key, { draft: builderState.setFieldFlag(v2.published, physicianId, "hidden", true), baseVersion: 2, expectedDraftUpdatedAt: removedDraft.draftUpdatedAt }, users.admin);
   assert((await builder.publishClubFormDraft(copy.key, { baseVersion: 2 }, users.admin)).version === 3, "hiding a sensitive field publishes");
+  // A draft started before the hide still holds the sealed answer. Editing never returns it, and saving again keeps it.
+  const editView = await submissions.getSubmissionForViewer(directorA, draftFill.id, "EDIT");
+  assert(editView.answers.physician_name === undefined && !JSON.stringify(editView).includes(SECRET_PHYSICIAN), "editing a draft never returns the answer to a hidden field");
+  await submissions.saveClubFormSubmission(directorA, { organizationId: clubs.a, templateKey: copy.key, submissionId: draftFill.id, answers: { child_name: "Riley Verify" }, submit: false });
+  const keptDraft = await prisma.clubFormSubmission.findUniqueOrThrow({ where: { id: draftFill.id } });
+  assert(keptDraft.sealedSensitiveAnswers !== null && sealed.openSensitiveAnswers(draftFill.id, keptDraft.sealedSensitiveAnswers).physician_name === SECRET_PHYSICIAN, "a sealed answer survives a draft re-save after the field was hidden");
+  assert(keptDraft.templateVersion === 3 && !(keptDraft.answers as Record<string, unknown>).physician_name, "the re-saved draft moves to the latest version with no plain copy of the sealed answer");
   const hiddenFill = await submissions.saveClubFormSubmission(directorA, { organizationId: clubs.a, templateKey: copy.key, answers: slipAnswers, submit: true });
   const hiddenRow = await prisma.clubFormSubmission.findUniqueOrThrow({ where: { id: hiddenFill.id } });
   assert(hiddenRow.templateVersion === 3, "a fill after hiding is on the new version");
@@ -738,8 +744,30 @@ async function main() {
     await templates.syncClubFormTemplates(prisma, { continueOnRefusal: true });
     const restored = await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } });
     assert(restored.name === original.name && restored.version === original.version, "a template never edited keeps updating from the code");
+
+    // A draft in progress pauses the sync; discarding it hands the template back to the code.
+    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { version: 0, name: "Verify draft name", draft: { placeholder: true }, draftUpdatedAt: new Date() } });
+    const paused = await templates.syncClubFormTemplates(prisma, { continueOnRefusal: true });
+    assert(paused.skipped.some((item) => item.key === SLIP && item.reason === "draft in progress"), "the sync skips a template with a draft in progress");
+    assert((await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } })).name === "Verify draft name", "the sync did not overwrite a template with a draft");
+    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { draft: Prisma.DbNull, draftUpdatedAt: null } });
+    await templates.syncClubFormTemplates(prisma, { continueOnRefusal: true });
+    assert((await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } })).name === original.name, "a discarded draft makes the template sync-managed again");
+
+    // A customized template ignores the code's definition, but a key the code added as sensitive is still sealed.
+    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { customizedAt: new Date(), sensitiveFieldKeys: original.sensitiveFieldKeys.filter((key) => key !== "physician_name") } });
+    const plainStored = await prisma.clubFormSubmission.create({
+      data: {
+        templateId: original.id, organizationId: clubs.a, clubYear, status: "DRAFT", templateVersion: 1, enteredVia: "ATTENDEE", enteredByAccountId: accounts.a,
+        answers: { child_name: "Riley Verify", physician_name: SECRET_PHYSICIAN },
+      },
+    });
+    await templates.syncClubFormTemplates(prisma, { continueOnRefusal: true });
+    const sealedNow = await prisma.clubFormSubmission.findUniqueOrThrow({ where: { id: plainStored.id } });
+    assert(!(sealedNow.answers as Record<string, unknown>).physician_name && sealedNow.sealedSensitiveAnswers !== null && sealed.openSensitiveAnswers(plainStored.id, sealedNow.sealedSensitiveAnswers).physician_name === SECRET_PHYSICIAN, "the sync seals a key the code added for a template edited in the app");
+    assert((await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } })).sensitiveFieldKeys.includes("physician_name"), "the stored sensitive keys gained the code's key");
   } finally {
-    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { name: original.name, version: original.version, customizedAt: original.customizedAt } });
+    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { name: original.name, version: original.version, customizedAt: original.customizedAt, sensitiveFieldKeys: original.sensitiveFieldKeys, draft: Prisma.DbNull, draftUpdatedAt: null } });
   }
 
   // Club forms and links block deleting a club.

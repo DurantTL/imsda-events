@@ -6,7 +6,8 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   blankClubFormSpec,
   checkClubFormDraft,
-  clubFormDraftSchema,
+  CLUB_FORM_DRAFT_MAX_BYTES,
+  readDraftShape,
   copySpec,
   newlySensitiveKeys,
   NO_PROTECTION_HISTORY,
@@ -101,6 +102,10 @@ export type ClubFormBuilderView = {
   /** The unpublished draft, or null. The editor starts from this when present. */
   draft: ClubFormDraftSpec | null;
   draftUpdatedAt: string | null;
+  /** A draft is stored but cannot be read (it no longer parses): show an error and offer to discard it. */
+  draftUnreadable: boolean;
+  /** Problems the unpublished draft still has, shown as warnings; publish refuses until they are fixed. */
+  draftWarnings: BuilderIssue[];
   /** Keys that keep their sensitive or birth-date setting for good, and so cannot be deleted while submissions exist. */
   lockedSensitiveKeys: string[];
   lockedBirthDateKeys: string[];
@@ -119,7 +124,8 @@ export async function getClubFormBuilderView(key: string): Promise<ClubFormBuild
     prisma.clubFormSubmission.count({ where: { templateId: row.id } }),
   ]);
   const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === key);
-  const parsedDraft = row.draft ? clubFormDraftSchema.safeParse(row.draft) : null;
+  const draft = row.draft ? readDraftShape(row.draft) : null;
+  const draftWarnings = draft ? checkClubFormDraft(draft, history).issues : [];
   return {
     key,
     version: row.version,
@@ -128,8 +134,10 @@ export async function getClubFormBuilderView(key: string): Promise<ClubFormBuild
     submissionCount,
     needsSync: Boolean(seed && !row.customizedAt && row.version < seed.version),
     published: specFromRecord({ ...record, sortOrder: row.sortOrder }),
-    draft: parsedDraft?.success ? parsedDraft.data : null,
-    draftUpdatedAt: parsedDraft?.success ? row.draftUpdatedAt?.toISOString() ?? null : null,
+    draft,
+    draftUpdatedAt: row.draft ? row.draftUpdatedAt?.toISOString() ?? null : null,
+    draftUnreadable: Boolean(row.draft) && draft === null,
+    draftWarnings,
     lockedSensitiveKeys: history.everSensitiveKeys.filter((candidate) => history.publishedFieldKeys.includes(candidate)),
     lockedBirthDateKeys: history.everBirthDateKeys.filter((candidate) => history.publishedFieldKeys.includes(candidate)),
     versions: versions.map((version) => ({ version: version.version, recordedAt: version.createdAt.toISOString() })),
@@ -143,11 +151,13 @@ export type SaveDraftInput = {
 };
 
 /**
- * Saves the draft of the next version. The whole draft is validated on every
- * save with the same schema the fill-in and submission code uses, plus the
- * sensitive-flag protection rules; a draft with problems is refused with
- * field-level issues and nothing is stored. The first save marks the template
- * as edited in the app, so `club-forms:sync` stops updating it from code.
+ * Saves the draft of the next version. An unfinished draft can be saved: it
+ * only has to be structurally a draft and under the size cap. The full check
+ * (the schema the fill-in and submission code use, plus the sensitive-flag
+ * protection rules) runs here too, but its problems come back as warnings; it
+ * is publish that refuses, under the lock. Saving a draft does not mark the
+ * template as edited in the app: that happens at its first publish. While a
+ * draft exists the sync leaves the template alone.
  */
 export async function saveClubFormDraft(key: string, input: SaveDraftInput, actorUserId: string, now = new Date()) {
   return getPrisma().$transaction(async (tx) => {
@@ -157,15 +167,17 @@ export async function saveClubFormDraft(key: string, input: SaveDraftInput, acto
     const storedStamp = row.draft ? row.draftUpdatedAt?.toISOString() ?? null : null;
     if ((input.expectedDraftUpdatedAt ?? null) !== storedStamp) throw changed("Someone else saved a draft of this form. Reload the page to see it.");
     const history = await loadProtectionHistory(tx, row);
-    const check = checkClubFormDraft(input.draft, history);
-    if (!check.ok) throw validationFailed(check.issues);
+    const shaped = readDraftShape(input.draft);
+    if (!shaped) {
+      throw validationFailed([{ key: "template", message: `This draft could not be read, or it is larger than ${Math.round(CLUB_FORM_DRAFT_MAX_BYTES / 1000)} KB.` }]);
+    }
+    const warnings = checkClubFormDraft(shaped, history).issues;
     await tx.clubFormTemplate.update({
       where: { id: row.id },
       data: {
-        draft: check.spec as unknown as Prisma.InputJsonValue,
+        draft: shaped as unknown as Prisma.InputJsonValue,
         draftUpdatedAt: now,
         draftUpdatedByUserId: actorUserId,
-        customizedAt: row.customizedAt ?? now,
       },
     });
     await writeAuditLog({
@@ -174,13 +186,13 @@ export async function saveClubFormDraft(key: string, input: SaveDraftInput, acto
       entityType: "ClubFormTemplate",
       entityId: row.id,
       summary: "Saved a draft of a club form.",
-      metadata: { templateKey: key, version: row.version },
+      metadata: { templateKey: key, version: row.version, warnings: warnings.length },
     }, tx);
-    return { key, version: row.version, draftUpdatedAt: now.toISOString() };
+    return { key, version: row.version, draftUpdatedAt: now.toISOString(), warnings };
   });
 }
 
-/** Throws the draft away. The template stays marked as edited in the app. */
+/** Throws the draft away. A template that was never published from the app is managed by the sync again. */
 export async function discardClubFormDraft(key: string, actorUserId: string) {
   return getPrisma().$transaction(async (tx) => {
     const row = await lockRow(tx, key);
@@ -221,8 +233,7 @@ export async function publishClubFormDraft(key: string, input: { baseVersion: nu
     const check = checkClubFormDraft(row.draft, history);
     if (!check.ok) throw validationFailed(check.issues);
     const spec = check.spec;
-    const published = asRecord(row);
-    const newly = newlySensitiveKeys(spec, published.sensitiveFieldKeys);
+    const newly = newlySensitiveKeys(spec, row.sensitiveFieldKeys);
     const nextVersion = row.version + 1;
 
     // Keep the version being replaced, whatever path wrote it, before it is overwritten.

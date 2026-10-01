@@ -57,7 +57,7 @@ function union(stored: readonly string[], seed: readonly string[] = []) {
 async function readLockedKeys(tx: Prisma.TransactionClient, templateId: string) {
   const row = await tx.clubFormTemplate.findUnique({
     where: { id: templateId },
-    select: { version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true, customizedAt: true },
+    select: { version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true, customizedAt: true, draftUpdatedAt: true },
   });
   if (!row) throw new Error("Club form template disappeared during a write.");
   return row;
