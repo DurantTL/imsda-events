@@ -6342,7 +6342,6 @@ select:focus-visible {
   color: #5f7078;
   font-size: calc(6.5pt * var(--badge-font-scale, 1));
   font-weight: 700;
-  text-transform: capitalize;
 }
 .badge-label-card footer span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 

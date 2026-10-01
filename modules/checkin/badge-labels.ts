@@ -1,3 +1,9 @@
+import {
+  registrationFormDefinitionSchema,
+  type RegistrationFormDefinition,
+  type RegistrationFormField,
+} from "@/modules/forms/definition";
+import { withAttendeeTypeOptionsForAttendee } from "@/modules/attendee-types/form-options";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import { buildOperationalReport } from "@/modules/reporting/operational-reports";
 import {
@@ -64,6 +70,8 @@ export function normalizeBadgeOrientation(value: string | undefined): BadgeOrien
 export type BadgeLabel = {
   attendeeId: string;
   attendeeType: string;
+  /** What prints on the optional attendee-type line. */
+  attendeeTypeLabel: string;
   confirmationCode: string;
   firstName: string;
   lastName: string;
@@ -89,6 +97,52 @@ export function normalizeBadgeShowTitle(value: string | string[] | undefined) {
   // unchecked box leaves only "0" and a checked one ends with "1".
   const last = Array.isArray(value) ? value[value.length - 1] : value;
   return last !== "0";
+}
+
+/** The attendee-type line prints unless the query explicitly sends `type=0`. */
+export function normalizeBadgeShowAttendeeType(value: string | string[] | undefined) {
+  const last = Array.isArray(value) ? value[value.length - 1] : value;
+  return last !== "0";
+}
+
+function titleCase(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/(^|\s|-)([a-z])/g, (_, lead: string, letter: string) => `${lead}${letter.toUpperCase()}`);
+}
+
+/**
+ * The attendee-type line: the label of the attendee's own answer to the
+ * form's explicit `attendee_type` SELECT/RADIO question at ATTENDEE scope;
+ * otherwise the event's configured type label; otherwise the system label.
+ */
+function attendeeTypeLabelFor(
+  registration: RegistrationRecord,
+  attendee: RegistrationRecord["attendees"][number],
+  definition: RegistrationFormDefinition | null,
+) {
+  const options = registration.publicSubmission?.attendeeTypeOptions ?? [];
+  const answer = attendee.responses?.attendee_type;
+  const raw = typeof answer === "string" ? answer.trim() : "";
+  if (raw && definition) {
+    const hydrated = withAttendeeTypeOptionsForAttendee(definition, options, raw);
+    const field: RegistrationFormField | undefined = hydrated.sections
+      .flatMap((section) => section.fields)
+      .find((candidate) => (
+        candidate.key === "attendee_type"
+        && candidate.scope === "ATTENDEE"
+        && (candidate.type === "SELECT" || candidate.type === "RADIO")
+      ));
+    // Only a real choice prints; an unknown stored value never reaches a badge.
+    if (field?.options.includes(raw)) {
+      const label = (field.optionLabels?.[raw] ?? raw).trim();
+      if (label) return label;
+    }
+  }
+  const configured = options
+    .find((type) => type.code === attendee.attendeeTypeDefinitionCode)?.label;
+  return configured?.trim() || titleCase(attendee.attendeeType);
 }
 
 export function normalizeBadgeTemplate(value: string | undefined) {
@@ -120,10 +174,16 @@ export function buildBadgeLabels(
   );
 
   return registrations
-    .flatMap((registration) => (
-      registration.attendees.map((attendee) => ({
+    .flatMap((registration) => {
+      // Each registration carries its own form version; parse it once.
+      const parsed = registrationFormDefinitionSchema.safeParse(
+        registration.publicSubmission?.definition,
+      );
+      const definition = parsed.success ? parsed.data : null;
+      return registration.attendees.map((attendee) => ({
         attendeeId: attendee.id,
         attendeeType: attendee.attendeeType,
+        attendeeTypeLabel: attendeeTypeLabelFor(registration, attendee, definition),
         confirmationCode: registration.confirmationCode,
         firstName: attendee.firstName,
         lastName: attendee.lastName,
@@ -133,8 +193,8 @@ export function buildBadgeLabels(
         shirtSizeConfirmed: Boolean(
           shirtSizeConfirmedAtFromResponses(attendee.responses),
         ),
-      }))
-    ))
+      }));
+    })
     .sort((left, right) => (
       left.lastName.localeCompare(right.lastName)
       || left.firstName.localeCompare(right.firstName)
