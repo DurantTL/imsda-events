@@ -30,6 +30,7 @@ export async function ClubOverview({
   honorsHref,
   rosterYear,
   portalView = false,
+  headingLevel = 2,
 }: {
   organizationId: string;
   /**
@@ -40,6 +41,8 @@ export async function ClubOverview({
   rosterYear?: string;
   /** Rendered in the account portal (not the staff admin pages), so empty states can point to the conference office. */
   portalView?: boolean;
+  /** Heading level of the summary tiles (see ClubYearTiles): 3 when the page has its own h2 above. */
+  headingLevel?: 2 | 3;
   birthDatesEndpoint?: string;
   reportHref: (month: string) => string;
   /** Staff can open and file a month with no report yet; others only view. */
@@ -96,6 +99,7 @@ export async function ClubOverview({
   return (
     <>
       <ClubYearTiles
+        headingLevel={headingLevel}
         compliance={complianceTile}
         complianceHref="#open-club-roster"
         events={{ open: open.length, registered: registered.length }}

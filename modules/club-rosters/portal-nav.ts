@@ -25,14 +25,14 @@ export function clubPortalNavItems({
     ...(roster ? [{ href: `${base}/honors`, label: "Honors", group: "People" }] : []),
     ...(roster ? [{ href: `${base}/class-tracking`, label: "Class tracking", group: "People" }] : []),
     ...(roster ? [{ href: `${base}/exports`, label: "Honors & class reports", matchChildren: true, group: "People" }] : []),
-    { href: `${base}/events`, label: "Events", matchChildren: true, group: "Events" },
+    { href: `${base}/events`, label: "Events", matchChildren: true, group: "Events", hideGroupLabel: true },
     // Club forms (#610) hold health and conduct answers: the club's director and deputy only.
-    ...(isClubFormsRole(role) ? [{ href: `${base}/forms`, label: "Forms", matchChildren: true, group: "Events" }] : []),
-    ...(capabilities.submitReports ? [{ href: `${base}/records`, label: "Monthly Records", matchChildren: true, group: "Records" }] : []),
+    ...(isClubFormsRole(role) ? [{ href: `${base}/forms`, label: "Forms", matchChildren: true, group: "Events", hideGroupLabel: true }] : []),
+    ...(capabilities.submitReports ? [{ href: `${base}/records`, label: "Monthly Records", matchChildren: true, group: "Records", hideGroupLabel: true }] : []),
     // Supplies on hand live inside Orders (#654), so there is no separate Supplies entry.
-    ...(roster ? [{ href: `${base}/orders`, label: "Orders", group: "Orders" }] : []),
+    ...(roster ? [{ href: `${base}/orders`, label: "Orders", group: "Orders", hideGroupLabel: true }] : []),
     ...(capabilities.manageTeam || capabilities.editProfile
-      ? [{ href: `${base}/club-info`, label: "Club info", group: "Club" }]
+      ? [{ href: `${base}/club-info`, label: "Club info", group: "Club", hideGroupLabel: true }]
       : []),
   ];
 }
@@ -41,6 +41,6 @@ export function clubPortalNavItems({
 export function clubReporterNavItems({ base, capabilities }: { base: string; capabilities: ClubCapabilities }): AccountNavItem[] {
   return [
     { href: base, label: "Home" },
-    ...(capabilities.submitReports ? [{ href: `${base}/records`, label: "Monthly Records", matchChildren: true, group: "Records" }] : []),
+    ...(capabilities.submitReports ? [{ href: `${base}/records`, label: "Monthly Records", matchChildren: true, group: "Records", hideGroupLabel: true }] : []),
   ];
 }

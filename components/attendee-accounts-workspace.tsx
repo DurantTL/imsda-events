@@ -5,6 +5,7 @@ import { LogOut, Mail, MapPinned, Search, ShieldOff } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 import type { AttendeeAccountSummary } from "@/modules/system-admin/user-admin";
+import { cardCell } from "@/components/table-card-labels";
 
 type PendingAccountAction = {
   account: AttendeeAccountSummary;
@@ -121,30 +122,30 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
           <p className="report-empty">No accounts match.</p>
         ) : (
           <div className="report-table-wrap">
-            <table className="report-table">
-              <thead><tr><th>Account</th><th>Club roles</th><th>Two-step</th><th>Last sign-in</th><th><span className="sr-only">Actions</span></th></tr></thead>
-              <tbody>
+            <table role="table" className="report-table table-cards">
+              <thead role="rowgroup"><tr role="row"><th role="columnheader">Account</th><th role="columnheader">Club roles</th><th role="columnheader">Two-step</th><th role="columnheader">Last sign-in</th><th role="columnheader"><span className="sr-only">Actions</span></th></tr></thead>
+              <tbody role="rowgroup">
                 {accounts.map((account) => (
-                  <tr key={account.id}>
-                    <td>
+                  <tr role="row" key={account.id}>
+                    <td {...cardCell("Account")}>
                       <strong translate="no">{account.displayName || "—"}</strong><br />
                       <small translate="no">{account.email}</small>
                       {account.disabled && <><br /><span className="status-chip coral">Disabled</span></>}
                     </td>
-                    <td>
+                    <td {...cardCell("Club roles")}>
                       {account.areaCoordinator && <><span className="status-chip green">Area Coordinator</span>{account.clubRoles.length > 0 && <br />}</>}
                       {account.clubRoles.length === 0
                         ? (account.areaCoordinator ? null : "—")
                         : account.clubRoles.map((role) => `${clubDirectorRoleLabels[role.role]}, ${role.clubName}`).join("; ")}
                     </td>
-                    <td>
+                    <td {...cardCell("Two-step")}>
                       {account.authenticatorOn ? "Authenticator" : ""}
                       {account.authenticatorOn && account.passkeyCount > 0 ? " + " : ""}
                       {account.passkeyCount > 0 ? `${account.passkeyCount} passkey${account.passkeyCount === 1 ? "" : "s"}` : ""}
                       {!account.authenticatorOn && account.passkeyCount === 0 ? "Not set up" : ""}
                     </td>
-                    <td>{when(account.lastSignedInAt)}</td>
-                    <td>
+                    <td {...cardCell("Last sign-in")}>{when(account.lastSignedInAt)}</td>
+                    <td {...cardCell(null)}>
                       <div className="team-account-actions">
                         {(account.authenticatorOn || account.passkeyCount > 0) && (
                           <button

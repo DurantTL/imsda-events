@@ -353,7 +353,8 @@ export function buildDeadlinesCard(input: InfoCardsInput): { rows: DeadlineRow[]
 
 export type FeeTier = { amountCents: number; note: string | null };
 export type FeeLine = { label: string; unit: string | null; tiers: FeeTier[] };
-export type FeeGroup = { title: string; lines: FeeLine[] };
+/** `isSingles`: the group of plain one-price lines, which the card heading ("Fees") already names. */
+export type FeeGroup = { title: string; lines: FeeLine[]; isSingles?: boolean };
 export type FeeSection = { title: string | null; groups: FeeGroup[] };
 export type FeesCard = { sections: FeeSection[]; notes: string[] };
 
@@ -429,7 +430,7 @@ function feeGroupsFor(form: InfoCardForm): FeeGroup[] {
       }
     }
   }
-  if (singles.length > 0) groups.unshift({ title: "Fees", lines: singles });
+  if (singles.length > 0) groups.unshift({ title: "Fees", lines: singles, isSingles: true });
   return groups;
 }
 
