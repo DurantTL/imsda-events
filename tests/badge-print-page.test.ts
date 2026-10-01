@@ -65,6 +65,21 @@ describe("printable name badge page layout options", () => {
     expect(markup).toContain("Export CSV for Avery Design &amp; Print");
   });
 
+  it("carries the Show attendee type setting to the export link", async () => {
+    expect(await render({ type: "0" })).toContain("badge-labels-csv?type=0");
+    expect(await render({ type: ["0", "1"] })).not.toContain("badge-labels-csv?type=0");
+    expect(await render({ type: "0", positionField: "none" })).toContain("badge-labels-csv?type=0");
+  });
+
+  it("prints on zero-margin portrait letter paper for every template and orientation", async () => {
+    for (const template of ["avery-5395", "avery-5392", "avery-presta-94237"]) {
+      for (const orientation of ["landscape", "portrait"]) {
+        const markup = await render({ template, orientation });
+        expect(markup).toContain("<style>@page { size: letter portrait; margin: 0; }</style>");
+      }
+    }
+  });
+
   it("offers a Position column select defaulting to none, and carries an eligible choice to the export link", async () => {
     const definition = {
       title: "Synthetic Form",

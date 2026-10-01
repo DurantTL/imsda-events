@@ -14,6 +14,7 @@ import {
   listBadgeBackgroundOptions,
 } from "@/modules/checkin/badge-background-repository";
 import {
+  badgePrintPageRule,
   badgeTemplates,
   buildBadgeLabels,
   badgeTextSizes,
@@ -93,6 +94,10 @@ export default async function PrintableNameBadgesPage({
     getEventBadgeBackground(event.id),
     canConfigure ? listBadgeBackgroundOptions(event.id) : Promise.resolve([]),
   ]);
+  const csvParams = new URLSearchParams();
+  if (positionField) csvParams.set("positionField", positionField);
+  if (!showAttendeeType) csvParams.set("type", "0");
+  const csvHref = `/api/events/${encodeURIComponent(event.id)}/exports/badge-labels-csv${csvParams.size > 0 ? `?${csvParams}` : ""}`;
   const sheets = paginateBadgeLabels(labels, templateId, startingPosition);
   const collectsShirtSizes = eventCollectsShirtSizes(event);
   const missingShirtSizes = collectsShirtSizes
@@ -101,7 +106,7 @@ export default async function PrintableNameBadgesPage({
 
   return (
     <section className="page-stack badge-print-page">
-      <style>{"@page { size: letter portrait; margin: 0; }"}</style>
+      <style>{badgePrintPageRule}</style>
       <div className="page-intro badge-print-intro">
         <div>
           <p className="eyebrow">Convention preparation</p>
@@ -123,7 +128,7 @@ export default async function PrintableNameBadgesPage({
             <a
               className="secondary-button"
               download
-              href={`/api/events/${encodeURIComponent(event.id)}/exports/badge-labels-csv${positionField ? `?positionField=${encodeURIComponent(positionField)}` : ""}`}
+              href={csvHref}
             >
               Export CSV for Avery Design &amp; Print
             </a>

@@ -14,8 +14,13 @@ import { isCheckInBookExtraField } from "@/modules/reporting/check-in-book";
  * Position is an explicit staff choice, never guessed: only a plain text or
  * single-choice field that is not sensitive, and not controlled (directly or
  * through a chain) by a sensitive field, can be chosen.
+ *
+ * Attendee type is the last column so existing Avery templates keep mapping
+ * ID, Name and Position. It carries the same label the badge prints. When the
+ * page's "Show attendee type" setting is off the column stays in the file (so
+ * the header never changes under a saved Avery merge) with every value empty.
  */
-export const badgeCsvHeader = ["ID", "Name", "Position"] as const;
+export const badgeCsvHeader = ["ID", "Name", "Position", "Attendee type"] as const;
 
 const positionFieldTypes = new Set(["TEXT", "SELECT", "RADIO"]);
 const positionScopes = ["ATTENDEE", "REGISTRATION"] as const;
@@ -73,6 +78,7 @@ export function eligiblePositionField(
 export function buildBadgeCsvRows(
   registrations: RegistrationRecord[],
   positionField: string | null = null,
+  showAttendeeType = true,
 ): string[][] {
   const positionByAttendee = new Map<string, string>();
   if (positionField) {
@@ -101,6 +107,7 @@ export function buildBadgeCsvRows(
       label.confirmationCode,
       `${label.firstName} ${label.lastName}`.trim(),
       positionByAttendee.get(label.attendeeId) ?? "",
+      showAttendeeType ? label.attendeeTypeLabel : "",
     ]),
   ];
 }
