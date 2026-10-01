@@ -7104,6 +7104,12 @@ select:focus-visible {
 .translate-hint > svg { flex: 0 0 auto; margin-top: 2px; }
 .translate-hint a { color: var(--imsda-navy); font-weight: 700; text-underline-offset: 3px; }
 .public-registration-embed .translate-hint { display: none; }
+@media (max-width: 640px) {
+  .translate-hint { gap: 6px; padding: 6px 12px; line-height: 1.35; }
+  .translate-hint > svg { margin-top: 1px; }
+  /* The link text already says "How to translate"; the English sentence adds two more lines. */
+  .translate-hint-en { display: none; }
+}
 
 /* Honors Weekend setup (#357) */
 .honor-session-list { display: grid; gap: 8px; margin: 0 0 16px; padding: 0; list-style: none; }
@@ -7329,7 +7335,7 @@ select:focus-visible {
 .account-nav ul::-webkit-scrollbar { display: none; }
 .account-nav li { flex: none; }
 .account-nav a {
-  display: inline-flex; min-height: 42px; align-items: center; border-radius: 10px; padding: 8px 15px;
+  display: inline-flex; min-height: 44px; align-items: center; border-radius: 10px; padding: 8px 15px;
   color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.76rem); font-weight: 800; text-decoration: none; white-space: nowrap;
 }
 .account-nav a:hover { background: var(--imsda-navy-soft); color: var(--imsda-navy); }
@@ -7340,6 +7346,13 @@ select:focus-visible {
 .account-nav-secondary .account-nav-group > ul { border-width: 0; }
 .account-nav-group-label {
   color: var(--imsda-navy); font-size: max(var(--type-floor, 0px), 0.72rem); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap;
+}
+/* Scroll cue for a tab row that overflows: a fade on each side that still has
+   tabs hidden (account-section-nav.tsx keeps data-fade-start/-end current). */
+.account-nav[data-fade-end="true"] > ul { mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+.account-nav[data-fade-start="true"] > ul { mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); }
+.account-nav[data-fade-start="true"][data-fade-end="true"] > ul {
+  mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
 }
 .account-nav-secondary { width: 100%; margin: 0; }
 .account-nav-secondary ul { border-width: 0 0 1px; border-radius: 0; background: transparent; padding: 0; gap: 2px; }
@@ -7412,7 +7425,27 @@ select:focus-visible {
   .club-home-stat svg { display: none; }
   .club-home-stat strong { font-size: 1.3rem; }
   .club-home-stat span { font-size: var(--text-helper-min); line-height: 1.3; }
-  .account-nav-primary ul { mask-image: linear-gradient(to right, #000 88%, transparent); }
+}
+@media (max-width: 640px) {
+  /* Club roster toolbar on a phone: every action is a full-width 44px row,
+     with one even gap between them. */
+  .club-roster-heading-actions { display: grid; flex: 1 1 100%; grid-template-columns: 1fr; justify-content: stretch; gap: 8px; }
+  .club-roster-heading-actions .count-badge { justify-self: start; }
+  .club-roster-heading-actions :is(.primary-button, .secondary-button) { width: 100%; min-height: 44px; justify-content: center; }
+  .club-roster-heading .club-roster-heading-actions .secondary-button { width: 100%; }
+  /* Same for a card heading's action pair (Monthly Records meetings): it overflowed 390px. */
+  .club-roster-heading > .club-team-invite-actions { display: grid; flex: 1 1 100%; grid-template-columns: 1fr; gap: 8px; }
+  .club-roster-heading > .club-team-invite-actions :is(.primary-button, .secondary-button) { width: 100%; min-height: 44px; justify-content: center; white-space: normal; }
+  .club-roster-toolbar { display: grid; grid-template-columns: 1fr; justify-content: stretch; gap: 8px; }
+  .club-roster-toolbar .roster-csv-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .club-roster-toolbar .roster-csv-actions > :is(a, button),
+  .club-roster-toolbar > .text-button {
+    display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 6px;
+    border: 1px solid var(--line); border-radius: 10px; background: #fff; padding: 8px 12px; text-decoration: none;
+  }
+  /* The three Monthly Records counters: one even column instead of 2 + 1. */
+  .club-roster-layout .club-home-stats { grid-template-columns: 1fr; gap: 8px; }
+  .club-roster-layout .club-home-stat { grid-template-columns: minmax(2ch, auto) 1fr; align-items: center; gap: 12px; }
 }
 @media (max-width: 580px) {
   .account-nav, .account-page-body, .account-overview-grid { margin-right: 12px; margin-left: 12px; }
@@ -8342,4 +8375,73 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 /* Narrow phones: keep long page titles in the header on one line (#685). */
 @media (max-width: 400px) {
   .workspace-header h1 { font-size: 1rem; }
+}
+
+/* Issue #686 - mobile pass 3: report and overview tables as stacked cards on
+   phones. `table.table-cards` is the opt-in. Everything is CSS plus markup the
+   server already renders (data-label on each cell via cardCell(), static ARIA
+   roles on the table parts so the display changes keep table semantics), so the
+   first paint is already cards. Desktop is untouched: all rules sit inside the
+   media query. The doubled class (.table-cards.table-cards) beats desktop
+   rules such as `.report-table td:last-child { width: 120px }` and the
+   roster/seminar/team nowrap rules without !important. */
+@media screen and (max-width: 600px) {
+  .report-table-wrap:has(> table.table-cards),
+  .table-wrap:has(> table.table-cards),
+  .reminder-recipient-table-wrap:has(> table.table-cards) { overflow: visible; }
+
+  table.table-cards.table-cards,
+  table.table-cards.table-cards > tbody,
+  table.table-cards.table-cards > caption { display: block; width: 100%; box-sizing: border-box; min-width: 0; }
+
+  /* Visually hidden but still in the accessibility tree: the column headers
+     stay announced, and can never clip. */
+  table.table-cards.table-cards > thead {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+    clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+
+  table.table-cards.table-cards > tbody > tr {
+    display: flex; flex-direction: column; box-sizing: border-box; width: 100%;
+    margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--line, #d6dee2); border-radius: 12px; background: #fff;
+  }
+  table.table-cards.table-cards > tbody > tr > :is(th, td) {
+    display: block; box-sizing: border-box; width: 100%; min-width: 0; margin: 0;
+    border: 0; padding: 4px 0; text-align: left; white-space: normal; overflow-wrap: anywhere;
+  }
+
+  /* The row header is the card title, always first (the points table lists
+     Rank before Club, the special-roles table Role before Name). */
+  table.table-cards.table-cards > tbody > tr > th[scope="row"] {
+    order: -1; margin-bottom: 4px; padding-bottom: 8px; border-bottom: 1px solid #eaf0f2;
+    font-size: max(var(--type-body-floor, 0px), 0.9rem); overflow-wrap: break-word; word-break: normal;
+  }
+
+  /* "Header: value" lines. The label floats into a left gutter (negative margin
+     into the cell's padding), so a label that wraps to two lines grows the row
+     instead of overlapping the next one. flow-root contains the float. */
+  table.table-cards.table-cards > tbody > tr > td[data-label] {
+    display: flow-root; padding-left: 8.5rem; font-size: max(var(--type-body-floor, 0px), 0.8rem);
+  }
+  table.table-cards > tbody > tr > td[data-label]::before {
+    content: attr(data-label); content: attr(data-label) / ""; float: left; width: 7.75rem; margin-left: -8.5rem;
+    color: var(--muted); font-weight: 700; font-size: max(var(--type-floor, 0px), 0.68rem);
+    overflow-wrap: break-word; text-transform: none; letter-spacing: 0;
+  }
+  /* Long labels and cells that hold controls: label above, value full width. */
+  table.table-cards.table-cards > tbody > tr > td[data-label]:is([data-label-long], :has(button, .team-account-actions)) { padding-left: 0; }
+  table.table-cards > tbody > tr > td[data-label]:is([data-label-long], :has(button, .team-account-actions))::before {
+    float: none; display: block; width: auto; margin: 0 0 2px;
+  }
+  table.table-cards .team-account-actions { flex-wrap: wrap; }
+  /* Unlabelled (sr-only header) action cells: just the controls, wrapping. */
+  table.table-cards.table-cards > tbody > tr > td:not([data-label]) { display: flex; flex-wrap: wrap; gap: 8px; }
+  table.table-cards.table-cards > tbody > tr > td:empty { display: none; }
+
+  /* Month grids: two short "Sep  81" cells per line. The label takes the free
+     space (margin-right: auto) so the value and a following "late" stay together. */
+  .club-reports-grid table.table-cards.table-cards > tbody > tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 14px; }
+  .club-reports-grid table.table-cards.table-cards > tbody > tr > th[scope="row"] { grid-column: 1 / -1; }
+  .club-reports-grid table.table-cards.table-cards > tbody > tr > td[data-label] { display: flex; align-items: baseline; gap: 6px; padding-left: 0; }
+  .club-reports-grid table.table-cards > tbody > tr > td[data-label]::before { float: none; width: auto; margin: 0 auto 0 0; }
 }

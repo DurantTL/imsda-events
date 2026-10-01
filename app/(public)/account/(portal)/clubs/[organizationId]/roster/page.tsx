@@ -45,7 +45,6 @@ export default async function ClubRosterPage({
   const registrationHref = registrationReturnTo(organizationId, returnToParam);
   return (
     <>
-      <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
       {registrationHref && <BackLink href={registrationHref}>Back to registration</BackLink>}
       <p className="quiet-copy">
         <a href={`/account/clubs/${organizationId}/roster/export`}>Build a roster export</a> for an outside camporee.

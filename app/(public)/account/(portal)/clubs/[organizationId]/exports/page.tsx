@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { BackLink } from "@/components/back-link";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 
 export const metadata: Metadata = { title: "Reports" };
@@ -18,7 +17,6 @@ export default async function ClubExportsPage({ params }: { params: Promise<{ or
   const api = `/api/attendee/clubs/${organizationId}/exports`;
   return (
     <>
-      <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
       <section className="panel" aria-labelledby="club-exports-heading">
         <h2 id="club-exports-heading">Reports</h2>
         <p className="muted">
