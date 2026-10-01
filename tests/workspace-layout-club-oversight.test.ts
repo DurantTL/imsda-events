@@ -109,6 +109,6 @@ describe("WorkspaceShell club oversight (#481)", () => {
     const children = (tree.props as { children: ReactNode }).children;
     const banner = (Array.isArray(children) ? children : [children])
       .find((child): child is ReactElement => Boolean(child) && (child as ReactElement).type === ActAsBanner);
-    expect(banner?.props).toEqual({ acting });
+    expect(banner?.props).toEqual({ acting, inShell: true });
   });
 });

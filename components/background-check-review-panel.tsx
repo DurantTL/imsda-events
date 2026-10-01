@@ -2,6 +2,14 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { RefreshCcw, Search, Undo2, UserCheck, UserX } from "lucide-react";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ListPager } from "@/components/list-pager";
+import { paginate } from "@/lib/pagination";
+
+/** Unmatched list-wide rows shown per page (#702). */
+export const UNMATCHED_PAGE_SIZE = 50;
+/** Shown above the conference-wide unmatched rows, pointing at the name lookup. */
+export const UNMATCHED_NARROWING_GUIDANCE = "This list covers the whole conference. To find one person, use the name lookup above: type a first and last name, or just a last name, to narrow it down.";
 
 type ReviewCandidate = { personId: string; name: string; sites: string[] };
 type ReviewItem = { id: string; entryId: string; name: string; site: string | null; reason: string; candidates: ReviewCandidate[] };
@@ -17,6 +25,33 @@ type LookupResult = {
   truncated: boolean;
 };
 type UnmatchedEntry = { id: string; name: string; site: string | null; complianceStatus: string | null; checkedOn: string | null; expiresOn: string | null };
+
+/** Confirm step for "Match them anyway": it overrides an earlier staff "not the same person" decision. */
+export function MatchAnywayDialog({
+  onCancel,
+  onConfirm,
+  target,
+}: {
+  onCancel: () => void;
+  onConfirm: () => void;
+  target: { rowName: string; personName: string } | null;
+}) {
+  return (
+    <ConfirmDialog
+      confirmLabel="Match them anyway"
+      onCancel={onCancel}
+      onConfirm={onConfirm}
+      open={target !== null}
+      title="Match them anyway?"
+    >
+      <p>
+        Staff earlier marked <span translate="no">{target?.rowName}</span> as not{" "}
+        <span translate="no">{target?.personName}</span>. Matching them anyway clears that decision and
+        records a match by hand, which holds across refreshes and uploads until someone undoes it.
+      </p>
+    </ConfirmDialog>
+  );
+}
 
 /**
  * Staff review for the background-check list (#527): entries or people an
@@ -36,6 +71,10 @@ export function BackgroundCheckReviewPanel() {
   const [lookingUp, setLookingUp] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [matchAnywayTarget, setMatchAnywayTarget] = useState<{ entryId: string; personId: string; rowName: string; personName: string } | null>(null);
+  // Dismissals made in this visit, so each can be undone until the page is left (#702).
+  const [dismissals, setDismissals] = useState<Array<{ reviewId: string; name: string }>>([]);
+  const [unmatchedPage, setUnmatchedPage] = useState(1);
 
   const load = useCallback(async () => {
     setError("");
@@ -55,6 +94,7 @@ export function BackgroundCheckReviewPanel() {
       setUnmatched(unmatchedResult.entries ?? []);
       setManualMatches(manualResult.matches ?? []);
       setNameOnlyMatches(nameOnlyResult.matches ?? []);
+      setUnmatchedPage(1);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Couldn't load the review list.");
     }
@@ -77,9 +117,37 @@ export function BackgroundCheckReviewPanel() {
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message ?? "That decision couldn't be saved.");
       setReviews(result.reviews ?? []);
+      if (decision.type === "dismiss") {
+        const name = reviews?.find((review) => review.id === reviewId)?.name ?? "";
+        setDismissals((current) => [...current, { reviewId, name }]);
+      }
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That decision couldn't be saved.");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  /** Undoes a dismissal made earlier in this visit; the review returns to "To review". */
+  async function undoDismissal(reviewId: string) {
+    setBusyId(reviewId);
+    setError("");
+    try {
+      const response = await fetch(`/api/admin/background-checks/reviews/${encodeURIComponent(reviewId)}`, { method: "DELETE" });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        // The review is gone (a new upload replaced the list): stop offering the undo.
+        if (response.status === 404 || result.error === "REVIEW_NOT_FOUND") {
+          setDismissals((current) => current.filter((item) => item.reviewId !== reviewId));
+        }
+        throw new Error(result.message ?? "That dismissal couldn't be undone.");
+      }
+      setReviews(result.reviews ?? []);
+      setDismissals((current) => current.filter((item) => item.reviewId !== reviewId));
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "That dismissal couldn't be undone.");
     } finally {
       setBusyId(null);
     }
@@ -179,7 +247,21 @@ export function BackgroundCheckReviewPanel() {
     }
   }
 
-  if (reviews === null && unmatched === null && manualMatches === null && nameOnlyMatches === null && !error) return null;
+  if (reviews === null && unmatched === null && manualMatches === null && nameOnlyMatches === null && !error) {
+    return (
+      <section aria-busy="true" className="panel">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Background checks</p>
+            <h2>Needs a look</h2>
+          </div>
+        </div>
+        <p className="quiet-copy" role="status">Loading the review list&hellip;</p>
+      </section>
+    );
+  }
+
+  const unmatchedSlice = paginate(unmatched ?? [], unmatchedPage, UNMATCHED_PAGE_SIZE);
 
   return (
     <section className="panel">
@@ -192,6 +274,21 @@ export function BackgroundCheckReviewPanel() {
         <button className="secondary-button" disabled={refreshing} onClick={() => void refresh()} type="button"><RefreshCcw aria-hidden="true" size={14} /> {refreshing ? "Re-matching…" : "Refresh"}</button>
       </div>
       {error && <div className="inline-notice error" role="alert">{error}</div>}
+      {dismissals.length > 0 && (
+        <div className="inline-notice" role="status">
+          <strong>Dismissed in this visit</strong>
+          <ul>
+            {dismissals.map((item) => (
+              <li key={item.reviewId}>
+                <span translate="no">{item.name || "A row"}</span>: none of the candidates was chosen.{" "}
+                <button className="text-button" disabled={busyId === item.reviewId} onClick={() => void undoDismissal(item.reviewId)} type="button">
+                  <Undo2 aria-hidden="true" size={14} /> Undo dismissal
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <h3>To review ({reviews?.length ?? 0})</h3>
       {reviews && reviews.length === 0 && <p className="report-empty">Nothing waiting on a decision.</p>}
@@ -369,7 +466,7 @@ export function BackgroundCheckReviewPanel() {
                 {lookup.rejected.map((item) => (
                   <li key={`${item.entryId}:${item.personId}`}>
                     <span translate="no">{item.rowName}</span> is not <span translate="no">{item.personName}</span>{" "}
-                    <button className="text-button" disabled={busyId === `${item.entryId}:${item.personId}`} onClick={() => void matchAnyway(item.entryId, item.personId)} type="button">
+                    <button className="text-button" disabled={busyId === `${item.entryId}:${item.personId}`} onClick={() => setMatchAnywayTarget({ entryId: item.entryId, personId: item.personId, rowName: item.rowName, personName: item.personName })} type="button">
                       <UserCheck aria-hidden="true" size={14} /> Match them anyway
                     </button>
                   </li>
@@ -384,6 +481,7 @@ export function BackgroundCheckReviewPanel() {
       <details className="background-check-unmatched">
         <summary><strong>Not on a club roster or registration yet ({unmatched?.length ?? 0})</strong></summary>
         <p className="quiet-copy">Most volunteers on the conference-wide list aren&apos;t on any club roster. This isn&apos;t work to do; they match once they appear on a roster or registration.</p>
+      <p className="quiet-copy">{UNMATCHED_NARROWING_GUIDANCE}</p>
       {unmatched && unmatched.length === 0 && <p className="report-empty">Everyone on the list is matched to someone.</p>}
       {unmatched && unmatched.length > 0 && (
         <div className="report-table-wrap">
@@ -391,7 +489,7 @@ export function BackgroundCheckReviewPanel() {
             <caption className="sr-only">Background check list entries not matched to anyone</caption>
             <thead><tr><th>Name</th><th>Site</th></tr></thead>
             <tbody>
-              {unmatched.map((entry) => (
+              {unmatchedSlice.items.map((entry) => (
                 <tr key={entry.id}>
                   <td translate="no">{entry.name || "—"}</td>
                   <td>{entry.site || "—"}</td>
@@ -401,7 +499,18 @@ export function BackgroundCheckReviewPanel() {
           </table>
         </div>
       )}
+      <ListPager label="Unmatched rows pages" onPage={setUnmatchedPage} slice={unmatchedSlice} />
       </details>
+
+      <MatchAnywayDialog
+        onCancel={() => setMatchAnywayTarget(null)}
+        onConfirm={() => {
+          const target = matchAnywayTarget;
+          setMatchAnywayTarget(null);
+          if (target) void matchAnyway(target.entryId, target.personId);
+        }}
+        target={matchAnywayTarget}
+      />
     </section>
   );
 }

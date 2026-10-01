@@ -17,12 +17,15 @@ import Link from "next/link";
 import {
   useCallback,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { CheckInPaymentDue } from "@/components/check-in-payment-due";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { CheckInScanner } from "@/components/check-in-scanner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ListPager } from "@/components/list-pager";
+import { paginate } from "@/lib/pagination";
 import {
   ClubCheckInPanel,
   type ClubCheckInProgress,
@@ -37,6 +40,12 @@ import { arrivalMatchesSearch, offlineCheckInErrorMessage } from "@/modules/chec
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import { attendeeBalanceCents } from "@/modules/registrations/finance-view";
 import type { ClubCheckInInfo } from "@/modules/club-registrations/repository";
+
+/** Arrivals rendered per page; search always runs across the whole roster (#702). */
+export const ARRIVALS_PAGE_SIZE = 50;
+
+/** The tally label for people not yet checked in; matches the row status text. */
+export const AWAITING_ARRIVAL_LABEL = "Awaiting arrival";
 
 type Arrival = RegistrationRecord["attendees"][number] & {
   confirmationCode: string;
@@ -87,7 +96,17 @@ export function CheckInWorkspace({
       : [],
   ), [initialRegistrations, showBalances]);
   const owingCount = Object.keys(paymentDueByConfirmationCode).length;
-  const [query, setQuery] = useState("");
+  const [query, setQueryText] = useState("");
+  const [rosterPage, setRosterPageState] = useState(1);
+  const rosterHeadingRef = useRef<HTMLHeadingElement>(null);
+  const setRosterPage = useCallback((page: number) => {
+    setRosterPageState(page);
+    rosterHeadingRef.current?.scrollIntoView?.({ block: "start" });
+  }, []);
+  const setQuery = useCallback((next: string) => {
+    setQueryText(next);
+    setRosterPageState(1);
+  }, []);
   const [undoPendingId, setUndoPendingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   // Review before discarding saved offline data (#471): both are local,
@@ -154,6 +173,10 @@ export function CheckInWorkspace({
     query,
     clubByConfirmationCode.get(arrival.confirmationCode)?.organizationName,
   )), [arrivals, query, clubByConfirmationCode]);
+  const rosterSlice = useMemo(
+    () => paginate(visible, rosterPage, ARRIVALS_PAGE_SIZE),
+    [visible, rosterPage],
+  );
   const queueByAttendee = useMemo(() => new Map(
     queue.map((item) => [item.attendeeId, item]),
   ), [queue]);
@@ -324,7 +347,7 @@ export function CheckInWorkspace({
           <span><strong>{checkedIn}</strong><small>Confirmed</small></span>
           <span>
             <strong>{arrivals.length - checkedIn}</strong>
-            <small>Not confirmed</small>
+            <small>{AWAITING_ARRIVAL_LABEL}</small>
           </span>
           <span><strong>{queue.length}</strong><small>Saved locally</small></span>
         </div>
@@ -552,7 +575,7 @@ export function CheckInWorkspace({
         <div className="section-heading">
           <div>
             <p className="eyebrow">Arrival roster</p>
-            <h2>Expected attendees</h2>
+            <h2 ref={rosterHeadingRef}>Expected attendees</h2>
             {owingCount > 0 && (
               <small className="checkin-balance-note">
                 {owingCount} {owingCount === 1 ? "registration still owes" : "registrations still owe"} money.{" "}
@@ -563,10 +586,10 @@ export function CheckInWorkspace({
             )}
           </div>
           <span className="count-badge">
-            <UsersRound aria-hidden="true" size={16} /> {visible.length} shown
+            <UsersRound aria-hidden="true" size={16} /> {visible.length} match
           </span>
         </div>
-        {visible.map((arrival) => {
+        {rosterSlice.items.map((arrival) => {
           const savedItem = queueByAttendee.get(arrival.id);
           const processing = savedItem
             ? processingKeySet.has(savedItem.idempotencyKey)
@@ -599,7 +622,7 @@ export function CheckInWorkspace({
                     ? "Needs review"
                     : savedItem
                       ? "Queued — not confirmed"
-                      : "Awaiting arrival"}
+                      : AWAITING_ARRIVAL_LABEL}
               </span>
               <button
                 className={arrival.checkedIn ? "undo-button" : ""}
@@ -643,6 +666,7 @@ export function CheckInWorkspace({
             </div>
           );
         })}
+        <ListPager label="Arrival roster pages" onPage={setRosterPage} slice={rosterSlice} />
         {visible.length === 0 && (
           <div className="empty-state">
             <Search aria-hidden="true" size={24} />

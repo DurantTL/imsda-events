@@ -27,6 +27,7 @@ function valueMatches(value: unknown, condition: unknown): boolean {
       else if (value === c.not) return false;
     }
     if ("endsWith" in c && !String(value ?? "").endsWith(c.endsWith as string)) return false;
+    if ("gt" in c && !((value as string) > (c.gt as string))) return false;
     if ("gte" in c && !((value as string) >= (c.gte as string))) return false;
     if ("lte" in c && !((value as string) <= (c.lte as string))) return false;
     if ("lt" in c && !((value as string) < (c.lt as string))) return false;
@@ -503,6 +504,7 @@ import {
   rejectNameOnlyBackgroundCheckMatch,
   rematchBackgroundCheckList,
   resolveBackgroundCheckReview,
+  restoreDismissedBackgroundCheckReview,
   undoManualBackgroundCheckMatch,
 } from "@/modules/background-checks/repository";
 import { BackgroundCheckOperationError } from "@/modules/background-checks/errors";
@@ -1237,6 +1239,24 @@ describe("staff review resolution (#527)", () => {
     expect(seed.matches.size).toBe(1);
   });
 
+  it("undoes a dismissal (#702): the review is open again, and only a dismissed review can be restored", async () => {
+    const { client, seed } = makeFakeDb();
+    currentClient = client;
+    seed.uploads.set("u-1", { id: "u-1", createdAt: new Date("2026-09-01") });
+    rosterAdult(seed, "p-kim-1", "Kim", "Cho", { email: "kim@example.test" });
+    rosterAdult(seed, "p-kim-2", "Kim", "Cho", { email: "kim@example.test" });
+    seedEntry(seed, "e-1", { identityKey: "email:kim@example.test|kim cho", firstName: "Kim", lastName: "Cho", normalizedName: matchableName("Kim Cho"), email: "kim@example.test" });
+    seed.reviews.set("r-1", { id: "r-1", entryId: "e-1", reason: "Ambiguous.", candidatePersonIds: ["p-kim-1", "p-kim-2"], dismissedAt: null, createdAt: new Date() });
+    await expect(restoreDismissedBackgroundCheckReview("r-1", "admin-1")).rejects.toMatchObject({ code: "REVIEW_NOT_FOUND" });
+    await resolveBackgroundCheckReview("r-1", { type: "dismiss" }, "admin-1");
+    await expect(listBackgroundCheckReviews()).resolves.toEqual([]);
+    await restoreDismissedBackgroundCheckReview("r-1", "admin-1");
+    expect(seed.reviews.get("r-1")!.dismissedAt).toBeNull();
+    expect(auditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "BACKGROUND_CHECK_REVIEW_RESTORED" }), client);
+    await expect(listBackgroundCheckReviews()).resolves.toHaveLength(1);
+    await expect(restoreDismissedBackgroundCheckReview("r-missing", "admin-1")).rejects.toMatchObject({ code: "REVIEW_NOT_FOUND" });
+  });
+
   it("keeps a dismissal: the entry matches no one on a refresh, isn't reviewed again, and shows as unmatched", async () => {
     const { client, seed } = makeFakeDb();
     currentClient = client;
@@ -1704,15 +1724,18 @@ describe("the system administrator's summary (#527)", () => {
     seed.uploads.set(uploadId, { id: uploadId, createdAt: new Date("2026-09-01") });
     seed.entries.set("e-current", { id: "e-current", uploadId, complianceStatus: null, expiresOn: "2027-01-01" });
     seed.entries.set("e-soon", { id: "e-soon", uploadId, complianceStatus: "FLAGGED", expiresOn: null });
+    seed.entries.set("e-sterling-soon", { id: "e-sterling-soon", uploadId, complianceStatus: null, expiresOn: "2026-11-01" });
     seed.entries.set("e-expired", { id: "e-expired", uploadId, complianceStatus: null, expiresOn: "2020-01-01" });
     seed.entries.set("e-unmatched", { id: "e-unmatched", uploadId, complianceStatus: null, expiresOn: "2027-01-01", firstName: "Pat", lastName: "Nobody" });
     seed.matches.set("m-current", { id: "m-current", personId: "p-1", entryId: "e-current", matchedBy: "AUTO", createdAt: new Date(), updatedAt: new Date("2026-09-01") });
     seed.matches.set("m-soon", { id: "m-soon", personId: "p-2", entryId: "e-soon", matchedBy: "AUTO", createdAt: new Date(), updatedAt: new Date("2026-09-01") });
+    seed.matches.set("m-sterling-soon", { id: "m-sterling-soon", personId: "p-4", entryId: "e-sterling-soon", matchedBy: "AUTO", createdAt: new Date(), updatedAt: new Date("2026-09-01") });
     seed.matches.set("m-expired", { id: "m-expired", personId: "p-3", entryId: "e-expired", matchedBy: "AUTO", createdAt: new Date(), updatedAt: new Date("2026-09-01") });
     const summary = await backgroundCheckSummary("2026-10-04");
-    // "Current" counts both a dated Sterling check and a CLEAR/FLAGGED roster mark.
-    expect(summary.current).toBe(2);
-    expect(summary.expiringSoon).toBe(1);
+    // "Current" is disjoint from "expiring soon" (#702): the FLAGGED mark counts only as expiring soon.
+    expect(summary.current).toBe(1);
+    expect(summary.expiringSoon).toBe(2);
+    // A Sterling check ending inside the 60-day window is expiring soon only, never also current.
     expect(summary.notCurrent).toBe(1);
     expect(summary.unmatchedCount).toBe(1);
   });

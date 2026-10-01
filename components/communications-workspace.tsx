@@ -24,6 +24,8 @@ import {
   X,
 } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import { ListPager } from "@/components/list-pager";
+import { newestFirst, paginate } from "@/lib/pagination";
 import {
   AnnouncementBroadcastReviewFacts,
   announcementBroadcastConfirmState,
@@ -133,6 +135,12 @@ function withPreviewLinks(value: string) {
     .replaceAll(REGISTRATION_MANAGE_API_SENTINEL, PREVIEW_MANAGE_API_URL)
     .replaceAll(REGISTRATION_MANAGE_LINK_SENTINEL, PREVIEW_MANAGE_URL);
 }
+/** Delivery-log rows per page (#702). */
+export const DELIVERY_PAGE_SIZE = 50;
+
+/** The server returns at most this many messages; older ones are not listed. */
+export const DELIVERY_SERVER_CAP = 150;
+
 const deliveryFilters: Array<"ALL" | MessageOutboxStatusValue> = [
   "ALL",
   "PENDING",
@@ -352,8 +360,16 @@ export function CommunicationsWorkspace({
   );
 
   const filteredMessages = useMemo(
-    () => (messaging?.messages ?? []).filter((message) => deliveryFilter === "ALL" || message.status === deliveryFilter),
+    () => newestFirst(
+      (messaging?.messages ?? []).filter((message) => deliveryFilter === "ALL" || message.status === deliveryFilter),
+      (message) => String(message.createdAt),
+    ),
     [deliveryFilter, messaging?.messages],
+  );
+  const [deliveryPage, setDeliveryPage] = useState(1);
+  const deliverySlice = useMemo(
+    () => paginate(filteredMessages, deliveryPage, DELIVERY_PAGE_SIZE),
+    [filteredMessages, deliveryPage],
   );
 
   function setQuery(nextView: CommunicationsView, resource?: { template?: string; message?: string; status?: string }) {
@@ -1013,6 +1029,7 @@ export function CommunicationsWorkspace({
     if (filter === deliveryFilter) return;
     if (!confirmDiscardEditorChanges()) return;
     setDeliveryFilter(filter);
+    setDeliveryPage(1);
     setQuery("deliveries", { message: selectedMessageId, status: filter });
   }
 
@@ -1601,15 +1618,19 @@ export function CommunicationsWorkspace({
                 </button>
               ))}
             </div>
+            {(messaging.messages.length >= DELIVERY_SERVER_CAP) && (
+              <p className="inline-notice" role="status">Showing the newest {DELIVERY_SERVER_CAP} messages only. Older messages aren&apos;t listed here.</p>
+            )}
             <div className="message-delivery-layout">
               <div className="message-delivery-list">
-                {filteredMessages.map((message) => (
+                {deliverySlice.items.map((message) => (
                   <button aria-pressed={selectedMessage?.id === message.id} className={selectedMessage?.id === message.id ? "selected" : ""} type="button" onClick={() => selectMessage(message.id)} key={message.id}>
                     <span className={`message-delivery-icon ${statusTone(message.status)}`}><Mail size={17} aria-hidden="true" /></span>
                     <span><strong>{message.recipientName || message.recipientEmail}</strong><small>{message.recipientEmail} · {messageTypeLabel(message)}</small></span>
                     <span><span className={`status-chip ${statusTone(message.status)}`}>{friendlyStatus(message.status)}</span><small>{new Date(message.createdAt).toLocaleString()}</small></span>
                   </button>
                 ))}
+                <ListPager label="Delivery log pages" onPage={setDeliveryPage} slice={deliverySlice} />
                 {filteredMessages.length === 0 && <div className="empty-state"><Inbox size={24} /><h3>No matching messages</h3><p>Submit a public registration or capture a template test to create a local row.</p></div>}
               </div>
               <aside className="message-delivery-detail">
