@@ -138,6 +138,9 @@ function withPreviewLinks(value: string) {
 /** Delivery-log rows per page (#702). */
 export const DELIVERY_PAGE_SIZE = 50;
 
+/** The server returns at most this many messages; older ones are not listed. */
+export const DELIVERY_SERVER_CAP = 150;
+
 const deliveryFilters: Array<"ALL" | MessageOutboxStatusValue> = [
   "ALL",
   "PENDING",
@@ -1615,6 +1618,9 @@ export function CommunicationsWorkspace({
                 </button>
               ))}
             </div>
+            {(messaging.messages.length >= DELIVERY_SERVER_CAP) && (
+              <p className="inline-notice" role="status">Showing the newest {DELIVERY_SERVER_CAP} messages only. Older messages aren&apos;t listed here.</p>
+            )}
             <div className="message-delivery-layout">
               <div className="message-delivery-list">
                 {deliverySlice.items.map((message) => (

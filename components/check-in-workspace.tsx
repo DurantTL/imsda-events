@@ -17,6 +17,7 @@ import Link from "next/link";
 import {
   useCallback,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { CheckInPaymentDue } from "@/components/check-in-payment-due";
@@ -96,10 +97,15 @@ export function CheckInWorkspace({
   ), [initialRegistrations, showBalances]);
   const owingCount = Object.keys(paymentDueByConfirmationCode).length;
   const [query, setQueryText] = useState("");
-  const [rosterPage, setRosterPage] = useState(1);
+  const [rosterPage, setRosterPageState] = useState(1);
+  const rosterHeadingRef = useRef<HTMLHeadingElement>(null);
+  const setRosterPage = useCallback((page: number) => {
+    setRosterPageState(page);
+    rosterHeadingRef.current?.scrollIntoView?.({ block: "start" });
+  }, []);
   const setQuery = useCallback((next: string) => {
     setQueryText(next);
-    setRosterPage(1);
+    setRosterPageState(1);
   }, []);
   const [undoPendingId, setUndoPendingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -569,7 +575,7 @@ export function CheckInWorkspace({
         <div className="section-heading">
           <div>
             <p className="eyebrow">Arrival roster</p>
-            <h2>Expected attendees</h2>
+            <h2 ref={rosterHeadingRef}>Expected attendees</h2>
             {owingCount > 0 && (
               <small className="checkin-balance-note">
                 {owingCount} {owingCount === 1 ? "registration still owes" : "registrations still owe"} money.{" "}
@@ -580,7 +586,7 @@ export function CheckInWorkspace({
             )}
           </div>
           <span className="count-badge">
-            <UsersRound aria-hidden="true" size={16} /> {visible.length} shown
+            <UsersRound aria-hidden="true" size={16} /> {visible.length} match
           </span>
         </div>
         {rosterSlice.items.map((arrival) => {

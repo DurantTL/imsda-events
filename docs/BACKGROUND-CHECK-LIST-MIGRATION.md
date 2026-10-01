@@ -56,6 +56,10 @@ it expects the old table name and raw `user_id`s.
   review named is held too: if two rows matched one person and staff dismiss
   one, the other row's review stays open and that person isn't auto-matched
   to it until staff decide. The next upload starts every entry fresh.
+  Staff can undo a dismissal ("Undo dismissal") until the next upload; the
+  review then returns to "To review". The server lets any system
+  administrator restore any dismissed review, not only the one who dismissed
+  it, and every restore is audited (`BACKGROUND_CHECK_REVIEW_RESTORED`).
 - A decision made while an upload is in progress, or one that collides with
   a concurrent change, is refused with a 409 and can simply be retried.
 

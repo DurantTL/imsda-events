@@ -94,6 +94,7 @@ export function BackgroundCheckReviewPanel() {
       setUnmatched(unmatchedResult.entries ?? []);
       setManualMatches(manualResult.matches ?? []);
       setNameOnlyMatches(nameOnlyResult.matches ?? []);
+      setUnmatchedPage(1);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Couldn't load the review list.");
     }
@@ -135,7 +136,13 @@ export function BackgroundCheckReviewPanel() {
     try {
       const response = await fetch(`/api/admin/background-checks/reviews/${encodeURIComponent(reviewId)}`, { method: "DELETE" });
       const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.message ?? "That dismissal couldn't be undone.");
+      if (!response.ok) {
+        // The review is gone (a new upload replaced the list): stop offering the undo.
+        if (response.status === 404 || result.error === "REVIEW_NOT_FOUND") {
+          setDismissals((current) => current.filter((item) => item.reviewId !== reviewId));
+        }
+        throw new Error(result.message ?? "That dismissal couldn't be undone.");
+      }
       setReviews(result.reviews ?? []);
       setDismissals((current) => current.filter((item) => item.reviewId !== reviewId));
       await load();

@@ -22,7 +22,7 @@ import {
   AWAITING_ARRIVAL_LABEL,
   CheckInWorkspace,
 } from "@/components/check-in-workspace";
-import { DELIVERY_PAGE_SIZE } from "@/components/communications-workspace";
+import { DELIVERY_PAGE_SIZE, DELIVERY_SERVER_CAP } from "@/components/communications-workspace";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 
 /**
@@ -99,9 +99,24 @@ describe("the Square payment-match candidate cap (F-S1)", () => {
   });
 });
 
+describe("searching a paged list (#702)", () => {
+  it("finds a match beyond the first page, and a new search starts on page 1", () => {
+    const names = numbers(120).map((n) => `Person ${n}`);
+    // A search runs over the whole list before paging, so row 117 is found.
+    const matches = names.filter((name) => name.includes("117"));
+    expect(paginate(matches, 1, 50).items).toEqual(["Person 117"]);
+    // Browsing to page 3, then searching: the page is reset to 1 and stays valid.
+    expect(paginate(names, 3, 50).page).toBe(3);
+    expect(paginate(matches, 1, 50).page).toBe(1);
+    // A stale page past the end of a narrowed list is clamped back into range.
+    expect(paginate(matches, 3, 50).page).toBe(1);
+  });
+});
+
 describe("page sizes", () => {
   it("pages the delivery log, the arrival roster and the unmatched rows at 50", () => {
     expect(DELIVERY_PAGE_SIZE).toBe(50);
+    expect(DELIVERY_SERVER_CAP).toBe(150);
     expect(ARRIVALS_PAGE_SIZE).toBe(50);
     expect(UNMATCHED_PAGE_SIZE).toBe(50);
   });
@@ -148,7 +163,7 @@ describe("the check-in roster (F-S4, F-S5)", () => {
     const html = render();
     expect(html.match(/class="arrival-row"/g)).toHaveLength(ARRIVALS_PAGE_SIZE);
     expect(html).toContain("Page 1 of 3");
-    expect(html).toContain("120 shown");
+    expect(html).toContain("120 match");
   });
 });
 

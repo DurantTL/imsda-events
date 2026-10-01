@@ -212,6 +212,19 @@ describe("background-check review and undo routes (#527 N2, N5)", () => {
     expect((await reviewDelete(request(), reviewCtx)).status).toBe(404);
   });
 
+  it("is a 409 to undo a dismissal while an upload is in progress, and rejects a cross-origin DELETE (#702)", async () => {
+    mocks.restoreDismissedBackgroundCheckReview.mockRejectedValueOnce(new BackgroundCheckOperationError("UPLOAD_IN_PROGRESS", "A background-check list upload is in progress. Try again in a moment."));
+    const busy = await reviewDelete(post("/api/admin/background-checks/reviews/r-1", undefined, "DELETE"), reviewCtx);
+    expect(busy.status).toBe(409);
+    await expect(busy.json()).resolves.toMatchObject({ error: "UPLOAD_IN_PROGRESS" });
+
+    mocks.restoreDismissedBackgroundCheckReview.mockClear();
+    mocks.rejectCrossOriginRequest.mockReturnValueOnce(Response.json({ error: "CROSS_ORIGIN" }, { status: 403 }));
+    const cross = await reviewDelete(post("/api/admin/background-checks/reviews/r-1", undefined, "DELETE"), reviewCtx);
+    expect(cross.status).toBe(403);
+    expect(mocks.restoreDismissedBackgroundCheckReview).not.toHaveBeenCalled();
+  });
+
   it("refuses to undo a dismissal for anyone but a system administrator (#702)", async () => {
     mocks.requireSystemAdministrator.mockRejectedValueOnce(new AccessDeniedError("System administrator access is required.", 403, "PERMISSION_DENIED"));
     const response = await reviewDelete(post("/api/admin/background-checks/reviews/r-1", undefined, "DELETE"), reviewCtx);
