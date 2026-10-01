@@ -18,6 +18,20 @@ export function organizationListHref(basePath: string, state: OrganizationListSt
 }
 
 /**
+ * Set a field to the URL's value unless its owner is typing in it (#723). The
+ * fields are uncontrolled, so after same-page navigation (a nav link, Back)
+ * they would otherwise keep showing the old query.
+ */
+export function syncFieldValue(
+  field: { value: string } | null,
+  value: string,
+  activeElement: unknown,
+) {
+  if (!field || field === activeElement || field.value === value) return;
+  field.value = value;
+}
+
+/**
  * The shared filter bar of the Clubs and churches page and the organization
  * directory (#723): a search box, Kind and Status, and the Filter button. It is
  * a plain GET form, so it works before the script loads and Enter submits it.
@@ -43,6 +57,15 @@ export function OrganizationSearchControls({
   const formRef = useRef<HTMLFormElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [pending, startTransition] = useTransition();
+
+  useEffect(() => {
+    const form = formRef.current;
+    if (!form) return;
+    const active = document.activeElement;
+    syncFieldValue(form.elements.namedItem("q") as HTMLInputElement | null, state.q, active);
+    syncFieldValue(form.elements.namedItem("kind") as HTMLSelectElement | null, state.kind, active);
+    syncFieldValue(form.elements.namedItem("status") as HTMLSelectElement | null, state.status, active);
+  }, [state.q, state.kind, state.status]);
 
   useEffect(() => () => {
     if (timer.current) clearTimeout(timer.current);

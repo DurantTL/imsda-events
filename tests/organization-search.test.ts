@@ -12,6 +12,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: vi.fn() }));
 
+import { syncFieldValue } from "@/components/organization-search-controls";
 import { listDirectoryOrganizations } from "@/modules/organizations/eadventist-import-repository";
 import { listOrganizationsPage } from "@/modules/organizations/repository";
 import {
@@ -119,6 +120,23 @@ describe("the query stays in the URL (#723)", () => {
     expect(listSearchParams({ q: "albia ia", kind: "SCHOOL", status: "ACTIVE", page: 2 }).toString())
       .toBe("q=albia+ia&kind=SCHOOL&status=ACTIVE&page=2");
     expect(listSearchParams({ q: "", kind: "", status: "ALL", page: 1 }).toString()).toBe("");
+  });
+
+  it("normalises the query with NFKC before splitting it", () => {
+    expect(searchTerms("\uFF21lbia\u3000school")).toEqual(["Albia", "school"]);
+    expect(searchTerms("a b c d e f g")).toHaveLength(6);
+  });
+
+  it("syncs a field to the URL unless it is being typed in", () => {
+    const stale = { value: "albia" };
+    syncFieldValue(stale, "", null);
+    expect(stale.value).toBe("");
+    const typing = { value: "alb" };
+    syncFieldValue(typing, "", typing);
+    expect(typing.value).toBe("alb");
+    expect(() => syncFieldValue(null, "x", null)).not.toThrow();
+    const source = read("components/organization-search-controls.tsx");
+    expect(source).toContain("[state.q, state.kind, state.status]");
   });
 
   it("reads a page number defensively", () => {

@@ -5,7 +5,7 @@ import type { Prisma } from "@prisma/client";
  * page and the organization directory. Pure and free of database access so the
  * matching rules are unit-testable.
  *
- * The query is split on whitespace. Every word has to match at least one
+ * The query is NFKC-normalised (as names are stored) and split on whitespace. Every word has to match at least one
  * searchable field (case-insensitive "contains"), so "albia school" finds the
  * school in Albia whichever fields hold the two words. Accents are not folded:
  * Postgres would need the unaccent extension, which this database does not
@@ -21,7 +21,7 @@ export function cleanSearchQuery(value: string | null | undefined) {
 }
 
 export function searchTerms(query: string) {
-  return cleanSearchQuery(query).trim().split(/\s+/).filter(Boolean).slice(0, MAX_TERMS);
+  return cleanSearchQuery(query).normalize("NFKC").trim().split(/\s+/).filter(Boolean).slice(0, MAX_TERMS);
 }
 
 function termMatches(term: string): Prisma.OrganizationWhereInput {

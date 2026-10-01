@@ -8572,13 +8572,13 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .org-cell-link { color: var(--imsda-purple); font-weight: 700; }
 .org-directory-table { table-layout: fixed; }
 .org-directory-table th, .org-directory-table td { padding: 9px 8px; overflow-wrap: anywhere; }
-.org-directory-table thead th:nth-child(1) { width: 20%; }
+.org-directory-table thead th:nth-child(1) { width: 19%; }
 .org-directory-table thead th:nth-child(2) { width: 13%; }
 .org-directory-table thead th:nth-child(3) { width: 10%; }
-.org-directory-table thead th:nth-child(4) { width: 18%; }
+.org-directory-table thead th:nth-child(4) { width: 17%; }
 .org-directory-table thead th:nth-child(5) { width: 13%; }
 .org-directory-table thead th:nth-child(6) { width: 10%; }
-.org-directory-table thead th:nth-child(7) { width: 16%; }
+.org-directory-table thead th:nth-child(7) { width: 18%; }
 .org-directory-table tbody th.org-cell-name { color: var(--ink); font-weight: 700; }
 .org-directory-table td.org-cell-actions { width: auto; text-align: right; vertical-align: top; }
 .org-status-button { min-height: 36px; white-space: nowrap; }
