@@ -12,7 +12,7 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
  * unchanged state writes nothing.
  */
 export class HealthAccessGrantError extends Error {
-  constructor(public readonly code: "MEMBERSHIP_NOT_FOUND", message: string) {
+  constructor(public readonly code: "MEMBERSHIP_NOT_FOUND" | "TARGET_IS_SYSTEM_ADMIN", message: string) {
     super(message);
     this.name = "HealthAccessGrantError";
   }
@@ -63,9 +63,13 @@ export async function setHealthAccess(eventId: string, membershipId: string, act
   return getPrisma().$transaction(async (tx) => {
     const membership = await tx.eventMembership.findFirst({
       where: { id: membershipId, eventId },
-      select: { id: true, userId: true, permissions: true, user: { select: { displayName: true } } },
+      select: { id: true, userId: true, permissions: true, user: { select: { displayName: true, globalRole: true } } },
     });
     if (!membership) throw new HealthAccessGrantError("MEMBERSHIP_NOT_FOUND", "That staff assignment no longer exists.");
+    // System administrators already have access everywhere: a grant on their row would only mislead.
+    if (membership.user.globalRole === "SYSTEM_ADMIN") {
+      throw new HealthAccessGrantError("TARGET_IS_SYSTEM_ADMIN", "System administrators already have health information access.");
+    }
     const has = membership.permissions.includes("VIEW_HEALTH_INFORMATION");
     if (has === granted) return { granted, changed: false };
     const permissions = granted

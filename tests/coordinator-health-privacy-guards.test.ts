@@ -15,7 +15,8 @@ describe("coordinator health view privacy guards (#658)", () => {
 
   it("has no CSV or download path, and nothing logs", () => {
     for (const file of [...moduleFiles, "components/event-health-sheet.tsx", "app/(workspace)/more/event-health/page.tsx", "app/(public)/account/(portal)/area/health/page.tsx", "app/(public)/account/(portal)/clubs/[organizationId]/health/page.tsx"]) {
-      const source = read(file);
+      // The one permitted log call is a fixed message about a failed denial audit write (checked below).
+      const source = read(file).replace('import { logError } from "@/lib/logger";', "").replace('logError("Coordinator health denial could not be audited", error);', "");
       expect(source, file).not.toMatch(/text\/csv|\.csv|Content-Disposition|console\.|logError|logger/i);
     }
   });

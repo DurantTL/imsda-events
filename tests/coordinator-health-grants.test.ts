@@ -99,6 +99,16 @@ describe("granting health information access (#658)", () => {
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
   });
 
+  it("answers 400 for a system administrator's own row or any system administrator's row", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: { id: "root", globalRole: "SYSTEM_ADMIN" } });
+    mocks.membershipFindFirst.mockResolvedValue({ id: "m1", userId: "root", permissions: [], user: { displayName: "Root", globalRole: "SYSTEM_ADMIN" } });
+    expect((await PUT(put({ granted: true }), params)).status).toBe(400);
+    mocks.membershipFindFirst.mockResolvedValue({ id: "m1", userId: "other", permissions: [], user: { displayName: "Other Admin", globalRole: "SYSTEM_ADMIN" } });
+    expect((await PUT(put({ granted: false }), params)).status).toBe(400);
+    expect(mocks.membershipUpdate).not.toHaveBeenCalled();
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
   it("answers 404 for a membership of another event", async () => {
     mocks.getCurrentSession.mockResolvedValue({ user: { id: "root", globalRole: "SYSTEM_ADMIN" } });
     mocks.membershipFindFirst.mockResolvedValue(null);

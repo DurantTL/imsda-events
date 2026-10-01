@@ -465,10 +465,15 @@ only.
   can. The seed never grants it, and a note cannot be restricted to it.
 - **Audit.** Every view (`COORDINATOR_HEALTH_VIEWED`) and every printed sheet
   (`COORDINATOR_HEALTH_EXPORTED`) is audited first: who, event, club if
-  narrowed, counts. Refused attempts (no access to the event, another club,
-  window closed, unknown event) are audited as `COORDINATOR_HEALTH_DENIED` with
-  the reason. No health text and no names are in any audit row. If the audit
-  write for a view fails nothing is returned.
+  narrowed, counts. Refusals made after a viewer has been resolved are audited
+  as `COORDINATOR_HEALTH_DENIED` with the reason: no access to that event,
+  another club, window closed, or unknown event. Caller-supplied ids that are
+  not id-shaped are stored as `unknown` or `invalid`, never as raw text. Refusals
+  at the page itself, because the visitor holds no qualifying role, are not
+  audited, and neither are anonymous visits. No health text and no names are in
+  any audit row. If the audit write for a view fails nothing is returned; if
+  one for a refusal fails the refusal stands and the failure is logged without
+  health text.
 - **Printable sheet.** Marked confidential. There is no CSV, no download file,
   and no API route returning the data.
 - **No new store.** No table, column or migration holds medical data. The only
@@ -482,6 +487,10 @@ only.
 
 ### Gaps this does not close
 
+- **Sign-in race (known limitation).** The password step decides whether
+  two-step is needed before it creates the session. A grant made between that
+  decision and the session being created is therefore not covered by the
+  session-ending rule above. It is left as is for now.
 - Medications and structured allergies are not collected for club events.
   Collecting them is #611.
 - Emergency contact name and relationship are missing from the permission slip.

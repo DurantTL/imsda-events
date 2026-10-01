@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
+import { logError } from "@/lib/logger";
 import { isSecretEncryptionConfigured, SecretBoxError } from "@/lib/secret-box";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { clubYearFor } from "@/modules/club-rosters/domain";
@@ -112,6 +113,9 @@ export async function loadEventHealth(
     select: { id: true, name: true, startsAt: true, endsAt: true, timezone: true },
   });
 
+  // Ids are short opaque strings. Anything else is caller-supplied text and is never stored.
+  const idShaped = (value: string | undefined | null): value is string => typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value);
+
   /** A refused attempt is audited too (ADR 0005 section 3): who, event, why, never any health text. */
   async function deny(code: HealthViewError["code"], message: string): Promise<never> {
     try {
@@ -120,12 +124,13 @@ export async function loadEventHealth(
         actorUserId: who.actorUserId,
         action: "COORDINATOR_HEALTH_DENIED",
         entityType: "Event",
-        entityId: eventId.slice(0, 64),
+        entityId: idShaped(eventId) ? eventId : "unknown",
         summary: "A coordinator health view request was refused.",
-        metadata: { ...who.metadata, purpose, reason: code, organizationId: options.organizationId ?? null },
+        metadata: { ...who.metadata, purpose, reason: code, organizationId: options.organizationId === undefined ? null : idShaped(options.organizationId) ? options.organizationId : "invalid" },
       });
-    } catch {
-      // The refusal stands even if the audit write fails.
+    } catch (error) {
+      // The refusal stands even if the audit write fails. Nothing health-related is in this log line.
+      logError("Coordinator health denial could not be audited", error);
     }
     throw new HealthViewError(code, message);
   }

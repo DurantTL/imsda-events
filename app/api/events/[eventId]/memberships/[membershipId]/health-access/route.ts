@@ -29,7 +29,7 @@ async function putHandler(request: Request, context: { params: Promise<{ eventId
   } catch (error) {
     if (error instanceof z.ZodError) return Response.json({ error: "INVALID_REQUEST", message: "Send { granted: true or false }." }, { status: 400 });
     if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
-    if (error instanceof HealthAccessGrantError) return Response.json({ error: error.code, message: error.message }, { status: 404 });
+    if (error instanceof HealthAccessGrantError) return Response.json({ error: error.code, message: error.message }, { status: error.code === "TARGET_IS_SYSTEM_ADMIN" ? 400 : 404 });
     logError("Health access change failed", error);
     return Response.json({ error: "HEALTH_ACCESS_FAILED", message: "The access change could not be saved." }, { status: 500 });
   }

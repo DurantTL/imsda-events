@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   writeAuditLog: vi.fn(),
+  logError: vi.fn(),
   eventFindUnique: vi.fn(),
   eventFindMany: vi.fn(),
   registrationFindMany: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/env", () => ({
   getServerEnv: () => ({ SECRET_ENCRYPTION_KEY: "a-synthetic-encryption-key-for-health-view-tests", APP_BASE_URL: "https://events.imsda.test" }),
 }));
+vi.mock("@/lib/logger", () => ({ logError: mocks.logError }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAuditLog }));
 
 import { sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
@@ -203,6 +205,28 @@ describe("loadEventHealth (#658)", () => {
     expect(where).toMatchObject({ status: "SUBMITTED" });
     expect(where.clubYear.in).toEqual(["2026-27"]);
     expect(where.template.key.in.sort()).toEqual(["off_premises_permission_slip", "transportation_passenger_list"]);
+  });
+});
+
+describe("denial audit rows (#658)", () => {
+  it("stores only id-shaped values, never raw query text", async () => {
+    const evil = "club-b'; DROP TABLE x -- Avery Test 555-0142";
+    await expect(loadEventHealth(ownLeader, "e1", { organizationId: evil }, now)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mocks.writeAuditLog.mock.calls[0][0].metadata.organizationId).toBe("invalid");
+    mocks.eventFindUnique.mockResolvedValue(null);
+    await expect(loadEventHealth(admin, "x".repeat(200) + " raw text", {}, now)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    const entry = mocks.writeAuditLog.mock.calls[1][0];
+    expect(entry.entityId).toBe("unknown");
+    expect(JSON.stringify(mocks.writeAuditLog.mock.calls)).not.toContain("raw text");
+    await expect(loadEventHealth(ownLeader, "e1", { organizationId: "club-b" }, now)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(mocks.writeAuditLog.mock.calls[2][0].metadata.organizationId).toBe("club-b");
+  });
+
+  it("still refuses, and logs without health text, when the denial audit write fails", async () => {
+    mocks.writeAuditLog.mockRejectedValueOnce(new Error("audit down"));
+    await expect(loadEventHealth({ ...roleHolder, eventIds: ["e2"] }, "e1", {}, now)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect(mocks.logError.mock.calls[0][0]).toBe("Coordinator health denial could not be audited");
   });
 });
 
