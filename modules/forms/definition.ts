@@ -134,7 +134,17 @@ export const formFieldSchema = z.object({
     minimumAge: z.number().int().min(0).max(GENERAL_NUMBER_MAXIMUM).nullable(),
     maximumAge: z.number().int().min(0).max(GENERAL_NUMBER_MAXIMUM).nullable(),
   }).optional(),
+  /**
+   * A DATE field that fills in today's date (Chicago) on its own (#719): a
+   * signing or application date. Club forms only; a private link shows it
+   * read-only and the server sets it on submit, a director's form
+   * pre-fills it but lets them change it.
+   */
+  autoDate: z.literal("TODAY").optional(),
 }).superRefine((field, context) => {
+  if (field.autoDate && field.type !== "DATE") {
+    context.addIssue({ code: "custom", path: ["autoDate"], message: "Only a date question can fill in today's date." });
+  }
   if (field.ageBounds) {
     const { minimumAge, maximumAge } = field.ageBounds;
     const isAge = isAgeFieldKey(field.key);

@@ -6,7 +6,9 @@ import {
 } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { clampPage } from "@/lib/pagination";
 import { normalizeOrganizationName } from "@/modules/organizations/domain";
+import { organizationSearchWhere } from "@/modules/organizations/search";
 import type {
   CreateOrganizationInput,
   ExternalIdentityInput,
@@ -143,6 +145,69 @@ export async function listOrganizations() {
     ],
   });
   return organizations.map(serializeOrganization);
+}
+
+/** Rows per page on the Clubs and churches page (#723). */
+export const ORGANIZATION_PAGE_SIZE = 24;
+
+export type OrganizationListFilters = {
+  query: string;
+  kind: "CHURCH" | "CLUB" | null;
+  status: "ALL" | "ACTIVE" | "INACTIVE";
+  page?: number;
+};
+
+/**
+ * One page of the Clubs and churches list for a search and the Kind and Status
+ * filters (#723). Matching runs in the database; the same ordering as the full
+ * list is kept. A club row carries its sponsoring church (`parentOrganization`),
+ * so a hit on a club always shows the church it belongs to.
+ */
+export async function listOrganizationsPage(filters: OrganizationListFilters) {
+  const where: Prisma.OrganizationWhereInput = {
+    type: filters.kind ?? { in: ["CHURCH", "CLUB"] },
+    ...(filters.status === "ACTIVE" ? { isActive: true } : {}),
+    ...(filters.status === "INACTIVE" ? { isActive: false } : {}),
+    ...(organizationSearchWhere(filters.query) ?? {}),
+  };
+  const prisma = getPrisma();
+  const total = await prisma.organization.count({ where });
+  const page = clampPage(filters.page ?? 1, total, ORGANIZATION_PAGE_SIZE);
+  const organizations = await prisma.organization.findMany({
+    where,
+    include: organizationInclude,
+    orderBy: [{ isActive: "desc" }, { type: "asc" }, { name: "asc" }, { id: "asc" }],
+    skip: (page - 1) * ORGANIZATION_PAGE_SIZE,
+    take: ORGANIZATION_PAGE_SIZE,
+  });
+  return {
+    total,
+    page,
+    pageSize: ORGANIZATION_PAGE_SIZE,
+    organizations: organizations.map(serializeOrganization),
+  };
+}
+
+/** Whole-directory counts for the summary tiles, independent of any search. */
+export async function getOrganizationSummary() {
+  const prisma = getPrisma();
+  const inScope = { type: { in: ["CHURCH", "CLUB"] } } satisfies Prisma.OrganizationWhereInput;
+  const [churches, clubs, identities, unlinked] = await Promise.all([
+    prisma.organization.count({ where: { type: "CHURCH", isActive: true } }),
+    prisma.organization.count({ where: { type: "CLUB", isActive: true } }),
+    prisma.externalIdentity.count({ where: { organization: inScope } }),
+    prisma.organization.count({ where: { ...inScope, isActive: true, externalIdentities: { none: {} } } }),
+  ]);
+  return { churches, clubs, identities, unlinked };
+}
+
+/** Every church, for the sponsoring-church picker. Small and not searched. */
+export async function listChurchOptions() {
+  return getPrisma().organization.findMany({
+    where: { type: "CHURCH" },
+    select: { id: true, name: true, isActive: true },
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+  });
 }
 
 export async function createOrganization(

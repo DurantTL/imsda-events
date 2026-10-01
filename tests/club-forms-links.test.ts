@@ -370,6 +370,27 @@ describe("submitting through a private link (#610)", () => {
     expect(openSensitiveAnswers(result.submissionId, data.sealedSensitiveAnswers)).toMatchObject({ activity: "Canoe trip" });
   });
 
+  it("sets the signing date on the server in Chicago time and ignores a client-sent value (#719)", async () => {
+    // 01:30 UTC on Oct 6 is still the evening of Oct 5 in Chicago.
+    const lateUtc = new Date("2026-10-06T01:30:00Z");
+    await submitClubFormViaLink(TOKEN, { ...slipAnswers, parent_signature_date: "2020-01-01" }, lateUtc);
+    const stored = mocks.submissionCreate.mock.calls[0][0].data.answers;
+    expect(stored.parent_signature_date).toBe("2026-10-05");
+    expect(stored.activity_date).toBe("2026-11-07");
+  });
+
+  it("fills a missing signing date, so a required date cannot be skipped or left stale (#719)", async () => {
+    const withoutDate: Record<string, unknown> = { ...slipAnswers };
+    delete withoutDate.parent_signature_date;
+    await submitClubFormViaLink(TOKEN, withoutDate, now);
+    expect(mocks.submissionCreate.mock.calls[0][0].data.answers.parent_signature_date).toBe("2026-10-05");
+  });
+
+  it("tells the fill page today's date from the server (#719)", async () => {
+    const view = await resolveClubFormLinkForFill(TOKEN, new Date("2026-10-06T01:30:00Z"));
+    expect(view.today).toBe("2026-10-05");
+  });
+
   it("spends the link and stores the submission in that link's club, sealing sensitive answers", async () => {
     const result = await submitClubFormViaLink(TOKEN, slipAnswers, now);
     expect(result.confirmationMessage).toContain("permission slip");

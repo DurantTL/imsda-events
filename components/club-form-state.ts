@@ -91,3 +91,26 @@ export function notePreview(text: string, limit = 140): string | null {
   const cut = first.slice(0, limit).replace(/\s+\S*$/, "") || first.slice(0, limit);
   return `${cut}…`;
 }
+
+type AutoDateField = { key: string; type: string; autoDate?: string };
+
+/**
+ * Fills in today's date (#719) for every auto-date field without an answer
+ * (a director's new form), or for every one of them when `overwrite` is set
+ * (a private link, where the server sets the same day again on submit).
+ */
+export function withAutoDateAnswers(
+  definition: { sections: Array<{ fields: AutoDateField[] }> },
+  answers: Answers,
+  today: string,
+  overwrite = false,
+): Answers {
+  const next = { ...answers };
+  for (const section of definition.sections) {
+    for (const field of section.fields) {
+      if (field.type !== "DATE" || field.autoDate !== "TODAY") continue;
+      if (overwrite || isBlank(next[field.key])) next[field.key] = today;
+    }
+  }
+  return next;
+}
