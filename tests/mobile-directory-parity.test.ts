@@ -163,6 +163,8 @@ const moreOnlyPages: Record<string, (scenario: Scenario) => boolean> = {
   "/more/health": (scenario) => canAccessOperationalHealth(scenario.permissions),
   // app/(workspace)/more/club-forms/page.tsx (#610): system administrators and Event Admins of a current event (`resolveStaffViewer`).
   "/more/club-forms": (scenario) => scenario.clubFormsAccess,
+  // app/(workspace)/more/event-health/page.tsx (#658): the VIEW_HEALTH_INFORMATION permission (system administrators, or a grant), on a CLUB-audience event.
+  "/more/event-health": (scenario) => has(scenario, "VIEW_HEALTH_INFORMATION") && scenario.clubEvent,
   // app/(workspace)/more/clubs/page.tsx (`resolveClubOversight().allowed`).
   // The sidebar links a system admin to the directory instead, so for them
   // this event view is reached only from "More".
@@ -224,17 +226,17 @@ function phoneDestinations(scenario: Scenario): Set<string> {
 const configPages = ["/more/event-settings", "/more/attendee-configuration", "/more/tags", "/more/honors", "/more/event-content", "/more/merchandise"];
 const clubPages = ["/more/clubs", "/admin/organizations", "/more/club-assignments"];
 const deniedOnPhone: Record<string, readonly string[]> = {
-  EVENT_ADMIN: ["/admin/organizations", "/more/clubs", "/more/club-assignments", "/admin"],
-  REGISTRATION_MANAGER: [...configPages, "/check-in", "/finance", "/more/promo-codes", "/communications", "/community", "/staff", "/imports", ...clubPages],
-  FINANCE_MANAGER: [...configPages, "/check-in", "/registration-builder", "/more/program-assignments", "/communications", "/community", "/staff", "/imports", ...clubPages],
+  EVENT_ADMIN: ["/admin/organizations", "/more/clubs", "/more/club-assignments", "/admin", "/more/event-health"],
+  REGISTRATION_MANAGER: [...configPages, "/more/event-health", "/check-in", "/finance", "/more/promo-codes", "/communications", "/community", "/staff", "/imports", ...clubPages],
+  FINANCE_MANAGER: [...configPages, "/more/event-health", "/check-in", "/registration-builder", "/more/program-assignments", "/communications", "/community", "/staff", "/imports", ...clubPages],
   COMMUNICATIONS_MANAGER: [...configPages, "/people", "/check-in", "/registration-builder", "/more/program-assignments", "/finance", "/more/promo-codes", "/more/reports", "/staff", "/imports", ...clubPages],
   CHECK_IN_STAFF: [...configPages, "/more", "/more/health", "/more/reports", "/registration-builder", "/more/program-assignments", "/finance", "/more/promo-codes", "/communications", "/community", "/staff", "/imports", ...clubPages],
   READ_ONLY_STAFF: [...configPages, "/more", "/more/health", "/more/reports", "/people", "/check-in", "/registration-builder", "/more/program-assignments", "/finance", "/more/promo-codes", "/communications", "/community", "/staff", "/imports", ...clubPages],
   // #481: a GENERAL event shows no club features, even for a system admin
   // (who still reaches the directory from System management, not the phone).
   "SYSTEM_ADMIN on a GENERAL event": ["/admin/organizations", "/more/clubs", "/more/club-assignments"],
-  "EVENT_ADMIN with club oversight on a CLUB-audience event": ["/admin/organizations"],
-  "REGISTRATION_MANAGER on a CLUB-audience event (no oversight)": ["/more/clubs", "/admin/organizations", ...configPages],
+  "EVENT_ADMIN with club oversight on a CLUB-audience event": ["/admin/organizations", "/more/event-health"],
+  "REGISTRATION_MANAGER on a CLUB-audience event (no oversight)": ["/more/clubs", "/admin/organizations", "/more/event-health", ...configPages],
   "custom: CHECK_IN_STAFF plus CONFIGURE_EVENT": ["/more/reports", "/more/program-assignments", "/finance", "/staff", "/imports", "/community", ...clubPages],
   "custom: READ_ONLY_STAFF plus VIEW_REPORTS": [...configPages, "/more/health", "/people", "/finance", "/staff", "/imports", "/community", ...clubPages],
   "custom: CHECK_IN_STAFF plus MANAGE_REGISTRATION on a CLUB-audience event": [...configPages, "/more/clubs", "/admin/organizations", "/more/reports", "/finance", "/staff"],

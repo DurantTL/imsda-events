@@ -148,6 +148,7 @@ export const moreDirectoryCardApplicability: Record<string, AppliesTo> = {
   "club-assignments": "club",
   "event-patches": "club",
   "club-forms": "both",
+  "event-health": "club",
   imports: "both",
   reports: "both",
   health: "both",

@@ -15,7 +15,7 @@ describe("club portal menu (#644)", () => {
     expect(items.map((item) => `${item.group ?? "-"}:${item.label}`)).toEqual([
       "-:Home",
       "People:Roster", "People:Honors", "People:Class tracking",
-      "Events:Events", "Events:Forms",
+      "Events:Events", "Events:Forms", "Events:Health",
       "Records:Monthly Records",
       "Orders:Orders",
       "Club:Club info",
@@ -30,10 +30,10 @@ describe("club portal menu (#644)", () => {
   });
 
   it("gives each role exactly the destinations it had before, with Club info standing for team and profile", () => {
-    const everything = ["/", "/roster", "/honors", "/class-tracking", "/events", "/forms", "/records", "/orders", "/club-info"];
+    const everything = ["/", "/roster", "/honors", "/class-tracking", "/events", "/forms", "/health", "/records", "/orders", "/club-info"];
     expect(hrefs("DIRECTOR")).toEqual(everything);
     expect(hrefs("DEPUTY")).toEqual(everything);
-    // A registrar: no forms, no notes or reports, no club info.
+    // A registrar: no forms or health, no notes or reports, no club info.
     expect(hrefs("REGISTRAR")).toEqual(["/", "/roster", "/honors", "/class-tracking", "/events", "/orders"]);
   });
 

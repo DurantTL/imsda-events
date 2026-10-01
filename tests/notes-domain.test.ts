@@ -73,3 +73,10 @@ describe("canReadNote — the rule every read path, including exports, must appl
     expect(visibleToExport).not.toContain(restrictedToFinance);
   });
 });
+
+describe("note restrictions (#658)", () => {
+  it("cannot be restricted to the health information permission", () => {
+    const parsed = noteInputSchema.safeParse({ body: "Synthetic note", visibility: "RESTRICTED", restrictedPermission: "VIEW_HEALTH_INFORMATION" });
+    expect(parsed.success).toBe(false);
+  });
+});

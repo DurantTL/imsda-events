@@ -28,6 +28,8 @@ export function clubPortalNavItems({
     { href: `${base}/events`, label: "Events", matchChildren: true, group: "Events", hideGroupLabel: true },
     // Club forms (#610) hold health and conduct answers: the club's director and deputy only.
     ...(isClubFormsRole(role) ? [{ href: `${base}/forms`, label: "Forms", matchChildren: true, group: "Events", hideGroupLabel: true }] : []),
+    // Event health information (#658): the club's director and deputy, for their own club.
+    ...(isClubFormsRole(role) ? [{ href: `${base}/health`, label: "Health", matchChildren: true, group: "Events", hideGroupLabel: true }] : []),
     ...(capabilities.submitReports ? [{ href: `${base}/records`, label: "Monthly Records", matchChildren: true, group: "Records", hideGroupLabel: true }] : []),
     // Supplies on hand live inside Orders (#654), so there is no separate Supplies entry.
     ...(roster ? [{ href: `${base}/orders`, label: "Orders", group: "Orders", hideGroupLabel: true }] : []),

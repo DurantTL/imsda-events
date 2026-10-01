@@ -18,7 +18,8 @@ const bodySchema = z.string().trim().min(1, "A note needs a body.").max(4000);
 export const noteInputSchema = z.object({
   body: bodySchema,
   visibility: z.enum(noteVisibilities).default("STAFF"),
-  restrictedPermission: z.enum(eventPermissions).nullable().optional(),
+  // Health information access is granted per person (#658); a note cannot be restricted to it.
+  restrictedPermission: z.enum(eventPermissions).refine((permission) => permission !== "VIEW_HEALTH_INFORMATION", "That permission cannot restrict a note.").nullable().optional(),
 }).superRefine((value, context) => {
   if (value.visibility === "RESTRICTED" && !value.restrictedPermission) {
     context.addIssue({
