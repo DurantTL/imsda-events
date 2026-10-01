@@ -18,6 +18,7 @@ import {
   buildBadgeLabels,
   badgeTextSizes,
   normalizeBadgeOrientation,
+  normalizeBadgeShowAttendeeType,
   normalizeBadgeShowTitle,
   normalizeBadgeTextSize,
   normalizeBadgeStartingPosition,
@@ -55,6 +56,7 @@ export default async function PrintableNameBadgesPage({
     start?: string;
     orientation?: string;
     title?: string | string[];
+    type?: string | string[];
     positionField?: string;
     size?: string;
   }>;
@@ -78,6 +80,7 @@ export default async function PrintableNameBadgesPage({
   );
   const orientation = normalizeBadgeOrientation(query.orientation);
   const showTitle = normalizeBadgeShowTitle(query.title);
+  const showAttendeeType = normalizeBadgeShowAttendeeType(query.type);
   const textSize = normalizeBadgeTextSize(query.size);
   const registrations = await listRegistrations(event.id, {
     statuses: activeRegistrationStatuses,
@@ -188,6 +191,11 @@ export default async function PrintableNameBadgesPage({
           <input defaultChecked={showTitle} name="title" type="checkbox" value="1" />
           <span>Show event title</span>
         </label>
+        <label className="badge-print-checkbox">
+          <input name="type" type="hidden" value="0" />
+          <input defaultChecked={showAttendeeType} name="type" type="checkbox" value="1" />
+          <span>Show attendee type</span>
+        </label>
         <button className="primary-button" type="submit">
           Apply layout
         </button>
@@ -261,12 +269,14 @@ export default async function PrintableNameBadgesPage({
                         <strong>{label.lastName}</strong>
                       </div>
                       <p>{label.groupLabel}</p>
-                      <footer>
-                        <span>{label.attendeeType.toLowerCase()}</span>
-                        {collectsShirtSizes && (
-                          <span>{label.shirtSize ? `Shirt ${label.shirtSize}` : "Shirt size needed"}</span>
-                        )}
-                      </footer>
+                      {(showAttendeeType || collectsShirtSizes) && (
+                        <footer>
+                          {showAttendeeType && <span>{label.attendeeTypeLabel}</span>}
+                          {collectsShirtSizes && (
+                            <span>{label.shirtSize ? `Shirt ${label.shirtSize}` : "Shirt size needed"}</span>
+                          )}
+                        </footer>
+                      )}
                     </div>
                   </article>
                 ) : (

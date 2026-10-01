@@ -102,3 +102,37 @@ describe("printable name badge page layout options", () => {
     expect(markup).not.toContain("badge-sheet-avery-5163");
   });
 });
+
+describe("printable name badge attendee-type line", () => {
+  const withTeenAnswer = () => {
+    const definition = {
+      title: "Synthetic Form",
+      description: "",
+      confirmationMessage: "Thanks",
+      sections: [{ id: "sec_one", title: "Section", description: "", fields: [
+        { id: "field_type", key: "attendee_type", label: "Attendee type", helpText: "", type: "SELECT", scope: "ATTENDEE", required: true, options: ["adult", "teen"], optionLabels: { adult: "Adult", teen: "Teen" } },
+      ] }],
+    };
+    dependencies.listRegistrations.mockResolvedValue([{
+      ...registration,
+      attendees: [{ ...registration.attendees[0], attendeeType: "CHILD", responses: { attendee_type: "teen" } }],
+      publicSubmission: { definition, responses: {} },
+    }]);
+  };
+
+  it("shows the form answer's label by default and offers a checked toggle", async () => {
+    withTeenAnswer();
+    const markup = await render({});
+    expect(markup).toContain("<footer><span>Teen</span></footer>");
+    expect(markup).toContain("Show attendee type");
+    expect(markup).toMatch(/<input[^>]*name="type"[^>]*checked=""/);
+  });
+
+  it("hides the line, and an empty footer, when type=0", async () => {
+    withTeenAnswer();
+    const markup = await render({ type: "0" });
+    expect(markup).not.toContain("<footer>");
+    expect(markup).not.toContain(">Teen<");
+    expect(markup).not.toMatch(/<input[^>]*name="type"[^>]*checked=""/);
+  });
+});
