@@ -1,3 +1,5 @@
+import { DUPLICATE_PUBLIC_FORMS_MESSAGE, duplicatePublicFormGroups, publicFormLookKey } from "@/modules/forms/duplicate-public-forms";
+
 export type EventReadinessSource = {
   name?: string | null;
   slug?: string | null;
@@ -264,5 +266,22 @@ export function getPaymentOnChurchBilledWarnings(
     id: `payment-on-church-billed:${title}`,
     label: `${title} collects payment on a church-billed event`,
     detail: "This event bills the church or organization later, so a form with card payment cannot be submitted. Turn payment off on the form, or change the event to attendee pay.",
+  }));
+}
+
+/**
+ * Two or more published forms sharing a public title and description (#720):
+ * the public event page can't tell them apart. Pass only forms with a
+ * published version; a draft or withdrawn form never counts.
+ */
+export function getDuplicatePublicFormWarnings(
+  publishedForms: ReadonlyArray<{ title: string; description?: string | null }>,
+  eventId?: string,
+): EventReadinessWarning[] {
+  return duplicatePublicFormGroups(publishedForms).map((group) => ({
+    id: `duplicate-public-forms:${publicFormLookKey(group[0]!)}`,
+    label: `${group.length} published forms are titled "${group[0]!.title}"`,
+    detail: DUPLICATE_PUBLIC_FORMS_MESSAGE,
+    ...(eventId ? { href: registrationBuilderFieldHref(eventId) } : {}),
   }));
 }

@@ -14,6 +14,8 @@ import { listPublishedEventContentSections } from "@/modules/events/content-repo
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { groupFormDefinition, groupFormProblem } from "@/modules/group-registrations/domain";
 import { logWarn } from "@/lib/logger";
+import { publicFormDifferentiators } from "@/modules/forms/duplicate-public-forms";
+import { clubRegistrationEntryPath } from "@/modules/club-registrations/entry-path";
 
 async function loadPublicEventLanding(
   eventSlug: string,
@@ -106,7 +108,11 @@ async function loadPublicEventLanding(
     now
   );
 
-  const forms = event.registrationForms.flatMap((form) => {
+  // A club-audience event billed to the church takes its roster registrations
+  // through the club portal (the director's roster, the club's own sign-in),
+  // never the anonymous public form (#720).
+  const clubPortalEvent = event.audience === "CLUB" && event.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
+  const publicForms = event.registrationForms.flatMap((form) => {
     const version = form.versions[0];
     if (!version) return [];
     const parsed = registrationFormDefinitionSchema.safeParse(version.definition);
@@ -118,6 +124,7 @@ async function loadPublicEventLanding(
       return [];
     }
     const summary = summarizePublicRegistrationForm(parsed.data);
+    const viaClubPortal = clubPortalEvent && summary.isRoster;
     return [{
       id: form.id,
       slug: form.slug,
@@ -125,9 +132,14 @@ async function loadPublicEventLanding(
       versionNumber: version.versionNumber,
       name: form.name,
       ...summary,
-      href: `/register/${event.slug}/${form.slug}`,
+      registrationPath: viaClubPortal ? ("CLUB_PORTAL" as const) : ("PUBLIC_FORM" as const),
+      href: viaClubPortal
+        ? clubRegistrationEntryPath(event.slug)
+        : `/register/${event.slug}/${form.slug}`,
     }];
   });
+  const differentiators = publicFormDifferentiators(publicForms);
+  const forms = publicForms.map((form, index) => ({ ...form, differentiator: differentiators[index] ?? null }));
 
   // "Register as a group or individual" (#650): a club event also takes people who are not in a
   // club, when one of its published forms can be used for them. Labelled only "Group".

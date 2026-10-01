@@ -434,13 +434,35 @@ function feeGroupsFor(form: InfoCardForm): FeeGroup[] {
   return groups;
 }
 
+/**
+ * Forms that would print the same block twice (#720): published copies of one
+ * form share a title and every field, so listing each copy repeats the card.
+ * Keeps the first of any identical entries, in order.
+ */
+function withoutIdenticalEntries<T>(entries: readonly T[]): T[] {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const key = JSON.stringify(entry);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** How many genuinely different published forms there are (identical copies count once). */
+function distinctFormCount(input: InfoCardsInput) {
+  return withoutIdenticalEntries(input.forms.map((form) => [form.title, form.definition])).length;
+}
+
 export function buildFeesCard(input: InfoCardsInput): FeesCard | null {
-  const perForm = input.forms.map((form) => ({ title: form.title, groups: feeGroupsFor(form) }))
-    .filter((entry) => entry.groups.length > 0);
+  const perForm = withoutIdenticalEntries(
+    input.forms.map((form) => ({ title: form.title, groups: feeGroupsFor(form) })).filter((entry) => entry.groups.length > 0),
+  );
   if (perForm.length === 0) return null;
-  // With several published forms, each form's fees are listed under its name.
+  // With several different published forms, each form's fees are listed under its name.
+  const showTitles = distinctFormCount(input) > 1;
   const sections: FeeSection[] = perForm.map((entry) => ({
-    title: input.forms.length > 1 ? entry.title : null,
+    title: showTitles ? entry.title : null,
     groups: entry.groups,
   }));
 
@@ -459,15 +481,17 @@ export type RegisterStep = { title: string; description: string | null };
 export type StepsCard = { forms: { title: string | null; steps: RegisterStep[] }[] };
 
 export function buildRegisterStepsCard(input: InfoCardsInput): StepsCard | null {
-  const forms = input.forms
+  const showTitles = distinctFormCount(input) > 1;
+  const forms = withoutIdenticalEntries(input.forms
     .map((form) => ({
-      title: input.forms.length > 1 ? form.title : null,
+      title: form.title,
       steps: getPublicRegistrationStepPlan(form.definition).map((step) => ({
         title: step.title,
         description: step.description.trim() || null,
       })),
     }))
-    .filter((form) => form.steps.length > 0);
+    .filter((form) => form.steps.length > 0))
+    .map((form) => ({ ...form, title: showTitles ? form.title : null }));
   return forms.length > 0 ? { forms } : null;
 }
 

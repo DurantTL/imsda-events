@@ -18,6 +18,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { EventInfoCards } from "@/components/event-info-cards";
 import { TranslateHint } from "@/components/translate-hint";
 import { AutoEventHeader, AutoEventInfoCards } from "@/components/auto-event-info-cards";
+import { CLUB_REGISTRATION_CARD_NOTE } from "@/modules/club-registrations/entry-path";
 import { getAutoEventInfoCards } from "@/modules/event-info-cards/repository";
 import { contentBlocks } from "@/modules/events/content-schemas";
 import { getPublicEventLanding } from "@/modules/events/public-repository";
@@ -99,6 +100,9 @@ export default async function PublicEventPage({
       </header>
       <TranslateHint />
 
+      {/* One container (#720): every section below shares this width and left
+          edge at every viewport, with the same side gutters on a phone. */}
+      <div className="public-event-container">
       {autoCards ? (
         <AutoEventHeader
           header={autoCards.header}
@@ -233,7 +237,13 @@ export default async function PublicEventPage({
                   <div className="public-event-form-copy">
                     <p className="public-registration-eyebrow">{form.audienceLabel}</p>
                     <h3>{form.title}</h3>
+                    {form.differentiator && (
+                      <p className="public-event-form-differentiator">{form.differentiator}</p>
+                    )}
                     <p>{form.description}</p>
+                    {form.registrationPath === "CLUB_PORTAL" && (
+                      <p className="public-event-form-note">{CLUB_REGISTRATION_CARD_NOTE}</p>
+                    )}
                     <ul aria-label={`${form.title} details`}>
                       {form.highlights.map((highlight) => <li key={highlight}>{highlight}</li>)}
                     </ul>
@@ -353,6 +363,7 @@ export default async function PublicEventPage({
             </a>
           )}
         </aside>
+      </div>
       </div>
     </main>
   );

@@ -365,7 +365,9 @@ export function summarizePublicRegistrationForm(
 
   return {
     title: definition.title,
-    description: definition.description || "Complete this form to register for the event.",
+    description: definition.description?.trim() || "Complete this form to register for the event.",
+    /** True when the form collects a list of people (a roster form). */
+    isRoster: roster !== null,
     audienceLabel: roster
       ? `${roster.attendeeLabel} roster`
       : attendeeFields.length > 0

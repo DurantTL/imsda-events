@@ -8539,3 +8539,47 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .list-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 0; }
 .list-pager-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .list-pager-buttons .secondary-button { min-height: 44px; }
+
+/* Public event page (#720): one container width and left edge for the hero,
+   announcements, info cards ("steps", "Need help?"), resources, the
+   registration list and the side column, with the same 16px gutters on a
+   phone. The sections keep their own look; only width and side margins are
+   normalised here, with a selector strong enough to beat each section's
+   older per-breakpoint margins. */
+.public-event-container {
+  width: min(100% - 32px, 1180px);
+  margin-inline: auto;
+}
+.public-event-container > .public-registration-hero,
+.public-event-container > .public-event-announcement-feed,
+.public-event-container > .event-info-cards,
+.public-event-container > .public-event-resources,
+.public-event-container > .auto-info-header,
+.public-event-container > .auto-info-cards,
+.public-event-container > .public-event-layout {
+  width: auto;
+  max-width: none;
+  margin-right: 0;
+  margin-left: 0;
+}
+.public-event-container > .auto-info-header,
+.public-event-container > .auto-info-cards {
+  padding-right: 0;
+  padding-left: 0;
+}
+.public-event-form-copy > .public-event-form-differentiator {
+  margin: 4px 0 0;
+  color: var(--imsda-purple);
+  font-size: var(--text-helper-min);
+  font-weight: 800;
+}
+.public-event-form-copy > .public-event-form-note {
+  max-width: 620px;
+  margin: 8px 0 0;
+  border-left: 3px solid var(--imsda-gold);
+  padding-left: 10px;
+  color: var(--ink);
+  font-size: var(--text-helper-min);
+  font-weight: 700;
+  line-height: 1.5;
+}

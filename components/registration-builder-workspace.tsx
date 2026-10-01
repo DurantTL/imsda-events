@@ -47,6 +47,7 @@ import { creditPatchForKindChange, creditSummary, hasCredit, removeCreditPatch }
 import { getPublicRegistrationStepPlan, isPublicReviewSection, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
 import { batchFieldKeys, removalAnswerNote } from "@/modules/forms/field-answer-counts";
 import { slugMatchesTitle } from "@/modules/forms/slug";
+import { DUPLICATE_PUBLIC_FORMS_MESSAGE, duplicatePublicFormGroups } from "@/modules/forms/duplicate-public-forms";
 import { recordTemplateCleanupCreated } from "@/components/template-cleanup-checklist";
 import { TemplateCleanupChecklistPanel } from "@/components/template-cleanup-checklist-panel";
 
@@ -160,6 +161,11 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
   const focusedForm = focusTarget ? initialForms.find((form) => form.id === focusTarget.formId) : undefined;
   const [selectedFormId, setSelectedFormId] = useState(focusedForm?.id ?? initialForms[0]?.id ?? "");
   const selectedForm = forms.find((form) => form.id === selectedFormId) ?? null;
+  // Published forms the public can't tell apart (#720): same public title and description.
+  const duplicatePublishedGroups = useMemo(() => duplicatePublicFormGroups(forms.flatMap((form) => {
+    const live = form.versions.find((version) => version.status === "PUBLISHED");
+    return live ? [{ id: form.id, name: form.name, title: live.definition.title, description: live.definition.description }] : [];
+  })), [forms]);
   const [selectedVersionId, setSelectedVersionId] = useState(selectedForm?.activeVersion.id ?? "");
   const selectedVersion = selectedForm?.versions.find((version) => version.id === selectedVersionId) ?? selectedForm?.activeVersion ?? null;
   const [definition, setDefinition] = useState<RegistrationFormDefinition | null>(selectedVersion?.definition ?? null);
@@ -901,6 +907,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
     {error && <div className="inline-notice error" role="alert">{error}</div>}
     {notice && <div className="inline-notice" role="status">{notice}</div>}
 
+    {duplicatePublishedGroups.length > 0 && <section className="panel builder-duplicate-warning" role="alert" data-testid="duplicate-public-forms-warning"><p className="builder-gate"><AlertTriangle size={15} /> <strong>{DUPLICATE_PUBLIC_FORMS_MESSAGE}</strong> {duplicatePublishedGroups.map((group) => `“${group[0]!.title}” (${group.map((form) => form.name).join(", ")})`).join("; ")}.</p></section>}
     {forms.length === 0 ? <section className="panel builder-empty"><CopyPlus size={32} /><h2>Create the first registration form</h2><p>Choose “Blank form” or a tested local template to begin. Nothing will be published publicly or sent to an external service.</p></section> : <div className="builder-layout">
       <aside className="panel builder-form-list"><div className="section-heading"><div><p className="eyebrow">Event forms</p><h2>{forms.length} form{forms.length === 1 ? "" : "s"}</h2></div></div><div className="builder-form-buttons">{forms.map((form) => <button aria-pressed={form.id === selectedFormId} className={form.id === selectedFormId ? "selected" : ""} type="button" key={form.id} onClick={() => chooseForm(form)}><span><strong>{form.name}</strong><small>Version {form.activeVersion.versionNumber} · {statusLabel(form.activeVersion.status)}</small></span><ChevronRight size={16} /></button>)}</div>{selectedForm && <div className="version-history"><p className="eyebrow">Version history</p>{selectedForm.versions.map((version) => <button aria-pressed={version.id === selectedVersion?.id} className={version.id === selectedVersion?.id ? "selected" : ""} type="button" key={version.id} onClick={() => chooseVersion(version)}><FileClock size={15} /><span><strong>Version {version.versionNumber}</strong><small>{statusLabel(version.status)} · {version.testSubmissionCount} tests</small></span></button>)}</div>}</aside>
 

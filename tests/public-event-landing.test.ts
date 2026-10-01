@@ -105,6 +105,7 @@ describe("public event landing domain", () => {
     expect(summarizePublicRegistrationForm(definition)).toEqual({
       title: "Household retreat registration",
       description: "Register everyone attending from your household.",
+      isRoster: true,
       audienceLabel: "Guest roster",
       highlights: ["Add up to 6 guests", "1 section", "Includes fee calculation"],
     });
