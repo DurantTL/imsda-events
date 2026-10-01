@@ -48,6 +48,11 @@ deputies and system administrators read full birth dates. A template marks them
 in `birthDateFieldKeys`; they are also in `sensitiveFieldKeys` (so they are
 sealed) and everyone else sees `Restricted`.
 
+The coordinator health view (#658, ADR 0005 Addendum C, Proposed) is a separate,
+narrow read-only view over some of these answers and the club registration's
+dietary note. It does not change this table: Area Coordinators still see
+`Restricted` here.
+
 Club pages sit behind the roster's second step (these files hold birth dates
 and health answers).
 

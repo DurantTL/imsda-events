@@ -186,6 +186,19 @@ const nextConfig: NextConfig = {
         headers: privateRegistrationHeaders,
       },
       {
+        // Health information for club events (#658): never cached, never indexed, no referrer.
+        source: "/account/area/health/:path*",
+        headers: privateRegistrationHeaders,
+      },
+      {
+        source: "/account/clubs/:organizationId/health/:path*",
+        headers: privateRegistrationHeaders,
+      },
+      {
+        source: "/more/event-health/:path*",
+        headers: privateRegistrationHeaders,
+      },
+      {
         source: "/check-in",
         headers: [
           {

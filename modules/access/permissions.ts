@@ -10,6 +10,13 @@ export const eventPermissions = [
   "VIEW_SENSITIVE_DATA",
   "MANAGE_IMPORTS",
   "MANAGE_FORMS",
+  /**
+   * Allergies (as entered), emergency contacts and the medical-need flag for
+   * club event attendees (#658, ADR 0005 Addendum C). Granted one membership at
+   * a time by a system administrator and held by no role, EVENT_ADMIN included.
+   * System administrators have it through `effectivePermissions`.
+   */
+  "VIEW_HEALTH_INFORMATION",
 ] as const;
 
 export type EventPermission = (typeof eventPermissions)[number];
@@ -26,7 +33,8 @@ export const eventRoles = [
 export type EventRole = (typeof eventRoles)[number];
 
 export const rolePermissions: Record<EventRole, readonly EventPermission[]> = {
-  EVENT_ADMIN: eventPermissions,
+  // Everything except the health permission, which no role carries (#658).
+  EVENT_ADMIN: eventPermissions.filter((permission) => permission !== "VIEW_HEALTH_INFORMATION"),
   REGISTRATION_MANAGER: ["VIEW_EVENT", "MANAGE_REGISTRATION", "MANAGE_FORMS", "VIEW_REPORTS", "VIEW_SENSITIVE_DATA"],
   FINANCE_MANAGER: ["VIEW_EVENT", "MANAGE_FINANCE", "VIEW_REPORTS", "VIEW_SENSITIVE_DATA"],
   COMMUNICATIONS_MANAGER: ["VIEW_EVENT", "MANAGE_COMMUNICATIONS"],

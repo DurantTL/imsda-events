@@ -44,6 +44,10 @@ enum EventPermission {
   VIEW_SENSITIVE_DATA
   MANAGE_IMPORTS
   MANAGE_FORMS
+  /// Allergies (as entered), emergency contacts and the medical-need flag for
+  /// club event attendees (#658, ADR 0005 Addendum C). Never part of a role:
+  /// only a system administrator grants it, one membership at a time.
+  VIEW_HEALTH_INFORMATION
 }
 
 enum MembershipStatus {
