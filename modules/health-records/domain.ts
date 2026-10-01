@@ -214,7 +214,8 @@ export type HealthViewer =
   | { kind: "CLUB_LEADER"; organizationId: string; accountId: string }
   | { kind: "AREA_COORDINATOR"; accountId: string }
   | { kind: "HEALTH_ROLE"; userId: string; eventIds: readonly string[] }
-  | { kind: "SYSTEM_ADMIN"; userId: string };
+  /** `actAsId` is set when the administrator is acting as a club director (#442), so the audit shows it. */
+  | { kind: "SYSTEM_ADMIN"; userId: string; actAsId?: string };
 
 export type HealthAction = "VIEW" | "EDIT" | "SEND_LINK";
 
@@ -236,10 +237,11 @@ export function viewerCanSeeEvent(viewer: HealthViewer, eventId: string) {
 /** Audit attribution: who, never what they saw. */
 export function healthAuditActor(viewer: HealthViewer): {
   actorUserId?: string;
-  metadata: { viewerKind: HealthViewer["kind"]; actorAttendeeAccountId?: string };
+  metadata: { viewerKind: HealthViewer["kind"]; actorAttendeeAccountId?: string; actAsId?: string };
 } {
   switch (viewer.kind) {
     case "SYSTEM_ADMIN":
+      return { actorUserId: viewer.userId, metadata: { viewerKind: viewer.kind, ...(viewer.actAsId ? { actAsId: viewer.actAsId } : {}) } };
     case "HEALTH_ROLE":
       return { actorUserId: viewer.userId, metadata: { viewerKind: viewer.kind } };
     case "AREA_COORDINATOR":

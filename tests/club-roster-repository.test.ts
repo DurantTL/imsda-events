@@ -108,6 +108,7 @@ function fakeDatabase() {
     clubRosterMember: {
       create: async ({ data }: { data: Row }) => { const row = { status: "ACTIVE", ...data, id: `member-${++sequence}` }; db.members.push(row); return row; },
       update: async ({ where, data }: { where: Row; data: Row }) => { db.calls.push("erase-row"); return Object.assign(db.members.find((member) => member.id === where.id)!, data); },
+      findUnique: async ({ where }: { where: Row }) => db.members.find((member) => member.id === where.id) ?? null,
       findFirst: async ({ where }: { where: Record<string, unknown> }) => {
         db.calls.push("find-member");
         const member = db.members.find((row) => matches(row, where));

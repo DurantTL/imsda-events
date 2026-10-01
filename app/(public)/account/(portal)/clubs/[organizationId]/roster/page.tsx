@@ -13,7 +13,7 @@ import { honorSummaryByMemberId } from "@/modules/honors/member-honor-domain";
 import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 import { requireHealthViewerForClub } from "@/modules/health-records/access";
 import { healthRecordsEnabled } from "@/modules/health-records/flag";
-import { healthSummariesForMembers } from "@/modules/health-records/repository";
+import { healthNoteFlagsForRoster, healthSummariesForMembers } from "@/modules/health-records/repository";
 
 export const metadata: Metadata = { title: "Club roster" };
 export const dynamic = "force-dynamic";
@@ -52,6 +52,9 @@ export default async function ClubRosterPage({
       .then((viewer) => (viewer.kind === "CLUB_LEADER" ? healthSummariesForMembers(viewer, organizationId, members.map((member) => member.id)) : undefined))
       .catch(() => undefined)
     : undefined;
+  // Anyone who can see these rows, with no health access, still sees a neutral
+  // "Has a health note" marker: one boolean, no text (#611).
+  const healthNoteFlags = healthTab || readOnly ? undefined : await healthNoteFlagsForRoster(organizationId, members.map((member) => member.id)).catch(() => undefined);
   const registrationHref = registrationReturnTo(organizationId, returnToParam);
   return (
     <>
@@ -74,6 +77,7 @@ export default async function ClubRosterPage({
         complianceStatuses={complianceStatuses}
         headingActions={canTransfer ? <RequestTransferButton clubOptions={clubOptions} organizationId={organizationId} /> : undefined}
         honorSummaries={honorSummaryByMemberId(honorRows)}
+        healthNoteFlags={healthNoteFlags}
         healthTab={healthTab}
         honorsPopup={{ canRecord: !readOnly }}
         initialMembers={members}

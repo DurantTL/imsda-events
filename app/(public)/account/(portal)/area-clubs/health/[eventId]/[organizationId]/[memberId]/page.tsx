@@ -23,9 +23,14 @@ export default async function AreaCoordinatorHealthPage({
   if (!healthRecordsEnabled()) notFound();
   const { eventId, organizationId, memberId } = await params;
   const viewer = await requireAreaCoordinatorHealthViewer().catch((error: unknown) => {
+    if (error instanceof HealthRecordError && error.code === "FORBIDDEN") return error;
     if (error instanceof HealthRecordError) notFound();
     throw error;
   });
+  // Second step too old: say so (it is the coordinator's own session, nothing about a record).
+  if (viewer instanceof HealthRecordError) {
+    return <p className="public-manage-empty">{viewer.message} <a href="/account/two-step">Confirm now</a></p>;
+  }
   const health = await viewHealthRecord(viewer, organizationId, memberId, new Date(), { eventId }).catch((error: unknown) => {
     if (error instanceof HealthRecordError) notFound();
     throw error;

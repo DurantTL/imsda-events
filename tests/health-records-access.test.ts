@@ -7,12 +7,15 @@ const state = vi.hoisted(() => ({
   acting: vi.fn(),
   memberships: vi.fn(),
   coordinator: vi.fn(),
+  attendee: vi.fn(),
+  sessionFind: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/env", () => ({ getServerEnv: () => ({ HEALTH_RECORDS_ENABLED: state.enabled }) }));
-vi.mock("@/lib/prisma", () => ({ getPrisma: () => ({ eventMembership: { findMany: state.memberships } }) }));
-vi.mock("@/modules/club-rosters/access", () => ({ requireRosterAccess: state.roster }));
+vi.mock("@/lib/prisma", () => ({ getPrisma: () => ({ eventMembership: { findMany: state.memberships }, attendeeSession: { findUnique: state.sessionFind } }) }));
+vi.mock("@/modules/club-rosters/access", () => ({ requireRosterAccess: state.roster, ROSTER_UNLOCK_HOURS: 12 }));
+vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: state.attendee }));
 vi.mock("@/modules/access/current-session", () => ({ getCurrentSession: state.session }));
 vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: state.acting }));
 vi.mock("@/modules/organizations/area-coordinators", () => ({ currentAreaCoordinator: state.coordinator }));
@@ -59,7 +62,7 @@ describe("health access: club portal", () => {
 
   it("treats a system administrator acting as the director as a view-only system administrator, never an editor", async () => {
     state.roster.mockResolvedValue(rosterAs("DIRECTOR", { kind: "STAFF_ACTING", userId: "admin-1", actAsId: "act-1" }));
-    await expect(requireHealthViewerForClub("club-a")).resolves.toEqual({ kind: "SYSTEM_ADMIN", userId: "admin-1" });
+    await expect(requireHealthViewerForClub("club-a")).resolves.toEqual({ kind: "SYSTEM_ADMIN", userId: "admin-1", actAsId: "act-1" });
   });
 
   it("is not found when the feature is off, before the roster gate is consulted", async () => {
@@ -130,24 +133,40 @@ describe("health access: staff", () => {
 });
 
 describe("health access: Area Coordinator", () => {
+  const now = new Date("2026-10-05T15:00:00Z");
+
   beforeEach(() => {
     state.enabled = true;
     state.coordinator.mockReset();
+    state.attendee.mockReset();
+    state.sessionFind.mockReset();
+    state.attendee.mockResolvedValue({ via: "attendee", sessionId: "session-1" });
   });
 
-  it("admits a coordinator whose second sign-in step is verified (currentAreaCoordinator checks it)", async () => {
+  it("admits a coordinator whose second step was verified within 12 hours", async () => {
     state.coordinator.mockResolvedValue({ id: "acct-coord" });
-    await expect(requireAreaCoordinatorHealthViewer()).resolves.toEqual({ kind: "AREA_COORDINATOR", accountId: "acct-coord" });
+    state.sessionFind.mockResolvedValue({ secondFactorVerifiedAt: new Date(now.getTime() - 11 * 3_600_000) });
+    await expect(requireAreaCoordinatorHealthViewer(now)).resolves.toEqual({ kind: "AREA_COORDINATOR", accountId: "acct-coord" });
+  });
+
+  it("asks a coordinator whose second step is older than 12 hours, or missing, to confirm again", async () => {
+    state.coordinator.mockResolvedValue({ id: "acct-coord" });
+    state.sessionFind.mockResolvedValue({ secondFactorVerifiedAt: new Date(now.getTime() - 13 * 3_600_000) });
+    await expect(requireAreaCoordinatorHealthViewer(now)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    state.sessionFind.mockResolvedValue({ secondFactorVerifiedAt: null });
+    await expect(requireAreaCoordinatorHealthViewer(now)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    state.attendee.mockResolvedValue({ via: "staff", sessionId: null });
+    await expect(requireAreaCoordinatorHealthViewer(now)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
   it("refuses everyone else, including a coordinator without a verified MFA session, as not found", async () => {
     state.coordinator.mockResolvedValue(null);
-    await expect(requireAreaCoordinatorHealthViewer()).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(requireAreaCoordinatorHealthViewer(now)).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 
   it("is not found when the feature is off, before the coordinator is looked up", async () => {
     state.enabled = false;
-    await expect(requireAreaCoordinatorHealthViewer()).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(requireAreaCoordinatorHealthViewer(now)).rejects.toMatchObject({ code: "NOT_FOUND" });
     expect(state.coordinator).not.toHaveBeenCalled();
   });
 });

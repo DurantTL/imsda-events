@@ -30,8 +30,8 @@ import {
   type HealthRecordStatus,
   type HealthViewer,
 } from "@/modules/health-records/domain";
-import { HEALTH_LINK_UNAVAILABLE_MESSAGE, HealthRecordError } from "@/modules/health-records/errors";
-import { requireHealthRecordsEnabled } from "@/modules/health-records/flag";
+import { HEALTH_LINK_UNAVAILABLE_MESSAGE, HEALTH_MEMBER_NOT_FOUND_MESSAGE, HealthRecordError } from "@/modules/health-records/errors";
+import { healthRecordsEnabled, requireHealthRecordsEnabled } from "@/modules/health-records/flag";
 import { HEALTH_RECORD_LINK_TEMPLATE_KEY, healthRecordLinkEmailContent } from "@/modules/health-records/link-email";
 
 /**
@@ -52,7 +52,7 @@ function unavailable() {
 function allow(viewer: HealthViewer, organizationId: string, action: HealthAction) {
   if (!viewerCan(viewer, organizationId, action)) {
     // Another club's record is not found; a permitted viewer without this action is forbidden.
-    if (viewer.kind === "CLUB_LEADER") throw new HealthRecordError("MEMBER_NOT_FOUND", "That person isn't on your club's roster.");
+    if (viewer.kind === "CLUB_LEADER") throw new HealthRecordError("MEMBER_NOT_FOUND", HEALTH_MEMBER_NOT_FOUND_MESSAGE);
     throw new HealthRecordError("FORBIDDEN", "Your access to health records is view-only.");
   }
 }
@@ -89,7 +89,7 @@ async function loadMember(
     },
   });
   if (!member || member.organization.type !== "CLUB" || !member.organization.isActive) {
-    throw new HealthRecordError("MEMBER_NOT_FOUND", "That person isn't on your club's roster.");
+    throw new HealthRecordError("MEMBER_NOT_FOUND", HEALTH_MEMBER_NOT_FOUND_MESSAGE);
   }
   return member;
 }
@@ -106,7 +106,7 @@ async function assertEventScope(
   client: Pick<Client, "clubEventRegistration">,
   input: { viewer: HealthViewer; eventId: string | undefined; organizationId: string; member: Pick<LoadedMember, "personId">; now: Date },
 ) {
-  const notFound = () => new HealthRecordError("MEMBER_NOT_FOUND", "That person isn't registered for this event.");
+  const notFound = () => new HealthRecordError("MEMBER_NOT_FOUND", HEALTH_MEMBER_NOT_FOUND_MESSAGE);
   if (!input.eventId || !input.member.personId || !viewerCanSeeEvent(input.viewer, input.eventId)) throw notFound();
   const registration = await client.clubEventRegistration.findFirst({
     where: {
@@ -117,9 +117,11 @@ async function assertEventScope(
         attendees: { some: { personId: input.member.personId } },
       },
     },
-    select: { event: { select: { timezone: true, endsAt: true } } },
+    select: { event: { select: { timezone: true, endsAt: true, isPublished: true } } },
   });
-  if (!registration || !healthWindowOpen(registration.event, input.now)) throw notFound();
+  // The event model has no cancelled or archived state, and a deleted event takes
+  // its registrations with it; an unpublished event is the one "not open" state.
+  if (!registration || !registration.event.isPublished || !healthWindowOpen(registration.event, input.now)) throw notFound();
 }
 
 /**
@@ -176,7 +178,7 @@ export async function viewHealthRecord(
   const record = await findRecord(prisma, organizationId, member);
   const who = healthAuditActor(viewer);
   await writeAuditLog({
-    ...(scoped && options.eventId ? { eventId: options.eventId } : {}),
+    // No top-level eventId: that column feeds the event staff audit log, which must not list these views. The event is in the metadata.
     actorUserId: who.actorUserId,
     action: "HEALTH_RECORD_VIEWED",
     entityType: "HealthRecord",
@@ -201,6 +203,29 @@ export async function viewHealthRecord(
     consentText: HEALTH_CONSENT_TEXT,
     consentVersion: HEALTH_CONSENT_VERSION,
   };
+}
+
+function isUniqueViolation(error: unknown) {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2002";
+}
+
+/**
+ * Two first saves for the same person can both try to create the record; the
+ * loser hits the unique key. Retry once (the record now exists, so it updates),
+ * then answer a friendly conflict rather than an error.
+ */
+async function withFirstSaveRetry<T>(work: () => Promise<T>): Promise<T> {
+  try {
+    return await work();
+  } catch (error) {
+    if (!isUniqueViolation(error)) throw error;
+  }
+  try {
+    return await work();
+  } catch (error) {
+    if (isUniqueViolation(error)) throw new HealthRecordError("CONFLICT", "This record was just saved by someone else. Please reload and try again.");
+    throw error;
+  }
 }
 
 function requireEncryption() {
@@ -256,7 +281,7 @@ export async function saveHealthRecord(viewer: HealthViewer, organizationId: str
   const input = parseHealthRecordInput(rawInput);
   requireEncryption();
   const who = healthAuditActor(viewer);
-  return getPrisma().$transaction(async (tx) => {
+  return withFirstSaveRetry(() => getPrisma().$transaction(async (tx) => {
     const member = await loadMember(tx, organizationId, memberId, now);
     const written = await writeRecord(tx, { organizationId, member, input, via: "DIRECTOR", savedBy: viewerActorId(viewer), now });
     await writeAuditLog({
@@ -268,7 +293,7 @@ export async function saveHealthRecord(viewer: HealthViewer, organizationId: str
       metadata: { ...who.metadata, organizationId, rosterMemberId: memberId, fieldCount: written.fieldCount, clubYear: clubYearFor(now) },
     }, tx);
     return { recordId: written.recordId, status: "CURRENT" as const };
-  });
+  }));
 }
 
 /** The director confirms last year's record is still right for this club year. */
@@ -323,6 +348,22 @@ export async function healthSummariesForMembers(
     const record = byMember.get(id) ?? null;
     return [id, { status: healthRecordStatus(record, now), hasHealthNote: record?.hasHealthNote ?? false }];
   }));
+}
+
+/**
+ * The plain "has a health note" marker for a club's roster rows (#611), for any
+ * viewer who can already see those rows, including one with no health access.
+ * One boolean per member and nothing else: no status, no text, no decryption.
+ * The caller must already hold roster access for `organizationId`; with the
+ * feature off it returns nothing.
+ */
+export async function healthNoteFlagsForRoster(organizationId: string, memberIds: string[]): Promise<Record<string, boolean>> {
+  if (!healthRecordsEnabled() || memberIds.length === 0) return {};
+  const records = await getPrisma().healthRecord.findMany({
+    where: { organizationId, rosterMemberId: { in: memberIds }, hasHealthNote: true },
+    select: { rosterMemberId: true },
+  });
+  return Object.fromEntries(records.map((record) => [record.rosterMemberId, true]));
 }
 
 // ---------------------------------------------------------------------------
@@ -498,7 +539,24 @@ async function findUsableLink(token: string, now: Date) {
   ) {
     throw unavailable();
   }
-  return link;
+  // The link names a roster row, but rows are per club year. A link for an older
+  // year must write to the person's current-year row, never move the record back
+  // onto the old one; with no current-year row it is as good as unusable.
+  let member: { id: string; personId: string | null; firstName: string } = {
+    id: link.rosterMember.id,
+    personId: link.rosterMember.personId,
+    firstName: link.rosterMember.person?.firstName ?? "",
+  };
+  if (link.rosterMember.clubYear !== clubYearFor(now)) {
+    if (!link.rosterMember.personId) throw unavailable();
+    const current = await getPrisma().clubRosterMember.findFirst({
+      where: { organizationId: link.organizationId, personId: link.rosterMember.personId, clubYear: clubYearFor(now), status: "ACTIVE" },
+      select: { id: true, personId: true, person: { select: { firstName: true } } },
+    });
+    if (!current) throw unavailable();
+    member = { id: current.id, personId: current.personId, firstName: current.person?.firstName ?? "" };
+  }
+  return { ...link, member };
 }
 
 /** What the link's page shows: the club, the member's first name, and the empty form. Never any stored value. */
@@ -506,7 +564,7 @@ export async function resolveHealthLinkForFill(token: string, now = new Date()) 
   const link = await findUsableLink(token, now);
   return {
     clubName: link.rosterMember.organization.name,
-    memberFirstName: link.rosterMember.person?.firstName ?? "",
+    memberFirstName: link.member.firstName,
     consentText: HEALTH_CONSENT_TEXT,
     consentVersion: HEALTH_CONSENT_VERSION,
   };
@@ -522,7 +580,7 @@ export async function submitHealthRecordViaLink(token: string, rawInput: unknown
   const input = parseHealthRecordInput(rawInput);
   requireEncryption();
   const tokenHash = hashOpaqueToken(token);
-  return getPrisma().$transaction(async (tx) => {
+  return withFirstSaveRetry(() => getPrisma().$transaction(async (tx) => {
     const spent = await tx.healthRecordLink.updateMany({
       where: { id: link.id, tokenHash, status: "OPEN", expiresAt: { gt: now } },
       data: { status: "USED", usedAt: now, tokenHash: null },
@@ -530,7 +588,7 @@ export async function submitHealthRecordViaLink(token: string, rawInput: unknown
     if (spent.count === 0) throw unavailable();
     const written = await writeRecord(tx, {
       organizationId: link.organizationId,
-      member: { id: link.rosterMember.id, personId: link.rosterMember.personId },
+      member: { id: link.member.id, personId: link.member.personId },
       input,
       via: "LINK",
       savedBy: null,
@@ -541,8 +599,8 @@ export async function submitHealthRecordViaLink(token: string, rawInput: unknown
       entityType: "HealthRecord",
       entityId: written.recordId,
       summary: "A health record was submitted through a private link.",
-      metadata: { organizationId: link.organizationId, rosterMemberId: link.rosterMemberId, linkId: link.id, fieldCount: written.fieldCount, clubYear: clubYearFor(now) },
+      metadata: { organizationId: link.organizationId, rosterMemberId: link.member.id, linkId: link.id, fieldCount: written.fieldCount, clubYear: clubYearFor(now) },
     }, tx);
     return { recordId: written.recordId };
-  });
+  }));
 }

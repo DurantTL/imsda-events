@@ -33,6 +33,9 @@ function matches(row: Row, where: Row): boolean {
 const client: any = {
   clubRosterMember: {
     findFirst: async ({ where }: { where: Row }) => {
+      if (where.personId) {
+        return state.members.find((member) => member.organizationId === where.organizationId && member.personId === where.personId && member.clubYear === where.clubYear && member.status === where.status) ?? null;
+      }
       state.prismaTouched("clubRosterMember.findFirst");
       return state.members.find((member) => member.id === where.id && member.organizationId === where.organizationId && member.status === "ACTIVE" && (where.clubYear === undefined || member.clubYear === where.clubYear)) ?? null;
     },
@@ -133,6 +136,7 @@ import { prepareHealthRecordLinkBodyForDelivery } from "@/modules/health-records
 import {
   confirmHealthRecord,
   createHealthRecordLink,
+  healthNoteFlagsForRoster,
   healthSummariesForMembers,
   listHealthRecordLinks,
   resolveHealthLinkForFill,
@@ -163,7 +167,7 @@ function resetState() {
     organizationId: "club-a",
     status: "CONFIRMED",
     attendeePersonIds: ["person-1"],
-    event: { timezone: "America/Chicago", endsAt: new Date("2026-10-11T18:00:00Z") },
+    event: { timezone: "America/Chicago", endsAt: new Date("2026-10-11T18:00:00Z"), isPublished: true },
   }];
   state.emailConfigured = true;
   state.prismaTouched.mockClear();
@@ -308,12 +312,20 @@ describe("director entry and viewing", () => {
     await expect(createHealthRecordLink(admin, { organizationId: "club-a", rosterMemberId: "member-1", recipientEmail: "p@example.test" }, now)).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
+  it("records the act-as id when a system administrator is acting as a director", async () => {
+    await saveHealthRecord(leader, "club-a", "member-1", syntheticRecord, now);
+    state.audit = [];
+    await viewHealthRecord({ kind: "SYSTEM_ADMIN", userId: "admin-1", actAsId: "act-1" }, "club-a", "member-1", now);
+    expect(state.audit[0]!.metadata).toMatchObject({ viewerKind: "SYSTEM_ADMIN", actAsId: "act-1" });
+  });
+
   it("lets the health role view an attendee of its own event only, inside the window, and never edit", async () => {
     await saveHealthRecord(leader, "club-a", "member-1", syntheticRecord, now);
     state.audit = [];
     const view = await viewHealthRecord(staff, "club-a", "member-1", now, { eventId: "event-1" });
     expect(view.canEdit).toBe(false);
-    expect(state.audit[0]).toMatchObject({ eventId: "event-1", actorUserId: "staff-1", metadata: { viewerKind: "HEALTH_ROLE", eventId: "event-1" } });
+    expect(state.audit[0]).toMatchObject({ actorUserId: "staff-1", metadata: { viewerKind: "HEALTH_ROLE", eventId: "event-1" } });
+    expect(state.audit[0]).not.toHaveProperty("eventId");
     // Another event's attendee, no event named, and an event the role does not cover.
     state.eventRegistrations.push({ ...state.eventRegistrations[0]!, eventId: "event-2" });
     await expect(viewHealthRecord(staff, "club-a", "member-1", now, { eventId: "event-2" })).rejects.toMatchObject({ code: "MEMBER_NOT_FOUND" });
@@ -419,10 +431,19 @@ describe("the Area Coordinator's event-scoped view", () => {
     expect(state.audit).toHaveLength(1);
     expect(state.audit[0]).toMatchObject({
       action: "HEALTH_RECORD_VIEWED",
-      eventId: "event-1",
       metadata: { viewerKind: "AREA_COORDINATOR", actorAttendeeAccountId: "acct-coord", eventId: "event-1", rosterMemberId: "member-1", organizationId: "club-a" },
     });
+    // The event id lives in the metadata only: a top-level eventId would list the view in the event staff's audit log.
+    expect(state.audit[0]).not.toHaveProperty("eventId");
     for (const marker of healthMarkers) expect(JSON.stringify(state.audit)).not.toContain(marker);
+  });
+
+  it("refuses an unpublished event's attendee, with the same not-found as every other miss", async () => {
+    state.eventRegistrations[0]!.event.isPublished = false;
+    const error = await viewHealthRecord(coordinator, "club-a", "member-1", now, { eventId: "event-1" }).catch((caught: unknown) => caught);
+    const roster = await viewHealthRecord(coordinator, "club-a", "member-x", now, { eventId: "event-1" }).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "MEMBER_NOT_FOUND" });
+    expect((error as Error).message).toBe((roster as Error).message);
   });
 
   it("still opens a record through the 30 days after the event, and not after", async () => {
@@ -460,5 +481,81 @@ describe("the Area Coordinator's event-scoped view", () => {
   it("is not found when the feature is off", async () => {
     state.env.HEALTH_RECORDS_ENABLED = false;
     await expect(viewHealthRecord(coordinator, "club-a", "member-1", now, { eventId: "event-1" })).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+});
+
+describe("an older year's parent link and removal", () => {
+  beforeEach(resetState);
+
+  async function sendLinkForMember(memberId: string, at: Date) {
+    const created = await createHealthRecordLink(leader, { organizationId: "club-a", rosterMemberId: memberId, recipientEmail: "parent@example.test" }, at);
+    const delivered = await prepareHealthRecordLinkBodyForDelivery({ messageId: created.messageId, bodyText: state.outbox.at(-1)!.bodyTextSnapshot as string, now: at });
+    return decodeURIComponent(delivered.bodyText.match(/https:\/\/\S+/)![0].split("/health-records/")[1]!);
+  }
+
+  it("writes to the person's current-year row and never moves the record back onto the old one", async () => {
+    const token = await sendLinkForMember("member-1", now);
+    // The club year turns over after the link was sent.
+    state.members[0]!.clubYear = "2025-26";
+    state.members.push({ ...state.members[0]!, id: "member-2", clubYear: "2026-27" });
+    await submitHealthRecordViaLink(token, syntheticRecord, now);
+    expect(state.records).toHaveLength(1);
+    expect(state.records[0]!.rosterMemberId).toBe("member-2");
+    expect(state.audit.at(-1)!.metadata).toMatchObject({ rosterMemberId: "member-2" });
+  });
+
+  it("refuses it with the generic answer when the person has no current-year row", async () => {
+    const token = await sendLinkForMember("member-1", now);
+    state.members[0]!.clubYear = "2025-26";
+    await expect(submitHealthRecordViaLink(token, syntheticRecord, now)).rejects.toMatchObject({ code: "LINK_UNAVAILABLE", message: "This private link is invalid or no longer active." });
+    await expect(resolveHealthLinkForFill(token, now)).rejects.toMatchObject({ code: "LINK_UNAVAILABLE" });
+    expect(state.records).toHaveLength(0);
+    expect(state.links[0]!.status).toBe("OPEN");
+  });
+});
+
+describe("delivery when the feature is switched off", () => {
+  beforeEach(resetState);
+
+  it("retires the link and fails the message without minting a token", async () => {
+    const created = await createHealthRecordLink(leader, { organizationId: "club-a", rosterMemberId: "member-1", recipientEmail: "parent@example.test" }, now);
+    state.env.HEALTH_RECORDS_ENABLED = false;
+    await expect(prepareHealthRecordLinkBodyForDelivery({ messageId: created.messageId, bodyText: state.outbox[0]!.bodyTextSnapshot as string, now })).rejects.toThrow(/switched off/);
+    expect(state.links[0]).toMatchObject({ status: "REVOKED", tokenHash: null });
+  });
+});
+
+describe("two first saves racing", () => {
+  beforeEach(resetState);
+
+  it("retries once after a unique-key conflict, then answers a friendly conflict", async () => {
+    const original = client.healthRecord.create;
+    let calls = 0;
+    client.healthRecord.create = async (args: { data: Row }) => {
+      calls += 1;
+      if (calls === 1) throw Object.assign(new Error("unique"), { code: "P2002" });
+      return original(args);
+    };
+    await saveHealthRecord(leader, "club-a", "member-1", syntheticRecord, now);
+    expect(calls).toBe(2);
+    expect(state.records).toHaveLength(1);
+
+    resetState();
+    client.healthRecord.create = async () => {
+      throw Object.assign(new Error("unique"), { code: "P2002" });
+    };
+    await expect(saveHealthRecord(leader, "club-a", "member-1", syntheticRecord, now)).rejects.toMatchObject({ code: "CONFLICT" });
+    client.healthRecord.create = original;
+  });
+});
+
+describe("the neutral health note marker", () => {
+  beforeEach(resetState);
+
+  it("returns ids only, for rows with a note, and nothing when the feature is off", async () => {
+    await saveHealthRecord(leader, "club-a", "member-1", syntheticRecord, now);
+    expect(await healthNoteFlagsForRoster("club-a", ["member-1", "member-2"])).toEqual({ "member-1": true });
+    state.env.HEALTH_RECORDS_ENABLED = false;
+    expect(await healthNoteFlagsForRoster("club-a", ["member-1"])).toEqual({});
   });
 });

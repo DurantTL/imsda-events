@@ -186,6 +186,19 @@ const nextConfig: NextConfig = {
         headers: privateRegistrationHeaders,
       },
       {
+        // Pages that open a health record (#611): never cached, never indexed, no referrer.
+        source: "/account/clubs/:organizationId/roster/:memberId/health",
+        headers: privateRegistrationHeaders,
+      },
+      {
+        source: "/account/area-clubs/health/:path*",
+        headers: privateRegistrationHeaders,
+      },
+      {
+        source: "/more/health-records/:path*",
+        headers: privateRegistrationHeaders,
+      },
+      {
         // A Health Record's single-use private link (#611): never cached, never indexed, no referrer.
         source: "/health-records/:path*",
         headers: privateRegistrationHeaders,

@@ -73,23 +73,35 @@ describe("health data stays out of exports, the check-in book, communications an
 });
 
 describe("removing a roster member erases their Health Record", () => {
-  it("deletes the record and withdraws open links in the same transaction, flag on or off", async () => {
+  async function erase(row: { organizationId: string; personId: string | null } | null) {
     const calls: string[] = [];
     const tx = {
       clubMeetingAttendance: { deleteMany: vi.fn(async () => { calls.push("attendance"); }) },
       healthRecord: { deleteMany: vi.fn(async () => { calls.push("healthRecord"); }) },
       healthRecordLink: { updateMany: vi.fn(async () => { calls.push("healthRecordLink"); }) },
-      clubRosterMember: { update: vi.fn(async () => { calls.push("member"); }) },
+      clubRosterMember: { findUnique: vi.fn(async () => row), update: vi.fn(async () => { calls.push("member"); }) },
     };
     vi.doMock("@/lib/prisma", () => ({ getPrisma: () => ({}) }));
     const { eraseRosterRow } = await import("@/modules/club-rosters/repository");
     await eraseRosterRow(tx as never, "member-1", new Date("2026-10-05T15:00:00Z"));
-    expect(tx.healthRecord.deleteMany).toHaveBeenCalledWith({ where: { rosterMemberId: "member-1" } });
+    return { tx, calls };
+  }
+
+  it("deletes every year's record for the person in this club, and withdraws their open links, before personId is cleared", async () => {
+    const { tx, calls } = await erase({ organizationId: "club-a", personId: "person-1" });
+    const scope = { OR: [{ rosterMemberId: "member-1" }, { organizationId: "club-a", rosterMember: { personId: "person-1" } }] };
+    expect(tx.healthRecord.deleteMany).toHaveBeenCalledWith({ where: scope });
     expect(tx.healthRecordLink.updateMany).toHaveBeenCalledWith({
-      where: { rosterMemberId: "member-1", status: "OPEN" },
+      where: { status: "OPEN", ...scope },
       data: expect.objectContaining({ status: "REVOKED", tokenHash: null }),
     });
     expect(calls.indexOf("healthRecord")).toBeLessThan(calls.indexOf("member"));
+    expect(calls.indexOf("healthRecordLink")).toBeLessThan(calls.indexOf("member"));
+  });
+
+  it("falls back to the row itself when the person link is already gone", async () => {
+    const { tx } = await erase({ organizationId: "club-a", personId: null });
+    expect(tx.healthRecord.deleteMany).toHaveBeenCalledWith({ where: { rosterMemberId: "member-1" } });
   });
 });
 

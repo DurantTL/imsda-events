@@ -3,7 +3,8 @@ import "server-only";
 import { getPrisma } from "@/lib/prisma";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
-import { requireRosterAccess } from "@/modules/club-rosters/access";
+import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { ROSTER_UNLOCK_HOURS, requireRosterAccess } from "@/modules/club-rosters/access";
 import { currentAreaCoordinator } from "@/modules/organizations/area-coordinators";
 import { isClubFormsRole } from "@/modules/club-forms/domain";
 import { HEALTH_NOT_FOUND_MESSAGE, HealthRecordError } from "@/modules/health-records/errors";
@@ -36,7 +37,7 @@ export async function requireHealthViewerForClub(organizationId: string, now = n
   requireHealthRecordsEnabled();
   const access = await requireRosterAccess(organizationId, now);
   if (access.actor.kind === "STAFF_ACTING") {
-    return { kind: "SYSTEM_ADMIN", userId: access.actor.userId };
+    return { kind: "SYSTEM_ADMIN", userId: access.actor.userId, actAsId: access.actor.actAsId };
   }
   if (!isClubFormsRole(access.club.role)) {
     throw new HealthRecordError("FORBIDDEN", "Health records are for the club's director and deputy.");
@@ -67,13 +68,22 @@ export async function requireStaffHealthViewer(): Promise<HealthViewer> {
 
 /**
  * For the Area Coordinator's event-scoped health view. `currentAreaCoordinator`
- * itself requires the verified second sign-in step (the same gate the other
- * coordinator pages use), so an unverified coordinator is simply not one here.
- * Anyone else, including a club director or staff, is not found.
+ * requires a verified second sign-in step; on top of that the step must have
+ * been passed within `ROSTER_UNLOCK_HOURS`, the same as a director opening a
+ * roster. Anyone who is not a coordinator is not found; a coordinator whose
+ * step is too old is asked to confirm again.
  */
-export async function requireAreaCoordinatorHealthViewer(): Promise<HealthViewer> {
+export async function requireAreaCoordinatorHealthViewer(now = new Date()): Promise<HealthViewer> {
   requireHealthRecordsEnabled();
   const account = await currentAreaCoordinator();
   if (!account) throw new HealthRecordError("NOT_FOUND", HEALTH_NOT_FOUND_MESSAGE);
+  const { via, sessionId } = await getCurrentAttendee();
+  const session = via === "attendee" && sessionId
+    ? await getPrisma().attendeeSession.findUnique({ where: { id: sessionId }, select: { secondFactorVerifiedAt: true } })
+    : null;
+  const verifiedAt = session?.secondFactorVerifiedAt;
+  if (!verifiedAt || now.getTime() - verifiedAt.getTime() > ROSTER_UNLOCK_HOURS * 3_600_000) {
+    throw new HealthRecordError("FORBIDDEN", "Confirm it's you with your authenticator code or passkey to open health records.");
+  }
   return { kind: "AREA_COORDINATOR", accountId: account.id };
 }

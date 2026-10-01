@@ -14,6 +14,7 @@ import {
   RegistrationFormStatus,
   RegistrationStatus,
 } from "@prisma/client";
+import { rolePermissions } from "../modules/access/permissions";
 import { hashPassword } from "../modules/access/passwords";
 import { formTemplates } from "../modules/forms/definition";
 import { starterDescription, starterEventTemplates, starterPayload } from "../modules/event-templates/starters";
@@ -205,7 +206,8 @@ async function main() {
         userId: admin.id,
         role: event.id === "evt_wr26" ? EventRole.EVENT_ADMIN : EventRole.READ_ONLY_STAFF,
         status: MembershipStatus.ACTIVE,
-        permissions: event.id === "evt_wr26" ? Object.values(EventPermission) : [EventPermission.VIEW_EVENT],
+        // The Event Admin role's own set: the seed never grants health information access (#658).
+        permissions: event.id === "evt_wr26" ? [...rolePermissions.EVENT_ADMIN] : [EventPermission.VIEW_EVENT],
       },
     });
   }

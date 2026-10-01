@@ -4,6 +4,7 @@ import type { Prisma } from "@prisma/client";
 import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
+import { healthRecordsEnabled } from "@/modules/health-records/flag";
 
 /**
  * The email that carries a Health Record private link (#611), built the way
@@ -58,6 +59,14 @@ export async function retireHealthRecordLinkForMessage(
 export async function prepareHealthRecordLinkBodyForDelivery(input: { messageId: string; bodyText: string; now: Date }) {
   if (!input.bodyText.includes(HEALTH_RECORD_LINK_SENTINEL)) return { bodyText: input.bodyText };
   const prisma = getPrisma();
+  // Switched off after the link was queued: retire it and fail the message. No token is minted.
+  if (!healthRecordsEnabled()) {
+    await prisma.healthRecordLink.updateMany({
+      where: { messageId: input.messageId, status: "OPEN" },
+      data: { status: "REVOKED", revokedAt: input.now, tokenHash: null },
+    });
+    throw new Error("A health record link can't be delivered: health records are switched off.");
+  }
   const link = await prisma.healthRecordLink.findUnique({
     where: { messageId: input.messageId },
     select: { id: true, status: true, expiresAt: true },

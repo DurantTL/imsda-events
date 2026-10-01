@@ -62,6 +62,7 @@ const statusByCode: Record<HealthRecordError["code"], number> = {
   VALIDATION_FAILED: 400,
   EMAIL_NOT_CONFIGURED: 503,
   ENCRYPTION_NOT_CONFIGURED: 503,
+  CONFLICT: 409,
   UNREADABLE: 500,
 };
 

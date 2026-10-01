@@ -184,6 +184,25 @@ async function main() {
   assert((await prisma.healthRecordField.count({ where: { recordId: stored.id } })) === 0, "removal erases the sealed fields");
   assert((await prisma.healthRecordLink.count({ where: { rosterMemberId: member.id, status: "OPEN" } })) === 0, "removal withdraws open links");
 
+  // 5. A record on an earlier year's row dies with the person -------------
+  await prisma.person.create({ data: { id: `${P}_casey`, firstName: "Casey", lastName: "Verify" } });
+  const lastYearDate = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate(), 15));
+  const priorRow = await prisma.clubRosterMember.create({
+    data: { organizationId: clubs.a, clubYear: rosterDomain.clubYearFor(lastYearDate), personId: `${P}_casey`, attendeeType: "YOUTH", role: "Pathfinder", source: "DIRECTOR" },
+  });
+  const currentRow = await prisma.clubRosterMember.create({
+    data: { organizationId: clubs.a, clubYear, personId: `${P}_casey`, attendeeType: "YOUTH", role: "Pathfinder", source: "DIRECTOR" },
+  });
+  await repo.saveHealthRecord(directorA, clubs.a, priorRow.id, record, lastYearDate);
+  const carried = await repo.viewHealthRecord(directorA, clubs.a, currentRow.id, now);
+  assert(carried.status === "NEEDS_UPDATE", "last year's record follows the person and reads Needs update");
+  await prisma.healthRecordLink.create({
+    data: { organizationId: clubs.a, rosterMemberId: priorRow.id, clubYear: rosterDomain.clubYearFor(lastYearDate), recipientEmail: `old@${emailDomain}`, expiresAt: new Date(now.getTime() + 86_400_000), tokenHash: sha256("verify-open-link") },
+  });
+  await prisma.$transaction((tx) => rosterRepo.eraseRosterRow(tx, currentRow.id, now));
+  assert((await prisma.healthRecord.count({ where: { organizationId: clubs.a, rosterMemberId: { in: [priorRow.id, currentRow.id] } } })) === 0, "removing the current-year row erases the earlier year's record too");
+  assert((await prisma.healthRecordLink.count({ where: { rosterMemberId: priorRow.id, status: "OPEN" } })) === 0, "and withdraws the earlier row's open link");
+
   await cleanup();
   console.log("Health record checks passed.");
 }

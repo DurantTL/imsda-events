@@ -295,9 +295,15 @@ export async function eraseRosterRow(tx: Prisma.TransactionClient, memberId: str
   // Removing someone erases their Health Record at once, whether or not the
   // feature is switched on (#611, options report section 3), and withdraws any
   // open parent link so it can no longer be used.
-  await tx.healthRecord.deleteMany({ where: { rosterMemberId: memberId } });
+  // A record follows the person across club-year roster rows, so every record
+  // and open link for this person in this club goes, not only this row's. This
+  // runs before `personId` is cleared below.
+  const row = await tx.clubRosterMember.findUnique({ where: { id: memberId }, select: { organizationId: true, personId: true } });
+  const sameRow = { rosterMemberId: memberId };
+  const samePerson = row?.personId ? { organizationId: row.organizationId, rosterMember: { personId: row.personId } } : null;
+  await tx.healthRecord.deleteMany({ where: samePerson ? { OR: [sameRow, samePerson] } : sameRow });
   await tx.healthRecordLink.updateMany({
-    where: { rosterMemberId: memberId, status: "OPEN" },
+    where: { status: "OPEN", ...(samePerson ? { OR: [sameRow, samePerson] } : sameRow) },
     data: { status: "REVOKED", revokedAt: now, tokenHash: null },
   });
   await tx.clubRosterMember.update({

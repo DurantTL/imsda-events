@@ -462,8 +462,18 @@ human can accept, change or reject them before any real record is stored.
    director confirms it or edits it. A person's record follows them across
    club-year roster rows. This proposal does **not** delete stale records
    automatically (see open decisions).
-8. **Removal.** Removing a person from the roster erases their Health Record
-   and withdraws their open links immediately, whether or not the feature is on.
+8. **Removal.** Removing a person from the roster erases **every** Health
+   Record kept for that person in that club, including one still attached to an
+   earlier club year's roster row, and withdraws all of their open links
+   immediately, whether or not the feature is on. A parent link sent for an
+   earlier club year writes to the person's current-year row only, and is
+   refused (as an ordinary unusable link) when there is none. A coordinator
+   must also have passed the second sign-in step within the last 12 hours, the
+   same as a director opening a roster.
+   **Health note marker (deferred in part):** anyone who can see a club's roster
+   rows sees a neutral "Has a health note" marker on the club roster page, with
+   no text and no status. Showing it on other screens (the staff "Open club"
+   view, event rosters, the check-in book) is deferred and needs a decision.
 9. **Feature switch.** With `HEALTH_RECORDS_ENABLED` off there are no health
    routes (every one answers 404), no Health tab, no page, and nothing is
    written. Deployment configuration does not pass the variable on.
