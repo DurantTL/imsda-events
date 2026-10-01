@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { BadgeCheck, Building2, Church, Eye, IdCard, Link2, MapPin, Pencil, Plus, Save, ShieldCheck, Trash2, UserCog, UsersRound, X } from "lucide-react";
+import { OrganizationListPager, OrganizationSearchControls, type OrganizationListState } from "@/components/organization-search-controls";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import {
   externalSystemLabels,
@@ -35,41 +37,52 @@ function identityLabel(
   return `${externalSystemLabels[identity.provider]}${scope}`;
 }
 
+export type OrganizationSummary = { churches: number; clubs: number; identities: number; unlinked: number };
+export type ChurchOption = { id: string; name: string; isActive: boolean };
+
+const kindOptions = [
+  { value: "", label: "All kinds" },
+  { value: "CHURCH", label: "Churches" },
+  { value: "CLUB", label: "Clubs" },
+];
+const statusOptions = [
+  { value: "ALL", label: "Any status" },
+  { value: "ACTIVE", label: "Active" },
+  { value: "INACTIVE", label: "Inactive" },
+];
+
+/**
+ * The Clubs and churches page. The list is one searched, filtered, server-paged
+ * page (#723); the summary tiles and the sponsoring-church picker come from the
+ * whole directory, so a search never changes them. After a save the page asks
+ * the server for the list again.
+ */
 export function OrganizationDirectoryWorkspace({
-  initialOrganizations,
+  churchOptions,
+  filters,
+  organizations,
+  page,
+  pageSize,
+  summary,
+  total,
 }: {
-  initialOrganizations: OrganizationRecord[];
+  churchOptions: ChurchOption[];
+  filters: OrganizationListState;
+  organizations: OrganizationRecord[];
+  page: number;
+  pageSize: number;
+  summary: OrganizationSummary;
+  total: number;
 }) {
-  const [organizations, setOrganizations] = useState(initialOrganizations);
+  const router = useRouter();
   const [editor, setEditor] = useState<OrganizationEditor>(null);
   const [createType, setCreateType] = useState<"CHURCH" | "CLUB">("CHURCH");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(editor), closeEditor);
-
-  const activeChurches = useMemo(
-    () => organizations.filter(
-      (organization) => organization.type === "CHURCH" && organization.isActive,
-    ),
-    [organizations],
-  );
-  const summary = useMemo(() => ({
-    churches: organizations.filter(
-      (organization) => organization.type === "CHURCH" && organization.isActive,
-    ).length,
-    clubs: organizations.filter(
-      (organization) => organization.type === "CLUB" && organization.isActive,
-    ).length,
-    identities: organizations.reduce(
-      (total, organization) => total + organization.externalIdentities.length,
-      0,
-    ),
-    unlinked: organizations.filter(
-      (organization) => organization.isActive
-        && organization.externalIdentities.length === 0,
-    ).length,
-  }), [organizations]);
+  const activeChurches = churchOptions.filter((church) => church.isActive);
+  const searching = filters.q.trim() !== "" || filters.kind !== "" || filters.status !== "ALL";
 
   function closeEditor() {
     if (saving) return;
@@ -149,7 +162,7 @@ export function OrganizationDirectoryWorkspace({
           ?? "The organization directory could not be updated.",
       );
     }
-    setOrganizations(result.organizations);
+    router.refresh();
   }
 
   async function saveOrganization(event: React.FormEvent<HTMLFormElement>) {
@@ -288,10 +301,25 @@ export function OrganizationDirectoryWorkspace({
             <p className="eyebrow">Permanent directory</p>
             <h2>IMSDA organizations</h2>
           </div>
-          <span className="count-badge">{organizations.length} records</span>
+          <span className="count-badge">{total} {total === 1 ? "record" : "records"}</span>
         </div>
 
-        {organizations.length === 0 ? (
+        <OrganizationSearchControls
+          basePath="/admin/organizations"
+          kindOptions={kindOptions}
+          placeholder="Name, city, code, district or church"
+          searchLabel="Search"
+          state={filters}
+          statusOptions={statusOptions}
+        />
+
+        {total === 0 && searching ? (
+          <div className="empty-state" role="status">
+            <Building2 aria-hidden="true" size={27} />
+            <h3>No churches or clubs match</h3>
+            <p>Nothing matches your search and filters. Try fewer words, or clear the filters.</p>
+          </div>
+        ) : total === 0 ? (
           <div className="empty-state">
             <Building2 aria-hidden="true" size={27} />
             <h3>No churches or clubs yet</h3>
@@ -415,6 +443,16 @@ export function OrganizationDirectoryWorkspace({
               </article>
             ))}
           </div>
+        )}
+        {total > 0 && (
+          <OrganizationListPager
+            basePath="/admin/organizations"
+            page={page}
+            pageCount={Math.max(1, Math.ceil(total / pageSize))}
+            pageSize={pageSize}
+            state={filters}
+            total={total}
+          />
         )}
       </section>
 
@@ -618,7 +656,7 @@ export function OrganizationDirectoryWorkspace({
                         && editor.organization.parentOrganizationId
                         && !activeChurches.some((church) => church.id === editor.organization.parentOrganizationId)
                         && (() => {
-                          const current = organizations.find((organization) => organization.id === editor.organization.parentOrganizationId);
+                          const current = churchOptions.find((church) => church.id === editor.organization.parentOrganizationId);
                           return (
                             <option value={editor.organization.parentOrganizationId}>
                               {current?.name ?? "Current church"} (inactive)

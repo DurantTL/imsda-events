@@ -32,7 +32,7 @@ export function OrganizationStatusButton({ organizationId, name, isActive }: { o
 
   return (
     <>
-      <button aria-label={`${isActive ? "Mark inactive" : "Mark active"}: ${name}`} className="text-button" disabled={busy} onClick={toggle} type="button">
+      <button aria-label={`${isActive ? "Mark inactive" : "Mark active"}: ${name}`} className="secondary-button org-status-button" disabled={busy} onClick={toggle} type="button">
         {busy ? "Saving…" : isActive ? "Mark inactive" : "Mark active"}
       </button>
       {error && <span className="field-error" role="alert"> {error}</span>}
