@@ -148,8 +148,8 @@ export function AutoEventInfoCards({ cards }: { cards: EventInfoCards }) {
       {steps && (
         <section className="auto-info-card" aria-labelledby="auto-info-steps-title">
           <h2 id="auto-info-steps-title">How to register</h2>
-          {steps.forms.map((form) => (
-            <div key={form.title ?? "steps"}>
+          {steps.forms.map((form, formIndex) => (
+            <div key={`${formIndex}:${form.title ?? "steps"}`}>
               {form.title && <h3>{form.title}</h3>}
               <ol>
                 {form.steps.map((step, index) => (

@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import {
+  getDuplicatePublicFormWarnings,
   getFeeWarnings,
   getLocationDateWarnings,
   getPaymentOnChurchBilledWarnings,
@@ -40,7 +41,12 @@ export async function collectEventReadinessWarnings(
     const parsed = registrationFormDefinitionSchema.safeParse(published.get(form.id) ?? form.versions[0]?.definition);
     return parsed.success ? [{ formId: form.id, definition: parsed.data }] : [];
   });
+  // Only forms with a live (published) version are shown to the public.
+  const publiclyListed = publishedForms.flatMap((form) => {
+    const parsed = registrationFormDefinitionSchema.safeParse(form.versions[0]?.definition);
+    return parsed.success ? [{ title: parsed.data.title, description: parsed.data.description }] : [];
+  });
   const feeFields = parsedForms.flatMap(({ formId, definition }) => unpricedFeeFields(definition, formId));
   const paymentFormTitles = parsedForms.filter(({ definition }) => definition.payment?.enabled).map(({ definition }) => definition.title);
-  return [...getLocationDateWarnings(locations), ...getFeeWarnings(feeFields, eventId), ...getPaymentOnChurchBilledWarnings(billingMode, paymentFormTitles)];
+  return [...getLocationDateWarnings(locations), ...getFeeWarnings(feeFields, eventId), ...getPaymentOnChurchBilledWarnings(billingMode, paymentFormTitles), ...getDuplicatePublicFormWarnings(publiclyListed, eventId)];
 }

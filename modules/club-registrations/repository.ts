@@ -33,7 +33,8 @@ import {
   rosterOwnedResponses,
   type RosterPerson,
 } from "@/modules/club-registrations/domain";
-import { registrationFormDefinitionSchema, type RegistrationFormDefinition } from "@/modules/forms/definition";
+import { pickClubPortalForm } from "@/modules/club-registrations/portal-form";
+import { type RegistrationFormDefinition } from "@/modules/forms/definition";
 import type { PublicRegistrationInput } from "@/modules/forms/public-domain";
 import {
   PublicRegistrationError,
@@ -112,14 +113,18 @@ const MAX_DRAFT_BYTES = 200_000;
 
 /** Version-level status decides what is live; a draft beside it must not close club registration (#564). */
 export async function publishedClubForm(eventId: string) {
+  // Oldest first, ties by id: the same order `pickClubPortalForm` applies, which
+  // owns the rule (and which the public event page uses for the same pick).
   const form = await getPrisma().registrationForm.findFirst({
     where: {
       eventId,
       versions: { some: { status: RegistrationFormStatus.PUBLISHED } },
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     select: {
+      id: true,
       slug: true,
+      createdAt: true,
       versions: {
         where: { status: RegistrationFormStatus.PUBLISHED },
         orderBy: { versionNumber: "desc" },
@@ -130,8 +135,8 @@ export async function publishedClubForm(eventId: string) {
   });
   const version = form?.versions[0];
   if (!form || !version) return null;
-  const parsed = registrationFormDefinitionSchema.safeParse(version.definition);
-  return parsed.success ? { slug: form.slug, definition: parsed.data } : null;
+  const picked = pickClubPortalForm([{ id: form.id, slug: form.slug, createdAt: form.createdAt, definition: version.definition }]);
+  return picked ? { slug: picked.form.slug, definition: picked.definition } : null;
 }
 
 export const clubEventSelect = {
