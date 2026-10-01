@@ -9,6 +9,9 @@
  *  - no page chrome text ("Skip to main content", "Badge artwork", ...);
  *  - every PDF page is a portrait US Letter page (the sheet is always 8.5 x 11
  *    in, whatever the badge orientation option says);
+ *  - the print layout is no wider than the 816 px page, so Chrome's print
+ *    preview has nothing to shrink (#732): scrollWidth <= 816, shrink factor 1,
+ *    and .badge-sheet exactly 8.5 x 11 in;
  *  - the first label sits where the Avery template says (Presta 94237 is
  *    1 in from the top and 0.85 in from the left, +/- 0.02 in), and the whole
  *    2 x 4 grid lands on the measured pitch.
@@ -61,6 +64,8 @@ const targetAttendees = Number(process.env.BADGE_PRINT_ATTENDEES ?? 30);
 const eventId = "evt_wr26";
 const staffEmail = process.env.BADGE_PRINT_STAFF_EMAIL ?? "admin@imsda-events.test";
 const toleranceIn = 0.02;
+const pagePx = 816; // 8.5 in at 96 dpi
+const blinkPrintLayoutPx = 1088; // Blink lays print out at 4/3 of the page width
 const forbiddenText = ["Skip to main content", "Badge artwork", "Upload artwork", "No background selected"];
 
 /** First-label offsets and pitch, in inches, from each template's sheet layout. */
@@ -258,9 +263,19 @@ async function main() {
 
       if (variant.omitEvent) {
         const notices = await page.locator(".event-auto-select-notice").count();
-        check(notices > 0, "auto-select notice renders on screen (it must then be hidden in print)");
+        // Only some accounts get the notice (the administrator does, a
+        // single-event check-in account does not); when it renders, the
+        // hidden-in-print check below covers it.
+        if (staffEmail === "admin@imsda-events.test") {
+          check(notices > 0, "auto-select notice renders on screen (it must then be hidden in print)");
+        } else {
+          console.log(`  --   auto-select notice on screen: ${notices} (not required for this account)`);
+        }
       }
 
+      // Chrome's print preview lays the document out at the page width (8.5 in
+      // = 816 px at 96 dpi), so measure at that viewport.
+      await page.setViewportSize({ width: pagePx, height: 1056 });
       await page.emulateMedia({ media: "print" });
       const sheetCount = Math.ceil((labelCount + start - 1) / template.perSheet);
 
@@ -277,6 +292,51 @@ async function main() {
           .map(([selector]) => selector);
       });
       check(hidden.length === 0, `chrome is display:none in print (${hidden.join(", ") || "all hidden"})`);
+
+      // Print width (#732): Chrome shrinks the whole page to fit at Scale
+      // "Default" when the document is wider than the paper, which moves every
+      // label off its die-cut. Playwright's page.pdf at scale 1 never does
+      // this, so measure the layout width directly. Chrome's print layout is
+      // not exactly the page width: Blink lays the document out wider than the
+      // paper (up to 4/3 of it) and then fits it, so every auto-width ancestor
+      // of the sheets has to stay at 8.5 in at both widths.
+      for (const layoutPx of [pagePx, blinkPrintLayoutPx]) {
+        await page.setViewportSize({ width: layoutPx, height: 1056 });
+        const width = await page.evaluate(() => {
+          // No helper functions in here: tsx would inject a __name call that
+          // the browser does not have.
+          let widest: Element | undefined;
+          let widestRight = 0;
+          for (const element of document.querySelectorAll("body *")) {
+            if (getComputedStyle(element).display === "none") continue;
+            const right = element.getBoundingClientRect().right;
+            if (right > widestRight) { widestRight = right; widest = element; }
+          }
+          const sheet = document.querySelector(".badge-sheet")?.getBoundingClientRect();
+          return {
+            scrollWidth: document.documentElement.scrollWidth,
+            bodyWidth: document.body.getBoundingClientRect().width,
+            widest: widest
+              ? widest.tagName.toLowerCase() + String(widest.getAttribute("class") ?? "").split(/\s+/).filter(Boolean).map((name) => `.${name}`).join("")
+              : "none",
+            widestRight,
+            sheetWidthIn: (sheet?.width ?? 0) / 96,
+            sheetHeightIn: (sheet?.height ?? 0) / 96,
+          };
+        });
+        const layout = `layout ${layoutPx}px`;
+        check(width.widestRight <= pagePx + 0.5,
+          `${layout}: widest element ${width.widest} reaches ${Math.round(width.widestRight)}px (want <= ${pagePx}px)`);
+        check(width.bodyWidth <= pagePx + 0.5, `${layout}: body is ${Math.round(width.bodyWidth)}px wide (want <= ${pagePx}px)`);
+        if (layoutPx === pagePx) {
+          check(width.scrollWidth <= pagePx, `${layout}: print scrollWidth ${width.scrollWidth}px (want <= ${pagePx}px)`);
+          const shrink = pagePx / Math.max(pagePx, width.scrollWidth);
+          check(shrink === 1, `${layout}: Chrome shrink-to-fit factor at Scale Default is ${shrink.toFixed(3)} (want 1)`);
+          check(Math.abs(width.sheetWidthIn - 8.5) <= 0.005 && Math.abs(width.sheetHeightIn - 11) <= 0.005,
+            `${layout}: .badge-sheet is ${width.sheetWidthIn.toFixed(3)} x ${width.sheetHeightIn.toFixed(3)} in (want 8.5 x 11)`);
+        }
+      }
+      await page.setViewportSize({ width: pagePx, height: 1056 });
 
       // Label geometry at 96 dpi, in inches from the paper's top-left corner.
       const boxes = await page.evaluate(() => [...document.querySelectorAll(".badge-sheet:first-child .badge-label-card")]
@@ -310,7 +370,6 @@ async function main() {
       const oddSize = info.pageSizesIn.filter(([w, h]) => Math.abs(w - 8.5) > 0.02 || Math.abs(h - 11) > 0.02);
       check(oddSize.length === 0, `every page is 8.5 x 11 in (${info.pageSizesIn[0]?.map((n) => n.toFixed(2)).join(" x ")})`);
       // A PNG of the page-1 render for the eye (print emulation, one sheet wide).
-      await page.setViewportSize({ width: 816, height: 1056 });
       await page.screenshot({ path: `${stem}-page1.png`, clip: { x: 0, y: 0, width: 816, height: 1056 } });
       await page.setViewportSize({ width: 1280, height: 900 });
     }

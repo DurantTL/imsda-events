@@ -6578,8 +6578,47 @@ select:focus-visible {
   .badge-print-page > :not(.badge-sheet-stack) { display: none !important; }
   .app-shell,
   body { min-height: 0; }
+  /* Print width (#732): Chrome lays a printed page out wider than the paper
+     (Blink uses up to 4/3 of the page width) and, at Scale "Default", shrinks
+     the whole page to fit anything wider than the paper, which moved every
+     label up and left of its die-cut. An auto-width ancestor takes that wider
+     layout width, so pin the document to the sheet: 8.5 in, no minimum, and
+     every ancestor of the sheets sized by its parent with no sidebar track.
+     Scoped to the badges page so the other printable pages keep their
+     margins. */
+  html:has(.badge-print-page),
+  body:has(.badge-print-page) {
+    width: 8.5in;
+    min-width: 0;
+    max-width: 8.5in;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+  }
+  .app-shell:has(.badge-print-page),
+  .workspace:has(.badge-print-page),
+  .workspace-content:has(.badge-print-page),
+  .badge-print-page {
+    display: block;
+    width: auto;
+    min-width: 0;
+    max-width: 8.5in;
+    grid-template-columns: none;
+    margin: 0;
+    padding: 0;
+    overflow: visible;
+  }
   .badge-print-page { display: block; margin: 0; padding: 0; }
-  .badge-sheet-stack { display: block; margin: 0; overflow: visible; padding: 0; gap: 0; }
+  .badge-sheet-stack {
+    display: block;
+    width: auto;
+    min-width: 0;
+    max-width: 8.5in;
+    margin: 0;
+    overflow: visible;
+    padding: 0;
+    gap: 0;
+  }
   .badge-sheet {
     margin: 0;
     break-after: page;

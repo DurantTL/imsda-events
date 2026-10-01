@@ -92,6 +92,51 @@ describe("badge print CSS (#717)", () => {
     expect(presta).toMatch(/grid-template-rows:\s*repeat\(4,\s*2in\)/);
   });
 
+  it("pins the printed document to the 8.5 in sheet so Chrome has nothing to shrink (#732)", () => {
+    for (const selector of ["html:has(.badge-print-page),\n  body:has(.badge-print-page)"]) {
+      const rule = declarationsFor(block, selector);
+      expect(rule, selector).toMatch(/width:\s*8\.5in/);
+      expect(rule, selector).toMatch(/max-width:\s*8\.5in/);
+      expect(rule, selector).toMatch(/min-width:\s*0/);
+      expect(rule, selector).toMatch(/overflow:\s*visible/);
+    }
+  });
+
+  it("sizes every ancestor of the sheet stack from its parent, with no sidebar track (#732)", () => {
+    const selectors = [
+      ".app-shell:has(.badge-print-page)",
+      ".workspace:has(.badge-print-page)",
+      ".workspace-content:has(.badge-print-page)",
+      ".badge-print-page",
+    ];
+    const rule = declarationsFor(block, selectors.join(",\n  "));
+    expect(rule).toMatch(/display:\s*block/);
+    expect(rule).toMatch(/(?:^|[\s;])width:\s*auto/);
+    expect(rule).toMatch(/min-width:\s*0/);
+    expect(rule).toMatch(/max-width:\s*8\.5in/);
+    expect(rule).toMatch(/grid-template-columns:\s*none/);
+    expect(rule).toMatch(/overflow:\s*visible/);
+    const stack = declarationsFor(block, ".badge-sheet-stack");
+    expect(stack).toMatch(/(?:^|[\s;])width:\s*auto/);
+    expect(stack).toMatch(/min-width:\s*0/);
+    expect(stack).toMatch(/overflow:\s*visible/);
+  });
+
+  it("never gives a print ancestor of the sheets a width or margin that reserves the sidebar", () => {
+    expect(block).not.toMatch(/margin-left:\s*var\(--sidebar-width\)/);
+    expect(block).not.toMatch(/min-width:\s*(?!0[;\s}])[^;}]*(?:px|in|vw|rem)/);
+  });
+
+  it("keeps the 8.5 in document width scoped to the badges page", () => {
+    // Other printable pages print inside the browser's own margins.
+    const rules = [...block.matchAll(/([^{}]+)\{([^}]*)\}/g)];
+    const pinned = rules.filter(([, , body]) => /(?:^|[\s;])width:\s*8\.5in/.test(body));
+    expect(pinned.length).toBeGreaterThan(0);
+    for (const [, selector] of pinned) {
+      expect(selector).toContain(":has(.badge-print-page)");
+    }
+  });
+
   it("has a sheet layout for every badge template", () => {
     for (const id of badgeTemplateIds) {
       expect(css, id).toContain(`.badge-sheet-${id}`);
