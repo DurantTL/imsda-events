@@ -103,6 +103,7 @@ export default async function StaffOpenClubPage({
       )}
 
       <ClubOverview
+        headingLevel={3}
         backgroundChecks={{ includeNotes: true }}
         birthDatesEndpoint={`/api/admin/organizations/${encodeURIComponent(organizationId)}/roster/birth-dates`}
         organizationId={organizationId}

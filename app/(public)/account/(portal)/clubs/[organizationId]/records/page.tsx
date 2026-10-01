@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, CheckCircle2, CircleAlert, Clock3 } from "lucide-react";
-import { BackLink } from "@/components/back-link";
 import { ClubMeetingNotes } from "@/components/club-meeting-notes";
 import { ClubReportForm } from "@/components/club-report-form";
 import { calendarDateIn } from "@/modules/calendar/domain";
@@ -48,11 +47,9 @@ export default async function ClubRecordsPage({
   const [{ organizationId }, { month: monthParam }] = await Promise.all([params, searchParams]);
   const access = await getClubRoleAccessForPage(organizationId);
   if (access.state !== "OK") return null;
-  const back = <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>;
   if (!access.capabilities.submitReports) {
     return (
       <>
-        {back}
         <p className="public-manage-empty">Monthly Records are kept by the club&apos;s director, deputy, or reporter.</p>
       </>
     );
@@ -96,7 +93,6 @@ export default async function ClubRecordsPage({
 
   return (
     <>
-      {back}
 
       <div className="club-home-stats">
         <div className="club-home-stat">

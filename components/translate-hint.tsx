@@ -14,7 +14,7 @@ export function TranslateHint() {
       <Languages aria-hidden="true" size={16} />
       <span>
         <span lang="es">¿Necesita español? Use la opción «Traducir» de su navegador.</span>{" "}
-        <span>Need another language? Use your browser&rsquo;s Translate option.</span>{" "}
+        <span className="translate-hint-en">Need another language? Use your browser&rsquo;s Translate option.</span>{" "}
         <a href={BROWSER_TRANSLATE_HELP_URL} rel="noreferrer" target="_blank">
           <span lang="es">Cómo traducir</span> / How to translate
         </a>

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { BackLink } from "@/components/back-link";
 import { ClubHonorsWorkspace } from "@/components/club-honors-workspace";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { clubYearFor } from "@/modules/club-rosters/domain";
@@ -23,7 +22,6 @@ export default async function ClubHonorsPage({ params }: { params: Promise<{ org
   ]);
   return (
     <>
-      <BackLink href={`/account/clubs/${organizationId}`}>Back to {access.club.name}</BackLink>
       <ClubHonorsWorkspace
         canVoid={access.capabilities.manageTeam}
         clubYear={clubYear}
