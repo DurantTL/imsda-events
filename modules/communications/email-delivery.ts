@@ -31,6 +31,11 @@ import {
   prepareClubFormLinkBodyForDelivery,
   retireClubFormLinkForMessage,
 } from "@/modules/club-forms/link-email";
+import {
+  HEALTH_RECORD_LINK_TEMPLATE_KEY,
+  prepareHealthRecordLinkBodyForDelivery,
+  retireHealthRecordLinkForMessage,
+} from "@/modules/health-records/link-email";
 import { logError } from "@/lib/logger";
 import {
   createStableRegistrationAccessToken,
@@ -306,7 +311,10 @@ async function recoverStaleClaims(
         },
       });
       // Out of attempts: a club form link that never arrived must not stay live (#610). A message with no link matches nothing.
-      if (terminal) await retireClubFormLinkForMessage(tx, candidate.id, completedAt);
+      if (terminal) {
+        await retireClubFormLinkForMessage(tx, candidate.id, completedAt);
+        await retireHealthRecordLinkForMessage(tx, candidate.id, completedAt);
+      }
       return true;
     });
     if (recovered) recoveredIds.push(candidate.id);
@@ -625,6 +633,13 @@ async function runDeliveryLoop(
             logError("Unable to withdraw a club form link after its email finally failed.", retireError);
           }
         }
+        if (message.templateKey === HEALTH_RECORD_LINK_TEMPLATE_KEY) {
+          try {
+            await retireHealthRecordLinkForMessage(prisma as unknown as PrismaClient, message.id, now());
+          } catch (retireError) {
+            logError("Unable to withdraw a health record link after its email finally failed.", retireError);
+          }
+        }
       }
     }
   }
@@ -644,6 +659,14 @@ async function prepareAccountEmailBody(
   // A club form's private link (#610): the token is minted here, at delivery.
   if (input.templateKey === CLUB_FORM_LINK_TEMPLATE_KEY) {
     return prepareClubFormLinkBodyForDelivery({
+      messageId: input.messageId,
+      bodyText: input.bodyText,
+      now: input.now,
+    });
+  }
+  // A Health Record private link (#611): the token is minted here, at delivery.
+  if (input.templateKey === HEALTH_RECORD_LINK_TEMPLATE_KEY) {
+    return prepareHealthRecordLinkBodyForDelivery({
       messageId: input.messageId,
       bodyText: input.bodyText,
       now: input.now,

@@ -15,6 +15,7 @@ export default function robots(): MetadataRoute.Robots {
         "/event-setup",
         "/finance",
         "/forgot-password",
+        "/health-records/",
         "/imports",
         "/login",
         "/more",

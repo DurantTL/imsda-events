@@ -11,6 +11,9 @@ import { listRoster } from "@/modules/club-rosters/repository";
 import { listTransferClubOptions } from "@/modules/club-transfers/repository";
 import { honorSummaryByMemberId } from "@/modules/honors/member-honor-domain";
 import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
+import { requireHealthViewerForClub } from "@/modules/health-records/access";
+import { healthRecordsEnabled } from "@/modules/health-records/flag";
+import { healthRecordFlagsForRoster, healthSummariesForMembers } from "@/modules/health-records/repository";
 
 export const metadata: Metadata = { title: "Club roster" };
 export const dynamic = "force-dynamic";
@@ -42,6 +45,16 @@ export default async function ClubRosterPage({
     listClubHonorsPage(organizationId, clubYear),
     canTransfer ? listTransferClubOptions(organizationId) : Promise.resolve([]),
   ]);
+  // The Health tab (#611): only with the feature on, for the current year, and
+  // for the club's own director or deputy. Status and a plain flag, never text.
+  const healthTab = healthRecordsEnabled() && !readOnly
+    ? await requireHealthViewerForClub(organizationId)
+      .then((viewer) => (viewer.kind === "CLUB_LEADER" ? healthSummariesForMembers(viewer, organizationId, members.map((member) => member.id)) : undefined))
+      .catch(() => undefined)
+    : undefined;
+  // Anyone who can see these rows, with no health access, still sees a neutral
+  // "Has a health record" marker: one boolean saying a record exists, no text (#611).
+  const healthRecordFlags = readOnly ? undefined : await healthRecordFlagsForRoster(organizationId, members.map((member) => member.id)).catch(() => undefined);
   const registrationHref = registrationReturnTo(organizationId, returnToParam);
   return (
     <>
@@ -64,6 +77,8 @@ export default async function ClubRosterPage({
         complianceStatuses={complianceStatuses}
         headingActions={canTransfer ? <RequestTransferButton clubOptions={clubOptions} organizationId={organizationId} /> : undefined}
         honorSummaries={honorSummaryByMemberId(honorRows)}
+        healthRecordFlags={healthRecordFlags}
+        healthTab={healthTab}
         honorsPopup={{ canRecord: !readOnly }}
         initialMembers={members}
         organizationId={organizationId}

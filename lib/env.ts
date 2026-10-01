@@ -95,6 +95,15 @@ export const serverEnvSchema = z
     // TOTP secrets. Required in production, where MFA is enforced for admins.
     SECRET_ENCRYPTION_KEY: optionalTrimmed,
 
+    // Pathfinder Health Record (#611). Off unless exactly "true": with it off
+    // there are no health routes, no Health tab, and nothing is stored. Do not
+    // turn it on in production before ADR 0005 Addendum B is Accepted and the
+    // encryption key backup has been test-restored.
+    HEALTH_RECORDS_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+
     // Where alerts go. Any endpoint that accepts a JSON POST — a Slack or
     // Teams incoming webhook, or a small relay. Blank means alerts are only
     // written to the log, where nothing is watching them.
@@ -312,6 +321,7 @@ export const SERVER_ENV_KEYS = [
     "SQUARE_ENABLE_PRODUCTION",
     "OUTBOX_SWEEP_TOKEN",
     "SECRET_ENCRYPTION_KEY",
+    "HEALTH_RECORDS_ENABLED",
     "ALERT_WEBHOOK_URL",
     "ALERT_REPEAT_MINUTES",
     "PASSWORD_BREACH_CHECK",

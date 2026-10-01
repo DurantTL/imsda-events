@@ -57,6 +57,8 @@ export function ClubRosterWorkspace({
   honorsPopup,
   complianceFilter: initialComplianceFilter = null,
   headingActions,
+  healthTab,
+  healthRecordFlags,
 }: {
   /** Directors and deputies only; a registrar enters birth dates but sees ages (#375). */
   canSeeBirthDates: boolean;
@@ -85,6 +87,14 @@ export function ClubRosterWorkspace({
   complianceFilter?: ComplianceFilterValue | null;
   /** Extra actions beside "Add to roster", such as "Request a transfer" (#489). */
   headingActions?: React.ReactNode;
+  /**
+   * The Health tab link and status chip per member (#611). Present only when
+   * the feature is switched on and the viewer is the club's director or
+   * deputy; omitted everywhere else, so nothing about health is rendered.
+   */
+  healthTab?: Record<string, { status: "NONE" | "CURRENT" | "NEEDS_UPDATE"; hasHealthNote: boolean }>;
+  /** A neutral "Has a health record" marker (#611): a record exists, nothing more. Ids only, never text. */
+  healthRecordFlags?: Record<string, boolean>;
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [honorSummaries, setHonorSummaries] = useState(initialHonorSummaries);
@@ -438,6 +448,18 @@ export function ClubRosterWorkspace({
                             )}
                             {!readOnly && <td className="roster-card-actions" data-label="Actions">
                               <div className="honor-row-actions">
+                              {healthRecordFlags?.[member.id] && (
+                                <span className="status-chip">Has a health record</span>
+                              )}
+                              {healthTab && (
+                                <a
+                                  aria-label={`Health record for ${member.firstName} ${member.lastName}`}
+                                  className="secondary-button"
+                                  href={`/account/clubs/${encodeURIComponent(organizationId)}/roster/${encodeURIComponent(member.id)}/health`}
+                                >
+                                  Health{healthTab[member.id]?.status === "NEEDS_UPDATE" ? ": needs update" : healthTab[member.id]?.status === "NONE" ? ": none yet" : ""}
+                                </a>
+                              )}
                               <button aria-label={`Edit ${member.firstName} ${member.lastName}`} className="secondary-button" disabled={saving} onClick={() => openDialog(member)} type="button">
                                 <Pencil aria-hidden="true" size={13} />
                               </button>
