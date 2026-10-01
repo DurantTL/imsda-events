@@ -22,6 +22,7 @@ const client = {
     update: mocks.templateUpdate,
   },
   clubFormSubmission: { findMany: mocks.submissionFindMany, update: mocks.submissionUpdate },
+  clubFormTemplateVersion: { findMany: vi.fn(async () => []), findUnique: vi.fn(async () => null), createMany: vi.fn(async () => ({ count: 0 })) },
   $queryRaw: mocks.queryRaw,
   $transaction: (work: (tx: unknown) => unknown, options?: unknown) => {
     mocks.transactionOptions(options);
@@ -62,6 +63,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.writeAuditLog.mockResolvedValue({});
   mocks.queryRaw.mockResolvedValue([]);
+  mocks.templateUpsert.mockImplementation(async ({ create }: { create: { version: number } }) => ({ id: "created", version: create.version }));
   // The locked re-read of a template's keys: by default, what the earlier unlocked read returned.
   mocks.templateFindUnique.mockReset();
   mocks.templateFindUnique.mockImplementation(async ({ where }: { where: { id?: string } }) => {
@@ -216,7 +218,7 @@ describe("club form templates are off until a system administrator turns them on
     const now = new Date("2026-10-05T15:00:00Z");
     await setClubFormTemplateEnabled(slip.key, true, "admin-1", now);
     expect(mocks.templateUpdate).toHaveBeenCalledWith({ where: { id: "template-slip" }, data: { enabled: true, enabledAt: now, enabledByUserId: "admin-1" } });
-    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_FORM_TEMPLATE_ENABLED", actorUserId: "admin-1", metadata: { templateKey: slip.key } }), client);
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_FORM_TEMPLATE_ENABLED", actorUserId: "admin-1", metadata: { templateKey: slip.key, version: slip.version } }), client);
 
     mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", enabled: true, version: slip.version });
     await setClubFormTemplateEnabled(slip.key, false, "admin-1", now);

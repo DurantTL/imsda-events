@@ -20,6 +20,10 @@ function submittedOn(value: string | null) {
 export function ClubFormSubmissionView({ submission }: { submission: SubmissionView }) {
   const restricted = new Set(submission.restrictedKeys);
   const { definition, sectionNotes } = submission.template;
+  const hidden = new Set(submission.template.hiddenFieldKeys ?? []);
+  // A field hidden from new forms (#712) shows only when it holds an answer (or may hold one this viewer cannot read).
+  const holdsNothing = (key: string) => hidden.has(key)
+    && (restricted.has(key) ? !submission.hasSensitiveAnswers : submission.answers[key] === undefined);
 
   return (
     <article className="club-form-sheet">
@@ -42,7 +46,7 @@ export function ClubFormSubmissionView({ submission }: { submission: SubmissionV
       {submission.template.printLayout === "PASSENGER_LIST"
         ? <PassengerList restricted={restricted} submission={submission} />
         : definition.sections.map((section) => {
-          const fields = section.fields.filter((field) => isFieldVisible(field, submission.answers));
+          const fields = section.fields.filter((field) => isFieldVisible(field, submission.answers) && !holdsNothing(field.key));
           if (fields.length === 0) return null;
           return (
             <section className="club-form-sheet-section" key={section.id}>

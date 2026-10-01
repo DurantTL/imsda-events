@@ -506,3 +506,26 @@ describe("a club's own links (#610)", () => {
     await expect(revokeClubFormLink(director, "club-a", "link-1", now)).rejects.toMatchObject({ code: "LINK_UNAVAILABLE" });
   });
 });
+
+describe("fields hidden from new versions are never offered or taken through a link (#712)", () => {
+  const hiddenTemplate = () => ({ ...templateRow("off_premises_permission_slip"), hiddenFieldKeys: ["activity", "physician_name"] });
+
+  it("leaves them out of the page the person with the link sees", async () => {
+    mocks.linkFindUnique.mockResolvedValue(openLink({ template: hiddenTemplate() }));
+    const view = await resolveClubFormLinkForFill(TOKEN, now);
+    const keys = view.form.definition.sections.flatMap((section) => section.fields.map((field) => field.key));
+    expect(keys).not.toContain("activity");
+    expect(keys).not.toContain("physician_name");
+    expect(keys).toContain("child_name");
+  });
+
+  it("drops an answer to one sent by hand, and does not require it", async () => {
+    mocks.linkFindUnique.mockResolvedValue(openLink({ template: hiddenTemplate() }));
+    const answers: Record<string, unknown> = { ...slipAnswers, physician_name: SECRET_HEALTH, activity: "Hand-sent value" };
+    const result = await submitClubFormViaLink(TOKEN, answers, now);
+    const data = mocks.submissionCreate.mock.calls.at(-1)![0].data;
+    expect(JSON.stringify(data)).not.toContain("Hand-sent value");
+    expect(JSON.stringify(data)).not.toContain(SECRET_HEALTH);
+    expect(result.submissionId).toBeTruthy();
+  });
+});

@@ -13,6 +13,11 @@
  * version that would make a sensitive answer or a birth date readable again
  * needs a reviewed change, and changes nothing for that form), syncs every
  * other form, reports each refusal, and exits non-zero at the end.
+ *
+ * A template that was edited or created in the club form builder (#712) is
+ * never overwritten: the sync logs that it skipped it. A template with only an
+ * unpublished draft is still updated; its draft is left in place and reported
+ * as stale (it must be discarded: it can no longer be saved or published).
  */
 import { loadEnvConfig } from "@next/env";
 
@@ -23,7 +28,9 @@ async function main() {
   const { syncClubFormTemplates } = await import("../modules/club-forms/templates");
   const prisma = getPrisma();
   try {
-    const { refused } = await syncClubFormTemplates(prisma, { continueOnRefusal: true });
+    const { refused, skipped, staleDrafts } = await syncClubFormTemplates(prisma, { continueOnRefusal: true });
+    for (const item of skipped) console.log(`SKIPPED ${item.key}: ${item.reason}; the code's version is not applied.`);
+    for (const item of staleDrafts) console.log(`UPDATED ${item.key}: draft is now stale`);
     const rows = await prisma.clubFormTemplate.findMany({ orderBy: { sortOrder: "asc" }, select: { key: true, version: true, enabled: true } });
     for (const row of rows) console.log(`${row.key}: version ${row.version}${row.enabled ? " (on)" : " (off)"}`);
     if (refused.length > 0) {
