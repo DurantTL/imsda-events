@@ -38,6 +38,7 @@ describe("the passenger list print (#610)", () => {
       sectionNotes: seed.sectionNotes,
       sensitiveFieldKeys: seed.sensitiveFieldKeys,
       staffOnlyFieldKeys: [],
+      version: 1,
       enabled: true,
     },
     organization: { id: "club-a", name: "Example Pathfinders" },

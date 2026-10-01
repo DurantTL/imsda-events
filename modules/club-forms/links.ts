@@ -13,6 +13,7 @@ import {
   clubFormLinkState,
   definitionForLink,
   deriveSubjectName,
+  fillDefinition,
   parseClubFormTemplate,
   sanitizeClubFormAnswers,
   splitAnswers,
@@ -231,7 +232,7 @@ const linkSelect = {
   template: {
     select: {
       id: true, key: true, name: true, description: true, version: true, definition: true, sectionNotes: true,
-      sensitiveFieldKeys: true, birthDateFieldKeys: true, staffOnlyFieldKeys: true, printLayout: true, enabled: true,
+      sensitiveFieldKeys: true, birthDateFieldKeys: true, staffOnlyFieldKeys: true, hiddenFieldKeys: true, printLayout: true, enabled: true, customizedAt: true,
     },
   },
 } satisfies Prisma.ClubFormLinkSelect;
@@ -287,7 +288,8 @@ export async function submitClubFormViaLink(token: string, rawAnswers: Record<st
   const link = await findUsableLink(token, now);
   const template = parseClubFormTemplate(link.template);
   assertClubFormTemplateCurrent(template);
-  const definition = await withLiveDirectory(template.definition);
+  // Fields hidden from new versions (#712) are not offered, so they cannot be written either.
+  const definition = await withLiveDirectory(fillDefinition(template));
   // Office-use fields are not the filler's to write, even by hand-crafted request.
   const answers = sanitizeClubFormAnswers(definition, rawAnswers, template.staffOnlyFieldKeys);
   const issues = validateClubFormAnswers(definition, answers, { excludeKeys: template.staffOnlyFieldKeys });

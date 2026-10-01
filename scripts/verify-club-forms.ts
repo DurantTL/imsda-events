@@ -53,6 +53,7 @@ const SLIP = "off_premises_permission_slip";
 const STAFF_FORM = "pathfinder_staff_service_information";
 const PASSENGERS = "transportation_passenger_list";
 const templateKeys = [SLIP, STAFF_FORM, PASSENGERS, "pathfinder_membership_application"];
+const BUILDER_PREFIX = "cf712_";
 const emailDomain = "clubforms.example.test";
 const SECRET_PHYSICIAN = "Dr. Verify Physician Only";
 const SECRET_PHONE = "515-555-0177";
@@ -75,7 +76,7 @@ const sha256 = (value: string) => createHash("sha256").update(value).digest("hex
 async function cleanup() {
   const links = await prisma.clubFormLink.findMany({ where: { organizationId: { in: clubIds } }, select: { id: true, messageId: true } });
   const submissions = await prisma.clubFormSubmission.findMany({ where: { organizationId: { in: clubIds } }, select: { id: true } });
-  const templates = await prisma.clubFormTemplate.findMany({ where: { key: { in: templateKeys } }, select: { id: true } });
+  const templates = await prisma.clubFormTemplate.findMany({ where: { OR: [{ key: { in: templateKeys } }, { key: { startsWith: BUILDER_PREFIX } }] }, select: { id: true } });
   await prisma.auditLog.deleteMany({
     where: {
       OR: [
@@ -89,6 +90,10 @@ async function cleanup() {
   await prisma.clubFormLink.deleteMany({ where: { organizationId: { in: clubIds } } });
   await prisma.messageOutbox.deleteMany({ where: { OR: [{ id: { in: links.flatMap((link) => (link.messageId ? [link.messageId] : [])) } }, { recipientEmail: { endsWith: `@${emailDomain}` } }] } });
   await prisma.rateLimitBucket.deleteMany({ where: { policy: { startsWith: "club-form." } } });
+  // Templates made in the builder (#712) belong to this script: remove them with their versions.
+  const builderTemplateIds = (await prisma.clubFormTemplate.findMany({ where: { key: { startsWith: BUILDER_PREFIX } }, select: { id: true } })).map((row) => row.id);
+  await prisma.clubFormTemplateVersion.deleteMany({ where: { templateId: { in: builderTemplateIds } } });
+  await prisma.clubFormTemplate.deleteMany({ where: { id: { in: builderTemplateIds } } });
   // Templates are shared rows: leave them, but switch every one back off.
   await prisma.clubFormTemplate.updateMany({ where: { key: { in: templateKeys } }, data: { enabled: false, enabledAt: null, enabledByUserId: null } });
   await prisma.clubRosterMember.deleteMany({ where: { organizationId: { in: clubIds } } });
@@ -643,6 +648,99 @@ async function main() {
   assert(await prisma.clubFormSubmission.count({ where: { templateId: slipRow.id } }) === draftsBefore, "the refused save wrote nothing");
   releaseHeld();
   await holder;
+
+
+  // 12. The club form builder (#712) -----------------------------------------
+  const builder = await import("../modules/club-forms/builder");
+  const builderState = await import("../components/club-form-builder-state");
+  const { allFields } = await import("../modules/club-forms/domain");
+  const copy = await builder.createClubFormTemplate({ name: "cf712 Copy", copyFromKey: SLIP }, users.admin);
+  assert(copy.key === "cf712_copy" && copy.version === 1, "a copy gets its own key and starts at version 1");
+  const copyRow = await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: copy.key } });
+  assert(copyRow.enabled === false && copyRow.customizedAt !== null, "a copy starts disabled and marked as edited in the app");
+  assert(copyRow.sensitiveFieldKeys.join() === slipRow.sensitiveFieldKeys.join(), "a copy keeps the sensitive flags");
+  assert(await prisma.clubFormTemplateVersion.count({ where: { templateId: copyRow.id, version: 1 } }) === 1, "version 1 of a new form is recorded");
+  await templates.setClubFormTemplateEnabled(copy.key, true, users.admin);
+  const oldFill = await submissions.saveClubFormSubmission(directorA, { organizationId: clubs.a, templateKey: copy.key, answers: slipAnswers, submit: true });
+
+  const builderIdOf = (spec: import("../modules/club-forms/builder-domain").ClubFormDraftSpec, key: string) => allFields(spec.definition).find((field) => field.key === key)!.id;
+  const viewOf = async () => builder.getClubFormBuilderView(copy.key);
+  const first = await viewOf();
+  const relabeled = builderState.updateField(first.published, builderIdOf(first.published, "activity"), { label: "Verify renamed activity" });
+  await builder.saveClubFormDraft(copy.key, { draft: relabeled, baseVersion: 1, expectedDraftUpdatedAt: null }, users.admin);
+  assert((await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: copy.key } })).version === 1, "a saved draft does not change the live form");
+  const afterSave = await viewOf();
+  await expectCode(
+    builder.saveClubFormDraft(copy.key, { draft: relabeled, baseVersion: 1, expectedDraftUpdatedAt: null }, users.admin),
+    "TEMPLATE_CHANGED",
+    "a second tab with a stale draft is refused",
+  );
+  const published = await builder.publishClubFormDraft(copy.key, { baseVersion: 1 }, users.admin);
+  assert(published.version === 2, "publishing bumps the version");
+  assert(await prisma.clubFormTemplateVersion.count({ where: { templateId: copyRow.id } }) === 2, "both versions are kept");
+  const oldView = await submissions.getSubmissionForViewer(directorA, oldFill.id);
+  assert(oldView.template.version === 1, "an old submission is shown on its own version");
+  assert(!allFields(oldView.template.definition).some((field) => field.label === "Verify renamed activity"), "an old submission shows its own version's questions");
+  assert(oldView.answers.physician_name === SECRET_PHYSICIAN, "an old submission's sealed answer still opens for its director");
+  const newFill = await submissions.saveClubFormSubmission(directorA, { organizationId: clubs.a, templateKey: copy.key, answers: slipAnswers, submit: true });
+  const newView = await submissions.getSubmissionForViewer(directorA, newFill.id);
+  assert(newView.template.version === 2 && allFields(newView.template.definition).some((field) => field.label === "Verify renamed activity"), "a new fill uses the latest version");
+  assert(afterSave.draft !== null, "the builder shows the saved draft");
+
+  // The protection rules, against the real tables.
+  const v2 = await viewOf();
+  const physicianId = builderIdOf(v2.published, "physician_name");
+  await expectCode(
+    builder.saveClubFormDraft(copy.key, { draft: builderState.setFieldFlag(v2.published, physicianId, "sensitive", false), baseVersion: 2, expectedDraftUpdatedAt: null }, users.admin),
+    "VALIDATION_FAILED",
+    "a published sensitive flag cannot be cleared",
+  );
+  await expectCode(
+    builder.saveClubFormDraft(copy.key, { draft: builderState.removeField(v2.published, physicianId), baseVersion: 2, expectedDraftUpdatedAt: null }, users.admin),
+    "VALIDATION_FAILED",
+    "a sensitive field cannot be deleted once forms exist",
+  );
+  await builder.saveClubFormDraft(copy.key, { draft: builderState.setFieldFlag(v2.published, physicianId, "hidden", true), baseVersion: 2, expectedDraftUpdatedAt: null }, users.admin);
+  assert((await builder.publishClubFormDraft(copy.key, { baseVersion: 2 }, users.admin)).version === 3, "hiding a sensitive field publishes");
+  const hiddenFill = await submissions.saveClubFormSubmission(directorA, { organizationId: clubs.a, templateKey: copy.key, answers: slipAnswers, submit: true });
+  const hiddenRow = await prisma.clubFormSubmission.findUniqueOrThrow({ where: { id: hiddenFill.id } });
+  assert(hiddenRow.templateVersion === 3, "a fill after hiding is on the new version");
+  assert((await submissions.getSubmissionForViewer(directorA, hiddenFill.id)).answers.physician_name === undefined, "a hidden field takes no new answer");
+  assert((await submissions.getSubmissionForViewer(directorA, oldFill.id)).answers.physician_name === SECRET_PHYSICIAN, "hiding a field leaves old answers readable on their version");
+  assert(!(await submissions.getSubmissionForViewer(area, oldFill.id)).answers.physician_name, "an Area Coordinator still sees the old answer as Restricted");
+
+  // A field made sensitive later has its existing answers sealed by the publish.
+  const v3 = await viewOf();
+  await builder.saveClubFormDraft(copy.key, { draft: builderState.setFieldFlag(v3.published, builderIdOf(v3.published, "activity"), "sensitive", true), baseVersion: 3, expectedDraftUpdatedAt: null }, users.admin);
+  assert((await builder.publishClubFormDraft(copy.key, { baseVersion: 3 }, users.admin)).version === 4, "marking a field sensitive publishes");
+  const resealed = await prisma.$queryRaw<Array<{ text: string }>>`SELECT s::text AS text FROM "ClubFormSubmission" s WHERE s.id = ${oldFill.id}`;
+  assert(!resealed[0].text.includes("Canoe trip"), "an answer to a newly sensitive field is no longer stored in plain text");
+  assert((await submissions.getSubmissionForViewer(directorA, oldFill.id)).answers.activity === "Canoe trip", "the resealed answer still opens for the director");
+  const builderCsv = (await csv.buildClubFormsCsv(sysAdmin, { templateKey: copy.key })).csv;
+  assert(!builderCsv.includes(SECRET_PHYSICIAN) && !builderCsv.includes("Canoe trip"), "the export of an edited form has no sensitive text from any version");
+
+  const builderAudit = await prisma.auditLog.findMany({ where: { entityId: copyRow.id, entityType: "ClubFormTemplate" }, select: { action: true, actorUserId: true, metadata: true } });
+  for (const action of ["CLUB_FORM_TEMPLATE_CREATED", "CLUB_FORM_TEMPLATE_DRAFT_SAVED", "CLUB_FORM_TEMPLATE_PUBLISHED", "CLUB_FORM_TEMPLATE_ENABLED"]) {
+    assert(builderAudit.some((row) => row.action === action && row.actorUserId === users.admin), `${action} is audited with the actor`);
+  }
+  assert(builderAudit.filter((row) => row.action === "CLUB_FORM_TEMPLATE_PUBLISHED").map((row) => (row.metadata as { version: number }).version).sort().join() === "2,3,4", "each publish is audited with its version");
+  assert(!JSON.stringify(builderAudit).includes(SECRET_PHYSICIAN) && !JSON.stringify(builderAudit).includes("Verify renamed activity"), "builder audit rows hold no answer or definition text");
+
+  // The sync leaves a template edited in the app alone.
+  const original = await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } });
+  try {
+    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { version: 0, name: "Verify customized name", customizedAt: new Date() } });
+    const synced = await templates.syncClubFormTemplates(prisma, { continueOnRefusal: true });
+    const afterSync = await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } });
+    assert(synced.skipped.some((item) => item.key === SLIP), "the sync reports the template it skipped");
+    assert(afterSync.name === "Verify customized name" && afterSync.version === 0, "the sync did not overwrite an edited template");
+    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { customizedAt: null } });
+    await templates.syncClubFormTemplates(prisma, { continueOnRefusal: true });
+    const restored = await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } });
+    assert(restored.name === original.name && restored.version === original.version, "a template never edited keeps updating from the code");
+  } finally {
+    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { name: original.name, version: original.version, customizedAt: original.customizedAt } });
+  }
 
   // Club forms and links block deleting a club.
   const deletion = await orgRepository.getOrganizationDeletionCheck(clubs.a);

@@ -2,6 +2,7 @@ import { staffLoginRedirectPath } from "@/modules/access/login-redirect";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { ClubFormCreate } from "@/components/club-form-create";
 import { ClubFormTemplateToggle } from "@/components/club-forms-actions";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { listClubFormTemplatesForAdmin } from "@/modules/club-forms/templates";
@@ -12,7 +13,8 @@ export const dynamic = "force-dynamic";
 /**
  * Club forms (#610): each one is off until a system administrator turns it
  * on here. Turning one off hides it from clubs and Area Coordinators; nothing
- * that was filled in is deleted.
+ * that was filled in is deleted. Each form can be edited in the builder, and new
+ * forms created there (#712).
  */
 export default async function AdminClubFormsPage() {
   const { user } = await getCurrentSession();
@@ -40,7 +42,7 @@ export default async function AdminClubFormsPage() {
           <table className="report-table">
             <caption className="sr-only">Club forms</caption>
             <thead>
-              <tr><th scope="col">Form</th><th scope="col">Status</th><th scope="col">Filled in</th><th scope="col"><span className="sr-only">Change</span></th></tr>
+              <tr><th scope="col">Form</th><th scope="col">Status</th><th scope="col">Filled in</th><th scope="col">Version</th><th scope="col"><span className="sr-only">Change</span></th></tr>
             </thead>
             <tbody>
               {templates.map((template) => (
@@ -48,13 +50,22 @@ export default async function AdminClubFormsPage() {
                   <th scope="row">{template.name}<small className="quiet-copy"> · {template.description}</small></th>
                   <td>{template.enabled ? "On" : "Off"}{template.needsSync && <small className="club-report-problem"> · Needs sync: an operator must run <code>npm run club-forms:sync</code></small>}</td>
                   <td>{template.submissionCount}</td>
-                  <td><ClubFormTemplateToggle enabled={template.enabled} name={template.name} needsSync={template.needsSync} templateKey={template.key} /></td>
+                  <td>
+                    {template.version}
+                    {template.customized && <small className="quiet-copy"> · edited in the app</small>}
+                    {template.hasDraft && <small className="quiet-copy"> · draft waiting</small>}
+                  </td>
+                  <td>
+                    {template.version > 0 && <Link className="secondary-button" href={`/admin/club-forms/${encodeURIComponent(template.key)}`}>Edit</Link>}{" "}
+                    <ClubFormTemplateToggle enabled={template.enabled} name={template.name} needsSync={template.needsSync} templateKey={template.key} />
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </section>
+      <ClubFormCreate templates={templates.filter((template) => template.version > 0).map((template) => ({ key: template.key, name: template.name }))} />
     </section>
   );
 }

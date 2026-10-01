@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
 
 const client = {
   clubFormTemplate: { findFirst: mocks.templateFindFirst, findUnique: mocks.templateFindUnique },
+  // No older version is recorded in these fixtures, so a submission renders against the current one.
+  clubFormTemplateVersion: { findUnique: vi.fn(async () => null), findMany: vi.fn(async () => []) },
   $queryRaw: mocks.queryRaw,
   $executeRaw: mocks.executeRaw,
   clubFormSubmission: {
@@ -331,6 +333,7 @@ describe("opening a submission (#610)", () => {
     answers: { child_name: "Riley Sample", activity: "Canoe trip" },
     sealedSensitiveAnswers: sealed(),
     hasSensitiveAnswers: true,
+    templateVersion: slipTemplateRow().version,
     organization: { name: "Example Pathfinders" },
     template: slipTemplateRow(),
     ...overrides,

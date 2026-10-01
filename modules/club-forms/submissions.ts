@@ -20,6 +20,7 @@ import {
   viewerCanWriteForClub,
   viewerSeesDrafts,
   parseClubFormTemplate,
+  fillDefinition,
   type ClubFormActor,
   type ClubFormsViewer,
 } from "@/modules/club-forms/domain";
@@ -27,6 +28,7 @@ import { ClubFormError } from "@/modules/club-forms/errors";
 import { openSensitiveAnswers, sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
 import { assertClubFormTemplateCurrent, lockClubFormTemplateForWrite } from "@/modules/club-forms/template-lock";
 import { getEnabledClubFormTemplate, withLiveDirectory } from "@/modules/club-forms/templates";
+import { getClubFormTemplateAtVersion } from "@/modules/club-forms/versions";
 
 /**
  * Club form submissions (#610). Every function takes a resolved viewer and
@@ -104,7 +106,8 @@ export async function saveClubFormSubmission(viewer: ClubFormsViewer, input: Sav
 
   const template = await getEnabledClubFormTemplate(input.templateKey, prisma);
   assertClubFormTemplateCurrent(template);
-  const definition = await withLiveDirectory(template.definition, prisma);
+  // Fields hidden from new versions (#712) are not offered, so they cannot be written either.
+  const definition = await withLiveDirectory(fillDefinition(template), prisma);
   const memberName = input.rosterMemberId
     ? await resolveRosterMemberName(prisma, input.organizationId, input.rosterMemberId)
     : "";
@@ -267,17 +270,22 @@ export async function getSubmissionForViewer(
       answers: true,
       sealedSensitiveAnswers: true,
       hasSensitiveAnswers: true,
+      templateVersion: true,
       organization: { select: { name: true } },
       template: {
         select: {
           id: true, key: true, name: true, description: true, version: true, definition: true, sectionNotes: true,
-          sensitiveFieldKeys: true, birthDateFieldKeys: true, staffOnlyFieldKeys: true, printLayout: true, enabled: true,
+          sensitiveFieldKeys: true, birthDateFieldKeys: true, staffOnlyFieldKeys: true, hiddenFieldKeys: true, printLayout: true, enabled: true, customizedAt: true,
         },
       },
     },
   });
   if (!row) throw new ClubFormError("SUBMISSION_NOT_FOUND", "That form could not be found.");
-  const template = parseClubFormTemplate(row.template);
+  const current = parseClubFormTemplate(row.template);
+  // A submission is shown against the version it was filled in against (#712). A draft being edited moves to
+  // the latest published version, which is what its next save is validated against.
+  const editingDraft = purpose === "EDIT" && row.status === "DRAFT";
+  const template = editingDraft ? current : await getClubFormTemplateAtVersion(current, row.templateVersion, prisma);
   const restricted = new Set(restrictedFieldKeys(viewer, row.organizationId, template));
   const reveal = viewerCanRevealSensitive(viewer, row.organizationId);
   const revealBirthDates = viewerCanRevealBirthDates(viewer, row.organizationId);
@@ -329,10 +337,11 @@ export async function getSubmissionForViewer(
       name: template.name,
       description: template.description,
       printLayout: template.printLayout,
-      definition: template.definition,
+      definition: editingDraft ? fillDefinition(template) : template.definition,
       sectionNotes: template.sectionNotes,
       sensitiveFieldKeys: template.sensitiveFieldKeys,
       staffOnlyFieldKeys: template.staffOnlyFieldKeys,
+      version: template.version,
       enabled: template.enabled,
     },
     organization: { id: row.organizationId, name: row.organization.name },

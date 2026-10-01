@@ -36,7 +36,8 @@ export async function lockClubFormTemplateForWrite(tx: Prisma.TransactionClient,
   if (locked.version !== template.version) throw formBusyError();
   // A deploy that bumped a seed version has not been synced (and re-sealed) yet: nothing is written until it is.
   const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === template.key);
-  if (seed && locked.version < seed.version) throw formUnavailableError();
+  // A template edited in the app (#712) no longer follows the code's seed version.
+  if (seed && !locked.customizedAt && locked.version < seed.version) throw formUnavailableError();
   return {
     version: locked.version,
     sensitiveFieldKeys: union(locked.sensitiveFieldKeys, seed?.sensitiveFieldKeys),
@@ -56,7 +57,7 @@ function union(stored: readonly string[], seed: readonly string[] = []) {
 async function readLockedKeys(tx: Prisma.TransactionClient, templateId: string) {
   const row = await tx.clubFormTemplate.findUnique({
     where: { id: templateId },
-    select: { version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true },
+    select: { version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true, customizedAt: true },
   });
   if (!row) throw new Error("Club form template disappeared during a write.");
   return row;
@@ -68,7 +69,8 @@ async function readLockedKeys(tx: Prisma.TransactionClient, templateId: string) 
  * form is opened or a link is made, so nobody fills in a form that cannot be
  * saved; the writers check it again under the lock.
  */
-export function assertClubFormTemplateCurrent(template: { key: string; version: number }) {
+export function assertClubFormTemplateCurrent(template: { key: string; version: number; customized?: boolean }) {
+  if (template.customized) return;
   const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === template.key);
   if (seed && template.version < seed.version) throw formUnavailableError();
 }
