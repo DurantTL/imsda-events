@@ -1,3 +1,4 @@
+import { moreCardApplies } from "@/modules/events/settings-sections";
 import { createElement } from "react";
 import type { ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -349,5 +350,12 @@ describe("phone navigation reaches every page the desktop sidebar reaches (#475)
     const without = buildMoreDirectoryCards({ ...base, permissions: ["VIEW_REPORTS"] }).filter((card) => card.allowed);
     expect(without.map((card) => card.href)).not.toContain("/finance?event=e1");
     expect(without.map((card) => card.href)).not.toContain("/more/promo-codes?event=e1");
+  });
+
+  it("keeps Payments and Promo codes in the main More list on every event kind, never collapsed (#711)", () => {
+    for (const kind of ["general", "club"] as const) {
+      expect(moreCardApplies("payments", kind), `payments on ${kind}`).toBe(true);
+      expect(moreCardApplies("promo-codes", kind), `promo-codes on ${kind}`).toBe(true);
+    }
   });
 });

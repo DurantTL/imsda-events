@@ -137,7 +137,7 @@ export const moreDirectoryCardApplicability: Record<string, AppliesTo> = {
   honors: "both",
   "program-assignments": "general",
   merchandise: "general",
-  "promo-codes": "general",
+  "promo-codes": "both",
   payments: "both",
   "registration-builder": "both",
   "event-content": "both",

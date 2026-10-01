@@ -37,6 +37,9 @@ function fieldIsVisible(
   return String(actual ?? "") === condition.value;
 }
 
+/** A chosen option longer than this is also shown in full under its select (#711). */
+const LONG_OPTION_LENGTH = 38;
+
 function valuesEqual(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
@@ -191,6 +194,7 @@ export function AttendeeRegistrationAnswersForm({
                       <label key={rank}>
                         <span>{rank === 0 ? "First choice" : rank === 1 ? "Second choice" : `Choice ${rank + 1}`}</span>
                         <select
+                          aria-describedby={(selected[rank]?.length ?? 0) > LONG_OPTION_LENGTH ? `${attendee.attendeeId}_${field.id}_${rank}_full` : undefined}
                           className={`field-select${selected[rank] ? "" : " is-empty"}`}
                           title={selected[rank] || undefined}
                           value={selected[rank] ?? ""}
@@ -213,6 +217,9 @@ export function AttendeeRegistrationAnswersForm({
                             </option>
                           ))}
                         </select>
+                        {(selected[rank]?.length ?? 0) > LONG_OPTION_LENGTH && (
+                          <small className="field-select-full-name" id={`${attendee.attendeeId}_${field.id}_${rank}_full`}>{selected[rank]}</small>
+                        )}
                       </label>
                     ))}
                     {field.helpText && <small>{field.helpText}</small>}
