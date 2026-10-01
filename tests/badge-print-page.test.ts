@@ -65,6 +65,13 @@ describe("printable name badge page layout options", () => {
     expect(markup).toContain("Export CSV for Avery Design &amp; Print");
   });
 
+  it("shows a screen-only print tip inside the intro that print CSS hides", async () => {
+    const markup = await render({});
+    expect(markup).toContain("print from Chrome or Edge: Margins Default");
+    expect(markup).toContain("Scale 100%, no headers or footers.");
+    expect(markup).toContain('class="badge-print-tip"');
+  });
+
   it("carries the Show attendee type setting to the export link", async () => {
     expect(await render({ type: "0" })).toContain("badge-labels-csv?type=0");
     expect(await render({ type: ["0", "1"] })).not.toContain("badge-labels-csv?type=0");

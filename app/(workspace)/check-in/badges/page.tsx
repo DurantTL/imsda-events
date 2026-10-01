@@ -137,6 +137,10 @@ export default async function PrintableNameBadgesPage({
             <PrintReportButton label="Print name badges" />
           )}
         </div>
+        <p className="badge-print-tip">
+          For exact label alignment print from Chrome or Edge: Margins Default
+          or None, Scale 100%, no headers or footers.
+        </p>
       </div>
 
       <form className="panel badge-print-controls" method="get">

@@ -7,15 +7,24 @@
  *
  *  - the PDF has ceil(labels / perSheet) pages (no blank first or last page);
  *  - no page chrome text ("Skip to main content", "Badge artwork", ...);
- *  - every PDF page is a US Letter page, in the chosen orientation of the
- *    sheet (the sheet itself is always 8.5 x 11 in);
+ *  - every PDF page is a portrait US Letter page (the sheet is always 8.5 x 11
+ *    in, whatever the badge orientation option says);
  *  - the first label sits where the Avery template says (Presta 94237 is
  *    1 in from the top and 0.85 in from the left, +/- 0.02 in), and the whole
  *    2 x 4 grid lands on the measured pitch.
  *
+ * LOCAL USE ONLY. It writes synthetic registrations and mints a session that
+ * skips the second factor, so it refuses to run with NODE_ENV=production, with
+ * a DATABASE_URL or BADGE_PRINT_BASE_URL that is not on this machine, or as
+ * any account except a seeded @imsda-events.test one. The guard runs before
+ * Prisma or the session store are loaded.
+ *
  * Needs a running app (`npm run build && npm run start`, or `npm run dev`), a
  * migrated and seeded LOCAL database, and Chromium. It adds synthetic
  * attendees named "Badgecheck NNN" to the seeded Women's Retreat event.
+ * playwright-core and pdfjs-dist are deliberately not dependencies (they would
+ * bloat the production image); install them first with
+ *   npm i --no-save playwright-core@1.56.1 pdfjs-dist@4.10.38
  *
  *   BADGE_PRINT_BASE_URL=http://localhost:3717 \
  *   BADGE_PRINT_OUT_DIR=/tmp/badge-print npm run test:badge-print
@@ -33,9 +42,17 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { PrismaClient } from "@prisma/client";
-import { chromium, type Page } from "playwright-core";
+import type { PrismaClient } from "@prisma/client";
 import { badgeTemplates, type BadgeTemplateId } from "../modules/checkin/badge-labels";
+import {
+  assertLocalDatabase,
+  assertLocalUrl,
+  assertSeededStaffEmail,
+} from "./support/local-only-guard";
+
+// Structural stand-in: playwright-core is installed on demand, not a dependency.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Page = any;
 
 const baseUrl = (process.env.BADGE_PRINT_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const outDir = process.env.BADGE_PRINT_OUT_DIR
@@ -63,6 +80,7 @@ type Variant = {
   template: BadgeTemplateId;
   orientation: "portrait" | "landscape";
   query?: Record<string, string>;
+  omitEvent?: boolean;
 };
 
 const variants: Variant[] = [];
@@ -83,6 +101,13 @@ variants.push(
     template: "avery-presta-94237",
     orientation: "portrait",
     query: { size: "80", title: "1", type: "1" },
+  },
+  {
+    // No ?event=, so the app picks the event itself and shows its notice.
+    name: "avery-presta-94237-landscape-no-event-param",
+    template: "avery-presta-94237",
+    orientation: "landscape",
+    omitEvent: true,
   },
   {
     name: "avery-presta-94237-landscape-start5",
@@ -144,9 +169,19 @@ async function seedSyntheticAttendees(prisma: PrismaClient) {
 
 type PdfInfo = { pages: number; text: string; pageSizesIn: Array<[number, number]>; textPerPage: string[] };
 
+/** Dynamic import by variable name so tsc and eslint do not need the package. */
+async function loadOptional(name: string) {
+  try {
+    return await import(/* webpackIgnore: true */ name);
+  } catch {
+    console.error(`Missing ${name}. Run: npm i --no-save playwright-core@1.56.1 pdfjs-dist@4.10.38`);
+    process.exit(1);
+  }
+}
+
 async function readPdf(data: Uint8Array): Promise<PdfInfo> {
   // The legacy build runs under Node without a canvas.
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfjs = await loadOptional("pdfjs-dist/legacy/build/pdf.mjs");
   const document = await pdfjs.getDocument({ data, useSystemFonts: true }).promise;
   const textPerPage: string[] = [];
   const pageSizesIn: Array<[number, number]> = [];
@@ -155,7 +190,7 @@ async function readPdf(data: Uint8Array): Promise<PdfInfo> {
     const [x0, y0, x1, y1] = page.view;
     pageSizesIn.push([(x1 - x0) / 72, (y1 - y0) / 72]);
     const content = await page.getTextContent();
-    textPerPage.push(content.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+    textPerPage.push(content.items.map((item: { str?: string }) => (item.str ?? "")).join(" "));
   }
   return { pages: document.numPages, text: textPerPage.join("\n"), pageSizesIn, textPerPage };
 }
@@ -169,6 +204,7 @@ async function signIn(page: Page, prisma: PrismaClient) {
   const user = await prisma.user.findUnique({ where: { email: staffEmail } });
   if (!user) throw new Error("The seeded administrator is missing. Run `npm run db:seed` first.");
   const session = await createDatabaseSession(user.id, null);
+  mintedToken = session.token;
   await page.context().addCookies([{
     name: SESSION_COOKIE_NAME,
     value: session.token,
@@ -178,9 +214,19 @@ async function signIn(page: Page, prisma: PrismaClient) {
   }]);
 }
 
+let mintedToken: string | undefined;
+
 async function main() {
+  // Hard guard first: nothing below may load Prisma or the session store
+  // until this has passed.
+  assertLocalDatabase(process.env, "write synthetic badge-check registrations and mint a session");
+  assertLocalUrl(baseUrl, "BADGE_PRINT_BASE_URL");
+  assertSeededStaffEmail(staffEmail);
+
+  const { PrismaClient: Prisma } = await import("@prisma/client");
+  const { chromium } = await loadOptional("playwright-core");
   mkdirSync(outDir, { recursive: true });
-  const prisma = new PrismaClient();
+  const prisma: PrismaClient = new Prisma();
   const total = await seedSyntheticAttendees(prisma);
   console.log(`Event has ${total} active synthetic attendees; output in ${outDir}`);
 
@@ -199,7 +245,7 @@ async function main() {
       const grid = expectedGrid[variant.template];
       const start = Number(variant.query?.start ?? 1);
       const params = new URLSearchParams({
-        event: eventId,
+        ...(variant.omitEvent ? {} : { event: eventId }),
         template: variant.template,
         orientation: variant.orientation,
         ...variant.query,
@@ -210,6 +256,11 @@ async function main() {
       const labelCount = await page.locator(".badge-label-card:not(.is-empty)").count();
       check(labelCount === total, `page lists ${labelCount} of ${total} labels`);
 
+      if (variant.omitEvent) {
+        const notices = await page.locator(".event-auto-select-notice").count();
+        check(notices > 0, "auto-select notice renders on screen (it must then be hidden in print)");
+      }
+
       await page.emulateMedia({ media: "print" });
       const sheetCount = Math.ceil((labelCount + start - 1) / template.perSheet);
 
@@ -217,7 +268,8 @@ async function main() {
       const hidden = await page.evaluate(() => {
         const selectors = [".skip-link", ".sidebar", ".workspace-header", ".mobile-nav",
           ".badge-print-intro", ".badge-print-controls", ".badge-background-picker",
-          ".badge-print-summary"];
+          ".badge-print-summary", ".act-as-banner", ".event-auto-select-notice",
+          ".empty-state"];
         return selectors
           .map((selector) => [selector, [...document.querySelectorAll(selector)]
             .every((element) => getComputedStyle(element).display === "none")] as const)
@@ -238,7 +290,7 @@ async function main() {
         `first label at ${first[1].toFixed(3)} in from top, ${first[0].toFixed(3)} in from left (want ${grid.top} / ${grid.left})`,
       );
       let gridOk = boxes.length === grid.columns * grid.rows;
-      boxes.forEach(([x, y], index) => {
+      (boxes as number[][]).forEach(([x, y], index) => {
         const column = index % grid.columns;
         const row = Math.floor(index / grid.columns);
         if (Math.abs(x - (grid.left + column * grid.columnPitch)) > toleranceIn
@@ -264,6 +316,10 @@ async function main() {
     }
   } finally {
     await browser.close();
+    if (mintedToken) {
+      const { revokeDatabaseSession } = await import("../modules/access/session-store");
+      await revokeDatabaseSession(mintedToken);
+    }
     await prisma.$disconnect();
   }
 

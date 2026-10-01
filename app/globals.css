@@ -6109,6 +6109,7 @@ select:focus-visible {
 .badge-print-page { padding-bottom: 34px; }
 .badge-print-intro { gap: 24px; }
 .badge-print-actions { flex: 0 0 auto; }
+.badge-print-page .badge-print-tip { flex: 1 0 100%; max-width: none; margin: 0; }
 .badge-print-controls {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(150px, 0.45fr) auto;
