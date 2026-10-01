@@ -146,6 +146,7 @@ export async function ClubOverview({
           clubYear={shownRosterYear}
           complianceStatuses={compliance?.statuses}
           honorSummaries={honorSummaries}
+          honorsPopup={honorsHref ? { canRecord: false } : undefined}
           initialMembers={members}
           organizationId={organizationId}
           readOnly

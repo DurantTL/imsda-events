@@ -172,3 +172,46 @@ export function clubHonorsCsv(rows: readonly ClubHonorsRow[]) {
 /** The reason must be 3 to 500 characters once trimmed (#591). */
 export const VOID_REASON_MIN = 3;
 export const VOID_REASON_MAX = 500;
+
+export type ClubHonorsEmptyState = "NO_MEMBERS" | "NO_MATCH" | "NO_HONORS";
+
+/**
+ * Which empty state the club Honors page shows (#701, D4), each with its own
+ * copy: nobody on the roster, filters that exclude everyone, or members with
+ * no honors recorded yet. `null` when there is something to show.
+ */
+export function clubHonorsEmptyState(allRows: readonly ClubHonorsRow[], visibleRows: readonly ClubHonorsRow[]): ClubHonorsEmptyState | null {
+  if (allRows.length === 0) return "NO_MEMBERS";
+  if (visibleRows.length === 0) return "NO_MATCH";
+  if (allRows.every((row) => row.honors.length === 0)) return "NO_HONORS";
+  return null;
+}
+
+export const clubHonorsEmptyCopy: Record<ClubHonorsEmptyState, string> = {
+  NO_MEMBERS: "No members on the roster yet — add them on the Roster page first.",
+  NO_HONORS: "No honors recorded yet. Tick the names above, then choose Record honor.",
+  NO_MATCH: "No one matches these filters.",
+};
+
+/** The bulk button's label and, while it is disabled, the reason shown beside it (#701, D4). */
+export function bulkHonorButtonState(selectedCount: number, honorChosen: boolean) {
+  return {
+    label: `Record honor for ${selectedCount} selected`,
+    disabledReason: selectedCount === 0 ? "Tick at least one name above." : !honorChosen ? "Choose an honor." : "",
+  };
+}
+
+/**
+ * The roster honors popup's mode (#701): it records only when the page said the
+ * role may and the Honors list answered and did not report the caller
+ * read-only. A failed Honors list is a load error, never a silent view-only.
+ * The record endpoint checks access again either way.
+ */
+export function memberHonorsDialogMode(
+  pageAllowsRecording: boolean,
+  honorsList: { ok: boolean; readOnly: boolean } | null,
+): "RECORD" | "VIEW_ONLY" | "LOAD_ERROR" {
+  if (!pageAllowsRecording) return "VIEW_ONLY";
+  if (!honorsList || !honorsList.ok) return "LOAD_ERROR";
+  return honorsList.readOnly ? "VIEW_ONLY" : "RECORD";
+}

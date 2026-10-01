@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Download, History, UsersRound } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
@@ -8,6 +9,9 @@ import { clubClassLevelLabels } from "@/modules/club-rosters/domain";
 import {
   type ClubHonorsRow,
   type MemberHonorEntryRecord,
+  bulkHonorButtonState,
+  clubHonorsEmptyCopy,
+  clubHonorsEmptyState,
   filterClubHonorsRows,
   memberHonorStatusLabels,
 } from "@/modules/honors/member-honor-domain";
@@ -26,9 +30,8 @@ type HistoryResponse = {
 const statusTone = { IN_PROGRESS: "gold", COMPLETED: "green" } as const;
 
 /**
- * A club's Honors page (#486): filter by honor, status, and unit (the
- * roster's own class-level grouping — there's no separate "unit" on the
- * roster today); select several people, or every person a filter shows, and
+ * A club's Honors page (#486): filter by honor, status, and current class
+ * (the roster's own class-level column); select several people, or every person a filter shows, and
  * mark one honor in one action; open one person for their full history and a
  * single-member edit. Area Coordinators get this same view with `readOnly`
  * (their own mechanism, not a club role, so no edit endpoint is ever called).
@@ -86,6 +89,9 @@ export function ClubHonorsWorkspace({
     }),
     [rows, honorFilter, statusFilter, unitFilter],
   );
+
+  const emptyState = clubHonorsEmptyState(rows, visible);
+  const bulkState = bulkHonorButtonState(selected.size, Boolean(bulkHonorId));
 
   function toggle(memberId: string) {
     setSelected((prev) => {
@@ -221,9 +227,16 @@ export function ClubHonorsWorkspace({
             <h2 id="club-honors-heading">Honors</h2>
           </div>
           {!staff && (
-            <a className="secondary-button" href={`${base}/honors/csv`}>
-              <Download aria-hidden="true" size={14} /> Export CSV
-            </a>
+            <div className="report-actions" role="group" aria-label="Export honors">
+              <a className="secondary-button" href={`${base}/exports/honors`}>
+                <Download aria-hidden="true" size={14} /> Export CSV
+              </a>
+              {!readOnly && (
+                <Link className="secondary-button" href={`/account/clubs/${encodeURIComponent(organizationId)}/exports/honors`}>
+                  Print report
+                </Link>
+              )}
+            </div>
           )}
         </div>
 
@@ -247,9 +260,9 @@ export function ClubHonorsWorkspace({
             </select>
           </label>
           <label>
-            Unit
+            Current class
             <select onChange={(event) => setUnitFilter(event.target.value)} value={unitFilter}>
-              <option value="">All units</option>
+              <option value="">All classes</option>
               {Object.entries(clubClassLevelLabels).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
@@ -262,8 +275,8 @@ export function ClubHonorsWorkspace({
           )}
         </div>
 
-        {visible.length === 0 ? (
-          <p className="public-manage-empty"><UsersRound size={17} aria-hidden="true" /> No one matches these filters.</p>
+        {emptyState === "NO_MEMBERS" || emptyState === "NO_MATCH" ? (
+          <p className="public-manage-empty" role="status"><UsersRound size={17} aria-hidden="true" /> {clubHonorsEmptyCopy[emptyState]}</p>
         ) : (
           <div className="report-table-wrap">
             <table aria-labelledby="club-honors-heading" className="report-table">
@@ -271,7 +284,7 @@ export function ClubHonorsWorkspace({
                 <tr>
                   {!readOnly && <th><span className="sr-only">Select</span></th>}
                   <th>Name</th>
-                  <th>Unit</th>
+                  <th>Current class</th>
                   <th>Honors</th>
                   <th><span className="sr-only">History</span></th>
                 </tr>
@@ -290,7 +303,7 @@ export function ClubHonorsWorkspace({
                       </td>
                     )}
                     <td data-label="Name"><strong translate="no">{row.lastName}, {row.firstName}</strong></td>
-                    <td data-label="Unit">{row.classLevel ? clubClassLevelLabels[row.classLevel as keyof typeof clubClassLevelLabels] : "—"}</td>
+                    <td data-label="Current class">{row.classLevel ? clubClassLevelLabels[row.classLevel as keyof typeof clubClassLevelLabels] : "—"}</td>
                     <td data-label="Honors">
                       {row.honors.length === 0 ? "—" : (
                         <div className="roster-flag-list">
@@ -318,7 +331,13 @@ export function ClubHonorsWorkspace({
           </div>
         )}
 
-        {!readOnly && (
+        {emptyState === "NO_HONORS" && (
+          <p className="public-manage-empty" role="status">
+            <UsersRound size={17} aria-hidden="true" /> {readOnly ? "No honors recorded yet." : clubHonorsEmptyCopy.NO_HONORS}
+          </p>
+        )}
+
+        {!readOnly && emptyState !== "NO_MEMBERS" && (
           <div className="club-roster-tools honor-bulk-actions">
             <label>
               Honor
@@ -348,14 +367,18 @@ export function ClubHonorsWorkspace({
               <input aria-describedby="honor-note-help" maxLength={500} onChange={(event) => setBulkNote(event.target.value)} value={bulkNote} />
               <small className="field-help" id="honor-note-help">Notes stay with the member&apos;s history, including in future clubs. No health details.</small>
             </label>
-            <button
-              className="primary-button"
-              disabled={saving || selected.size === 0 || !bulkHonorId}
-              onClick={applyBulk}
-              type="button"
-            >
-              Mark for {selected.size} selected
-            </button>
+            <div className="honor-bulk-submit">
+              <button
+                aria-describedby={bulkState.disabledReason ? "honor-bulk-reason" : undefined}
+                className="primary-button"
+                disabled={saving || Boolean(bulkState.disabledReason)}
+                onClick={applyBulk}
+                type="button"
+              >
+                {bulkState.label}
+              </button>
+              {bulkState.disabledReason && <small className="field-help" id="honor-bulk-reason">{bulkState.disabledReason}</small>}
+            </div>
           </div>
         )}
       </section>
@@ -394,7 +417,7 @@ export function ClubHonorsWorkspace({
                     {!entry.voided && (staff || (!readOnly && canVoid && entry.recordedAtOrganizationId === organizationId)) && (
                       <button
                         aria-label={`Void ${entry.honorName} entry`}
-                        className="text-button"
+                        className="honor-void-button"
                         onClick={() => { setVoidError(""); setVoidReason(""); setVoidTarget(entry); }}
                         type="button"
                       >

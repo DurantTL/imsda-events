@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { AlertTriangle, Award, CheckCircle2, Eye, GraduationCap, Plus, Sparkles, Trash2, Trophy, X } from "lucide-react";
+import { AlertTriangle, Award, CheckCircle2, Download, Eye, GraduationCap, Plus, Sparkles, Trash2, Trophy, X } from "lucide-react";
 import styles from "@/components/club-orders.module.css";
 import { clubClassLevelLabels, clubClassLevels, type ClubClassLevel } from "@/modules/club-rosters/domain";
 import { awardEntryTooLarge, awardStatusLabels, MAX_AWARD_NEEDS_PER_ENTRY } from "@/modules/earned-awards/domain";
@@ -54,11 +54,16 @@ export function ClubEarnedAwardsWorkspace({
   organizationId,
   initial,
   ordersHref,
+  exportCsvHref,
+  exportPrintHref,
   readOnly = false,
 }: {
   organizationId: string;
   initial: ClubEarnedAwardsData;
   ordersHref: string;
+  /** The class tracking CSV and printable report (#701); omitted where the export isn't offered. */
+  exportCsvHref?: string;
+  exportPrintHref?: string;
   readOnly?: boolean;
 }) {
   const [data, setData] = useState(initial);
@@ -278,6 +283,12 @@ export function ClubEarnedAwardsWorkspace({
         </div>
         <span className="count-badge">{data.needs.length} open</span>
       </div>
+      {(exportCsvHref || exportPrintHref) && (
+        <div className="report-actions" role="group" aria-label="Export class tracking">
+          {exportCsvHref && <a className="secondary-button" href={exportCsvHref}><Download aria-hidden="true" size={14} /> Export CSV</a>}
+          {exportPrintHref && <Link className="secondary-button" href={exportPrintHref}>Print report</Link>}
+        </div>
+      )}
       {readOnly ? (
         <p className="inline-notice" role="status"><Eye aria-hidden="true" size={14} /> View only. Shows what&apos;s on file. The club director or deputy records and confirms awards.</p>
       ) : (
