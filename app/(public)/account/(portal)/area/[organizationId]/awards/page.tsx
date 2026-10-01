@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { BackLink } from "@/components/back-link";
 import { ClubEarnedAwardsWorkspace } from "@/components/club-earned-awards-workspace";
 import { getPrisma } from "@/lib/prisma";
 import { loadEarnedAwardsWorkspace } from "@/modules/earned-awards/order-source";
@@ -20,21 +19,12 @@ export default async function AreaClubAwardsPage({ params }: { params: Promise<{
   if (!club || club.type !== "CLUB" || !club.isActive) notFound();
   return (
     <>
-      <section className="public-registration-hero public-manage-hero account-page-hero">
-        <div>
-          <p className="public-registration-eyebrow">Area Coordinator · view only</p>
-          <h1 translate="no">{club.name}</h1>
-        </div>
-      </section>
-      <div className="account-page-body club-roster-stack">
-        <BackLink href={`/account/area/${organizationId}`}>Back to {club.name}</BackLink>
-        <ClubEarnedAwardsWorkspace
-          initial={await loadEarnedAwardsWorkspace(organizationId, { forEditing: false })}
-          ordersHref={`/account/area/${organizationId}/orders`}
-          organizationId={organizationId}
-          readOnly
-        />
-      </div>
+      <ClubEarnedAwardsWorkspace
+        initial={await loadEarnedAwardsWorkspace(organizationId, { forEditing: false })}
+        ordersHref={`/account/area/${organizationId}/orders`}
+        organizationId={organizationId}
+        readOnly
+      />
     </>
   );
 }

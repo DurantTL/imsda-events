@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { BackLink } from "@/components/back-link";
 import { ClubReportForm } from "@/components/club-report-form";
 import { getPrisma } from "@/lib/prisma";
 import { formatDueDate, noSubmittedReportMessage, isReportMonth, reportDueDate, reportMonthLabel } from "@/modules/club-reports/domain";
@@ -20,45 +19,21 @@ export default async function AreaClubReportPage({ params }: { params: Promise<{
   const report = await getClubReport(organizationId, month);
   if (!report || report.status !== "SUBMITTED") {
     // A real club and month with nothing filed yet (a draft counts as not filed) is not a missing page (#703).
-    return (
-      <>
-        <section className="public-registration-hero public-manage-hero account-page-hero">
-          <div>
-            <p className="public-registration-eyebrow">Area Coordinator · view only</p>
-            <h1 translate="no">{club.name}</h1>
-          </div>
-        </section>
-        <div className="account-page-body">
-          <BackLink href={`/account/area/${organizationId}`}>Back to {club.name}</BackLink>
-          <p className="public-manage-empty" role="status">{noSubmittedReportMessage(month)}</p>
-        </div>
-      </>
-    );
+    return <p className="public-manage-empty" role="status">{noSubmittedReportMessage(month)}</p>;
   }
   const rosterPrefill = await reportPrefill(organizationId, new Date());
   const prefill = { ...rosterPrefill, averageAttendance: null, honors: [] };
 
   return (
-    <>
-      <section className="public-registration-hero public-manage-hero account-page-hero">
-        <div>
-          <p className="public-registration-eyebrow">Area Coordinator · view only</p>
-          <h1 translate="no">{club.name}</h1>
-        </div>
-      </section>
-      <div className="account-page-body">
-        <BackLink href={`/account/area/${organizationId}`}>Back to {club.name}</BackLink>
-        <ClubReportForm
-          dueLabel={formatDueDate(reportDueDate(month))}
-          endpoint="/api/attendee/area-report-read-only"
-          expectedOnTime={0}
-          initial={report}
-          monthLabel={reportMonthLabel(month)}
-          prefill={prefill}
-          readOnly
-          readOnlyNote="View only. The club files and changes its own reports."
-        />
-      </div>
-    </>
+    <ClubReportForm
+      dueLabel={formatDueDate(reportDueDate(month))}
+      endpoint="/api/attendee/area-report-read-only"
+      expectedOnTime={0}
+      initial={report}
+      monthLabel={reportMonthLabel(month)}
+      prefill={prefill}
+      readOnly
+      readOnlyNote="View only. The club files and changes its own reports."
+    />
   );
 }

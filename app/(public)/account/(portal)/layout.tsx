@@ -91,7 +91,7 @@ export default async function AccountPortalLayout({ children }: { children: Reac
             : <AttendeeSignOutButton />}
         </div>
       </header>
-      <ActAsBanner acting={acting} />
+      <ActAsBanner acting={acting} inAccount />
       <AccountSectionNav items={items} label="Your account" />
       {chromeAccount && <AccountAnnouncementBanner accountId={chromeAccount.id} announcements={bannerAnnouncements} />}
       {children}
