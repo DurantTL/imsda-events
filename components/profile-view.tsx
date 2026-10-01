@@ -126,7 +126,7 @@ export function ProfileView({ data, variant }: { data: ProfileData; variant: "sh
       {attendeeAccount && (
         <section aria-labelledby="profile-registration-heading" className="profile-account-section">
           <div className="account-page-body">
-            <section className="public-manage-card profile-account-card">
+            <div className="public-manage-card profile-account-card">
               <div className="profile-account-heading-row">
                 <h2 className="profile-account-heading" id="profile-registration-heading">Registration account</h2>
                 <div className="profile-account-actions">
@@ -140,7 +140,7 @@ export function ProfileView({ data, variant }: { data: ProfileData; variant: "sh
                   Signed in as <strong>{attendeeAccount.verifiedEmail}</strong>. Saved details fill in new registration forms for you.
                 </p>
               )}
-            </section>
+            </div>
           </div>
           {secondStepPending
             ? (

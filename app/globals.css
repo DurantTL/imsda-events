@@ -7236,7 +7236,7 @@ select:focus-visible {
 .club-team-note { color: var(--muted); font-size: var(--text-helper-min); }
 .club-team-invite-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; flex: 0 0 auto; }
 .club-role-help { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
-.roster-unlock-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+.roster-unlock-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-top: 12px; }
 .roster-unlock-form label { display: grid; gap: 4px; }
 .roster-unlock-label { color: var(--imsda-navy); font-size: 0.82rem; font-weight: 700; }
 .roster-unlock-form input { width: 140px; border: 1px solid #cbdbe2; border-radius: 10px; padding: 10px 11px; font-size: 0.9rem; letter-spacing: 0.12em; }

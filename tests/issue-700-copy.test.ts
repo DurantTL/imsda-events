@@ -24,5 +24,6 @@ describe("authenticator code input (#700)", () => {
     const html = renderToStaticMarkup(createElement(RosterUnlockForm));
     expect(html).toContain("Authenticator code");
     expect(html).not.toContain("sr-only");
+    expect(html).toMatch(/<label[^>]*><span[^>]*>Authenticator code<\/span><input[^>]*autocomplete="one-time-code"/i);
   });
 });
