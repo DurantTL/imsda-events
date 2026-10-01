@@ -217,19 +217,29 @@ export function requiredPermissionFor(href: string): EventPermission | undefined
 }
 
 /**
- * The mobile tab bar keeps its own, unrelated order (#428 review) rather
- * than deriving from the sidebar's grouping: Home, People, Payments,
- * Promos, Check-in, Emails, More.
+ * The phone tab bar (#711): at most five tabs so each gets an equal, readable
+ * share of a 360px screen. Payments and Promo codes moved into the phone More
+ * directory (cards "payments" and "promo-codes"), gated by the same permission.
  */
 export const mobileNavigationOrder = [
   "/overview",
   "/people",
-  "/finance",
-  "/more/promo-codes",
   "/check-in",
   "/communications",
   "/more",
 ] as const;
+
+/**
+ * Short labels for the phone tab bar only (#711). The sidebar keeps the full
+ * `label`; a tab not listed here falls back to its full label.
+ */
+export const mobileNavigationLabels: Readonly<Record<string, string>> = {
+  "/overview": "Home",
+  "/people": "People",
+  "/check-in": "Check-in",
+  "/communications": "Emails",
+  "/more": "More",
+};
 
 /**
  * "Clubs and churches" is a club feature, so it shows only when the selected
@@ -328,6 +338,7 @@ export function buildMoreDirectoryCards({
   const has = (permission: EventPermission) => granted.has(permission);
   const attendeeConfigurationPermission = requiredPermissionFor("/more/attendee-configuration");
   const tagsPermission = requiredPermissionFor("/more/tags");
+  const paymentsPermission = requiredPermissionFor("/finance");
 
   return [
     { key: "event-settings", group: "setup", allowed: has("CONFIGURE_EVENT"), href: `/more/event-settings${eventQuery}`, icon: Settings2, title: "Event settings", description: "Edit dates, location, capacity, registration availability, and publishing.", cta: "Open settings" },
@@ -338,6 +349,7 @@ export function buildMoreDirectoryCards({
     { key: "program-assignments", group: "setup", allowed: canManageProgramAssignments(permissions), href: `/more/program-assignments${eventQuery}`, icon: ListChecks, title: "Seminar assignments", description: "Turn attendee rankings and room limits into reviewed, printable session rosters.", cta: "Preview assignments" },
     { key: "event-content", group: "content-sales", allowed: has("CONFIGURE_EVENT"), href: `/more/event-content${eventQuery}`, icon: FileText, title: "Public content", description: "Speaker bios, seminar descriptions, lodging, schedules, and downloads shown publicly.", cta: "Edit page" },
     { key: "merchandise", group: "content-sales", allowed: has("CONFIGURE_EVENT"), href: `/more/merchandise${eventQuery}`, icon: ShoppingBag, title: "Merchandise", description: "Add products, set artwork and pricing, and control what's available at registration.", cta: "Open merchandise" },
+    { key: "payments", group: "content-sales", allowed: Boolean(paymentsPermission && has(paymentsPermission)), href: `/finance${eventQuery}`, icon: WalletCards, title: "Payments", description: "Review balances, record payments, and follow up on what is owed.", cta: "Open payments" },
     { key: "promo-codes", group: "content-sales", allowed: has("MANAGE_FINANCE"), href: `/more/promo-codes${eventQuery}`, icon: TicketPercent, title: "Promo codes", description: "Create bounded registration discounts, schedule dates, and review use limits.", cta: "Manage discounts" },
     { key: "community", group: "content-sales", allowed: has("MANAGE_COMMUNICATIONS"), href: `/community${eventQuery}`, icon: MessagesSquare, title: "Attendee community", description: "Open or pause discussion, review attendee reports, and moderate posts and replies.", cta: "Moderate community" },
     { key: "staff", group: "people-access", allowed: has("MANAGE_STAFF"), href: `/staff${eventQuery}`, icon: UserCog, title: "Staff", description: "Add staff and choose what each person can do for this event.", cta: "Manage team" },

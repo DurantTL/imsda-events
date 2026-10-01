@@ -20,6 +20,7 @@ import type { EventPermission } from "@/modules/access/permissions";
 import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-contexts";
 import {
   matchesVisibility,
+  mobileNavigationLabels,
   mobileNavigationOrder,
   navigation,
   navigationGroupLabels,
@@ -321,7 +322,7 @@ export function AppShell({
           const isActive = !isProfileRoute && current.href === href;
           return (
             <Link className={isActive ? "active" : undefined} href={`${href}${eventQuery}`} key={href} aria-current={isActive ? "page" : undefined}>
-              <Icon aria-hidden="true" size={20} /><span>{label}</span>
+              <Icon aria-hidden="true" size={22} /><span>{mobileNavigationLabels[href] ?? label}</span>
             </Link>
           );
         })}
