@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
-import { LOCAL_DEMO_EMAIL, LOCAL_DEMO_PASSWORD, LoginForm } from "@/components/login-form";
+import { LoginForm } from "@/components/login-form";
 import { StaffPasskeySignInButton } from "@/components/staff-passkey-sign-in-button";
 import { getCurrentSession } from "@/modules/access/current-session";
+import { LOCAL_DEMO_EMAIL, LOCAL_DEMO_PASSWORD } from "@/modules/access/local-demo-credentials";
 import { passkeysConfigured } from "@/modules/access/passkeys";
 import { resolvePostLoginDestination } from "@/modules/access/post-login-destination";
 
@@ -47,7 +48,7 @@ export default async function LoginPage({
             <p className="auth-divider"><span>or</span></p>
           </>
         )}
-        <LoginForm demoCredentials={showLocalCredentials} next={next} />
+        <LoginForm demoCredentials={showLocalCredentials ? { email: LOCAL_DEMO_EMAIL, password: LOCAL_DEMO_PASSWORD } : undefined} next={next} />
         {showLocalCredentials && (
           <div className="local-credentials">
             <strong>Local test account</strong>

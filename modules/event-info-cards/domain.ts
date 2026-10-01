@@ -11,8 +11,9 @@ import { getPublicRegistrationStepPlan } from "@/modules/forms/public-registrati
  */
 
 export const CONFERENCE_EYEBROW = "Iowa-Missouri Conference of Seventh-day Adventists";
-/** The help address of a club event that set none. */
-export const DEFAULT_CLUB_HELP_EMAIL = "youth@imsda.org";
+import { DEFAULT_CLUB_HELP_EMAIL } from "./help-email";
+
+export { DEFAULT_CLUB_HELP_EMAIL };
 
 export type InfoCardLocation = {
   id: string;

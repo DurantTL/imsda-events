@@ -46,9 +46,6 @@ function CopyField({ label, value }: { label: string; value: string }) {
   );
 }
 
-export const LOCAL_DEMO_EMAIL = "admin@imsda-events.test";
-export const LOCAL_DEMO_PASSWORD = "IMSDA-Local-2026!";
-
 type MfaStep = {
   gate: "challenge" | "enrol";
   challengeToken: string;
@@ -59,7 +56,7 @@ type MfaStep = {
 const DEFAULT_DESTINATION = "/overview";
 
 /**
- * `demoCredentials` is passed only by a non-production render. A production
+ * `demoCredentials` is passed only by a non-production render, from a server-only module. A production
  * sign-in page must never prefill or display a shared credential.
  *
  * `next` is an unvalidated deep-link target carried in from `/login`'s own
@@ -67,7 +64,7 @@ const DEFAULT_DESTINATION = "/overview";
  * the server decides — via `resolvePostLoginDestination` — whether it, or
  * role-based routing, decides where sign-in lands.
  */
-export function LoginForm({ demoCredentials = false, next }: { demoCredentials?: boolean; next?: string }) {
+export function LoginForm({ demoCredentials, next }: { demoCredentials?: { email: string; password: string }; next?: string }) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -242,8 +239,8 @@ export function LoginForm({ demoCredentials = false, next }: { demoCredentials?:
 
   return (
     <form className="auth-form" onSubmit={submit}>
-      <label>Email address<input name="email" type="email" autoComplete="username" required defaultValue={demoCredentials ? LOCAL_DEMO_EMAIL : undefined} /></label>
-      <label>Password<span className="password-field"><input name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" required defaultValue={demoCredentials ? LOCAL_DEMO_PASSWORD : undefined} /><button type="button" aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></span></label>
+      <label>Email address<input name="email" type="email" autoComplete="username" required defaultValue={demoCredentials?.email} /></label>
+      <label>Password<span className="password-field"><input name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" required defaultValue={demoCredentials?.password} /><button type="button" aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></span></label>
       <div className="auth-form-row"><label className="checkbox-label"><input type="checkbox" name="remember" /> Keep email on this device</label><Link href="/forgot-password">Forgot password?</Link></div>
       {error && <p className="form-error" role="alert">{error}</p>}
       <button className="primary-button full-button" type="submit" disabled={busy}><LogIn aria-hidden="true" size={17} /> {busy ? "Signing in…" : "Sign in"}</button>

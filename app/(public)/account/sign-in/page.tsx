@@ -15,7 +15,7 @@ import { attendeeReturnDestination } from "@/modules/attendee-accounts/return-de
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Registrant sign in",
+  title: "Account sign in",
   description: "Sign in to see every IMSDA event registration made with your email address.",
   robots: { index: false, follow: false },
 };
@@ -46,7 +46,7 @@ export default async function AttendeeSignInPage({
         </div>
         <div className="auth-heading">
           <p className="eyebrow">Your registrations</p>
-          <h1>Registrant sign in</h1>
+          <h1>Account sign in</h1>
           <p>Sign in to see every registration made with your email address.</p>
         </div>
         {errorMessage && <p className="form-error" role="alert">{errorMessage}</p>}

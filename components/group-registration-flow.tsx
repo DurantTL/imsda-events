@@ -147,7 +147,7 @@ export function GroupRegistrationFlow({ eventSlug, ready, topContent }: { eventS
             </Link>
           </div>
         </header>
-        <section className="public-manage-card public-group-state">
+        <section className="public-manage-card public-group-flow-card">
           <p className="public-registration-eyebrow">{GROUP_LABEL} registration · {ready.event.name}</p>
           <h1><UsersRound aria-hidden="true" size={22} /> Register as a group or individual</h1>
           <p>

@@ -1,10 +1,11 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The seeded local sign-in (#688, audit F19): the "Local test account" box and
- * the prefilled credentials must never render in production. Everything is
- * synthetic.
+ * the prefilled credentials must never render in production, and the strings
+ * must not live in the client module. Everything is synthetic.
  */
 
 vi.mock("server-only", () => ({}));
@@ -18,7 +19,8 @@ vi.mock("@/modules/access/passkeys", () => ({ passkeysConfigured: async () => fa
 vi.mock("@/modules/access/post-login-destination", () => ({ resolvePostLoginDestination: vi.fn() }));
 
 import LoginPage from "@/app/login/page";
-import { LOCAL_DEMO_EMAIL, LOCAL_DEMO_PASSWORD } from "@/components/login-form";
+import * as loginFormModule from "@/components/login-form";
+import { LOCAL_DEMO_EMAIL, LOCAL_DEMO_PASSWORD } from "@/modules/access/local-demo-credentials";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -44,5 +46,13 @@ describe("staff sign-in page", () => {
     const markup = await renderLogin();
     expect(markup).toContain("Local test account");
     expect(markup).toContain(LOCAL_DEMO_EMAIL);
+  });
+
+  it("keeps the credentials out of the client module", () => {
+    expect(loginFormModule).not.toHaveProperty("LOCAL_DEMO_EMAIL");
+    expect(loginFormModule).not.toHaveProperty("LOCAL_DEMO_PASSWORD");
+    const source = readFileSync("components/login-form.tsx", "utf8");
+    expect(source).not.toContain(LOCAL_DEMO_EMAIL);
+    expect(source).not.toContain(LOCAL_DEMO_PASSWORD);
   });
 });

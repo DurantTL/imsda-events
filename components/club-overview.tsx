@@ -29,6 +29,7 @@ export async function ClubOverview({
   complianceCounts,
   honorsHref,
   rosterYear,
+  portalView = false,
 }: {
   organizationId: string;
   /**
@@ -37,6 +38,8 @@ export async function ClubOverview({
    * never offers birth dates, since the reveal route covers the current year.
    */
   rosterYear?: string;
+  /** Rendered in the account portal (not the staff admin pages), so empty states can point to the conference office. */
+  portalView?: boolean;
   birthDatesEndpoint?: string;
   reportHref: (month: string) => string;
   /** Staff can open and file a month with no report yet; others only view. */
@@ -114,7 +117,7 @@ export async function ClubOverview({
           <h2 id="open-club-team">Who runs this club</h2>
         </div>
         {team.length === 0 ? (
-          <p className="public-manage-empty"><UserCog size={17} aria-hidden="true" /> No one has a club role yet. The conference office adds club directors, so contact them to add one.</p>
+          <p className="public-manage-empty"><UserCog size={17} aria-hidden="true" /> No club director is assigned yet.{portalView ? " Contact the conference office to have one added." : ""}</p>
         ) : (
           <ul className="public-manage-club-list">
             {team.map((member) => (

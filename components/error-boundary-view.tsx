@@ -4,15 +4,19 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { CircleAlert, RotateCw } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { DEFAULT_CLUB_HELP_EMAIL } from "@/modules/event-info-cards/help-email";
 
-/** The existing support contact (same address as the club help card and report-change requests). */
-const SUPPORT_EMAIL = "youth@imsda.org";
+const SUPPORT_EMAIL = DEFAULT_CLUB_HELP_EMAIL;
 
 type ErrorBoundaryViewProps = {
   error: Error & { digest?: string };
   retry: () => void;
-  /** "public" adds the site header, because the boundary replaces the page that would have shown it. */
-  variant: "public" | "embedded";
+  /**
+   * "public" adds the site header, because the boundary replaces the page that would have shown it.
+   * "portal" sits inside the account portal's header and is the page's only h1.
+   * "workspace" sits inside the staff shell, which already has an h1, so it uses an h2.
+   */
+  variant: "public" | "portal" | "workspace";
 };
 
 /**
@@ -24,22 +28,23 @@ export function ErrorBoundaryView({ error, retry, variant }: ErrorBoundaryViewPr
     console.error(error);
   }, [error]);
 
+  const Heading = variant === "workspace" ? "h2" : "h1";
   const card = (
     <section className="app-error-card" role="alert">
       <span className="app-error-icon"><CircleAlert size={30} aria-hidden="true" /></span>
       <p className="eyebrow">Something went wrong</p>
-      <h1>This page couldn&apos;t load</h1>
-      <p>It&apos;s not your fault. Try again, and if it keeps happening, email the event team.</p>
+      <Heading>This page couldn&apos;t load</Heading>
+      <p>It&apos;s not your fault. Try again, and if it keeps happening, email the IMSDA youth office.</p>
       <div className="app-error-actions">
         <button className="primary-button app-error-action" onClick={() => retry()} type="button">
           <RotateCw size={16} aria-hidden="true" /> Try again
         </button>
-        <a className="app-error-support" href={`mailto:${SUPPORT_EMAIL}`}>Email {SUPPORT_EMAIL}</a>
+        <a className="app-error-support" href={`mailto:${SUPPORT_EMAIL}`}>Email the IMSDA youth office at {SUPPORT_EMAIL}</a>
       </div>
     </section>
   );
 
-  if (variant === "embedded") return card;
+  if (variant !== "public") return card;
 
   return (
     <main className="public-registration-page public-event-page">
