@@ -10,11 +10,21 @@ export function actAsEndTime(expiresAt: Date) {
 }
 
 /**
+ * The banner's classes: beside the staff workspace's sidebar (#700), in the
+ * account portal's 1180px content column (#722), or the plain default.
+ */
+export function actAsBannerClassName({ inShell = false, inAccount = false }: { inShell?: boolean; inAccount?: boolean }) {
+  if (inShell) return "inline-notice act-as-banner act-as-banner-shell";
+  if (inAccount) return "inline-notice act-as-banner act-as-banner-account";
+  return "inline-notice act-as-banner";
+}
+
+/**
  * Shown on every page while a system administrator is "acting as" a club
  * role (#442), in the staff workspace and the /account portal alike, naming
  * the role and offering "Stop acting" for both roles.
  */
-export async function ActAsBanner({ acting, inShell = false }: { acting: StaffActingContext | null; inShell?: boolean }) {
+export async function ActAsBanner({ acting, inShell = false, inAccount = false }: { acting: StaffActingContext | null; inShell?: boolean; inAccount?: boolean }) {
   if (!acting) return null;
   const until = actAsEndTime(acting.expiresAt);
 
@@ -30,7 +40,7 @@ export async function ActAsBanner({ acting, inShell = false }: { acting: StaffAc
   }
 
   return (
-    <div className={inShell ? "inline-notice act-as-banner act-as-banner-shell" : "inline-notice act-as-banner"} role="status">
+    <div className={actAsBannerClassName({ inShell, inAccount })} role="status">
       <UserRoundCog aria-hidden="true" size={14} />
       <span>{label}</span>
       <StopActingButton />
