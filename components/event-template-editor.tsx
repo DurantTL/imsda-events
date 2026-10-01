@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { hasUnsavedTemplateEdits, publishDisabledReason, saveDisabledReason, UNSAVED_PUBLISH_MESSAGE } from "@/modules/event-templates/editor-guards";
+import { useMemo, useRef, useState } from "react";
+import { ArchiveTemplateDialog } from "@/components/archive-template-dialog";
+import { hasUnsavedTemplateEdits, publishDisabledReason, saveDisabledReason, UNSAVED_PUBLISH_MESSAGE, validateTemplateEdits, type TemplateFieldError } from "@/modules/event-templates/editor-guards";
 import type { EventTemplateRecord } from "@/modules/event-templates/repository";
 
 type EventTemplateEditorProps = {
@@ -36,6 +37,16 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<TemplateFieldError[]>([]);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
+  const payloadRef = useRef<HTMLTextAreaElement>(null);
+  const nameErrors = fieldErrors.filter((entry) => entry.field === "name");
+  const descriptionErrors = fieldErrors.filter((entry) => entry.field === "description");
+  const payloadErrors = fieldErrors.filter((entry) => entry.field === "payload");
 
   const hasUnsavedEdits = hasUnsavedTemplateEdits(
     { name, description, payloadText },
@@ -48,14 +59,17 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
     setSaving(true);
     setError("");
     setNotice("");
-    let parsedPayload: unknown;
-    try {
-      parsedPayload = JSON.parse(payloadText);
-    } catch {
-      setError("The payload is not valid JSON.");
+    // Validate the same schema the server uses, so a malformed or invalid payload never leaves the page.
+    const checked = validateTemplateEdits({ name, description, payloadText });
+    if (!checked.ok) {
+      setFieldErrors(checked.errors);
       setSaving(false);
+      const first = checked.errors[0]?.field;
+      (first === "name" ? nameRef : first === "description" ? descriptionRef : payloadRef).current?.focus();
       return;
     }
+    setFieldErrors([]);
+    const parsedPayload = checked.payload;
     try {
       const response = await fetch(`/api/event-templates/${template.id}`, {
         method: "PATCH",
@@ -105,16 +119,33 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
   }
 
   async function archive() {
-    setError("");
-    setNotice("");
+    setArchiveBusy(true);
+    setArchiveError("");
     try {
       const response = await fetch(`/api/event-templates/${template.id}/archive`, { method: "POST" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.message ?? "The template could not be archived.");
       setTemplate(body.template);
+      setArchiveOpen(false);
       setNotice("Archived. It no longer appears in “Start from template.”");
-    } catch (archiveError) {
-      setError(archiveError instanceof Error ? archiveError.message : "The template could not be archived.");
+    } catch (archiveFailure) {
+      setArchiveError(archiveFailure instanceof Error ? archiveFailure.message : "The template could not be archived.");
+    } finally {
+      setArchiveBusy(false);
+    }
+  }
+
+  async function unarchive() {
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/event-templates/${template.id}/unarchive`, { method: "POST" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.message ?? "The template could not be unarchived.");
+      setTemplate(body.template);
+      setNotice("Unarchived. It can be edited again.");
+    } catch (unarchiveError) {
+      setError(unarchiveError instanceof Error ? unarchiveError.message : "The template could not be unarchived.");
     }
   }
 
@@ -123,19 +154,43 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
       <p className="muted">For administrators comfortable editing JSON.</p>
       {error ? <div className="inline-notice error" role="alert">{error}</div> : null}
       {notice ? <div className="inline-notice success" role="status">{notice}</div> : null}
+      {fieldErrors.length > 0 ? (
+        <div className="inline-notice error" role="alert" id="template-error-summary">
+          Fix {fieldErrors.length === 1 ? "this problem" : `these ${fieldErrors.length} problems`} before saving:
+          <ul>{fieldErrors.map((entry, index) => <li key={`${entry.path}-${index}`}>{entry.path}: {entry.message}</li>)}</ul>
+        </div>
+      ) : null}
 
       <section className="panel form-stack event-settings-panel">
         <div className="form-grid two-column">
           <label>Name
-            <input value={name} onChange={(event) => setName(event.target.value)} />
+            <input
+              ref={nameRef}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              aria-invalid={nameErrors.length > 0 || undefined}
+              aria-describedby={nameErrors.length > 0 ? "template-name-error" : undefined}
+            />
+            {nameErrors.length > 0 ? <span id="template-name-error" className="form-error">{nameErrors.map((entry) => entry.message).join(" ")}</span> : null}
           </label>
           <p>Status: {template.status} — version {version?.versionNumber ?? "—"} ({version?.status ?? "none"})</p>
         </div>
         <label>Description
-          <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={2} />
+          <textarea
+            ref={descriptionRef}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={2}
+            aria-invalid={descriptionErrors.length > 0 || undefined}
+            aria-describedby={descriptionErrors.length > 0 ? "template-description-error" : undefined}
+          />
+          {descriptionErrors.length > 0 ? <span id="template-description-error" className="form-error">{descriptionErrors.map((entry) => entry.message).join(" ")}</span> : null}
         </label>
         <label>Payload (JSON)
           <textarea
+            ref={payloadRef}
+            aria-invalid={payloadErrors.length > 0 || undefined}
+            aria-describedby={payloadErrors.length > 0 ? "template-payload-error" : undefined}
             value={payloadText}
             onChange={(event) => setPayloadText(event.target.value)}
             rows={20}
@@ -143,6 +198,11 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
             disabled={isArchived}
           />
         </label>
+        {payloadErrors.length > 0 ? (
+          <ul id="template-payload-error" className="form-error">
+            {payloadErrors.map((entry, index) => <li key={`${entry.path}-${index}`}><code>{entry.path}</code>: {entry.message}</li>)}
+          </ul>
+        ) : null}
         {version && version.payloadIssues.length > 0 ? (
           <div className="inline-notice error" role="alert">
             This version no longer passes validation and cannot be published or applied until it is fixed:
@@ -171,8 +231,10 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
             {publishing ? "Publishing…" : "Publish"}
           </button>{" "}
           {template.status !== "ARCHIVED" ? (
-            <button type="button" className="secondary-button" onClick={archive}>Archive template</button>
-          ) : null}
+            <button type="button" className="secondary-button" onClick={() => { setArchiveError(""); setArchiveOpen(true); }}>Archive template</button>
+          ) : (
+            <button type="button" className="secondary-button" onClick={unarchive}>Unarchive template</button>
+          )}
         </p>
       </section>
 
@@ -187,6 +249,15 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
           ))}
         </ul>
       </section>
+
+      <ArchiveTemplateDialog
+        busy={archiveBusy}
+        error={archiveError}
+        name={template.name}
+        onCancel={() => setArchiveOpen(false)}
+        onConfirm={() => void archive()}
+        open={archiveOpen}
+      />
     </div>
   );
 }

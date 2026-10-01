@@ -817,7 +817,7 @@ export function EventSettingsWorkspace({
             <section className="panel event-delete-panel">
               <p className="eyebrow">Danger zone</p>
               <h2>Delete this event</h2>
-              <p>Permanently removes the event and everything it owns, whatever its state. You will see exactly what is removed before you confirm.</p>
+              <p>Only a system administrator can delete an event, and only one with no registrations, payments, imports, form submissions or other records attached. Otherwise the dialog explains why, and unpublishing is the way to retire it.</p>
               <button className="secondary-button full-button lifecycle-danger-button" onClick={() => setDeleteDialogOpen(true)} type="button">
                 Delete event…
               </button>

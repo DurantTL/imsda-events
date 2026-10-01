@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { ArchiveTemplateDialog } from "@/components/archive-template-dialog";
 import type { EventTemplateRecord } from "@/modules/event-templates/repository";
 import type { StarterTemplatesResult } from "@/modules/event-templates/starter-repository";
 import { pendingStarterEvents, starterEventTemplates } from "@/modules/event-templates/starters";
@@ -24,6 +25,9 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [addingStarters, setAddingStarters] = useState(false);
+  const [archiving, setArchiving] = useState<EventTemplateRecord | null>(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState("");
   const [starterResult, setStarterResult] = useState<StarterTemplatesResult | null>(null);
 
   async function addStarterTemplates() {
@@ -66,14 +70,30 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
   }
 
   async function archiveTemplate(templateId: string) {
-    setError("");
+    setArchiveBusy(true);
+    setArchiveError("");
     try {
       const response = await fetch(`/api/event-templates/${templateId}/archive`, { method: "POST" });
       const body = await response.json();
       if (!response.ok) throw new Error(body.message ?? "The template could not be archived.");
       setTemplates((current) => current.map((template) => (template.id === templateId ? body.template : template)));
-    } catch (archiveError) {
-      setError(archiveError instanceof Error ? archiveError.message : "The template could not be archived.");
+      setArchiving(null);
+    } catch (archiveFailure) {
+      setArchiveError(archiveFailure instanceof Error ? archiveFailure.message : "The template could not be archived.");
+    } finally {
+      setArchiveBusy(false);
+    }
+  }
+
+  async function unarchiveTemplate(templateId: string) {
+    setError("");
+    try {
+      const response = await fetch(`/api/event-templates/${templateId}/unarchive`, { method: "POST" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.message ?? "The template could not be unarchived.");
+      setTemplates((current) => current.map((template) => (template.id === templateId ? body.template : template)));
+    } catch (unarchiveError) {
+      setError(unarchiveError instanceof Error ? unarchiveError.message : "The template could not be unarchived.");
     }
   }
 
@@ -148,13 +168,24 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
                 <p>{template.description || "No description."}</p>
                 <Link className="secondary-button" href={`/admin/event-templates/${template.id}`}>Edit</Link>{" "}
                 {template.status !== "ARCHIVED" ? (
-                  <button type="button" className="secondary-button" onClick={() => archiveTemplate(template.id)}>Archive</button>
-                ) : null}
+                  <button type="button" className="secondary-button" onClick={() => { setArchiveError(""); setArchiving(template); }}>Archive</button>
+                ) : (
+                  <button type="button" className="secondary-button" onClick={() => unarchiveTemplate(template.id)}>Unarchive</button>
+                )}
               </li>
             ))}
           </ul>
         )}
       </section>
+
+      <ArchiveTemplateDialog
+        busy={archiveBusy}
+        error={archiveError}
+        name={archiving?.name ?? ""}
+        onCancel={() => setArchiving(null)}
+        onConfirm={() => { if (archiving) void archiveTemplate(archiving.id); }}
+        open={archiving !== null}
+      />
     </div>
   );
 }

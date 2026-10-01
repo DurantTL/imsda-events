@@ -9,6 +9,7 @@ vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 import {
   applyEventTemplate,
   archiveEventTemplate,
+  unarchiveEventTemplate,
   EventTemplateOperationError,
   getEventTemplate,
   publishEventTemplateVersion,
@@ -475,6 +476,38 @@ describe("archiveEventTemplate (#152)", () => {
 
     await expect(archiveEventTemplate("missing", "usr_actor"))
       .rejects.toThrowError(expect.objectContaining({ code: "TEMPLATE_NOT_FOUND" }));
+  });
+});
+
+describe("unarchiveEventTemplate (#704)", () => {
+  it("restores a template with a published version to PUBLISHED and audits it", async () => {
+    const { tx } = mockMutation({ status: "ARCHIVED", versions: [versionRow()] });
+    tx.eventTemplateVersion.findFirst.mockResolvedValue({ id: "version-1" });
+
+    await unarchiveEventTemplate("template-1", "usr_actor");
+
+    expect(tx.eventTemplate.update).toHaveBeenCalledWith({ where: { id: "template-1" }, data: { status: "PUBLISHED" } });
+    expect(tx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action: "EVENT_TEMPLATE_UNARCHIVED", actorUserId: "usr_actor", metadata: { restoredStatus: "PUBLISHED" } }),
+    }));
+  });
+
+  it("restores a never-published template to DRAFT", async () => {
+    const { tx } = mockMutation({ status: "ARCHIVED", versions: [versionRow({ status: "DRAFT" })] });
+    tx.eventTemplateVersion.findFirst.mockResolvedValue(null);
+
+    await unarchiveEventTemplate("template-1", "usr_actor");
+
+    expect(tx.eventTemplate.update).toHaveBeenCalledWith({ where: { id: "template-1" }, data: { status: "DRAFT" } });
+  });
+
+  it("refuses a template that is not archived and writes nothing", async () => {
+    const { tx } = mockMutation({ status: "PUBLISHED", versions: [versionRow()] });
+
+    await expect(unarchiveEventTemplate("template-1", "usr_actor"))
+      .rejects.toThrowError(expect.objectContaining({ code: "TEMPLATE_NOT_ARCHIVED" }));
+    expect(tx.eventTemplate.update).not.toHaveBeenCalled();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 });
 
