@@ -78,7 +78,7 @@ export default async function PublicCalendarPage({ searchParams }: { searchParam
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
           </Link>
-          <a className="text-button calendar-subscribe" href="/calendar/feed.ics">
+          <a className="text-button calendar-subscribe" href="/calendar/feed.ics" aria-label="Subscribe to the calendar">
             <CalendarPlus size={16} aria-hidden="true" /> <span>Subscribe</span>
           </a>
         </div>

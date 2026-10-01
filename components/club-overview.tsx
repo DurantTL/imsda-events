@@ -29,6 +29,7 @@ export async function ClubOverview({
   complianceCounts,
   honorsHref,
   rosterYear,
+  portalView = false,
   headingLevel = 2,
 }: {
   organizationId: string;
@@ -38,6 +39,8 @@ export async function ClubOverview({
    * never offers birth dates, since the reveal route covers the current year.
    */
   rosterYear?: string;
+  /** Rendered in the account portal (not the staff admin pages), so empty states can point to the conference office. */
+  portalView?: boolean;
   /** Heading level of the summary tiles (see ClubYearTiles): 3 when the page has its own h2 above. */
   headingLevel?: 2 | 3;
   birthDatesEndpoint?: string;
@@ -118,7 +121,7 @@ export async function ClubOverview({
           <h2 id="open-club-team">Who runs this club</h2>
         </div>
         {team.length === 0 ? (
-          <p className="public-manage-empty"><UserCog size={17} aria-hidden="true" /> No one has a club role yet.</p>
+          <p className="public-manage-empty"><UserCog size={17} aria-hidden="true" /> No club director is assigned yet.{portalView ? " Contact the conference office to have one added." : ""}</p>
         ) : (
           <ul className="public-manage-club-list">
             {team.map((member) => (
@@ -155,7 +158,7 @@ export async function ClubOverview({
           <h2 id="open-club-events">Upcoming club events</h2>
         </div>
         {events.length === 0 ? (
-          <p className="public-manage-empty"><CalendarDays size={17} aria-hidden="true" /> No upcoming club events are published.</p>
+          <p className="public-manage-empty"><CalendarDays size={17} aria-hidden="true" /> No upcoming club events are published. Check back when the conference opens registration.</p>
         ) : (
           <ul className="public-manage-club-list">
             {events.map((event) => (
@@ -185,7 +188,7 @@ export async function ClubOverview({
           <h2 id="open-club-reports">Monthly reports</h2>
         </div>
         {months.length === 0 ? (
-          <p className="public-manage-empty"><FileText size={17} aria-hidden="true" /> No reports are due yet this club year.</p>
+          <p className="public-manage-empty"><FileText size={17} aria-hidden="true" /> No reports are due yet this club year. Check back when the first month opens.</p>
         ) : (
           <ul className="public-manage-club-list">
             {months.map((month) => {

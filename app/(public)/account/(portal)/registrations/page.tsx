@@ -185,7 +185,8 @@ export default async function AttendeeRegistrationsPage() {
                   <Inbox size={17} aria-hidden="true" /> A registration appears here when its
                   contact email is {account.verifiedEmail}. If you registered under a different
                   address, the event team can correct the one on file — and doing that is what
-                  attaches it to this account.
+                  attaches it to this account. <Link className="empty-state-link" href="/recover-registration">Find a registration made with another email</Link>,
+                  or ask the event team.
                 </p>
               </section>
             )}

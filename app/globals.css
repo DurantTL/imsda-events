@@ -8377,6 +8377,25 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   .workspace-header h1 { font-size: 1rem; }
 }
 
+/* Branded error boundary (#688): public, account and workspace segments. */
+.app-error-card { display: grid; justify-items: center; gap: 10px; box-sizing: border-box; width: min(580px, calc(100% - 32px)); margin: 48px auto; border: 1px solid var(--line); border-radius: 24px; background: #fff; box-shadow: 0 12px 36px rgba(0, 59, 92, 0.06); padding: 32px 20px; text-align: center; }
+.app-error-card :is(h1, h2), .app-error-card p { margin: 0; }
+.app-error-card :is(h1, h2) { color: var(--ink); font-size: 1.65rem; line-height: 1.2; }
+.app-error-card p:not(.eyebrow) { max-width: 420px; color: var(--muted); line-height: 1.6; }
+.app-error-icon { display: grid; width: 58px; height: 58px; place-items: center; border-radius: 17px; background: var(--imsda-gold-soft); color: #8a5f08; }
+.app-error-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 20px; margin-top: 8px; }
+.app-error-action { min-height: 44px; min-width: 44px; padding-inline: 18px; }
+.app-error-support { display: inline-flex; min-height: 44px; align-items: center; color: var(--imsda-purple); font-weight: 700; }
+
+/* Group registration "not available yet" state (#688): keeps the page gutter. */
+.public-group-state { box-sizing: border-box; width: min(640px, calc(100% - 32px)); margin: 32px auto 48px; }
+.public-group-flow-card { box-sizing: border-box; width: min(720px, calc(100% - 32px)); margin: 24px auto; }
+.public-group-state h1 { margin: 4px 0 10px; color: var(--ink); font-size: 1.65rem; line-height: 1.2; }
+.public-group-state .public-event-not-found-link { min-height: 44px; margin-top: 0; }
+
+/* Next-step link inside an empty state (#688): a 44px tap target. */
+.empty-state-link { display: inline-flex; min-height: 44px; align-items: center; color: var(--imsda-purple); font-weight: 700; text-decoration: underline; }
+
 /* Issue #686 - mobile pass 3: report and overview tables as stacked cards on
    phones. `table.table-cards` is the opt-in. Everything is CSS plus markup the
    server already renders (data-label on each cell via cardCell(), static ARIA

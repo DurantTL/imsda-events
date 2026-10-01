@@ -45,6 +45,7 @@ export default async function AreaClubPage({ params }: { params: Promise<{ organ
           birth dates. The club makes changes.
         </p>
         <ClubOverview
+          portalView
           complianceCounts
           honorsHref={`/account/area/${organizationId}/honors`}
           organizationId={organizationId}

@@ -82,7 +82,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
         <summary><h2>Sign-in settings</h2><small>Two-step verification and passkeys</small></summary>
         <span id="passkeys" />
         <p className="quiet-copy">Set up two-step verification and passkeys on your profile page.</p>
-        <Link className="secondary-button" href="/profile">Edit profile</Link>
+        <Link className="secondary-button" href="/profile" aria-label="Edit profile: two-step verification and passkeys">Edit profile</Link>
       </DetailsOpenOnHash>
       <details className="panel activity-disclosure">
         <summary><h2>Your signed-in devices</h2><small>Review or end other sessions</small></summary>
