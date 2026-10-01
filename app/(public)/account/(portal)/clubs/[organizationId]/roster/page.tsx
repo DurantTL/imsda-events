@@ -64,7 +64,7 @@ export default async function ClubRosterPage({
         complianceStatuses={complianceStatuses}
         headingActions={canTransfer ? <RequestTransferButton clubOptions={clubOptions} organizationId={organizationId} /> : undefined}
         honorSummaries={honorSummaryByMemberId(honorRows)}
-        honorsHref={readOnly ? undefined : `/account/clubs/${organizationId}/honors`}
+        honorsPopup={{ canRecord: !readOnly }}
         initialMembers={members}
         organizationId={organizationId}
         readOnly={readOnly}

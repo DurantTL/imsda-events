@@ -37,7 +37,7 @@ export default async function ClubHonorsReportPage({
   if (category) csvParams.set("category", category);
   return (
     <>
-      <BackLink href={`/account/clubs/${organizationId}/exports`}>Back to reports</BackLink>
+      <BackLink href={`/account/clubs/${organizationId}/honors`}>Back to honors</BackLink>
       <section className="panel" aria-labelledby="honors-report-heading">
         <h2 id="honors-report-heading">Honors report: {access.club.name}, {clubYear}</h2>
         <form className="report-actions" method="get">

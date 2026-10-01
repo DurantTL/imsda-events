@@ -115,7 +115,7 @@ describe("the club roster page's ?year= view (#541)", () => {
   it("an old year offers no edit, import, remove, birth-date, or transfer control", async () => {
     const { html, elements, workspace } = await renderPage("2025-26");
     expect(mocks.listRoster).toHaveBeenCalledWith("club-1", "2025-26");
-    expect(workspace).toMatchObject({ clubYear: "2025-26", readOnly: true, canSeeBirthDates: false, headingActions: undefined, honorsHref: undefined });
+    expect(workspace).toMatchObject({ clubYear: "2025-26", readOnly: true, canSeeBirthDates: false, headingActions: undefined, honorsPopup: { canRecord: false } });
     expect(elements.some((element) => element.type === ClubTransfersPanel)).toBe(false);
 
     expect(html).toContain("Club year 2025-26");
