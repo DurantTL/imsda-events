@@ -19,6 +19,7 @@ import {
   bulkHonorButtonState,
   clubHonorsEmptyCopy,
   clubHonorsEmptyState,
+  currentHonorsFromHistory,
   memberHonorsDialogMode,
   type ClubHonorsRow,
 } from "@/modules/honors/member-honor-domain";
@@ -129,10 +130,26 @@ describe("the roster's per-person honors popup", () => {
     expect(roster({})).not.toContain("Honors for Pat Pathfinder");
   });
 
-  it("records only when the page and the server both allow it; otherwise view-only", () => {
-    expect(memberHonorsDialogMode(true, false)).toBe("RECORD");
-    expect(memberHonorsDialogMode(true, true)).toBe("VIEW_ONLY");
-    expect(memberHonorsDialogMode(false, false)).toBe("VIEW_ONLY");
+  it("decides record, view-only or load error from the page and the Honors list", () => {
+    expect(memberHonorsDialogMode(true, { ok: true, readOnly: false })).toBe("RECORD");
+    expect(memberHonorsDialogMode(true, { ok: true, readOnly: true })).toBe("VIEW_ONLY");
+    expect(memberHonorsDialogMode(false, null)).toBe("VIEW_ONLY");
+    expect(memberHonorsDialogMode(false, { ok: true, readOnly: false })).toBe("VIEW_ONLY");
+    expect(memberHonorsDialogMode(true, { ok: false, readOnly: false })).toBe("LOAD_ERROR");
+    expect(memberHonorsDialogMode(true, null)).toBe("LOAD_ERROR");
+  });
+
+  it("shows an honor once, at its latest non-voided status", () => {
+    const entry = (id: string, status: "IN_PROGRESS" | "COMPLETED", voided = false) => ({
+      id, honorId: "h1", honorCode: "H1", honorName: "Fixture Honor", status, completionDate: status === "COMPLETED" ? "2026-09-01" : "",
+      note: "", recordedByName: "Dana", recordedAtOrganizationId: "org-1", recordedAtOrganizationName: "Fixture", createdAt: "2026-09-01T00:00:00Z",
+      voided: voided ? { voidedByName: "Dana", voidedAt: "2026-09-02T00:00:00Z", reason: "synthetic" } : null,
+    });
+    // Newest first, as the repository returns it.
+    const current = currentHonorsFromHistory([entry("3", "COMPLETED"), entry("2", "IN_PROGRESS"), entry("1", "IN_PROGRESS")] as never);
+    expect(current).toHaveLength(1);
+    expect(current[0]!.status).toBe("COMPLETED");
+    expect(currentHonorsFromHistory([entry("3", "COMPLETED", true), entry("2", "IN_PROGRESS")] as never)[0]!.status).toBe("IN_PROGRESS");
   });
 
   it("offers no record form when the page says the role can't record", () => {

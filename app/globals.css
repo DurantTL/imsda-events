@@ -8476,6 +8476,10 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   font: inherit; font-weight: 700; cursor: pointer;
 }
 .honor-void-button:hover { background: #fdf1ee; }
+.report-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 640px), (pointer: coarse) {
+  .report-actions .secondary-button, .report-actions .primary-button { min-height: 44px; }
+}
 .honor-bulk-submit { display: grid; gap: 4px; align-content: end; }
 @media (max-width: 640px), (pointer: coarse) {
   .member-honors-dialog .form-grid { grid-template-columns: 1fr; }

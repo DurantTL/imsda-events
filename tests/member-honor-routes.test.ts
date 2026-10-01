@@ -136,6 +136,14 @@ describe("single-member honor history and edit", () => {
     expect(mocks.recordMemberHonorEntries).toHaveBeenCalledWith("club-1", ["member-1"], expect.objectContaining({ honorId: "honor-1" }), { accountId: "acct-1" });
   });
 
+  it("an Area Coordinator viewer is rejected on POST and nothing is recorded", async () => {
+    mocks.requireHonorsAccess.mockResolvedValue({ mode: "READ", viewer: { accountId: "acct-ac" } });
+    mocks.requireHonorsEditAccess.mockRejectedValue(new RosterAccessError("NOT_FOUND", 404, "That club could not be found."));
+    const response = await MEMBER_POST(postRequest({ honorId: "honor-1", status: "COMPLETED", completionDate: "2026-09-01" }), memberCtx());
+    expect(response.status).toBe(404);
+    expect(mocks.recordMemberHonorEntries).not.toHaveBeenCalled();
+  });
+
   it("a read-only viewer can't record an entry through this route", async () => {
     mocks.requireHonorsEditAccess.mockRejectedValue(new RosterAccessError("ROLE_NOT_ALLOWED", 403, "Your club role doesn't include this."));
     const response = await MEMBER_POST(postRequest({ honorId: "honor-1", status: "IN_PROGRESS" }), memberCtx());

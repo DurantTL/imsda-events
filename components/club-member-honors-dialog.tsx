@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import {
   type MemberHonorEntryRecord,
+  currentHonorsFromHistory,
   memberHonorsDialogMode,
   memberHonorStatusLabels,
 } from "@/modules/honors/member-honor-domain";
@@ -47,7 +48,6 @@ export function ClubMemberHonorsDialog({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState("IN_PROGRESS");
   const dialogRef = useAccessibleDialog<HTMLElement>(true, onClose);
 
   const load = useCallback(async () => {
@@ -60,12 +60,10 @@ export function ClubMemberHonorsDialog({
       if (!historyResponse.ok) throw new Error(historyBody.message ?? "Honors could not be loaded.");
       if (honorsResponse) {
         const body = await honorsResponse.json().catch(() => ({})) as { honors?: HonorOption[]; readOnly?: boolean };
-        if (honorsResponse.ok) {
-          setHonors(body.honors ?? []);
-          setMayRecord(memberHonorsDialogMode(canRecord, Boolean(body.readOnly)) === "RECORD");
-        } else {
-          setMayRecord(false);
-        }
+        const mode = memberHonorsDialogMode(canRecord, { ok: honorsResponse.ok, readOnly: Boolean(body.readOnly) });
+        if (mode === "LOAD_ERROR") throw new Error("The honor list could not be loaded.");
+        setHonors(body.honors ?? []);
+        setMayRecord(mode === "RECORD");
       }
       setHistory(historyBody.history);
     } catch (caught) {
@@ -102,7 +100,6 @@ export function ClubMemberHonorsDialog({
       if (!response.ok) throw new Error(result.message ?? result.issues?.[0]?.message ?? "That honor could not be recorded.");
       setHistory(result.history);
       setNotice("Honor recorded.");
-      setStatus("IN_PROGRESS");
       formElement.reset();
       onRecorded?.();
     } catch (caught) {
@@ -112,7 +109,7 @@ export function ClubMemberHonorsDialog({
     }
   }
 
-  const current = (history ?? []).filter((entry) => !entry.voided);
+  const current = currentHonorsFromHistory(history ?? []);
   return (
     <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }} role="presentation">
       <section aria-labelledby="roster-honors-title" aria-modal="true" className="modal-card member-honors-dialog" ref={dialogRef} role="dialog" tabIndex={-1}>
@@ -132,12 +129,11 @@ export function ClubMemberHonorsDialog({
         ) : (
           <ul className="public-manage-club-list" aria-label="Recorded honors">
             {current.map((entry) => (
-              <li key={entry.id}>
+              <li key={entry.honorId}>
                 <span>
                   <strong translate="no">{entry.honorName}</strong>
                   <small>
                     {memberHonorStatusLabels[entry.status]}{entry.completionDate ? ` · ${entry.completionDate}` : ""}
-                    {entry.note ? ` · ${entry.note}` : ""}
                   </small>
                 </span>
               </li>
@@ -160,18 +156,16 @@ export function ClubMemberHonorsDialog({
               </label>
               <label>
                 Status
-                <select name="status" onChange={(event) => setStatus(event.target.value)} value={status}>
+                <select defaultValue="IN_PROGRESS" name="status">
                   {Object.entries(memberHonorStatusLabels).map(([value, label]) => (
                     <option key={value} value={value}>{label}</option>
                   ))}
                 </select>
               </label>
-              {status === "COMPLETED" && (
-                <label>
-                  Completion date
-                  <input name="completionDate" required type="date" />
-                </label>
-              )}
+              <label>
+                Completion date (optional)
+                <input name="completionDate" type="date" />
+              </label>
               <label>
                 Note (optional)
                 <input aria-describedby="roster-honor-note-help" maxLength={500} name="note" />

@@ -203,9 +203,15 @@ export function bulkHonorButtonState(selectedCount: number, honorChosen: boolean
 
 /**
  * The roster honors popup's mode (#701): it records only when the page said the
- * role may and the Honors list did not report the caller read-only. The record
- * endpoint checks access again either way.
+ * role may and the Honors list answered and did not report the caller
+ * read-only. A failed Honors list is a load error, never a silent view-only.
+ * The record endpoint checks access again either way.
  */
-export function memberHonorsDialogMode(pageAllowsRecording: boolean, serverReadOnly: boolean): "RECORD" | "VIEW_ONLY" {
-  return pageAllowsRecording && !serverReadOnly ? "RECORD" : "VIEW_ONLY";
+export function memberHonorsDialogMode(
+  pageAllowsRecording: boolean,
+  honorsList: { ok: boolean; readOnly: boolean } | null,
+): "RECORD" | "VIEW_ONLY" | "LOAD_ERROR" {
+  if (!pageAllowsRecording) return "VIEW_ONLY";
+  if (!honorsList || !honorsList.ok) return "LOAD_ERROR";
+  return honorsList.readOnly ? "VIEW_ONLY" : "RECORD";
 }
