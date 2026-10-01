@@ -117,6 +117,7 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
       findFirst: vi.fn(async () => null),
     },
     clubFormLink: { updateMany: vi.fn(async () => ({ count: 1 })) },
+    healthRecordLink: { updateMany: vi.fn(async () => ({ count: 0 })) },
   };
   const prisma = {
     eventMessageSettings: {

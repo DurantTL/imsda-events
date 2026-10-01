@@ -1,0 +1,40 @@
+// Synthetic values only: invented names, numbers and notes that identify nobody.
+export const syntheticRecord = {
+  addressLine1: "1 Example Lane",
+  city: "Exampleton",
+  state: "ZZ",
+  zip: "00000",
+  phone: "555-0100",
+  email: "kid@example.test",
+  lastTetanusBooster: "2024-03-01",
+  hasAllergies: "YES",
+  allergyDetails: "Synthetic allergy: invented reaction, mild, synthetic remedy",
+  medications: "Synthetic medication note",
+  medicalRestrictions: "",
+  hasInsurance: "YES",
+  insuranceCompany: "Synthetic Mutual",
+  insuranceGroupNumber: "G-0001",
+  insurancePolicyNumber: "P-0001",
+  insurancePhone: "555-0101",
+  guardianFirstName: "Pat",
+  guardianLastName: "Sample",
+  guardianPhone: "555-0102",
+  guardianEmail: "guardian@example.test",
+  emergencyContacts: [{ firstName: "Alex", lastName: "Sample", phone: "555-0103", relationship: "Aunt" }],
+  consentEmergencyTreatment: true,
+  consentActivities: true,
+  consentPhotocopy: true,
+  signature: "Pat Sample",
+};
+
+/** Strings that must never appear in an audit row, log line, email body, error message or CSV. */
+export const healthMarkers = [
+  "Synthetic allergy",
+  "Synthetic medication note",
+  "Synthetic Mutual",
+  "G-0001",
+  "P-0001",
+  "1 Example Lane",
+  "555-0100",
+  "kid@example.test",
+];

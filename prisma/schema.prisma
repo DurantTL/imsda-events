@@ -44,6 +44,10 @@ enum EventPermission {
   VIEW_SENSITIVE_DATA
   MANAGE_IMPORTS
   MANAGE_FORMS
+  /// Allergies (as entered), emergency contacts and the medical-need flag for
+  /// club event attendees (#658, ADR 0005 Addendum C). Never part of a role:
+  /// only a system administrator grants it, one membership at a time.
+  VIEW_HEALTH_INFORMATION
 }
 
 enum MembershipStatus {
@@ -442,6 +446,7 @@ enum MessageTemplateKey {
   /// The single-use private link to fill in a club form (#610). The body
   /// carries a sentinel; the link is minted when the email is delivered.
   CLUB_FORM_LINK
+  HEALTH_RECORD_LINK
 }
 
 enum MessageTemplateStatus {
@@ -1784,6 +1789,8 @@ model UserPersonLink {
  */
 model Organization {
   id                   String           @id @default(cuid())
+  healthRecords       HealthRecord[]
+  healthRecordLinks   HealthRecordLink[]
   type                 OrganizationType
   name                 String
   normalizedName       String
@@ -3808,6 +3815,8 @@ model HonorOffering {
 /// stored in plain text (ADR 0005 Addendum A).
 model ClubRosterMember {
   id                   String                 @id @default(cuid())
+  healthRecord        HealthRecord?
+  healthRecordLinks   HealthRecordLink[]
   organizationId       String
   clubYear             String
   personId             String?
@@ -4908,5 +4917,85 @@ model ClubFormLink {
 
   @@index([organizationId, status])
   @@index([templateId, organizationId])
+  @@index([status, expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Pathfinder Health Record (#611). Built switched off behind
+// HEALTH_RECORDS_ENABLED; see ADR 0005 Addendum B (Proposed).
+
+enum HealthRecordLinkStatus {
+  OPEN
+  USED
+  REVOKED
+}
+
+enum HealthRecordEntryChannel {
+  DIRECTOR
+  LINK
+}
+
+/// One health record for one club member (#611). It holds no health text: every
+/// health field is a separate `HealthRecordField` row, sealed with
+/// `lib/secret-box.ts`. `hasHealthNote` is the plain "a record exists" flag.
+model HealthRecord {
+  id                String                    @id @default(cuid())
+  organizationId    String
+  rosterMemberId    String                    @unique
+  /// The club year (for example "2026-27") the record was last confirmed or
+  /// saved in. Anything else shows "Needs update".
+  confirmedClubYear String?
+  hasHealthNote     Boolean                   @default(false)
+  lastEnteredVia    HealthRecordEntryChannel?
+  /// Who last saved it: an attendee account id, or a staff user id for an act-as. Never shown.
+  lastSavedByActor  String?
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  rosterMember ClubRosterMember    @relation(fields: [rosterMemberId], references: [id], onDelete: Cascade)
+  fields       HealthRecordField[]
+
+  @@index([organizationId])
+}
+
+/// One sealed health field. `sealedValue` is `v1.<nonce>.<tag>.<ciphertext>`
+/// under the purpose `health-record:<recordId>:<fieldKey>`.
+model HealthRecordField {
+  id          String   @id @default(cuid())
+  recordId    String
+  fieldKey    String
+  sealedValue String
+  updatedAt   DateTime @updatedAt
+
+  record HealthRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+  @@unique([recordId, fieldKey])
+}
+
+/// A single-use, expiring private link for a parent to fill in one member's
+/// health record, with no account. Only the SHA-256 of the token is stored.
+model HealthRecordLink {
+  id             String                 @id @default(cuid())
+  organizationId String
+  rosterMemberId String
+  clubYear       String
+  recipientEmail String
+  status         HealthRecordLinkStatus @default(OPEN)
+  tokenHash      String?                @unique
+  expiresAt      DateTime
+  usedAt         DateTime?
+  revokedAt      DateTime?
+  messageId      String?                @unique
+  /// Attendee account id or staff user id of the sender, for attribution only.
+  createdByActor String?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  rosterMember ClubRosterMember @relation(fields: [rosterMemberId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@index([rosterMemberId])
   @@index([status, expiresAt])
 }

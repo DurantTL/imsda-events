@@ -10,7 +10,8 @@ Date: 2026-08-09
 
 **Addendum A (club roster birth dates) is Accepted** as of 2026-09-22; see the end
 of this document. It covers only roster birth dates. The rest of this ADR is
-still Proposed.
+still Proposed. **Addendum B (Pathfinder Health Record) is Proposed**, drafted with
+#611 for human sign-off; the feature stays switched off until it is Accepted.
 
 ## Context
 
@@ -377,3 +378,149 @@ birth dates need their own protection.
 - `SECRET_ENCRYPTION_KEY` becomes irreplaceable data, not just configuration.
 - The same sealing pattern is the model for the protected records in the rest of
   this ADR, without approving them.
+
+
+---
+
+## Addendum B: Pathfinder Health Record
+
+Status: **Proposed.** Drafted for human review with issue #611. Nothing here is
+approved until the people named under "Sign-off" accept it. Until then the
+feature stays **switched off in production** (`HEALTH_RECORDS_ENABLED`
+unset or `false`). Addendum A is unaffected: it still covers only roster birth
+dates.
+
+### Why
+
+On 2026-09-29 Caleb Durant asked for the Pathfinder Health Record to live in
+the secure health-records system described in
+`docs/HEALTH-RECORDS-OPTIONS-REPORT.md` (#389). On 2026-10-01 the director asked
+for it to be built now. The code is built and tested with synthetic data
+behind a switch. This addendum records the decisions the build assumes, so a
+human can accept, change or reject them before any real record is stored.
+
+### Decisions already made (2026-09-29, issue #611)
+
+1. **Who enters it:** both ways. A parent fills it in through a single-use,
+   expiring private link, or the club's director or deputy types it in from the
+   paper form.
+2. **Insurance:** company, group number, policy number and phone are stored as
+   encrypted text. The insurance card upload comes later, as a second step; no
+   file is stored by this slice.
+3. **Area Coordinators** (changed 2026-10-01): the 2026-09-29 rule that Area
+   Coordinators never see health records was **replaced** by the director. They
+   may see the full record of a member **registered for an event**, for that
+   event's window only, with a verified second sign-in step, and never by
+   browsing rosters. See item 3 of the proposed design. Who may see club forms
+   in general is decided separately in #610.
+
+### Proposed design (built in #611)
+
+1. **Encryption.** Each health field is its own ciphertext, sealed with
+   `sealSecret` from `lib/secret-box.ts`. The key purpose is
+   `health-record:<recordId>:<fieldKey>`, so a value copied to another record or
+   another field cannot be opened. The database holds no health text in any
+   plain column; the audit log, logs, CSVs, drafts, the check-in book, email
+   bodies and error messages hold none either.
+2. **Plain flags.** Two plain values exist: `hasHealthNote` (anything clinical
+   was entered) and the club year the record was last confirmed. Both carry no
+   text.
+3. **Who sees what.**
+
+   | Role | Health tab and record |
+   | --- | --- |
+   | That club's Director and Deputy (second step passed) | View and edit, own club only, all year; send and withdraw parent links |
+   | Club Registrar, Club Reporter | No |
+   | Area Coordinator (verified second step) | **View only** the full record of a member registered for an event (submitted or confirmed registration by that club), from registration until 30 days after the event's last day; no roster browsing, no Health tab, no edit |
+   | Staff holding `VIEW_HEALTH_INFORMATION` on an event membership | **View only**, and only for members registered for that event, inside the same window |
+   | System administrators | View only, any member, all year (no event needed) |
+   | Everyone else by role alone (Event Admins, registration, finance, check-in, read-only staff, and anyone with `VIEW_SENSITIVE_DATA`) | No |
+   | The parent, holding a valid private link | Fills in one member's record once; sees no stored value |
+
+   The window is the coordinator health view's rule (#658): inclusive, in the
+   event's time zone. Outside it, a coordinator or health-role viewer gets "not
+   found", system administrators excepted.
+4. **The explicit permission** is `VIEW_HEALTH_INFORMATION`, the same
+   permission the coordinator health view (#658) adds to event memberships. No
+   role carries it, Event Admin included; only a system administrator grants
+   it, one membership at a time, and each grant is audited. #611 adds no second
+   grant route.
+5. **Audit.** Every view, create, update, confirmation, link send, link
+   withdrawal and link submission writes an audit row (permission grants are
+   audited by #658). A row names who, which club and member by id, the event
+   id when the view was through an event, a field count, and the club year.
+   It never holds a health value, an address, a phone number or an email.
+   The view is audited before any value is decrypted.
+6. **Parent link.** Single-use and expiring (14 days by default, 30 at most).
+   Only a SHA-256 of the token is stored; the token is minted when the email is
+   delivered and the email body holds a sentinel. A new link for the same
+   person withdraws the earlier one. The page shows the club name, the child's
+   first name and an empty form, never a stored value. Submitting replaces that
+   member's record.
+7. **Annual re-confirmation.** A record is current only for the club year in
+   which it was saved or confirmed. After that it shows **Needs update** and the
+   director confirms it or edits it. A person's record follows them across
+   club-year roster rows. This proposal does **not** delete stale records
+   automatically (see open decisions).
+8. **Removal.** Removing a person from the roster erases their Health Record
+   and withdraws their open links immediately, whether or not the feature is on.
+9. **Feature switch.** With `HEALTH_RECORDS_ENABLED` off there are no health
+   routes (every one answers 404), no Health tab, no page, and nothing is
+   written. Deployment configuration does not pass the variable on.
+
+### Still open (blocking production use)
+
+These are the remaining decisions from section 6 of the options report plus
+questions this build raised.
+
+- **System administrator access.** The director's 2026-10-01 rule gives system
+  administrators view access. The options report instead proposed break-glass
+  only (a stated reason, time-limited, reviewed monthly). Confirm which, and
+  who reviews use each month.
+- **Event staff scope.** The health role is event-scoped here because the
+  permission lives on an event membership. Confirm that is wanted, rather than
+  a conference-wide health role.
+- **Coordinator window start.** The window has no start bound of its own (a
+  member can only be an attendee after registering). Confirm.
+- **Retention.** Whether stale records are removed after a grace period (the
+  report suggests 60 days), how long backups and off-site copies are kept, and
+  who owns a legal hold.
+- **Breach response.** Who decides a breach happened, who notifies families and
+  who contacts counsel.
+- **Youth Director scope.** Whether the Youth Director holds the explicit
+  permission, for all clubs or only campers, and whether exports are wanted.
+- **Consent wording.** The three consent statements (emergency treatment,
+  attendance and activity permission, photocopying) are placeholders in the code
+  and must be replaced with the verbatim 2026 text before use.
+- **Typed signature versus signature evidence** (#150) when it ships.
+- **Registrar entry.** The options report lets a Registrar enter but not read.
+  #611 grants no Registrar access; confirm.
+- **Coordinator entry point.** #611 adds the coordinator and staff pages but
+  no links to them; #658's event sheet is the natural place to link from.
+- **Denied-attempt auditing.** Whether refused attempts by signed-in staff
+  should also be audited (the options report asks for it).
+- **Training** for everyone who holds access.
+
+### Prerequisites before real records
+
+1. This addendum Accepted.
+2. The `SECRET_ENCRYPTION_KEY` backup exists **and has been test-restored**
+   (reported created on 2026-10-01; the restore is not yet confirmed).
+3. The open decisions above answered.
+4. The server checklist items in `docs/SERVER-SECURITY-CHECKLIST.md` complete.
+
+### Sign-off
+
+Privacy, security, legal, ministry-operations and key-operations owners, as
+for the rest of this ADR, plus the club-health owner named by the director.
+Key custodian remains Jonathan Swena (Addendum A, item 7).
+
+### Consequences
+
+- The build can be merged and exercised with synthetic data now; production use
+  waits on the prerequisites above.
+- `SECRET_ENCRYPTION_KEY` now protects health data as well as birth dates, so
+  losing it loses every health record permanently.
+- Adding the insurance card upload or an UltraCamp export needs its own
+  decision and does not follow from this addendum. The coordinator summary
+  (#658, Addendum C) reads other data and does not read these records.

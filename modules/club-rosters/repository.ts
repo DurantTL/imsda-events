@@ -292,6 +292,14 @@ export async function updateRosterMember(
 export async function eraseRosterRow(tx: Prisma.TransactionClient, memberId: string, now: Date) {
   // A meeting check-off names the member by roster row; it goes with them (#653).
   await tx.clubMeetingAttendance.deleteMany({ where: { rosterMemberId: memberId } });
+  // Removing someone erases their Health Record at once, whether or not the
+  // feature is switched on (#611, options report section 3), and withdraws any
+  // open parent link so it can no longer be used.
+  await tx.healthRecord.deleteMany({ where: { rosterMemberId: memberId } });
+  await tx.healthRecordLink.updateMany({
+    where: { rosterMemberId: memberId, status: "OPEN" },
+    data: { status: "REVOKED", revokedAt: now, tokenHash: null },
+  });
   await tx.clubRosterMember.update({
     where: { id: memberId },
     data: {

@@ -77,6 +77,8 @@ function fakeDatabase() {
     memberTransferRegistrationMove: {
       updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 0 }; },
     },
+    healthRecord: { deleteMany: async () => ({ count: 0 }) },
+    healthRecordLink: { updateMany: async () => ({ count: 0 }) },
     clubMeetingAttendance: {
       deleteMany: async ({ where }: { where: { rosterMemberId: string } }) => { db.attendanceErased.push(where.rosterMemberId); return { count: 1 }; },
     },

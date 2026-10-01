@@ -186,6 +186,15 @@ const nextConfig: NextConfig = {
         headers: privateRegistrationHeaders,
       },
       {
+        // A Health Record's single-use private link (#611): never cached, never indexed, no referrer.
+        source: "/health-records/:path*",
+        headers: privateRegistrationHeaders,
+      },
+      {
+        source: "/api/public/health-records/:path*",
+        headers: privateRegistrationHeaders,
+      },
+      {
         source: "/check-in",
         headers: [
           {
