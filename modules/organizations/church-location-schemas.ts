@@ -8,7 +8,9 @@ const zipPattern = /^\d{5}(-\d{4})?$/;
 
 /**
  * A church's town and, optionally, hand-entered map coordinates (#437).
- * Coordinates are typed in by staff, never geocoded, so both must be given
+ * Coordinates here are typed in or placed by staff (the hand-set path, saved as
+ * MANUAL). Staff can also accept a geocoded match (#724), which never goes
+ * through this schema. Both must be given
  * together or both left blank — a lone latitude or longitude can't place a
  * pin. Latitude and longitude are validated to real-world ranges so a typo
  * can't plot a church off the map (or off the planet).

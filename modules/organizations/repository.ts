@@ -58,7 +58,11 @@ export type OrganizationOperationErrorCode =
   | "DIRECTOR_GRANT_NOT_FOUND"
   | "DIRECTOR_GRANT_ALREADY_REVOKED"
   | "DIRECTOR_GRANT_ROLE_NOT_ALLOWED"
-  | "ACT_AS_OWN_ACCOUNT_NOT_ALLOWED";
+  | "ACT_AS_OWN_ACCOUNT_NOT_ALLOWED"
+  | "GEOCODING_DISABLED"
+  | "GEOCODING_UNAVAILABLE"
+  | "GEOCODE_RESULT_NOT_FOUND"
+  | "LOCATION_SET_BY_HAND";
 
 export class OrganizationOperationError extends Error {
   constructor(

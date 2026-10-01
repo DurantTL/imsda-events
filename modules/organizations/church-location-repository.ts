@@ -6,10 +6,11 @@ import { OrganizationOperationError } from "@/modules/organizations/repository";
 import type { ChurchLocationInput } from "@/modules/organizations/church-location-schemas";
 
 /**
- * A church's town and, when staff have entered them, map coordinates (#437).
- * Coordinates are hand-typed by staff — never geocoded — so this never calls
- * an external service. Edited by conference staff from the church's admin
- * page, gated the same as any other organization edit.
+ * A church's town and, when known, map coordinates (#437). This form is the
+ * hand-set path: whatever staff save here is marked MANUAL (#724), so neither
+ * the eAdventist import nor "Find map locations" will overwrite it. It never
+ * calls an external service. Edited by conference staff from the church's
+ * admin page, gated the same as any other organization edit.
  */
 
 const locationFields = ["city", "state", "zip", "latitude", "longitude"] as const;
@@ -29,6 +30,7 @@ export async function getChurchLocation(organizationId: string) {
     zip: location?.zip ?? "",
     latitude: location?.latitude ?? null,
     longitude: location?.longitude ?? null,
+    source: location?.source ?? null,
     updatedAt: location?.updatedAt.toISOString() ?? null,
   };
 }
@@ -50,12 +52,14 @@ export async function updateChurchLocation(organizationId: string, input: Church
       const before = church.churchLocation?.[field] ?? (field === "latitude" || field === "longitude" ? null : "");
       if (input[field] !== before) changed.push(field);
     }
-    if (changed.length === 0) return;
+    // Saving by hand claims an imported or geocoded location, even unchanged.
+    const claims = church.churchLocation !== null && church.churchLocation.source !== "MANUAL";
+    if (changed.length === 0 && !claims) return;
 
     await tx.churchLocation.upsert({
       where: { organizationId },
-      create: { organizationId, ...input },
-      update: { ...input },
+      create: { organizationId, ...input, source: "MANUAL" },
+      update: { ...input, source: "MANUAL" },
     });
     // Coordinates and ZIP place a pin on a map; keep them out of the log line.
     await writeAuditLog({
@@ -64,7 +68,7 @@ export async function updateChurchLocation(organizationId: string, input: Church
       entityType: "Organization",
       entityId: organizationId,
       summary: `Updated the location for ${church.name}.`,
-      metadata: { organizationId, fields: changed },
+      metadata: { organizationId, fields: changed, ...(claims ? { claimedFrom: church.churchLocation!.source } : {}) },
     }, tx);
   });
   return getChurchLocation(organizationId);

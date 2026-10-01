@@ -104,10 +104,37 @@ active club cannot be switched off until its clubs are moved.
   hard-coded name) is kept as a choice for that registration, so it still
   displays and validates.
 
+## Church map locations (#724)
+
+The public club map reads `ChurchLocation`, so the import also fills it:
+
+- For every **active church** in the file it creates a location (city, state, ZIP)
+  marked `IMPORT`, or updates an `IMPORT` or `GEOCODED` one whose town changed.
+  The preview shows how many locations will be created and updated.
+- A location a person set by hand (`MANUAL`, including every location that existed
+  before this change) is never touched.
+- Groups (which often meet in homes), companies, schools and camps get no location:
+  the map plots churches only, and a group never gets a street address or point.
+- The import never geocodes and stores no coordinates. If a geocoded point's address
+  changes, the point is dropped and the location returns to `IMPORT`.
+
+Then a system administrator opens **Find map locations** (link on the directory
+page). It needs `GEOCODING_ENABLED=true` and sends only the street address, city,
+state and ZIP of active churches that have a street address and no point (never a
+town-only address, a group, or a hand-set location) to the U.S. Census Bureau
+geocoder. Each church gets a result: matched or no match. Staff **Accept** a match
+(location becomes `GEOCODED`), **Set on map** (the existing map picker; saving
+there makes it `MANUAL`), or **Skip**. Nothing reaches the public map until a match
+is accepted. If the service can't be reached nothing is changed. Audit entries hold
+counts only. Production needs outbound HTTPS to `geocoding.geo.census.gov`
+(see `docs/DEPLOY-DOCKER.md`). Running it on production is a human action.
+
 ## Before running on production
 
-1. Deploy the migration `20260930210000_organization_eadventist_import`
-   (additive; nullable columns and new enum values).
+1. Deploy the migrations `20260930210000_organization_eadventist_import`
+   (additive; nullable columns and new enum values) and
+   `20261002030000_church_location_source` (adds `ChurchLocation.source`, backfilled
+   `MANUAL`, and the `ChurchGeocodeResult` table).
 2. Upload the real file, read the preview (especially name matches and
    Skipped rows), then Save.
 3. Review the "active, disbanded date on file" filter in the directory.

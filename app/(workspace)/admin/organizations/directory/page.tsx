@@ -40,6 +40,7 @@ export default async function OrganizationDirectoryPage({ searchParams }: { sear
       <div className="intro-actions club-admin-links">
         <BackLink href="/admin/organizations" variant="staff">Back to Clubs and churches</BackLink>
         <Link className="secondary-button" href="/admin/organizations/import">Import from eAdventist</Link>
+        <Link className="secondary-button" href="/admin/organizations/map-locations">Find map locations</Link>
       </div>
       <section className="page-stack org-directory-page" aria-labelledby="org-directory-title">
         <div className="page-intro">

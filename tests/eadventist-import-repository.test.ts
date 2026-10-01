@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** In-memory stand-in for the organization table and audit log. */
 type Row = Record<string, unknown> & { id: string; type: string; name: string; isActive: boolean; eadventistId: string | null; affiliatedOrganizationId: string | null; parentOrganizationId?: string | null };
-const state = vi.hoisted(() => ({ rows: [] as unknown[], audit: [] as unknown[], identities: [] as Array<{ organizationId?: string; personId?: string; providerScope?: string; externalId: string }>, next: 1 }));
+const state = vi.hoisted(() => ({ rows: [] as unknown[], audit: [] as unknown[], identities: [] as Array<{ organizationId?: string; personId?: string; providerScope?: string; externalId: string }>, locations: [] as Array<Record<string, unknown> & { organizationId: string }>, next: 1 }));
 const rows = () => state.rows as Row[];
 
 const db = vi.hoisted(() => {
@@ -12,7 +12,7 @@ const db = vi.hoisted(() => {
     findMany: async () => rows().map((row) => ({
       ...row,
       externalIdentities: state.identities.filter((identity) => identity.organizationId === row.id && (identity.providerScope ?? "") === "").map((identity) => ({ externalId: identity.externalId })),
-      churchLocation: null,
+      churchLocation: state.locations.find((location) => location.organizationId === row.id) ?? null,
       _count: { childOrganizations: rows().filter((other) => other.parentOrganizationId === row.id).length, sponsoredPromoCodes: 0 },
       disbandedOn: (row.disbandedOn as Date | null) ?? null,
       affiliatedOrganization: rows().find((other) => other.id === row.affiliatedOrganizationId) ? { eadventistId: rows().find((other) => other.id === row.affiliatedOrganizationId)!.eadventistId } : null,
@@ -42,8 +42,16 @@ const db = vi.hoisted(() => {
       return {};
     },
   };
+  const churchLocation = {
+    create: async ({ data }: { data: Record<string, unknown> & { organizationId: string } }) => { state.locations.push({ latitude: null, longitude: null, ...data }); return {}; },
+    update: async ({ where, data }: { where: { organizationId: string }; data: Record<string, unknown> }) => {
+      Object.assign(state.locations.find((location) => location.organizationId === where.organizationId)!, data);
+      return {};
+    },
+  };
   const client = {
     organization,
+    churchLocation,
     externalIdentity,
     auditLog: { create: async ({ data }: { data: unknown }) => { state.audit.push(data); return data; } },
     $transaction: async (callback: (tx: unknown) => unknown) => callback(client),
@@ -65,6 +73,7 @@ beforeEach(() => {
   state.rows = [];
   state.audit = [];
   state.identities = [];
+  state.locations = [];
   state.next = 1;
 });
 
@@ -224,5 +233,63 @@ describe("eAdventist import storage (#649)", () => {
       { actorUserId: "admin-2", action: "ORGANIZATION_MARKED_INACTIVE" },
       { actorUserId: "admin-2", action: "ORGANIZATION_MARKED_ACTIVE" },
     ]);
+  });
+});
+
+describe("church map locations from the import (#724)", () => {
+  const church = () => byName("Sample Hills SDA Church");
+  const locationOf = (id: string) => state.locations.find((location) => location.organizationId === id);
+
+  it("previews and creates a location for each active church, with town, state and ZIP only", async () => {
+    const preview = await previewEadventistImport(fixture);
+    expect(preview.locationCounts).toEqual({ created: 1, updated: 0 });
+    expect(preview.items.find((item) => item.name === "Sample Hills SDA Church")).toMatchObject({ locationAction: "CREATE" });
+    expect(state.locations).toHaveLength(0);
+
+    const result = await commitEadventistImport(fixture, "admin-1");
+    expect(result.locationCounts).toEqual({ created: 1, updated: 0 });
+    expect(state.locations).toHaveLength(1);
+    expect(locationOf(church().id)).toMatchObject({ source: "IMPORT", city: "Sample Hills", latitude: null, longitude: null });
+    expect(Object.keys(locationOf(church().id)!).sort()).toEqual(["city", "latitude", "longitude", "organizationId", "source", "state", "zip"]);
+    // Counts only in the audit entry.
+    expect(state.audit[0]).toMatchObject({ metadata: { locationsCreated: 1, locationsUpdated: 0 } });
+    expect(JSON.stringify(state.audit)).not.toContain("Sample Hills");
+  });
+
+  it("is idempotent, then updates an imported location when the town changes", async () => {
+    await commitEadventistImport(fixture, "admin-1");
+    expect((await previewEadventistImport(fixture)).locationCounts).toEqual({ created: 0, updated: 0 });
+    const moved = fixture.replace(/(9002,SC002,Sample Hills SDA Church,[\s\S]*?),Sample Hills,/, "$1,Sample Vale,");
+    expect(moved).not.toBe(fixture);
+    const result = await commitEadventistImport(moved, "admin-1");
+    expect(result.locationCounts).toEqual({ created: 0, updated: 1 });
+    expect(locationOf(church().id)).toMatchObject({ source: "IMPORT", city: "Sample Vale" });
+  });
+
+  it("never overwrites a location set by hand", async () => {
+    rows().push({ id: "church-old", type: "CHURCH", name: "Sample Hills SDA Church", normalizedName: "sample hills sda church", isActive: true, eadventistId: null, affiliatedOrganizationId: null } as Row);
+    state.locations.push({ organizationId: "church-old", source: "MANUAL", city: "Typed Town", state: "ZZ", zip: "", latitude: 41.5, longitude: -93.6 });
+    const preview = await previewEadventistImport(fixture);
+    expect(preview.locationCounts).toEqual({ created: 0, updated: 0 });
+    await commitEadventistImport(fixture, "admin-1");
+    expect(locationOf("church-old")).toEqual({ organizationId: "church-old", source: "MANUAL", city: "Typed Town", state: "ZZ", zip: "", latitude: 41.5, longitude: -93.6 });
+  });
+
+  it("drops a geocoded point when the address it was found for changes", async () => {
+    await commitEadventistImport(fixture, "admin-1");
+    Object.assign(locationOf(church().id)!, { source: "GEOCODED", latitude: 41.5, longitude: -93.6 });
+    expect((await previewEadventistImport(fixture)).locationCounts).toEqual({ created: 0, updated: 0 });
+    const moved = fixture.replace("10 Sample Road", "99 Sample Road");
+    const result = await commitEadventistImport(moved, "admin-1");
+    expect(result.locationCounts).toEqual({ created: 0, updated: 1 });
+    expect(locationOf(church().id)).toMatchObject({ source: "IMPORT", latitude: null, longitude: null });
+  });
+
+  it("gives no location to groups, companies, schools, or churches staff switched off", async () => {
+    await commitEadventistImport(fixture, "admin-1");
+    expect(state.locations.map((location) => location.organizationId)).toEqual([church().id]);
+    state.locations = [];
+    church().isActive = false;
+    expect((await previewEadventistImport(fixture)).locationCounts).toEqual({ created: 0, updated: 0 });
   });
 });

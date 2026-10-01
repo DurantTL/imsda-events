@@ -120,16 +120,19 @@ describe("the upload preview screen (#649)", () => {
     const html = renderToStaticMarkup(createElement(EadventistImportWorkspace, {
       initialPreview: {
         counts: { new: 1, updated: 2, unchanged: 0, skipped: 0, flagged: 1 },
+        locationCounts: { created: 2, updated: 1 },
         needsChoice: 1,
         rejected: [{ line: 9, name: "Sample Odd", reason: "Unknown organization type \"Spaceport\"." }],
         items: [
-          { line: 2, eadventistId: "9004", name: "Sample Ridge Group", kind: "GROUP", action: "NEW", matchedBy: null, notes: [], disbandedOn: "2024-03-01", possibleMatches: [], needsChoice: false, selectedMatch: null },
-          { line: 3, eadventistId: "9002", name: "Sample Hills SDA Church", kind: "CHURCH", action: "UPDATED", matchedBy: "NAME", notes: ["Matches the existing church \"Sample Hills SDA Church\" by name."], disbandedOn: null, possibleMatches: [], needsChoice: false, selectedMatch: null },
-          { line: 4, eadventistId: "9010", name: "Sample Pines Company", kind: "COMPANY", action: "UPDATED", matchedBy: "POSSIBLE", notes: ["Possible match: \"Sample Pines SDA\"."], disbandedOn: null, possibleMatches: [{ id: "church-7", name: "Sample Pines SDA" }], needsChoice: true, selectedMatch: null },
+          { line: 2, eadventistId: "9004", name: "Sample Ridge Group", kind: "GROUP", action: "NEW", matchedBy: null, notes: [], disbandedOn: "2024-03-01", possibleMatches: [], needsChoice: false, selectedMatch: null, locationAction: null },
+          { line: 3, eadventistId: "9002", name: "Sample Hills SDA Church", kind: "CHURCH", action: "UPDATED", matchedBy: "NAME", notes: ["Matches the existing church \"Sample Hills SDA Church\" by name."], disbandedOn: null, possibleMatches: [], needsChoice: false, selectedMatch: null, locationAction: "CREATE" },
+          { line: 4, eadventistId: "9010", name: "Sample Pines Company", kind: "COMPANY", action: "UPDATED", matchedBy: "POSSIBLE", notes: ["Possible match: \"Sample Pines SDA\"."], disbandedOn: null, possibleMatches: [{ id: "church-7", name: "Sample Pines SDA" }], needsChoice: true, selectedMatch: null, locationAction: null },
         ],
       },
     }));
     expect(html).toContain("1 new, 2 updated, 0 unchanged, 0 skipped. 1 with a disbanded date on file to review.");
+    expect(html).toContain("Church map locations: 2 to create, 1 to update");
+    expect(html).toContain("Map location will be created.");
     expect(html).toContain("Possible match — choose");
     expect(html).toContain("Choose…");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>(?:(?!<\/button>).)*Save 3 changes/);

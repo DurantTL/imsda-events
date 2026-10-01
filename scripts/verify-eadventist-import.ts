@@ -8,7 +8,12 @@
  * - uploading the same file again previews 12 unchanged and changes no row;
  * - a possible match with no choice is refused (NEEDS_CHOICES) and nothing is
  *   written; a stale choice asks again; a real choice links the church;
- * - a club holding an id is skipped and left untouched.
+ * - a club holding an id is skipped and left untouched;
+ * - (#724) the import creates an IMPORT church location for the active church
+ *   only (no group, school or company), never overwrites a MANUAL one, and
+ *   "Find map locations" (with the offline fake provider) stores a result for
+ *   a church with a street address, skips a hand-set church, and accepting a
+ *   match marks the location GEOCODED; a changed address drops the point.
  *
  * Creates and removes its own rows. Needs a migrated database.
  *
@@ -18,8 +23,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
+import type { GeocodeRequest } from "../integrations/geocoding/types";
 
 loadEnvConfig(process.cwd());
+
+// "Find map locations" (#724) is off unless this is set; the fake provider is used, never the network.
+process.env.GEOCODING_ENABLED = "true";
 
 const prisma = new PrismaClient();
 const fixture = readFileSync(join(process.cwd(), "tests", "fixtures", "eadventist-organizations-synthetic.csv"), "utf8");
@@ -103,6 +112,45 @@ async function main() {
     const church = await prisma.organization.findUniqueOrThrow({ where: { id: loose.id }, include: { externalIdentities: true } });
     assert(church.eadventistId === "9002" && church.name === "Sample Hills SDA Church" && church.externalIdentities[0]?.externalId === "9002", "the church is linked, renamed, and has its identity");
     assert((await prisma.organization.count()) === countBefore + 10, "the other ten rows were created (12 minus the linked church and the club's row)");
+
+    // 4. Church map locations (#724).
+    await wipe(user.id);
+    const manual = await prisma.organization.create({ data: { type: "CHURCH", name: `${stamp} Manual Church`, normalizedName: `${stamp} manual church`, streetAddress: "7 Manual Way", city: "Sample Hills", state: "ZZ", postalCode: "00001" } });
+    await prisma.churchLocation.create({ data: { organizationId: manual.id, city: "Typed Town", state: "ZZ", source: "MANUAL" } });
+    const mapped = await commitEadventistImport(fixture, user.id);
+    assert(mapped.locationCounts.created === 1 && mapped.locationCounts.updated === 0, `one location created: ${JSON.stringify(mapped.locationCounts)}`);
+    const importedOrgs = await prisma.organization.findMany({ where: { eadventistId: { in: ids } }, include: { churchLocation: true } });
+    const withLocation = importedOrgs.filter((org) => org.churchLocation);
+    assert(withLocation.length === 1 && withLocation[0]!.type === "CHURCH", "only the active church got a location");
+    const importedChurch = withLocation[0]!;
+    assert(importedChurch.churchLocation!.source === "IMPORT" && importedChurch.churchLocation!.latitude === null && importedChurch.churchLocation!.city === "Sample Hills", "imported location has the town and no point");
+    assert((await prisma.churchGeocodeResult.count({ where: { organizationId: { in: importedOrgs.map((org) => org.id) } } })) === 0, "the import geocoded nothing");
+    assert((await previewEadventistImport(fixture)).locationCounts.created === 0, "re-upload plans no location work");
+
+    const { runChurchGeocoding, acceptGeocodeResult, listGeocodeReview } = await import("../modules/organizations/church-geocoding");
+    const { createFakeGeocodingProvider } = await import("../integrations/geocoding/fake");
+    const calls: GeocodeRequest[][] = [];
+    const summary = await runChurchGeocoding(user.id, createFakeGeocodingProvider({ calls }));
+    const sentIds = calls.flat().map((request) => request.id);
+    assert(sentIds.includes(importedChurch.id), "the imported church was looked up");
+    assert(!sentIds.includes(manual.id), "the hand-set church was never sent");
+    assert(importedOrgs.filter((org) => org.type === "GROUP").every((org) => !sentIds.includes(org.id)), "no group was sent");
+    assert(summary.matched >= 1, "the fake provider matched the church");
+    const review = await listGeocodeReview();
+    assert(review.some((item) => item.organizationId === importedChurch.id && item.status === "MATCHED"), "the match is waiting for review");
+    assert((await prisma.churchLocation.findUniqueOrThrow({ where: { organizationId: importedChurch.id } })).latitude === null, "nothing reaches the location before acceptance");
+    await acceptGeocodeResult(importedChurch.id, user.id);
+    const accepted = await prisma.churchLocation.findUniqueOrThrow({ where: { organizationId: importedChurch.id } });
+    assert(accepted.source === "GEOCODED" && accepted.latitude !== null && accepted.city === "Sample Hills", "accepted match is GEOCODED with the town kept");
+    const geocodeAudit = await prisma.auditLog.findMany({ where: { actorUserId: user.id, action: { in: ["CHURCH_GEOCODING_RUN", "CHURCH_GEOCODE_ACCEPTED"] } } });
+    assert(geocodeAudit.length === 2 && !JSON.stringify(geocodeAudit).includes("Sample Road"), "run and accept audited without addresses");
+    assert((await previewEadventistImport(fixture)).locationCounts.updated === 0, "an unchanged re-upload leaves the geocoded point alone");
+    const moved = await commitEadventistImport(fixture.replace("10 Sample Road", "99 Sample Road"), user.id);
+    assert(moved.locationCounts.updated === 1, "a changed street drops the stale point");
+    const dropped = await prisma.churchLocation.findUniqueOrThrow({ where: { organizationId: importedChurch.id } });
+    assert(dropped.source === "IMPORT" && dropped.latitude === null, "the location returned to IMPORT without a point");
+    const stillManual = await prisma.churchLocation.findUniqueOrThrow({ where: { organizationId: manual.id } });
+    assert(stillManual.source === "MANUAL" && stillManual.city === "Typed Town", "the hand-set location was never touched");
 
     console.log("eAdventist import checks passed.");
   } finally {

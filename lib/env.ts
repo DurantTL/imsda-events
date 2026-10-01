@@ -104,6 +104,18 @@ export const serverEnvSchema = z
       .default("false")
       .transform((value) => value === "true"),
 
+    // Church map locations (#724). Off unless exactly "true": with it off the
+    // staff "Find map locations" step does nothing and sends nothing. When on,
+    // staff clicking the button sends church street addresses to the U.S.
+    // Census Bureau geocoder (geocoding.geo.census.gov), so production needs
+    // outbound HTTPS to that host. GEOCODING_PROVIDER "fake" is a built-in
+    // offline stand-in for local screenshots and must not be set in production.
+    GEOCODING_ENABLED: z
+      .enum(["true", "false"])
+      .default("false")
+      .transform((value) => value === "true"),
+    GEOCODING_PROVIDER: z.enum(["census", "fake"]).default("census"),
+
     // Where alerts go. Any endpoint that accepts a JSON POST — a Slack or
     // Teams incoming webhook, or a small relay. Blank means alerts are only
     // written to the log, where nothing is watching them.
@@ -322,6 +334,8 @@ export const SERVER_ENV_KEYS = [
     "OUTBOX_SWEEP_TOKEN",
     "SECRET_ENCRYPTION_KEY",
     "HEALTH_RECORDS_ENABLED",
+    "GEOCODING_ENABLED",
+    "GEOCODING_PROVIDER",
     "ALERT_WEBHOOK_URL",
     "ALERT_REPEAT_MINUTES",
     "PASSWORD_BREACH_CHECK",

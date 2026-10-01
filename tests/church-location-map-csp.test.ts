@@ -81,6 +81,6 @@ describe("church location map: reaching the page (#542)", () => {
     }
 
     expect(offenders).toEqual([]);
-    expect(anchors).toEqual(["components/organization-directory-workspace.tsx"]);
+    expect(anchors.sort()).toEqual(["components/church-map-locations-workspace.tsx", "components/organization-directory-workspace.tsx"]);
   });
 });
