@@ -42,6 +42,7 @@ import {
   buildBadgeCsvRows,
 } from "@/modules/checkin/badge-csv";
 import { badgeTemplates } from "@/modules/checkin/badge-labels";
+import { buildBadgeLabels } from "@/modules/checkin/badge-labels";
 import { toCsv } from "@/modules/reporting/csv";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 
@@ -147,13 +148,52 @@ describe("badge CSV Position options", () => {
 });
 
 describe("badge CSV rows", () => {
-  it("starts with the exact ID,Name,Position header and keeps badge order", () => {
+  it("starts with the ID,Name,Position header, adds Attendee type last, and keeps badge order", () => {
     const rows = buildBadgeCsvRows(registrations);
-    expect(rows[0]).toEqual(["ID", "Name", "Position"]);
+    expect(rows[0]).toEqual(["ID", "Name", "Position", "Attendee type"]);
     expect(rows.slice(1).map((row) => row[1])).toEqual(["Amy Adams", "=Evil Formula", "Zed Zimmer"]);
     expect(rows.slice(1).map((row) => row[0])).toEqual([
       "REG-AAAA1111", "REG-AAAA1111", "REG-BBBB2222",
     ]);
+  });
+
+  it("fills Attendee type with the label the badge prints", () => {
+    const rows = buildBadgeCsvRows(registrations);
+    expect(rows.slice(1).map((row) => row[3])).toEqual(["Adult", "Adult", "Adult"]);
+    expect(rows.slice(1).map((row) => row[3])).toEqual(
+      buildBadgeLabels(registrations).map((label) => label.attendeeTypeLabel),
+    );
+  });
+
+  it("uses the configured event label and the attendee's own answer for Attendee type", () => {
+    const typed = {
+      ...registration("REG-DDDD4444", [
+        { id: "d1", first: "Dee", last: "Dunn", responses: {} },
+        { id: "d2", first: "Eli", last: "Estes", responses: { attendee_type: "TEEN" } },
+      ]),
+    } as unknown as Record<string, unknown> & { attendees: Array<Record<string, unknown>>; publicSubmission: Record<string, unknown> };
+    typed.attendees[0].attendeeType = "ATTENDEE";
+    typed.attendees[0].attendeeTypeDefinitionCode = "guest";
+    typed.attendees[1].attendeeType = "ATTENDEE";
+    typed.publicSubmission.attendeeTypeOptions = [
+      { code: "guest", label: "Retreat guest" },
+      { code: "teen", label: "Teen" },
+    ];
+    typed.publicSubmission.definition = definitionWith(
+      field("attendee_type", "Attendee type", "SELECT", "ATTENDEE", {
+        options: ["ADULT", "TEEN"],
+        optionLabels: { ADULT: "Adult", TEEN: "Teen (13-17)" },
+      }),
+    );
+    const rows = buildBadgeCsvRows([typed as unknown as RegistrationRecord]);
+    expect(rows.slice(1).map((row) => row[3])).toEqual(["Retreat guest", "Teen (13-17)"]);
+  });
+
+  it("keeps the Attendee type column but leaves it empty when the badge setting is off", () => {
+    const rows = buildBadgeCsvRows(registrations, null, false);
+    expect(rows[0]).toEqual(["ID", "Name", "Position", "Attendee type"]);
+    expect(rows.slice(1).map((row) => row[3])).toEqual(["", "", ""]);
+    expect(rows.slice(1).map((row) => row[1])).toEqual(["Amy Adams", "=Evil Formula", "Zed Zimmer"]);
   });
 
   it("leaves Position blank when no field is chosen", () => {
@@ -242,8 +282,8 @@ describe("badge CSV option labels, form names and mixed form versions", () => {
       registration("REG-BBBB2222", [{ id: "m2", first: "Bo", last: "Brown", responses: { church_role: "Secret" } }], {}, otherDefinition),
     ], "church_role");
     expect(rows.slice(1)).toEqual([
-      ["REG-AAAA1111", "Amy Adams", "Greeter"],
-      ["REG-BBBB2222", "Bo Brown", ""],
+      ["REG-AAAA1111", "Amy Adams", "Greeter", "Adult"],
+      ["REG-BBBB2222", "Bo Brown", "", "Adult"],
     ]);
   });
 });
@@ -261,7 +301,8 @@ describe("badge CSV route", () => {
       'attachment; filename="womens-retreat-2026-avery-94237.csv"',
     );
     const body = await response.text();
-    expect(body.startsWith('"ID","Name","Position"\r\n')).toBe(true);
+    expect(body.startsWith('"ID","Name","Position","Attendee type"\r\n')).toBe(true);
+    expect(body).toContain('"REG-AAAA1111","Amy Adams","","Adult"');
     expect(body).not.toContain("imsda-pass");
     expect(dependencies.writeAuditLog).toHaveBeenCalledTimes(1);
     const audit = dependencies.writeAuditLog.mock.calls[0][0];
@@ -271,7 +312,17 @@ describe("badge CSV route", () => {
 
   it("fills Position from an eligible chosen field", async () => {
     const body = await (await call("?positionField=church_role")).text();
-    expect(body).toContain('"REG-AAAA1111","Amy Adams","Greeter"');
+    expect(body).toContain('"REG-AAAA1111","Amy Adams","Greeter","Adult"');
+  });
+
+  it("follows the page's Show attendee type setting: type=0 empties the column, the last type value wins", async () => {
+    const off = await (await call("?type=0")).text();
+    expect(off.startsWith('"ID","Name","Position","Attendee type"\r\n')).toBe(true);
+    expect(off).toContain('"REG-AAAA1111","Amy Adams","",""');
+    expect(off).not.toContain("Adult");
+    // The page form sends a hidden type=0 followed by the checked box's type=1.
+    const on = await (await call("?type=0&type=1")).text();
+    expect(on).toContain('"REG-AAAA1111","Amy Adams","","Adult"');
   });
 
   it.each(["emergency_role", "medical_team_role", "guardian_title", "needs_detail", "no_such_field"])(

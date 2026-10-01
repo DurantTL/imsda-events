@@ -61,6 +61,15 @@ export const badgeTemplates: Record<BadgeTemplateId, {
   },
 };
 
+/**
+ * The printed page for every badge template. Avery sheets feed through the
+ * printer upright (8.5 x 11 in), so the paper is always portrait letter; the
+ * "orientation" option only turns the text inside each die-cut label. Zero
+ * page margin: the template's own margins are the sheet's padding, so the grid
+ * never depends on the browser's margin setting.
+ */
+export const badgePrintPageRule = "@page { size: letter portrait; margin: 0; }";
+
 export function normalizeBadgeOrientation(value: string | undefined): BadgeOrientation {
   return badgeOrientations.includes(value as BadgeOrientation)
     ? value as BadgeOrientation

@@ -6109,6 +6109,7 @@ select:focus-visible {
 .badge-print-page { padding-bottom: 34px; }
 .badge-print-intro { gap: 24px; }
 .badge-print-actions { flex: 0 0 auto; }
+.badge-print-page .badge-print-tip { flex: 1 0 100%; max-width: none; margin: 0; }
 .badge-print-controls {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(150px, 0.45fr) auto;
@@ -6497,7 +6498,7 @@ select:focus-visible {
   .badge-print-controls,
   .badge-print-summary,
   .report-safety-note { display: none !important; }
-  .workspace { margin: 0; padding: 0; }
+  .workspace { min-height: 0; margin: 0; padding: 0; }
   .workspace-content { max-width: none; }
   .reports-workspace { gap: 12px; padding: 0; }
   .report-page-intro { display: block; }
@@ -6564,14 +6565,29 @@ select:focus-visible {
   .printable-pass-card dt { font-size: 5pt; }
   .printable-pass-card dd { font-size: 7pt; }
   .printable-pass-card > p { border-color: #aaa; color: #111; padding: 5px 7px; font-size: 6pt; }
-  .badge-print-page { display: block; padding: 0; }
-  .badge-sheet-stack { display: block; overflow: visible; padding: 0; }
+  /* Name badges (#717): the paper carries label sheets and nothing else.
+     Every sheet is a full 8.5 x 11 in page that starts at the very top of the
+     paper (@page margin is 0; the template's own margins are the sheet's
+     padding), so one extra line of chrome ahead of sheet 1 would push every
+     label off the Avery die-cuts and spill each sheet onto the next page. */
+  .skip-link,
+  .act-as-banner,
+  .event-auto-select-notice,
+  .badge-print-page > :not(.badge-sheet-stack) { display: none !important; }
+  .app-shell,
+  body { min-height: 0; }
+  .badge-print-page { display: block; margin: 0; padding: 0; }
+  .badge-sheet-stack { display: block; margin: 0; overflow: visible; padding: 0; gap: 0; }
   .badge-sheet {
+    margin: 0;
     break-after: page;
+    break-inside: avoid;
+    page-break-after: always;
+    page-break-inside: avoid;
     border: 0;
     box-shadow: none;
   }
-  .badge-sheet:last-child { break-after: auto; }
+  .badge-sheet:last-child { break-after: auto; page-break-after: auto; }
   .badge-label-card {
     border: 0;
     print-color-adjust: exact;
@@ -8622,3 +8638,30 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   .org-status-button { min-height: 44px; }
   table.table-cards-wide.table-cards-wide > tbody > tr > td[colspan] { padding-left: 0; }
 }
+
+/* #718: the "Age on event date" field inside a roster person's card. It sits
+   inside the card's padding and is a real, visible 44px input; the generic
+   .club-going-list label/input/small rules (full-width, 20px, flush) are
+   overridden here on purpose. */
+.club-going-list .club-roster-age { display: grid; gap: 8px; padding: 0 14px 14px 48px; }
+.club-going-list .club-roster-age label { width: auto; padding: 0; cursor: default; }
+.club-going-list .club-roster-age .club-roster-age-label { color: var(--ink) !important; font-weight: 700 !important; }
+.club-going-list .club-roster-age label.checkbox-label { cursor: pointer; align-items: center; min-height: 44px; }
+.club-going-list .club-roster-age-control { display: flex; align-items: center; gap: 8px; }
+.club-going-list .club-roster-age-input {
+  box-sizing: border-box; width: 6rem; min-height: 44px; flex: none;
+  border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; color: var(--ink);
+  padding: 8px 10px; font-size: 1rem;
+}
+.club-going-list .club-roster-age-input:focus-visible { border-color: var(--imsda-purple); }
+.club-going-list .club-roster-age-input[aria-invalid="true"] { border-color: var(--coral); }
+.club-going-list .club-roster-age-control span { color: var(--muted); font-size: var(--text-helper-min); }
+.club-going-list .club-roster-age .field-help { margin: 0; }
+.club-going-list .club-roster-age .inline-notice { margin: 0; }
+.club-going-list .club-roster-age .checkbox-label input { width: 22px; height: 22px; }
+@media (max-width: 640px) {
+  .club-going-list .club-roster-age { padding-left: 14px; }
+}
+.club-age-summary { margin: 8px 0; }
+/* The roster link is part of the help sentence, so it stays inline with the full stop after it. */
+:root .club-going-list .club-roster-age .field-help a { display: inline; min-height: 0; padding-inline: 0; text-decoration: underline; }
