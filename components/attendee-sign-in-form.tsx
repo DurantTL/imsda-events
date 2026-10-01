@@ -92,7 +92,7 @@ export function AttendeeSignInForm({ next }: { next?: string }) {
       </button>
       <div className="auth-alternate">
         <strong>New to IMSDA Events?</strong>
-        <span>Invited to help run a club, or registering for the first time? Create your account with your email address.</span>
+        <span>Want one place to manage future registrations? Create an optional account — registration itself never requires one.</span>
         <Link className="secondary-button full-button" href="/account/sign-up">
           <UserPlus aria-hidden="true" size={17} /> Create an account
         </Link>

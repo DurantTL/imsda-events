@@ -33,7 +33,7 @@ export function RosterUnlockForm({ label = "Open roster" }: { label?: string }) 
   return (
     <form className="roster-unlock-form" onSubmit={submit}>
       <label>
-        <span className="sr-only">Authenticator code</span>
+        <span className="roster-unlock-label">Authenticator code</span>
         <input
           autoComplete="one-time-code"
           inputMode="numeric"

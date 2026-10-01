@@ -3,6 +3,7 @@ import {
   badgeTemplates,
   buildBadgeLabels,
   normalizeBadgeOrientation,
+  normalizeBadgeShowAttendeeType,
   normalizeBadgeShowTitle,
   normalizeBadgeTextSize,
   normalizeBadgeStartingPosition,
@@ -17,6 +18,7 @@ function label(index: number): BadgeLabel {
   return {
     attendeeId: `attendee-${index}`,
     attendeeType: "Adult",
+    attendeeTypeLabel: "Adult",
     confirmationCode: `REG-${index}`,
     firstName: `First ${index}`,
     lastName: `Last ${index}`,
@@ -139,5 +141,146 @@ describe("printable badge labels", () => {
       shirtSize: "Adult M",
       shirtSizeConfirmed: true,
     });
+  });
+});
+
+describe("badge attendee-type line", () => {
+  const typeField = {
+    id: "field_attendee_type",
+    key: "attendee_type",
+    label: "Attendee type",
+    helpText: "",
+    type: "SELECT",
+    scope: "ATTENDEE",
+    required: true,
+    options: ["adult", "teen"],
+    optionLabels: { adult: "Adult", teen: "Teen" },
+  };
+  const configured = [{
+    id: "t1", code: "YOUTH", label: "Youth", description: "", sortOrder: 0,
+    isActive: true, minimumAge: null, maximumAge: null,
+  }];
+  const build = (
+    attendee: Record<string, unknown>,
+    fields: unknown[],
+    attendeeTypeOptions: unknown[] = [],
+  ) => buildBadgeLabels([{
+    id: "registration-1",
+    confirmationCode: "REG-T",
+    status: "SUBMITTED",
+    accountHolder: { firstName: "Account", lastName: "Holder" },
+    attendees: [{
+      id: "attendee-1",
+      firstName: "Sam",
+      lastName: "Sample",
+      attendeeType: "CHILD",
+      position: 0,
+      responses: {},
+      ...attendee,
+    }],
+    publicSubmission: {
+      definition: {
+        title: "Synthetic Form",
+        description: "",
+        confirmationMessage: "Thanks",
+        sections: [{ id: "sec_one", title: "Section", description: "", fields }],
+      },
+      responses: {},
+      attendeeResponses: [{}],
+      attendeeTypeOptions,
+    },
+  }] as unknown as RegistrationRecord[])[0];
+
+  it("normalizes the show-attendee-type option", () => {
+    expect(normalizeBadgeShowAttendeeType(undefined)).toBe(true);
+    expect(normalizeBadgeShowAttendeeType("1")).toBe(true);
+    expect(normalizeBadgeShowAttendeeType("0")).toBe(false);
+    expect(normalizeBadgeShowAttendeeType(["0", "1"])).toBe(true);
+  });
+
+  it("uses the option label of the attendee's own answer, not the stored value or system type", () => {
+    expect(build({ responses: { attendee_type: "teen" } }, [typeField]).attendeeTypeLabel)
+      .toBe("Teen");
+  });
+
+  it("ignores an attendee_type field that is not an attendee-scope choice", () => {
+    const registrationScoped = { ...typeField, scope: "REGISTRATION" };
+    const textField = { ...typeField, type: "TEXT", options: [], optionLabels: undefined };
+    for (const field of [registrationScoped, textField]) {
+      expect(build(
+        { responses: { attendee_type: "teen" }, attendeeTypeDefinitionCode: "YOUTH" },
+        [field],
+        configured,
+      ).attendeeTypeLabel).toBe("Youth");
+    }
+  });
+
+  it("falls back to the event's configured type label, then the system label", () => {
+    expect(build(
+      { attendeeTypeDefinitionCode: "YOUTH" },
+      [typeField],
+      configured,
+    ).attendeeTypeLabel).toBe("Youth");
+    expect(build({}, [typeField]).attendeeTypeLabel).toBe("Child");
+    expect(build({ attendeeType: "WORKER" }, []).attendeeTypeLabel).toBe("Worker");
+  });
+
+  it("falls back when the answer is not one of the form's options", () => {
+    expect(build(
+      { responses: { attendee_type: "legacy_code" }, attendeeTypeDefinitionCode: "YOUTH" },
+      [typeField],
+      configured,
+    ).attendeeTypeLabel).toBe("Youth");
+    expect(build({ responses: { attendee_type: "legacy_code" } }, [typeField]).attendeeTypeLabel)
+      .toBe("Child");
+  });
+
+  it("maps a code from an ATTENDEE_TYPES-sourced field to its configured label, including a deactivated type", () => {
+    const sourced = { ...typeField, options: [], optionLabels: undefined, optionSource: "ATTENDEE_TYPES" };
+    const types = [
+      { ...configured[0], code: "YOUTH", label: "Youth" },
+      { ...configured[0], id: "t2", code: "RETIRED", label: "Retired Guest", isActive: false },
+    ];
+    expect(build({ responses: { attendee_type: "YOUTH" } }, [sourced], types).attendeeTypeLabel)
+      .toBe("Youth");
+    expect(build({ responses: { attendee_type: "RETIRED" } }, [sourced], types).attendeeTypeLabel)
+      .toBe("Retired Guest");
+    expect(build({ responses: { attendee_type: "UNKNOWN" } }, [sourced], types).attendeeTypeLabel)
+      .toBe("Child");
+  });
+
+  it("resolves each registration against its own form version", () => {
+    const registrationWith = (id: string, labels: Record<string, string>) => ({
+      id,
+      confirmationCode: id,
+      status: "SUBMITTED",
+      accountHolder: { firstName: "Account", lastName: "Holder" },
+      attendees: [{
+        id: `attendee-${id}`,
+        firstName: "Sam",
+        lastName: id,
+        attendeeType: "CHILD",
+        position: 0,
+        responses: { attendee_type: "teen" },
+      }],
+      publicSubmission: {
+        definition: {
+          title: "Synthetic Form",
+          description: "",
+          confirmationMessage: "Thanks",
+          sections: [{ id: "sec_one", title: "Section", description: "", fields: [
+            { ...typeField, optionLabels: labels },
+          ] }],
+        },
+        responses: {},
+        attendeeResponses: [{}],
+        attendeeTypeOptions: [],
+      },
+    });
+    const labels = buildBadgeLabels([
+      registrationWith("REG-A", { teen: "Teen" }),
+      registrationWith("REG-B", { teen: "Youth Teen" }),
+    ] as unknown as RegistrationRecord[]);
+    expect(labels.map((entry) => entry.attendeeTypeLabel)).toEqual(["Teen", "Youth Teen"]);
   });
 });

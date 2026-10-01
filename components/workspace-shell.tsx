@@ -41,7 +41,7 @@ export async function WorkspaceShell({ anyStaffWithoutEvents = false, children }
 
   return (
     <Suspense fallback={<div className="shell-loading">Loading IMSDA Events…</div>}>
-      <ActAsBanner acting={acting} />
+      <ActAsBanner acting={acting} inShell />
       <AppShell
         attendeeAccountAvailable={attendeeAccountAvailable}
         autoSelected={autoSelected}

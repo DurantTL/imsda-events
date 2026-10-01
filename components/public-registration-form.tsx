@@ -2904,7 +2904,7 @@ export function PublicRegistrationForm({
           {currentStep.isReview && (
             <section className="public-registration-submit-card">
               <div><ShieldCheck size={21} aria-hidden="true" /><span><strong>Server-verified registration</strong><small>Pricing and remaining capacity are checked again when you submit.</small></span></div>
-              {cardSelected && !joiningWaitlist && !deferredOrganizationBilling && <p>Submitting saves the registration first. Your private registration page will then offer secure Square checkout when Sandbox or Production payments are configured.</p>}
+              {cardSelected && !joiningWaitlist && !deferredOrganizationBilling && <p>Submitting saves the registration first. Your private registration page will then offer secure Square checkout when online payments are configured.</p>}
               <button type="submit" disabled={submitting}>
                 <ClipboardCheck size={19} aria-hidden="true" /> {submitting ? "Submitting…" : club?.submitLabel ?? (joiningWaitlist ? "Join waitlist" : "Submit registration")}
               </button>
