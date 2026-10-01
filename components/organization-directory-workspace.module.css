@@ -48,19 +48,19 @@
 
 .organizationHeading strong {
   color: var(--ink);
-  font-size: 0.74rem;
+  font-size: max(var(--type-floor, 0px), 0.74rem);
 }
 
 .organizationHeading small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 0.58rem;
+  font-size: max(var(--type-floor, 0px), 0.58rem);
 }
 
 .organizationHeading em {
   border-radius: 999px;
   padding: 4px 7px;
-  font-size: 0.52rem;
+  font-size: max(var(--type-floor, 0px), 0.52rem);
   font-style: normal;
   font-weight: 800;
 }
@@ -118,13 +118,13 @@
 
 .identities strong {
   color: var(--imsda-navy);
-  font-size: 0.57rem;
+  font-size: max(var(--type-floor, 0px), 0.57rem);
 }
 
 .identities small,
 .identities p {
   color: var(--muted);
-  font-size: 0.52rem;
+  font-size: max(var(--type-floor, 0px), 0.52rem);
 }
 
 .identities p {
@@ -145,14 +145,14 @@
   gap: 4px;
   margin: 0;
   padding-left: 18px;
-  font-size: 0.72rem;
+  font-size: max(var(--type-floor, 0px), 0.72rem);
   line-height: 1.5;
 }
 
 .formHelp {
   margin: -2px 0 0;
   color: var(--muted);
-  font-size: 0.64rem;
+  font-size: max(var(--type-body-floor, 0px), 0.64rem);
   line-height: 1.55;
 }
 

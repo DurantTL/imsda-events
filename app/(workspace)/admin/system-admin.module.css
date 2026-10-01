@@ -29,7 +29,7 @@
   max-width: 760px;
   margin: 0;
   color: #d6e5ec;
-  font-size: 0.78rem;
+  font-size: max(var(--type-body-floor, 0px), 0.78rem);
   line-height: 1.65;
 }
 
@@ -53,7 +53,7 @@
   background: rgba(255, 255, 255, 0.1);
   padding: 6px 10px;
   color: white;
-  font-size: 0.62rem;
+  font-size: max(var(--type-floor, 0px), 0.62rem);
   font-weight: 800;
 }
 
@@ -128,13 +128,13 @@
 
 .metrics p {
   color: var(--ink);
-  font-size: 0.66rem;
+  font-size: max(var(--type-body-floor, 0px), 0.66rem);
   font-weight: 800;
 }
 
 .metrics small {
   color: var(--muted);
-  font-size: 0.57rem;
+  font-size: max(var(--type-floor, 0px), 0.57rem);
   line-height: 1.4;
 }
 
@@ -180,7 +180,7 @@
 .sectionHeading p:not(:global(.eyebrow)) {
   margin: 5px 0 0;
   color: var(--muted);
-  font-size: 0.65rem;
+  font-size: max(var(--type-body-floor, 0px), 0.65rem);
   line-height: 1.55;
 }
 
@@ -189,7 +189,7 @@
   background: var(--imsda-navy-soft);
   color: var(--imsda-navy);
   padding: 5px 9px;
-  font-size: 0.58rem;
+  font-size: max(var(--type-floor, 0px), 0.58rem);
   font-weight: 800;
 }
 
@@ -231,7 +231,7 @@
 .eventTitle p {
   margin: 0;
   color: var(--muted);
-  font-size: 0.61rem;
+  font-size: max(var(--type-body-floor, 0px), 0.61rem);
 }
 
 .phase {
@@ -239,7 +239,7 @@
   background: var(--imsda-purple-soft);
   color: var(--imsda-purple);
   padding: 4px 8px;
-  font-size: 0.54rem;
+  font-size: max(var(--type-floor, 0px), 0.54rem);
   font-style: normal;
   font-weight: 800;
 }
@@ -255,7 +255,7 @@
   flex: 0 0 auto;
   gap: 5px;
   color: var(--imsda-navy);
-  font-size: 0.62rem;
+  font-size: max(var(--type-floor, 0px), 0.62rem);
   font-weight: 900;
   text-decoration: none;
 }
@@ -288,7 +288,7 @@
 .eventStats small {
   margin-top: 2px;
   color: var(--muted);
-  font-size: 0.52rem;
+  font-size: max(var(--type-floor, 0px), 0.52rem);
 }
 
 .eventFooter {
@@ -305,7 +305,7 @@
 
 .eventWarnings span {
   color: #7b5610;
-  font-size: 0.55rem;
+  font-size: max(var(--type-floor, 0px), 0.55rem);
   font-weight: 700;
 }
 
@@ -319,7 +319,7 @@
 
 .eventLinks a {
   color: var(--imsda-navy);
-  font-size: 0.55rem;
+  font-size: max(var(--type-body-floor, 0px), 0.55rem);
   font-weight: 800;
   text-decoration: none;
 }
@@ -360,7 +360,7 @@
 
 .moduleList strong {
   color: var(--ink);
-  font-size: 0.65rem;
+  font-size: max(var(--type-floor, 0px), 0.65rem);
 }
 
 .moduleList strong a {
@@ -377,14 +377,14 @@
 .moduleList small {
   margin-top: 3px;
   color: var(--muted);
-  font-size: 0.54rem;
+  font-size: max(var(--type-floor, 0px), 0.54rem);
   line-height: 1.45;
 }
 
 .moduleList em {
   border-radius: 999px;
   padding: 4px 7px;
-  font-size: 0.5rem;
+  font-size: max(var(--type-floor, 0px), 0.5rem);
   font-style: normal;
   font-weight: 900;
   white-space: nowrap;
@@ -414,14 +414,14 @@
   margin: 6px 0 0;
   padding-left: 16px;
   color: var(--coral);
-  font-size: 0.54rem;
+  font-size: max(var(--type-floor, 0px), 0.54rem);
   line-height: 1.5;
 }
 
 .countdown {
   margin-left: 6px;
   color: var(--muted);
-  font-size: 0.54rem;
+  font-size: max(var(--type-floor, 0px), 0.54rem);
   font-weight: 800;
 }
 
@@ -430,7 +430,7 @@
   align-items: center;
   gap: 6px;
   color: #7b5610;
-  font-size: 0.55rem;
+  font-size: max(var(--type-body-floor, 0px), 0.55rem);
   font-weight: 700;
   text-decoration: underline;
   text-decoration-color: rgba(123, 86, 16, 0.35);
@@ -463,7 +463,7 @@
 .scope p {
   margin: 3px 0 0;
   color: var(--muted);
-  font-size: 0.58rem;
+  font-size: max(var(--type-body-floor, 0px), 0.58rem);
   line-height: 1.5;
 }
 
@@ -476,7 +476,7 @@
 .pastEvents summary {
   cursor: pointer;
   color: var(--imsda-navy);
-  font-size: 0.62rem;
+  font-size: max(var(--type-body-floor, 0px), 0.62rem);
   font-weight: 800;
 }
 
@@ -503,7 +503,7 @@
 .pastEvents strong,
 .pastEvents small {
   display: block;
-  font-size: 0.58rem;
+  font-size: max(var(--type-floor, 0px), 0.58rem);
 }
 
 .pastEvents small {
@@ -523,7 +523,7 @@
 .emptyState p {
   margin: 0;
   color: var(--muted);
-  font-size: 0.62rem;
+  font-size: max(var(--type-body-floor, 0px), 0.62rem);
 }
 
 @media (max-width: 1080px) {

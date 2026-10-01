@@ -5,13 +5,13 @@
 .row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
 .text { display: grid; flex: 1 1 200px; gap: 2px; min-width: 0; }
 .text strong { color: var(--imsda-navy); font-size: .76rem; overflow-wrap: anywhere; }
-.text small { color: var(--muted); font-size: .63rem; }
+.text small { color: var(--muted); font-size: max(var(--type-floor, 0px), .63rem); }
 .numbers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); flex: 1 1 260px; gap: 6px; margin: 0; }
 .numbers div { display: grid; gap: 2px; min-width: 0; }
-.numbers dt { color: var(--muted); font-size: .58rem; }
-.numbers dd { display: flex; align-items: center; min-height: 44px; margin: 0; font-size: .8rem; }
+.numbers dt { color: var(--muted); font-size: max(var(--type-body-floor, 0px), .58rem); }
+.numbers dd { display: flex; align-items: center; min-height: 44px; margin: 0; font-size: max(var(--type-body-floor, 0px), .8rem); }
 .number { width: 100%; min-width: 0; min-height: 44px; border: 1px solid #cbdbe2; border-radius: 8px; background: #fff; padding: 8px; font-size: 16px; text-align: right; }
-.flag { display: flex; align-items: flex-start; gap: 6px; margin: 0; border: 1px solid var(--coral); border-radius: 10px; padding: 8px 10px; color: var(--coral); font-size: .66rem; line-height: 1.5; }
+.flag { display: flex; align-items: flex-start; gap: 6px; margin: 0; border: 1px solid var(--coral); border-radius: 10px; padding: 8px 10px; color: var(--coral); font-size: max(var(--type-floor, 0px), .66rem); line-height: 1.5; }
 .flag svg { flex: 0 0 auto; margin-top: 3px; }
 .flagInline { display: inline-flex; align-items: center; gap: 4px; color: var(--coral); }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -19,35 +19,35 @@
 .group { display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
 .groupHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .people { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
-.check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: .74rem; }
+.check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: max(var(--type-floor, 0px), .74rem); }
 .check input { width: 22px; height: 22px; flex: 0 0 auto; }
-.muted { color: var(--muted); font-size: .63rem; }
+.muted { color: var(--muted); font-size: max(var(--type-floor, 0px), .63rem); }
 .prompt { border: 1px solid var(--line); border-radius: 12px; background: #f6fafb; padding: 11px 12px; }
 .prompt h3 { display: flex; align-items: center; gap: 6px; }
-.promptCopy { margin: 0; color: var(--muted); font-size: .68rem; line-height: 1.5; }
-.dateSelect { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: .68rem; }
+.promptCopy { margin: 0; color: var(--muted); font-size: max(var(--type-body-floor, 0px), .68rem); line-height: 1.5; }
+.dateSelect { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: max(var(--type-body-floor, 0px), .68rem); }
 .dateSelect :global(.secondary-button) { min-height: 44px; }
 .date { min-height: 44px; min-width: 0; max-width: 100%; border: 1px solid #cbdbe2; border-radius: 8px; background: #fff; padding: 6px 8px; font-size: 16px; }
 .actions :global(.text-button) { min-height: 44px; min-width: 44px; padding-inline: 10px; }
 
 /* Uniforms (#497): item and size pickers, chosen-item chips. */
 .pickerRow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 10px; }
-.pickerField { display: grid; flex: 1 1 200px; gap: 4px; min-width: 0; font-size: .68rem; }
+.pickerField { display: grid; flex: 1 1 200px; gap: 4px; min-width: 0; font-size: max(var(--type-body-floor, 0px), .68rem); }
 .select { width: 100%; min-width: 0; min-height: 44px; border: 1px solid #cbdbe2; border-radius: 8px; background: #fff; padding: 8px; font-size: 16px; }
 .pickerRow :global(.secondary-button) { min-height: 44px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.chips li { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 4px 2px 12px; font-size: .72rem; }
+.chips li { display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 4px 2px 12px; font-size: max(var(--type-body-floor, 0px), .72rem); }
 .chipRemove { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border: 0; background: none; color: var(--muted); cursor: pointer; }
-.rowStatic { display: flex; align-items: center; min-height: 44px; padding-left: 32px; font-size: .74rem; }
+.rowStatic { display: flex; align-items: center; min-height: 44px; padding-left: 32px; font-size: max(var(--type-floor, 0px), .74rem); }
 
 /* Order helper list, printable page (#654). */
 .printHeader { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 16px; margin: 0; }
 .printHeader div { display: grid; gap: 2px; min-width: 0; }
-.printHeader dt { color: var(--muted); font-size: .63rem; }
-.printHeader dd { margin: 0; font-size: .78rem; overflow-wrap: anywhere; }
+.printHeader dt { color: var(--muted); font-size: max(var(--type-body-floor, 0px), .63rem); }
+.printHeader dd { margin: 0; font-size: max(var(--type-body-floor, 0px), .78rem); overflow-wrap: anywhere; }
 .printSection { display: grid; gap: 6px; margin-top: 14px; break-inside: avoid; }
 .printSection h3 { margin: 0; color: var(--imsda-navy); font-size: .86rem; }
-.printTable { width: 100%; border-collapse: collapse; font-size: .74rem; }
+.printTable { width: 100%; border-collapse: collapse; font-size: max(var(--type-floor, 0px), .74rem); }
 .printTable th, .printTable td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; overflow-wrap: anywhere; }
 .noPrint { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 @media print { .noPrint { display: none !important; } }
