@@ -59,7 +59,7 @@ describe("staff page names (#685)", () => {
       clubReports: "more/reports/clubs", groupedPackets: "more/reports/packets", operationalReports: "more/reports",
       clubMonthlyReport: "more/clubs/reports/[organizationId]/[month]", clubMonthlyReports: "more/clubs/reports",
       clubs: "more/clubs", club: "more/clubs/[organizationId]", clubForm: "more/club-forms/[submissionId]",
-      clubForms: "more/club-forms", clubAssignments: "more/club-assignments", eventContent: "more/event-content",
+      clubForms: "more/club-forms", eventHealth: "more/event-health", clubAssignments: "more/club-assignments", eventContent: "more/event-content",
       eventPatches: "more/event-patches", operationalHealth: "more/health", merchandise: "more/merchandise",
       assignmentRoster: "more/program-assignments/[runId]", programAssignments: "more/program-assignments",
     };

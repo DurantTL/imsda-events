@@ -113,6 +113,7 @@ export const staffPageTitles = {
   club: "Club",
   clubForm: "Club form",
   clubForms: "Club forms",
+  eventHealth: "Event health information",
   clubAssignments: "Club assignments",
   eventContent: "Public content",
   eventPatches: "Event patches",
@@ -144,6 +145,7 @@ const subpageRules: readonly SubpageRule[] = [
   ["/more/club-forms/", "under", staffPageTitles.clubForm],
   ["/more/club-forms", "exact", staffPageTitles.clubForms],
   ["/more/club-assignments", "prefix", staffPageTitles.clubAssignments],
+  ["/more/event-health", "prefix", staffPageTitles.eventHealth],
   ["/more/event-content", "prefix", staffPageTitles.eventContent],
   ["/more/event-patches", "prefix", staffPageTitles.eventPatches],
   ["/more/health", "prefix", staffPageTitles.operationalHealth],
@@ -371,6 +373,8 @@ export function buildMoreDirectoryCards({
     { key: "event-patches", group: "setup", allowed: clubEvent && has("CONFIGURE_EVENT"), href: `/more/event-patches${eventQuery}`, icon: Trophy, title: "Event patches", description: "Link the patch or pin a club event gives, so directors are suggested it for every member who attended.", cta: "Link patches" },
     // Club forms (#610) belong to no event: system administrators and Event Admins of a current event only.
     { key: "club-forms", group: "people-access", allowed: clubFormsAccess, href: `/more/club-forms${eventQuery}`, icon: FileText, title: "Club forms", description: "Membership applications, staff service forms, permission slips, and passenger lists clubs have filled in.", cta: "Open club forms" },
+    // Health information for club events (#658): system administrators, plus staff a system administrator gave VIEW_HEALTH_INFORMATION. No role carries it.
+    { key: "event-health", group: "people-access", allowed: clubEvent && has("VIEW_HEALTH_INFORMATION"), href: `/more/event-health${eventQuery}`, icon: HeartPulse, title: "Event health information", description: "Dietary notes as entered, the medical-need flag, and emergency contacts for this club event, with a printable confidential sheet.", cta: "Open health information" },
     { key: "imports", group: "people-access", allowed: has("MANAGE_IMPORTS"), href: `/imports${eventQuery}`, icon: FileUp, title: "Import registrations", description: "Preview a CSV, review every change, then import approved records.", cta: "Open imports" },
     { key: "reports", group: "reports", allowed: has("VIEW_REPORTS"), href: `/more/reports${eventQuery}`, icon: ChartNoAxesCombined, title: "Operational reports", description: "Print active attendee rosters and review meal, housing, and ranked seminar totals.", cta: "Open reports" },
     { key: "health", group: "reports", allowed: canAccessOperationalHealth(permissions), href: `/more/health${eventQuery}`, icon: HeartPulse, title: "Operational health", description: "Review failed or delayed work, open balances, import exceptions, and capacity warnings.", cta: "Review exceptions" },

@@ -9,11 +9,12 @@ import { calendarDateIn } from "@/modules/calendar/domain";
 
 export type AreaCardLink = { href: string; label: string };
 
-/** Quick links on the card. Add the health view here when #658 lands. */
+/** Quick links on the card. The health view (#658) is gated again on its own page. */
 export function areaCardLinks(): AreaCardLink[] {
   return [
     { href: "/account/area-clubs/overview", label: "Clubs overview" },
     { href: "/account/area-clubs/events", label: "Club event registrations" },
+    { href: "/account/area/health", label: "Event health information" },
   ];
 }
 

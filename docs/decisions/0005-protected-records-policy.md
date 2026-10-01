@@ -377,3 +377,95 @@ birth dates need their own protection.
 - `SECRET_ENCRYPTION_KEY` becomes irreplaceable data, not just configuration.
 - The same sealing pattern is the model for the protected records in the rest of
   this ADR, without approving them.
+
+---
+
+## Addendum C: Coordinator health view for club events
+
+Status: **Proposed.** Not Accepted. It records a narrow exception the
+Communication Director approved for GitHub issue #658 (decision of 2026-09-30,
+confirmed 2026-10-01 on #658 and #510), and the access rules set on 2026-10-01.
+It does not approve the encrypted Health record (#611), medications,
+insurance, or any new collection of medical data. The rest of this ADR is
+unchanged.
+
+### Exception
+
+Section 3 above says "can see the roster" must not imply "can see medical
+notes", and #611 says Area Coordinators never see health records. This
+addendum makes one narrow exception to both, for one read-only view over data
+that already exists. It does not change what Area Coordinators see in club
+forms, which stay `Restricted` to them.
+
+### What is shown
+
+For attendees of **club events** only:
+
+- the club registration's `dietary_needs` answer, labelled "Dietary
+  restrictions / allergies (as entered)". It is free text and is not an allergy
+  record;
+- the yes/no `medical_or_accessibility_need` flag;
+- emergency contacts from two club forms: the Off-Premises Permission Slip's
+  `emergency_contact_phone` (a phone number only; the form has no name or
+  relationship), and the Transportation Passenger List's
+  `passenger_N_emergency_contact` (free text). Each shows its form and date;
+- **medications** show "Not collected". The encrypted Health record (#611) will
+  add them.
+
+Nothing else is read. Physician and clinic fields are never opened, and no
+other registration answer is shown.
+
+A slip is linked to an attendee through the club's roster member and the club
+year that covers the event dates. A passenger list has no roster link, so it is
+matched by exact name within the same club, and the sheet says "matched by
+name".
+
+### Who can see it
+
+| Who | Access |
+| --- | --- |
+| System administrators | Automatic |
+| Active Area Coordinators, signed in with the second step passed | Automatic, every club |
+| A user holding `VIEW_HEALTH_INFORMATION` on the event | Only that event; granted by a system administrator |
+| A club's own director or deputy | Their own club's attendees only, past the roster's second step |
+| Event Admins | **No**, unless they also hold the new permission |
+| Registration, Finance and Check-in staff, and any other `VIEW_SENSITIVE_DATA` holder | **No**, unless they also hold the new permission |
+| Club registrars and reporters, other clubs' directors, anyone signed out | No |
+
+`VIEW_HEALTH_INFORMATION` belongs to no role. Only a system administrator
+grants or removes it, one event membership at a time, and each grant and
+removal is audited. The staff page shows the control to system administrators
+only.
+
+### Rules
+
+- **Window.** Open from registration until 30 days after the event's last day
+  (event time zone, inclusive), then closed for everyone, system
+  administrators included, for the view and for the printable sheet. This is
+  this view's own rule; the club forms "has not ended" rule is unchanged.
+- **MFA.** Staff sessions already require two-step sign-in (decision of
+  2026-09-25). Area Coordinators and club leaders pass the same second step the
+  portal and roster already require, checked on the server in the page or
+  route, not in a layout.
+- **Audit.** Every view (`COORDINATOR_HEALTH_VIEWED`) and every printed sheet
+  (`COORDINATOR_HEALTH_EXPORTED`) is audited first: who, event, club if
+  narrowed, counts. No health text and no names are in the audit row. If the
+  audit write fails nothing is returned.
+- **Printable sheet.** Marked confidential. There is no CSV, no download file,
+  and no API route returning the data.
+- **No new store.** No table, column or migration holds medical data. The only
+  schema change is the new permission value. Sealed values are opened with
+  `openSecret` through `modules/club-forms/sealed-answers.ts` and not kept.
+- **No caching or indexing.** Pages are dynamic, `noindex` and `nocache`, and
+  nothing is written to logs, drafts or the client.
+- **Emergency contacts are not encrypted by decision** (#510, 2026-10-01).
+  The existing sealed club-form answers stay sealed.
+- **Key backup** is recorded as done (#658, 2026-10-01).
+
+### Gaps this does not close
+
+- Medications and structured allergies are not collected for club events.
+  Collecting them is #611.
+- Emergency contact name and relationship are missing from the permission slip.
+- The 30-day window and the exception need the same owner sign-off as the rest
+  of this ADR before it moves from Proposed to Accepted.
