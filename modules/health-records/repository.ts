@@ -351,19 +351,36 @@ export async function healthSummariesForMembers(
 }
 
 /**
- * The plain "has a health note" marker for a club's roster rows (#611), for any
- * viewer who can already see those rows, including one with no health access.
- * One boolean per member and nothing else: no status, no text, no decryption.
- * The caller must already hold roster access for `organizationId`; with the
- * feature off it returns nothing.
+ * The plain "a health record exists" marker for a club's roster rows (#611),
+ * for any viewer who can already see those rows, including one with no health
+ * access. One boolean per member and nothing else: not whether it holds a
+ * clinical note, no status, no text, no decryption. A record is found by
+ * person within the club, so one still attached to an earlier year's row
+ * counts. The caller must already hold roster access for `organizationId`;
+ * with the feature off it returns nothing.
  */
-export async function healthNoteFlagsForRoster(organizationId: string, memberIds: string[]): Promise<Record<string, boolean>> {
+export async function healthRecordFlagsForRoster(organizationId: string, memberIds: string[]): Promise<Record<string, boolean>> {
   if (!healthRecordsEnabled() || memberIds.length === 0) return {};
-  const records = await getPrisma().healthRecord.findMany({
-    where: { organizationId, rosterMemberId: { in: memberIds }, hasHealthNote: true },
-    select: { rosterMemberId: true },
+  const prisma = getPrisma();
+  const members = await prisma.clubRosterMember.findMany({
+    where: { id: { in: memberIds }, organizationId },
+    select: { id: true, personId: true },
   });
-  return Object.fromEntries(records.map((record) => [record.rosterMemberId, true]));
+  const personIds = members.flatMap((member) => (member.personId ? [member.personId] : []));
+  const records = await prisma.healthRecord.findMany({
+    where: {
+      organizationId,
+      OR: [{ rosterMemberId: { in: memberIds } }, ...(personIds.length > 0 ? [{ rosterMember: { personId: { in: personIds } } }] : [])],
+    },
+    select: { rosterMemberId: true, rosterMember: { select: { personId: true } } },
+  });
+  const rowsWithRecord = new Set(records.map((record) => record.rosterMemberId));
+  const peopleWithRecord = new Set(records.flatMap((record) => (record.rosterMember.personId ? [record.rosterMember.personId] : [])));
+  return Object.fromEntries(
+    members
+      .filter((member) => rowsWithRecord.has(member.id) || (member.personId !== null && peopleWithRecord.has(member.personId)))
+      .map((member) => [member.id, true]),
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { HealthRecordView, HealthStatusChip } from "@/components/health-record-view";
-import { requireAreaCoordinatorHealthViewer } from "@/modules/health-records/access";
+import { HealthStepUp } from "@/components/health-step-up";
+import { attendeeUnlockMethods, requireAreaCoordinatorHealthViewer } from "@/modules/health-records/access";
 import { HealthRecordError } from "@/modules/health-records/errors";
 import { healthRecordsEnabled } from "@/modules/health-records/flag";
 import { viewHealthRecord } from "@/modules/health-records/repository";
@@ -23,13 +24,13 @@ export default async function AreaCoordinatorHealthPage({
   if (!healthRecordsEnabled()) notFound();
   const { eventId, organizationId, memberId } = await params;
   const viewer = await requireAreaCoordinatorHealthViewer().catch((error: unknown) => {
-    if (error instanceof HealthRecordError && error.code === "FORBIDDEN") return error;
+    if (error instanceof HealthRecordError && error.code === "STEP_UP_REQUIRED") return error;
     if (error instanceof HealthRecordError) notFound();
     throw error;
   });
   // Second step too old: say so (it is the coordinator's own session, nothing about a record).
   if (viewer instanceof HealthRecordError) {
-    return <p className="public-manage-empty">{viewer.message} <a href="/account/two-step">Confirm now</a></p>;
+    return <HealthStepUp methods={await attendeeUnlockMethods()} />;
   }
   const health = await viewHealthRecord(viewer, organizationId, memberId, new Date(), { eventId }).catch((error: unknown) => {
     if (error instanceof HealthRecordError) notFound();

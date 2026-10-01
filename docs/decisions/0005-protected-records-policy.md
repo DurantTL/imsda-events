@@ -430,7 +430,8 @@ human can accept, change or reject them before any real record is stored.
    | Role | Health tab and record |
    | --- | --- |
    | That club's Director and Deputy (second step passed) | View and edit, own club only, all year; send and withdraw parent links |
-   | Club Registrar, Club Reporter | No |
+   | Club Registrar | No health access. Sees only a neutral "Has a health record" marker on the club roster page: the single fact that a record exists, not whether it holds a clinical note, not its status, never its text |
+   | Club Reporter | No |
    | Area Coordinator (verified second step) | **View only** the full record of a member registered for an event (submitted or confirmed registration by that club), from registration until 30 days after the event's last day; no roster browsing, no Health tab, no edit |
    | Staff holding `VIEW_HEALTH_INFORMATION` on an event membership | **View only**, and only for members registered for that event, inside the same window |
    | System administrators | View only, any member, all year (no event needed) |
@@ -470,9 +471,12 @@ human can accept, change or reject them before any real record is stored.
    refused (as an ordinary unusable link) when there is none. A coordinator
    must also have passed the second sign-in step within the last 12 hours, the
    same as a director opening a roster.
-   **Health note marker (deferred in part):** anyone who can see a club's roster
-   rows sees a neutral "Has a health note" marker on the club roster page, with
-   no text and no status. Showing it on other screens (the staff "Open club"
+   **Record-exists marker (deferred in part):** anyone who can see a club's
+   roster rows, a registrar included, sees a neutral "Has a health record"
+   marker on the club roster page. It is a single boolean meaning only that a
+   record exists (found by person within the club, so a record still on an
+   earlier year's row counts); it does not say whether the record holds a
+   clinical note, and carries no status and no text. Showing it on other screens (the staff "Open club"
    view, event rosters, the check-in book) is deferred and needs a decision.
 9. **Feature switch.** With `HEALTH_RECORDS_ENABLED` off there are no health
    routes (every one answers 404), no Health tab, no page, and nothing is

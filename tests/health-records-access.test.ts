@@ -152,11 +152,11 @@ describe("health access: Area Coordinator", () => {
   it("asks a coordinator whose second step is older than 12 hours, or missing, to confirm again", async () => {
     state.coordinator.mockResolvedValue({ id: "acct-coord" });
     state.sessionFind.mockResolvedValue({ secondFactorVerifiedAt: new Date(now.getTime() - 13 * 3_600_000) });
-    await expect(requireAreaCoordinatorHealthViewer(now)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(requireAreaCoordinatorHealthViewer(now)).rejects.toMatchObject({ code: "STEP_UP_REQUIRED" });
     state.sessionFind.mockResolvedValue({ secondFactorVerifiedAt: null });
-    await expect(requireAreaCoordinatorHealthViewer(now)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(requireAreaCoordinatorHealthViewer(now)).rejects.toMatchObject({ code: "STEP_UP_REQUIRED" });
     state.attendee.mockResolvedValue({ via: "staff", sessionId: null });
-    await expect(requireAreaCoordinatorHealthViewer(now)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(requireAreaCoordinatorHealthViewer(now)).rejects.toMatchObject({ code: "STEP_UP_REQUIRED" });
   });
 
   it("refuses everyone else, including a coordinator without a verified MFA session, as not found", async () => {

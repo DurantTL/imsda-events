@@ -7,6 +7,7 @@ export type HealthRecordErrorCode =
   | "VALIDATION_FAILED"
   | "EMAIL_NOT_CONFIGURED"
   | "ENCRYPTION_NOT_CONFIGURED"
+  | "STEP_UP_REQUIRED"
   | "CONFLICT"
   | "UNREADABLE";
 

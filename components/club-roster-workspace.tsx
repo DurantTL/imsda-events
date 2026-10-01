@@ -58,7 +58,7 @@ export function ClubRosterWorkspace({
   complianceFilter: initialComplianceFilter = null,
   headingActions,
   healthTab,
-  healthNoteFlags,
+  healthRecordFlags,
 }: {
   /** Directors and deputies only; a registrar enters birth dates but sees ages (#375). */
   canSeeBirthDates: boolean;
@@ -93,8 +93,8 @@ export function ClubRosterWorkspace({
    * deputy; omitted everywhere else, so nothing about health is rendered.
    */
   healthTab?: Record<string, { status: "NONE" | "CURRENT" | "NEEDS_UPDATE"; hasHealthNote: boolean }>;
-  /** A neutral "Has a health note" marker for viewers without health access (#611): ids only, never text. */
-  healthNoteFlags?: Record<string, boolean>;
+  /** A neutral "Has a health record" marker (#611): a record exists, nothing more. Ids only, never text. */
+  healthRecordFlags?: Record<string, boolean>;
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [honorSummaries, setHonorSummaries] = useState(initialHonorSummaries);
@@ -448,8 +448,8 @@ export function ClubRosterWorkspace({
                             )}
                             {!readOnly && <td className="roster-card-actions" data-label="Actions">
                               <div className="honor-row-actions">
-                              {(healthTab?.[member.id]?.hasHealthNote || healthNoteFlags?.[member.id]) && (
-                                <span className="status-chip">Has a health note</span>
+                              {healthRecordFlags?.[member.id] && (
+                                <span className="status-chip">Has a health record</span>
                               )}
                               {healthTab && (
                                 <a

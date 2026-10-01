@@ -32,6 +32,8 @@ function matches(row: Row, where: Row): boolean {
 
 const client: any = {
   clubRosterMember: {
+    findMany: async ({ where }: { where: { id: { in: string[] }; organizationId: string } }) =>
+      state.members.filter((member) => where.id.in.includes(member.id) && member.organizationId === where.organizationId),
     findFirst: async ({ where }: { where: Row }) => {
       if (where.personId) {
         return state.members.find((member) => member.organizationId === where.organizationId && member.personId === where.personId && member.clubYear === where.clubYear && member.status === where.status) ?? null;
@@ -62,7 +64,14 @@ const client: any = {
       const record = state.records.find((row) => row.organizationId === where.organizationId && state.members.find((m) => m.id === row.rosterMemberId)?.personId === personId);
       return record ? { ...record, fields: state.fields.filter((field) => field.recordId === record.id) } : null;
     },
-    findMany: async ({ where }: { where: Row }) => state.records.filter((row) => matches(row, where)),
+    findMany: async ({ where }: { where: Row }) => {
+      const withPerson = (row: Record<string, any>) => ({ ...row, rosterMember: { personId: state.members.find((member) => member.id === row.rosterMemberId)?.personId ?? null } });
+      const { OR, ...rest } = where as { OR?: Array<Record<string, any>> } & Row;
+      return state.records
+        .filter((row) => matches(row, rest))
+        .filter((row) => !OR || OR.some((clause) => (clause.rosterMemberId ? clause.rosterMemberId.in.includes(row.rosterMemberId) : clause.rosterMember.personId.in.includes(withPerson(row).rosterMember.personId))))
+        .map(withPerson);
+    },
     create: async ({ data }: { data: Row }) => {
       state.prismaTouched("healthRecord.create");
       const { fields, ...record } = data as { fields?: { create: Row[] } } & Row;
@@ -136,7 +145,7 @@ import { prepareHealthRecordLinkBodyForDelivery } from "@/modules/health-records
 import {
   confirmHealthRecord,
   createHealthRecordLink,
-  healthNoteFlagsForRoster,
+  healthRecordFlagsForRoster,
   healthSummariesForMembers,
   listHealthRecordLinks,
   resolveHealthLinkForFill,
@@ -549,13 +558,26 @@ describe("two first saves racing", () => {
   });
 });
 
-describe("the neutral health note marker", () => {
+describe("the neutral record-exists marker", () => {
   beforeEach(resetState);
 
-  it("returns ids only, for rows with a note, and nothing when the feature is off", async () => {
+  it("means only that a record exists, whether or not it holds a clinical note", async () => {
+    await saveHealthRecord(leader, "club-a", "member-1", { ...syntheticRecord, hasAllergies: "NO", allergyDetails: "", medications: "", medicalRestrictions: "" }, now);
+    expect(state.records[0]!.hasHealthNote).toBe(false);
+    expect(await healthRecordFlagsForRoster("club-a", ["member-1", "member-2"])).toEqual({ "member-1": true });
+  });
+
+  it("finds a record still on an earlier year's row, by person within the club", async () => {
+    state.members[0]!.clubYear = "2025-26";
+    await saveHealthRecord(leader, "club-a", "member-1", syntheticRecord, new Date("2025-10-05T15:00:00Z"));
+    state.members.push({ ...state.members[0]!, id: "member-2", clubYear: "2026-27" });
+    state.members.push({ ...state.members[0]!, id: "member-3", personId: "person-3", clubYear: "2026-27" });
+    expect(await healthRecordFlagsForRoster("club-a", ["member-2", "member-3"])).toEqual({ "member-2": true });
+  });
+
+  it("returns nothing when the feature is off", async () => {
     await saveHealthRecord(leader, "club-a", "member-1", syntheticRecord, now);
-    expect(await healthNoteFlagsForRoster("club-a", ["member-1", "member-2"])).toEqual({ "member-1": true });
     state.env.HEALTH_RECORDS_ENABLED = false;
-    expect(await healthNoteFlagsForRoster("club-a", ["member-1"])).toEqual({});
+    expect(await healthRecordFlagsForRoster("club-a", ["member-1"])).toEqual({});
   });
 });

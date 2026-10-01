@@ -4,6 +4,7 @@ import { getPrisma } from "@/lib/prisma";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { passkeysConfigured } from "@/modules/attendee-accounts/passkeys";
 import { ROSTER_UNLOCK_HOURS, requireRosterAccess } from "@/modules/club-rosters/access";
 import { currentAreaCoordinator } from "@/modules/organizations/area-coordinators";
 import { isClubFormsRole } from "@/modules/club-forms/domain";
@@ -83,7 +84,24 @@ export async function requireAreaCoordinatorHealthViewer(now = new Date()): Prom
     : null;
   const verifiedAt = session?.secondFactorVerifiedAt;
   if (!verifiedAt || now.getTime() - verifiedAt.getTime() > ROSTER_UNLOCK_HOURS * 3_600_000) {
-    throw new HealthRecordError("FORBIDDEN", "Confirm it's you with your authenticator code or passkey to open health records.");
+    throw new HealthRecordError("STEP_UP_REQUIRED", "Confirm it's you with your authenticator code or passkey to open health records.");
   }
   return { kind: "AREA_COORDINATOR", accountId: account.id };
+}
+
+/**
+ * Which second steps the signed-in attendee can use to unlock, for the page that
+ * asks a coordinator to confirm again. The same rule the roster's MFA_UNLOCK
+ * state uses: an active authenticator, and a passkey once passkeys are on.
+ */
+export async function attendeeUnlockMethods() {
+  const { account } = await getCurrentAttendee();
+  if (!account) return { code: false, passkey: false };
+  const prisma = getPrisma();
+  const [enrollment, passkeyCount, passkeysOn] = await Promise.all([
+    prisma.attendeeMfaEnrollment.findUnique({ where: { accountId: account.id }, select: { status: true } }),
+    prisma.attendeePasskey.count({ where: { accountId: account.id, revokedAt: null } }),
+    passkeysConfigured(),
+  ]);
+  return { code: enrollment?.status === "ACTIVE", passkey: passkeysOn && passkeyCount > 0 };
 }
