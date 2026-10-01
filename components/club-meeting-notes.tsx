@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Download, Pencil, Plus, Trash2, X } from "lucide-react";
+import { notePreview } from "@/components/club-form-state";
 import { countsFromAttendance, countsToSend, groupAttendanceRoster } from "@/modules/club-meeting-notes/attendance";
 import type { AttendanceRosterEntry, ClubMeetingNoteRecord } from "@/modules/club-meeting-notes/repository";
 import { clubYearFor } from "@/modules/club-rosters/domain";
@@ -91,6 +92,8 @@ export function ClubMeetingNotes({
     setNotes(initialNotes);
   }
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Notes whose full text is showing in the list (#703).
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState<Draft>(emptyDraft(newMeetingDate));
   const [saving, setSaving] = useState(false);
@@ -267,6 +270,17 @@ export function ClubMeetingNotes({
                   {note.attendance.length > 0 ? ` · Attendance taken (${note.attendance.filter((entry) => entry.present).length} of ${note.attendance.length} present)` : ""}
                   {note.honors.length > 0 ? ` · ${note.honors.map((honor) => honor.name).filter(Boolean).join(", ")}` : ""}
                 </small>
+                {note.notes.trim() !== "" && (
+                  <MeetingNoteText
+                    expanded={expanded.has(note.id)}
+                    onToggle={() => setExpanded((current) => {
+                      const next = new Set(current);
+                      if (!next.delete(note.id)) next.add(note.id);
+                      return next;
+                    })}
+                    text={note.notes}
+                  />
+                )}
               </span>
               <span className="club-team-invite-actions">
                 <button aria-label={`Edit the meeting note for ${formatMeetingDate(note.meetingDate)}`} className="secondary-button club-event-action" disabled={saving} onClick={() => startEdit(note)} type="button">
@@ -357,6 +371,20 @@ export function ClubMeetingNotes({
         </form>
       )}
     </div>
+  );
+}
+
+/** The note text under a list row: a one-line preview that expands in place (#703). */
+function MeetingNoteText({ text, expanded, onToggle }: { text: string; expanded: boolean; onToggle: () => void }) {
+  const preview = notePreview(text);
+  if (preview === null) return <small className="club-meeting-note-text">{text.trim()}</small>;
+  return (
+    <>
+      <small className="club-meeting-note-text">{expanded ? text.trim() : preview}</small>
+      <button aria-expanded={expanded} className="text-button club-meeting-note-toggle" onClick={onToggle} type="button">
+        {expanded ? "Show less" : "Show full note"}
+      </button>
+    </>
   );
 }
 

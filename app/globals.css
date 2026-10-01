@@ -8464,3 +8464,15 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   .club-reports-grid table.table-cards.table-cards > tbody > tr > td[data-label] { display: flex; align-items: baseline; gap: 6px; padding-left: 0; }
   .club-reports-grid table.table-cards > tbody > tr > td[data-label]::before { float: none; width: auto; margin: 0 auto 0 0; }
 }
+
+/* Club forms and records (#703). */
+.club-form-ranking-list { display: grid; gap: 8px; }
+.club-form-ranking-list button { display: flex; width: 100%; min-height: 48px; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #d2dfe4; border-radius: 12px; background: #fbfcfd; color: var(--ink); cursor: pointer; padding: 10px 12px; font: inherit; text-align: left; }
+.club-form-ranking-list button.is-selected { border-color: #ad92c6; background: var(--imsda-purple-soft); }
+.club-form-ranking-list button:disabled { cursor: not-allowed; opacity: 0.62; }
+.club-form-ranking-list button > span { min-width: 0; overflow-wrap: anywhere; }
+.club-form-ranking-list button > b { flex: 0 0 auto; border-radius: 999px; background: white; color: var(--imsda-purple); padding: 5px 9px; font-size: var(--text-badge); }
+.club-meeting-note-text { margin-top: 2px; white-space: pre-line; overflow-wrap: anywhere; }
+.club-meeting-note-toggle { min-height: 44px; padding: 0; }
+/* The area overview never grows wider than its container on phones (#703). */
+.page-stack, .page-stack > * { min-width: 0; max-width: 100%; }

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { BackLink } from "@/components/back-link";
 import { ClubReportForm } from "@/components/club-report-form";
 import { getPrisma } from "@/lib/prisma";
-import { formatDueDate, isReportMonth, reportDueDate, reportMonthLabel } from "@/modules/club-reports/domain";
+import { formatDueDate, noSubmittedReportMessage, isReportMonth, reportDueDate, reportMonthLabel } from "@/modules/club-reports/domain";
 import { getClubReport, reportPrefill } from "@/modules/club-reports/repository";
 import { currentAreaCoordinatorViewerActive } from "@/modules/organizations/area-coordinators";
 
@@ -18,7 +18,23 @@ export default async function AreaClubReportPage({ params }: { params: Promise<{
   const club = await getPrisma().organization.findUnique({ where: { id: organizationId }, select: { type: true, name: true, isActive: true } });
   if (!club || club.type !== "CLUB" || !club.isActive) notFound();
   const report = await getClubReport(organizationId, month);
-  if (!report || report.status !== "SUBMITTED") notFound();
+  if (!report || report.status !== "SUBMITTED") {
+    // A real club and month with nothing filed yet (a draft counts as not filed) is not a missing page (#703).
+    return (
+      <>
+        <section className="public-registration-hero public-manage-hero account-page-hero">
+          <div>
+            <p className="public-registration-eyebrow">Area Coordinator · view only</p>
+            <h1 translate="no">{club.name}</h1>
+          </div>
+        </section>
+        <div className="account-page-body">
+          <BackLink href={`/account/area/${organizationId}`}>Back to {club.name}</BackLink>
+          <p className="public-manage-empty" role="status">{noSubmittedReportMessage(month)}</p>
+        </div>
+      </>
+    );
+  }
   const rosterPrefill = await reportPrefill(organizationId, new Date());
   const prefill = { ...rosterPrefill, averageAttendance: null, honors: [] };
 
