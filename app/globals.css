@@ -8475,4 +8475,5 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .club-meeting-note-text { margin-top: 2px; white-space: pre-line; overflow-wrap: anywhere; }
 .club-meeting-note-toggle { min-height: 44px; padding: 0; }
 /* The area overview never grows wider than its container on phones (#703). */
-.page-stack, .page-stack > * { min-width: 0; max-width: 100%; }
+.area-overview-page, .area-overview-page > * { min-width: 0; max-width: 100%; }
+.public-manage-club-list small.club-meeting-note-collapsed { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; overflow: hidden; }

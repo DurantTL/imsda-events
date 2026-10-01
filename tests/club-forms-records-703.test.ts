@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   clubFormIsDirty,
   clubFormUnsavedMessage,
+  dropStaleRankedChoices,
   notePreview,
   rankLabel,
   rankedMaximum,
@@ -26,6 +27,11 @@ describe("club form unsaved-changes guard (#703)", () => {
     expect(clubFormIsDirty({ ...saved, answers: { ...saved.answers, a: "y" } }, saved)).toBe(true);
     expect(clubFormIsDirty({ ...saved, answers: { ...saved.answers, picks: ["Two", "One"] } }, saved)).toBe(true);
     expect(clubFormIsDirty({ ...saved, subjectName: "Pat" }, saved)).toBe(true);
+  });
+
+  it("treats a checkbox checked then unchecked as unchanged", () => {
+    expect(clubFormIsDirty({ ...saved, answers: { ...saved.answers, agree: false } }, saved)).toBe(false);
+    expect(clubFormIsDirty({ ...saved, answers: { ...saved.answers, agree: true } }, saved)).toBe(true);
   });
 
   it("registers while dirty and clears once saved", () => {
@@ -80,12 +86,26 @@ describe("meeting note preview (#703)", () => {
   });
 
   it("previews multi-line notes on one line", () => {
-    expect(notePreview("Line one\nLine two")).toBe("Line one Line two…");
+    expect(notePreview("Line one\nLine two")).toBe("Line one…");
+    expect(notePreview("Line one\n\n")).toBeNull();
   });
 });
 
 describe("area report not-submitted message (#703)", () => {
   it("names the month", () => {
     expect(noSubmittedReportMessage("2026-09")).toBe("No submitted report for September 2026 yet.");
+  });
+});
+
+describe("stale ranked choices (#703)", () => {
+  const definition = { sections: [{ fields: [{ key: "picks", type: "RANKED_CHOICE", options: ["A", "B"] }, { key: "t", type: "TEXT", options: [] }] }] };
+
+  it("drops saved choices that are no longer offered, keeping order", () => {
+    expect(dropStaleRankedChoices(definition, { picks: ["Gone", "B", "A"], t: "x" })).toEqual({ picks: ["B", "A"], t: "x" });
+  });
+
+  it("returns the same answers when nothing is stale", () => {
+    const answers = { picks: ["A"] };
+    expect(dropStaleRankedChoices(definition, answers)).toBe(answers);
   });
 });

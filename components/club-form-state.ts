@@ -13,7 +13,8 @@ export type ClubFormSnapshot = {
 };
 
 function isBlank(value: unknown): boolean {
-  if (value === undefined || value === null || value === "") return true;
+  // false is the same as unset, so checking then unchecking a box is not a change.
+  if (value === undefined || value === null || value === "" || value === false) return true;
   if (Array.isArray(value)) return value.length === 0;
   if (typeof value === "object") return Object.values(value as Record<string, unknown>).every(isBlank);
   return false;
@@ -60,11 +61,33 @@ export function rankLabel(rank: number): string {
   return rank === 0 ? "1st choice" : rank === 1 ? "2nd choice" : `#${rank + 1}`;
 }
 
-/** A one-line preview of a long note; null when the whole note already fits on one line. */
+/** Ranked answers keep only choices still offered; others would be rejected on submit. */
+export function dropStaleRankedChoices(
+  definition: { sections: Array<{ fields: Array<{ key: string; type: string; options: string[] }> }> },
+  answers: Answers,
+): Answers {
+  let result = answers;
+  for (const section of definition.sections) {
+    for (const field of section.fields) {
+      const value = result[field.key];
+      if (field.type !== "RANKED_CHOICE" || !Array.isArray(value)) continue;
+      const kept = value.map(String).filter((item) => field.options.includes(item));
+      if (kept.length !== value.length) result = { ...result, [field.key]: kept };
+    }
+  }
+  return result;
+}
+
+/**
+ * A one-line preview of a note: its first line, with "…" only when something
+ * is hidden (more lines, or a first line cut at a word). Null when the whole
+ * note is one short line.
+ */
 export function notePreview(text: string, limit = 140): string | null {
-  const trimmed = text.trim();
-  const flat = trimmed.replace(/\s+/g, " ");
-  if (flat.length <= limit && !trimmed.includes("\n")) return null;
-  const cut = flat.length > limit ? flat.slice(0, limit).replace(/\s+\S*$/, "") || flat.slice(0, limit) : flat;
+  const lines = text.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const first = (lines[0] ?? "").replace(/\s+/g, " ");
+  const hiddenLines = lines.length > 1;
+  if (first.length <= limit) return hiddenLines ? `${first}…` : null;
+  const cut = first.slice(0, limit).replace(/\s+\S*$/, "") || first.slice(0, limit);
   return `${cut}…`;
 }

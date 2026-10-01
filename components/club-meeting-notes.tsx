@@ -278,6 +278,8 @@ export function ClubMeetingNotes({
                       if (!next.delete(note.id)) next.add(note.id);
                       return next;
                     })}
+                    dateLabel={formatMeetingDate(note.meetingDate)}
+                    id={`meeting-note-${note.id}`}
                     text={note.notes}
                   />
                 )}
@@ -375,13 +377,13 @@ export function ClubMeetingNotes({
 }
 
 /** The note text under a list row: a one-line preview that expands in place (#703). */
-function MeetingNoteText({ text, expanded, onToggle }: { text: string; expanded: boolean; onToggle: () => void }) {
+function MeetingNoteText({ text, id, dateLabel, expanded, onToggle }: { text: string; id: string; dateLabel: string; expanded: boolean; onToggle: () => void }) {
   const preview = notePreview(text);
-  if (preview === null) return <small className="club-meeting-note-text">{text.trim()}</small>;
+  if (preview === null) return <small className="club-meeting-note-text" id={id}>{text.trim()}</small>;
   return (
     <>
-      <small className="club-meeting-note-text">{expanded ? text.trim() : preview}</small>
-      <button aria-expanded={expanded} className="text-button club-meeting-note-toggle" onClick={onToggle} type="button">
+      <small className={`club-meeting-note-text${expanded ? "" : " club-meeting-note-collapsed"}`} id={id}>{expanded ? text.trim() : preview}</small>
+      <button aria-controls={id} aria-expanded={expanded} aria-label={`${expanded ? "Show less of" : "Show full"} meeting note for ${dateLabel}`} className="text-button club-meeting-note-toggle" onClick={onToggle} type="button">
         {expanded ? "Show less" : "Show full note"}
       </button>
     </>

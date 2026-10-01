@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { clubFormIsDirty, clubFormUnsavedMessage, rankLabel, rankedMaximum, toggleRankedChoice } from "@/components/club-form-state";
+import { clubFormIsDirty, dropStaleRankedChoices, clubFormUnsavedMessage, rankLabel, rankedMaximum, toggleRankedChoice } from "@/components/club-form-state";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { LockKeyhole } from "lucide-react";
 import { addressComponentKeys, addressComponentLabels } from "@/modules/forms/address";
@@ -49,7 +49,9 @@ function textOf(value: unknown) {
  */
 export function ClubFormFillIn(props: Props) {
   const { definition, sectionNotes, sensitiveFieldKeys } = props;
-  const [answers, setAnswers] = useState<Answers>(props.initialAnswers ?? {});
+  // Saved ranked choices no longer offered are dropped up front; the saved baseline matches, so this is not a change.
+  const [initialAnswers] = useState<Answers>(() => dropStaleRankedChoices(props.definition, props.initialAnswers ?? {}));
+  const [answers, setAnswers] = useState<Answers>(initialAnswers);
   const [rosterMemberId, setRosterMemberId] = useState(props.mode === "club" ? props.initialRosterMemberId ?? "" : "");
   const [subjectName, setSubjectName] = useState(props.mode === "club" ? props.initialSubjectName ?? "" : "");
   const [saving, setSaving] = useState(false);
@@ -61,7 +63,7 @@ export function ClubFormFillIn(props: Props) {
   const sensitive = useMemo(() => new Set(sensitiveFieldKeys), [sensitiveFieldKeys]);
   // Last saved state (#703): the guard is on only while the form differs from it.
   const [saved, setSaved] = useState({
-    answers: props.initialAnswers ?? {},
+    answers: initialAnswers,
     rosterMemberId: props.mode === "club" ? props.initialRosterMemberId ?? "" : "",
     subjectName: props.mode === "club" ? props.initialSubjectName ?? "" : "",
   });
@@ -268,11 +270,12 @@ function FieldInput({
     case "RANKED_CHOICE": {
       const selected = Array.isArray(value) ? value.map(String).filter((item) => field.options.includes(item)) : [];
       const maximum = rankedMaximum(field);
+      const minimum = field.minSelections ?? (required ? Math.min(2, maximum) : 0);
       return (
         <fieldset className={`club-form-choice ${className ?? ""}`}>
           <legend>{label}</legend>
           <small className="field-help">
-            Tap choices in preference order, up to {maximum}. Tap a ranked choice again to remove it and re-rank.
+            {minimum > 0 ? `Choose ${minimum} and rank up to ${maximum}.` : `Optional — rank up to ${maximum} if you'd like.`} Tap choices in preference order; tap a ranked choice again to remove it and re-rank.
           </small>
           <div className="club-form-ranking-list">
             {field.options.map((option) => {
