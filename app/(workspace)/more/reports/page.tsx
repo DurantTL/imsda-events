@@ -31,6 +31,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { canSeeIssuesText } from "@/modules/background-checks/notes-access";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 import { staffPageTitles } from "@/components/staff-navigation";
+import { cardCell } from "@/components/table-card-labels";
 
 export const metadata: Metadata = { title: staffPageTitles.operationalReports };
 
@@ -70,12 +71,12 @@ function CountFields({
             <span>{displayCount(field.total)} total</span>
           </div>
           <div className="report-table-wrap">
-            <table className="report-table">
+            <table role="table" className="report-table table-cards">
               <caption className="sr-only">{field.label} counts</caption>
-              <thead><tr><th scope="col">Choice or quantity</th><th scope="col">Count</th></tr></thead>
-              <tbody>
+              <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Choice or quantity</th><th role="columnheader" scope="col">Count</th></tr></thead>
+              <tbody role="rowgroup">
                 {field.counts.map((row) => (
-                  <tr key={row.label}><th scope="row">{row.label}</th><td>{displayCount(row.count)}</td></tr>
+                  <tr role="row" key={row.label}><th role="rowheader" scope="row">{row.label}</th><td {...cardCell("Count")}>{displayCount(row.count)}</td></tr>
                 ))}
               </tbody>
             </table>
@@ -102,18 +103,18 @@ function SeminarFields({ fields }: { fields: OperationalSeminarField[] }) {
             <span>{displayCount(field.totalInterest)} choices</span>
           </div>
           <div className="report-table-wrap">
-            <table className="report-table seminar-table">
+            <table role="table" className="report-table seminar-table table-cards">
               <caption className="sr-only">{field.label} ranked interest</caption>
-              <thead>
-                <tr><th scope="col">Option</th><th scope="col">1st</th><th scope="col">2nd</th><th scope="col">Total interest</th></tr>
+              <thead role="rowgroup">
+                <tr role="row"><th role="columnheader" scope="col">Option</th><th role="columnheader" scope="col">1st</th><th role="columnheader" scope="col">2nd</th><th role="columnheader" scope="col">Total interest</th></tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {field.choices.map((choice) => (
-                  <tr key={choice.label}>
-                    <th scope="row">{choice.label}</th>
-                    <td>{choice.firstChoice}</td>
-                    <td>{choice.secondChoice}</td>
-                    <td><strong>{choice.totalInterest}</strong></td>
+                  <tr role="row" key={choice.label}>
+                    <th role="rowheader" scope="row">{choice.label}</th>
+                    <td {...cardCell("1st")}>{choice.firstChoice}</td>
+                    <td {...cardCell("2nd")}>{choice.secondChoice}</td>
+                    <td {...cardCell("Total interest")}><strong>{choice.totalInterest}</strong></td>
                   </tr>
                 ))}
               </tbody>
@@ -269,16 +270,16 @@ export default async function OperationalReportsPage({
                     <span>{group.attendees.length} {group.attendees.length === 1 ? "person" : "people"}</span>
                   </header>
                   <div className="report-table-wrap">
-                    <table className="report-table roster-table">
+                    <table role="table" className="report-table roster-table table-cards">
                       <caption className="sr-only">Attendees in {group.label}</caption>
-                      <thead><tr><th scope="col">Attendee</th><th scope="col">Type</th><th scope="col">Registration</th><th scope="col">Account holder</th></tr></thead>
-                      <tbody>
+                      <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Attendee</th><th role="columnheader" scope="col">Type</th><th role="columnheader" scope="col">Registration</th><th role="columnheader" scope="col">Account holder</th></tr></thead>
+                      <tbody role="rowgroup">
                         {group.attendees.map((attendee) => (
-                          <tr key={attendee.attendeeId}>
-                            <th scope="row">{attendee.lastName}, {attendee.firstName}</th>
-                            <td>{attendee.attendeeType}</td>
-                            <td><Link className="report-record-link" href={`/people${peopleQuery}&registration=${encodeURIComponent(attendee.registrationId)}`}>{attendee.confirmationCode}</Link></td>
-                            <td>{attendee.accountHolderName}</td>
+                          <tr role="row" key={attendee.attendeeId}>
+                            <th role="rowheader" scope="row">{attendee.lastName}, {attendee.firstName}</th>
+                            <td {...cardCell("Type")}>{attendee.attendeeType}</td>
+                            <td {...cardCell("Registration")}><Link className="report-record-link" href={`/people${peopleQuery}&registration=${encodeURIComponent(attendee.registrationId)}`}>{attendee.confirmationCode}</Link></td>
+                            <td {...cardCell("Account holder")}>{attendee.accountHolderName}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -307,16 +308,16 @@ export default async function OperationalReportsPage({
                     <span>{group.attendees.length} {group.attendees.length === 1 ? "person" : "people"}</span>
                   </header>
                   <div className="report-table-wrap">
-                    <table className="report-table roster-table">
+                    <table role="table" className="report-table roster-table table-cards">
                       <caption className="sr-only">{group.label} attendees</caption>
-                      <thead><tr><th scope="col">Attendee</th><th scope="col">Group</th><th scope="col">Registration</th><th scope="col">Account holder</th></tr></thead>
-                      <tbody>
+                      <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Attendee</th><th role="columnheader" scope="col">Group</th><th role="columnheader" scope="col">Registration</th><th role="columnheader" scope="col">Account holder</th></tr></thead>
+                      <tbody role="rowgroup">
                         {group.attendees.map((attendee) => (
-                          <tr key={attendee.attendeeId}>
-                            <th scope="row" translate="no">{attendee.lastName}, {attendee.firstName}</th>
-                            <td>{attendee.groupLabel ?? "—"}</td>
-                            <td><Link className="report-record-link" href={`/people${peopleQuery}&registration=${encodeURIComponent(attendee.registrationId)}`}>{attendee.confirmationCode}</Link></td>
-                            <td translate="no">{attendee.accountHolderName}</td>
+                          <tr role="row" key={attendee.attendeeId}>
+                            <th role="rowheader" scope="row" translate="no">{attendee.lastName}, {attendee.firstName}</th>
+                            <td {...cardCell("Group")}>{attendee.groupLabel ?? "—"}</td>
+                            <td {...cardCell("Registration")}><Link className="report-record-link" href={`/people${peopleQuery}&registration=${encodeURIComponent(attendee.registrationId)}`}>{attendee.confirmationCode}</Link></td>
+                            <td {...cardCell("Account holder")} translate="no">{attendee.accountHolderName}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -398,17 +399,17 @@ export default async function OperationalReportsPage({
           {report.volunteerRoster.length === 0
             ? <EmptyReport>No one has said yes to a volunteer question yet.</EmptyReport>
             : <div className="report-table-wrap">
-                <table className="report-table roster-table">
+                <table role="table" className="report-table roster-table table-cards">
                   <caption className="sr-only">Volunteers</caption>
-                  <thead><tr><th scope="col">Volunteer</th><th scope="col">Answer</th><th scope="col">Phone</th><th scope="col">Group</th><th scope="col">Registration</th></tr></thead>
-                  <tbody>
+                  <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Volunteer</th><th role="columnheader" scope="col">Answer</th><th role="columnheader" scope="col">Phone</th><th role="columnheader" scope="col">Group</th><th role="columnheader" scope="col">Registration</th></tr></thead>
+                  <tbody role="rowgroup">
                     {report.volunteerRoster.map((volunteer) => (
-                      <tr key={`${volunteer.attendeeId}-${volunteer.question}`}>
-                        <th scope="row" translate="no">{volunteer.lastName}, {volunteer.firstName}<small className="quiet-copy"> · {volunteer.attendeeType}</small></th>
-                        <td>{volunteer.answer}{report.volunteers.length > 1 && <small className="quiet-copy"> · {volunteer.question}</small>}</td>
-                        <td translate="no">{volunteer.phone || "—"}</td>
-                        <td>{volunteer.groupLabel ?? "—"}</td>
-                        <td><Link className="report-record-link" href={`/people${peopleQuery}&registration=${encodeURIComponent(volunteer.registrationId)}`}>{volunteer.confirmationCode}</Link></td>
+                      <tr role="row" key={`${volunteer.attendeeId}-${volunteer.question}`}>
+                        <th role="rowheader" scope="row" translate="no">{volunteer.lastName}, {volunteer.firstName}<small className="quiet-copy"> · {volunteer.attendeeType}</small></th>
+                        <td {...cardCell("Answer")}>{volunteer.answer}{report.volunteers.length > 1 && <small className="quiet-copy"> · {volunteer.question}</small>}</td>
+                        <td {...cardCell("Phone")} translate="no">{volunteer.phone || "—"}</td>
+                        <td {...cardCell("Group")}>{volunteer.groupLabel ?? "—"}</td>
+                        <td {...cardCell("Registration")}><Link className="report-record-link" href={`/people${peopleQuery}&registration=${encodeURIComponent(volunteer.registrationId)}`}>{volunteer.confirmationCode}</Link></td>
                       </tr>
                     ))}
                   </tbody>
