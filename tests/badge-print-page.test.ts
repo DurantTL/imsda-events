@@ -128,6 +128,17 @@ describe("printable name badge attendee-type line", () => {
     expect(markup).toMatch(/<input[^>]*name="type"[^>]*checked=""/);
   });
 
+  it("keeps only the shirt span in the footer when the type is hidden and shirt sizes are collected", async () => {
+    withTeenAnswer();
+    dependencies.resolveEventContext.mockResolvedValue({
+      event: { id: "event_1", name: "Synthetic Retreat", collectsShirtSizes: true },
+      permissions: ["MANAGE_CHECK_IN"],
+    });
+    const markup = await render({ type: "0" });
+    expect(markup).toContain("<footer><span>Shirt size needed</span></footer>");
+    expect(markup).not.toContain(">Teen<");
+  });
+
   it("hides the line, and an empty footer, when type=0", async () => {
     withTeenAnswer();
     const markup = await render({ type: "0" });

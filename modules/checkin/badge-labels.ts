@@ -1,5 +1,6 @@
 import {
   registrationFormDefinitionSchema,
+  type RegistrationFormDefinition,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
 import { withAttendeeTypeOptionsForAttendee } from "@/modules/attendee-types/form-options";
@@ -119,31 +120,28 @@ function titleCase(value: string) {
 function attendeeTypeLabelFor(
   registration: RegistrationRecord,
   attendee: RegistrationRecord["attendees"][number],
+  definition: RegistrationFormDefinition | null,
 ) {
+  const options = registration.publicSubmission?.attendeeTypeOptions ?? [];
   const answer = attendee.responses?.attendee_type;
   const raw = typeof answer === "string" ? answer.trim() : "";
-  if (raw) {
-    const parsed = registrationFormDefinitionSchema.safeParse(
-      registration.publicSubmission?.definition,
-    );
-    if (parsed.success) {
-      const hydrated = withAttendeeTypeOptionsForAttendee(
-        parsed.data,
-        registration.publicSubmission?.attendeeTypeOptions ?? [],
-        raw,
-      );
-      const field: RegistrationFormField | undefined = hydrated.sections
-        .flatMap((section) => section.fields)
-        .find((candidate) => (
-          candidate.key === "attendee_type"
-          && candidate.scope === "ATTENDEE"
-          && (candidate.type === "SELECT" || candidate.type === "RADIO")
-        ));
-      if (field) return (field.optionLabels?.[raw] ?? raw).trim();
+  if (raw && definition) {
+    const hydrated = withAttendeeTypeOptionsForAttendee(definition, options, raw);
+    const field: RegistrationFormField | undefined = hydrated.sections
+      .flatMap((section) => section.fields)
+      .find((candidate) => (
+        candidate.key === "attendee_type"
+        && candidate.scope === "ATTENDEE"
+        && (candidate.type === "SELECT" || candidate.type === "RADIO")
+      ));
+    // Only a real choice prints; an unknown stored value never reaches a badge.
+    if (field?.options.includes(raw)) {
+      const label = (field.optionLabels?.[raw] ?? raw).trim();
+      if (label) return label;
     }
   }
-  const configured = registration.publicSubmission?.attendeeTypeOptions
-    ?.find((type) => type.code === attendee.attendeeTypeDefinitionCode)?.label;
+  const configured = options
+    .find((type) => type.code === attendee.attendeeTypeDefinitionCode)?.label;
   return configured?.trim() || titleCase(attendee.attendeeType);
 }
 
@@ -176,11 +174,16 @@ export function buildBadgeLabels(
   );
 
   return registrations
-    .flatMap((registration) => (
-      registration.attendees.map((attendee) => ({
+    .flatMap((registration) => {
+      // Each registration carries its own form version; parse it once.
+      const parsed = registrationFormDefinitionSchema.safeParse(
+        registration.publicSubmission?.definition,
+      );
+      const definition = parsed.success ? parsed.data : null;
+      return registration.attendees.map((attendee) => ({
         attendeeId: attendee.id,
         attendeeType: attendee.attendeeType,
-        attendeeTypeLabel: attendeeTypeLabelFor(registration, attendee),
+        attendeeTypeLabel: attendeeTypeLabelFor(registration, attendee, definition),
         confirmationCode: registration.confirmationCode,
         firstName: attendee.firstName,
         lastName: attendee.lastName,
@@ -190,8 +193,8 @@ export function buildBadgeLabels(
         shirtSizeConfirmed: Boolean(
           shirtSizeConfirmedAtFromResponses(attendee.responses),
         ),
-      }))
-    ))
+      }));
+    })
     .sort((left, right) => (
       left.lastName.localeCompare(right.lastName)
       || left.firstName.localeCompare(right.firstName)
