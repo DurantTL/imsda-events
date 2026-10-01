@@ -20,6 +20,10 @@ export type EventDeletionCounts = {
   /** Data import runs recorded against the event. */
   imports: number;
   merchandiseOrders: number;
+  /** Club-entered registration drafts (guests, responses, honor selections, roster ages). */
+  clubRegistrationDrafts: number;
+  communityPosts: number;
+  announcements: number;
   /** Succeeded payments that are not sandbox (test-mode) card payments. */
   realPayments: number;
 };
@@ -34,19 +38,6 @@ export type EventDeletionActor = {
   /** The actor's active role on this event, or null when they have none. */
   eventRole: string | null;
 };
-
-/** Payment history is removed from this system; the card processor keeps its own. */
-export function eventDeletionHasRealMoney(counts: Pick<EventDeletionCounts, "realPayments" | "invoices">) {
-  return counts.realPayments > 0 || counts.invoices > 0;
-}
-
-/**
- * A draft is an event nobody has used: unpublished, with no registrations and
- * no payments.
- */
-export function isDraftForDeletion(facts: EventDeletionFacts) {
-  return !facts.isPublished && facts.counts.registrations === 0 && facts.counts.payments === 0;
-}
 
 function plural(count: number, one: string, many = `${one}s`) {
   return `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`;
@@ -68,6 +59,9 @@ export function eventDeletionBlockers(counts: EventDeletionCounts) {
   if (counts.formSubmissions > 0) blockers.push(plural(counts.formSubmissions, "form submission"));
   if (counts.imports > 0) blockers.push(plural(counts.imports, "import run"));
   if (counts.merchandiseOrders > 0) blockers.push(plural(counts.merchandiseOrders, "merchandise order"));
+  if (counts.clubRegistrationDrafts > 0) blockers.push(plural(counts.clubRegistrationDrafts, "club registration draft"));
+  if (counts.communityPosts > 0) blockers.push(plural(counts.communityPosts, "community post"));
+  if (counts.announcements > 0) blockers.push(plural(counts.announcements, "announcement"));
   if (counts.messages > 0) blockers.push(plural(counts.messages, "message"));
   return blockers;
 }

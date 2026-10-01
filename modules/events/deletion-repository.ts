@@ -52,6 +52,9 @@ async function loadDeletionFacts(db: Db, eventId: string) {
     formSubmissions,
     imports,
     merchandiseOrders,
+    clubRegistrationDrafts,
+    communityPosts,
+    announcements,
   ] = await Promise.all([
     db.registration.count({ where: inEvent }),
     db.registrationAttendee.count({ where: inEvent }),
@@ -75,6 +78,9 @@ async function loadDeletionFacts(db: Db, eventId: string) {
     db.publicRegistrationSubmission.count({ where: inEvent }),
     db.importRun.count({ where: inEvent }),
     db.merchandiseOrder.count({ where: inEvent }),
+    db.clubRegistrationDraft.count({ where: inEvent }),
+    db.communityPost.count({ where: inEvent }),
+    db.announcement.count({ where: inEvent }),
   ]);
   const counts: EventDeletionCounts = {
     registrations,
@@ -89,6 +95,9 @@ async function loadDeletionFacts(db: Db, eventId: string) {
     formSubmissions,
     imports,
     merchandiseOrders,
+    clubRegistrationDrafts,
+    communityPosts,
+    announcements,
     realPayments,
   };
   return { event, facts: { isPublished: event.isPublished, counts } satisfies EventDeletionFacts };

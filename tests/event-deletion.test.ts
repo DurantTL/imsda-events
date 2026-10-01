@@ -4,9 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DeleteEventDialogView } from "@/components/delete-event-dialog";
 import {
   decideEventDeletion,
-  eventDeletionHasRealMoney,
   eventNameConfirmed,
-  isDraftForDeletion,
   type EventDeletionCounts,
   type EventDeletionFacts,
 } from "@/modules/events/deletion";
@@ -24,6 +22,9 @@ const emptyCounts: EventDeletionCounts = {
   formSubmissions: 0,
   imports: 0,
   merchandiseOrders: 0,
+  clubRegistrationDrafts: 0,
+  communityPosts: 0,
+  announcements: 0,
   realPayments: 0,
 };
 
@@ -49,6 +50,9 @@ describe("event deletion rules (#620)", () => {
     ["form submissions", { formSubmissions: 1 }],
     ["imports", { imports: 1 }],
     ["merchandise orders", { merchandiseOrders: 1 }],
+    ["club registration drafts", { clubRegistrationDrafts: 1 }],
+    ["community posts", { communityPosts: 1 }],
+    ["announcements", { announcements: 1 }],
     ["messages", { messages: 1 }],
   ] as const)("refuses even a system administrator when the event has %s, and points to unpublishing", (_label, counts) => {
     const decision = decideEventDeletion(admin, facts({ isPublished: true, counts }));
@@ -66,17 +70,6 @@ describe("event deletion rules (#620)", () => {
     for (const eventRole of ["EVENT_ADMIN", "REGISTRATION_MANAGER", "FINANCE_MANAGER", "READ_ONLY_STAFF", null]) {
       expect(decideEventDeletion({ globalRole: null, eventRole }, facts()).allowed).toBe(false);
     }
-  });
-
-  it("treats an unpublished event with registrations as not a draft", () => {
-    expect(isDraftForDeletion(facts())).toBe(true);
-    expect(isDraftForDeletion(facts({ counts: { registrations: 2 } }))).toBe(false);
-  });
-
-  it("warns about real money for non-test payments or issued invoices only", () => {
-    expect(eventDeletionHasRealMoney(emptyCounts)).toBe(false);
-    expect(eventDeletionHasRealMoney({ realPayments: 1, invoices: 0 })).toBe(true);
-    expect(eventDeletionHasRealMoney({ realPayments: 0, invoices: 2 })).toBe(true);
   });
 
   it("requires the exact event name, forgiving only surrounding spaces", () => {

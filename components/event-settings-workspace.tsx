@@ -42,6 +42,8 @@ type EventSettingsWorkspaceProps = {
   /** The event's locations (#413), edited in their own panel below the form. */
   initialLocations?: EventLocationRecord[];
   areaCoordinators?: ActiveAreaCoordinator[];
+  /** Whether to offer Delete event: system administrators only. The server decides again. */
+  canDeleteEvent?: boolean;
 };
 
 type EventApiResult = {
@@ -116,6 +118,7 @@ export function EventSettingsWorkspace({
   initialEvent,
   initialLocations,
   areaCoordinators,
+  canDeleteEvent = false,
 }: EventSettingsWorkspaceProps) {
   const [draft, setDraft] = useState<EventSettingsInput>(() => draftFromEvent(initialEvent));
   const [savedDraft, setSavedDraft] = useState<EventSettingsInput>(() => draftFromEvent(initialEvent));
@@ -813,7 +816,7 @@ export function EventSettingsWorkspace({
             </section>
           )}
 
-          {mode === "edit" && initialEvent && (
+          {mode === "edit" && initialEvent && canDeleteEvent && (
             <section className="panel event-delete-panel">
               <p className="eyebrow">Danger zone</p>
               <h2>Delete this event</h2>
@@ -848,7 +851,7 @@ export function EventSettingsWorkspace({
           open={publishDialogOpen}
         />
       )}
-      {mode === "edit" && initialEvent && (
+      {mode === "edit" && initialEvent && canDeleteEvent && (
         <DeleteEventDialog
           eventId={initialEvent.id}
           onCancel={() => setDeleteDialogOpen(false)}

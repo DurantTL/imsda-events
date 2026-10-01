@@ -145,8 +145,9 @@ export function DeleteEventDialogView({
       {allowed && counts && (
         <>
           <p>
-            This permanently deletes <strong translate="no">{eventName}</strong>. It has no registrations, payments, imports or
-            form submissions, so only its setup is removed. It cannot be undone. People, accounts, clubs and background checks
+            This permanently deletes <strong translate="no">{eventName}</strong>. It has no registrations, payments, imports,
+            form submissions, club drafts, posts, announcements or messages, so only its setup (the locations and forms listed
+            below, plus its settings) is removed. It cannot be undone. People, accounts, clubs and background checks
             are shared with other events and are kept.
           </p>
           <ul>

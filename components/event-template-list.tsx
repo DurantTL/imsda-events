@@ -26,6 +26,7 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
   const [error, setError] = useState("");
   const [addingStarters, setAddingStarters] = useState(false);
   const [archiving, setArchiving] = useState<EventTemplateRecord | null>(null);
+  const [unarchivingId, setUnarchivingId] = useState<string | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [archiveError, setArchiveError] = useState("");
   const [starterResult, setStarterResult] = useState<StarterTemplatesResult | null>(null);
@@ -86,6 +87,8 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
   }
 
   async function unarchiveTemplate(templateId: string) {
+    if (unarchivingId) return;
+    setUnarchivingId(templateId);
     setError("");
     try {
       const response = await fetch(`/api/event-templates/${templateId}/unarchive`, { method: "POST" });
@@ -94,6 +97,8 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
       setTemplates((current) => current.map((template) => (template.id === templateId ? body.template : template)));
     } catch (unarchiveError) {
       setError(unarchiveError instanceof Error ? unarchiveError.message : "The template could not be unarchived.");
+    } finally {
+      setUnarchivingId(null);
     }
   }
 
@@ -170,7 +175,7 @@ export function EventTemplateList({ initialTemplates }: EventTemplateListProps) 
                 {template.status !== "ARCHIVED" ? (
                   <button type="button" className="secondary-button" onClick={() => { setArchiveError(""); setArchiving(template); }}>Archive</button>
                 ) : (
-                  <button type="button" className="secondary-button" onClick={() => unarchiveTemplate(template.id)}>Unarchive</button>
+                  <button type="button" className="secondary-button" disabled={unarchivingId !== null} onClick={() => unarchiveTemplate(template.id)}>{unarchivingId === template.id ? "Unarchiving…" : "Unarchive"}</button>
                 )}
               </li>
             ))}

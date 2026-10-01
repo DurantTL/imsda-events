@@ -41,6 +41,9 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [archiveError, setArchiveError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const [unarchiving, setUnarchiving] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
   const payloadRef = useRef<HTMLTextAreaElement>(null);
@@ -64,8 +67,9 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
     if (!checked.ok) {
       setFieldErrors(checked.errors);
       setSaving(false);
-      const first = checked.errors[0]?.field;
-      (first === "name" ? nameRef : first === "description" ? descriptionRef : payloadRef).current?.focus();
+      // A fresh key remounts the summary so it is announced again even when the errors are unchanged.
+      setAttempt((current) => current + 1);
+      setTimeout(() => summaryRef.current?.focus(), 0);
       return;
     }
     setFieldErrors([]);
@@ -136,6 +140,8 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
   }
 
   async function unarchive() {
+    if (unarchiving) return;
+    setUnarchiving(true);
     setError("");
     setNotice("");
     try {
@@ -146,6 +152,8 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
       setNotice("Unarchived. It can be edited again.");
     } catch (unarchiveError) {
       setError(unarchiveError instanceof Error ? unarchiveError.message : "The template could not be unarchived.");
+    } finally {
+      setUnarchiving(false);
     }
   }
 
@@ -155,28 +163,44 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
       {error ? <div className="inline-notice error" role="alert">{error}</div> : null}
       {notice ? <div className="inline-notice success" role="status">{notice}</div> : null}
       {fieldErrors.length > 0 ? (
-        <div className="inline-notice error" role="alert" id="template-error-summary">
+        <div className="inline-notice error" role="alert" id="template-error-summary" key={attempt} ref={summaryRef} tabIndex={-1}>
           Fix {fieldErrors.length === 1 ? "this problem" : `these ${fieldErrors.length} problems`} before saving:
-          <ul>{fieldErrors.map((entry, index) => <li key={`${entry.path}-${index}`}>{entry.path}: {entry.message}</li>)}</ul>
+          <ul>
+            {fieldErrors.map((entry, index) => (
+              <li key={`${entry.path}-${index}`}>
+                <a
+                  href={`#template-${entry.field}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    (entry.field === "name" ? nameRef : entry.field === "description" ? descriptionRef : payloadRef).current?.focus();
+                  }}
+                >{entry.path}</a>: {entry.message}
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
 
       <section className="panel form-stack event-settings-panel">
         <div className="form-grid two-column">
+          <div>
           <label>Name
             <input
+              id="template-name"
               ref={nameRef}
               value={name}
               onChange={(event) => setName(event.target.value)}
               aria-invalid={nameErrors.length > 0 || undefined}
               aria-describedby={nameErrors.length > 0 ? "template-name-error" : undefined}
             />
-            {nameErrors.length > 0 ? <span id="template-name-error" className="form-error">{nameErrors.map((entry) => entry.message).join(" ")}</span> : null}
           </label>
+          {nameErrors.length > 0 ? <span id="template-name-error" className="form-error">{nameErrors.map((entry) => entry.message).join(" ")}</span> : null}
+          </div>
           <p>Status: {template.status} — version {version?.versionNumber ?? "—"} ({version?.status ?? "none"})</p>
         </div>
         <label>Description
           <textarea
+            id="template-description"
             ref={descriptionRef}
             value={description}
             onChange={(event) => setDescription(event.target.value)}
@@ -184,10 +208,11 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
             aria-invalid={descriptionErrors.length > 0 || undefined}
             aria-describedby={descriptionErrors.length > 0 ? "template-description-error" : undefined}
           />
-          {descriptionErrors.length > 0 ? <span id="template-description-error" className="form-error">{descriptionErrors.map((entry) => entry.message).join(" ")}</span> : null}
         </label>
+        {descriptionErrors.length > 0 ? <span id="template-description-error" className="form-error">{descriptionErrors.map((entry) => entry.message).join(" ")}</span> : null}
         <label>Payload (JSON)
           <textarea
+            id="template-payload"
             ref={payloadRef}
             aria-invalid={payloadErrors.length > 0 || undefined}
             aria-describedby={payloadErrors.length > 0 ? "template-payload-error" : undefined}
@@ -233,7 +258,7 @@ export function EventTemplateEditor({ initialTemplate }: EventTemplateEditorProp
           {template.status !== "ARCHIVED" ? (
             <button type="button" className="secondary-button" onClick={() => { setArchiveError(""); setArchiveOpen(true); }}>Archive template</button>
           ) : (
-            <button type="button" className="secondary-button" onClick={unarchive}>Unarchive template</button>
+            <button type="button" className="secondary-button" disabled={unarchiving} onClick={unarchive}>{unarchiving ? "Unarchiving…" : "Unarchive template"}</button>
           )}
         </p>
       </section>
