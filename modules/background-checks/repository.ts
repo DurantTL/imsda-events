@@ -1299,6 +1299,39 @@ export async function resolveBackgroundCheckReview(
   });
 }
 
+/**
+ * Undo a "none of these" dismissal (#702): the review returns to the open
+ * list, as if it had never been dismissed. Only a dismissed review that still
+ * exists can be restored; an upload replaces the list wholesale, which removes
+ * the review (404). Takes the list lock like the dismissal did.
+ */
+export async function restoreDismissedBackgroundCheckReview(reviewId: string, actorUserId: string) {
+  const prisma = getPrisma();
+  const notFound = () => new BackgroundCheckOperationError("REVIEW_NOT_FOUND", "That dismissal can no longer be undone. Refresh the list.");
+  await prisma.$transaction(async (tx) => {
+    await requireListLock(tx);
+    const review = await tx.backgroundCheckReview.findUnique({
+      where: { id: reviewId },
+      select: { id: true, entryId: true, dismissedAt: true },
+    });
+    if (!review || !review.dismissedAt) throw notFound();
+    await tx.backgroundCheckReview.update({ where: { id: review.id }, data: { dismissedAt: null } });
+    await writeAuditLog({
+      actorUserId,
+      action: "BACKGROUND_CHECK_REVIEW_RESTORED",
+      entityType: "BackgroundCheckReview",
+      entityId: review.id,
+      summary: "Staff undid a background-check review dismissal; the review is open again.",
+      metadata: { entryId: review.entryId },
+    }, tx);
+  }).catch((error: unknown) => {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === "P2003" || code === "P2025") throw notFound();
+    if (code === "P2002" || isWriteConflict(error)) throw listChanged();
+    throw error;
+  });
+}
+
 function listBusy() {
   return new BackgroundCheckOperationError("LIST_BUSY", "Busy, try again in a moment: an upload, a staff decision, or a refresh is running.");
 }
@@ -1880,7 +1913,11 @@ async function lookupUncachedChecks(prisma: PrismaLike, subjects: LookupSubject[
   return found;
 }
 
-/** Counts for the system administrator's page. Sterling checks go by date; roster checks by their mark. */
+/**
+ * Counts for the system administrator's page. Sterling checks go by date; roster checks by their mark.
+ * `current` and `expiringSoon` are disjoint (#702): "current" is clear with no expiry in the next 60
+ * days, so the two never count the same check twice.
+ */
 export async function backgroundCheckSummary(today = calendarDateInEventTimeZone(new Date(), "America/Chicago")) {
   const soon = new Date(`${today}T12:00:00Z`);
   soon.setUTCDate(soon.getUTCDate() + 60);
@@ -1888,8 +1925,8 @@ export async function backgroundCheckSummary(today = calendarDateInEventTimeZone
   const prisma = getPrisma();
   const latestUploadForCounts = await latestUpload(prisma);
   const [currentByDate, currentByMark, soonByDate, soonByMark, expired, notCompliant, latestMatch, reviewCount, unmatchedCount, youthEvents] = await Promise.all([
-    prisma.backgroundCheckMatch.count({ where: { entry: { complianceStatus: null, expiresOn: { gte: today } } } }),
-    prisma.backgroundCheckMatch.count({ where: { entry: { complianceStatus: { in: ["CLEAR", "FLAGGED"] } } } }),
+    prisma.backgroundCheckMatch.count({ where: { entry: { complianceStatus: null, expiresOn: { gt: soonDate } } } }),
+    prisma.backgroundCheckMatch.count({ where: { entry: { complianceStatus: "CLEAR" } } }),
     prisma.backgroundCheckMatch.count({ where: { entry: { complianceStatus: null, expiresOn: { gte: today, lte: soonDate } } } }),
     prisma.backgroundCheckMatch.count({ where: { entry: { complianceStatus: "FLAGGED" } } }),
     prisma.backgroundCheckMatch.count({ where: { entry: { complianceStatus: null, expiresOn: { lt: today } } } }),

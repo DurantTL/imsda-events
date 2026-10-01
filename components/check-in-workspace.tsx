@@ -23,6 +23,8 @@ import { CheckInPaymentDue } from "@/components/check-in-payment-due";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { CheckInScanner } from "@/components/check-in-scanner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ListPager } from "@/components/list-pager";
+import { paginate } from "@/lib/pagination";
 import {
   ClubCheckInPanel,
   type ClubCheckInProgress,
@@ -37,6 +39,12 @@ import { arrivalMatchesSearch, offlineCheckInErrorMessage } from "@/modules/chec
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import { attendeeBalanceCents } from "@/modules/registrations/finance-view";
 import type { ClubCheckInInfo } from "@/modules/club-registrations/repository";
+
+/** Arrivals rendered per page; search always runs across the whole roster (#702). */
+export const ARRIVALS_PAGE_SIZE = 50;
+
+/** The tally label for people not yet checked in; matches the row status text. */
+export const AWAITING_ARRIVAL_LABEL = "Awaiting arrival";
 
 type Arrival = RegistrationRecord["attendees"][number] & {
   confirmationCode: string;
@@ -87,7 +95,12 @@ export function CheckInWorkspace({
       : [],
   ), [initialRegistrations, showBalances]);
   const owingCount = Object.keys(paymentDueByConfirmationCode).length;
-  const [query, setQuery] = useState("");
+  const [query, setQueryText] = useState("");
+  const [rosterPage, setRosterPage] = useState(1);
+  const setQuery = useCallback((next: string) => {
+    setQueryText(next);
+    setRosterPage(1);
+  }, []);
   const [undoPendingId, setUndoPendingId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
   // Review before discarding saved offline data (#471): both are local,
@@ -154,6 +167,10 @@ export function CheckInWorkspace({
     query,
     clubByConfirmationCode.get(arrival.confirmationCode)?.organizationName,
   )), [arrivals, query, clubByConfirmationCode]);
+  const rosterSlice = useMemo(
+    () => paginate(visible, rosterPage, ARRIVALS_PAGE_SIZE),
+    [visible, rosterPage],
+  );
   const queueByAttendee = useMemo(() => new Map(
     queue.map((item) => [item.attendeeId, item]),
   ), [queue]);
@@ -324,7 +341,7 @@ export function CheckInWorkspace({
           <span><strong>{checkedIn}</strong><small>Confirmed</small></span>
           <span>
             <strong>{arrivals.length - checkedIn}</strong>
-            <small>Not confirmed</small>
+            <small>{AWAITING_ARRIVAL_LABEL}</small>
           </span>
           <span><strong>{queue.length}</strong><small>Saved locally</small></span>
         </div>
@@ -566,7 +583,7 @@ export function CheckInWorkspace({
             <UsersRound aria-hidden="true" size={16} /> {visible.length} shown
           </span>
         </div>
-        {visible.map((arrival) => {
+        {rosterSlice.items.map((arrival) => {
           const savedItem = queueByAttendee.get(arrival.id);
           const processing = savedItem
             ? processingKeySet.has(savedItem.idempotencyKey)
@@ -599,7 +616,7 @@ export function CheckInWorkspace({
                     ? "Needs review"
                     : savedItem
                       ? "Queued — not confirmed"
-                      : "Awaiting arrival"}
+                      : AWAITING_ARRIVAL_LABEL}
               </span>
               <button
                 className={arrival.checkedIn ? "undo-button" : ""}
@@ -643,6 +660,7 @@ export function CheckInWorkspace({
             </div>
           );
         })}
+        <ListPager label="Arrival roster pages" onPage={setRosterPage} slice={rosterSlice} />
         {visible.length === 0 && (
           <div className="empty-state">
             <Search aria-hidden="true" size={24} />
