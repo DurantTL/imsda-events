@@ -32,7 +32,7 @@ export async function AttendeeAccountSettings({
       <div className="account-page-body">
         <AttendeeProfileForm email={account.verifiedEmail ?? null} initialProfile={profile} />
       </div>
-      <div className="account-page-body account-security-grid">
+      <div className={`account-page-body${clubs.length > 0 ? " account-security-grid" : ""}`}>
         <div className="account-security-main">
           <MfaManager
             initialStatus={mfaStatus}

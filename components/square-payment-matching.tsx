@@ -7,6 +7,22 @@ import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import type { SquareReconciliationFinding } from "@/modules/payments/square-reconciliation";
 import { registrationMatchesSearch } from "@/modules/registrations/search";
+import { cappedNotice } from "@/lib/pagination";
+
+/** How many registrations the match dialog lists: a short default, a wider cap once searching. */
+export const SQUARE_CANDIDATES_DEFAULT = 8;
+export const SQUARE_CANDIDATES_SEARCH = 25;
+
+/**
+ * The candidates the dialog shows, plus how many matched in all, so the dialog
+ * can say when the list is cut off instead of silently hiding the right
+ * registration (#702).
+ */
+export function squareCandidateWindow<T>(matching: readonly T[], query: string) {
+  const cap = query.trim() ? SQUARE_CANDIDATES_SEARCH : SQUARE_CANDIDATES_DEFAULT;
+  const shown = matching.slice(0, cap);
+  return { shown, total: matching.length, notice: cappedNotice(shown.length, matching.length) };
+}
 
 const activeStatuses = new Set(["SUBMITTED", "CONFIRMED"]);
 
@@ -110,10 +126,11 @@ export function SquarePaymentMatching({
     () => registrations.filter((row) => activeStatuses.has(row.status)),
     [registrations],
   );
-  const candidates = useMemo(() => {
-    const matching = payable.filter((row) => registrationMatchesSearch(row, query));
-    return query.trim() ? matching.slice(0, 25) : matching.slice(0, 8);
-  }, [payable, query]);
+  const candidateWindow = useMemo(
+    () => squareCandidateWindow(payable.filter((row) => registrationMatchesSearch(row, query)), query),
+    [payable, query],
+  );
+  const candidates = candidateWindow.shown;
   const selected = payable.find((row) => row.id === chosen) ?? null;
 
   function open(finding: SquareReconciliationFinding) {
@@ -390,6 +407,9 @@ export function SquarePaymentMatching({
                     </li>
                   ))}
                 </ul>
+                {candidateWindow.notice && (
+                  <p className="quiet-copy" role="status">{candidateWindow.notice}</p>
+                )}
                 {candidates.length === 0 && (
                   <p className="quiet-copy">
                     No submitted or confirmed registration matches that search.

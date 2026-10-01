@@ -1412,6 +1412,9 @@ select:focus-visible {
 .act-as-banner { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
 .act-as-banner span:not(.act-as-banner-actions) { flex: 1 1 auto; }
 .act-as-banner-actions { display: flex; align-items: center; gap: 8px; }
+/* The staff workspace's fixed sidebar covers the left edge of a full-width banner, so start the banner beside it (#700). */
+.act-as-banner-shell { margin-left: var(--sidebar-width); }
+@media (max-width: 800px) { .act-as-banner-shell { margin-left: 0; } }
 .inline-notice.error { border-color: #e9c7c2; background: #fff1ef; color: var(--coral); }
 .check-in-scanner-modal { width: min(760px, 100%); }
 .check-in-scanner-description {
@@ -6342,7 +6345,6 @@ select:focus-visible {
   color: #5f7078;
   font-size: calc(6.5pt * var(--badge-font-scale, 1));
   font-weight: 700;
-  text-transform: capitalize;
 }
 .badge-label-card footer span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
@@ -7233,7 +7235,9 @@ select:focus-visible {
 .club-team-note { color: var(--muted); font-size: var(--text-helper-min); }
 .club-team-invite-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; flex: 0 0 auto; }
 .club-role-help { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
-.roster-unlock-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+.roster-unlock-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; margin-top: 12px; }
+.roster-unlock-form label { display: grid; gap: 4px; }
+.roster-unlock-label { color: var(--imsda-navy); font-size: 0.82rem; font-weight: 700; }
 .roster-unlock-form input { width: 140px; border: 1px solid #cbdbe2; border-radius: 10px; padding: 10px 11px; font-size: 0.9rem; letter-spacing: 0.12em; }
 .roster-unlock-form .form-error { flex-basis: 100%; margin: 0; }
 .club-going-list { display: grid; gap: 6px; margin: 8px 0 16px; padding: 0; list-style: none; }
@@ -7815,7 +7819,7 @@ select:focus-visible {
 .profile-identity strong { color: var(--imsda-navy); font-size: 1.05rem; }
 .profile-identity small { color: var(--muted); }
 .profile-back-links .secondary-button { min-height: 44px; text-decoration: none; }
-.profile-account-section { display: grid; gap: 16px; }
+.profile-account-section { display: block; }
 /* Staff cards share the workspace .panel look and the same 16px rhythm. */
 .profile-staff-body .panel .section-heading { margin-bottom: 10px; }
 .profile-staff-body .panel .profile-identity { margin-top: 0; }
@@ -8111,10 +8115,17 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .profile-readonly-fields dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .profile-readonly-note { margin: 12px 0 0; }
 .profile-staff-card .section-heading { align-items: flex-start; gap: 12px; }
-.profile-portal-staff { margin-bottom: 0; }
+.profile-portal-staff { margin-bottom: 16px; }
 .profile-portal-staff > .panel { min-width: 0; }
 .profile-account-heading-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .profile-account-heading-row .profile-account-heading { margin: 0; }
+/* One column for every profile block: same width and left edge as the hero (#700). */
+.profile-account-section > .account-page-body { margin-bottom: 16px; }
+.profile-account-section > .account-page-body:last-child { margin-bottom: 48px; }
+.profile-account-card { display: grid; gap: 12px; }
+.profile-account-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.profile-account-actions .profile-back-links { margin: 0; }
+.profile-account-actions .secondary-button { min-height: 44px; }
 .profile-readonly-field { grid-column: 1 / -1; }
 .profile-readonly-field em { color: var(--muted); font-style: normal; font-weight: 400; }
 .profile-readonly-field input[readonly] { background: color-mix(in srgb, var(--muted) 10%, transparent); color: var(--muted); cursor: default; }
@@ -8123,8 +8134,9 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 @media (max-width: 640px) {
   .profile-details-form .public-manage-contact-grid { grid-template-columns: 1fr; }
   .profile-details-form .public-manage-contact-actions button { width: 100%; justify-content: center; min-height: 44px; }
-  .profile-staff-card .section-heading, .profile-account-heading-row { flex-direction: column; align-items: stretch; }
+  .profile-staff-card .section-heading, .profile-account-heading-row, .profile-account-actions { flex-direction: column; align-items: stretch; }
   .profile-staff-card .section-heading .secondary-button, .profile-account-heading-row .secondary-button { width: 100%; }
+  .profile-account-actions .profile-back-links { flex-direction: column; }
 }
 
 /* Auto-built event info cards for club events (#651). Mobile first: one column under 600px. */
@@ -8477,3 +8489,8 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 /* The area overview never grows wider than its container on phones (#703). */
 .area-overview-page, .area-overview-page > * { min-width: 0; max-width: 100%; }
 .public-manage-club-list small.club-meeting-note-collapsed { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; overflow: hidden; }
+
+/* Shared pager for long staff lists (#702). Wraps at phone width, never scrolls sideways. */
+.list-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 0; }
+.list-pager-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.list-pager-buttons .secondary-button { min-height: 44px; }
