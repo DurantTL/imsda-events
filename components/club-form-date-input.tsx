@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import { CalendarDays } from "lucide-react";
 
 /**
@@ -35,6 +35,12 @@ export function DateInput({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const id = useId();
+  // A partly typed date (month and day only) leaves `value` empty but is not empty to the person typing:
+  // keep its digits visible instead of hiding them under the hint (#733).
+  const [partial, setPartial] = useState(false);
+  function syncPartial() {
+    setPartial(Boolean(inputRef.current?.validity.badInput));
+  }
   function openPicker(fromInput = false) {
     const input = inputRef.current;
     if (!input || locked) return;
@@ -53,12 +59,18 @@ export function DateInput({
   return (
     <div className={`club-form-date-field${className ? ` ${className}` : ""}`}>
       <label htmlFor={id}>{label}</label>
-      <span className={`club-form-date${value ? "" : " is-empty"}${locked ? " is-locked" : ""}`}>
+      <span className={`club-form-date${value || partial ? "" : " is-empty"}${locked ? " is-locked" : ""}`}>
         <input
           id={id}
           max={bounds?.max}
           min={bounds?.min}
-          onChange={(event) => onChange(event.target.value)}
+          onBlur={syncPartial}
+          onChange={(event) => {
+            onChange(event.target.value);
+            syncPartial();
+          }}
+          onInput={syncPartial}
+          onKeyUp={syncPartial}
           onClick={() => openPicker(true)}
           readOnly={locked}
           ref={inputRef}
@@ -66,7 +78,7 @@ export function DateInput({
           type="date"
           value={value}
         />
-        {!value && <span aria-hidden="true" className="club-form-date-hint">mm/dd/yyyy</span>}
+        {!value && !partial && <span aria-hidden="true" className="club-form-date-hint">mm/dd/yyyy</span>}
         {!locked && (
           <button aria-label={`Choose date for ${labelText}`} className="club-form-date-button" onClick={() => openPicker()} title="Choose date" type="button">
             <CalendarDays aria-hidden="true" size={18} />
