@@ -2,6 +2,7 @@ import { AccessDeniedError, requirePermission } from "@/modules/access/authoriza
 import { getCurrentSession } from "@/modules/access/current-session";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { badgeCsvFilename, buildBadgeCsvRows, eligiblePositionField } from "@/modules/checkin/badge-csv";
+import { normalizeBadgeShowAttendeeType } from "@/modules/checkin/badge-labels";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
 import { findActiveMembership, findEventSlug } from "@/modules/events/repository";
 import { listRegistrations } from "@/modules/registrations/repository";
@@ -32,7 +33,8 @@ async function getHandler(
     }
     const registrations = await listRegistrations(eventId, { statuses: activeRegistrationStatuses });
     // Position is an explicit choice from the eligible list; nothing is guessed.
-    const requested = new URL(request.url).searchParams.get("positionField") || undefined;
+    const searchParams = new URL(request.url).searchParams;
+    const requested = searchParams.get("positionField") || undefined;
     const positionField = eligiblePositionField(registrations, requested);
     if (requested && !positionField) {
       return Response.json({
@@ -40,7 +42,12 @@ async function getHandler(
         message: "That field cannot be used as the Position column.",
       }, { status: 400 });
     }
-    const rows = buildBadgeCsvRows(registrations, positionField);
+    // Same setting as the badge page: `type=0` leaves the Attendee type column empty.
+    const rows = buildBadgeCsvRows(
+      registrations,
+      positionField,
+      normalizeBadgeShowAttendeeType(searchParams.getAll("type")),
+    );
     // Counts only: an audit row never carries an attendee's name.
     await writeAuditLog({
       eventId,

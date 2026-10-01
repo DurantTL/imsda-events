@@ -6109,6 +6109,7 @@ select:focus-visible {
 .badge-print-page { padding-bottom: 34px; }
 .badge-print-intro { gap: 24px; }
 .badge-print-actions { flex: 0 0 auto; }
+.badge-print-page .badge-print-tip { flex: 1 0 100%; max-width: none; margin: 0; }
 .badge-print-controls {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(150px, 0.45fr) auto;
@@ -6497,7 +6498,7 @@ select:focus-visible {
   .badge-print-controls,
   .badge-print-summary,
   .report-safety-note { display: none !important; }
-  .workspace { margin: 0; padding: 0; }
+  .workspace { min-height: 0; margin: 0; padding: 0; }
   .workspace-content { max-width: none; }
   .reports-workspace { gap: 12px; padding: 0; }
   .report-page-intro { display: block; }
@@ -6564,14 +6565,29 @@ select:focus-visible {
   .printable-pass-card dt { font-size: 5pt; }
   .printable-pass-card dd { font-size: 7pt; }
   .printable-pass-card > p { border-color: #aaa; color: #111; padding: 5px 7px; font-size: 6pt; }
-  .badge-print-page { display: block; padding: 0; }
-  .badge-sheet-stack { display: block; overflow: visible; padding: 0; }
+  /* Name badges (#717): the paper carries label sheets and nothing else.
+     Every sheet is a full 8.5 x 11 in page that starts at the very top of the
+     paper (@page margin is 0; the template's own margins are the sheet's
+     padding), so one extra line of chrome ahead of sheet 1 would push every
+     label off the Avery die-cuts and spill each sheet onto the next page. */
+  .skip-link,
+  .act-as-banner,
+  .event-auto-select-notice,
+  .badge-print-page > :not(.badge-sheet-stack) { display: none !important; }
+  .app-shell,
+  body { min-height: 0; }
+  .badge-print-page { display: block; margin: 0; padding: 0; }
+  .badge-sheet-stack { display: block; margin: 0; overflow: visible; padding: 0; gap: 0; }
   .badge-sheet {
+    margin: 0;
     break-after: page;
+    break-inside: avoid;
+    page-break-after: always;
+    page-break-inside: avoid;
     border: 0;
     box-shadow: none;
   }
-  .badge-sheet:last-child { break-after: auto; }
+  .badge-sheet:last-child { break-after: auto; page-break-after: auto; }
   .badge-label-card {
     border: 0;
     print-color-adjust: exact;
