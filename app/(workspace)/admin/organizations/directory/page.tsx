@@ -3,10 +3,13 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BackLink } from "@/components/back-link";
+import { OrganizationListPager, OrganizationSearchControls } from "@/components/organization-search-controls";
+import { cardCell } from "@/components/table-card-labels";
 import { OrganizationStatusButton } from "@/components/organization-status-button";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { disbandedNotice, organizationKindLabels, safeWebsiteHref } from "@/modules/organizations/eadventist-import";
-import { DIRECTORY_LIST_LIMIT, listDirectoryOrganizations, type DirectoryStatusFilter } from "@/modules/organizations/eadventist-import-repository";
+import { listDirectoryOrganizations, type DirectoryStatusFilter } from "@/modules/organizations/eadventist-import-repository";
+import { cleanSearchQuery, parsePageParam } from "@/modules/organizations/search";
 
 export const metadata: Metadata = { title: "Organization directory" };
 
@@ -18,8 +21,8 @@ const statuses: Array<{ value: DirectoryStatusFilter; label: string }> = [
   { value: "REVIEW", label: "Active, disbanded date on file" },
 ];
 
-/** Staff list of churches, companies, groups, schools and the rest, by kind and status (#649). */
-export default async function OrganizationDirectoryPage({ searchParams }: { searchParams: Promise<{ kind?: string; status?: string; q?: string }> }) {
+/** Staff list of churches, companies, groups, schools and the rest, by kind, status and search (#649, #723). */
+export default async function OrganizationDirectoryPage({ searchParams }: { searchParams: Promise<{ kind?: string; status?: string; q?: string; page?: string }> }) {
   const { user } = await getCurrentSession();
   if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
@@ -27,8 +30,10 @@ export default async function OrganizationDirectoryPage({ searchParams }: { sear
   const params = await searchParams;
   const kind = kinds.find((candidate) => candidate === params.kind) ?? null;
   const status = statuses.find((candidate) => candidate.value === params.status)?.value ?? "ALL";
-  const query = (params.q ?? "").slice(0, 80);
-  const { organizations, total } = await listDirectoryOrganizations({ kind, status, query });
+  const query = cleanSearchQuery(params.q);
+  const { organizations, total, page, pageSize } = await listDirectoryOrganizations({ kind, status, query, page: parsePageParam(params.page) });
+  const state = { q: query, kind: kind ?? "", status };
+  const searching = query.trim() !== "" || kind !== null || status !== "ALL";
 
   return (
     <>
@@ -36,58 +41,84 @@ export default async function OrganizationDirectoryPage({ searchParams }: { sear
         <BackLink href="/admin/organizations" variant="staff">Back to Clubs and churches</BackLink>
         <Link className="secondary-button" href="/admin/organizations/import">Import from eAdventist</Link>
       </div>
-      <section className="panel" aria-labelledby="org-directory-title">
-        <p className="eyebrow">Clubs and churches</p>
-        <h1 id="org-directory-title">Organization directory</h1>
-        <form className="form-grid" method="get">
-          <label>Kind
-            <select defaultValue={kind ?? ""} name="kind">
-              <option value="">All kinds</option>
-              {kinds.map((value) => <option key={value} value={value}>{organizationKindLabels[value]}</option>)}
-            </select>
-          </label>
-          <label>Status
-            <select defaultValue={status} name="status">
-              {statuses.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>
-          <label>Name
-            <input defaultValue={query} maxLength={80} name="q" type="search" />
-          </label>
-          <div className="form-actions"><button className="secondary-button" type="submit">Filter</button></div>
-        </form>
-        <p className="field-help">
-          {total} {total === 1 ? "organization" : "organizations"}{total > DIRECTORY_LIST_LIMIT ? `; showing the first ${DIRECTORY_LIST_LIMIT}. Narrow the filter to see the rest` : ""}.
-          Churches, companies and groups that are active appear in registration form church lists; active schools appear in school lists.
-        </p>
-        <div className="report-table-wrap">
-          <table className="report-table">
-            <thead><tr><th>Name</th><th>Kind</th><th>Status</th><th>Place</th><th>Parent</th><th>Contact</th><th><span className="sr-only">Actions</span></th></tr></thead>
-            <tbody>
-              {organizations.length === 0 && <tr><td colSpan={7}>No organizations match.</td></tr>}
-              {organizations.map((organization) => {
-                const notice = disbandedNotice(organization.disbandedOn, organization.isActive);
-                const href = safeWebsiteHref(organization.website);
-                return (
-                  <tr key={organization.id}>
-                    <td translate="no">{organization.name}</td>
-                    <td>{organizationKindLabels[organization.type]}{organization.sourceOrgType && organization.sourceOrgType !== organizationKindLabels[organization.type] ? <div className="field-help">{organization.sourceOrgType}</div> : null}</td>
-                    <td>
-                      <span className={`status-chip ${organization.isActive ? "green" : "gold"}`}>{organization.isActive ? "Active" : "Inactive"}</span>
-                      {notice && <div className="field-help">{notice}</div>}
-                    </td>
-                    <td>{[organization.city, organization.state].filter(Boolean).join(", ") || "—"}{organization.district ? <div className="field-help">{organization.district}</div> : null}</td>
-                    <td>{organization.parentName ?? "—"}</td>
-                    <td>
-                      {organization.officePhone ?? ""}
-                      {href && <div><a href={href} rel="noopener noreferrer" target="_blank">Website</a></div>}
-                    </td>
-                    <td><OrganizationStatusButton isActive={organization.isActive} name={organization.name} organizationId={organization.id} /></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+      <section className="page-stack org-directory-page" aria-labelledby="org-directory-title">
+        <div className="page-intro">
+          <div>
+            <p className="eyebrow">Clubs and churches</p>
+            <h2 id="org-directory-title">Organization directory</h2>
+            <p>
+              Churches, companies and groups that are active appear in registration form church lists; active schools appear in school lists.
+            </p>
+          </div>
+        </div>
+        <div className="panel org-directory-panel">
+          <OrganizationSearchControls
+            basePath="/admin/organizations/directory"
+            kindOptions={[{ value: "", label: "All kinds" }, ...kinds.map((value) => ({ value, label: organizationKindLabels[value] }))]}
+            placeholder="Name, city, code, district or parent"
+            searchLabel="Search"
+            state={state}
+            statusOptions={statuses}
+          />
+          <p className="org-result-summary" role="status">
+            {total} {total === 1 ? "organization" : "organizations"}{searching ? " match" : ""}.
+          </p>
+          <div className="report-table-wrap">
+            <table className="report-table table-cards table-cards-wide org-directory-table" role="table">
+              <thead role="rowgroup">
+                <tr role="row">
+                  <th role="columnheader" scope="col">Name</th>
+                  <th role="columnheader" scope="col">Kind</th>
+                  <th role="columnheader" scope="col">Status</th>
+                  <th role="columnheader" scope="col">Place</th>
+                  <th role="columnheader" scope="col">Parent</th>
+                  <th role="columnheader" scope="col">Contact</th>
+                  <th role="columnheader" scope="col"><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
+              <tbody role="rowgroup">
+                {organizations.length === 0 && (
+                  <tr role="row"><td colSpan={7} role="cell">
+                    {searching ? "No organizations match your search and filters. Try fewer words or clear the filters." : "No organizations yet."}
+                  </td></tr>
+                )}
+                {organizations.map((organization) => {
+                  const notice = disbandedNotice(organization.disbandedOn, organization.isActive);
+                  const href = safeWebsiteHref(organization.website);
+                  const place = [organization.city, organization.state].filter(Boolean).join(", ");
+                  const kindLabel = organizationKindLabels[organization.type];
+                  const subType = organization.sourceOrgType && organization.sourceOrgType !== kindLabel ? organization.sourceOrgType : null;
+                  return (
+                    <tr key={organization.id} role="row">
+                      <th className="org-cell-name" role="rowheader" scope="row" translate="no">{organization.name}</th>
+                      <td {...cardCell("Kind")}>
+                        <span className="org-cell-main">{kindLabel}</span>
+                        {subType && <span className="org-cell-sub">{subType}</span>}
+                      </td>
+                      <td {...cardCell("Status")}>
+                        <span className={`status-chip ${organization.isActive ? "green" : "gold"}`}>{organization.isActive ? "Active" : "Inactive"}</span>
+                        {notice && <span className="org-cell-sub">{notice}</span>}
+                      </td>
+                      <td {...cardCell("Place")}>
+                        <span className="org-cell-main">{place || "—"}</span>
+                        {organization.district && <span className="org-cell-sub">District: {organization.district}</span>}
+                      </td>
+                      <td {...cardCell("Parent")}>{organization.parentName ?? "—"}</td>
+                      <td {...cardCell("Contact")}>
+                        {organization.officePhone && <span className="org-cell-main">{organization.officePhone}</span>}
+                        {href && <a className="org-cell-sub org-cell-link" href={href} rel="noopener noreferrer" target="_blank">Website</a>}
+                        {!organization.officePhone && !href && <span className="org-cell-main">—</span>}
+                      </td>
+                      <td {...cardCell(null)} className="org-cell-actions">
+                        <OrganizationStatusButton isActive={organization.isActive} name={organization.name} organizationId={organization.id} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <OrganizationListPager basePath="/admin/organizations/directory" page={page} pageCount={Math.max(1, Math.ceil(total / pageSize))} pageSize={pageSize} state={state} total={total} />
         </div>
       </section>
     </>

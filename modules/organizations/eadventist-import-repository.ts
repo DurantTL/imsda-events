@@ -14,6 +14,8 @@ import {
   type ImportPlan,
   type PlanItem,
 } from "@/modules/organizations/eadventist-import";
+import { clampPage } from "@/lib/pagination";
+import { organizationSearchWhere } from "@/modules/organizations/search";
 import { OrganizationOperationError } from "@/modules/organizations/repository";
 
 /**
@@ -181,11 +183,16 @@ export async function commitEadventistImport(csv: string, actorUserId: string, c
 }
 
 export type DirectoryStatusFilter = "ALL" | "ACTIVE" | "INACTIVE" | "REVIEW";
-export type DirectoryFilters = { kind: OrganizationType | null; status: DirectoryStatusFilter; query: string };
+export type DirectoryFilters = { kind: OrganizationType | null; status: DirectoryStatusFilter; query: string; page?: number };
 
-export const DIRECTORY_LIST_LIMIT = 500;
+/** Rows per page in the organization directory (#723). */
+export const DIRECTORY_PAGE_SIZE = 50;
 
-/** The staff list of imported and other non-club organizations, filtered by kind and status. */
+/**
+ * The staff list of imported and other non-club organizations, filtered by
+ * kind and status, searched by name, place, code, district and parent (#723),
+ * and paged.
+ */
 export async function listDirectoryOrganizations(filters: DirectoryFilters) {
   const where: Prisma.OrganizationWhereInput = {
     type: filters.kind && filters.kind !== "CLUB" ? filters.kind : { not: "CLUB" },
@@ -193,23 +200,25 @@ export async function listDirectoryOrganizations(filters: DirectoryFilters) {
     ...(filters.status === "INACTIVE" ? { isActive: false } : {}),
     // "Needs review": still active but a disbanded date is on file.
     ...(filters.status === "REVIEW" ? { isActive: true, disbandedOn: { not: null } } : {}),
-    ...(filters.query.trim() ? { normalizedName: { contains: normalizeOrganizationName(filters.query) } } : {}),
+    ...(organizationSearchWhere(filters.query) ?? {}),
   };
-  const [rows, total] = await Promise.all([
-    getPrisma().organization.findMany({
-      where,
-      orderBy: [{ name: "asc" }, { id: "asc" }],
-      take: DIRECTORY_LIST_LIMIT,
-      select: {
-        id: true, type: true, name: true, isActive: true, sourceOrgType: true, city: true, state: true, district: true,
-        website: true, officePhone: true, disbandedOn: true, eadventistId: true,
-        affiliatedOrganization: { select: { name: true } },
-      },
-    }),
-    getPrisma().organization.count({ where }),
-  ]);
+  const total = await getPrisma().organization.count({ where });
+  const page = clampPage(filters.page ?? 1, total, DIRECTORY_PAGE_SIZE);
+  const rows = await getPrisma().organization.findMany({
+    where,
+    orderBy: [{ name: "asc" }, { id: "asc" }],
+    skip: (page - 1) * DIRECTORY_PAGE_SIZE,
+    take: DIRECTORY_PAGE_SIZE,
+    select: {
+      id: true, type: true, name: true, isActive: true, sourceOrgType: true, city: true, state: true, district: true,
+      website: true, officePhone: true, disbandedOn: true, eadventistId: true,
+      affiliatedOrganization: { select: { name: true } },
+    },
+  });
   return {
     total,
+    page,
+    pageSize: DIRECTORY_PAGE_SIZE,
     organizations: rows.map(({ disbandedOn, affiliatedOrganization, eadventistId, ...row }) => ({
       ...row,
       disbandedOn: isoDay(disbandedOn),
