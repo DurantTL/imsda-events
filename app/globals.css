@@ -7971,7 +7971,7 @@ select:focus-visible {
 }
 @media print {
   .sidebar, .workspace-header, .mobile-nav, .account-nav, .club-form-page-actions, .club-form-print-button,
-  .club-roster-layout > nav, .account-portal .public-registration-header, .account-portal .account-page-hero,
+  .club-roster-layout > nav, .area-club-layout > :is(a, p.inline-notice), .account-portal .public-registration-header, .account-portal .account-page-hero,
   .act-as-banner { display: none !important; }
   .club-form-sheet { border: 0; padding: 0; border-radius: 0; }
   .club-form-sheet-section { break-inside: avoid; }

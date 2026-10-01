@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Eye } from "lucide-react";
 import { getPrisma } from "@/lib/prisma";
 import { resolveAreaCoordinatorViewer } from "@/modules/club-forms/access";
 import { listSubmissionsForViewer } from "@/modules/club-forms/submissions";
@@ -28,9 +27,8 @@ export default async function AreaClubFormsPage({ params }: { params: Promise<{ 
 
   return (
     <>
-      <p className="inline-notice" role="status">
-        <Eye aria-hidden="true" size={14} /> View only. Health, conduct, physician, emergency-contact and birth-date
-        answers show as Restricted. Forms the conference has since switched off stay listed.
+      <p className="field-help">
+        Health, conduct, physician, emergency-contact and birth-date answers show as Restricted. Forms the conference has since switched off stay listed.
       </p>
       {submissions.length === 0 ? (
         <p className="quiet-copy">This club has no submitted forms.</p>

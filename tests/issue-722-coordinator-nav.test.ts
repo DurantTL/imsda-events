@@ -17,10 +17,9 @@ describe("area coordinator club menu (#722)", () => {
       `Home -> ${base}`,
       `Roster -> ${base}#open-club-roster`,
       `Honors -> ${base}/honors`,
-      "Events -> /account/area-clubs/events",
+      `Events -> ${base}#open-club-events`,
       `Club forms -> ${base}/forms`,
-      "Monthly reports -> /account/area-clubs/reports",
-      "Background checks -> /account/area-clubs/overview",
+      `Monthly reports -> ${base}#open-club-reports`,
       `Orders -> ${base}/orders`,
       `Earned awards -> ${base}/awards`,
     ]);
@@ -32,6 +31,9 @@ describe("area coordinator club menu (#722)", () => {
       expect(hrefs.some((href) => href.includes(denied))).toBe(false);
     }
     for (const href of hrefs) expect(href.startsWith("/account/clubs/")).toBe(false);
+    // Every item stays inside this club.
+    for (const href of hrefs) expect(href.startsWith(base)).toBe(true);
+    expect(items.map((item) => item.label)).not.toContain("Background checks");
     expect(items.map((item) => item.label)).not.toContain("Class tracking");
     expect(items.map((item) => item.label)).not.toContain("Club info");
   });
@@ -78,6 +80,7 @@ describe("layout classes (#722)", () => {
     expect(layout).toContain('className="club-roster-layout area-club-layout"');
     expect(layout).toContain('variant="secondary"');
     expect(layout).toContain("View only");
+    expect(css).toMatch(/\.area-club-layout > :is\(a, p\.inline-notice\)/);
     expect(layout).toContain('href="/account/clubs"');
   });
 });
