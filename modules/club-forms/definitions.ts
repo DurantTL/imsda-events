@@ -89,12 +89,12 @@ const membershipApplication: ClubFormTemplateSeed = {
   key: "pathfinder_membership_application",
   name: "Pathfinder Club Membership Application",
   description: "An applicant's membership application with the parent or guardian's approval, waiver and signatures.",
-  version: 3,
+  version: 2,
   sortOrder: 10,
   printLayout: "STANDARD",
   sensitiveFieldKeys: ["birth_date"],
   birthDateFieldKeys: ["birth_date"],
-  // v2 (#719): the fee amounts are entered by the club, so a private-link filler never sees them. v3: signing dates fill in automatically.
+  // v2 (#719): the fee amounts are entered by the club, so a private-link filler never sees them. Signing dates fill in automatically in the same version.
   staffOnlyFieldKeys: ["registration_fee", "club_dues", "insurance_fee"],
   sectionNotes: {
     sec_applicant: [

@@ -63,11 +63,6 @@ export type ClubFormTemplateSpec = Pick<
   "definition" | "sectionNotes" | "sensitiveFieldKeys" | "birthDateFieldKeys" | "staffOnlyFieldKeys"
 >;
 
-/** The keys of the visible-or-not DATE fields that fill in today's date themselves (#719). */
-export function autoDateKeys(definition: RegistrationFormDefinition): string[] {
-  return allFields(definition).filter((field) => field.type === "DATE" && field.autoDate === "TODAY").map((field) => field.key);
-}
-
 /**
  * Sets every auto-date field the answers should carry to today's date in the
  * conference zone, replacing anything the client sent. Used by the private

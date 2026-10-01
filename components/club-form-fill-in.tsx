@@ -360,11 +360,17 @@ function FieldInput({
     }
     case "DATE":
       return (
-        <label className={className}>{label}
-          <DateInput bounds={dateFieldBounds(field)} locked={lockedDate} onChange={onChange} required={required} value={textOf(value)} />
-          {lockedDate ? <small className="field-help">Filled in automatically with today&apos;s date.</small> : null}
-          {help}
-        </label>
+        <DateInput
+          bounds={dateFieldBounds(field)}
+          className={className}
+          help={<>{lockedDate ? <small className="field-help">Filled in automatically with today&apos;s date.</small> : null}{help}</>}
+          label={label}
+          labelText={field.label}
+          locked={lockedDate}
+          onChange={onChange}
+          required={required}
+          value={textOf(value)}
+        />
       );
     case "NUMBER":
       return (

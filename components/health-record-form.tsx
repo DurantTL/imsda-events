@@ -114,13 +114,13 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
     );
   }
 
-  const field = (key: string, label: string, options: { wide?: boolean; area?: boolean; date?: boolean; type?: string } = {}) => (
+  const field = (key: string, label: string, options: { wide?: boolean; area?: boolean; date?: boolean; type?: string } = {}) => options.date ? (
+    <DateInput className={options.wide ? "club-form-field-wide" : undefined} key={key} label={label} labelText={label} onChange={(value) => set(key, value)} value={text[key] ?? ""} />
+  ) : (
     <label className={options.wide ? "club-form-field-wide" : undefined}>{label}
       {options.area
         ? <textarea maxLength={2000} onChange={(event) => set(key, event.target.value)} rows={3} value={text[key] ?? ""} />
-        : options.date
-          ? <DateInput onChange={(value) => set(key, value)} value={text[key] ?? ""} />
-          : <input autoComplete="off" onChange={(event) => set(key, event.target.value)} type={options.type ?? "text"} value={text[key] ?? ""} />}
+        : <input autoComplete="off" onChange={(event) => set(key, event.target.value)} type={options.type ?? "text"} value={text[key] ?? ""} />}
     </label>
   );
 

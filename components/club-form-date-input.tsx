@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useId, useRef, type ReactNode } from "react";
 import { CalendarDays } from "lucide-react";
 
 /**
@@ -11,12 +11,22 @@ import { CalendarDays } from "lucide-react";
  * locked one (a private link's signing date) is read-only with no picker.
  */
 export function DateInput({
+  label,
+  labelText,
+  help,
+  className,
   value,
   bounds,
   required = false,
   locked = false,
   onChange,
 }: {
+  /** The visible label content; it labels the input only, so the button's name stays out of the input's. */
+  label: ReactNode;
+  /** Plain text of the label, for the button's accessible name. */
+  labelText: string;
+  help?: ReactNode;
+  className?: string;
   value: string;
   bounds?: { min?: string; max?: string };
   required?: boolean;
@@ -24,9 +34,12 @@ export function DateInput({
   onChange: (value: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  function openPicker() {
+  const id = useId();
+  function openPicker(fromInput = false) {
     const input = inputRef.current;
     if (!input || locked) return;
+    // A click in a filled field is for editing its parts; only an empty one opens the picker.
+    if (fromInput && input.value) return;
     try {
       if (typeof input.showPicker === "function") {
         input.showPicker();
@@ -38,24 +51,29 @@ export function DateInput({
     input.focus();
   }
   return (
-    <span className={`club-form-date${value ? "" : " is-empty"}${locked ? " is-locked" : ""}`}>
-      <input
-        max={bounds?.max}
-        min={bounds?.min}
-        onChange={(event) => onChange(event.target.value)}
-        onClick={openPicker}
-        readOnly={locked}
-        ref={inputRef}
-        required={required}
-        type="date"
-        value={value}
-      />
-      {!value && <span aria-hidden="true" className="club-form-date-hint">mm/dd/yyyy</span>}
-      {!locked && (
-        <button aria-label="Choose date" className="club-form-date-button" onClick={openPicker} title="Choose date" type="button">
-          <CalendarDays aria-hidden="true" size={18} />
-        </button>
-      )}
-    </span>
+    <div className={`club-form-date-field${className ? ` ${className}` : ""}`}>
+      <label htmlFor={id}>{label}</label>
+      <span className={`club-form-date${value ? "" : " is-empty"}${locked ? " is-locked" : ""}`}>
+        <input
+          id={id}
+          max={bounds?.max}
+          min={bounds?.min}
+          onChange={(event) => onChange(event.target.value)}
+          onClick={() => openPicker(true)}
+          readOnly={locked}
+          ref={inputRef}
+          required={required}
+          type="date"
+          value={value}
+        />
+        {!value && <span aria-hidden="true" className="club-form-date-hint">mm/dd/yyyy</span>}
+        {!locked && (
+          <button aria-label={`Choose date for ${labelText}`} className="club-form-date-button" onClick={() => openPicker()} title="Choose date" type="button">
+            <CalendarDays aria-hidden="true" size={18} />
+          </button>
+        )}
+      </span>
+      {help}
+    </div>
   );
 }

@@ -104,9 +104,25 @@ describe("signing dates fill in automatically (#719)", () => {
 
   it("gives every editable date a Choose date button and keeps the mm/dd/yyyy hint", () => {
     const markup = render();
-    expect(markup.match(/aria-label="Choose date"/g)).toHaveLength(2);
+    expect(markup.match(/aria-label="Choose date for /g)).toHaveLength(2);
     expect(markup.match(/mm\/dd\/yyyy/g)).toHaveLength(2);
     expect(css).toMatch(/\.club-form-date-button \{[^}]*width: 44px;[^}]*height: 44px/);
+  });
+
+  it("keeps the Choose date button outside the label so the input's name is just its label", () => {
+    const markup = render();
+    for (const label of markup.match(/<label\b[^>]*>[\s\S]*?<\/label>/g) ?? []) expect(label).not.toContain("<button");
+    expect(markup).toContain("aria-label=\"Choose date for Date signed by applicant\"");
+    expect(markup).toMatch(/<label for="([^"]+)">[\s\S]*?Date signed by applicant[\s\S]*?<\/label>[\s\S]*?<input id="\1"/);
+    const health = readFileSync(path.join(process.cwd(), "components/health-record-form.tsx"), "utf8");
+    expect(health).toContain("labelText={label}");
+  });
+
+  it("opens the picker from the input only while it is empty, and always from the button", () => {
+    const source = readFileSync(path.join(process.cwd(), "components/club-form-date-input.tsx"), "utf8");
+    expect(source).toContain("if (fromInput && input.value) return;");
+    expect(source).toContain("onClick={() => openPicker(true)}");
+    expect(source).toContain("onClick={() => openPicker()}");
   });
 
   it("fills missing auto dates only, or all of them when overwriting", () => {

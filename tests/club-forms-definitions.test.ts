@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
 import {
   allFields,
-  autoDateKeys,
   definitionForLink,
   sanitizeClubFormAnswers,
   splitAnswers,
@@ -10,7 +9,7 @@ import {
   validateClubFormAnswers,
   withAutoDates,
 } from "@/modules/club-forms/domain";
-import { formTemplates, registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { formTemplates, registrationFormDefinitionSchema, todayDateValue } from "@/modules/forms/definition";
 
 /**
  * The four seeded templates (#610, field specs from #608): they validate on
@@ -101,7 +100,7 @@ describe("seeded club form templates", () => {
   it("keeps the club-entered fee fields off a private link but on the director's form (#719)", () => {
     const fees = ["registration_fee", "club_dues", "insurance_fee"];
     expect(membership().staffOnlyFieldKeys).toEqual(fees);
-    expect(membership().version).toBeGreaterThanOrEqual(2);
+    expect(membership().version).toBe(2);
     const linkKeys = allFields(definitionForLink(membership())).map((field) => field.key);
     for (const key of fees) expect(linkKeys).not.toContain(key);
     expect(definitionForLink(membership()).sections.map((section) => section.title)).not.toContain("Fees");
@@ -119,7 +118,7 @@ describe("seeded club form templates", () => {
   });
 
   it("marks the signing and application dates to fill in automatically, and no other date (#719)", () => {
-    const auto = Object.fromEntries(clubFormTemplateSeeds.map((template) => [template.key, autoDateKeys(registrationFormDefinitionSchema.parse(template.definition))]));
+    const auto = Object.fromEntries(clubFormTemplateSeeds.map((template) => [template.key, allFields(registrationFormDefinitionSchema.parse(template.definition)).filter((field) => field.autoDate === "TODAY").map((field) => field.key)]));
     expect(auto).toEqual({
       pathfinder_membership_application: ["applicant_signature_date", "application_date"],
       pathfinder_staff_service_information: ["signature_date"],
@@ -139,6 +138,22 @@ describe("seeded club form templates", () => {
     expect(set).toEqual({ parent_signature_date: "2026-10-05", activity_date: "2026-11-07", child_name: "Riley Sample" });
     expect(answers.parent_signature_date).toBe("2020-01-01");
     expect(withAutoDates(definition, {}, ["parent_signature_date"], new Date("2026-10-06T01:30:00Z"))).toEqual({});
+  });
+
+  it("rolls the Chicago day over at 05:00Z in daylight time and 06:00Z in standard time (#719)", () => {
+    const day = (iso: string) => todayDateValue(new Date(iso));
+    // CDT until Nov 1 2026 07:00Z (2:00 local); CST after. CDT again from Mar 14 2027 08:00Z.
+    expect(day("2026-10-31T04:59:00Z")).toBe("2026-10-30");
+    expect(day("2026-10-31T05:00:00Z")).toBe("2026-10-31");
+    expect(day("2026-11-02T05:59:00Z")).toBe("2026-11-01");
+    expect(day("2026-11-02T06:00:00Z")).toBe("2026-11-02");
+    expect(day("2027-03-13T05:59:00Z")).toBe("2027-03-12");
+    expect(day("2027-03-13T06:00:00Z")).toBe("2027-03-13");
+    // Mar 14 2027 is the spring-forward day (08:00Z), so it still rolls at 06:00Z; Mar 15 rolls at 05:00Z.
+    expect(day("2027-03-14T05:59:00Z")).toBe("2027-03-13");
+    expect(day("2027-03-14T06:00:00Z")).toBe("2027-03-14");
+    expect(day("2027-03-15T04:59:00Z")).toBe("2027-03-14");
+    expect(day("2027-03-15T05:00:00Z")).toBe("2027-03-15");
   });
 
   it("only lets a date question carry the auto-date setting (#719)", () => {

@@ -7960,6 +7960,8 @@ select:focus-visible {
 .club-form-fill > fieldset.public-manage-card > legend { float: left; width: 100%; margin: 0 0 4px; padding: 0; }
 .club-form-fill > fieldset.public-manage-card > legend + * { clear: both; }
 /* Empty date fields: the browser's own placeholder can be today's date (Safari), which reads as a filled-in value. */
+.club-form-date-field { display: grid; gap: 6px; color: var(--ink); font-size: max(var(--type-body-floor, 0px), 0.7rem); font-weight: 700; }
+.club-form-date-field.club-form-field-wide { grid-column: 1 / -1; }
 .club-form-date { position: relative; display: block; }
 .club-form-date.is-empty input:not(:focus)::-webkit-datetime-edit { color: transparent; }
 .club-form-date-hint { position: absolute; top: 50%; left: 11px; transform: translateY(-50%); color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.78rem); pointer-events: none; }
