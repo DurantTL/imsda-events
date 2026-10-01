@@ -54,6 +54,16 @@ RESEND_API_KEY=<from the Resend dashboard>
 ACCOUNT_EMAIL_SENDER_ADDRESS=<a verified sender, e.g. no-reply@imsda.org>
 ```
 
+**Church map locations (optional, off by default)** — `GEOCODING_ENABLED=true`
+lets a system administrator click "Find map locations" on the organization
+directory. That sends each church's public street address, city, state and ZIP
+to the U.S. Census Bureau geocoder, so **the production server needs outbound
+HTTPS (port 443) to `geocoding.geo.census.gov`**. No API key is needed. With
+the flag unset or `false` nothing is ever sent. If the host cannot be reached
+the step reports an error and changes nothing. Leave `GEOCODING_PROVIDER`
+unset in production (`fake` is an offline stand-in for local work only). See
+[ADR 0014](decisions/0014-church-geocoding.md).
+
 Each secret needs at least 32 characters. If one is missing or malformed the
 container exits at startup with the offending variable named in its log, rather
 than serving pages and failing later on a QR pass or a private link. A variable

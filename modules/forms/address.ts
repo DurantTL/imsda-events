@@ -4,6 +4,7 @@
  * deterministic normalization for search / duplicate-match evidence, and a
  * stable flattened display value for exports.
  *
+ * (Church map locations are geocoded separately, by staff only: #724.)
  * This module intentionally does NOT verify or geocode addresses and does
  * NOT decide identity matches — `normalizeAddress` only gives callers (for
  * example a future duplicate-match workflow) a deterministic comparison key

@@ -229,6 +229,19 @@ export type ExistingOrganization = {
   disbandedOn: string | null;
   /** The eAdventist id of the affiliated organization, when it has one. */
   affiliatedEadventistId: string | null;
+  /** Stored active switch; staff own it once a record exists. Treated as active when absent. */
+  isActive?: boolean;
+  /** The stored ChurchLocation (#724), or null. Treated as null when absent. */
+  location?: ExistingLocation | null;
+};
+
+/** What the plan needs to know about a stored church location. */
+export type ExistingLocation = {
+  source: "IMPORT" | "MANUAL" | "GEOCODED";
+  city: string;
+  state: string;
+  zip: string;
+  hasCoordinates: boolean;
 };
 
 export type PlanAction = "NEW" | "UPDATED" | "UNCHANGED" | "SKIPPED";
@@ -256,11 +269,30 @@ export type PlanItem = {
   record: EadventistRecord | null;
   /** The eAdventist id of the resolved parent inside this file, or null. */
   affiliatedEadventistId: string | null;
+  /** What the commit does to the church's map location (#724), or null when nothing. */
+  location: LocationPlan | null;
+  /** The stored street, town, state or ZIP differs from the file: any saved geocode result is stale. */
+  addressChanged: boolean;
+};
+
+/**
+ * City, state and ZIP for a church's ChurchLocation (#724). Never a street
+ * address and never coordinates: the import does not geocode. `clearPoint`
+ * drops coordinates that came from a geocode of an address that has changed.
+ */
+export type LocationPlan = {
+  action: "CREATE" | "UPDATE";
+  city: string;
+  state: string;
+  zip: string;
+  clearPoint: boolean;
 };
 
 export type ImportPlan = {
   items: PlanItem[];
   counts: { new: number; updated: number; unchanged: number; skipped: number; flagged: number };
+  /** Church locations the commit creates or updates (#724). */
+  locationCounts: { created: number; updated: number };
   /** Rows still waiting for a "Possible match" choice. */
   needsChoice: number;
   rejected: EadventistParseResult["rejected"];
@@ -271,6 +303,51 @@ export const NEW_RECORD = "NEW";
 export type LinkChoices = Record<string, string>;
 
 const conferenceNamePattern = /\bconference\b/i;
+
+/** A 5-digit ZIP or ZIP+4 (as ChurchLocation holds them), or blank when the export's value isn't one. */
+export function locationZip(postalCode: string | null) {
+  const digits = (postalCode ?? "").replace(/\D/g, "");
+  if (digits.length === 5) return digits;
+  if (digits.length === 9) return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+  return "";
+}
+
+/**
+ * A comparable form of a church's public address (#724): whitespace and case
+ * folded, the ZIP normalized. A geocode result is only good for the address it
+ * was found for.
+ */
+export function churchAddressKey(address: { street: string | null; city: string | null; state: string | null; zip: string | null }) {
+  const fold = (value: string | null) => (value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase("en-US");
+  return [fold(address.street), fold(address.city), fold(address.state), locationZip(address.zip)].join("|");
+}
+
+/**
+ * The map location a church row yields (#724): only an active church with a
+ * town gets one, and only when no person set the stored location by hand. Home
+ * meeting groups never do (the public map plots churches, and a group's home
+ * must never be a point). Schools, companies and camps are not plotted by the
+ * public club map, so they get none either.
+ */
+function planLocation(record: EadventistRecord, kind: OrganizationType, stored: ExistingOrganization | null): LocationPlan | null {
+  const current = stored?.location ?? null;
+  // A geocoded point belongs to a church's street address: once the record is no
+  // longer a church, or has no street address, the point is dropped.
+  if (current?.source === "GEOCODED" && current.hasCoordinates && (kind !== "CHURCH" || record.type !== "CHURCH" || !record.streetAddress)) {
+    return { action: "UPDATE", city: current.city, state: current.state, zip: current.zip, clearPoint: true };
+  }
+  if (kind !== "CHURCH" || record.type !== "CHURCH") return null;
+  const active = stored ? stored.isActive ?? true : record.isActive;
+  if (!active || !record.city) return null;
+  const next = { city: record.city, state: record.state ?? "", zip: locationZip(record.postalCode) };
+  if (!current) return { action: "CREATE", ...next, clearPoint: false };
+  if (current.source === "MANUAL") return null;
+  const placeChanged = current.city !== next.city || current.state !== next.state || current.zip !== next.zip;
+  // A geocoded point belongs to the address it was found for.
+  const addressChanged = current.source === "GEOCODED" && current.hasCoordinates && (placeChanged || (stored?.streetAddress ?? null) !== record.streetAddress);
+  if (!placeChanged && !addressChanged) return null;
+  return { action: "UPDATE", ...next, clearPoint: addressChanged };
+}
 
 const FIELDS = ["orgCode", "sourceOrgType", "streetAddress", "city", "state", "postalCode", "website", "officePhone", "district", "language"] as const;
 
@@ -446,7 +523,7 @@ export function planEadventistImport(
     const notes = [...entry.notes];
     const base = { line: record.line, eadventistId: record.eadventistId, name: record.name, disbandedOn: record.disbandedOn, possibleMatches, needsChoice };
     if (skipped) {
-      return { ...base, kind: record.type, action: "SKIPPED" as const, matchedBy: null, existingId: null, notes, record: null, affiliatedEadventistId: null };
+      return { ...base, kind: record.type, action: "SKIPPED" as const, matchedBy: null, existingId: null, notes, record: null, affiliatedEadventistId: null, location: null, addressChanged: false };
     }
 
     // SubOrgOf: resolve by name to another imported row; ignore the conference itself.
@@ -474,7 +551,9 @@ export function planEadventistImport(
     }
 
     const action: PlanAction = !stored ? "NEW" : differs(record, kind, stored, affiliatedEadventistId) ? "UPDATED" : "UNCHANGED";
-    return { ...base, kind, action, matchedBy, existingId: stored?.id ?? null, notes, record, affiliatedEadventistId };
+    return { ...base, kind, action, matchedBy, existingId: stored?.id ?? null, notes, record, affiliatedEadventistId, location: planLocation(record, kind, stored),
+      addressChanged: !!stored && churchAddressKey({ street: stored.streetAddress, city: stored.city, state: stored.state, zip: stored.postalCode })
+        !== churchAddressKey({ street: record.streetAddress, city: record.city, state: record.state, zip: record.postalCode }) };
   });
 
   const counts = { new: 0, updated: 0, unchanged: 0, skipped: 0, flagged: 0 };
@@ -482,7 +561,11 @@ export function planEadventistImport(
     counts[item.action.toLowerCase() as "new" | "updated" | "unchanged" | "skipped"] += 1;
     if (item.disbandedOn && item.action !== "SKIPPED") counts.flagged += 1;
   }
-  return { items, counts, needsChoice: items.filter((item) => item.needsChoice).length, rejected: parsed.rejected };
+  const locationCounts = {
+    created: items.filter((item) => item.location?.action === "CREATE").length,
+    updated: items.filter((item) => item.location?.action === "UPDATE").length,
+  };
+  return { items, counts, locationCounts, needsChoice: items.filter((item) => item.needsChoice).length, rejected: parsed.rejected };
 }
 
 /** "Disbanded 03/01/2024 on file — review" (#649): shown wherever a record with a date is active. */

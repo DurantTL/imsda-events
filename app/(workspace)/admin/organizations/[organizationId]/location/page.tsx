@@ -10,8 +10,8 @@ export const metadata: Metadata = { title: "Church location" };
 
 /**
  * Conference staff enter a church's town and, optionally, its map
- * coordinates (#437). Coordinates are typed in here, by hand — nothing
- * geocodes them. Used only to plot the church's listed clubs on the public
+ * coordinates (#437). Saving here marks the location as set by hand (#724),
+ * so the import and "Find map locations" never overwrite it. Used only to plot the church's listed clubs on the public
  * club map.
  */
 export default async function StaffChurchLocationPage({

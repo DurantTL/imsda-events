@@ -1839,6 +1839,7 @@ model Organization {
   meetingNotes       ClubMeetingNote[]
   yearStandings      ClubYearStanding[]
   churchLocation     ChurchLocation?
+  churchGeocodeResult ChurchGeocodeResult?
   staffActAs         StaffActAs[]
   memberHonorEntries MemberHonorEntry[]
   transfersReceived  MemberTransfer[]   @relation("MemberTransferTo")
@@ -1859,22 +1860,63 @@ model Organization {
 }
 
 /**
- * A church's town and, when staff have entered them, hand-plotted map
- * coordinates (#437). Coordinates are typed in by staff, never geocoded from
- * an address or looked up on a page view — there is no street address in
- * this system (see #149). Used only to place a church's listed clubs on the
- * public club map; a church without one still lists its clubs, just without
- * a pin.
+ * A church's town and, when known, map coordinates (#437, #724). `source`
+ * records who set the row: IMPORT (city, state and ZIP filled by the
+ * eAdventist import), GEOCODED (a staff-accepted Census Bureau match), or
+ * MANUAL (a person typed it or placed the pin). Neither the import nor the
+ * geocoder ever overwrites a MANUAL row. Existing rows were backfilled MANUAL.
  */
 model ChurchLocation {
-  organizationId String   @id
-  city           String   @default("")
-  state          String   @default("")
-  zip            String   @default("")
+  organizationId String               @id
+  city           String               @default("")
+  state          String               @default("")
+  zip            String               @default("")
   latitude       Float?
   longitude      Float?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  source         ChurchLocationSource @default(MANUAL)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+enum ChurchLocationSource {
+  IMPORT
+  MANUAL
+  GEOCODED
+}
+
+enum ChurchGeocodeStatus {
+  MATCHED
+  NO_MATCH
+}
+
+enum ChurchGeocodeDecision {
+  PENDING
+  ACCEPTED
+  SKIPPED
+}
+
+/**
+ * The result of the staff-triggered "Find map locations" step (#724), one row
+ * per church, kept for review. A MATCHED row holds a proposed point that only
+ * reaches ChurchLocation when staff accept it.
+ */
+model ChurchGeocodeResult {
+  organizationId  String                @id
+  status          ChurchGeocodeStatus
+  decision        ChurchGeocodeDecision @default(PENDING)
+  latitude        Float?
+  longitude       Float?
+  matchedAddress  String                @default("")
+  provider        String
+  /// The address that was sent. Accepting is refused once the church's address no longer matches.
+  inputStreet     String                @default("")
+  inputCity       String                @default("")
+  inputState      String                @default("")
+  inputZip        String                @default("")
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 }

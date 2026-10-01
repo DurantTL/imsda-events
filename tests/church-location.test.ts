@@ -104,11 +104,29 @@ describe("church location repository (#437)", () => {
       id: "church-1",
       type: "CHURCH",
       name: "First Church",
-      churchLocation: { city: "Ames", state: "IA", zip: "50010", latitude: 42.03, longitude: -93.62 },
+      churchLocation: { source: "MANUAL", city: "Ames", state: "IA", zip: "50010", latitude: 42.03, longitude: -93.62 },
     });
     await updateChurchLocation("church-1", input(), "staff-1");
     expect(mocks.upsertLocation).not.toHaveBeenCalled();
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("marks a hand save MANUAL, and claims an imported or geocoded location even when nothing else changed (#724)", async () => {
+    await updateChurchLocation("church-1", input(), "staff-1");
+    expect(mocks.upsertLocation).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ source: "MANUAL" }),
+      update: expect.objectContaining({ source: "MANUAL" }),
+    }));
+    mocks.upsertLocation.mockClear();
+    mocks.findOrganization.mockResolvedValueOnce({
+      id: "church-1",
+      type: "CHURCH",
+      name: "First Church",
+      churchLocation: { source: "GEOCODED", city: "Ames", state: "IA", zip: "50010", latitude: 42.03, longitude: -93.62 },
+    });
+    await updateChurchLocation("church-1", input(), "staff-1");
+    expect(mocks.upsertLocation).toHaveBeenCalledWith(expect.objectContaining({ update: expect.objectContaining({ source: "MANUAL" }) }));
+    expect(mocks.writeAuditLog.mock.calls.at(-1)![0].metadata).toMatchObject({ claimedFrom: "GEOCODED" });
   });
 
   it("rejects a club, since only churches have a location", async () => {

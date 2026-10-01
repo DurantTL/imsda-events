@@ -52,10 +52,10 @@ async function loadExisting(client: Client): Promise<{ existing: ExistingOrganiz
     select: {
       id: true, type: true, name: true, normalizedName: true, eadventistId: true, orgCode: true, sourceOrgType: true,
       streetAddress: true, city: true, state: true, postalCode: true, website: true, officePhone: true, district: true,
-      language: true, disbandedOn: true,
+      language: true, disbandedOn: true, isActive: true,
       affiliatedOrganization: { select: { eadventistId: true } },
       externalIdentities: { where: { provider: "EADVENTIST", providerScope: "" }, select: { externalId: true }, take: 1 },
-      churchLocation: { select: { organizationId: true } },
+      churchLocation: { select: { organizationId: true, source: true, city: true, state: true, zip: true, latitude: true, longitude: true } },
       _count: { select: { childOrganizations: true, sponsoredPromoCodes: true } },
     },
   });
@@ -65,6 +65,9 @@ async function loadExisting(client: Client): Promise<{ existing: ExistingOrganiz
     affiliatedEadventistId: affiliatedOrganization?.eadventistId ?? null,
     identityEadventistId: externalIdentities[0]?.externalId ?? null,
     hasDependents: _count.childOrganizations > 0 || _count.sponsoredPromoCodes > 0 || churchLocation !== null,
+    location: churchLocation
+      ? { source: churchLocation.source, city: churchLocation.city, state: churchLocation.state, zip: churchLocation.zip, hasCoordinates: churchLocation.latitude !== null && churchLocation.longitude !== null }
+      : null,
   }));
   return { existing, blocked };
 }
@@ -73,16 +76,20 @@ async function loadExisting(client: Client): Promise<{ existing: ExistingOrganiz
 export type ImportPreviewItem = Pick<PlanItem, "line" | "eadventistId" | "name" | "kind" | "action" | "matchedBy" | "notes" | "disbandedOn" | "possibleMatches" | "needsChoice"> & {
   /** For a possible match: the stored organization that will be linked, or `NEW` to create a new record. */
   selectedMatch: string | null;
+  /** What the commit does to the church's map location (#724): city, state and ZIP only. */
+  locationAction: "CREATE" | "UPDATE" | null;
 };
-export type ImportPreview = { counts: ImportPlan["counts"]; needsChoice: number; items: ImportPreviewItem[]; rejected: ImportPlan["rejected"] };
+export type ImportPreview = { counts: ImportPlan["counts"]; locationCounts: ImportPlan["locationCounts"]; needsChoice: number; items: ImportPreviewItem[]; rejected: ImportPlan["rejected"] };
 
 function previewOf(plan: ImportPlan): ImportPreview {
   return {
     counts: plan.counts,
+    locationCounts: plan.locationCounts,
     needsChoice: plan.needsChoice,
     rejected: plan.rejected,
-    items: plan.items.map(({ line, eadventistId, name, kind, action, matchedBy, notes, disbandedOn, possibleMatches, needsChoice, existingId }) => ({
+    items: plan.items.map(({ line, eadventistId, name, kind, action, matchedBy, notes, disbandedOn, possibleMatches, needsChoice, existingId, location }) => ({
       line, eadventistId, name, kind, action, matchedBy, notes, disbandedOn, possibleMatches, needsChoice,
+      locationAction: location?.action ?? null,
       selectedMatch: possibleMatches.length === 0 || needsChoice || action === "SKIPPED" ? null : matchedBy === "POSSIBLE" ? existingId : NEW_RECORD,
     })),
   };
@@ -165,14 +172,51 @@ export async function commitEadventistImport(csv: string, actorUserId: string, c
         await tx.organization.update({ where: { id }, data: { affiliatedOrganizationId: parentId } });
       }
 
+      // Map locations (#724): city, state and ZIP only. The import never
+      // geocodes; a person triggers "Find map locations" separately. A hand-set
+      // location never reaches here (the plan leaves it out).
+      const applied = { created: 0, updated: 0 };
+      for (const item of plan.items) {
+        const record = item.record;
+        const location = item.location;
+        if (!record || !location) continue;
+        const organizationId = idByEadventistId.get(record.eadventistId);
+        if (!organizationId) continue;
+        const place = { city: location.city, state: location.state, zip: location.zip };
+        // Conditional writes: a location saved by hand since the plan was made is
+        // never overwritten. A skipped write means "set by hand"; nothing else to do.
+        if (location.action === "CREATE") {
+          applied.created += (await tx.churchLocation.createMany({ data: [{ organizationId, ...place, source: "IMPORT" }], skipDuplicates: true })).count;
+        } else {
+          applied.updated += (await tx.churchLocation.updateMany({
+            where: { organizationId, source: { not: "MANUAL" } },
+            data: { ...place, ...(location.clearPoint ? { latitude: null, longitude: null, source: "IMPORT" as const } : {}) },
+          })).count;
+        }
+      }
+
+      // A saved "Find map locations" result is only good for the address it was
+      // found for (this also clears an old skip): drop it when the address changed.
+      for (const item of plan.items) {
+        if (item.addressChanged && item.existingId && item.action !== "SKIPPED") {
+          await tx.churchGeocodeResult.deleteMany({ where: { organizationId: item.existingId } });
+          // Decided at write time, not from the earlier snapshot: a match accepted
+          // after the plan was read is for the old address too.
+          await tx.churchLocation.updateMany({
+            where: { organizationId: item.existingId, source: "GEOCODED" },
+            data: { latitude: null, longitude: null, source: "IMPORT" },
+          });
+        }
+      }
+
       await writeAuditLog({
         actorUserId,
         action: "ORGANIZATIONS_EADVENTIST_IMPORTED",
         entityType: "OrganizationImport",
-        summary: `Imported the eAdventist organizations export: ${plan.counts.new} new, ${plan.counts.updated} updated, ${plan.counts.unchanged} unchanged, ${plan.counts.skipped} skipped, ${plan.counts.flagged} flagged as disbanded.`,
-        metadata: { ...plan.counts, rejected: plan.rejected.length, keptAsChurch: plan.items.filter((item) => item.notes.some((note) => note.startsWith("Kept as a church"))).length },
+        summary: `Imported the eAdventist organizations export: ${plan.counts.new} new, ${plan.counts.updated} updated, ${plan.counts.unchanged} unchanged, ${plan.counts.skipped} skipped, ${plan.counts.flagged} flagged as disbanded; ${applied.created} church locations created, ${applied.updated} updated.`,
+        metadata: { ...plan.counts, locationsCreated: applied.created, locationsUpdated: applied.updated, rejected: plan.rejected.length, keptAsChurch: plan.items.filter((item) => item.notes.some((note) => note.startsWith("Kept as a church"))).length },
       }, tx);
-      return { ...previewOf(plan), committed: true as const };
+      return { ...previewOf(plan), locationCounts: applied, committed: true as const };
     }, { timeout: 60_000, maxWait: 10_000 });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {

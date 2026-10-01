@@ -19,8 +19,8 @@ type LocationResponse = { location?: ChurchLocationRecord; message?: string; iss
  * Staff can either drop a pin on a map (reusing the map library and CSP
  * scoping added for the public club map, #437) or, switching to manual
  * entry, type coordinates in from a source they trust. Address lookup
- * (typing a street address to find the pin) is out of scope here — it
- * needs a geocoding provider, which is a separate decision.
+ * entered here is saved as set by hand (#724); finding a pin from a street
+ * address is the separate "Find map locations" step on the directory.
  */
 export function ChurchLocationForm({
   endpoint,
@@ -144,7 +144,10 @@ export function ChurchLocationForm({
       <p className="field-help">
         {entryMode === "map"
           ? "Click the map to place the church's pin, or drag an existing pin to adjust it. Coordinates fill in above; switch to manual entry to type them instead."
-          : "Latitude and longitude are typed in by hand, from a source you trust — nothing here looks an address up automatically. Give both or leave both blank, or use “Pick on map” instead."}
+          : "Latitude and longitude are typed in by hand, from a source you trust. Give both or leave both blank, or use “Pick on map” instead."}
+        {" "}Saving here marks this location as set by hand, so imports and “Find map locations” leave it alone.
+        {location.source === "IMPORT" && " It currently comes from the eAdventist import."}
+        {location.source === "GEOCODED" && " It currently comes from an accepted address lookup."}
         {" "}A church without coordinates still lists its clubs; it just won&apos;t have a pin on the map.
       </p>
       <div>

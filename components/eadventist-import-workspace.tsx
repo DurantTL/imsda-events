@@ -92,6 +92,7 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
             {saved ? <><CheckCircle2 aria-hidden="true" size={14} /> Saved. </> : "Nothing is saved yet. "}
             {waiting > 0 && <strong>{waiting} possible {waiting === 1 ? "match needs" : "matches need"} a choice before you can save. </strong>}
             {counts.new} new, {counts.updated} updated, {counts.unchanged} unchanged, {counts.skipped} skipped. {counts.flagged} with a disbanded date on file to review.
+            {" "}Church map locations: {preview.locationCounts.created} to create, {preview.locationCounts.updated} to update (town, state and ZIP only; hand-set locations are never changed).
           </p>
           {preview.rejected.length > 0 && (
             <div className="inline-notice" role="status">
@@ -130,6 +131,7 @@ export function EadventistImportWorkspace({ initialPreview }: { initialPreview?:
                           <option value={NEW_RECORD}>Create new</option>
                         </select>
                       )}
+                      {item.locationAction && <div className="field-help">{item.locationAction === "CREATE" ? "Map location will be created." : "Map location will be updated."}</div>}
                       {item.disbandedOn && <div className="field-help">{disbandedNotice(item.disbandedOn, true)}</div>}
                     </td>
                   </tr>
