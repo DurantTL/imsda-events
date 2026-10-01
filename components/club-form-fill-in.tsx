@@ -1,14 +1,16 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { clubFormIsDirty, dropStaleRankedChoices, clubFormUnsavedMessage, rankLabel, rankedMaximum, toggleRankedChoice } from "@/components/club-form-state";
+import { clubFormIsDirty, dropStaleRankedChoices, clubFormUnsavedMessage, rankLabel, rankedMaximum, toggleRankedChoice, withAutoDateAnswers } from "@/components/club-form-state";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { LockKeyhole } from "lucide-react";
+import { DateInput } from "@/components/club-form-date-input";
 import { addressComponentKeys, addressComponentLabels } from "@/modules/forms/address";
 import {
   dateFieldBounds,
   isFieldRequired,
   isFieldVisible,
+  todayDateValue,
   type RegistrationFormDefinition,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
@@ -20,6 +22,8 @@ type Props = {
   sectionNotes: Record<string, string[]>;
   sensitiveFieldKeys: string[];
   initialAnswers?: Answers;
+  /** Today in the conference zone (Chicago), from the server, so signing dates fill in the same day on both sides (#719). */
+  todayDate?: string;
 } & (
   | {
     mode: "club";
@@ -50,7 +54,13 @@ function textOf(value: unknown) {
 export function ClubFormFillIn(props: Props) {
   const { definition, sectionNotes, sensitiveFieldKeys } = props;
   // Saved ranked choices no longer offered are dropped up front; the saved baseline matches, so this is not a change.
-  const [initialAnswers] = useState<Answers>(() => dropStaleRankedChoices(props.definition, props.initialAnswers ?? {}));
+  // Signing and application dates (#719): a link always shows today's date (the server sets it again on submit); a director's new form starts with it but can change it.
+  const today = props.todayDate ?? todayDateValue();
+  const [initialAnswers] = useState<Answers>(() => {
+    const cleaned = dropStaleRankedChoices(props.definition, props.initialAnswers ?? {});
+    if (props.mode === "link") return withAutoDateAnswers(props.definition, cleaned, today, true);
+    return props.submissionId ? cleaned : withAutoDateAnswers(props.definition, cleaned, today);
+  });
   const [answers, setAnswers] = useState<Answers>(initialAnswers);
   const [rosterMemberId, setRosterMemberId] = useState(props.mode === "club" ? props.initialRosterMemberId ?? "" : "");
   const [subjectName, setSubjectName] = useState(props.mode === "club" ? props.initialSubjectName ?? "" : "");
@@ -183,6 +193,7 @@ export function ClubFormFillIn(props: Props) {
                   field={field}
                   isSensitive={sensitive.has(field.key)}
                   key={field.id}
+                  lockedDate={props.mode === "link" && field.autoDate === "TODAY"}
                   onChange={(value) => set(field.key, value)}
                   value={answers[field.key]}
                 />
@@ -214,19 +225,22 @@ function FieldInput({
   value,
   answers,
   isSensitive,
+  lockedDate,
   onChange,
 }: {
   field: RegistrationFormField;
   value: unknown;
   answers: Answers;
   isSensitive: boolean;
+  /** An auto-date field on a private link: shown, not editable. */
+  lockedDate: boolean;
   onChange: (value: unknown) => void;
 }) {
   const required = isFieldRequired(field, answers);
   const label = (
     <span>
       {field.label}
-      {required ? <span aria-hidden="true"> *</span> : null}
+      {required ? <span aria-hidden="true">{"\u00a0*"}</span> : null}
       {isSensitive && <small className="club-form-private"><LockKeyhole aria-hidden="true" size={11} /> Private</small>}
     </span>
   );
@@ -344,15 +358,14 @@ function FieldInput({
         </fieldset>
       );
     }
-    case "DATE": {
-      const bounds = dateFieldBounds(field);
+    case "DATE":
       return (
         <label className={className}>{label}
-          <input max={bounds.max} min={bounds.min} required={required} type="date" value={textOf(value)} onChange={(event) => onChange(event.target.value)} />
+          <DateInput bounds={dateFieldBounds(field)} locked={lockedDate} onChange={onChange} required={required} value={textOf(value)} />
+          {lockedDate ? <small className="field-help">Filled in automatically with today&apos;s date.</small> : null}
           {help}
         </label>
       );
-    }
     case "NUMBER":
       return (
         <label className={className}>{label}

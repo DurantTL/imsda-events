@@ -88,6 +88,7 @@ export default async function PublicClubFormPage({ params }: { params: Promise<{
           mode="link"
           sectionNotes={form.sectionNotes}
           sensitiveFieldKeys={form.sensitiveFieldKeys}
+          todayDate={view.today}
           token={token}
         />
       </div>

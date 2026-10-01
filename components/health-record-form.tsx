@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { DateInput } from "@/components/club-form-date-input";
 
 /**
  * The Pathfinder Health Record form (#611), used for a parent opening a
@@ -113,11 +114,13 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
     );
   }
 
-  const field = (key: string, label: string, options: { wide?: boolean; area?: boolean; type?: string } = {}) => (
+  const field = (key: string, label: string, options: { wide?: boolean; area?: boolean; date?: boolean; type?: string } = {}) => (
     <label className={options.wide ? "club-form-field-wide" : undefined}>{label}
       {options.area
         ? <textarea maxLength={2000} onChange={(event) => set(key, event.target.value)} rows={3} value={text[key] ?? ""} />
-        : <input autoComplete="off" onChange={(event) => set(key, event.target.value)} type={options.type ?? "text"} value={text[key] ?? ""} />}
+        : options.date
+          ? <DateInput onChange={(value) => set(key, value)} value={text[key] ?? ""} />
+          : <input autoComplete="off" onChange={(event) => set(key, event.target.value)} type={options.type ?? "text"} value={text[key] ?? ""} />}
     </label>
   );
 
@@ -140,7 +143,7 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
       <fieldset className="public-manage-card form-stack" disabled={saving}>
         <legend className="public-registration-eyebrow">Health</legend>
         <div className="form-grid two-column">
-          {field("lastTetanusBooster", "Date of last tetanus booster (year-month-day)")}
+          {field("lastTetanusBooster", "Date of last tetanus booster", { date: true })}
           <label>Does the participant have allergies?
             <select onChange={(event) => setHasAllergies(event.target.value)} value={hasAllergies}>
               <option value="NO">No</option>

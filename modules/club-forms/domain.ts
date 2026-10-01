@@ -4,6 +4,7 @@ import { formatAddressDisplay, isPlainAddressObject, sanitizeAddressInput } from
 import {
   isFieldVisible,
   registrationFormDefinitionSchema,
+  todayDateValue,
   validateTestResponses,
   type RegistrationFormDefinition,
   type RegistrationFormField,
@@ -61,6 +62,34 @@ export type ClubFormTemplateSpec = Pick<
   ClubFormTemplateRecord,
   "definition" | "sectionNotes" | "sensitiveFieldKeys" | "birthDateFieldKeys" | "staffOnlyFieldKeys"
 >;
+
+/** The keys of the visible-or-not DATE fields that fill in today's date themselves (#719). */
+export function autoDateKeys(definition: RegistrationFormDefinition): string[] {
+  return allFields(definition).filter((field) => field.type === "DATE" && field.autoDate === "TODAY").map((field) => field.key);
+}
+
+/**
+ * Sets every auto-date field the answers should carry to today's date in the
+ * conference zone, replacing anything the client sent. Used by the private
+ * link, where the date is the server's to give; `excludeKeys` (staff-only
+ * fields) are left alone, and a field hidden by a "show only when" rule stays
+ * empty.
+ */
+export function withAutoDates(
+  definition: RegistrationFormDefinition,
+  answers: Record<string, unknown>,
+  excludeKeys: readonly string[] = [],
+  now: Date = new Date(),
+): Record<string, unknown> {
+  const next = { ...answers };
+  const today = todayDateValue(now);
+  for (const field of allFields(definition)) {
+    if (field.type !== "DATE" || field.autoDate !== "TODAY" || excludeKeys.includes(field.key)) continue;
+    if (isFieldVisible(field, answers)) next[field.key] = today;
+    else delete next[field.key];
+  }
+  return next;
+}
 
 export function allFields(definition: RegistrationFormDefinition): RegistrationFormField[] {
   return definition.sections.flatMap((section) => section.fields);
