@@ -125,7 +125,7 @@ town-only address, a group, or a hand-set location) to the U.S. Census Bureau
 geocoder. Each church gets a result: matched or no match. Staff **Accept** a match
 (location becomes `GEOCODED`), **Set on map** (the existing map picker; saving
 there makes it `MANUAL`), or **Skip**. Nothing reaches the public map until a match
-is accepted. If the service can't be reached nothing is changed. Audit entries hold
+is accepted. A match is refused ("The address changed; run Find map locations again") if the church's address changed after the lookup, and the import discards saved results for churches whose address it changes. Only one lookup runs at a time. The whole lookup is capped at about 60 seconds (under a typical proxy timeout); if it can't finish in that time, or the service can't be reached, nothing is changed. Audit entries hold
 counts only. Production needs outbound HTTPS to `geocoding.geo.census.gov`
 (see `docs/DEPLOY-DOCKER.md`). Running it on production is a human action.
 

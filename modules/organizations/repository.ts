@@ -62,6 +62,8 @@ export type OrganizationOperationErrorCode =
   | "GEOCODING_DISABLED"
   | "GEOCODING_UNAVAILABLE"
   | "GEOCODE_RESULT_NOT_FOUND"
+  | "GEOCODE_ADDRESS_CHANGED"
+  | "GEOCODING_ALREADY_RUNNING"
   | "LOCATION_SET_BY_HAND";
 
 export class OrganizationOperationError extends Error {

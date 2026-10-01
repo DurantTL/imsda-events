@@ -28,6 +28,14 @@ function issuesFor(source: Record<string, string | undefined>) {
 }
 
 describe("server environment contract", () => {
+  it("rejects the offline fake geocoder in production but allows it elsewhere (#724)", () => {
+    const production = validateServerEnv({ ...productionEnv, GEOCODING_PROVIDER: "fake" });
+    expect(production.ok).toBe(false);
+    if (!production.ok) expect(production.issues.join(" ")).toContain("GEOCODING_PROVIDER");
+    expect(validateServerEnv({ ...productionEnv, GEOCODING_PROVIDER: "census" }).ok).toBe(true);
+    expect(validateServerEnv({ DATABASE_URL: "postgresql://synthetic:synthetic@localhost:5432/synthetic", GEOCODING_PROVIDER: "fake" }).ok).toBe(true);
+  });
+
   it("accepts a complete production environment", () => {
     const result = validateServerEnv(productionEnv);
     expect(result.ok).toBe(true);

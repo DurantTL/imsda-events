@@ -271,6 +271,8 @@ export type PlanItem = {
   affiliatedEadventistId: string | null;
   /** What the commit does to the church's map location (#724), or null when nothing. */
   location: LocationPlan | null;
+  /** The stored street, town, state or ZIP differs from the file: any saved geocode result is stale. */
+  addressChanged: boolean;
 };
 
 /**
@@ -311,6 +313,16 @@ export function locationZip(postalCode: string | null) {
 }
 
 /**
+ * A comparable form of a church's public address (#724): whitespace and case
+ * folded, the ZIP normalized. A geocode result is only good for the address it
+ * was found for.
+ */
+export function churchAddressKey(address: { street: string | null; city: string | null; state: string | null; zip: string | null }) {
+  const fold = (value: string | null) => (value ?? "").normalize("NFKC").replace(/\s+/g, " ").trim().toLocaleLowerCase("en-US");
+  return [fold(address.street), fold(address.city), fold(address.state), locationZip(address.zip)].join("|");
+}
+
+/**
  * The map location a church row yields (#724): only an active church with a
  * town gets one, and only when no person set the stored location by hand. Home
  * meeting groups never do (the public map plots churches, and a group's home
@@ -318,11 +330,16 @@ export function locationZip(postalCode: string | null) {
  * public club map, so they get none either.
  */
 function planLocation(record: EadventistRecord, kind: OrganizationType, stored: ExistingOrganization | null): LocationPlan | null {
+  const current = stored?.location ?? null;
+  // A geocoded point belongs to a church's street address: once the record is no
+  // longer a church, or has no street address, the point is dropped.
+  if (current?.source === "GEOCODED" && current.hasCoordinates && (kind !== "CHURCH" || record.type !== "CHURCH" || !record.streetAddress)) {
+    return { action: "UPDATE", city: current.city, state: current.state, zip: current.zip, clearPoint: true };
+  }
   if (kind !== "CHURCH" || record.type !== "CHURCH") return null;
   const active = stored ? stored.isActive ?? true : record.isActive;
   if (!active || !record.city) return null;
   const next = { city: record.city, state: record.state ?? "", zip: locationZip(record.postalCode) };
-  const current = stored?.location ?? null;
   if (!current) return { action: "CREATE", ...next, clearPoint: false };
   if (current.source === "MANUAL") return null;
   const placeChanged = current.city !== next.city || current.state !== next.state || current.zip !== next.zip;
@@ -506,7 +523,7 @@ export function planEadventistImport(
     const notes = [...entry.notes];
     const base = { line: record.line, eadventistId: record.eadventistId, name: record.name, disbandedOn: record.disbandedOn, possibleMatches, needsChoice };
     if (skipped) {
-      return { ...base, kind: record.type, action: "SKIPPED" as const, matchedBy: null, existingId: null, notes, record: null, affiliatedEadventistId: null, location: null };
+      return { ...base, kind: record.type, action: "SKIPPED" as const, matchedBy: null, existingId: null, notes, record: null, affiliatedEadventistId: null, location: null, addressChanged: false };
     }
 
     // SubOrgOf: resolve by name to another imported row; ignore the conference itself.
@@ -534,7 +551,9 @@ export function planEadventistImport(
     }
 
     const action: PlanAction = !stored ? "NEW" : differs(record, kind, stored, affiliatedEadventistId) ? "UPDATED" : "UNCHANGED";
-    return { ...base, kind, action, matchedBy, existingId: stored?.id ?? null, notes, record, affiliatedEadventistId, location: planLocation(record, kind, stored) };
+    return { ...base, kind, action, matchedBy, existingId: stored?.id ?? null, notes, record, affiliatedEadventistId, location: planLocation(record, kind, stored),
+      addressChanged: !!stored && churchAddressKey({ street: stored.streetAddress, city: stored.city, state: stored.state, zip: stored.postalCode })
+        !== churchAddressKey({ street: record.streetAddress, city: record.city, state: record.state, zip: record.postalCode }) };
   });
 
   const counts = { new: 0, updated: 0, unchanged: 0, skipped: 0, flagged: 0 };

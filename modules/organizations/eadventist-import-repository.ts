@@ -182,13 +182,23 @@ export async function commitEadventistImport(csv: string, actorUserId: string, c
         const organizationId = idByEadventistId.get(record.eadventistId);
         if (!organizationId) continue;
         const place = { city: location.city, state: location.state, zip: location.zip };
+        // Conditional writes: a location saved by hand since the plan was made is
+        // never overwritten. A skipped write means "set by hand"; nothing else to do.
         if (location.action === "CREATE") {
-          await tx.churchLocation.create({ data: { organizationId, ...place, source: "IMPORT" } });
+          await tx.churchLocation.createMany({ data: [{ organizationId, ...place, source: "IMPORT" }], skipDuplicates: true });
         } else {
-          await tx.churchLocation.update({
-            where: { organizationId },
+          await tx.churchLocation.updateMany({
+            where: { organizationId, source: { not: "MANUAL" } },
             data: { ...place, ...(location.clearPoint ? { latitude: null, longitude: null, source: "IMPORT" as const } : {}) },
           });
+        }
+      }
+
+      // A saved "Find map locations" result is only good for the address it was
+      // found for (this also clears an old skip): drop it when the address changed.
+      for (const item of plan.items) {
+        if (item.addressChanged && item.existingId && item.action !== "SKIPPED") {
+          await tx.churchGeocodeResult.deleteMany({ where: { organizationId: item.existingId } });
         }
       }
 

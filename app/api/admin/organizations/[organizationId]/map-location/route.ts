@@ -20,7 +20,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
     const { organizationId } = await context.params;
     const { decision } = bodySchema.parse(await request.json());
     if (decision === "accept") await acceptGeocodeResult(organizationId, actor.id);
-    else await skipGeocodeResult(organizationId);
+    else await skipGeocodeResult(organizationId, actor.id);
     return Response.json({ organizationId, decision }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return organizationApiError(error, "Reviewing a church map location");

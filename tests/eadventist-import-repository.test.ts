@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** In-memory stand-in for the organization table and audit log. */
 type Row = Record<string, unknown> & { id: string; type: string; name: string; isActive: boolean; eadventistId: string | null; affiliatedOrganizationId: string | null; parentOrganizationId?: string | null };
-const state = vi.hoisted(() => ({ rows: [] as unknown[], audit: [] as unknown[], identities: [] as Array<{ organizationId?: string; personId?: string; providerScope?: string; externalId: string }>, locations: [] as Array<Record<string, unknown> & { organizationId: string }>, next: 1 }));
+const state = vi.hoisted(() => ({ rows: [] as unknown[], audit: [] as unknown[], identities: [] as Array<{ organizationId?: string; personId?: string; providerScope?: string; externalId: string }>, locations: [] as Array<Record<string, unknown> & { organizationId: string }>, results: [] as Array<{ organizationId: string; decision: string }>, locationWriteRaces: false, next: 1 }));
 const rows = () => state.rows as Row[];
 
 const db = vi.hoisted(() => {
@@ -43,15 +43,33 @@ const db = vi.hoisted(() => {
     },
   };
   const churchLocation = {
-    create: async ({ data }: { data: Record<string, unknown> & { organizationId: string } }) => { state.locations.push({ latitude: null, longitude: null, ...data }); return {}; },
-    update: async ({ where, data }: { where: { organizationId: string }; data: Record<string, unknown> }) => {
-      Object.assign(state.locations.find((location) => location.organizationId === where.organizationId)!, data);
-      return {};
+    createMany: async ({ data }: { data: Array<Record<string, unknown> & { organizationId: string }> }) => {
+      let count = 0;
+      for (const row of data) {
+        if (state.locationWriteRaces || state.locations.some((location) => location.organizationId === row.organizationId)) continue;
+        state.locations.push({ latitude: null, longitude: null, ...row });
+        count += 1;
+      }
+      return { count };
+    },
+    updateMany: async ({ where, data }: { where: { organizationId: string; source: { not: string } }; data: Record<string, unknown> }) => {
+      const row = state.locations.find((location) => location.organizationId === where.organizationId);
+      if (!row || state.locationWriteRaces || row.source === where.source.not) return { count: 0 };
+      Object.assign(row, data);
+      return { count: 1 };
+    },
+  };
+  const churchGeocodeResult = {
+    deleteMany: async ({ where }: { where: { organizationId: string } }) => {
+      const before = state.results.length;
+      state.results = state.results.filter((row) => row.organizationId !== where.organizationId);
+      return { count: before - state.results.length };
     },
   };
   const client = {
     organization,
     churchLocation,
+    churchGeocodeResult,
     externalIdentity,
     auditLog: { create: async ({ data }: { data: unknown }) => { state.audit.push(data); return data; } },
     $transaction: async (callback: (tx: unknown) => unknown) => callback(client),
@@ -74,6 +92,8 @@ beforeEach(() => {
   state.audit = [];
   state.identities = [];
   state.locations = [];
+  state.results = [];
+  state.locationWriteRaces = false;
   state.next = 1;
 });
 
@@ -292,4 +312,45 @@ describe("church map locations from the import (#724)", () => {
     church().isActive = false;
     expect((await previewEadventistImport(fixture)).locationCounts).toEqual({ created: 0, updated: 0 });
   });
+
+  it("discards saved geocode results (even a skip) for a church whose address changed, and keeps the rest", async () => {
+    await commitEadventistImport(fixture, "admin-1");
+    state.results = [{ organizationId: church().id, decision: "SKIPPED" }, { organizationId: "other-church", decision: "PENDING" }];
+    await commitEadventistImport(fixture, "admin-1");
+    expect(state.results).toHaveLength(2);
+    await commitEadventistImport(fixture.replace("10 Sample Road", "99 Sample Road"), "admin-1");
+    expect(state.results).toEqual([{ organizationId: "other-church", decision: "PENDING" }]);
+  });
+
+  it("never overwrites a location saved by hand after the plan was made, for create and update", async () => {
+    state.locationWriteRaces = true;
+    const created = await commitEadventistImport(fixture, "admin-1");
+    expect(created.locationCounts.created).toBe(1);
+    expect(state.locations).toHaveLength(0);
+    state.locationWriteRaces = false;
+    await commitEadventistImport(fixture, "admin-1");
+    expect(locationOf(church().id)).toMatchObject({ source: "IMPORT", city: "Sample Hills" });
+    state.locationWriteRaces = true;
+    await commitEadventistImport(fixture.replace(/(9002,SC002,Sample Hills SDA Church,[\s\S]*?),Sample Hills,/, "$1,Sample Vale,"), "admin-1");
+    expect(locationOf(church().id)).toMatchObject({ source: "IMPORT", city: "Sample Hills" });
+  });
+
+  it("clears a geocoded point when the record stops being a church or loses its street address", async () => {
+    await commitEadventistImport(fixture, "admin-1");
+    // Becomes a group: groups keep the town only, so the street is dropped and so is the point.
+    Object.assign(locationOf(church().id)!, { source: "GEOCODED", latitude: 41.5, longitude: -93.6 });
+    const asGroup = fixture.replace("Sample Hills SDA Church,Church,", "Sample Hills SDA Church,Group,");
+    const preview = await previewEadventistImport(asGroup);
+    expect(preview.locationCounts.updated).toBe(1);
+    await commitEadventistImport(asGroup, "admin-1");
+    expect(locationOf(church().id)).toMatchObject({ source: "IMPORT", latitude: null, longitude: null, city: "Sample Hills" });
+  });
+
+  it("clears a geocoded point when the church's street address is removed", async () => {
+    await commitEadventistImport(fixture, "admin-1");
+    Object.assign(locationOf(church().id)!, { source: "GEOCODED", latitude: 41.5, longitude: -93.6 });
+    await commitEadventistImport(fixture.replace("10 Sample Road", ""), "admin-1");
+    expect(locationOf(church().id)).toMatchObject({ source: "IMPORT", latitude: null, longitude: null });
+  });
 });
+

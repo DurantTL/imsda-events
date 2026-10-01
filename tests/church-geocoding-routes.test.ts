@@ -77,7 +77,7 @@ describe("Find map locations routes (#724)", () => {
     expect((await decide(post("/api/admin/organizations/org-1/map-location", { decision: "accept" }), params)).status).toBe(200);
     expect(mocks.acceptGeocodeResult).toHaveBeenCalledWith("org-1", "admin-1");
     expect((await decide(post("/api/admin/organizations/org-1/map-location", { decision: "skip" }), params)).status).toBe(200);
-    expect(mocks.skipGeocodeResult).toHaveBeenCalledWith("org-1");
+    expect(mocks.skipGeocodeResult).toHaveBeenCalledWith("org-1", "admin-1");
     expect((await decide(post("/api/admin/organizations/org-1/map-location", { decision: "x", latitude: 1 }), params)).status).toBe(400);
     mocks.acceptGeocodeResult.mockRejectedValueOnce(new OrganizationOperationError("LOCATION_SET_BY_HAND", "Set by hand."));
     expect((await decide(post("/api/admin/organizations/org-1/map-location", { decision: "accept" }), params)).status).toBe(409);

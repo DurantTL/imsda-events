@@ -159,6 +159,15 @@ export const serverEnvSchema = z
       }
     }
 
+    // The offline stand-in returns invented points; it must never run in production.
+    if (isProduction && value.GEOCODING_PROVIDER === "fake") {
+      context.addIssue({
+        code: "custom",
+        path: ["GEOCODING_PROVIDER"],
+        message: "must not be \"fake\" in production",
+      });
+    }
+
     const rotationKeys = [
       "MANAGE_LINK_DERIVATION_SECRET_PREVIOUS",
       "ATTENDEE_PASS_SIGNING_SECRET_PREVIOUS",

@@ -1910,6 +1910,11 @@ model ChurchGeocodeResult {
   longitude       Float?
   matchedAddress  String                @default("")
   provider        String
+  /// The address that was sent. Accepting is refused once the church's address no longer matches.
+  inputStreet     String                @default("")
+  inputCity       String                @default("")
+  inputState      String                @default("")
+  inputZip        String                @default("")
   createdAt       DateTime              @default(now())
   updatedAt       DateTime              @updatedAt
 

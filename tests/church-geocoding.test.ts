@@ -15,6 +15,11 @@ const mocks = vi.hoisted(() => ({
   results: new Map<string, Record<string, unknown>>(),
   locations: new Map<string, Record<string, unknown>>(),
   orgs: new Map<string, Record<string, unknown>>(),
+  locked: true,
+  /** Runs once, mid-lookup, to simulate another admin acting while the run is in flight. */
+  duringLookup: undefined as undefined | (() => void),
+  /** Makes the next conditional location write find no row, as if a hand save landed first. */
+  locationWriteRaces: false,
 }));
 
 const client = {
@@ -23,9 +28,15 @@ const client = {
     count: vi.fn(async () => mocks.churches.length),
   },
   churchGeocodeResult: {
-    upsert: vi.fn(async ({ where, create, update }: { where: { organizationId: string }; create: Record<string, unknown>; update: Record<string, unknown> }) => {
-      const existing = mocks.results.get(where.organizationId);
-      mocks.results.set(where.organizationId, existing ? { ...existing, ...update } : { decision: "PENDING", ...create });
+    findMany: vi.fn(async () => [...mocks.results.entries()].map(([organizationId, row]) => ({ organizationId, decision: row.decision }))),
+    createMany: vi.fn(async ({ data }: { data: Array<Record<string, unknown> & { organizationId: string }> }) => {
+      let count = 0;
+      for (const row of data) {
+        if (mocks.results.has(row.organizationId)) continue;
+        mocks.results.set(row.organizationId, { decision: "PENDING", ...row });
+        count += 1;
+      }
+      return { count };
     }),
     findUnique: vi.fn(async ({ where }: { where: { organizationId: string } }) => {
       const result = mocks.results.get(where.organizationId);
@@ -43,11 +54,19 @@ const client = {
     }),
   },
   churchLocation: {
-    upsert: vi.fn(async ({ where, create, update }: { where: { organizationId: string }; create: Record<string, unknown>; update: Record<string, unknown> }) => {
+    updateMany: vi.fn(async ({ where, data }: { where: { organizationId: string; source: { not: string } }; data: Record<string, unknown> }) => {
       const existing = mocks.locations.get(where.organizationId);
-      mocks.locations.set(where.organizationId, existing ? { ...existing, ...update } : create);
+      if (mocks.locationWriteRaces || !existing || existing.source === where.source.not) return { count: 0 };
+      mocks.locations.set(where.organizationId, { ...existing, ...data });
+      return { count: 1 };
+    }),
+    createMany: vi.fn(async ({ data }: { data: Array<Record<string, unknown> & { organizationId: string }> }) => {
+      if (mocks.locationWriteRaces || mocks.locations.has(data[0]!.organizationId)) return { count: 0 };
+      mocks.locations.set(data[0]!.organizationId, data[0]!);
+      return { count: 1 };
     }),
   },
+  $queryRaw: vi.fn(async () => [{ locked: mocks.locked }]),
   $transaction: async (work: (tx: unknown) => unknown) => work(client),
 };
 
@@ -59,7 +78,7 @@ vi.mock("@/integrations/geocoding", () => ({
   getGeocodingProvider: () => { throw new Error("The real provider must never be built in a test."); },
 }));
 
-import { createCensusGeocodingProvider, parseCensusBatchResponse, CENSUS_CHUNK_SIZE } from "@/integrations/geocoding/census";
+import { createCensusGeocodingProvider, parseCensusBatchResponse, CENSUS_CHUNK_SIZE, CENSUS_TOTAL_BUDGET_MS } from "@/integrations/geocoding/census";
 import { createFakeGeocodingProvider } from "@/integrations/geocoding/fake";
 import { GeocodingUnavailableError } from "@/integrations/geocoding/types";
 import { acceptGeocodeResult, runChurchGeocoding, skipGeocodeResult } from "@/modules/organizations/church-geocoding";
@@ -76,6 +95,9 @@ beforeEach(() => {
   mocks.results.clear();
   mocks.locations.clear();
   mocks.orgs.clear();
+  mocks.locked = true;
+  mocks.duringLookup = undefined;
+  mocks.locationWriteRaces = false;
   fetchSpy.mockClear();
 });
 
@@ -156,7 +178,8 @@ describe("running the lookup", () => {
 describe("reviewing results", () => {
   const matched = (id: string) => {
     mocks.results.set(id, { status: "MATCHED", decision: "PENDING", latitude: 41.5, longitude: -93.6 });
-    mocks.orgs.set(id, { type: "CHURCH", name: "Sample Hills SDA Church", city: "Sample Hills", state: "ZZ", postalCode: "00001" });
+    mocks.results.set(id, { ...mocks.results.get(id), inputStreet: "10 Sample Road", inputCity: "Sample Hills", inputState: "ZZ", inputZip: "00001" });
+    mocks.orgs.set(id, { type: "CHURCH", name: "Sample Hills SDA Church", isActive: true, streetAddress: "10 Sample Road", city: "Sample Hills", state: "ZZ", postalCode: "00001" });
   };
 
   it("accepting puts the point on the location, marked GEOCODED, and audits without coordinates", async () => {
@@ -196,14 +219,112 @@ describe("reviewing results", () => {
 
   it("skipping leaves the church without a point and drops the result from review", async () => {
     matched("c1");
-    await skipGeocodeResult("c1");
+    await skipGeocodeResult("c1", "admin-1");
     expect(mocks.results.get("c1")).toMatchObject({ decision: "SKIPPED" });
     expect(mocks.locations.size).toBe(0);
-    await expect(skipGeocodeResult("c1")).rejects.toMatchObject({ code: "GEOCODE_RESULT_NOT_FOUND" });
+    const entry = mocks.writeAuditLog.mock.calls[0]![0];
+    expect(entry).toMatchObject({ actorUserId: "admin-1", action: "CHURCH_GEOCODE_SKIPPED", entityId: "c1", metadata: { organizationId: "c1" } });
+    expect(JSON.stringify(entry)).not.toContain("Sample");
+    mocks.writeAuditLog.mockClear();
+    await expect(skipGeocodeResult("c1", "admin-1")).rejects.toMatchObject({ code: "GEOCODE_RESULT_NOT_FOUND" });
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+});
+
+describe("stale matches, races and overlapping runs (#724 review)", () => {
+  const matched = (id: string, org: Record<string, unknown> = {}) => {
+    mocks.results.set(id, { status: "MATCHED", decision: "PENDING", latitude: 41.5, longitude: -93.6, inputStreet: "10 Sample Road", inputCity: "Sample Hills", inputState: "ZZ", inputZip: "00001" });
+    mocks.orgs.set(id, { type: "CHURCH", name: "Sample Hills SDA Church", isActive: true, streetAddress: "10 Sample Road", city: "Sample Hills", state: "ZZ", postalCode: "00001", ...org });
+  };
+
+  it("stores the address that was sent with each result", async () => {
+    mocks.churches = [church("c1")];
+    await runChurchGeocoding("admin-1", createFakeGeocodingProvider());
+    expect(mocks.results.get("c1")).toMatchObject({ inputStreet: "c1 Sample Road", inputCity: "Sample Hills", inputState: "ZZ", inputZip: "00001" });
+  });
+
+  it("refuses to accept after the address changed, and writes nothing", async () => {
+    matched("c1", { streetAddress: "99 Other Road" });
+    await expect(acceptGeocodeResult("c1", "admin-1")).rejects.toMatchObject({ code: "GEOCODE_ADDRESS_CHANGED", message: "The address changed; run Find map locations again." });
+    matched("c2", { postalCode: "00002" });
+    await expect(acceptGeocodeResult("c2", "admin-1")).rejects.toMatchObject({ code: "GEOCODE_ADDRESS_CHANGED" });
+    expect(mocks.locations.size).toBe(0);
+    expect(mocks.results.get("c1")).toMatchObject({ decision: "PENDING" });
+  });
+
+  it("ignores case and spacing differences when comparing the address", async () => {
+    matched("c1", { streetAddress: "  10  sample road ", city: "SAMPLE HILLS" });
+    await acceptGeocodeResult("c1", "admin-1");
+    expect(mocks.locations.get("c1")).toMatchObject({ source: "GEOCODED" });
+  });
+
+  it("refuses a result from before the address was recorded", async () => {
+    matched("c1");
+    mocks.results.set("c1", { ...mocks.results.get("c1"), inputStreet: "", inputCity: "", inputState: "", inputZip: "" });
+    await expect(acceptGeocodeResult("c1", "admin-1")).rejects.toMatchObject({ code: "GEOCODE_ADDRESS_CHANGED" });
+  });
+
+  it("refuses to accept for a church that was switched off or lost its street address", async () => {
+    matched("c1", { isActive: false });
+    await expect(acceptGeocodeResult("c1", "admin-1")).rejects.toMatchObject({ code: "GEOCODE_RESULT_NOT_FOUND" });
+    matched("c2", { streetAddress: null });
+    await expect(acceptGeocodeResult("c2", "admin-1")).rejects.toMatchObject({ code: "GEOCODE_ADDRESS_CHANGED" });
+    expect(mocks.locations.size).toBe(0);
+  });
+
+  it("never overwrites a hand save that lands between the read and the write (update and create)", async () => {
+    matched("c1");
+    mocks.locations.set("c1", { organizationId: "c1", source: "IMPORT", city: "Sample Hills", state: "ZZ", zip: "00001", latitude: null, longitude: null });
+    mocks.locationWriteRaces = true;
+    await expect(acceptGeocodeResult("c1", "admin-1")).rejects.toMatchObject({ code: "LOCATION_SET_BY_HAND" });
+    expect(mocks.locations.get("c1")).toMatchObject({ source: "IMPORT", latitude: null });
+    matched("c2");
+    await expect(acceptGeocodeResult("c2", "admin-1")).rejects.toMatchObject({ code: "LOCATION_SET_BY_HAND" });
+    expect(mocks.results.get("c1")).toMatchObject({ decision: "PENDING" });
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("does not reset a decision made while a run was looking up", async () => {
+    mocks.results.set("c1", { status: "MATCHED", decision: "PENDING", latitude: 1, longitude: 1 });
+    mocks.results.set("c2", { status: "NO_MATCH", decision: "PENDING", latitude: null, longitude: null });
+    mocks.churches = [church("c1"), church("c2")];
+    const inner = createFakeGeocodingProvider();
+    const racing = { name: "fake", geocode: async (requests: Parameters<typeof inner.geocode>[0]) => {
+      mocks.results.set("c1", { ...mocks.results.get("c1"), decision: "ACCEPTED" });
+      return inner.geocode(requests);
+    } };
+    const summary = await runChurchGeocoding("admin-1", racing);
+    expect(mocks.results.get("c1")).toMatchObject({ decision: "ACCEPTED", latitude: 1 });
+    expect(mocks.results.get("c2")).toMatchObject({ status: "MATCHED", decision: "PENDING" });
+    expect(summary).toMatchObject({ processed: 1, matched: 1 });
+  });
+
+  it("tells a second run that one is already running, and does nothing", async () => {
+    mocks.locked = false;
+    mocks.churches = [church("c1")];
+    const calls: unknown[] = [];
+    await expect(runChurchGeocoding("admin-1", createFakeGeocodingProvider({ calls: calls as never }))).rejects.toMatchObject({ code: "GEOCODING_ALREADY_RUNNING", message: expect.stringContaining("already running") });
+    expect(calls).toHaveLength(0);
+    expect(mocks.results.size).toBe(0);
   });
 });
 
 describe("the Census adapter against a stubbed fetch (#724)", () => {
+  it("gives up when the whole lookup would take longer than the time cap, changing nothing", async () => {
+    let clock = 0;
+    const stub = vi.fn(async (_url: string, init: RequestInit) => {
+      clock += 40_000;
+      const file = (init.body as FormData).get("addressFile") as Blob;
+      const ids = (await file.text()).split("\n").map((line) => line.split(",")[0]!.replace(/"/g, ""));
+      return new Response(ids.map((id) => `"${id}","x","No_Match"`).join("\n"), { status: 200 });
+    });
+    const provider = createCensusGeocodingProvider(stub, () => clock);
+    const many = Array.from({ length: CENSUS_CHUNK_SIZE * 3 }, (_, index) => ({ id: `c${index}`, street: "1 Sample Road", city: "Sample Hills", state: "ZZ", zip: "00001" }));
+    await expect(provider.geocode(many)).rejects.toThrow(/took too long.*Nothing was changed/);
+    expect(stub).toHaveBeenCalledTimes(2);
+    expect(CENSUS_TOTAL_BUDGET_MS).toBeLessThanOrEqual(60_000);
+  });
+
   const requests = [
     { id: "c1", street: "1 Sample Road", city: "Sample Hills", state: "ZZ", zip: "00001" },
     { id: "c2", street: "2 Sample Road", city: "Sample Hills", state: "ZZ", zip: "00001" },

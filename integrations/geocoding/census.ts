@@ -11,7 +11,12 @@ export const CENSUS_BATCH_URL = "https://geocoding.geo.census.gov/geocoder/locat
 const BENCHMARK = "Public_AR_Current";
 /** Well under the service's 10,000-address limit, and short enough to finish inside the timeout. */
 export const CENSUS_CHUNK_SIZE = 250;
-const TIMEOUT_MS = 90_000;
+/**
+ * The most time a whole lookup may take, across all chunks. It stays under a
+ * typical reverse-proxy timeout (60 s) so staff see our error, not a gateway
+ * one. A lookup that can't finish inside it fails and changes nothing.
+ */
+export const CENSUS_TOTAL_BUDGET_MS = 55_000;
 
 type Fetch = (input: string, init: RequestInit) => Promise<Response>;
 
@@ -64,15 +69,22 @@ export function parseCensusBatchResponse(body: string, requests: GeocodeRequest[
   return requests.map((request) => byId.get(request.id)!);
 }
 
-export function createCensusGeocodingProvider(fetchImpl: Fetch = (input, init) => fetch(input, init)): GeocodingProvider {
-  async function geocodeChunk(chunk: GeocodeRequest[]) {
+export function createCensusGeocodingProvider(
+  fetchImpl: Fetch = (input, init) => fetch(input, init),
+  now: () => number = () => Date.now(),
+): GeocodingProvider {
+  async function geocodeChunk(chunk: GeocodeRequest[], deadline: number) {
+    const remaining = deadline - now();
+    if (remaining <= 0) {
+      throw new GeocodingUnavailableError("Looking up map locations took too long. Nothing was changed; try again.");
+    }
     const csv = chunk.map((r) => [r.id, r.street, r.city, r.state, r.zip].map(csvCell).join(",")).join("\n");
     const form = new FormData();
     form.set("benchmark", BENCHMARK);
     form.set("addressFile", new Blob([csv], { type: "text/csv" }), "addresses.csv");
     let response: Response;
     try {
-      response = await fetchImpl(CENSUS_BATCH_URL, { method: "POST", body: form, signal: AbortSignal.timeout(TIMEOUT_MS), cache: "no-store" });
+      response = await fetchImpl(CENSUS_BATCH_URL, { method: "POST", body: form, signal: AbortSignal.timeout(remaining), cache: "no-store" });
     } catch {
       throw new GeocodingUnavailableError("The map location service could not be reached. Check the server's outbound access to geocoding.geo.census.gov and try again. Nothing was changed.");
     }
@@ -92,8 +104,9 @@ export function createCensusGeocodingProvider(fetchImpl: Fetch = (input, init) =
     name: "census",
     async geocode(requests) {
       const outcomes: GeocodeOutcome[] = [];
+      const deadline = now() + CENSUS_TOTAL_BUDGET_MS;
       for (let start = 0; start < requests.length; start += CENSUS_CHUNK_SIZE) {
-        outcomes.push(...await geocodeChunk(requests.slice(start, start + CENSUS_CHUNK_SIZE)));
+        outcomes.push(...await geocodeChunk(requests.slice(start, start + CENSUS_CHUNK_SIZE), deadline));
       }
       return outcomes;
     },
