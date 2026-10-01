@@ -8539,3 +8539,30 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .list-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 0; }
 .list-pager-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .list-pager-buttons .secondary-button { min-height: 44px; }
+
+/* #718: the "Age on event date" field inside a roster person's card. It sits
+   inside the card's padding and is a real, visible 44px input; the generic
+   .club-going-list label/input/small rules (full-width, 20px, flush) are
+   overridden here on purpose. */
+.club-going-list .club-roster-age { display: grid; gap: 8px; padding: 0 14px 14px 48px; }
+.club-going-list .club-roster-age label { width: auto; padding: 0; cursor: default; }
+.club-going-list .club-roster-age .club-roster-age-label { color: var(--ink) !important; font-weight: 700 !important; }
+.club-going-list .club-roster-age label.checkbox-label { cursor: pointer; align-items: center; min-height: 44px; }
+.club-going-list .club-roster-age-control { display: flex; align-items: center; gap: 8px; }
+.club-going-list .club-roster-age-input {
+  box-sizing: border-box; width: 6rem; min-height: 44px; flex: none;
+  border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; color: var(--ink);
+  padding: 8px 10px; font-size: 1rem;
+}
+.club-going-list .club-roster-age-input:focus-visible { border-color: var(--imsda-purple); }
+.club-going-list .club-roster-age-input[aria-invalid="true"] { border-color: var(--coral); }
+.club-going-list .club-roster-age-control span { color: var(--muted); font-size: var(--text-helper-min); }
+.club-going-list .club-roster-age .field-help { margin: 0; }
+.club-going-list .club-roster-age .inline-notice { margin: 0; }
+.club-going-list .club-roster-age .checkbox-label input { width: 22px; height: 22px; }
+@media (max-width: 640px) {
+  .club-going-list .club-roster-age { padding-left: 14px; }
+}
+.club-age-summary { margin: 8px 0; }
+/* The roster link is part of the help sentence, so it stays inline with the full stop after it. */
+:root .club-going-list .club-roster-age .field-help a { display: inline; min-height: 0; padding-inline: 0; text-decoration: underline; }
