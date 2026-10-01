@@ -70,7 +70,13 @@ export default async function AreaHealthPage({ searchParams }: { searchParams: P
         {sheet
           ? <PrintReportButton label="Print confidential sheet" />
           : <a className="secondary-button" href={`/account/area/health?event=${encodeURIComponent(data.event.id)}${query.club ? `&club=${encodeURIComponent(query.club)}` : ""}&sheet=1`}>Open printable sheet</a>}
-        <EventHealthSheet clubs={data.clubs} />
+        <EventHealthSheet
+          clubs={data.clubs}
+          clubLinks={query.club ? undefined : (organizationId) => {
+            const base = `/account/area/health?event=${encodeURIComponent(data.event.id)}&club=${encodeURIComponent(organizationId)}`;
+            return { view: base, sheet: `${base}&sheet=1` };
+          }}
+        />
       </div>
     </>
   );

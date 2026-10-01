@@ -6,7 +6,9 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import { clubYearFor } from "@/modules/club-rosters/domain";
 import { openSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
 import {
+  ACTIVITY_DATE_KEY,
   dietaryFromResponses,
+  eventCalendarDates,
   healthAuditActor,
   healthWindowEndsOn,
   healthWindowOpen,
@@ -14,6 +16,7 @@ import {
   medicalFlagFromResponses,
   normalizeName,
   passengerContacts,
+  pickHealthAnswers,
   passengerEmergencyKey,
   passengerNameKey,
   PASSENGER_LIST_KEY,
@@ -22,6 +25,8 @@ import {
   slipContact,
   SLIP_EMERGENCY_KEY,
   sortAttendees,
+  sortContacts,
+  type EmergencyStatus,
   viewerCanSeeClub,
   viewerCanSeeEvent,
   type EmergencyContact,
@@ -100,18 +105,37 @@ export async function loadEventHealth(
 ): Promise<HealthEventSheet> {
   const purpose = options.purpose ?? "VIEW";
   const prisma = getPrisma();
-  if (!viewerCanSeeEvent(viewer, eventId)) throw new HealthViewError("FORBIDDEN", "You don't have health access for this event.");
   const requestedClub = viewer.kind === "CLUB_LEADER" ? viewer.organizationId : options.organizationId;
-  if (options.organizationId && !viewerCanSeeClub(viewer, options.organizationId)) {
-    throw new HealthViewError("NOT_FOUND", "That club could not be found.");
-  }
-
+  const who = healthAuditActor(viewer);
   const event = await prisma.event.findUnique({
     where: { id: eventId },
     select: { id: true, name: true, startsAt: true, endsAt: true, timezone: true },
   });
-  if (!event) throw new HealthViewError("NOT_FOUND", "That event could not be found.");
-  if (!healthWindowOpen(event, now)) throw new HealthViewError("WINDOW_CLOSED", WINDOW_CLOSED_MESSAGE);
+
+  /** A refused attempt is audited too (ADR 0005 section 3): who, event, why, never any health text. */
+  async function deny(code: HealthViewError["code"], message: string): Promise<never> {
+    try {
+      await writeAuditLog({
+        ...(event ? { eventId: event.id } : {}),
+        actorUserId: who.actorUserId,
+        action: "COORDINATOR_HEALTH_DENIED",
+        entityType: "Event",
+        entityId: eventId.slice(0, 64),
+        summary: "A coordinator health view request was refused.",
+        metadata: { ...who.metadata, purpose, reason: code, organizationId: options.organizationId ?? null },
+      });
+    } catch {
+      // The refusal stands even if the audit write fails.
+    }
+    throw new HealthViewError(code, message);
+  }
+
+  if (!viewerCanSeeEvent(viewer, eventId)) return deny("FORBIDDEN", "You don't have health access for this event.");
+  if (options.organizationId && !viewerCanSeeClub(viewer, options.organizationId)) {
+    return deny("NOT_FOUND", "That club could not be found.");
+  }
+  if (!event) return deny("NOT_FOUND", "That event could not be found.");
+  if (!healthWindowOpen(event, now)) return deny("WINDOW_CLOSED", WINDOW_CLOSED_MESSAGE);
 
   const registrations = await prisma.clubEventRegistration.findMany({
     where: {
@@ -135,7 +159,6 @@ export async function loadEventHealth(
   const attendeeCount = registrations.reduce((total, row) => total + row.registration.attendees.length, 0);
 
   // Audit first. Nothing sealed is opened, and nothing is returned, if this fails.
-  const who = healthAuditActor(viewer);
   await writeAuditLog({
     eventId,
     actorUserId: who.actorUserId,
@@ -186,13 +209,14 @@ export async function loadEventHealth(
   function answersFor(submission: (typeof submissions)[number]) {
     const cached = opened.get(submission.id);
     if (cached) return cached;
-    const merged: Record<string, unknown> = { ...(submission.answers as Record<string, unknown>) };
+    const merged: Record<string, unknown> = pickHealthAnswers(submission.answers as Record<string, unknown>);
     if (submission.sealedSensitiveAnswers) {
       if (!isSecretEncryptionConfigured()) {
         throw new HealthViewError("ENCRYPTION_UNAVAILABLE", "Encryption isn't set up on this server, so emergency contacts can't be read.");
       }
       try {
-        Object.assign(merged, openSensitiveAnswers(submission.id, submission.sealedSensitiveAnswers));
+        // Every key this view does not use is dropped here, before anything else can touch it.
+        Object.assign(merged, pickHealthAnswers(openSensitiveAnswers(submission.id, submission.sealedSensitiveAnswers)));
       } catch (error) {
         if (error instanceof SecretBoxError) throw new HealthViewError("SENSITIVE_UNREADABLE", "Emergency contacts can't be read on this server.");
         throw error;
@@ -202,21 +226,39 @@ export async function loadEventHealth(
     return merged;
   }
 
-  const memberByPerson = new Map(rosterMembers.map((member) => [`${member.organizationId}:${member.personId}`, member.id]));
+  // Every roster member row for a person, across both club years when the event spans two.
+  const membersByPerson = new Map<string, Set<string>>();
+  for (const member of rosterMembers) {
+    const key = `${member.organizationId}:${member.personId}`;
+    membersByPerson.set(key, (membersByPerson.get(key) ?? new Set()).add(member.id));
+  }
+  const dates = eventCalendarDates(event);
   const clubs: HealthClubSheet[] = registrations.map((row) => {
     const organizationId = row.organization.id;
     const clubSubmissions = submissions.filter((submission) => submission.organizationId === organizationId);
+    const clubHasPassengerLists = clubSubmissions.some((submission) => submission.template.key === PASSENGER_LIST_KEY);
+    const nameCounts = new Map<string, number>();
+    for (const attendee of row.registration.attendees) {
+      const key = normalizeName(attendee.person.firstName, attendee.person.lastName);
+      nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+    }
     const rows: HealthAttendeeRow[] = row.registration.attendees.map((attendee) => {
       const name = `${attendee.person.firstName} ${attendee.person.lastName}`.replace(/\s+/g, " ").trim();
-      const rosterMemberId = memberByPerson.get(`${organizationId}:${attendee.personId}`) ?? null;
+      const rosterMemberIds = membersByPerson.get(`${organizationId}:${attendee.personId}`) ?? new Set<string>();
+      const wanted = normalizeName(attendee.person.firstName, attendee.person.lastName);
+      const nameIsShared = (nameCounts.get(wanted) ?? 0) > 1;
       const contacts: EmergencyContact[] = [];
+      let withheldForSharedName = false;
       for (const submission of clubSubmissions) {
-        if (submission.template.key === PERMISSION_SLIP_KEY && rosterMemberId && submission.rosterMemberId === rosterMemberId) {
+        if (submission.template.key === PERMISSION_SLIP_KEY && submission.rosterMemberId && rosterMemberIds.has(submission.rosterMemberId)) {
+          const answers = answersFor(submission);
           const contact = slipContact({
             rosterMemberId: submission.rosterMemberId,
             formName: submission.template.name,
             submittedAt: submission.submittedAt,
-            emergencyPhone: answersFor(submission)[SLIP_EMERGENCY_KEY],
+            emergencyPhone: answers[SLIP_EMERGENCY_KEY],
+            activityDate: answers[ACTIVITY_DATE_KEY],
+            event: dates,
           });
           if (contact) contacts.push(contact);
         }
@@ -230,18 +272,24 @@ export async function loadEventHealth(
               emergencyContact: answers[passengerEmergencyKey(index + 1)],
             })),
           });
-          const wanted = normalizeName(attendee.person.firstName, attendee.person.lastName);
           for (const match of matches) {
-            if (normalizeName(match.name, "") === wanted) contacts.push(match.contact);
+            if (normalizeName(match.name, "") !== wanted) continue;
+            // Two attendees share this name: a contact could belong to either, so it is withheld.
+            if (nameIsShared) withheldForSharedName = true;
+            else contacts.push(match.contact);
           }
         }
       }
+      const emergencyStatus: EmergencyStatus = withheldForSharedName ? "AMBIGUOUS_NAME"
+        : contacts.length === 0 && clubHasPassengerLists ? "NO_CONTACT_MATCHED"
+          : "NONE_ON_FILE";
       return {
         attendeeId: attendee.id,
         name,
         dietary: dietaryFromResponses(attendee.formResponses),
         medicalFlag: medicalFlagFromResponses(attendee.formResponses),
-        emergencyContacts: contacts,
+        emergencyContacts: sortContacts(contacts),
+        emergencyStatus,
       };
     });
     return { organizationId, clubName: row.organization.name, attendees: sortAttendees(rows) };

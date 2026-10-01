@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 
@@ -17,6 +18,47 @@ export class HealthAccessGrantError extends Error {
   }
 }
 
+type Tx = Prisma.TransactionClient;
+
+/**
+ * A change of health access must not be carried by a session that predates it,
+ * so the user's next sign-in has to pass two-step again (same as `setGlobalRole`).
+ */
+async function endUserSessions(tx: Tx, userId: string) {
+  await tx.userSession.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
+}
+
+/**
+ * Removes VIEW_HEALTH_INFORMATION from a membership inside the caller's
+ * transaction (#658): used when a membership is deactivated, re-added, or its
+ * role changes, so health access never survives those. Ends the user's sessions
+ * and audits the revoke. Returns whether anything was removed.
+ */
+export async function stripHealthAccess(
+  tx: Tx,
+  membership: { id: string; userId: string; permissions: readonly string[]; eventId: string },
+  actorUserId: string,
+  reason: "DEACTIVATED" | "REACTIVATED" | "RE_ADDED" | "ROLE_CHANGED",
+) {
+  if (!membership.permissions.includes("VIEW_HEALTH_INFORMATION")) return false;
+  await tx.eventMembership.update({
+    where: { id: membership.id },
+    data: { permissions: membership.permissions.filter((permission) => permission !== "VIEW_HEALTH_INFORMATION") as never },
+  });
+  await endUserSessions(tx, membership.userId);
+  await writeAuditLog({
+    eventId: membership.eventId,
+    actorUserId,
+    action: "HEALTH_ACCESS_REVOKED",
+    entityType: "EventMembership",
+    entityId: membership.id,
+    correlationId: randomUUID(),
+    summary: "Health information access was removed because the staff assignment changed.",
+    metadata: { userId: membership.userId, permission: "VIEW_HEALTH_INFORMATION", reason },
+  }, tx);
+  return true;
+}
+
 export async function setHealthAccess(eventId: string, membershipId: string, actorUserId: string, granted: boolean) {
   return getPrisma().$transaction(async (tx) => {
     const membership = await tx.eventMembership.findFirst({
@@ -30,6 +72,7 @@ export async function setHealthAccess(eventId: string, membershipId: string, act
       ? [...membership.permissions, "VIEW_HEALTH_INFORMATION" as const]
       : membership.permissions.filter((permission) => permission !== "VIEW_HEALTH_INFORMATION");
     await tx.eventMembership.update({ where: { id: membership.id }, data: { permissions } });
+    await endUserSessions(tx, membership.userId);
     await writeAuditLog({
       eventId,
       actorUserId,

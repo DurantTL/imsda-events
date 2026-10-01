@@ -8,6 +8,7 @@ import {
   healthWindowOpen,
   medicalFlagFromResponses,
   passengerContacts,
+  pickHealthAnswers,
   slipContact,
   viewerCanSeeClub,
   viewerCanSeeEvent,
@@ -100,5 +101,21 @@ describe("what is read from existing answers", () => {
     });
     expect(found).toHaveLength(1);
     expect(found[0].contact).toMatchObject({ kind: "NAME_AND_PHONE", matchedBy: "NAME" });
+  });
+});
+
+describe("pickHealthAnswers (#658)", () => {
+  it("keeps only the emergency, activity-date and passenger name keys and drops everything else at once", () => {
+    const kept = pickHealthAnswers({
+      emergency_contact_phone: "555-0100",
+      activity_date: "2026-10-10",
+      passenger_1_name: "A",
+      passenger_20_emergency_contact: "B",
+      passenger_21_name: "too far",
+      physician_name: "Synthetic",
+      clinic_phone: "555-0112",
+      child_name: "Avery",
+    });
+    expect(Object.keys(kept).sort()).toEqual(["activity_date", "emergency_contact_phone", "passenger_1_name", "passenger_20_emergency_contact"]);
   });
 });

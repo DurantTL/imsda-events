@@ -412,13 +412,21 @@ For attendees of **club events** only:
 - **medications** show "Not collected". The encrypted Health record (#611) will
   add them.
 
-Nothing else is read. Physician and clinic fields are never opened, and no
-other registration answer is shown.
+Nothing else is shown or returned. A club form's sealed answers have to be
+decrypted as one object, so the physician and clinic fields are decrypted in
+memory with the rest. Every key except the ones listed above is dropped from
+that object immediately after decrypting: it is never shown, returned, logged
+or kept, and no other registration answer is shown.
 
-A slip is linked to an attendee through the club's roster member and the club
-year that covers the event dates. A passenger list has no roster link, so it is
-matched by exact name within the same club, and the sheet says "matched by
-name".
+A slip is linked to an attendee through any of the club's roster member rows
+for that person in the club years that cover the event dates. Slips whose
+activity date falls within the event's dates are listed first and marked "for
+this event". A passenger list has no roster link, so it is matched by exact
+name within the same club, and the sheet says "matched by name". If two
+attendees of the club share the name, the contact is not attached and the sheet
+says "Name matches more than one attendee — check the passenger list". When a
+club has passenger lists but none matched an attendee, the sheet says "No
+contact matched".
 
 ### Who can see it
 
@@ -443,14 +451,24 @@ only.
   (event time zone, inclusive), then closed for everyone, system
   administrators included, for the view and for the printable sheet. This is
   this view's own rule; the club forms "has not ended" rule is unchanged.
-- **MFA.** Staff sessions already require two-step sign-in (decision of
-  2026-09-25). Area Coordinators and club leaders pass the same second step the
-  portal and roster already require, checked on the server in the page or
-  route, not in a layout.
+- **MFA.** Staff accounts with any active event membership, and system
+  administrators, already require two-step sign-in (decision of 2026-09-25).
+  Granting or removing `VIEW_HEALTH_INFORMATION` ends all of that user's
+  sessions in the same transaction, so their next sign-in has to pass two-step
+  before the new access works. Area Coordinators and club leaders pass the same
+  second step the portal and roster already require, checked on the server in
+  the page or route, not in a layout.
+- **Access does not survive a staff change.** Deactivating, re-adding or
+  reactivating a membership, or changing its role, removes the permission,
+  ends the user's sessions and writes a `HEALTH_ACCESS_REVOKED` audit row. An
+  Event Admin cannot grant it or bring it back; only a system administrator
+  can. The seed never grants it, and a note cannot be restricted to it.
 - **Audit.** Every view (`COORDINATOR_HEALTH_VIEWED`) and every printed sheet
   (`COORDINATOR_HEALTH_EXPORTED`) is audited first: who, event, club if
-  narrowed, counts. No health text and no names are in the audit row. If the
-  audit write fails nothing is returned.
+  narrowed, counts. Refused attempts (no access to the event, another club,
+  window closed, unknown event) are audited as `COORDINATOR_HEALTH_DENIED` with
+  the reason. No health text and no names are in any audit row. If the audit
+  write for a view fails nothing is returned.
 - **Printable sheet.** Marked confidential. There is no CSV, no download file,
   and no API route returning the data.
 - **No new store.** No table, column or migration holds medical data. The only

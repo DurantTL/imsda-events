@@ -55,7 +55,10 @@ export default async function EventHealthPage({
             : <a className="secondary-button" href={`${base}${query.club ? `&club=${encodeURIComponent(query.club)}` : ""}&sheet=1`}>Open printable sheet</a>}
         </div>
       </div>
-      <EventHealthSheet clubs={data.clubs} />
+      <EventHealthSheet
+        clubs={data.clubs}
+        clubLinks={query.club ? undefined : (organizationId) => ({ view: `${base}&club=${encodeURIComponent(organizationId)}`, sheet: `${base}&club=${encodeURIComponent(organizationId)}&sheet=1` })}
+      />
     </section>
   );
 }

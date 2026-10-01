@@ -7,10 +7,12 @@ const mocks = vi.hoisted(() => ({
   writeAuditLog: vi.fn(),
   membershipFindFirst: vi.fn(),
   membershipUpdate: vi.fn(),
+  sessionUpdateMany: vi.fn(),
 }));
 
 const client = {
   eventMembership: { findFirst: mocks.membershipFindFirst, update: mocks.membershipUpdate },
+  userSession: { updateMany: mocks.sessionUpdateMany },
   $transaction: (work: (tx: unknown) => unknown) => work(client),
 };
 
@@ -65,6 +67,29 @@ describe("granting health information access (#658)", () => {
     await PUT(put({ granted: false }), params);
     expect(mocks.membershipUpdate).toHaveBeenLastCalledWith({ where: { id: "m1" }, data: { permissions: ["MANAGE_FORMS"] } });
     expect(mocks.writeAuditLog.mock.calls[1][0]).toMatchObject({ action: "HEALTH_ACCESS_REVOKED" });
+  });
+
+  it("ends all of the user's sessions on a grant and on a revoke, so the next sign-in passes two-step", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: { id: "root", globalRole: "SYSTEM_ADMIN" } });
+    mocks.membershipFindFirst.mockResolvedValue({ id: "m1", userId: "u9", permissions: [], user: { displayName: "Synthetic Staffer" } });
+    await PUT(put({ granted: true }), params);
+    expect(mocks.sessionUpdateMany).toHaveBeenLastCalledWith({ where: { userId: "u9", revokedAt: null }, data: { revokedAt: expect.any(Date) } });
+    mocks.membershipFindFirst.mockResolvedValue({ id: "m1", userId: "u9", permissions: ["VIEW_HEALTH_INFORMATION"], user: { displayName: "Synthetic Staffer" } });
+    await PUT(put({ granted: false }), params);
+    expect(mocks.sessionUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.sessionUpdateMany).toHaveBeenLastCalledWith({ where: { userId: "u9", revokedAt: null }, data: { revokedAt: expect.any(Date) } });
+  });
+
+  it("ends no sessions when nothing changed", async () => {
+    mocks.membershipFindFirst.mockResolvedValue({ id: "m1", userId: "u9", permissions: [], user: { displayName: "Synthetic Staffer" } });
+    await grants.setHealthAccess("e1", "m1", "root", false);
+    expect(mocks.sessionUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("answers 400, not 500, for a body that is not JSON", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: { id: "root", globalRole: "SYSTEM_ADMIN" } });
+    const response = await PUT(new Request("https://events.imsda.test/x", { method: "PUT", body: "{nope" }), params);
+    expect(response.status).toBe(400);
   });
 
   it("writes nothing when the state is unchanged", async () => {

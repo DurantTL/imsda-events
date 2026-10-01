@@ -17,7 +17,13 @@ async function putHandler(request: Request, context: { params: Promise<{ eventId
     const { user } = await getCurrentSession();
     if (!user) throw new AccessDeniedError("Authentication is required.", 401, "AUTHENTICATION_REQUIRED");
     if (user.globalRole !== "SYSTEM_ADMIN") throw new AccessDeniedError("Only a system administrator can change health information access.", 403, "PERMISSION_DENIED");
-    const { granted } = bodySchema.parse(await request.json());
+    let raw: unknown;
+    try {
+      raw = await request.json();
+    } catch {
+      return Response.json({ error: "INVALID_REQUEST", message: "Send { granted: true or false } as JSON." }, { status: 400 });
+    }
+    const { granted } = bodySchema.parse(raw);
     const result = await setHealthAccess(eventId, membershipId, user.id, granted);
     return Response.json(result, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {

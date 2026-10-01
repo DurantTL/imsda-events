@@ -37,6 +37,7 @@ export const SLIP_EMERGENCY_KEY = "emergency_contact_phone";
 export const passengerNameKey = (slot: number) => `passenger_${slot}_name`;
 export const passengerEmergencyKey = (slot: number) => `passenger_${slot}_emergency_contact`;
 
+export const ACTIVITY_DATE_KEY = "activity_date";
 export const ATTENDEE_DIETARY_KEY = "dietary_needs";
 export const ATTENDEE_MEDICAL_FLAG_KEY = "medical_or_accessibility_need";
 
@@ -116,7 +117,16 @@ export type EmergencyContact = {
   /** Roster-linked slips are exact; passenger lists are matched by name within the club. */
   matchedBy: "ROSTER_MEMBER" | "NAME";
   kind: "PHONE_ONLY" | "NAME_AND_PHONE";
+  /** A permission slip whose activity date falls within the event's dates. */
+  forThisEvent: boolean;
 };
+
+/**
+ * Why an attendee has no contact shown. "None on file" means no slip and no
+ * passenger list reached them; the other two mean a passenger list exists for
+ * the club but could not be tied to this person.
+ */
+export type EmergencyStatus = "NONE_ON_FILE" | "NO_CONTACT_MATCHED" | "AMBIGUOUS_NAME";
 
 export type HealthAttendeeRow = {
   attendeeId: string;
@@ -124,6 +134,7 @@ export type HealthAttendeeRow = {
   dietary: string | null;
   medicalFlag: "Yes" | "No" | null;
   emergencyContacts: EmergencyContact[];
+  emergencyStatus: EmergencyStatus;
 };
 
 export type HealthClubSheet = {
@@ -153,7 +164,7 @@ export function medicalFlagFromResponses(responses: unknown): "Yes" | "No" | nul
   return value === "Yes" || value === "No" ? value : null;
 }
 
-export type SlipEmergencyInput = { rosterMemberId: string | null; formName: string; submittedAt: Date | null; emergencyPhone: unknown };
+export type SlipEmergencyInput = { rosterMemberId: string | null; formName: string; submittedAt: Date | null; emergencyPhone: unknown; activityDate?: unknown; event?: { startsOn: string; endsOn: string } };
 export type PassengerEmergencyInput = {
   formName: string;
   submittedAt: Date | null;
@@ -163,7 +174,9 @@ export type PassengerEmergencyInput = {
 export function slipContact(input: SlipEmergencyInput): EmergencyContact | null {
   const value = shortText(input.emergencyPhone, 60);
   if (!value) return null;
-  return { value, formName: input.formName, submittedOn: input.submittedAt?.toISOString().slice(0, 10) ?? null, matchedBy: "ROSTER_MEMBER", kind: "PHONE_ONLY" };
+  const activity = typeof input.activityDate === "string" ? input.activityDate.trim() : "";
+  const forThisEvent = Boolean(input.event && /^\d{4}-\d{2}-\d{2}$/.test(activity) && activity >= input.event.startsOn && activity <= input.event.endsOn);
+  return { value, formName: input.formName, submittedOn: input.submittedAt?.toISOString().slice(0, 10) ?? null, matchedBy: "ROSTER_MEMBER", kind: "PHONE_ONLY", forThisEvent };
 }
 
 export function passengerContacts(input: PassengerEmergencyInput) {
@@ -179,10 +192,35 @@ export function passengerContacts(input: PassengerEmergencyInput) {
         submittedOn: input.submittedAt?.toISOString().slice(0, 10) ?? null,
         matchedBy: "NAME" as const,
         kind: "NAME_AND_PHONE" as const,
+        forThisEvent: false,
       } satisfies EmergencyContact,
     }];
   });
 }
+
+/** Slips for this event first; otherwise the order they were given in. */
+export function sortContacts(contacts: EmergencyContact[]) {
+  return [...contacts].sort((left, right) => Number(right.forThisEvent) - Number(left.forThisEvent));
+}
+
+/** The calendar dates (event time zone) the event runs from and to, for matching a slip's activity date. */
+export function eventCalendarDates(event: { startsAt: Date; endsAt: Date; timezone: string }) {
+  return {
+    startsOn: calendarDateInEventTimeZone(event.startsAt, event.timezone),
+    endsOn: calendarDateInEventTimeZone(event.endsAt, event.timezone),
+  };
+}
+
+/** Keeps only the answers this view may use, dropping every other key the moment a form is opened. */
+export function pickHealthAnswers(answers: Record<string, unknown>) {
+  const kept: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(answers)) {
+    if (HEALTH_ANSWER_KEY.test(key)) kept[key] = value;
+  }
+  return kept;
+}
+
+const HEALTH_ANSWER_KEY = new RegExp(`^(?:${SLIP_EMERGENCY_KEY}|${ACTIVITY_DATE_KEY}|passenger_(?:[1-9]|1\\d|20)_(?:name|emergency_contact))$`);
 
 /** Sorts a club's attendees by name for a stable sheet. */
 export function sortAttendees(rows: HealthAttendeeRow[]) {
