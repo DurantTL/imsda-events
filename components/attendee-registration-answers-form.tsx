@@ -191,6 +191,8 @@ export function AttendeeRegistrationAnswersForm({
                       <label key={rank}>
                         <span>{rank === 0 ? "First choice" : rank === 1 ? "Second choice" : `Choice ${rank + 1}`}</span>
                         <select
+                          className={`field-select${selected[rank] ? "" : " is-empty"}`}
+                          title={selected[rank] || undefined}
                           value={selected[rank] ?? ""}
                           required={field.required || rank < (field.minSelections ?? 0)}
                           onChange={(event) => {
