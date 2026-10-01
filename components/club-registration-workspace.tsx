@@ -14,7 +14,8 @@ import { createDraftSender, DRAFT_CONFLICT_MESSAGE, draftBlockedReason } from "@
 import { restoreDraftLocation } from "@/modules/club-registrations/draft-location";
 import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
-import { ageInputProblem, ageInputValue, effectiveRosterAges, parseTypedAge, withRosterAge } from "@/modules/club-registrations/roster-ages";
+import { ageFieldId, ageInputProblem, ageInputValue, effectiveRosterAges, parseTypedAge, peopleMissingAges, withRosterAge } from "@/modules/club-registrations/roster-ages";
+import { continueButtonLabel, focusFirstMissingAge, leaveAfterSave } from "@/modules/club-registrations/roster-age-flow";
 import { ClubLocationPicker } from "@/components/club-location-picker";
 import { clubRosterAttendeeTypeLabels } from "@/modules/club-rosters/domain";
 import {
@@ -127,9 +128,12 @@ export function ClubRegistrationWorkspace({
     if (leaving) return;
     setLeaving(true);
     setLeaveHref(null);
-    const saved = await flush();
-    if (saved) router.push(href);
-    else { setLeaveHref(href); setLeaving(false); }
+    await leaveAfterSave({
+      flush,
+      href,
+      push: (to) => router.push(to),
+      onUnsaved: (to) => { setLeaveHref(to); setLeaving(false); },
+    });
   }
   function followRosterLink(event: { preventDefault: () => void; altKey?: boolean; metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean; button?: number }, href: string) {
     if (event.altKey || event.metaKey || event.ctrlKey || event.shiftKey || (event.button ?? 0) !== 0) return;
@@ -185,10 +189,11 @@ export function ClubRegistrationWorkspace({
   // Roster people with no birth date need an age typed in for this registration (#639).
   // The raw text of the age fields, so a half-typed entry is reported rather than read as blank.
   const [ageText, setAgeText] = useState<Record<string, string>>({});
-  const [ageProblem, setAgeProblem] = useState("");
+  // Problems show only after Continue was pressed and blocked, or once a field is touched (#718).
+  const [agesAttempted, setAgesAttempted] = useState(false);
+  const missingAges = peopleMissingAges(workspace.roster, draft.selectedMemberIds, ageText, draft.rosterAges);
 
   function changeRosterAge(memberId: string, raw: string) {
-    setAgeProblem("");
     setAgeText((current) => ({ ...current, [memberId]: raw }));
     setDraft((current) => {
       // A blank or invalid entry clears the age; only whole numbers 0 to 120 are kept, like guests.
@@ -235,11 +240,13 @@ export function ClubRegistrationWorkspace({
   }
 
   function leaveWho() {
-    for (const person of selected) {
-      const problem = ageInputProblem(person, ageText, draft.rosterAges);
-      if (problem) return setAgeProblem(problem);
+    const first = missingAges[0];
+    if (first) {
+      setAgesAttempted(true);
+      focusFirstMissingAge(ageFieldId(first.memberId), (id) => document.getElementById(id));
+      return;
     }
-    setAgeProblem("");
+    setAgesAttempted(false);
     void flush();
     setStep("form");
   }
@@ -441,6 +448,11 @@ export function ClubRegistrationWorkspace({
             </span>
             <span className="field-help" role="status">{saveLabel}{saveAction && <> {saveAction}</>}</span>
           </div>
+          {agesAttempted && missingAges.length > 0 && (
+            <div className="inline-notice error club-age-summary" role="alert">
+              {missingAges.length === 1 ? "1 person still needs an age on the event date." : `${missingAges.length} people still need an age on the event date.`}
+            </div>
+          )}
           <ul className="club-going-list">
             {workspace.roster.map((person) => (
               <li key={person.memberId}>
@@ -463,7 +475,9 @@ export function ClubRegistrationWorkspace({
                 </label>
                 {person.ageOnEventDate === null && draft.selectedMemberIds.includes(person.memberId) && (
                   <ClubRosterAgeField
-                    error={ageProblem !== "" || ageInputValue(person, ageText, draft.rosterAges).trim() !== "" ? ageInputProblem(person, ageText, draft.rosterAges) : null}
+                    attempted={agesAttempted}
+                    error={ageInputProblem(person, ageText, draft.rosterAges)}
+                    memberId={person.memberId}
                     value={ageInputValue(person, ageText, draft.rosterAges)}
                     onAge={(raw) => changeRosterAge(person.memberId, raw)}
                     href={rosterHref}
@@ -476,7 +490,6 @@ export function ClubRegistrationWorkspace({
               </li>
             ))}
           </ul>
-          {ageProblem && <div className="inline-notice error" role="alert">{ageProblem}</div>}
         </>
       )}
       <section className="club-guest-section" aria-labelledby="club-guests-title">
@@ -551,7 +564,7 @@ export function ClubRegistrationWorkspace({
           title={needsLocation ? "Choose a location first" : undefined}
           type="button"
         >
-          Continue with {goingCount} {goingCount === 1 ? "person" : "people"} <ArrowRight aria-hidden="true" size={15} />
+          {continueButtonLabel({ missingAges: missingAges.length, goingCount, otherwiseDisabled: goingCount === 0 || needsLocation })} <ArrowRight aria-hidden="true" size={15} />
         </button>
       </div>
     </section>
