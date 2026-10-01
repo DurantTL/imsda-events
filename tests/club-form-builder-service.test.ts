@@ -378,18 +378,47 @@ describe("the sync leaves edited templates alone (#712)", () => {
     expect(state.templates.length).toBe(clubFormTemplateSeeds.length);
   });
 
-  it("skips a template with a draft in progress, and manages it again once the draft is discarded", async () => {
+  it("still applies a seed update when a draft is pending: the form stays fillable and the draft goes stale", async () => {
     const published = await currentSpec();
     await saveClubFormDraft(slipSeed.key, { draft: updateField(published, idOf(published, "activity"), { label: "Synthetic label" }), baseVersion: slipSeed.version }, "admin-1", now);
     expect(state.templates[0].customizedAt).toBeNull();
+    expect(state.templates[0].draftBaseVersion).toBe(slipSeed.version);
+    // The code's seed moves ahead of the stored version.
     state.templates[0].version = 0;
-    const first = await syncClubFormTemplates(client as never, { continueOnRefusal: true });
-    expect(first.skipped).toEqual([{ key: slipSeed.key, reason: "draft in progress" }]);
-    expect(state.templates[0].version).toBe(0);
-    await discardClubFormDraft(slipSeed.key, "admin-1");
-    const second = await syncClubFormTemplates(client as never, { continueOnRefusal: true });
-    expect(second.skipped).toEqual([]);
+    state.templates[0].draftBaseVersion = 0;
+    state.templates[0].name = "Old name";
+    const result = await syncClubFormTemplates(client as never, { continueOnRefusal: true });
+    expect(result.skipped).toEqual([]);
+    expect(result.staleDrafts).toEqual([{ key: slipSeed.key }]);
     expect(state.templates[0].version).toBe(slipSeed.version);
+    expect(state.templates[0].name).toBe(slipSeed.name);
+    expect(state.templates[0].draft).not.toBeNull();
+    // Fillable: nothing refuses a save for being behind the code.
+    const fill = await saveClubFormSubmission(director, { organizationId: "club-a", templateKey: slipSeed.key, answers: { child_name: "Riley Sample" }, submit: false }, now);
+    expect(fill.status).toBe("DRAFT");
+    const view = await getClubFormBuilderView(slipSeed.key);
+    expect(view.draftStale).toBe(true);
+    expect(view.draftBaseVersion).toBe(0);
+  });
+
+  it("refuses to save or publish a stale draft, and discarding it clears it", async () => {
+    const published = await currentSpec();
+    await saveClubFormDraft(slipSeed.key, { draft: published, baseVersion: slipSeed.version }, "admin-1", now);
+    state.templates[0].draftBaseVersion = slipSeed.version - 1;
+    state.templates[0].version = slipSeed.version;
+    const stamp = (state.templates[0].draftUpdatedAt as Date).toISOString();
+    await expect(publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now))
+      .rejects.toMatchObject({ code: "TEMPLATE_CHANGED", message: expect.stringContaining("updated by a code change after this draft was started") });
+    await expect(saveClubFormDraft(slipSeed.key, { draft: published, baseVersion: slipSeed.version, expectedDraftUpdatedAt: stamp }, "admin-1", now))
+      .rejects.toMatchObject({ code: "TEMPLATE_CHANGED" });
+    expect(state.templates[0].version).toBe(slipSeed.version);
+    await discardClubFormDraft(slipSeed.key, "admin-1");
+    expect(state.templates[0].draft).toBeNull();
+    expect(state.templates[0].draftBaseVersion).toBeNull();
+    expect((await getClubFormBuilderView(slipSeed.key)).draftStale).toBe(false);
+    // A fresh draft can then be started and published.
+    await saveClubFormDraft(slipSeed.key, { draft: published, baseVersion: slipSeed.version }, "admin-1", now);
+    expect((await publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now)).version).toBe(slipSeed.version + 1);
   });
 
   it("still seals keys the code seed added for a template edited in the app, without touching its definition", async () => {
@@ -543,6 +572,37 @@ describe("hidden fields on every new-fill path (#712)", () => {
     await saveClubFormSubmission(director, { organizationId: "club-a", templateKey: slipSeed.key, submissionId: "sub-d", answers: { child_name: "Riley Sample" }, submit: false }, now);
     const row = state.submissions.find((candidate) => candidate.id === "sub-d")!;
     expect(row.answers).toMatchObject({ activity: "Canoe trip" });
+  });
+
+  it("keeps a client-sent value for a hidden key from replacing the stored one on a draft re-save", async () => {
+    state.submissions.push(draftRow());
+    await hide(["activity", "physician_name"]);
+    await saveClubFormSubmission(director, { organizationId: "club-a", templateKey: slipSeed.key, submissionId: "sub-d", answers: { child_name: "Riley Sample", activity: "Tampered", physician_name: "Dr. Tampered" }, submit: false }, now);
+    const row = state.submissions.find((candidate) => candidate.id === "sub-d")!;
+    expect(row.answers).toMatchObject({ activity: "Canoe trip" });
+    expect(JSON.stringify(row)).not.toContain("Tampered");
+    expect(openSensitiveAnswers("sub-d", row.sealedSensitiveAnswers as string)).toEqual({ physician_name: "Dr. Synthetic Physician" });
+  });
+
+  it("re-seals a carried-forward sealed key even when the stored sensitive key list no longer names it", async () => {
+    state.submissions.push(draftRow());
+    await hide(["physician_name"]);
+    // The stored list (and the seed union) are changed under it: only the sealed blob says physician_name was sensitive.
+    state.templates[0].sensitiveFieldKeys = [];
+    const seedKeys = slipSeed.sensitiveFieldKeys.filter((key) => key !== "physician_name");
+    void seedKeys;
+    await saveClubFormSubmission(director, { organizationId: "club-a", templateKey: slipSeed.key, submissionId: "sub-d", answers: { child_name: "Riley Sample" }, submit: false }, now);
+    const row = state.submissions.find((candidate) => candidate.id === "sub-d")!;
+    expect(row.answers).not.toHaveProperty("physician_name");
+    expect(JSON.stringify(row.answers)).not.toContain("Dr. Synthetic Physician");
+    expect(openSensitiveAnswers("sub-d", row.sealedSensitiveAnswers as string)).toMatchObject({ physician_name: "Dr. Synthetic Physician" });
+  });
+
+  it("answers SENSITIVE_UNREADABLE, not a server error, when the sealed value on a draft cannot be opened", async () => {
+    state.submissions.push({ ...draftRow(), sealedSensitiveAnswers: "v1.bad.bad.bad" });
+    const error = await saveClubFormSubmission(director, { organizationId: "club-a", templateKey: slipSeed.key, submissionId: "sub-d", answers: { child_name: "Riley Sample" }, submit: false }, now).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "SENSITIVE_UNREADABLE" });
+    expect(state.submissions.find((candidate) => candidate.id === "sub-d")!.sealedSensitiveAnswers).toBe("v1.bad.bad.bad");
   });
 
   it("omits a hidden field with no answer when a form is viewed or printed, but shows it where it has one", async () => {

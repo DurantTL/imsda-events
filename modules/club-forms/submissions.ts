@@ -89,11 +89,22 @@ function carriedForwardAnswers(
   existing: { id: string; answers: unknown; sealedSensitiveAnswers: string | null },
   fillable: RegistrationFormDefinition,
   submissionId: string,
-): Record<string, unknown> {
+): { plain: Record<string, unknown>; sealed: Record<string, unknown> } {
   const offered = new Set(allFields(fillable).map((field) => field.key));
-  const stored: Record<string, unknown> = { ...(existing.answers as Record<string, unknown>) };
-  if (existing.sealedSensitiveAnswers) Object.assign(stored, openSensitiveAnswers(submissionId, existing.sealedSensitiveAnswers));
-  return Object.fromEntries(Object.entries(stored).filter(([key]) => !offered.has(key)));
+  const notOffered = (entries: Record<string, unknown>) => Object.fromEntries(Object.entries(entries).filter(([key]) => !offered.has(key)));
+  let opened: Record<string, unknown> = {};
+  if (existing.sealedSensitiveAnswers) {
+    try {
+      opened = openSensitiveAnswers(submissionId, existing.sealedSensitiveAnswers);
+    } catch (error) {
+      if (error instanceof SecretBoxError) {
+        throw new ClubFormError("SENSITIVE_UNREADABLE", "The sensitive answers already saved on this draft can't be read on this server, so it can't be saved right now.");
+      }
+      throw error;
+    }
+  }
+  // Whatever came out of the sealed value goes back in it, whatever the current sensitive key list says.
+  return { plain: notOffered((existing.answers ?? {}) as Record<string, unknown>), sealed: notOffered(opened) };
 }
 
 export type SaveClubFormInput = {
@@ -152,8 +163,10 @@ export async function saveClubFormSubmission(viewer: ClubFormsViewer, input: Sav
     // A draft started on an earlier version may hold answers to a field since hidden or removed. The form no
     // longer shows them, so this save carries them forward untouched (sealed ones are re-opened here, server-side
     // only, and sealed again) rather than silently erasing them.
-    const carried = existing ? carriedForwardAnswers(existing, definition, id) : {};
-    const { plain, sensitive } = splitAnswers({ sensitiveFieldKeys: keys.sensitiveFieldKeys }, { ...carried, ...answers });
+    const carried = existing ? carriedForwardAnswers(existing, definition, id) : { plain: {}, sealed: {} };
+    const split = splitAnswers({ sensitiveFieldKeys: keys.sensitiveFieldKeys }, { ...carried.plain, ...answers });
+    const plain = split.plain;
+    const sensitive = { ...split.sensitive, ...carried.sealed };
     const hasSensitive = Object.keys(sensitive).length > 0;
     if (hasSensitive && !isSecretEncryptionConfigured()) {
       throw new ClubFormError("ENCRYPTION_NOT_CONFIGURED", "Encryption isn't set up on this server, so this form can't be saved yet.");

@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 /** Throws away a stored draft the builder cannot read (#712), so the form can be edited again. */
-export function ClubFormDraftDiscard({ templateKey }: { templateKey: string }) {
+export function ClubFormDraftDiscard({ templateKey, message }: { templateKey: string; message?: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -28,7 +28,7 @@ export function ClubFormDraftDiscard({ templateKey }: { templateKey: string }) {
 
   return (
     <div className="inline-notice error" role="alert">
-      <p>The saved draft of this form can&apos;t be read, so it can&apos;t be edited or published. The published version is not affected.</p>
+      <p>{message ?? "The saved draft of this form can't be read, so it can't be edited or published. The published version is not affected."}</p>
       <button className="secondary-button" disabled={busy} onClick={() => void discard()} type="button">Discard draft</button>
       {error && <small className="club-report-problem">{error}</small>}
     </div>

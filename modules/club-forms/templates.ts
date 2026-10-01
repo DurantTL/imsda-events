@@ -47,8 +47,9 @@ const templateSelect = {
  * created disabled; a changed definition (higher `version`) is written over
  * the stored one. The `enabled` switch is never touched. A template that has
  * been published or created in the app (`customizedAt`, #712) is never written
- * over, and neither is one with an unpublished draft: each is skipped and
- * reported. For a customized one, sensitive or birth-date keys the code seed
+ * over: it is skipped and reported. A template with only an unpublished draft is
+ * still updated (so the live form stays available) and its draft is reported as
+ * stale. For a customized one, sensitive or birth-date keys the code seed
  * has added are still sealed in existing answers (the definition is untouched).
  * Safe to call often.
  */
@@ -58,6 +59,7 @@ export async function syncClubFormTemplates(
 ) {
   const refused: Array<{ key: string; message: string }> = [];
   const skipped: Array<{ key: string; reason: string }> = [];
+  const staleDrafts: Array<{ key: string }> = [];
   const existing = await client.clubFormTemplate.findMany({ select: { id: true, key: true, version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true, customizedAt: true, draftUpdatedAt: true } });
   const stored = new Map(existing.map((row) => [row.key, row]));
   for (const seed of clubFormTemplateSeeds) {
@@ -76,13 +78,15 @@ export async function syncClubFormTemplates(
       }
       continue;
     }
-    if (row?.draftUpdatedAt) {
-      skipped.push({ key: seed.key, reason: "draft in progress" });
-      logInfo("Club form sync skipped a template with an unpublished draft.", { templateKey: seed.key });
-      continue;
-    }
+    const hadDraft = Boolean(row?.draftUpdatedAt);
+    const wasBehind = Boolean(row && row.version < seed.version);
     try {
       await syncOneTemplate(client, seed, stored.get(seed.key));
+      // The live form is updated, so it stays fillable. An unpublished draft is left in place but is now stale.
+      if (hadDraft && wasBehind) {
+        staleDrafts.push({ key: seed.key });
+        logInfo("Club form sync updated a template whose unpublished draft is now stale.", { templateKey: seed.key });
+      }
     } catch (error) {
       // A refused loosening stops that form only; the operator script asks to carry on and reports every refusal.
       if (options.continueOnRefusal && error instanceof ClubFormError && error.code === "INVALID_TEMPLATE") {
@@ -92,7 +96,7 @@ export async function syncClubFormTemplates(
       throw error;
     }
   }
-  return { refused, skipped };
+  return { refused, skipped, staleDrafts };
 }
 
 type Seed = (typeof clubFormTemplateSeeds)[number];
@@ -172,8 +176,8 @@ async function syncOneTemplate(
       // Lock, then decide from the locked row: a concurrent save or sync cannot change the keys under us.
       const locked = await lockClubFormTemplateForReseal(tx, current.id);
       if (locked.version >= seed.version) return;
-      // Edited or drafted in the app since the check above: the code no longer owns it.
-      if (locked.customizedAt || locked.draftUpdatedAt) return;
+      // Published from the app since the check above: the code no longer owns it. (A draft does not stop the update.)
+      if (locked.customizedAt) return;
       assertNotLoosened(seed, locked);
       const newlySensitive = seed.sensitiveFieldKeys.filter((key) => !locked.sensitiveFieldKeys.includes(key));
       // A newly sensitive field must be sealed in existing submissions in the same transaction as the update.
@@ -225,6 +229,10 @@ export type ClubFormTemplateSummary = {
   customized: boolean;
   /** An unpublished draft is waiting. */
   hasDraft: boolean;
+  /** The published version the draft was started on. */
+  draftBaseVersion: number | null;
+  /** A code sync moved the version on after the draft was started: it cannot be published. */
+  draftStale: boolean;
 };
 
 /**
@@ -246,6 +254,7 @@ export async function listClubFormTemplatesForAdmin(): Promise<ClubFormTemplateS
       version: true,
       customizedAt: true,
       draftUpdatedAt: true,
+      draftBaseVersion: true,
       _count: { select: { submissions: true } },
     },
   });
@@ -263,11 +272,13 @@ export async function listClubFormTemplatesForAdmin(): Promise<ClubFormTemplateS
       needsSync: Boolean(seed && !row.customizedAt && row.version < seed.version),
       customized: Boolean(row.customizedAt),
       hasDraft: Boolean(row.draftUpdatedAt),
+      draftBaseVersion: row.draftUpdatedAt ? row.draftBaseVersion : null,
+      draftStale: Boolean(row.draftUpdatedAt && row.draftBaseVersion !== null && row.draftBaseVersion !== row.version),
     };
   });
   for (const seed of clubFormTemplateSeeds) {
     if (stored.has(seed.key)) continue;
-    listed.push({ key: seed.key, name: seed.name, description: seed.description, enabled: false, enabledAt: null, version: 0, submissionCount: 0, needsSync: true, customized: false, hasDraft: false });
+    listed.push({ key: seed.key, name: seed.name, description: seed.description, enabled: false, enabledAt: null, version: 0, submissionCount: 0, needsSync: true, customized: false, hasDraft: false, draftBaseVersion: null, draftStale: false });
   }
   return listed;
 }

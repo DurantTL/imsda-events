@@ -4836,6 +4836,8 @@ model ClubFormTemplate {
   /// bumps `version` and records a `ClubFormTemplateVersion`.
   draft                Json?
   draftUpdatedAt       DateTime?
+  /// The published `version` the draft was started on (#712). A code sync that moves the version on makes the draft stale.
+  draftBaseVersion     Int?
   draftUpdatedByUserId String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt

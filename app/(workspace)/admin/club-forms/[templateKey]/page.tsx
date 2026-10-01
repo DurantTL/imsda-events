@@ -7,6 +7,7 @@ import { ClubFormBuilder } from "@/components/club-form-builder";
 import { ClubFormDraftDiscard } from "@/components/club-form-draft-discard";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getClubFormBuilderView } from "@/modules/club-forms/builder";
+import { STALE_DRAFT_MESSAGE } from "@/modules/club-forms/builder-messages";
 import { ClubFormError } from "@/modules/club-forms/errors";
 
 export const metadata: Metadata = { title: "Club form builder" };
@@ -42,11 +43,15 @@ export default async function ClubFormBuilderPage({ params }: { params: Promise<
           </p>
         </div>
       </div>
-      {view.customized
-        ? <p className="field-help">Edited in the app; code updates no longer apply to this form.</p>
-        : view.draft !== null || view.draftUnreadable
-          ? <p className="field-help">Code updates are paused while a draft exists. Discarding a draft of a form that was never published from the app lets code updates apply again.</p>
-          : null}
+      {view.customized && <p className="field-help">Edited in the app; code updates no longer apply to this form.</p>}
+      {view.draftStale ? (
+        <ClubFormDraftDiscard
+          message={`This draft was started on version ${view.draftBaseVersion ?? "?"}, but the form is now on version ${view.version}. ${STALE_DRAFT_MESSAGE}`}
+          templateKey={view.key}
+        />
+      ) : view.draftBaseVersion !== null && (view.draft !== null || view.draftUnreadable)
+        ? <p className="field-help">This draft was started on version {view.draftBaseVersion}.</p>
+        : null}
       <BuilderPhoneNotice backHref="/admin/club-forms" backLabel="Back to club forms" builderName="club form builder" />
       <div className="builder-phone-hidden">
         {view.draftUnreadable ? (
@@ -54,6 +59,7 @@ export default async function ClubFormBuilderPage({ params }: { params: Promise<
         ) : view.needsSync ? (
           <div className="inline-notice error" role="alert">
             This form is behind the code and needs a sync first. An operator must run <code>npm run club-forms:sync</code>, then reload this page.
+            {(view.draft !== null || view.draftBaseVersion !== null) && <ClubFormDraftDiscard templateKey={view.key} />}
           </div>
         ) : (
           <ClubFormBuilder

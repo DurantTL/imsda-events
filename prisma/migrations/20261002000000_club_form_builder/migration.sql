@@ -6,6 +6,7 @@ ALTER TABLE "ClubFormTemplate" ADD COLUMN "hiddenFieldKeys" TEXT[] DEFAULT ARRAY
 ALTER TABLE "ClubFormTemplate" ADD COLUMN "customizedAt" TIMESTAMP(3);
 ALTER TABLE "ClubFormTemplate" ADD COLUMN "draft" JSONB;
 ALTER TABLE "ClubFormTemplate" ADD COLUMN "draftUpdatedAt" TIMESTAMP(3);
+ALTER TABLE "ClubFormTemplate" ADD COLUMN "draftBaseVersion" INTEGER;
 ALTER TABLE "ClubFormTemplate" ADD COLUMN "draftUpdatedByUserId" TEXT;
 
 CREATE TABLE "ClubFormTemplateVersion" (

@@ -19,6 +19,7 @@ import {
 import { parseClubFormTemplate, type ClubFormTemplateRecord } from "@/modules/club-forms/domain";
 import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
 import { ClubFormError } from "@/modules/club-forms/errors";
+import { STALE_DRAFT_MESSAGE } from "@/modules/club-forms/builder-messages";
 import { resealClubFormSubmissions } from "@/modules/club-forms/reseal";
 import { RESEAL_TRANSACTION } from "@/modules/club-forms/templates";
 import { loadProtectionHistory, recordClubFormTemplateVersion } from "@/modules/club-forms/versions";
@@ -56,6 +57,7 @@ const rowSelect = {
   customizedAt: true,
   draft: true,
   draftUpdatedAt: true,
+  draftBaseVersion: true,
 } satisfies Prisma.ClubFormTemplateSelect;
 
 function notFound() {
@@ -82,6 +84,11 @@ function assertSyncedForEditing(row: { key: string; version: number; customizedA
   }
 }
 
+
+function isStaleDraft(row: { draft: unknown; draftBaseVersion: number | null; version: number }) {
+  return Boolean(row.draft) && typeof row.draftBaseVersion === "number" && row.draftBaseVersion !== row.version;
+}
+
 function validationFailed(issues: BuilderIssue[]) {
   return new ClubFormError("VALIDATION_FAILED", issues[0]?.message ?? "Check the form and try again.", issues);
 }
@@ -102,6 +109,10 @@ export type ClubFormBuilderView = {
   /** The unpublished draft, or null. The editor starts from this when present. */
   draft: ClubFormDraftSpec | null;
   draftUpdatedAt: string | null;
+  /** The published version the draft was started on. */
+  draftBaseVersion: number | null;
+  /** A code change moved the version on after the draft was started: it cannot be saved or published; discard it. */
+  draftStale: boolean;
   /** A draft is stored but cannot be read (it no longer parses): show an error and offer to discard it. */
   draftUnreadable: boolean;
   /** Problems the unpublished draft still has, shown as warnings; publish refuses until they are fixed. */
@@ -136,6 +147,8 @@ export async function getClubFormBuilderView(key: string): Promise<ClubFormBuild
     published: specFromRecord({ ...record, sortOrder: row.sortOrder }),
     draft,
     draftUpdatedAt: row.draft ? row.draftUpdatedAt?.toISOString() ?? null : null,
+    draftBaseVersion: row.draft ? row.draftBaseVersion : null,
+    draftStale: isStaleDraft(row),
     draftUnreadable: Boolean(row.draft) && draft === null,
     draftWarnings,
     lockedSensitiveKeys: history.everSensitiveKeys.filter((candidate) => history.publishedFieldKeys.includes(candidate)),
@@ -156,14 +169,16 @@ export type SaveDraftInput = {
  * (the schema the fill-in and submission code use, plus the sensitive-flag
  * protection rules) runs here too, but its problems come back as warnings; it
  * is publish that refuses, under the lock. Saving a draft does not mark the
- * template as edited in the app: that happens at its first publish. While a
- * draft exists the sync leaves the template alone.
+ * template as edited in the app: that happens at its first publish. If a code
+ * sync moves the version on while a draft exists, the draft goes stale: it can
+ * be discarded but not saved or published.
  */
 export async function saveClubFormDraft(key: string, input: SaveDraftInput, actorUserId: string, now = new Date()) {
   return getPrisma().$transaction(async (tx) => {
     const row = await lockRow(tx, key);
     assertSyncedForEditing(row);
     if (row.version !== input.baseVersion) throw changed();
+    if (isStaleDraft(row)) throw changed(STALE_DRAFT_MESSAGE);
     const storedStamp = row.draft ? row.draftUpdatedAt?.toISOString() ?? null : null;
     if ((input.expectedDraftUpdatedAt ?? null) !== storedStamp) throw changed("Someone else saved a draft of this form. Reload the page to see it.");
     const history = await loadProtectionHistory(tx, row);
@@ -177,6 +192,7 @@ export async function saveClubFormDraft(key: string, input: SaveDraftInput, acto
       data: {
         draft: shaped as unknown as Prisma.InputJsonValue,
         draftUpdatedAt: now,
+        draftBaseVersion: row.version,
         draftUpdatedByUserId: actorUserId,
       },
     });
@@ -199,7 +215,7 @@ export async function discardClubFormDraft(key: string, actorUserId: string) {
     if (row.draft) {
       await tx.clubFormTemplate.update({
         where: { id: row.id },
-        data: { draft: Prisma.DbNull, draftUpdatedAt: null, draftUpdatedByUserId: null },
+        data: { draft: Prisma.DbNull, draftUpdatedAt: null, draftBaseVersion: null, draftUpdatedByUserId: null },
       });
       await writeAuditLog({
         actorUserId,
@@ -229,6 +245,7 @@ export async function publishClubFormDraft(key: string, input: { baseVersion: nu
     assertSyncedForEditing(row);
     if (row.version !== input.baseVersion) throw changed();
     if (!row.draft) throw new ClubFormError("VALIDATION_FAILED", "There is no saved draft to publish.");
+    if (isStaleDraft(row)) throw changed(STALE_DRAFT_MESSAGE);
     const history = await loadProtectionHistory(tx, row);
     const check = checkClubFormDraft(row.draft, history);
     if (!check.ok) throw validationFailed(check.issues);
@@ -258,6 +275,7 @@ export async function publishClubFormDraft(key: string, input: { baseVersion: nu
         version: nextVersion,
         draft: Prisma.DbNull,
         draftUpdatedAt: null,
+        draftBaseVersion: null,
         draftUpdatedByUserId: null,
         customizedAt: row.customizedAt ?? now,
       },

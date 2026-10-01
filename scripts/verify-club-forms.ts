@@ -745,14 +745,19 @@ async function main() {
     const restored = await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } });
     assert(restored.name === original.name && restored.version === original.version, "a template never edited keeps updating from the code");
 
-    // A draft in progress pauses the sync; discarding it hands the template back to the code.
-    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { version: 0, name: "Verify draft name", draft: { placeholder: true }, draftUpdatedAt: new Date() } });
-    const paused = await templates.syncClubFormTemplates(prisma, { continueOnRefusal: true });
-    assert(paused.skipped.some((item) => item.key === SLIP && item.reason === "draft in progress"), "the sync skips a template with a draft in progress");
-    assert((await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } })).name === "Verify draft name", "the sync did not overwrite a template with a draft");
-    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { draft: Prisma.DbNull, draftUpdatedAt: null } });
-    await templates.syncClubFormTemplates(prisma, { continueOnRefusal: true });
-    assert((await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } })).name === original.name, "a discarded draft makes the template sync-managed again");
+    // A pending draft does not stop a code update: the live form is updated and stays fillable, and the draft goes stale.
+    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { version: 0, name: "Verify draft name", draft: { placeholder: true }, draftUpdatedAt: new Date(), draftBaseVersion: 0 } });
+    const staleRun = await templates.syncClubFormTemplates(prisma, { continueOnRefusal: true });
+    assert(staleRun.staleDrafts.some((item) => item.key === SLIP) && !staleRun.skipped.some((item) => item.key === SLIP), "the sync updates a template with a pending draft and reports the draft as stale");
+    const staleRow = await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } });
+    assert(staleRow.name === original.name && staleRow.version === original.version && staleRow.draft !== null, "the live form was updated and the draft was left in place");
+    const stillFillable = await submissions.saveClubFormSubmission(directorA, { organizationId: clubs.a, templateKey: SLIP, answers: slipAnswers, submit: false });
+    assert(stillFillable.status === "DRAFT", "a form with a stale draft is still fillable");
+    assert((await builder.getClubFormBuilderView(SLIP)).draftStale === true, "the builder sees the draft as stale");
+    await expectCode(builder.publishClubFormDraft(SLIP, { baseVersion: staleRow.version }, users.admin), "TEMPLATE_CHANGED", "a stale draft cannot be published");
+    await builder.discardClubFormDraft(SLIP, users.admin);
+    const discarded = await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } });
+    assert(discarded.draft === null && discarded.draftBaseVersion === null, "discarding clears a stale draft");
 
     // A customized template ignores the code's definition, but a key the code added as sensitive is still sealed.
     await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { customizedAt: new Date(), sensitiveFieldKeys: original.sensitiveFieldKeys.filter((key) => key !== "physician_name") } });
@@ -767,7 +772,7 @@ async function main() {
     assert(!(sealedNow.answers as Record<string, unknown>).physician_name && sealedNow.sealedSensitiveAnswers !== null && sealed.openSensitiveAnswers(plainStored.id, sealedNow.sealedSensitiveAnswers).physician_name === SECRET_PHYSICIAN, "the sync seals a key the code added for a template edited in the app");
     assert((await prisma.clubFormTemplate.findUniqueOrThrow({ where: { key: SLIP } })).sensitiveFieldKeys.includes("physician_name"), "the stored sensitive keys gained the code's key");
   } finally {
-    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { name: original.name, version: original.version, customizedAt: original.customizedAt, sensitiveFieldKeys: original.sensitiveFieldKeys, draft: Prisma.DbNull, draftUpdatedAt: null } });
+    await prisma.clubFormTemplate.update({ where: { key: SLIP }, data: { name: original.name, version: original.version, customizedAt: original.customizedAt, sensitiveFieldKeys: original.sensitiveFieldKeys, draft: Prisma.DbNull, draftUpdatedAt: null, draftBaseVersion: null } });
   }
 
   // Club forms and links block deleting a club.

@@ -130,10 +130,15 @@ cross-origin check and `requireSystemAdministrator` on each request.
 - **Sync.** Creating a form or its first publish sets `customizedAt`; the sync then
   skips it (logs it, prints `SKIPPED`) and it no longer follows the code's seed
   version, though a key the code seed later marks sensitive is still sealed in
-  existing answers. A template with an unpublished draft is skipped too
-  (`draft in progress`); discarding a never-published draft makes it sync-managed
-  again. Never-edited seeds update from code as before. A seed that is behind the
-  code cannot be edited until the sync has run.
+  existing answers. An unpublished draft does **not** pause the sync: a seed
+  version bump is still applied to the live columns (with the usual re-seal), so
+  the live form stays fillable. The draft stays in place but goes **stale**
+  (`draftBaseVersion` no longer matches `version`): the sync logs and prints
+  `UPDATED <key>: draft is now stale` and still exits 0; save and publish refuse a
+  stale draft (`TEMPLATE_CHANGED`, "The form was updated by a code change after
+  this draft was started..."); the builder shows a notice and Discard. Discard is
+  available whenever a draft exists. Never-edited seeds update from code as
+  before. A seed that is behind the code cannot be edited until the sync has run.
 - **Unfinished drafts.** A save accepts any draft that is structurally a draft
   (size-capped) and returns the full check's problems as warnings; publish runs
   the full check and the protection rules under the lock. A stored draft that no
@@ -141,7 +146,8 @@ cross-origin check and `requireSystemAdministrator` on each request.
 - **Hidden fields** are left out of every new-fill path (director page, draft
   edit, private link) and the server ignores answers to them. A draft saved again
   carries forward stored plain and sealed answers to hidden or removed fields
-  (never returned to the client). Views and prints omit a hidden field with no
+  (never returned to the client; anything that came out of the sealed value goes
+  back into it, and an unreadable sealed value answers `SENSITIVE_UNREADABLE`). Views and prints omit a hidden field with no
   answer; the CSV formats each row with its own version's field and keeps
   headings unique.
 - **Audit.** `CLUB_FORM_TEMPLATE_CREATED`, `_DRAFT_SAVED`, `_DRAFT_DISCARDED`,
