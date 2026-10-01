@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   currentAttendee: vi.fn(),
   needsSecondStep: vi.fn(),
   acting: vi.fn(),
+  formFindFirst: vi.fn(),
   redirect: vi.fn((path: string) => { throw new Error(`REDIRECT:${path}`); }),
   notFound: vi.fn(() => { throw new Error("NOT_FOUND"); }),
 }));
@@ -20,6 +21,7 @@ vi.mock("@/lib/prisma", () => ({
     event: { findFirst: mocks.eventFindFirst },
     eventContentSection: { findMany: vi.fn().mockResolvedValue([]) },
     registrationAttendee: { count: mocks.attendeeCount },
+    registrationForm: { findFirst: mocks.formFindFirst },
   }),
 }));
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound, redirect: mocks.redirect }));
@@ -204,6 +206,40 @@ describe("club roster cards open club registration, not the anonymous form (#720
     expect(paths(await getPublicEventLanding("honors-weekend-test"))).toEqual([
       ["club-roster", "PUBLIC_FORM", "/register/honors-weekend-test/club-roster"],
     ]);
+  });
+
+  it("the landing page and the portal pick the same form, including when createdAt ties", async () => {
+    const { getPublicEventLanding } = await import("@/modules/events/public-repository");
+    const { publishedClubForm } = await import("@/modules/club-registrations/repository");
+    const tie = "2027-01-01T00:00:00.000Z";
+    const rows = [
+      formRow("id-b", "form-b", rosterDef(), tie),
+      formRow("id-a", "form-a", rosterDef(), tie),
+      formRow("id-c", "form-c", rosterDef(), "2026-12-31T00:00:00.000Z"),
+    ];
+    // The mocked query honours the orderBy it is given: createdAt, then id.
+    const portalQuery = (order: typeof rows) => {
+      mocks.eventFindFirst.mockResolvedValue(eventRow(order));
+      mocks.formFindFirst.mockImplementation(async (args: { orderBy: { createdAt?: string; id?: string }[] }) => {
+        expect(args.orderBy).toEqual([{ createdAt: "asc" }, { id: "asc" }]);
+        const first = [...order].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))[0]!;
+        return { id: first.id, slug: first.slug, createdAt: first.createdAt, versions: [{ definition: first.versions[0]!.definition }] };
+      });
+    };
+    const cardSlugs = async () =>
+      (await getPublicEventLanding("honors-weekend-test"))!.forms.filter((form) => form.registrationPath === "CLUB_PORTAL").map((form) => form.slug);
+    for (const order of [rows, [...rows].reverse()]) {
+      portalQuery(order);
+      expect(await cardSlugs()).toEqual(["form-c"]);
+      expect((await publishedClubForm("event-honors"))?.slug).toBe("form-c");
+    }
+    // Tie only: the lower id wins on both sides, whatever the input order.
+    const tied = rows.slice(0, 2);
+    for (const order of [tied, [...tied].reverse()]) {
+      portalQuery(order);
+      expect(await cardSlugs()).toEqual(["form-a"]);
+      expect((await publishedClubForm("event-honors"))?.slug).toBe("form-a");
+    }
   });
 
   it("keeps public links on a general or attendee-pay event", async () => {

@@ -13,7 +13,7 @@ import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
 import { listPublishedEventContentSections } from "@/modules/events/content-repository";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { groupFormDefinition, groupFormProblem } from "@/modules/group-registrations/domain";
-import { clubFormProblem } from "@/modules/club-registrations/domain";
+import { pickClubPortalForm } from "@/modules/club-registrations/portal-form";
 import { logWarn } from "@/lib/logger";
 import { publicFormDifferentiators } from "@/modules/forms/duplicate-public-forms";
 import { clubRegistrationEntryPath } from "@/modules/club-registrations/entry-path";
@@ -116,11 +116,11 @@ async function loadPublicEventLanding(
   // The portal serves exactly one form per event: the oldest published one, and
   // only when it passes `clubFormProblem` (the same pick as `publishedClubForm`).
   // Only that card may open the portal; every other form keeps its public link.
-  const portalForm = [...event.registrationForms].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
-  const portalDefinition = registrationFormDefinitionSchema.safeParse(portalForm?.versions[0]?.definition);
-  const portalFormId = clubPortalEvent && portalForm && portalDefinition.success && clubFormProblem(portalDefinition.data) === null
-    ? portalForm.id
-    : null;
+  const portal = pickClubPortalForm(event.registrationForms.flatMap((form) => {
+    const version = form.versions[0];
+    return version ? [{ id: form.id, createdAt: form.createdAt, definition: version.definition }] : [];
+  }));
+  const portalFormId = clubPortalEvent && portal && portal.problem === null ? portal.form.id : null;
   const publicForms = event.registrationForms.flatMap((form) => {
     const version = form.versions[0];
     if (!version) return [];
@@ -153,7 +153,7 @@ async function loadPublicEventLanding(
   // "Register as a group or individual" (#650): a club event also takes people who are not in a
   // club, when one of its published forms can be used for them. Labelled only "Group".
   // The club's own form (the first one created, as club registration picks it) is the one a group uses.
-  const primaryForm = [...event.registrationForms].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
+  const primaryForm = portal ? event.registrationForms.find((form) => form.id === portal.form.id) : undefined;
   const primaryDefinition = registrationFormDefinitionSchema.safeParse(primaryForm?.versions[0]?.definition);
   const groupForm = event.audience === "CLUB" && event.billingMode === "DEFERRED_ORGANIZATION_INVOICE"
     && primaryDefinition.success && groupFormProblem(groupFormDefinition(primaryDefinition.data)) === null

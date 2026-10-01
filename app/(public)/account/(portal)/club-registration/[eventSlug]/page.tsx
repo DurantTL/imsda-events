@@ -30,24 +30,26 @@ export default async function ClubRegistrationEntryPage({
   params: Promise<{ eventSlug: string }>;
 }) {
   const { eventSlug } = await params;
+  // This page checks sign-in and the second step itself; it does not rely on the layout,
+  // and does so before any event lookup. Staff acting as a club director skip the attendee checks.
+  const acting = await currentStaffActingContext();
+  const actingDirector = acting?.role === "CLUB_DIRECTOR";
+  const { account, via, sessionId } = await getCurrentAttendee();
+  if (!account && !actingDirector) redirect(await attendeeSignInRedirectPath());
+  if (account && !actingDirector && via === "attendee" && sessionId && (await accountNeedsSecondStep(account.id, sessionId)) !== "OK") {
+    redirect(await twoStepRedirectPath());
+  }
+
   const event = await getPrisma().event.findFirst({
     where: { slug: eventSlug, isPublished: true, audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE" },
     select: { id: true, name: true, slug: true },
   });
   if (!event) notFound();
 
-  // Staff acting as a club director go straight to that club, as the roster checks do.
-  const acting = await currentStaffActingContext();
-  if (acting && acting.role === "CLUB_DIRECTOR") {
+  if (acting && actingDirector) {
     redirect(`/account/clubs/${acting.organizationId}/events/${event.id}`);
   }
-
-  // This page checks sign-in and the second step itself; it does not rely on the layout.
-  const { account, via, sessionId } = await getCurrentAttendee();
   if (!account) redirect(await attendeeSignInRedirectPath());
-  if (via === "attendee" && sessionId && (await accountNeedsSecondStep(account.id, sessionId)) !== "OK") {
-    redirect(await twoStepRedirectPath());
-  }
 
   const clubs = (await listDirectedClubs(account.id)).filter((club) => clubCapabilities(club.role).registerForEvents);
   if (clubs.length === 1) {
