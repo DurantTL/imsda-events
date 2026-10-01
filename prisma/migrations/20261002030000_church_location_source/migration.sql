@@ -16,6 +16,11 @@ CREATE TABLE "ChurchGeocodeResult" (
     "longitude" DOUBLE PRECISION,
     "matchedAddress" TEXT NOT NULL DEFAULT '',
     "provider" TEXT NOT NULL,
+    -- The address that was sent: a match is refused once the church's address no longer matches it.
+    "inputStreet" TEXT NOT NULL DEFAULT '',
+    "inputCity" TEXT NOT NULL DEFAULT '',
+    "inputState" TEXT NOT NULL DEFAULT '',
+    "inputZip" TEXT NOT NULL DEFAULT '',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 

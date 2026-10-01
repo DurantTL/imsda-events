@@ -31,6 +31,8 @@ export function organizationApiError(error: unknown, action: string) {
       ? 404
       : error.code === "GEOCODING_UNAVAILABLE"
         ? 502
+      : error.code === "GEOCODING_TIMEOUT"
+        ? 504
       : error.code === "DIRECTOR_GRANT_ROLE_NOT_ALLOWED" || error.code === "ACT_AS_OWN_ACCOUNT_NOT_ALLOWED"
         ? 403
       : error.code === "DIRECTOR_GRANT_WINDOW_INVALID"

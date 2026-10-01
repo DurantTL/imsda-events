@@ -175,6 +175,7 @@ export async function commitEadventistImport(csv: string, actorUserId: string, c
       // Map locations (#724): city, state and ZIP only. The import never
       // geocodes; a person triggers "Find map locations" separately. A hand-set
       // location never reaches here (the plan leaves it out).
+      const applied = { created: 0, updated: 0 };
       for (const item of plan.items) {
         const record = item.record;
         const location = item.location;
@@ -185,12 +186,12 @@ export async function commitEadventistImport(csv: string, actorUserId: string, c
         // Conditional writes: a location saved by hand since the plan was made is
         // never overwritten. A skipped write means "set by hand"; nothing else to do.
         if (location.action === "CREATE") {
-          await tx.churchLocation.createMany({ data: [{ organizationId, ...place, source: "IMPORT" }], skipDuplicates: true });
+          applied.created += (await tx.churchLocation.createMany({ data: [{ organizationId, ...place, source: "IMPORT" }], skipDuplicates: true })).count;
         } else {
-          await tx.churchLocation.updateMany({
+          applied.updated += (await tx.churchLocation.updateMany({
             where: { organizationId, source: { not: "MANUAL" } },
             data: { ...place, ...(location.clearPoint ? { latitude: null, longitude: null, source: "IMPORT" as const } : {}) },
-          });
+          })).count;
         }
       }
 
@@ -199,6 +200,12 @@ export async function commitEadventistImport(csv: string, actorUserId: string, c
       for (const item of plan.items) {
         if (item.addressChanged && item.existingId && item.action !== "SKIPPED") {
           await tx.churchGeocodeResult.deleteMany({ where: { organizationId: item.existingId } });
+          // Decided at write time, not from the earlier snapshot: a match accepted
+          // after the plan was read is for the old address too.
+          await tx.churchLocation.updateMany({
+            where: { organizationId: item.existingId, source: "GEOCODED" },
+            data: { latitude: null, longitude: null, source: "IMPORT" },
+          });
         }
       }
 
@@ -206,10 +213,10 @@ export async function commitEadventistImport(csv: string, actorUserId: string, c
         actorUserId,
         action: "ORGANIZATIONS_EADVENTIST_IMPORTED",
         entityType: "OrganizationImport",
-        summary: `Imported the eAdventist organizations export: ${plan.counts.new} new, ${plan.counts.updated} updated, ${plan.counts.unchanged} unchanged, ${plan.counts.skipped} skipped, ${plan.counts.flagged} flagged as disbanded; ${plan.locationCounts.created} church locations created, ${plan.locationCounts.updated} updated.`,
-        metadata: { ...plan.counts, locationsCreated: plan.locationCounts.created, locationsUpdated: plan.locationCounts.updated, rejected: plan.rejected.length, keptAsChurch: plan.items.filter((item) => item.notes.some((note) => note.startsWith("Kept as a church"))).length },
+        summary: `Imported the eAdventist organizations export: ${plan.counts.new} new, ${plan.counts.updated} updated, ${plan.counts.unchanged} unchanged, ${plan.counts.skipped} skipped, ${plan.counts.flagged} flagged as disbanded; ${applied.created} church locations created, ${applied.updated} updated.`,
+        metadata: { ...plan.counts, locationsCreated: applied.created, locationsUpdated: applied.updated, rejected: plan.rejected.length, keptAsChurch: plan.items.filter((item) => item.notes.some((note) => note.startsWith("Kept as a church"))).length },
       }, tx);
-      return { ...previewOf(plan), committed: true as const };
+      return { ...previewOf(plan), locationCounts: applied, committed: true as const };
     }, { timeout: 60_000, maxWait: 10_000 });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {

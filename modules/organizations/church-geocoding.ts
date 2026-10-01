@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { GeocodingUnavailableError, type GeocodeRequest, type GeocodingProvider } from "@/integrations/geocoding/types";
 import { geocodingEnabled, getGeocodingProvider } from "@/integrations/geocoding";
 import { getPrisma } from "@/lib/prisma";
@@ -22,6 +22,25 @@ import { OrganizationOperationError } from "@/modules/organizations/repository";
  *   accept a match. If the service can't be reached, nothing is changed.
  * - System administrators only (checked by the routes); audits hold counts only.
  */
+
+/**
+ * Maps a transaction timeout (P2028) or a row that vanished (P2025) to a plain
+ * message for staff. The Prisma error carries query detail, so it is neither
+ * returned nor logged; nothing about an address reaches a log.
+ */
+function staffFacingError(error: unknown, what: "run" | "accept" | "skip") {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === "P2028") {
+      return new OrganizationOperationError("GEOCODING_TIMEOUT", what === "run"
+        ? "Find map locations took too long; nothing was changed. Try again."
+        : "Saving that took too long; nothing was changed. Reload and try again.");
+    }
+    if (error.code === "P2025") {
+      return new OrganizationOperationError("GEOCODE_RESULT_NOT_FOUND", "That result changed or was removed; nothing was changed. Reload and try again.");
+    }
+  }
+  return error;
+}
 
 const eligibleWhere: Prisma.OrganizationWhereInput = {
   type: "CHURCH",
@@ -124,7 +143,7 @@ export async function runChurchGeocoding(actorUserId: string, provider: Geocodin
       metadata: { processed: summary.processed, matched: summary.matched, noMatch: summary.noMatch, provider: geocoder.name },
     }, tx);
     return summary;
-  }, { timeout: 120_000, maxWait: 10_000 });
+  }, { timeout: 120_000, maxWait: 10_000 }).catch((error) => { throw staffFacingError(error, "run"); });
 }
 
 export type GeocodeReviewItem = {
@@ -188,6 +207,13 @@ export async function acceptGeocodeResult(organizationId: string, actorUserId: s
     if (found !== current) throw new OrganizationOperationError("GEOCODE_ADDRESS_CHANGED", staleMessage);
 
     const setByHand = () => new OrganizationOperationError("LOCATION_SET_BY_HAND", "This church's location was set by hand, so the match was not applied.");
+    // A conditional write that found nothing: say "by hand" only if it was.
+    const conflict = async () => {
+      const now = await tx.churchLocation.findUnique({ where: { organizationId }, select: { source: true } });
+      return now?.source === "MANUAL"
+        ? setByHand()
+        : new OrganizationOperationError("LOCATION_CHANGED", "The location changed; reload and try again.");
+    };
     const location = church.churchLocation;
     if (location?.source === "MANUAL") throw setByHand();
     // Conditional writes: a hand save between the read above and here wins.
@@ -196,13 +222,13 @@ export async function acceptGeocodeResult(organizationId: string, actorUserId: s
         where: { organizationId, source: { not: "MANUAL" } },
         data: { latitude: result.latitude, longitude: result.longitude, source: "GEOCODED" },
       });
-      if (count === 0) throw setByHand();
+      if (count === 0) throw await conflict();
     } else {
       const { count } = await tx.churchLocation.createMany({
         data: [{ organizationId, city: church.city ?? "", state: church.state ?? "", zip: locationZip(church.postalCode), latitude: result.latitude, longitude: result.longitude, source: "GEOCODED" }],
         skipDuplicates: true,
       });
-      if (count === 0) throw setByHand();
+      if (count === 0) throw await conflict();
     }
     await tx.churchGeocodeResult.update({ where: { organizationId }, data: { decision: "ACCEPTED" } });
     await writeAuditLog({
@@ -213,7 +239,7 @@ export async function acceptGeocodeResult(organizationId: string, actorUserId: s
       summary: `Accepted a map location for ${church.name}.`,
       metadata: { organizationId },
     }, tx);
-  });
+  }).catch((error) => { throw staffFacingError(error, "accept"); });
 }
 
 /** Leaves the church without a point; the result drops off the review list. Audited with the organization id only. */
@@ -232,5 +258,5 @@ export async function skipGeocodeResult(organizationId: string, actorUserId: str
       summary: "Skipped a map location match.",
       metadata: { organizationId },
     }, tx);
-  });
+  }).catch((error) => { throw staffFacingError(error, "skip"); });
 }

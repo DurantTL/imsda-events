@@ -19,7 +19,9 @@ const mocks = vi.hoisted(() => ({
   /** Runs once, mid-lookup, to simulate another admin acting while the run is in flight. */
   duringLookup: undefined as undefined | (() => void),
   /** Makes the next conditional location write find no row, as if a hand save landed first. */
-  locationWriteRaces: false,
+  locationWriteRaces: false as false | "MANUAL" | "IMPORT",
+  /** Makes the next transaction fail the way Prisma does. */
+  txError: undefined as unknown,
 }));
 
 const client = {
@@ -54,20 +56,26 @@ const client = {
     }),
   },
   churchLocation: {
+    findUnique: vi.fn(async ({ where }: { where: { organizationId: string } }) => mocks.locations.get(where.organizationId) ?? null),
     updateMany: vi.fn(async ({ where, data }: { where: { organizationId: string; source: { not: string } }; data: Record<string, unknown> }) => {
       const existing = mocks.locations.get(where.organizationId);
-      if (mocks.locationWriteRaces || !existing || existing.source === where.source.not) return { count: 0 };
+      if (mocks.locationWriteRaces && existing) { mocks.locations.set(where.organizationId, { ...existing, source: mocks.locationWriteRaces }); return { count: 0 }; }
+      if (!existing || existing.source === where.source.not) return { count: 0 };
       mocks.locations.set(where.organizationId, { ...existing, ...data });
       return { count: 1 };
     }),
     createMany: vi.fn(async ({ data }: { data: Array<Record<string, unknown> & { organizationId: string }> }) => {
-      if (mocks.locationWriteRaces || mocks.locations.has(data[0]!.organizationId)) return { count: 0 };
+      if (mocks.locationWriteRaces) { mocks.locations.set(data[0]!.organizationId, { organizationId: data[0]!.organizationId, source: mocks.locationWriteRaces }); return { count: 0 }; }
+      if (mocks.locations.has(data[0]!.organizationId)) return { count: 0 };
       mocks.locations.set(data[0]!.organizationId, data[0]!);
       return { count: 1 };
     }),
   },
   $queryRaw: vi.fn(async () => [{ locked: mocks.locked }]),
-  $transaction: async (work: (tx: unknown) => unknown) => work(client),
+  $transaction: async (work: (tx: unknown) => unknown) => {
+    if (mocks.txError) throw mocks.txError;
+    return work(client);
+  },
 };
 
 vi.mock("server-only", () => ({}));
@@ -83,6 +91,7 @@ import { createFakeGeocodingProvider } from "@/integrations/geocoding/fake";
 import { GeocodingUnavailableError } from "@/integrations/geocoding/types";
 import { acceptGeocodeResult, runChurchGeocoding, skipGeocodeResult } from "@/modules/organizations/church-geocoding";
 import { validateServerEnv } from "@/lib/env";
+import { Prisma } from "@prisma/client";
 
 const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => { throw new Error("Tests must never reach the network."); });
 
@@ -98,6 +107,7 @@ beforeEach(() => {
   mocks.locked = true;
   mocks.duringLookup = undefined;
   mocks.locationWriteRaces = false;
+  mocks.txError = undefined;
   fetchSpy.mockClear();
 });
 
@@ -275,13 +285,39 @@ describe("stale matches, races and overlapping runs (#724 review)", () => {
   it("never overwrites a hand save that lands between the read and the write (update and create)", async () => {
     matched("c1");
     mocks.locations.set("c1", { organizationId: "c1", source: "IMPORT", city: "Sample Hills", state: "ZZ", zip: "00001", latitude: null, longitude: null });
-    mocks.locationWriteRaces = true;
+    mocks.locationWriteRaces = "MANUAL";
     await expect(acceptGeocodeResult("c1", "admin-1")).rejects.toMatchObject({ code: "LOCATION_SET_BY_HAND" });
-    expect(mocks.locations.get("c1")).toMatchObject({ source: "IMPORT", latitude: null });
+    expect(mocks.locations.get("c1")).toMatchObject({ source: "MANUAL", latitude: null });
     matched("c2");
     await expect(acceptGeocodeResult("c2", "admin-1")).rejects.toMatchObject({ code: "LOCATION_SET_BY_HAND" });
     expect(mocks.results.get("c1")).toMatchObject({ decision: "PENDING" });
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("uses a neutral message, not \"set by hand\", when the conflicting row is not MANUAL", async () => {
+    matched("c1");
+    mocks.locations.set("c1", { organizationId: "c1", source: "IMPORT", city: "Sample Hills", state: "ZZ", zip: "00001", latitude: null, longitude: null });
+    mocks.locationWriteRaces = "IMPORT";
+    await expect(acceptGeocodeResult("c1", "admin-1")).rejects.toMatchObject({ code: "LOCATION_CHANGED", message: "The location changed; reload and try again." });
+    matched("c2");
+    await expect(acceptGeocodeResult("c2", "admin-1")).rejects.toMatchObject({ code: "LOCATION_CHANGED" });
+    expect(mocks.results.get("c1")).toMatchObject({ decision: "PENDING" });
+  });
+
+  it("turns a transaction timeout or a vanished row into a plain message, with no query detail", async () => {
+    const prismaError = (code: string) => new Prisma.PrismaClientKnownRequestError(`Invalid \`prisma.x()\` 10 Sample Road ${code}`, { code, clientVersion: "test" });
+    mocks.churches = [church("c1")];
+    mocks.txError = prismaError("P2028");
+    const timedOut = await runChurchGeocoding("admin-1", createFakeGeocodingProvider()).catch((error) => error);
+    expect(timedOut).toMatchObject({ code: "GEOCODING_TIMEOUT", message: "Find map locations took too long; nothing was changed. Try again." });
+    expect(String(timedOut.message)).not.toContain("Sample Road");
+    matched("c1");
+    await expect(acceptGeocodeResult("c1", "admin-1")).rejects.toMatchObject({ code: "GEOCODING_TIMEOUT" });
+    mocks.txError = prismaError("P2025");
+    await expect(acceptGeocodeResult("c1", "admin-1")).rejects.toMatchObject({ code: "GEOCODE_RESULT_NOT_FOUND", message: expect.stringContaining("nothing was changed") });
+    await expect(skipGeocodeResult("c1", "admin-1")).rejects.toMatchObject({ code: "GEOCODE_RESULT_NOT_FOUND" });
+    mocks.txError = new Error("boom");
+    await expect(acceptGeocodeResult("c1", "admin-1")).rejects.toThrow("boom");
   });
 
   it("does not reset a decision made while a run was looking up", async () => {

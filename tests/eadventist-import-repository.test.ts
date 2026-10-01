@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /** In-memory stand-in for the organization table and audit log. */
 type Row = Record<string, unknown> & { id: string; type: string; name: string; isActive: boolean; eadventistId: string | null; affiliatedOrganizationId: string | null; parentOrganizationId?: string | null };
-const state = vi.hoisted(() => ({ rows: [] as unknown[], audit: [] as unknown[], identities: [] as Array<{ organizationId?: string; personId?: string; providerScope?: string; externalId: string }>, locations: [] as Array<Record<string, unknown> & { organizationId: string }>, results: [] as Array<{ organizationId: string; decision: string }>, locationWriteRaces: false, next: 1 }));
+const state = vi.hoisted(() => ({ rows: [] as unknown[], audit: [] as unknown[], identities: [] as Array<{ organizationId?: string; personId?: string; providerScope?: string; externalId: string }>, locations: [] as Array<Record<string, unknown> & { organizationId: string }>, results: [] as Array<{ organizationId: string; decision: string }>, locationWriteRaces: false, afterSnapshot: undefined as undefined | (() => void), next: 1 }));
 const rows = () => state.rows as Row[];
 
 const db = vi.hoisted(() => {
@@ -33,6 +33,9 @@ const db = vi.hoisted(() => {
       rows().find((row) => row.parentOrganizationId === where.parentOrganizationId && row.type === where.type && row.isActive === where.isActive) ?? null,
     count: async ({ where }: { where: { parentOrganizationId: string } }) => rows().filter((row) => row.parentOrganizationId === where.parentOrganizationId).length,
   };
+  // Lets a test change state after the plan has read the organizations (a write landing mid-import: it fires on the first organization update).
+  const updateOrganization = organization.update;
+  organization.update = async (args) => { state.afterSnapshot?.(); state.afterSnapshot = undefined; return updateOrganization(args); };
   const externalIdentity = {
     findMany: async () => state.identities.filter((identity) => identity.personId || (identity.providerScope ?? "") !== "").map((identity) => ({ externalId: identity.externalId, personId: identity.personId ?? null })),
     upsert: async ({ where, create, update }: { where: { organizationId_provider_providerScope: { organizationId: string } }; create: { organizationId: string; externalId: string }; update: { externalId: string } }) => {
@@ -52,9 +55,12 @@ const db = vi.hoisted(() => {
       }
       return { count };
     },
-    updateMany: async ({ where, data }: { where: { organizationId: string; source: { not: string } }; data: Record<string, unknown> }) => {
+    updateMany: async ({ where, data }: { where: { organizationId: string; source: string | { not: string } }; data: Record<string, unknown> }) => {
       const row = state.locations.find((location) => location.organizationId === where.organizationId);
-      if (!row || state.locationWriteRaces || row.source === where.source.not) return { count: 0 };
+      if (!row) return { count: 0 };
+      if (typeof where.source === "string") {
+        if (row.source !== where.source) return { count: 0 };
+      } else if (state.locationWriteRaces || row.source === where.source.not) return { count: 0 };
       Object.assign(row, data);
       return { count: 1 };
     },
@@ -325,7 +331,9 @@ describe("church map locations from the import (#724)", () => {
   it("never overwrites a location saved by hand after the plan was made, for create and update", async () => {
     state.locationWriteRaces = true;
     const created = await commitEadventistImport(fixture, "admin-1");
-    expect(created.locationCounts.created).toBe(1);
+    // Counts report what was written, not what was planned.
+    expect(created.locationCounts).toEqual({ created: 0, updated: 0 });
+    expect(state.audit.at(-1)).toMatchObject({ metadata: { locationsCreated: 0, locationsUpdated: 0 } });
     expect(state.locations).toHaveLength(0);
     state.locationWriteRaces = false;
     await commitEadventistImport(fixture, "admin-1");
@@ -333,6 +341,25 @@ describe("church map locations from the import (#724)", () => {
     state.locationWriteRaces = true;
     await commitEadventistImport(fixture.replace(/(9002,SC002,Sample Hills SDA Church,[\s\S]*?),Sample Hills,/, "$1,Sample Vale,"), "admin-1");
     expect(locationOf(church().id)).toMatchObject({ source: "IMPORT", city: "Sample Hills" });
+  });
+
+  it("clears a point accepted after the import's snapshot when the address changes, and counts what it wrote", async () => {
+    await commitEadventistImport(fixture, "admin-1");
+    expect(locationOf(church().id)).toMatchObject({ source: "IMPORT", latitude: null });
+    // The plan reads an IMPORT location with no point; an Accept then commits before the import writes.
+    state.results.push({ organizationId: church().id, decision: "PENDING" });
+    state.afterSnapshot = () => Object.assign(locationOf(church().id)!, { source: "GEOCODED", latitude: 41.5, longitude: -93.6 });
+    const result = await commitEadventistImport(fixture.replace("10 Sample Road", "99 Sample Road"), "admin-1");
+    expect(locationOf(church().id)).toMatchObject({ source: "IMPORT", latitude: null, longitude: null });
+    expect(state.results).toEqual([]);
+    expect(result.locationCounts).toEqual({ created: 0, updated: 0 });
+  });
+
+  it("reports the locations it wrote in the result and the audit entry", async () => {
+    const result = await commitEadventistImport(fixture, "admin-1");
+    expect(result.locationCounts).toEqual({ created: 1, updated: 0 });
+    expect(state.audit[0]).toMatchObject({ metadata: { locationsCreated: 1, locationsUpdated: 0 } });
+    expect(String((state.audit[0] as { summary: string }).summary)).toContain("1 church locations created, 0 updated");
   });
 
   it("clears a geocoded point when the record stops being a church or loses its street address", async () => {
