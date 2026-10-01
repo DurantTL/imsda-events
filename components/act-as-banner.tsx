@@ -14,7 +14,7 @@ export function actAsEndTime(expiresAt: Date) {
  * role (#442), in the staff workspace and the /account portal alike, naming
  * the role and offering "Stop acting" for both roles.
  */
-export async function ActAsBanner({ acting }: { acting: StaffActingContext | null }) {
+export async function ActAsBanner({ acting, inShell = false }: { acting: StaffActingContext | null; inShell?: boolean }) {
   if (!acting) return null;
   const until = actAsEndTime(acting.expiresAt);
 
@@ -30,7 +30,7 @@ export async function ActAsBanner({ acting }: { acting: StaffActingContext | nul
   }
 
   return (
-    <div className="inline-notice act-as-banner" role="status">
+    <div className={inShell ? "inline-notice act-as-banner act-as-banner-shell" : "inline-notice act-as-banner"} role="status">
       <UserRoundCog aria-hidden="true" size={14} />
       <span>{label}</span>
       <StopActingButton />
