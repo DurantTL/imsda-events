@@ -2,9 +2,10 @@ import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { allFields, formatClubFormAnswer, type ClubFormsViewer } from "@/modules/club-forms/domain";
+import { formatClubFormAnswer, type ClubFormsViewer } from "@/modules/club-forms/domain";
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { getClubFormTemplateForStaff } from "@/modules/club-forms/templates";
+import { exportColumnsAcrossVersions, listClubFormTemplateVersions } from "@/modules/club-forms/versions";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -21,8 +22,11 @@ export async function buildClubFormsCsv(
   if (viewer.kind !== "STAFF") throw new ClubFormError("FORBIDDEN", "Only conference staff can export forms.");
   const prisma = getPrisma();
   const template = await getClubFormTemplateForStaff(input.templateKey, prisma);
-  const sensitive = new Set(template.sensitiveFieldKeys);
-  const columns = allFields(template.definition).filter((field) => !sensitive.has(field.key));
+  // Columns cover every version (#712): a field a later version dropped or hid still has answers in older submissions.
+  // A key that was sensitive in any version stays out of the file.
+  const versions = await listClubFormTemplateVersions(template, prisma);
+  const sensitive = new Set(versions.flatMap((version) => version.sensitiveFieldKeys));
+  const columns = exportColumnsAcrossVersions(versions, sensitive);
 
   const rows = await prisma.clubFormSubmission.findMany({
     where: {
@@ -34,6 +38,7 @@ export async function buildClubFormsCsv(
     select: {
       clubYear: true,
       subjectName: true,
+      templateVersion: true,
       status: true,
       submittedAt: true,
       enteredVia: true,
@@ -42,7 +47,7 @@ export async function buildClubFormsCsv(
     },
   });
 
-  const header = ["Form", "Club", "Club year", "Member or subject", "Status", "Submitted at", "Entered by", ...columns.map((field) => field.label)];
+  const header = ["Form", "Club", "Club year", "Member or subject", "Status", "Submitted at", "Entered by", ...columns.map((column) => column.heading)];
   const body = rows.map((row) => {
     const answers = row.answers as Record<string, unknown>;
     return [
@@ -53,7 +58,7 @@ export async function buildClubFormsCsv(
       row.status,
       row.submittedAt?.toISOString() ?? "",
       row.enteredVia === "LINK" ? "Private link" : "Club director",
-      ...columns.map((field) => formatClubFormAnswer(field, answers[field.key])),
+      ...columns.map((column) => formatClubFormAnswer(column.byVersion.get(row.templateVersion) ?? column.latest, answers[column.key])),
     ];
   });
 

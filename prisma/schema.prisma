@@ -4830,16 +4830,55 @@ model ClubFormTemplate {
   staffOnlyFieldKeys String[]  @default([])
   /// "STANDARD", or "PASSENGER_LIST" for the roll-call print layout.
   printLayout        String    @default("STANDARD")
+  /// Field keys kept in the definition (so their sensitive flags and old
+  /// answers stay put) but not offered to new fills (#712).
+  hiddenFieldKeys    String[]  @default([])
   sortOrder          Int       @default(0)
   enabled            Boolean   @default(false)
   enabledAt          DateTime?
   enabledByUserId    String?
+  /// Set the first time the template is edited or created in the app (#712).
+  /// `club-forms:sync` never overwrites a customized template.
+  customizedAt       DateTime?
+  /// The unpublished draft of the next version (#712): the whole spec as JSON.
+  /// Null when there is no draft. Publishing writes it to the columns above,
+  /// bumps `version` and records a `ClubFormTemplateVersion`.
+  draft                Json?
+  draftUpdatedAt       DateTime?
+  /// The published `version` the draft was started on (#712). A code sync that moves the version on makes the draft stale.
+  draftBaseVersion     Int?
+  draftUpdatedByUserId String?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
-  enabledBy   User?                @relation("ClubFormTemplateEnabledBy", fields: [enabledByUserId], references: [id], onDelete: SetNull)
+  enabledBy   User?                     @relation("ClubFormTemplateEnabledBy", fields: [enabledByUserId], references: [id], onDelete: SetNull)
   submissions ClubFormSubmission[]
   links       ClubFormLink[]
+  versions    ClubFormTemplateVersion[]
+}
+
+/// A frozen copy of one published version of a club form template (#712), so a
+/// submission is always shown and exported against the version it was filled
+/// in against. Rows are only ever added.
+model ClubFormTemplateVersion {
+  id                 String   @id @default(cuid())
+  templateId         String
+  version            Int
+  name               String
+  description        String   @default("")
+  definition         Json
+  sectionNotes       Json     @default("{}")
+  sensitiveFieldKeys String[] @default([])
+  birthDateFieldKeys String[] @default([])
+  staffOnlyFieldKeys String[] @default([])
+  hiddenFieldKeys    String[] @default([])
+  printLayout        String   @default("STANDARD")
+  createdByUserId    String?
+  createdAt          DateTime @default(now())
+
+  template ClubFormTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+
+  @@unique([templateId, version])
 }
 
 /// One filled-in club form (#610). `answers` holds only non-sensitive answers;

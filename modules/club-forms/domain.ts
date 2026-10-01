@@ -46,8 +46,15 @@ export type ClubFormTemplateRecord = {
    */
   birthDateFieldKeys: string[];
   staffOnlyFieldKeys: string[];
+  /**
+   * Fields kept in the definition (so their flags and old answers stay put)
+   * but not offered to new fills (#712).
+   */
+  hiddenFieldKeys: string[];
   printLayout: ClubFormPrintLayout;
   enabled: boolean;
+  /** Edited or created in the app (#712): `club-forms:sync` leaves it alone. */
+  customized: boolean;
 };
 
 export type ClubFormTemplateSpec = Pick<
@@ -96,8 +103,10 @@ export function parseClubFormTemplate(row: {
   sensitiveFieldKeys: string[];
   birthDateFieldKeys: string[];
   staffOnlyFieldKeys: string[];
+  hiddenFieldKeys?: string[];
   printLayout: string;
   enabled: boolean;
+  customizedAt?: Date | null;
 }): ClubFormTemplateRecord {
   const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === row.key);
   return {
@@ -113,24 +122,37 @@ export function parseClubFormTemplate(row: {
     sensitiveFieldKeys: unionKeys(row.sensitiveFieldKeys, seed?.sensitiveFieldKeys),
     birthDateFieldKeys: unionKeys(row.birthDateFieldKeys, seed?.birthDateFieldKeys),
     staffOnlyFieldKeys: row.staffOnlyFieldKeys,
+    hiddenFieldKeys: row.hiddenFieldKeys ?? [],
     printLayout: row.printLayout === "PASSENGER_LIST" ? "PASSENGER_LIST" : "STANDARD",
     enabled: row.enabled,
+    customized: Boolean(row.customizedAt),
+  };
+}
+
+function withoutFields(definition: RegistrationFormDefinition, hidden: ReadonlySet<string>): RegistrationFormDefinition {
+  if (hidden.size === 0) return definition;
+  return {
+    ...definition,
+    sections: definition.sections
+      .map((section) => ({ ...section, fields: section.fields.filter((field) => !hidden.has(field.key)) }))
+      .filter((section) => section.fields.length > 0),
   };
 }
 
 /**
- * The definition a private-link filler sees: staff-only (office-use) fields
- * removed, and any section left empty removed with them.
+ * The definition a new fill-in shows (#712): fields the builder has hidden
+ * from new versions are removed, and any section left empty with them.
  */
-export function definitionForLink(template: Pick<ClubFormTemplateRecord, "definition" | "staffOnlyFieldKeys">): RegistrationFormDefinition {
-  const hidden = new Set(template.staffOnlyFieldKeys);
-  if (hidden.size === 0) return template.definition;
-  return {
-    ...template.definition,
-    sections: template.definition.sections
-      .map((section) => ({ ...section, fields: section.fields.filter((field) => !hidden.has(field.key)) }))
-      .filter((section) => section.fields.length > 0),
-  };
+export function fillDefinition(template: Pick<ClubFormTemplateRecord, "definition" | "hiddenFieldKeys">): RegistrationFormDefinition {
+  return withoutFields(template.definition, new Set(template.hiddenFieldKeys));
+}
+
+/**
+ * The definition a private-link filler sees: staff-only (office-use) and
+ * hidden fields removed, and any section left empty removed with them.
+ */
+export function definitionForLink(template: Pick<ClubFormTemplateRecord, "definition" | "staffOnlyFieldKeys"> & { hiddenFieldKeys?: string[] }): RegistrationFormDefinition {
+  return withoutFields(template.definition, new Set([...template.staffOnlyFieldKeys, ...(template.hiddenFieldKeys ?? [])]));
 }
 
 /** Trims text, drops empty answers, and keeps only the value shapes the field types use. */

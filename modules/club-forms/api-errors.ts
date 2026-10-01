@@ -23,6 +23,7 @@ const statusByCode: Record<ClubFormError["code"], number> = {
   SENSITIVE_UNREADABLE: 500,
   INVALID_TEMPLATE: 500,
   TEMPLATE_NEEDS_SYNC: 409,
+  TEMPLATE_CHANGED: 409,
   FORM_BUSY: 503,
   FORM_UNAVAILABLE: 503,
 };

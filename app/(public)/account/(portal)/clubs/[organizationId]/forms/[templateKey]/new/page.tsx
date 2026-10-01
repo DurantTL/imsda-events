@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { BackLink } from "@/components/back-link";
 import { ClubFormFillIn } from "@/components/club-form-fill-in";
 import { clubLeaderViewerFromAccess } from "@/modules/club-forms/access";
-import { isClubFormsRole } from "@/modules/club-forms/domain";
+import { fillDefinition, isClubFormsRole } from "@/modules/club-forms/domain";
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { listRosterChoices } from "@/modules/club-forms/submissions";
 import { getEnabledClubFormTemplate, withLiveDirectory } from "@/modules/club-forms/templates";
@@ -30,7 +30,7 @@ export default async function NewClubFormPage({
     throw error;
   });
   if (!template) notFound();
-  const [definition, rosterMembers] = await Promise.all([withLiveDirectory(template.definition), listRosterChoices(organizationId)]);
+  const [definition, rosterMembers] = await Promise.all([withLiveDirectory(fillDefinition(template)), listRosterChoices(organizationId)]);
   const base = `/account/clubs/${organizationId}/forms`;
 
   return (

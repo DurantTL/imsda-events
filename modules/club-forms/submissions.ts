@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
+import type { RegistrationFormDefinition } from "@/modules/forms/definition";
 import { getPrisma } from "@/lib/prisma";
 import { isSecretEncryptionConfigured, SecretBoxError } from "@/lib/secret-box";
 import { writeAuditLog } from "@/modules/audit/audit-service";
@@ -20,6 +21,8 @@ import {
   viewerCanWriteForClub,
   viewerSeesDrafts,
   parseClubFormTemplate,
+  fillDefinition,
+  allFields,
   type ClubFormActor,
   type ClubFormsViewer,
 } from "@/modules/club-forms/domain";
@@ -27,6 +30,7 @@ import { ClubFormError } from "@/modules/club-forms/errors";
 import { openSensitiveAnswers, sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
 import { assertClubFormTemplateCurrent, lockClubFormTemplateForWrite } from "@/modules/club-forms/template-lock";
 import { getEnabledClubFormTemplate, withLiveDirectory } from "@/modules/club-forms/templates";
+import { getClubFormTemplateAtVersion } from "@/modules/club-forms/versions";
 
 /**
  * Club form submissions (#610). Every function takes a resolved viewer and
@@ -77,6 +81,32 @@ export async function resolveRosterMemberName(client: Pick<Prisma.TransactionCli
   return member.person ? `${member.person.firstName} ${member.person.lastName}`.trim().slice(0, 120) : "";
 }
 
+/**
+ * The stored answers (plain and sealed) of a draft whose keys are not in the
+ * definition being filled in, because the field was hidden or removed since.
+ */
+function carriedForwardAnswers(
+  existing: { id: string; answers: unknown; sealedSensitiveAnswers: string | null },
+  fillable: RegistrationFormDefinition,
+  submissionId: string,
+): { plain: Record<string, unknown>; sealed: Record<string, unknown> } {
+  const offered = new Set(allFields(fillable).map((field) => field.key));
+  const notOffered = (entries: Record<string, unknown>) => Object.fromEntries(Object.entries(entries).filter(([key]) => !offered.has(key)));
+  let opened: Record<string, unknown> = {};
+  if (existing.sealedSensitiveAnswers) {
+    try {
+      opened = openSensitiveAnswers(submissionId, existing.sealedSensitiveAnswers);
+    } catch (error) {
+      if (error instanceof SecretBoxError) {
+        throw new ClubFormError("SENSITIVE_UNREADABLE", "The sensitive answers already saved on this draft can't be read on this server, so it can't be saved right now.");
+      }
+      throw error;
+    }
+  }
+  // Whatever came out of the sealed value goes back in it, whatever the current sensitive key list says.
+  return { plain: notOffered((existing.answers ?? {}) as Record<string, unknown>), sealed: notOffered(opened) };
+}
+
 export type SaveClubFormInput = {
   organizationId: string;
   templateKey: string;
@@ -104,7 +134,8 @@ export async function saveClubFormSubmission(viewer: ClubFormsViewer, input: Sav
 
   const template = await getEnabledClubFormTemplate(input.templateKey, prisma);
   assertClubFormTemplateCurrent(template);
-  const definition = await withLiveDirectory(template.definition, prisma);
+  // Fields hidden from new versions (#712) are not offered, so they cannot be written either.
+  const definition = await withLiveDirectory(fillDefinition(template), prisma);
   const memberName = input.rosterMemberId
     ? await resolveRosterMemberName(prisma, input.organizationId, input.rosterMemberId)
     : "";
@@ -118,12 +149,28 @@ export async function saveClubFormSubmission(viewer: ClubFormsViewer, input: Sav
   return prisma.$transaction(async (tx) => {
     // Which answers are sensitive is decided under a share lock on the template row, so a concurrent re-seal cannot leave this save in plaintext.
     const keys = await lockClubFormTemplateForWrite(tx, template);
-    const { plain, sensitive } = splitAnswers({ sensitiveFieldKeys: keys.sensitiveFieldKeys }, answers);
+    let id = input.submissionId ?? randomUUID();
+    const existing = input.submissionId
+      ? await tx.clubFormSubmission.findFirst({
+        where: { id: input.submissionId, organizationId: input.organizationId, templateId: template.id },
+        select: { id: true, status: true, answers: true, sealedSensitiveAnswers: true },
+      })
+      : null;
+    if (input.submissionId) {
+      if (!existing) throw new ClubFormError("SUBMISSION_NOT_FOUND", "That form could not be found.");
+      if (existing.status !== "DRAFT") throw new ClubFormError("ALREADY_SUBMITTED", "A submitted form can't be changed. Start a new one instead.");
+    }
+    // A draft started on an earlier version may hold answers to a field since hidden or removed. The form no
+    // longer shows them, so this save carries them forward untouched (sealed ones are re-opened here, server-side
+    // only, and sealed again) rather than silently erasing them.
+    const carried = existing ? carriedForwardAnswers(existing, definition, id) : { plain: {}, sealed: {} };
+    const split = splitAnswers({ sensitiveFieldKeys: keys.sensitiveFieldKeys }, { ...carried.plain, ...answers });
+    const plain = split.plain;
+    const sensitive = { ...split.sensitive, ...carried.sealed };
     const hasSensitive = Object.keys(sensitive).length > 0;
     if (hasSensitive && !isSecretEncryptionConfigured()) {
       throw new ClubFormError("ENCRYPTION_NOT_CONFIGURED", "Encryption isn't set up on this server, so this form can't be saved yet.");
     }
-    let id = input.submissionId ?? randomUUID();
     const sealed = hasSensitive ? sealSensitiveAnswers(id, sensitive) : null;
     const data = {
       rosterMemberId: input.rosterMemberId ?? null,
@@ -135,13 +182,7 @@ export async function saveClubFormSubmission(viewer: ClubFormsViewer, input: Sav
       status: input.submit ? ("SUBMITTED" as const) : ("DRAFT" as const),
       submittedAt: input.submit ? now : null,
     };
-    if (input.submissionId) {
-      const existing = await tx.clubFormSubmission.findFirst({
-        where: { id: input.submissionId, organizationId: input.organizationId, templateId: template.id },
-        select: { id: true, status: true },
-      });
-      if (!existing) throw new ClubFormError("SUBMISSION_NOT_FOUND", "That form could not be found.");
-      if (existing.status !== "DRAFT") throw new ClubFormError("ALREADY_SUBMITTED", "A submitted form can't be changed. Start a new one instead.");
+    if (existing) {
       // Guarded on still being a draft: a second save racing a submit cannot rewrite a submitted form.
       const updated = await tx.clubFormSubmission.updateMany({
         where: { id: existing.id, status: "DRAFT" },
@@ -267,17 +308,22 @@ export async function getSubmissionForViewer(
       answers: true,
       sealedSensitiveAnswers: true,
       hasSensitiveAnswers: true,
+      templateVersion: true,
       organization: { select: { name: true } },
       template: {
         select: {
           id: true, key: true, name: true, description: true, version: true, definition: true, sectionNotes: true,
-          sensitiveFieldKeys: true, birthDateFieldKeys: true, staffOnlyFieldKeys: true, printLayout: true, enabled: true,
+          sensitiveFieldKeys: true, birthDateFieldKeys: true, staffOnlyFieldKeys: true, hiddenFieldKeys: true, printLayout: true, enabled: true, customizedAt: true,
         },
       },
     },
   });
   if (!row) throw new ClubFormError("SUBMISSION_NOT_FOUND", "That form could not be found.");
-  const template = parseClubFormTemplate(row.template);
+  const current = parseClubFormTemplate(row.template);
+  // A submission is shown against the version it was filled in against (#712). A draft being edited moves to
+  // the latest published version, which is what its next save is validated against.
+  const editingDraft = purpose === "EDIT" && row.status === "DRAFT";
+  const template = editingDraft ? current : await getClubFormTemplateAtVersion(current, row.templateVersion, prisma);
   const restricted = new Set(restrictedFieldKeys(viewer, row.organizationId, template));
   const reveal = viewerCanRevealSensitive(viewer, row.organizationId);
   const revealBirthDates = viewerCanRevealBirthDates(viewer, row.organizationId);
@@ -322,6 +368,14 @@ export async function getSubmissionForViewer(
       throw error;
     }
   }
+  // Editing a draft: the form offers only the fields it still shows. Answers to a hidden or removed field stay on
+  // the server (the save carries them forward); they are never returned to the client.
+  if (editingDraft) {
+    const offered = new Set(allFields(fillDefinition(template)).map((field) => field.key));
+    for (const key of Object.keys(answers)) {
+      if (!offered.has(key)) delete answers[key];
+    }
+  }
   return {
     id: row.id,
     template: {
@@ -329,10 +383,12 @@ export async function getSubmissionForViewer(
       name: template.name,
       description: template.description,
       printLayout: template.printLayout,
-      definition: template.definition,
+      definition: editingDraft ? fillDefinition(template) : template.definition,
       sectionNotes: template.sectionNotes,
       sensitiveFieldKeys: template.sensitiveFieldKeys,
       staffOnlyFieldKeys: template.staffOnlyFieldKeys,
+      version: template.version,
+      hiddenFieldKeys: template.hiddenFieldKeys,
       enabled: template.enabled,
     },
     organization: { id: row.organizationId, name: row.organization.name },
@@ -342,6 +398,7 @@ export async function getSubmissionForViewer(
     status: row.status,
     submittedAt: row.submittedAt?.toISOString() ?? null,
     enteredVia: row.enteredVia,
+    hasSensitiveAnswers: row.hasSensitiveAnswers,
     answers,
     sensitiveRevealed: reveal,
     /** Fields shown as "Restricted": every sensitive field this viewer may not read, answered or not, so a blank does not tell. */

@@ -11,6 +11,8 @@ import {
 } from "@/modules/club-forms/domain";
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { resealClubFormSubmissions } from "@/modules/club-forms/reseal";
+import { recordClubFormTemplateVersion } from "@/modules/club-forms/versions";
+import { logInfo } from "@/lib/logger";
 import { lockClubFormTemplateForReseal } from "@/modules/club-forms/template-lock";
 import { registrationFormDefinitionSchema, type RegistrationFormDefinition } from "@/modules/forms/definition";
 import { hasDirectoryOptionSource, withDirectoryOptions } from "@/modules/organizations/directory-form-options";
@@ -34,25 +36,57 @@ const templateSelect = {
   sensitiveFieldKeys: true,
   birthDateFieldKeys: true,
   staffOnlyFieldKeys: true,
+  hiddenFieldKeys: true,
   printLayout: true,
   enabled: true,
+  customizedAt: true,
 } satisfies Prisma.ClubFormTemplateSelect;
 
 /**
  * Makes sure every seeded template exists and is current. New ones are
  * created disabled; a changed definition (higher `version`) is written over
- * the stored one. The `enabled` switch is never touched. Safe to call often.
+ * the stored one. The `enabled` switch is never touched. A template that has
+ * been published or created in the app (`customizedAt`, #712) is never written
+ * over: it is skipped and reported. A template with only an unpublished draft is
+ * still updated (so the live form stays available) and its draft is reported as
+ * stale. For a customized one, sensitive or birth-date keys the code seed
+ * has added are still sealed in existing answers (the definition is untouched).
+ * Safe to call often.
  */
 export async function syncClubFormTemplates(
   client: Client = getPrisma(),
   options: { continueOnRefusal?: boolean } = {},
 ) {
   const refused: Array<{ key: string; message: string }> = [];
-  const existing = await client.clubFormTemplate.findMany({ select: { id: true, key: true, version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true } });
+  const skipped: Array<{ key: string; reason: string }> = [];
+  const staleDrafts: Array<{ key: string }> = [];
+  const existing = await client.clubFormTemplate.findMany({ select: { id: true, key: true, version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true, customizedAt: true, draftUpdatedAt: true } });
   const stored = new Map(existing.map((row) => [row.key, row]));
   for (const seed of clubFormTemplateSeeds) {
+    const row = stored.get(seed.key);
+    if (row?.customizedAt) {
+      skipped.push({ key: seed.key, reason: "edited in the app" });
+      logInfo("Club form sync skipped a template that was edited in the app.", { templateKey: seed.key });
+      try {
+        await sealSeedKeysForCustomized(client, seed, row.id);
+      } catch (error) {
+        if (options.continueOnRefusal && error instanceof ClubFormError) {
+          refused.push({ key: seed.key, message: `${seed.key}: ${error.message}` });
+          continue;
+        }
+        throw error;
+      }
+      continue;
+    }
+    const hadDraft = Boolean(row?.draftUpdatedAt);
+    const wasBehind = Boolean(row && row.version < seed.version);
     try {
       await syncOneTemplate(client, seed, stored.get(seed.key));
+      // The live form is updated, so it stays fillable. An unpublished draft is left in place but is now stale.
+      if (hadDraft && wasBehind) {
+        staleDrafts.push({ key: seed.key });
+        logInfo("Club form sync updated a template whose unpublished draft is now stale.", { templateKey: seed.key });
+      }
     } catch (error) {
       // A refused loosening stops that form only; the operator script asks to carry on and reports every refusal.
       if (options.continueOnRefusal && error instanceof ClubFormError && error.code === "INVALID_TEMPLATE") {
@@ -62,10 +96,52 @@ export async function syncClubFormTemplates(
       throw error;
     }
   }
-  return { refused };
+  return { refused, skipped, staleDrafts };
 }
 
 type Seed = (typeof clubFormTemplateSeeds)[number];
+
+/**
+ * A customized template ignores the code's definition, but a sensitive or
+ * birth-date key the seed has since added must still be sealed (#712):
+ * existing plain answers are moved into the sealed value and the stored key
+ * lists gain the keys, in one transaction. The definition is not touched.
+ */
+async function sealSeedKeysForCustomized(client: Client, seed: Seed, templateId: string) {
+  const apply = async (tx: Prisma.TransactionClient) => {
+    const locked = await lockClubFormTemplateForReseal(tx, templateId);
+    const newlySensitive = seed.sensitiveFieldKeys.filter((key) => !locked.sensitiveFieldKeys.includes(key));
+    const newlyBirthDate = seed.birthDateFieldKeys.filter((key) => !locked.birthDateFieldKeys.includes(key));
+    if (newlySensitive.length === 0 && newlyBirthDate.length === 0) return;
+    await resealClubFormSubmissions(tx, templateId, newlySensitive);
+    await tx.clubFormTemplate.update({
+      where: { id: templateId },
+      data: {
+        sensitiveFieldKeys: [...new Set([...locked.sensitiveFieldKeys, ...newlySensitive])],
+        birthDateFieldKeys: [...new Set([...locked.birthDateFieldKeys, ...newlyBirthDate])],
+      },
+    });
+    const sealedKeyCount = newlySensitive.length + newlyBirthDate.length;
+    logInfo("Club form sync sealed extra keys for a template edited in the app.", { templateKey: seed.key, keys: sealedKeyCount });
+  };
+  if ("$transaction" in client) await client.$transaction(apply, RESEAL_TRANSACTION);
+  else await apply(client);
+}
+
+function versionSpec(seed: Seed, definition: RegistrationFormDefinition) {
+  return {
+    version: seed.version,
+    name: seed.name,
+    description: seed.description,
+    definition,
+    sectionNotes: seed.sectionNotes,
+    sensitiveFieldKeys: seed.sensitiveFieldKeys,
+    birthDateFieldKeys: seed.birthDateFieldKeys,
+    staffOnlyFieldKeys: seed.staffOnlyFieldKeys,
+    hiddenFieldKeys: [],
+    printLayout: seed.printLayout,
+  };
+}
 
 async function syncOneTemplate(
   client: Client,
@@ -88,21 +164,26 @@ async function syncOneTemplate(
     sortOrder: seed.sortOrder,
   };
   if (!current) {
-    await client.clubFormTemplate.upsert({
+    const created = await client.clubFormTemplate.upsert({
       where: { key: seed.key },
       create: { key: seed.key, ...data, enabled: false },
       update: {},
+      select: { id: true, version: true },
     });
+    if (created.version === seed.version) await recordClubFormTemplateVersion(client, created.id, versionSpec(seed, definition));
   } else if (current.version < seed.version) {
     const apply = async (tx: Prisma.TransactionClient) => {
       // Lock, then decide from the locked row: a concurrent save or sync cannot change the keys under us.
       const locked = await lockClubFormTemplateForReseal(tx, current.id);
       if (locked.version >= seed.version) return;
+      // Published from the app since the check above: the code no longer owns it. (A draft does not stop the update.)
+      if (locked.customizedAt) return;
       assertNotLoosened(seed, locked);
       const newlySensitive = seed.sensitiveFieldKeys.filter((key) => !locked.sensitiveFieldKeys.includes(key));
       // A newly sensitive field must be sealed in existing submissions in the same transaction as the update.
       await resealClubFormSubmissions(tx, current.id, newlySensitive);
       await tx.clubFormTemplate.update({ where: { key: seed.key }, data });
+      await recordClubFormTemplateVersion(tx, current.id, versionSpec(seed, definition));
     };
     assertNotLoosened(seed, current);
     if ("$transaction" in client) await client.$transaction(apply, RESEAL_TRANSACTION);
@@ -114,7 +195,7 @@ async function syncOneTemplate(
  * A large re-seal touches thousands of rows, well past Prisma's 5 s default
  * for an interactive transaction, which would roll it back every time.
  */
-const RESEAL_TRANSACTION = { maxWait: 30_000, timeout: 10 * 60_000 } as const;
+export const RESEAL_TRANSACTION = { maxWait: 30_000, timeout: 10 * 60_000 } as const;
 
 /**
  * Never silently make an answer readable: a field that stops being sensitive,
@@ -144,6 +225,14 @@ export type ClubFormTemplateSummary = {
   submissionCount: number;
   /** Stored version is behind the code (or the form was never synced): run `npm run club-forms:sync`. */
   needsSync: boolean;
+  /** Edited or created in the app (#712): the code's seed no longer applies. */
+  customized: boolean;
+  /** An unpublished draft is waiting. */
+  hasDraft: boolean;
+  /** The published version the draft was started on. */
+  draftBaseVersion: number | null;
+  /** A code sync moved the version on after the draft was started: it cannot be published. */
+  draftStale: boolean;
 };
 
 /**
@@ -163,6 +252,9 @@ export async function listClubFormTemplatesForAdmin(): Promise<ClubFormTemplateS
       enabled: true,
       enabledAt: true,
       version: true,
+      customizedAt: true,
+      draftUpdatedAt: true,
+      draftBaseVersion: true,
       _count: { select: { submissions: true } },
     },
   });
@@ -177,12 +269,16 @@ export async function listClubFormTemplatesForAdmin(): Promise<ClubFormTemplateS
       enabledAt: row.enabledAt?.toISOString() ?? null,
       version: row.version,
       submissionCount: row._count.submissions,
-      needsSync: Boolean(seed && row.version < seed.version),
+      needsSync: Boolean(seed && !row.customizedAt && row.version < seed.version),
+      customized: Boolean(row.customizedAt),
+      hasDraft: Boolean(row.draftUpdatedAt),
+      draftBaseVersion: row.draftUpdatedAt ? row.draftBaseVersion : null,
+      draftStale: Boolean(row.draftUpdatedAt && row.draftBaseVersion !== null && row.draftBaseVersion !== row.version),
     };
   });
   for (const seed of clubFormTemplateSeeds) {
     if (stored.has(seed.key)) continue;
-    listed.push({ key: seed.key, name: seed.name, description: seed.description, enabled: false, enabledAt: null, version: 0, submissionCount: 0, needsSync: true });
+    listed.push({ key: seed.key, name: seed.name, description: seed.description, enabled: false, enabledAt: null, version: 0, submissionCount: 0, needsSync: true, customized: false, hasDraft: false, draftBaseVersion: null, draftStale: false });
   }
   return listed;
 }
@@ -194,14 +290,14 @@ function needsSync() {
 /** Turns one template on or off. The caller has already checked for a system administrator. */
 export async function setClubFormTemplateEnabled(key: string, enabled: boolean, actorUserId: string, now = new Date()) {
   return getPrisma().$transaction(async (tx) => {
-    const template = await tx.clubFormTemplate.findUnique({ where: { key }, select: { id: true, enabled: true, version: true } });
+    const template = await tx.clubFormTemplate.findUnique({ where: { key }, select: { id: true, enabled: true, version: true, customizedAt: true } });
     const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === key);
     if (!template) {
       if (seed) throw needsSync();
       throw new ClubFormError("TEMPLATE_NOT_FOUND", "That form could not be found.");
     }
     // Turning a form on needs its stored definition to be current (and its answers re-sealed). Turning one off never waits.
-    if (enabled && seed && template.version < seed.version) throw needsSync();
+    if (enabled && seed && !template.customizedAt && template.version < seed.version) throw needsSync();
     if (template.enabled !== enabled) {
       await tx.clubFormTemplate.update({
         where: { id: template.id },
@@ -215,7 +311,7 @@ export async function setClubFormTemplateEnabled(key: string, enabled: boolean, 
         entityType: "ClubFormTemplate",
         entityId: template.id,
         summary: enabled ? "Turned on a club form." : "Turned off a club form.",
-        metadata: { templateKey: key },
+        metadata: { templateKey: key, version: template.version },
       }, tx);
     }
     return { key, enabled };

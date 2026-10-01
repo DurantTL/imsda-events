@@ -99,6 +99,68 @@ keys. Writers also take a share lock on the template row with a 3 s
 `lock_timeout` and answer "being updated" (`FORM_BUSY`) rather than wait behind
 a re-seal.
 
+## Club form builder (#712)
+
+System administrators edit every form and create new ones at
+`/admin/club-forms` (builder at `/admin/club-forms/<key>`; desktop only, phones
+get `BuilderPhoneNotice`). Every route (`app/api/admin/club-forms/**`) runs the
+cross-origin check and `requireSystemAdministrator` on each request.
+
+- **Draft and publish.** A save stores the whole next-version spec in
+  `ClubFormTemplate.draft` (the live columns do not change). Publish, in one
+  transaction under the template's row lock, writes the draft to the live
+  columns, bumps `version` by one and records the version in
+  `ClubFormTemplateVersion` (frozen copies, add-only; the migration backfills
+  each template's current version). `builder.ts` is the server side,
+  `builder-domain.ts` the pure rules.
+- **Validation** reuses `registrationFormDefinitionSchema` (unique keys, valid
+  choices, ranked-choice min and max) plus club form limits (no pricing,
+  capacity, calculated fields, attendee roster or payment) and returns issues
+  keyed `field:<id>`, `section:<id>`, `removed:<key>` or `template`. Saves and
+  publishes both check; a stale tab (`baseVersion`, `expectedDraftUpdatedAt`)
+  is refused with `TEMPLATE_CHANGED`.
+- **Old submissions** show and export on the version they were filled in on
+  (`getClubFormTemplateAtVersion`, `versions.ts`). Sensitive and birth-date keys
+  are the union of that version's and the current ones, so an older view can only
+  be more restricted. The CSV has a column for every non-sensitive field any
+  version had. A draft submission being edited moves to the latest version.
+- **Sensitive-flag protection.** A field that was sensitive or a birth date in
+  any published version keeps that flag (refused on save and publish) and cannot
+  be deleted while any submission exists; it is hidden from new forms instead
+  (`hiddenFieldKeys`: kept in the definition, left out of new fills, links and
+  validation). Marking a field sensitive later re-seals existing answers in the
+  publish transaction (`resealClubFormSubmissions`; fails, changing nothing, if
+  encryption is not set up). The builder reads definitions only: no answer, sealed
+  or plain, reaches it, its logs or its audit rows.
+- **Sync.** Creating a form or its first publish sets `customizedAt`; the sync then
+  skips it (logs it, prints `SKIPPED`) and it no longer follows the code's seed
+  version, though a key the code seed later marks sensitive is still sealed in
+  existing answers. An unpublished draft does **not** pause the sync: a seed
+  version bump is still applied to the live columns (with the usual re-seal), so
+  the live form stays fillable. The draft stays in place but goes **stale**
+  (`draftBaseVersion` no longer matches `version`): the sync logs and prints
+  `UPDATED <key>: draft is now stale` and still exits 0; save and publish refuse a
+  stale draft (`TEMPLATE_CHANGED`, "The form was updated by a code change after
+  this draft was started..."); the builder shows a notice and Discard. Discard is
+  available whenever a draft exists. Never-edited seeds update from code as
+  before. A seed that is behind the code cannot be edited until the sync has run.
+- **Unfinished drafts.** A save accepts any draft that is structurally a draft
+  (size-capped) and returns the full check's problems as warnings; publish runs
+  the full check and the protection rules under the lock. A stored draft that no
+  longer parses is shown with an error and a Discard button.
+- **Hidden fields** are left out of every new-fill path (director page, draft
+  edit, private link) and the server ignores answers to them. A draft saved again
+  carries forward stored plain and sealed answers to hidden or removed fields
+  (never returned to the client; anything that came out of the sealed value goes
+  back into it, and an unreadable sealed value answers `SENSITIVE_UNREADABLE`). Views and prints omit a hidden field with no
+  answer; the CSV formats each row with its own version's field and keeps
+  headings unique.
+- **Audit.** `CLUB_FORM_TEMPLATE_CREATED`, `_DRAFT_SAVED`, `_DRAFT_DISCARDED`,
+  `_PUBLISHED`, `_ENABLED` and `_DISABLED` carry the actor, template key and
+  version.
+- A copy starts from the published version (not the draft), drops hidden fields,
+  and starts as a disabled version 1.
+
 ## Private links
 
 - One address, typed by the director. The email is queued in the link's own
