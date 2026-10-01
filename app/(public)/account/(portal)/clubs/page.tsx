@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, UsersRound } from "lucide-react";
-import { AccountSectionNav } from "@/components/account-section-nav";
+import { AreaClubsSubNav } from "@/components/area-clubs-subnav";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeSignInRedirectPath, twoStepRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
@@ -52,17 +52,7 @@ export default async function MyClubsPage() {
             <h1>Clubs</h1>
           </div>
         </section>
-        <AccountSectionNav
-          items={[
-            { href: "/account/clubs", label: "All clubs" },
-            { href: "/account/area-clubs/overview", label: "Overview" },
-            { href: "/account/area-clubs/reports", label: "Monthly reports" },
-            { href: "/account/area-clubs/points", label: "Points" },
-            { href: "/account/area-clubs/events", label: "Club events" },
-          ]}
-          label="Clubs"
-          variant="secondary"
-        />
+        <AreaClubsSubNav />
         <div className="account-page-body">
           <section className="public-manage-card">
             <p className="field-help">Every active club. Clubs you don&apos;t run open view only, with ages instead of birth dates.</p>

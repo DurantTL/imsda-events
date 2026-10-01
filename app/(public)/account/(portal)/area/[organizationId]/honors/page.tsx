@@ -1,7 +1,5 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { Eye } from "lucide-react";
-import { BackLink } from "@/components/back-link";
 import { ClubHonorsWorkspace } from "@/components/club-honors-workspace";
 import { getPrisma } from "@/lib/prisma";
 import { clubYearFor } from "@/modules/club-rosters/domain";
@@ -27,25 +25,13 @@ export default async function AreaClubHonorsPage({ params }: { params: Promise<{
   ]);
   return (
     <>
-      <section className="public-registration-hero public-manage-hero account-page-hero">
-        <div>
-          <p className="public-registration-eyebrow">Area Coordinator · view only</p>
-          <h1 translate="no">{club.name}</h1>
-        </div>
-      </section>
-      <div className="account-page-body club-roster-stack">
-        <BackLink href={`/account/area/${organizationId}`}>Back to {club.name}</BackLink>
-        <p className="inline-notice" role="status">
-          <Eye aria-hidden="true" size={14} /> View only. The club records and changes its own honors.
-        </p>
-        <ClubHonorsWorkspace
-          clubYear={clubYear}
-          honorOptions={honors}
-          initialRows={rows}
-          organizationId={organizationId}
-          readOnly
-        />
-      </div>
+      <ClubHonorsWorkspace
+        clubYear={clubYear}
+        honorOptions={honors}
+        initialRows={rows}
+        organizationId={organizationId}
+        readOnly
+      />
     </>
   );
 }

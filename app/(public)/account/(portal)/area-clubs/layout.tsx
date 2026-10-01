@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { AccountSectionNav } from "@/components/account-section-nav";
+import { AreaClubsSubNav } from "@/components/area-clubs-subnav";
 import { currentAreaCoordinatorViewerActive } from "@/modules/organizations/area-coordinators";
 
 /** The Area Coordinator's Clubs section (#657): its own menu, view only, nothing for anyone but a coordinator. */
@@ -13,17 +13,7 @@ export default async function AreaClubsLayout({ children }: { children: React.Re
           <h1>Clubs</h1>
         </div>
       </section>
-      <AccountSectionNav
-        items={[
-          { href: "/account/clubs", label: "All clubs" },
-          { href: "/account/area-clubs/overview", label: "Overview" },
-          { href: "/account/area-clubs/reports", label: "Monthly reports" },
-          { href: "/account/area-clubs/points", label: "Points" },
-          { href: "/account/area-clubs/events", label: "Club events" },
-        ]}
-        label="Clubs"
-        variant="secondary"
-      />
+      <AreaClubsSubNav />
       <div className="account-page-body">{children}</div>
     </>
   );
