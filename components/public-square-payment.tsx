@@ -12,6 +12,7 @@ import { CreditCard, LoaderCircle, ShieldCheck, TriangleAlert } from "lucide-rea
 import {
   paymentChoiceOptionPresentations,
 } from "@/modules/payments/payment-choice-presentation";
+import { squareTestModeNotice } from "@/modules/payments/square-sandbox-notice";
 
 type SquareCheckout = {
   state:
@@ -178,9 +179,12 @@ function unavailableCheckout(error: unknown): SquareCheckout {
 export function PublicSquarePayment({
   token,
   manageEndpoint: explicitManageEndpoint,
+  staffPreview = false,
 }: {
   token?: string;
   manageEndpoint?: string;
+  /** True only in a staff preview session; the public never sees the test-mode line. */
+  staffPreview?: boolean;
 }) {
   const manageEndpoint = explicitManageEndpoint
     ?? `/api/public/manage/${encodeURIComponent(token ?? "")}`;
@@ -701,6 +705,7 @@ export function PublicSquarePayment({
     );
   }
 
+  const testModeNotice = squareTestModeNotice({ environment: checkout.square.environment, staffPreview });
   return (
     <div className="public-payment-stack">
       {paymentChoicePanel}
@@ -732,11 +737,7 @@ export function PublicSquarePayment({
           </p>
         </div>
       </div>
-      {checkout.square.environment === "sandbox" && (
-        <p className="public-square-sandbox">
-          Sandbox mode · no real charge will be made
-        </p>
-      )}
+      {testModeNotice && <p className="public-square-sandbox">{testModeNotice}</p>}
       <div className="public-square-wallets" aria-label="Digital wallet payment methods">
         <button
           type="button"

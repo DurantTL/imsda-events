@@ -126,17 +126,21 @@ export function ProfileView({ data, variant }: { data: ProfileData; variant: "sh
       {attendeeAccount && (
         <section aria-labelledby="profile-registration-heading" className="profile-account-section">
           <div className="account-page-body">
-            <div className="profile-account-heading-row">
-              <h2 className="profile-account-heading" id="profile-registration-heading">Registration account</h2>
-              <AttendeeSignOutButton className="secondary-button" label="Sign out of registration account" />
-            </div>
-            {data.showTwoStepOn && <p className="auth-success" role="status">Two-step verification is on.</p>}
-            {!secondStepPending && (
-              <p className="field-help">
-                Signed in as <strong>{attendeeAccount.verifiedEmail}</strong>. Saved details fill in new registration forms for you.
-              </p>
-            )}
-            {backLinks}
+            <section className="public-manage-card profile-account-card">
+              <div className="profile-account-heading-row">
+                <h2 className="profile-account-heading" id="profile-registration-heading">Registration account</h2>
+                <div className="profile-account-actions">
+                  {backLinks}
+                  <AttendeeSignOutButton className="secondary-button" label="Sign out of registration account" />
+                </div>
+              </div>
+              {data.showTwoStepOn && <p className="auth-success" role="status">Two-step verification is on.</p>}
+              {!secondStepPending && (
+                <p className="field-help">
+                  Signed in as <strong>{attendeeAccount.verifiedEmail}</strong>. Saved details fill in new registration forms for you.
+                </p>
+              )}
+            </section>
           </div>
           {secondStepPending
             ? (
