@@ -68,6 +68,8 @@ const phone = (key: string, label: string, required = false, extra: FieldExtra =
 const date = (key: string, label: string, required = false, extra: FieldExtra = {}) => field(key, label, "DATE", required, extra);
 const yesNo = (key: string, label: string, required = false, extra: FieldExtra = {}) => field(key, label, "RADIO", required, { options: ["Yes", "No"], ...extra });
 const money = (key: string, label: string, extra: FieldExtra = {}) => field(key, label, "NUMBER", false, { helpText: "Dollars, entered by the club.", ...extra });
+/** A signing or application date: filled in with today's date (Chicago), read-only on a private link (#719). */
+const today: FieldExtra = { autoDate: "TODAY" };
 const whenYes = (fieldKey: string): FieldExtra => ({ conditional: { fieldKey, operator: "EQUALS", value: "Yes" } });
 
 const churchField = (required: boolean) => field("church", "Church", "SELECT", required, { optionSource: "CHURCHES_DIRECTORY" });
@@ -87,12 +89,13 @@ const membershipApplication: ClubFormTemplateSeed = {
   key: "pathfinder_membership_application",
   name: "Pathfinder Club Membership Application",
   description: "An applicant's membership application with the parent or guardian's approval, waiver and signatures.",
-  version: 1,
+  version: 2,
   sortOrder: 10,
   printLayout: "STANDARD",
   sensitiveFieldKeys: ["birth_date"],
   birthDateFieldKeys: ["birth_date"],
-  staffOnlyFieldKeys: [],
+  // v2 (#719): the fee amounts are entered by the club, so a private-link filler never sees them. Signing dates fill in automatically in the same version.
+  staffOnlyFieldKeys: ["registration_fee", "club_dues", "insurance_fee"],
   sectionNotes: {
     sec_applicant: [
       "I would like to join the Pathfinder Club named below. If I am accepted, I will do my best to take part and to live by the Pathfinder Pledge and Law.",
@@ -113,7 +116,7 @@ const membershipApplication: ClubFormTemplateSeed = {
       section("sec_applicant", "Applicant", [
         text("club_name", "Pathfinder Club name", true),
         text("applicant_signature", "Applicant signature (type your full name)", true, { helpText: "Typing your name here is your signature." }),
-        date("applicant_signature_date", "Date signed by applicant", true),
+        date("applicant_signature_date", "Date signed by applicant", true, today),
       ]),
       section("sec_fees", "Fees", [
         money("registration_fee", "Registration fee ($)"),
@@ -147,7 +150,7 @@ const membershipApplication: ClubFormTemplateSeed = {
         text("mother_guardian_signature", "Mother or guardian signature (type full name)", true, { optionalWhen: { fieldKey: "father_guardian_signature", operator: "NOT_EMPTY", value: "" } }),
         text("mother_guardian_occupation", "Mother or guardian occupation"),
         field("approval_agreement", "We have read and agree to the approval, waiver and cooperation statements above.", "CHECKBOX", true),
-        date("application_date", "Date of application", true),
+        date("application_date", "Date of application", true, today),
       ]),
     ],
   },
@@ -185,7 +188,7 @@ const staffForm: ClubFormTemplateSeed = {
   key: "pathfinder_staff_service_information",
   name: "Pathfinder Staff/Volunteer Service Information Form",
   description: "A staff or volunteer's record, health history, experience, honors to teach, conduct disclosure and references.",
-  version: 1,
+  version: 2,
   sortOrder: 20,
   printLayout: "STANDARD",
   sensitiveFieldKeys: [
@@ -272,7 +275,7 @@ const staffForm: ClubFormTemplateSeed = {
       section("sec_references", "VII. References", referenceFields),
       section("sec_signature", "Signature", [
         text("signature", "Signature (type your full name)", true, { helpText: "Typing your name here is your signature." }),
-        date("signature_date", "Date", true),
+        date("signature_date", "Date", true, today),
         field("signature_acknowledgment", "I confirm that the answers on this form are true and that typing my name is my signature.", "CHECKBOX", true),
       ]),
     ],
@@ -286,7 +289,7 @@ const permissionSlip: ClubFormTemplateSeed = {
   key: "off_premises_permission_slip",
   name: "Off-Premises Permission Slip",
   description: "A parent or guardian's permission for a child to take part in one off-premises club activity, with medical and emergency details.",
-  version: 1,
+  version: 2,
   sortOrder: 30,
   printLayout: "STANDARD",
   sensitiveFieldKeys: ["physician_name", "physician_phone", "clinic_name", "clinic_phone", "emergency_contact_phone"],
@@ -318,7 +321,7 @@ const permissionSlip: ClubFormTemplateSeed = {
       ]),
       section("sec_parent", "Parent or guardian", [
         text("parent_signature", "Signed name (type your full name)", true, { helpText: "Typing your name here is your signature." }),
-        date("parent_signature_date", "Date", true),
+        date("parent_signature_date", "Date", true, today),
         text("relationship", "Relationship to the Pathfinder or Adventurer", true),
         longText("parent_address_if_different", "Address, if different from above"),
       ]),

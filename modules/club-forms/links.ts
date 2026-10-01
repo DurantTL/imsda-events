@@ -20,8 +20,10 @@ import {
   validateClubFormAnswers,
   viewerAuditFields,
   viewerCanWriteForClub,
+  withAutoDates,
   type ClubFormsViewer,
 } from "@/modules/club-forms/domain";
+import { todayDateValue } from "@/modules/forms/definition";
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { CLUB_FORM_LINK_TEMPLATE_KEY, clubFormLinkEmailContent } from "@/modules/club-forms/link-email";
 import { sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
@@ -265,6 +267,7 @@ export async function resolveClubFormLinkForFill(token: string, now = new Date()
   const sectionIds = new Set(definition.sections.map((section) => section.id));
   return {
     clubName: link.organization.name,
+    today: todayDateValue(now),
     form: {
       key: template.key,
       name: template.name,
@@ -291,7 +294,8 @@ export async function submitClubFormViaLink(token: string, rawAnswers: Record<st
   // Fields hidden from new versions (#712) are not offered, so they cannot be written either.
   const definition = await withLiveDirectory(fillDefinition(template));
   // Office-use fields are not the filler's to write, even by hand-crafted request.
-  const answers = sanitizeClubFormAnswers(definition, rawAnswers, template.staffOnlyFieldKeys);
+  // Signing and application dates are the server's to set (#719): same Chicago day, whatever the client sent.
+  const answers = withAutoDates(definition, sanitizeClubFormAnswers(definition, rawAnswers, template.staffOnlyFieldKeys), template.staffOnlyFieldKeys, now);
   const issues = validateClubFormAnswers(definition, answers, { excludeKeys: template.staffOnlyFieldKeys });
   if (issues.length > 0) throw new ClubFormError("VALIDATION_FAILED", issues[0].message, issues);
   const submissionId = randomUUID();

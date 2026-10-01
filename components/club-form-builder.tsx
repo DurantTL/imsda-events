@@ -484,6 +484,11 @@ function FieldEditor({
           <fieldset className="form-stack">
             <legend>Settings</legend>
             <label className="checkbox-row"><input checked={field.required} onChange={(event) => flag("required", event.target.checked)} type="checkbox" /> Required</label>
+            {field.type === "DATE" && (
+              <label className="checkbox-row">
+                <input checked={field.autoDate === "TODAY"} onChange={(event) => edit((s) => updateField(s, field.id, { autoDate: event.target.checked ? "TODAY" : undefined }))} type="checkbox" /> Fill in today&apos;s date automatically (read-only on a private link; a director can change it)
+              </label>
+            )}
             <label className="checkbox-row">
               <input checked={staffOnly} disabled={lockedSensitive} onChange={(event) => flag("staffOnly", event.target.checked)} type="checkbox" /> Staff only (office use; a private-link filler never sees it)
             </label>

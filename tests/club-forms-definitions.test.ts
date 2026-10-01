@@ -7,8 +7,9 @@ import {
   splitAnswers,
   templateSpecProblems,
   validateClubFormAnswers,
+  withAutoDates,
 } from "@/modules/club-forms/domain";
-import { formTemplates, registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { formTemplates, registrationFormDefinitionSchema, todayDateValue } from "@/modules/forms/definition";
 
 /**
  * The four seeded templates (#610, field specs from #608): they validate on
@@ -94,6 +95,75 @@ describe("seeded club form templates", () => {
     expect(keys.filter((key) => /^honor_\d_name$/.test(key))).toHaveLength(8);
     expect(keys.filter((key) => /^reference_\d_name$/.test(key))).toHaveLength(3);
     expect(staff().staffOnlyFieldKeys).toEqual(["office_date_received", "office_date_approved", "office_recommendation", "office_signature"]);
+  });
+
+  it("keeps the club-entered fee fields off a private link but on the director's form (#719)", () => {
+    const fees = ["registration_fee", "club_dues", "insurance_fee"];
+    expect(membership().staffOnlyFieldKeys).toEqual(fees);
+    expect(membership().version).toBe(2);
+    const linkKeys = allFields(definitionForLink(membership())).map((field) => field.key);
+    for (const key of fees) expect(linkKeys).not.toContain(key);
+    expect(definitionForLink(membership()).sections.map((section) => section.title)).not.toContain("Fees");
+    const directorKeys = allFields(membership().definition).map((field) => field.key);
+    for (const key of fees) expect(directorKeys).toContain(key);
+    // The change never loosens a sensitive or birth-date flag.
+    expect(membership().sensitiveFieldKeys).toEqual(["birth_date"]);
+    expect(membership().birthDateFieldKeys).toEqual(["birth_date"]);
+    // No seeded field says the club enters it unless it is staff-only.
+    for (const template of clubFormTemplateSeeds) {
+      for (const field of allFields(registrationFormDefinitionSchema.parse(template.definition))) {
+        if (/entered by the club/i.test(field.helpText ?? "")) expect(template.staffOnlyFieldKeys, `${template.key}.${field.key}`).toContain(field.key);
+      }
+    }
+  });
+
+  it("marks the signing and application dates to fill in automatically, and no other date (#719)", () => {
+    const auto = Object.fromEntries(clubFormTemplateSeeds.map((template) => [template.key, allFields(registrationFormDefinitionSchema.parse(template.definition)).filter((field) => field.autoDate === "TODAY").map((field) => field.key)]));
+    expect(auto).toEqual({
+      pathfinder_membership_application: ["applicant_signature_date", "application_date"],
+      pathfinder_staff_service_information: ["signature_date"],
+      off_premises_permission_slip: ["parent_signature_date"],
+      transportation_passenger_list: [],
+    });
+    // Office-use dates, birth dates and the activity date stay as they were.
+    for (const key of ["office_date_received", "office_date_approved", "birth_date", "activity_date"]) {
+      for (const template of clubFormTemplateSeeds) expect(auto[template.key]).not.toContain(key);
+    }
+  });
+
+  it("sets auto-date fields to today in Chicago over whatever was sent, and leaves other answers alone (#719)", () => {
+    const definition = slip().definition;
+    const answers = { parent_signature_date: "2020-01-01", activity_date: "2026-11-07", child_name: "Riley Sample" };
+    const set = withAutoDates(definition, answers, [], new Date("2026-10-06T01:30:00Z"));
+    expect(set).toEqual({ parent_signature_date: "2026-10-05", activity_date: "2026-11-07", child_name: "Riley Sample" });
+    expect(answers.parent_signature_date).toBe("2020-01-01");
+    expect(withAutoDates(definition, {}, ["parent_signature_date"], new Date("2026-10-06T01:30:00Z"))).toEqual({});
+  });
+
+  it("rolls the Chicago day over at 05:00Z in daylight time and 06:00Z in standard time (#719)", () => {
+    const day = (iso: string) => todayDateValue(new Date(iso));
+    // CDT until Nov 1 2026 07:00Z (2:00 local); CST after. CDT again from Mar 14 2027 08:00Z.
+    expect(day("2026-10-31T04:59:00Z")).toBe("2026-10-30");
+    expect(day("2026-10-31T05:00:00Z")).toBe("2026-10-31");
+    expect(day("2026-11-02T05:59:00Z")).toBe("2026-11-01");
+    expect(day("2026-11-02T06:00:00Z")).toBe("2026-11-02");
+    expect(day("2027-03-13T05:59:00Z")).toBe("2027-03-12");
+    expect(day("2027-03-13T06:00:00Z")).toBe("2027-03-13");
+    // Mar 14 2027 is the spring-forward day (08:00Z), so it still rolls at 06:00Z; Mar 15 rolls at 05:00Z.
+    expect(day("2027-03-14T05:59:00Z")).toBe("2027-03-13");
+    expect(day("2027-03-14T06:00:00Z")).toBe("2027-03-14");
+    expect(day("2027-03-15T04:59:00Z")).toBe("2027-03-14");
+    expect(day("2027-03-15T05:00:00Z")).toBe("2027-03-15");
+  });
+
+  it("only lets a date question carry the auto-date setting (#719)", () => {
+    const base = { id: "f_x", key: "x_field", label: "Signed on", helpText: "", scope: "REGISTRATION", required: false, options: [] };
+    const parse = (type: string) => registrationFormDefinitionSchema.safeParse({
+      title: "Sample form", description: "", confirmationMessage: "Thanks",
+      sections: [{ id: "sec_x", title: "Section", description: "", fields: [{ ...base, type, autoDate: "TODAY" }] }],
+    });
+    expect(parse("DATE").error?.issues).toBeUndefined();
+    expect(parse("TEXT").success).toBe(false);
   });
 
   it("hides office-use fields from a private-link filler", () => {

@@ -131,6 +131,8 @@ function normalizeField(field: RegistrationFormField): RegistrationFormField {
     next.maxSelections = Math.max(1, next.options.length);
   }
   if (isChoiceFieldType(next.type) && !next.optionSource && next.options.length === 0) next.options = ["Option 1", "Option 2"];
+  // Only a date question can fill in today's date (#719).
+  if (next.type !== "DATE" || !next.autoDate) delete next.autoDate;
   return next;
 }
 

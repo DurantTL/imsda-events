@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { BackLink } from "@/components/back-link";
 import { ClubFormFillIn } from "@/components/club-form-fill-in";
+import { todayDateValue } from "@/modules/forms/definition";
 import { clubLeaderViewerFromAccess } from "@/modules/club-forms/access";
 import { fillDefinition, isClubFormsRole } from "@/modules/club-forms/domain";
 import { ClubFormError } from "@/modules/club-forms/errors";
@@ -51,6 +52,7 @@ export default async function NewClubFormPage({
         sectionNotes={template.sectionNotes}
         sensitiveFieldKeys={template.sensitiveFieldKeys}
         templateKey={template.key}
+        todayDate={todayDateValue()}
       />
     </>
   );
