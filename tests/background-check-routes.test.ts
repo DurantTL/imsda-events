@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   applyBackgroundCheckUpload: vi.fn(),
   listBackgroundCheckReviews: vi.fn(),
   resolveBackgroundCheckReview: vi.fn(),
+  restoreDismissedBackgroundCheckReview: vi.fn(),
   listManualBackgroundCheckMatches: vi.fn(),
   undoManualBackgroundCheckMatch: vi.fn(),
   listUnmatchedBackgroundCheckEntries: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock("@/modules/background-checks/repository", () => ({
   applyBackgroundCheckUpload: mocks.applyBackgroundCheckUpload,
   listBackgroundCheckReviews: mocks.listBackgroundCheckReviews,
   resolveBackgroundCheckReview: mocks.resolveBackgroundCheckReview,
+  restoreDismissedBackgroundCheckReview: mocks.restoreDismissedBackgroundCheckReview,
   listManualBackgroundCheckMatches: mocks.listManualBackgroundCheckMatches,
   undoManualBackgroundCheckMatch: mocks.undoManualBackgroundCheckMatch,
   listUnmatchedBackgroundCheckEntries: mocks.listUnmatchedBackgroundCheckEntries,
@@ -40,7 +42,7 @@ vi.mock("@/modules/background-checks/repository", () => ({
 }));
 
 import { POST as importPost } from "@/app/api/admin/background-checks/import/route";
-import { POST as reviewPost } from "@/app/api/admin/background-checks/reviews/[reviewId]/route";
+import { DELETE as reviewDelete, POST as reviewPost } from "@/app/api/admin/background-checks/reviews/[reviewId]/route";
 import { DELETE as undoDelete } from "@/app/api/admin/background-checks/manual-matches/[matchId]/route";
 import { GET as manualGet } from "@/app/api/admin/background-checks/manual-matches/route";
 import { GET as reviewsGet } from "@/app/api/admin/background-checks/reviews/route";
@@ -197,6 +199,37 @@ describe("background-check review and undo routes (#527 N2, N5)", () => {
     mocks.resolveBackgroundCheckReview.mockRejectedValueOnce(new BackgroundCheckOperationError("REVIEW_NOT_FOUND", "That review was already resolved or no longer exists."));
     response = await reviewPost(post("/api/admin/background-checks/reviews/r-1", { type: "dismiss" }), reviewCtx);
     expect(response.status).toBe(404);
+  });
+
+  it("undoes a dismissal (#702): 200 with the open reviews, 404 when it can no longer be undone", async () => {
+    const request = () => post("/api/admin/background-checks/reviews/r-1", undefined, "DELETE");
+    const response = await reviewDelete(request(), reviewCtx);
+    expect(response.status).toBe(200);
+    expect(mocks.restoreDismissedBackgroundCheckReview).toHaveBeenCalledWith("r-1", "admin-1");
+    await expect(response.json()).resolves.toHaveProperty("reviews");
+
+    mocks.restoreDismissedBackgroundCheckReview.mockRejectedValueOnce(new BackgroundCheckOperationError("REVIEW_NOT_FOUND", "That dismissal can no longer be undone."));
+    expect((await reviewDelete(request(), reviewCtx)).status).toBe(404);
+  });
+
+  it("is a 409 to undo a dismissal while an upload is in progress, and rejects a cross-origin DELETE (#702)", async () => {
+    mocks.restoreDismissedBackgroundCheckReview.mockRejectedValueOnce(new BackgroundCheckOperationError("UPLOAD_IN_PROGRESS", "A background-check list upload is in progress. Try again in a moment."));
+    const busy = await reviewDelete(post("/api/admin/background-checks/reviews/r-1", undefined, "DELETE"), reviewCtx);
+    expect(busy.status).toBe(409);
+    await expect(busy.json()).resolves.toMatchObject({ error: "UPLOAD_IN_PROGRESS" });
+
+    mocks.restoreDismissedBackgroundCheckReview.mockClear();
+    mocks.rejectCrossOriginRequest.mockReturnValueOnce(Response.json({ error: "CROSS_ORIGIN" }, { status: 403 }));
+    const cross = await reviewDelete(post("/api/admin/background-checks/reviews/r-1", undefined, "DELETE"), reviewCtx);
+    expect(cross.status).toBe(403);
+    expect(mocks.restoreDismissedBackgroundCheckReview).not.toHaveBeenCalled();
+  });
+
+  it("refuses to undo a dismissal for anyone but a system administrator (#702)", async () => {
+    mocks.requireSystemAdministrator.mockRejectedValueOnce(new AccessDeniedError("System administrator access is required.", 403, "PERMISSION_DENIED"));
+    const response = await reviewDelete(post("/api/admin/background-checks/reviews/r-1", undefined, "DELETE"), reviewCtx);
+    expect(response.status).toBe(403);
+    expect(mocks.restoreDismissedBackgroundCheckReview).not.toHaveBeenCalled();
   });
 
   it("undoes a manual match and returns the rest", async () => {

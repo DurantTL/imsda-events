@@ -2,7 +2,7 @@ import { z } from "zod";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { requireSystemAdministrator } from "@/modules/organizations/access";
 import { backgroundCheckApiError } from "@/modules/background-checks/api-errors";
-import { listBackgroundCheckReviews, resolveBackgroundCheckReview } from "@/modules/background-checks/repository";
+import { listBackgroundCheckReviews, resolveBackgroundCheckReview, restoreDismissedBackgroundCheckReview } from "@/modules/background-checks/repository";
 import { withRequestContext } from "@/lib/request-context";
 
 type RouteContext = { params: Promise<{ reviewId: string }> };
@@ -36,4 +36,22 @@ async function postHandler(request: Request, context: RouteContext) {
   }
 }
 
+/**
+ * Undo a dismissal (#702): the review is open again. Same system-administrator
+ * gate as dismissing. 404 when the review is gone or was never dismissed.
+ */
+async function deleteHandler(request: Request, context: RouteContext) {
+  const originError = rejectCrossOriginRequest(request);
+  if (originError) return originError;
+  try {
+    const actor = await requireSystemAdministrator();
+    const { reviewId } = await context.params;
+    await restoreDismissedBackgroundCheckReview(reviewId, actor.id);
+    return Response.json({ reviews: await listBackgroundCheckReviews() });
+  } catch (error) {
+    return backgroundCheckApiError(error, "Undoing a background check dismissal");
+  }
+}
+
 export const POST = withRequestContext(postHandler);
+export const DELETE = withRequestContext(deleteHandler);
