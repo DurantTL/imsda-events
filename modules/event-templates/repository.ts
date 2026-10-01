@@ -22,6 +22,7 @@ export class EventTemplateOperationError extends Error {
     public readonly code:
       | "TEMPLATE_NOT_FOUND"
       | "TEMPLATE_ARCHIVED"
+      | "TEMPLATE_NOT_ARCHIVED"
       | "NO_DRAFT"
       | "NO_PUBLISHED_VERSION"
       | "VERSION_NOT_FOUND"
@@ -290,6 +291,24 @@ export async function archiveEventTemplate(templateId: string, actorUserId: stri
     await tx.auditLog.create({ data: {
       actorUserId, action: "EVENT_TEMPLATE_ARCHIVED", entityType: "EventTemplate", entityId: templateId,
       correlationId: randomUUID(), summary: `Archived event template ${template.name}.`, metadata: {},
+    } });
+  });
+  return getEventTemplate(templateId);
+}
+
+/** Reverses an archive (#704). The template returns to PUBLISHED when it still has a published version, otherwise DRAFT; its versions are untouched. */
+export async function unarchiveEventTemplate(templateId: string, actorUserId: string) {
+  await getPrisma().$transaction(async (tx) => {
+    const status = await lockTemplate(tx, templateId, "UPDATE");
+    if (status !== "ARCHIVED") {
+      throw new EventTemplateOperationError("TEMPLATE_NOT_ARCHIVED", "This event template is not archived.");
+    }
+    const published = await tx.eventTemplateVersion.findFirst({ where: { templateId, status: "PUBLISHED" }, select: { id: true } });
+    const restored = published ? "PUBLISHED" : "DRAFT";
+    const template = await tx.eventTemplate.update({ where: { id: templateId }, data: { status: restored } });
+    await tx.auditLog.create({ data: {
+      actorUserId, action: "EVENT_TEMPLATE_UNARCHIVED", entityType: "EventTemplate", entityId: templateId,
+      correlationId: randomUUID(), summary: `Unarchived event template ${template.name}.`, metadata: { restoredStatus: restored },
     } });
   });
   return getEventTemplate(templateId);

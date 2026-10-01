@@ -10,6 +10,7 @@ const operationStatus: Record<EventTemplateOperationError["code"], number> = {
   TEMPLATE_NOT_FOUND: 404,
   VERSION_NOT_FOUND: 404,
   TEMPLATE_ARCHIVED: 409,
+  TEMPLATE_NOT_ARCHIVED: 409,
   NO_DRAFT: 409,
   NO_PUBLISHED_VERSION: 409,
   EDIT_CONFLICT: 409,

@@ -1,19 +1,23 @@
 /**
- * Proves deleting an event at any stage (#620) against a real PostgreSQL
- * database. A rich synthetic event is built (locations, club registrations and
- * drafts, attendees, payments and refunds, sandbox payment attempts and
- * webhook records, promo codes, adjustments, honors, forms and submissions,
- * capacity reservations, messages and templates, waitlist, tags and notes,
- * append-only amendment ledgers, merchandise, community, imports, assets,
- * check-ins) next to shared rows (people, accounts, clubs, roster members,
- * honor history, a club year-end report, another event) and then deleted.
+ * Proves the event deletion contract (#620, tightened in #704) against a real
+ * PostgreSQL database.
  *
- * The proof is a full-database diff: every table's row count is snapshotted
- * before the event's own rows exist and compared after the deletion. Nothing
- * may have changed except the one new audit row, so nothing owned by the event
- * is left behind and nothing shared went with it. It also covers permissions,
- * the typed-name check, the audit row, an all-or-nothing rollback, and a large
- * event that would not fit the default 5 s transaction timeout budget.
+ * Refusal: a rich synthetic event is built with every kind of record an event
+ * can accumulate (registrations and attendees, payments, refunds and sandbox
+ * attempts, invoices, club drafts, honors enrollments, form submissions,
+ * messages, merchandise orders, community posts, announcements, imports and
+ * more). Deleting it must be refused, with the blockers named, for every actor,
+ * and the refusal must change no row anywhere in the database (a full
+ * table-count diff, AuditLog included).
+ *
+ * Deletion: an event with only setup data (locations, forms and a test
+ * submission, attendee types, tags, promo codes, honors sessions and offerings,
+ * message templates, content sections and assets, merchandise catalog and
+ * products without orders, award items, staff memberships, settings) is
+ * deleted by a system administrator. A table-count diff proves nothing the
+ * event owned is left behind and nothing shared went with it, with exactly the
+ * expected audit growth. It also covers permissions, the typed-name check, the
+ * audit row, an all-or-nothing rollback, and a large setup-only event.
  * Uses fictitious rows it creates and removes itself.
  *
  *   npm run test:event-deletion
@@ -43,7 +47,9 @@ const eventId = id("event");
 const otherEventId = id("other_event");
 const draftEventId = id("draft_event");
 const publishedBareEventId = id("published_event");
-const BULK_REGISTRATIONS = 1500;
+const BULK_REGISTRATIONS = 20;
+const BULK_SETUP_ROWS = 1500;
+const setupEventId = id("setup_event");
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`FAILED: ${message}`);
@@ -100,6 +106,7 @@ async function cleanup() {
   await prisma.registration.deleteMany({ where: inEvents });
   await prisma.eventLocation.deleteMany({ where: inEvents });
   await prisma.event.deleteMany({ where: events });
+  await prisma.clubSupplyItem.deleteMany({ where: { name: { startsWith: "Evdel" } } });
   await prisma.clubYearEndReport.deleteMany({ where: { organizationId: { startsWith: `${P}_` } } });
   await prisma.memberHonorEntry.deleteMany({ where: { honorId: { startsWith: `${P}_` } } });
   await prisma.clubRosterMember.deleteMany({ where: { organizationId: { startsWith: `${P}_` } } });
@@ -179,7 +186,6 @@ async function main() {
     ],
   });
 
-  const baseline = await tableCounts();
 
   // ---- The event under test. ----
   await prisma.event.create({
@@ -442,50 +448,60 @@ async function main() {
   }
   console.log(`Built ${BULK_REGISTRATIONS} extra registrations in ${Date.now() - bulkStarted} ms.`);
 
-  // ---- Permissions and the typed name. ----
+  // ---- Refusal: the rich event has records attached, so nobody may delete it. ----
   const sysAdmin = { userId: adminId, globalRole: "SYSTEM_ADMIN" as const };
   const eventAdmin = { userId: eventAdminId, globalRole: null };
   const staff = { userId: staffId, globalRole: null };
 
   const preview = await getEventDeletionPreview(eventId, sysAdmin);
   assert(preview, "the preview loads");
-  assert(preview.decision.allowed, "a system admin may delete any event");
-  assert(preview.counts.registrations === BULK_REGISTRATIONS + 2, `registration count in the preview (${preview.counts.registrations})`);
-  assert(preview.counts.attendees === BULK_REGISTRATIONS + 3, "attendee count in the preview");
-  assert(preview.counts.payments === BULK_REGISTRATIONS + 2, "payment count in the preview");
-  assert(preview.counts.realPayments === BULK_REGISTRATIONS + 1, "the cash payment and bulk card payments are real; the sandbox one is not");
-  assert(preview.counts.invoices === 1, "one organization-billed registration is an invoice");
-  assert(preview.counts.honorEnrollments === 1 && preview.counts.locations === 2 && preview.counts.forms === 1, "honors, locations and forms counted");
-  assert(preview.counts.messages === BULK_REGISTRATIONS + 3 && preview.counts.queuedMessages === BULK_REGISTRATIONS + 2, "messages counted, queued ones separately");
-
+  const c = preview.counts;
+  assert(c.registrations === BULK_REGISTRATIONS + 2, `registration count in the preview (${c.registrations})`);
+  assert(c.attendees === BULK_REGISTRATIONS + 3, "attendee count in the preview");
+  assert(c.payments === BULK_REGISTRATIONS + 2, "payment count in the preview");
+  assert(c.realPayments === BULK_REGISTRATIONS + 1, "the cash payment and bulk card payments are real; the sandbox one is not");
+  assert(c.invoices === 1, "one organization-billed registration is an invoice");
+  assert(c.honorEnrollments === 1 && c.locations === 2 && c.forms === 1, "honors, locations and forms counted");
+  assert(c.messages === BULK_REGISTRATIONS + 3 && c.queuedMessages === BULK_REGISTRATIONS + 2, "messages counted, queued ones separately");
+  assert(c.formSubmissions === 1 && c.imports === 1 && c.merchandiseOrders === 1, "form submissions, imports and merchandise orders counted");
+  assert(c.clubRegistrationDrafts === 1 && c.communityPosts === 1 && c.announcements === 1, "club drafts, community posts and announcements counted");
+  assert(!preview.decision.allowed, "the preview refuses a system admin when records are attached");
+  const reason = preview.decision.allowed ? "" : preview.decision.reason;
+  for (const phrase of [
+    "registrations", "attendees", "payments", "invoice", "honors enrollment", "form submission", "import run",
+    "merchandise order", "club registration draft", "community post", "announcement", "messages",
+  ]) {
+    assert(reason.includes(phrase), `the refusal names "${phrase}" (${reason})`);
+  }
+  assert(/Unpublish it instead/.test(reason), "the refusal says what to do instead");
   const eventAdminPreview = await getEventDeletionPreview(eventId, eventAdmin);
-  assert(eventAdminPreview && !eventAdminPreview.decision.allowed, "an Event Admin cannot delete an event with registrations");
+  assert(eventAdminPreview && !eventAdminPreview.decision.allowed, "an Event Admin cannot delete it either");
+
+  const beforeRefusals = await tableCounts();
+  const refusal = await caught(deleteEvent({ eventId, actor: sysAdmin, confirmName: "Evdel Rich Event 2028" }));
+  assert(refusal instanceof EventDeletionError && refusal.code === "EVENT_DELETE_FORBIDDEN", `a system admin is refused with the exact name typed (${String(refusal)})`);
+  assert(/cannot be deleted because it has/.test((refusal as Error).message), "the refusal carries the blocker explanation");
   await expectCode(deleteEvent({ eventId, actor: eventAdmin, confirmName: "Evdel Rich Event 2028" }), "EVENT_DELETE_FORBIDDEN", "Event Admin on a live event");
   await expectCode(deleteEvent({ eventId, actor: staff, confirmName: "Evdel Rich Event 2028" }), "EVENT_DELETE_FORBIDDEN", "other staff");
-  await expectCode(deleteEvent({ eventId: publishedBareEventId, actor: eventAdmin, confirmName: "Evdel Published" }), "EVENT_DELETE_FORBIDDEN", "Event Admin on a published event");
-  await expectCode(deleteEvent({ eventId: draftEventId, actor: staff, confirmName: "Evdel Draft" }), "EVENT_DELETE_FORBIDDEN", "non-admin staff on a draft");
-  await expectCode(deleteEvent({ eventId, actor: sysAdmin, confirmName: "evdel rich event 2028" }), "EVENT_NAME_MISMATCH", "wrong name");
+  await expectCode(deleteEvent({ eventId, actor: sysAdmin, confirmName: "evdel rich event 2028" }), "EVENT_DELETE_FORBIDDEN", "blockers are reported before the name is checked");
   await expectCode(deleteEvent({ eventId: id("missing"), actor: sysAdmin, confirmName: "x" }), "EVENT_NOT_FOUND", "unknown event");
-  assert(await prisma.event.count({ where: { id: { in: [eventId, draftEventId, publishedBareEventId] } } }) === 3, "refused deletions removed nothing");
+  const afterRefusals = await tableCounts();
+  const refusalChanges = [...beforeRefusals].filter(([table, count]) => afterRefusals.get(table) !== count).map(([table, count]) => `${table}: ${count} -> ${afterRefusals.get(table)}`);
+  assert(refusalChanges.length === 0, `refused deletions change no table, audit log included:\n  ${refusalChanges.join("\n  ")}`);
+  assert(await prisma.auditLog.count({ where: { action: "EVENT_DELETED", entityId: eventId } }) === 0, "a refused deletion writes no deletion audit row");
+  assert(await prisma.messageOutbox.count({ where: { eventId, status: "PENDING" } }) === BULK_REGISTRATIONS + 2, "a refused deletion leaves queued mail queued, not cancelled");
+  assert(await prisma.payment.count({ where: { eventId } }) === BULK_REGISTRATIONS + 2, "a refused deletion leaves payments in place");
+  assert(await prisma.registrationOperation.count({ where: { eventId } }) === 1, "a refused deletion leaves the ledger in place");
+  assert(await prisma.clubRosterMember.count({ where: { id: rosterMember.id, sourceRegistrationId: registration.id } }) === 1, "a refused deletion leaves the roster pointer");
   assert(EventDeletionError.name === "EventDeletionError", "error class exported");
 
-  // ---- All-or-nothing: a failure late in the deletion rolls everything back. ----
-  const beforeRollback = await tableCounts();
-  await prisma.$executeRawUnsafe(`
-    CREATE FUNCTION evdel_fail_tag_delete() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN RAISE EXCEPTION 'synthetic failure late in the deletion'; END; $$`);
-  await prisma.$executeRawUnsafe(`CREATE TRIGGER "evdel_fail_tag_delete" BEFORE DELETE ON "EventTag" FOR EACH ROW EXECUTE FUNCTION evdel_fail_tag_delete()`);
-  const midFailure = await caught(deleteEvent({ eventId, actor: sysAdmin, confirmName: "Evdel Rich Event 2028" }));
-  assert(midFailure, "the injected failure surfaces");
-  await prisma.$executeRawUnsafe('DROP TRIGGER "evdel_fail_tag_delete" ON "EventTag"');
-  await prisma.$executeRawUnsafe("DROP FUNCTION evdel_fail_tag_delete()");
-  const afterRollback = await tableCounts();
-  const rollbackChanges = [...beforeRollback].filter(([table, count]) => afterRollback.get(table) !== count).map(([table]) => table);
-  assert(rollbackChanges.length === 0, `a failed deletion changes no table (${rollbackChanges.join(", ")})`);
-  assert(await prisma.messageOutbox.count({ where: { eventId, status: "PENDING" } }) === BULK_REGISTRATIONS + 2, "a rolled-back deletion leaves queued mail queued, not cancelled");
-  assert(await prisma.payment.count({ where: { eventId } }) === BULK_REGISTRATIONS + 2, "a rolled-back deletion leaves payments in place");
-  assert(await prisma.registrationOperation.count({ where: { eventId } }) === 1, "a rolled-back deletion leaves the ledger in place");
-  assert(await prisma.clubRosterMember.count({ where: { id: rosterMember.id, sourceRegistrationId: registration.id } }) === 1, "a rolled-back deletion leaves the roster pointer");
+  // Empty events: an Event Admin or other staff still cannot delete; only a system admin can.
+  const emptyDraftPreview = await getEventDeletionPreview(draftEventId, eventAdmin);
+  assert(emptyDraftPreview && !emptyDraftPreview.decision.allowed, "an Event Admin cannot delete even an empty draft");
+  await expectCode(deleteEvent({ eventId: draftEventId, actor: eventAdmin, confirmName: "Evdel Draft" }), "EVENT_DELETE_FORBIDDEN", "Event Admin on an empty draft");
+  await expectCode(deleteEvent({ eventId: draftEventId, actor: staff, confirmName: "Evdel Draft" }), "EVENT_DELETE_FORBIDDEN", "non-admin staff on a draft");
+  await expectCode(deleteEvent({ eventId: publishedBareEventId, actor: eventAdmin, confirmName: "Evdel Published" }), "EVENT_DELETE_FORBIDDEN", "Event Admin on a published event");
+  assert(await prisma.event.count({ where: { id: { in: [eventId, draftEventId, publishedBareEventId] } } }) === 3, "refused deletions removed nothing");
 
   // ---- The ledger stays immutable for everyone else. ----
   const ledgerDelete = await caught(prisma.registrationOperation.deleteMany({ where: { eventId } }));
@@ -512,37 +528,122 @@ async function main() {
     await singleConnection.$disconnect();
   }
 
+  // ---- Deletion: an event with only setup data. ----
+  // A shared supply item referenced by an award item below: the item stays, the link goes.
+  const supplyItem = await prisma.clubSupplyItem.create({ data: { section: "MISCELLANEOUS", name: "Evdel Supply Item", normalizedName: "evdel supply item" } });
+  const setupBaseline = await tableCounts();
+  await prisma.event.create({ data: { id: setupEventId, slug: `${P}-setup`, name: "Evdel Setup Only 2028", ...eventBase, isPublished: true } });
+  await prisma.eventMembership.createMany({
+    data: [
+      { eventId: setupEventId, userId: eventAdminId, role: "EVENT_ADMIN" },
+      { eventId: setupEventId, userId: staffId, role: "REGISTRATION_MANAGER" },
+    ],
+  });
+  await prisma.eventMessageSettings.create({ data: { eventId: setupEventId, senderName: "Evdel" } });
+  await prisma.eventPaymentInstructionVersion.create({ data: { eventId: setupEventId, versionNumber: 1 } });
+  await prisma.eventCommunitySettings.create({ data: { eventId: setupEventId } });
+  const setupLocation = await prisma.eventLocation.create({ data: { eventId: setupEventId, name: "Evdel Setup North", normalizedName: "evdel setup north" } });
+  await prisma.eventAttendeeType.create({ data: { eventId: setupEventId, code: "youth", label: "Youth" } });
+  await prisma.eventAttendeeClassification.create({ data: { eventId: setupEventId, kind: "CATEGORY", code: "cat", label: "Category" } });
+  await prisma.eventTag.create({ data: { eventId: setupEventId, name: "Evdel Setup Tag", normalizedName: "evdel setup tag", color: "#336699" } });
+  const setupForm = await prisma.registrationForm.create({ data: { eventId: setupEventId, createdByUserId: adminId, name: "Evdel Setup Form", slug: "evdel-setup-form" } });
+  const setupFormVersion = await prisma.registrationFormVersion.create({ data: { formId: setupForm.id, createdByUserId: adminId, versionNumber: 1, definition: {} } });
+  await prisma.formTestSubmission.create({
+    data: { eventId: setupEventId, formVersionId: setupFormVersion.id, submittedByUserId: adminId, responses: {}, validation: {}, isValid: true },
+  });
+  await prisma.promoCode.create({ data: { eventId: setupEventId, code: "EVDELSETUP", normalizedCode: "EVDELSETUP", discountType: "FIXED_CENTS", discountValue: 500 } });
+  const setupSession = await prisma.honorSession.create({ data: { eventId: setupEventId, name: "Evdel Setup Session", normalizedName: "evdel setup session", locationId: setupLocation.id } });
+  await prisma.honorOffering.create({ data: { eventId: setupEventId, honorId: honor.id, span: "SINGLE_SESSION", capacity: 10, sessionId: setupSession.id } });
+  const setupTemplate = await prisma.eventMessageTemplate.create({ data: { eventId: setupEventId, key: "PAYMENT_RECEIPT" } });
+  await prisma.messageTemplateVersion.create({ data: { templateId: setupTemplate.id, versionNumber: 1, subjectTemplate: "Receipt", bodyTemplate: "Thanks." } });
+  const setupAsset = await prisma.eventAsset.create({
+    data: { eventId: setupEventId, displayName: "setup.pdf", contentType: "application/pdf", byteSize: 10, checksum: "abc", storageKey: id("setup_asset_key") },
+  });
+  const setupSection = await prisma.eventContentSection.create({ data: { eventId: setupEventId, title: "Evdel Setup Section", position: 0 } });
+  await prisma.eventContentLink.create({ data: { sectionId: setupSection.id, label: "Flyer", position: 0, assetId: setupAsset.id } });
+  await prisma.event.update({ where: { id: setupEventId }, data: { badgeBackgroundAssetId: setupAsset.id } });
+  await prisma.merchandiseCatalog.create({ data: { eventId: setupEventId } });
+  const setupProduct = await prisma.merchandiseProduct.create({ data: { eventId: setupEventId, name: "Evdel Setup Shirt", artworkAssetId: setupAsset.id, artworkAltText: "Synthetic artwork" } });
+  const setupVariant = await prisma.merchandiseProductVariant.create({ data: { productId: setupProduct.id, label: "M" } });
+  await prisma.merchandiseVariantAvailability.create({
+    data: { variantId: setupVariant.id, versionNumber: 1, priceCents: 1500, taxTreatment: "TAXABLE", feePolicy: "ABSORBED_BY_EVENT", createdByUserId: adminId },
+  });
+  await prisma.eventAwardItem.create({ data: { eventId: setupEventId, itemId: supplyItem.id } });
+  // This event's own audit history is kept, detached from the event.
+  const setupAudit = await prisma.auditLog.create({
+    data: { eventId: setupEventId, actorUserId: adminId, action: "EVENT_CHECK", entityType: "Event", entityId: setupEventId, correlationId: id("corr_setup"), summary: "Synthetic own audit row." },
+  });
+  // A large setup-only event: many locations, tags and content sections, to exercise the longer transaction.
+  const setupBulkStarted = Date.now();
+  const bulkRows = Array.from({ length: BULK_SETUP_ROWS }, (_, n) => n);
+  await prisma.eventLocation.createMany({
+    data: bulkRows.map((n) => ({ id: id(`bulk_loc_${n}`), eventId: setupEventId, name: `Evdel Bulk ${n}`, normalizedName: `evdel bulk ${n}` })),
+  });
+  await prisma.eventTag.createMany({
+    data: bulkRows.map((n) => ({ eventId: setupEventId, name: `Evdel Bulk Tag ${n}`, normalizedName: `evdel bulk tag ${n}`, color: "#336699" })),
+  });
+  await prisma.eventContentSection.createMany({
+    data: bulkRows.map((n) => ({ eventId: setupEventId, title: `Evdel Bulk Section ${n}`, position: n + 1 })),
+  });
+  console.log(`Built ${BULK_SETUP_ROWS} extra locations, tags and sections in ${Date.now() - setupBulkStarted} ms.`);
+
+  const setupPreview = await getEventDeletionPreview(setupEventId, sysAdmin);
+  assert(setupPreview?.decision.allowed, "a system admin may delete an event that has only setup data");
+  assert(setupPreview.counts.locations === BULK_SETUP_ROWS + 1 && setupPreview.counts.registrations === 0 && setupPreview.counts.messages === 0, "setup-only counts");
+  const setupEventAdminPreview = await getEventDeletionPreview(setupEventId, eventAdmin);
+  assert(setupEventAdminPreview && !setupEventAdminPreview.decision.allowed, "an Event Admin may not delete even a setup-only event");
+  await expectCode(deleteEvent({ eventId: setupEventId, actor: eventAdmin, confirmName: "Evdel Setup Only 2028" }), "EVENT_DELETE_FORBIDDEN", "Event Admin on a setup-only event");
+  await expectCode(deleteEvent({ eventId: setupEventId, actor: sysAdmin, confirmName: "evdel setup only 2028" }), "EVENT_NAME_MISMATCH", "wrong name");
+  await expectCode(deleteEvent({ eventId: setupEventId, actor: sysAdmin, confirmName: "" }), "EVENT_NAME_MISMATCH", "empty name");
+
+  // ---- All-or-nothing: a failure late in the deletion rolls everything back. ----
+  const beforeRollback = await tableCounts();
+  await prisma.$executeRawUnsafe(`
+    CREATE FUNCTION evdel_fail_tag_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'synthetic failure late in the deletion'; END; $$`);
+  await prisma.$executeRawUnsafe(`CREATE TRIGGER "evdel_fail_tag_delete" BEFORE DELETE ON "EventTag" FOR EACH ROW EXECUTE FUNCTION evdel_fail_tag_delete()`);
+  const midFailure = await caught(deleteEvent({ eventId: setupEventId, actor: sysAdmin, confirmName: "Evdel Setup Only 2028" }));
+  assert(midFailure, "the injected failure surfaces");
+  await prisma.$executeRawUnsafe('DROP TRIGGER "evdel_fail_tag_delete" ON "EventTag"');
+  await prisma.$executeRawUnsafe("DROP FUNCTION evdel_fail_tag_delete()");
+  const afterRollback = await tableCounts();
+  const rollbackChanges = [...beforeRollback].filter(([table, count]) => afterRollback.get(table) !== count).map(([table]) => table);
+  assert(rollbackChanges.length === 0, `a failed deletion changes no table (${rollbackChanges.join(", ")})`);
+  assert(await prisma.event.count({ where: { id: setupEventId } }) === 1, "a rolled-back deletion leaves the event");
+
   // ---- The deletion. ----
   const started = Date.now();
-  const result = await deleteEvent({ eventId, actor: sysAdmin, confirmName: "  Evdel Rich Event 2028 " });
-  console.log(`Deleted the rich event (${BULK_REGISTRATIONS + 2} registrations) in ${Date.now() - started} ms.`);
-  assert(result.counts.registrations === BULK_REGISTRATIONS + 2, "the result reports what was removed");
+  const result = await deleteEvent({ eventId: setupEventId, actor: sysAdmin, confirmName: "  Evdel Setup Only 2028 " });
+  console.log(`Deleted the setup-only event (${BULK_SETUP_ROWS * 3 + 1} setup rows) in ${Date.now() - started} ms.`);
+  assert(result.counts.locations === BULK_SETUP_ROWS + 1, "the result reports what was removed");
 
-  assert(await prisma.event.count({ where: { id: eventId } }) === 0, "the event is gone");
+  assert(await prisma.event.count({ where: { id: setupEventId } }) === 0, "the event is gone");
   const after = await tableCounts();
   const changes: string[] = [];
-  for (const [table, count] of baseline) {
+  for (const [table, count] of setupBaseline) {
     // Two audit rows are added: the deletion itself, and the event's own earlier row, kept with its event reference cleared.
     const expected = table === "AuditLog" ? count + 2 : count;
     if (after.get(table) !== expected) changes.push(`${table}: expected ${expected}, found ${after.get(table)}`);
   }
   assert(changes.length === 0, `no leftover or lost rows anywhere in the database:\n  ${changes.join("\n  ")}`);
 
-  // Specific shared rows survived intact.
+  // Shared rows survived intact; the rich event and everything else is untouched.
+  assert(await prisma.clubSupplyItem.count({ where: { id: supplyItem.id } }) === 1, "the shared supply item survives its award link");
+  assert(await prisma.honor.count({ where: { id: honor.id } }) === 1, "the shared honor survives its offering");
   assert(await prisma.person.count({ where: { id: { in: [holder.id, ...attendeePeople.map((p) => p.id)] } } }) === 4, "people survive");
   assert(await prisma.attendeeAccount.count({ where: { id: account.id } }) === 1, "the attendee account survives");
   assert(await prisma.organization.count({ where: { id: { in: [club.id, church.id] } } }) === 2, "clubs and churches survive");
   assert(await prisma.user.count({ where: { id: { in: [adminId, eventAdminId, staffId] } } }) === 3, "staff accounts survive");
-  const member = await prisma.clubRosterMember.findUnique({ where: { id: rosterMember.id } });
-  assert(member && member.sourceRegistrationId === null, "the roster member survives with its pointer to the deleted registration cleared");
   assert(await prisma.memberHonorEntry.count({ where: { id: memberHonorEntry.id } }) === 1, "honor history survives");
   assert(await prisma.memberTransfer.count({ where: { id: transfer.id } }) === 1, "the club transfer survives");
   assert(await prisma.clubYearEndReport.count({ where: { organizationId: club.id } }) === 1, "the year-end report survives");
   assert(await prisma.registration.count({ where: { id: otherReg.id } }) === 1 && await prisma.payment.count({ where: { eventId: otherEventId } }) === 1, "another event and its payment are untouched");
+  assert(await prisma.event.count({ where: { id: eventId } }) === 1 && await prisma.registration.count({ where: { eventId } }) === BULK_REGISTRATIONS + 2, "the refused rich event is untouched");
   assert(await prisma.messageOutbox.count({ where: { idempotencyKey: id("account_msg") } }) === 1, "an account email with no event survives");
   assert(await prisma.auditLog.count({ where: { id: otherAudit.id, eventId: otherEventId } }) === 1, "another event's audit row is untouched");
-  const keptAudit = await prisma.auditLog.findUnique({ where: { id: ownAudit.id } });
+  const keptAudit = await prisma.auditLog.findUnique({ where: { id: setupAudit.id } });
   assert(keptAudit && keptAudit.eventId === null, "the event's own audit history is kept, no longer pointing at it");
+  void ownAudit;
 
   // No row in any table that has an eventId column may still name the deleted event.
   const eventIdTables = await prisma.$queryRaw<Array<{ table_name: string }>>`
@@ -554,39 +655,34 @@ async function main() {
         `SELECT count(*) AS n FROM information_schema.columns WHERE table_schema='public' AND table_name='${table_name}' AND column_name='${column}'`,
       );
       if (Number(has[0].n) === 0) continue;
-      const rows = await prisma.$queryRawUnsafe<Array<{ n: bigint }>>(`SELECT count(*) AS n FROM "${table_name}" WHERE "${column}" = '${eventId}'`);
+      const rows = await prisma.$queryRawUnsafe<Array<{ n: bigint }>>(`SELECT count(*) AS n FROM "${table_name}" WHERE "${column}" = '${setupEventId}'`);
       assert(Number(rows[0].n) === 0, `${table_name}.${column} still names the deleted event`);
     }
   }
 
   // Uploaded-file rows are gone (the file itself is removed by the service after commit).
-  assert(await prisma.eventAsset.count({ where: { storageKey: id("asset_key") } }) === 0, "asset rows are gone");
+  assert(await prisma.eventAsset.count({ where: { storageKey: id("setup_asset_key") } }) === 0, "asset rows are gone");
 
   // The audit row: who, which event, dates and counts, no personal data.
-  const auditRows = await prisma.auditLog.findMany({ where: { action: "EVENT_DELETED", entityId: eventId } });
+  const auditRows = await prisma.auditLog.findMany({ where: { action: "EVENT_DELETED", entityId: setupEventId } });
   assert(auditRows.length === 1, `exactly one deletion audit row (found ${auditRows.length})`);
   const [audit] = auditRows;
   assert(audit.actorUserId === adminId && audit.eventId === null && audit.entityType === "Event", "the audit row records the actor and the event id");
   const metadata = audit.metadata as { eventId: string; name: string; startsAt: string; endsAt: string; counts: Record<string, number> };
-  assert(metadata.eventId === eventId && metadata.name === "Evdel Rich Event 2028", "the audit row records the event id and name");
+  assert(metadata.eventId === setupEventId && metadata.name === "Evdel Setup Only 2028", "the audit row records the event id and name");
   assert(metadata.startsAt === eventBase.startsAt.toISOString() && metadata.endsAt === eventBase.endsAt.toISOString(), "the audit row records the dates");
-  assert(metadata.counts.registrations === BULK_REGISTRATIONS + 2 && metadata.counts.queuedMessages === BULK_REGISTRATIONS + 2, "the audit row records the counts");
-  const serialized = JSON.stringify(audit);
-  assert(!/Evdelperson|Evdelholder|@example\.test/.test(serialized), "the audit row holds no personal data");
+  assert(metadata.counts.locations === BULK_SETUP_ROWS + 1 && metadata.counts.registrations === 0, "the audit row records the counts");
+  assert(!/Evdelperson|Evdelholder|@example\.test/.test(JSON.stringify(audit)), "the audit row holds no personal data");
 
-  // ---- An Event Admin can delete a draft. ----
-  const draftPreview = await getEventDeletionPreview(draftEventId, eventAdmin);
-  assert(draftPreview?.decision.allowed, "an Event Admin may delete a draft");
-  await deleteEvent({ eventId: draftEventId, actor: eventAdmin, confirmName: "Evdel Draft" });
-  assert(await prisma.event.count({ where: { id: draftEventId } }) === 0, "the draft is gone");
+  // A system admin can delete the empty draft and the empty published event; the draft's staff access goes with it.
+  await deleteEvent({ eventId: draftEventId, actor: sysAdmin, confirmName: "Evdel Draft" });
+  assert(await prisma.event.count({ where: { id: draftEventId } }) === 0, "a system admin deletes an empty draft");
   assert(await prisma.eventMembership.count({ where: { eventId: draftEventId } }) === 0, "its staff access is gone with it");
-  assert(await prisma.auditLog.count({ where: { action: "EVENT_DELETED", entityId: draftEventId, actorUserId: eventAdminId } }) === 1, "the draft deletion is audited");
-
-  // A system admin can delete a published event with nothing in it.
+  assert(await prisma.auditLog.count({ where: { action: "EVENT_DELETED", entityId: draftEventId, actorUserId: adminId } }) === 1, "the draft deletion is audited");
   await deleteEvent({ eventId: publishedBareEventId, actor: sysAdmin, confirmName: "Evdel Published" });
-  assert(await prisma.event.count({ where: { id: publishedBareEventId } }) === 0, "a system admin deletes a published event");
+  assert(await prisma.event.count({ where: { id: publishedBareEventId } }) === 0, "a system admin deletes an empty published event");
 
-  console.log("Event deletion verified: dependency order, shared records kept, permissions, audit row, rollback, large event.");
+  console.log("Event deletion verified: refusal with records attached changes nothing, setup-only event deleted cleanly, shared records kept, permissions, audit row, rollback, large setup.");
 }
 
 main()

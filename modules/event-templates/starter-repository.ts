@@ -101,3 +101,16 @@ export async function addStarterEventTemplates(actorUserId: string): Promise<Sta
   });
   return result;
 }
+
+/**
+ * First-visit seeding (#704): a database with no event templates at all gets the
+ * starters on the first administrator visit to the templates page. Uses the same
+ * idempotent, advisory-locked logic as "Add starter templates", so concurrent
+ * visits cannot duplicate a starter, an existing starter in any state (edited,
+ * renamed, archived) is never touched, and once any template exists this is a no-op.
+ */
+export async function ensureStarterEventTemplates(actorUserId: string): Promise<boolean> {
+  if ((await getPrisma().eventTemplate.count()) > 0) return false;
+  await addStarterEventTemplates(actorUserId);
+  return true;
+}

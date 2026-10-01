@@ -15,6 +15,15 @@ export type EventDeletionCounts = {
   messages: number;
   /** Outbound emails that had not gone out yet; cancelled by the deletion. */
   queuedMessages: number;
+  /** Registration form submissions (public and club) that came through the forms. */
+  formSubmissions: number;
+  /** Data import runs recorded against the event. */
+  imports: number;
+  merchandiseOrders: number;
+  /** Club-entered registration drafts (guests, responses, honor selections, roster ages). */
+  clubRegistrationDrafts: number;
+  communityPosts: number;
+  announcements: number;
   /** Succeeded payments that are not sandbox (test-mode) card payments. */
   realPayments: number;
 };
@@ -30,36 +39,50 @@ export type EventDeletionActor = {
   eventRole: string | null;
 };
 
-/** Payment history is removed from this system; the card processor keeps its own. */
-export function eventDeletionHasRealMoney(counts: Pick<EventDeletionCounts, "realPayments" | "invoices">) {
-  return counts.realPayments > 0 || counts.invoices > 0;
+function plural(count: number, one: string, many = `${one}s`) {
+  return `${count.toLocaleString("en-US")} ${count === 1 ? one : many}`;
 }
 
 /**
- * A draft is an event nobody has used: unpublished, with no registrations and
- * no payments. An unpublished event that has been through testing is not a
- * draft, so its removal stays with system administrators.
+ * Everything that makes an event history rather than a mistake (#704). Any one
+ * of these blocks deletion for everybody: the schema would cascade through
+ * them, but a deletion that silently erases registrations, money or imports
+ * is refused instead.
  */
-export function isDraftForDeletion(facts: EventDeletionFacts) {
-  return !facts.isPublished && facts.counts.registrations === 0 && facts.counts.payments === 0;
+export function eventDeletionBlockers(counts: EventDeletionCounts) {
+  const blockers: string[] = [];
+  if (counts.registrations > 0) blockers.push(plural(counts.registrations, "registration"));
+  if (counts.attendees > 0) blockers.push(plural(counts.attendees, "attendee"));
+  if (counts.payments > 0) blockers.push(plural(counts.payments, "payment"));
+  if (counts.invoices > 0) blockers.push(plural(counts.invoices, "invoice"));
+  if (counts.honorEnrollments > 0) blockers.push(plural(counts.honorEnrollments, "honors enrollment"));
+  if (counts.formSubmissions > 0) blockers.push(plural(counts.formSubmissions, "form submission"));
+  if (counts.imports > 0) blockers.push(plural(counts.imports, "import run"));
+  if (counts.merchandiseOrders > 0) blockers.push(plural(counts.merchandiseOrders, "merchandise order"));
+  if (counts.clubRegistrationDrafts > 0) blockers.push(plural(counts.clubRegistrationDrafts, "club registration draft"));
+  if (counts.communityPosts > 0) blockers.push(plural(counts.communityPosts, "community post"));
+  if (counts.announcements > 0) blockers.push(plural(counts.announcements, "announcement"));
+  if (counts.messages > 0) blockers.push(plural(counts.messages, "message"));
+  return blockers;
 }
 
 export type EventDeletionDecision = { allowed: true } | { allowed: false; reason: string };
 
 /**
- * A system administrator may delete any event. An Event Admin may delete a
- * draft event they administer; everything else is system admin only. Staff
- * with other roles can never delete.
+ * Only a system administrator may delete an event, and only one with nothing
+ * attached: no registrations, payments, invoices, imports, form submissions or
+ * other dependent records. Anything else is refused with the reason, and the
+ * event is unpublished instead.
  */
 export function decideEventDeletion(actor: EventDeletionActor, facts: EventDeletionFacts): EventDeletionDecision {
-  if (actor.globalRole === "SYSTEM_ADMIN") return { allowed: true };
-  if (actor.eventRole !== "EVENT_ADMIN") {
-    return { allowed: false, reason: "Only a system administrator or the event's administrator can delete an event." };
+  if (actor.globalRole !== "SYSTEM_ADMIN") {
+    return { allowed: false, reason: "Only a system administrator can delete an event." };
   }
-  if (!isDraftForDeletion(facts)) {
+  const blockers = eventDeletionBlockers(facts.counts);
+  if (blockers.length > 0) {
     return {
       allowed: false,
-      reason: "Only a system administrator can delete an event that is published or already has registrations or payments.",
+      reason: `This event cannot be deleted because it has ${blockers.join(", ")}. Only an event with nothing attached (a test or duplicate event) can be deleted. Unpublish it instead to take it off the public site and keep its records.`,
     };
   }
   return { allowed: true };

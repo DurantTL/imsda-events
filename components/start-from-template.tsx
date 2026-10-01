@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import {
+  orderedFromTemplateErrors,
+  validateFromTemplateForm,
+  type FromTemplateErrors,
+  type FromTemplateField,
+} from "@/modules/event-templates/from-template-validation";
 import type { EventTemplateRecord } from "@/modules/event-templates/repository";
 
 type StartFromTemplateProps = {
@@ -34,6 +40,33 @@ export function StartFromTemplate({ templates }: StartFromTemplateProps) {
   const [requestKey] = useState(() => crypto.randomUUID());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<FromTemplateErrors>({});
+  const [attempt, setAttempt] = useState(0);
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const fieldRefs = useRef<Partial<Record<FromTemplateField, HTMLElement | null>>>({});
+  const summary = orderedFromTemplateErrors(fieldErrors);
+
+  function fieldProps(field: FromTemplateField) {
+    return {
+      id: `from-template-${field}`,
+      ref: (element: HTMLInputElement | HTMLSelectElement | null) => { fieldRefs.current[field] = element; },
+      "aria-invalid": fieldErrors[field] ? (true as const) : undefined,
+      "aria-describedby": fieldErrors[field] ? `from-template-${field}-error` : undefined,
+    };
+  }
+
+  function fieldError(field: FromTemplateField) {
+    return fieldErrors[field] ? <span id={`from-template-${field}-error`} className="form-error">{fieldErrors[field]}</span> : null;
+  }
+
+  function clearFieldError(field: FromTemplateField) {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const { [field]: _removed, ...rest } = current;
+      void _removed;
+      return rest;
+    });
+  }
 
   const selectedTemplate = useMemo(() => templates.find((template) => template.id === templateId), [templates, templateId]);
 
@@ -43,6 +76,16 @@ export function StartFromTemplate({ templates }: StartFromTemplateProps) {
   }
 
   async function apply() {
+    const errors = validateFromTemplateForm({ templateId, name, slug, startsOn, endsOn });
+    setFieldErrors(errors);
+    const invalid = orderedFromTemplateErrors(errors);
+    if (invalid.length > 0) {
+      setError("");
+      // A fresh key remounts the summary so a screen reader announces it again even when the errors are unchanged.
+      setAttempt((current) => current + 1);
+      setTimeout(() => summaryRef.current?.focus(), 0);
+      return;
+    }
     setSubmitting(true);
     setError("");
     try {
@@ -71,9 +114,25 @@ export function StartFromTemplate({ templates }: StartFromTemplateProps) {
   return (
     <div className="page-stack event-settings-workspace">
       {error ? <div className="inline-notice error" role="alert">{error}</div> : null}
+      {summary.length > 0 ? (
+        <div className="inline-notice error" role="alert" id="from-template-error-summary" key={attempt} ref={summaryRef} tabIndex={-1}>
+          Fix {summary.length === 1 ? "this field" : `these ${summary.length} fields`} to create the event:
+          <ul>
+            {summary.map((entry) => (
+              <li key={entry.field}>
+                <a
+                  href={`#from-template-${entry.field}`}
+                  onClick={(event) => { event.preventDefault(); fieldRefs.current[entry.field]?.focus(); }}
+                >{entry.label}</a>: {entry.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <section className="panel form-stack event-settings-panel">
+        <div>
         <label>Template
-          <select value={templateId} onChange={(event) => setTemplateId(event.target.value)}>
+          <select {...fieldProps("templateId")} value={templateId} onChange={(event) => { setTemplateId(event.target.value); clearFieldError("templateId"); }}>
             {applicable.length === 0 ? <option value="">No published templates yet</option> : null}
             {templates.map((template) => (
               <option key={template.id} value={template.id} disabled={!template.canApply}>
@@ -82,6 +141,8 @@ export function StartFromTemplate({ templates }: StartFromTemplateProps) {
             ))}
           </select>
         </label>
+        {fieldError("templateId")}
+        </div>
         {applicable.length === 0 ? (
           <p className="inline-notice" role="status">
             None of these templates is published yet. Open <Link href="/admin/event-templates">Event templates</Link>, edit the one you want, and publish it. Starter templates are added there with <strong>Add starter templates</strong>.
@@ -90,24 +151,36 @@ export function StartFromTemplate({ templates }: StartFromTemplateProps) {
         {selectedTemplate?.description ? <p>{selectedTemplate.description}</p> : null}
 
         <div className="form-grid two-column">
+          <div>
           <label>Event name
-            <input value={name} onChange={(event) => updateName(event.target.value)} />
+            <input {...fieldProps("name")} value={name} onChange={(event) => { updateName(event.target.value); clearFieldError("name"); }} />
           </label>
+          {fieldError("name")}
+          </div>
+          <div>
           <label>Web address
-            <input value={slug} onChange={(event) => { setSlug(event.target.value); setSlugEdited(true); }} />
+            <input {...fieldProps("slug")} value={slug} onChange={(event) => { setSlug(event.target.value); setSlugEdited(true); clearFieldError("slug"); }} />
           </label>
+          {fieldError("slug")}
+          </div>
+          <div>
           <label>Starts on
-            <input type="date" value={startsOn} onChange={(event) => setStartsOn(event.target.value)} />
+            <input {...fieldProps("startsOn")} type="date" value={startsOn} onChange={(event) => { setStartsOn(event.target.value); clearFieldError("startsOn"); }} />
           </label>
+          {fieldError("startsOn")}
+          </div>
+          <div>
           <label>Ends on
-            <input type="date" value={endsOn} onChange={(event) => setEndsOn(event.target.value)} />
+            <input {...fieldProps("endsOn")} type="date" value={endsOn} onChange={(event) => { setEndsOn(event.target.value); clearFieldError("endsOn"); }} />
           </label>
+          {fieldError("endsOn")}
+          </div>
         </div>
 
         <button
           type="button"
           className="primary-button"
-          disabled={submitting || !templateId || name.trim().length < 3 || slug.trim().length < 3 || !startsOn || !endsOn}
+          disabled={submitting || applicable.length === 0}
           onClick={apply}
         >
           {submitting ? "Creating…" : "Create draft event"}

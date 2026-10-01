@@ -4,7 +4,6 @@ import { useState } from "react";
 import {
   Clock,
   Mail,
-  Merge,
   Phone,
   RefreshCw,
   ShieldCheck,
@@ -216,9 +215,6 @@ export function DuplicateMatchReviewWorkspace({
                   onClick={() => defer(candidate)}
                 >
                   <Clock aria-hidden="true" size={15} /> Defer
-                </button>
-                <button className="secondary-button" type="button" disabled title="Merging is not built yet (#127) — this button is a placeholder.">
-                  <Merge aria-hidden="true" size={15} /> Merge (coming soon)
                 </button>
               </div>
             </article>

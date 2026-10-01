@@ -4,9 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DeleteEventDialogView } from "@/components/delete-event-dialog";
 import {
   decideEventDeletion,
-  eventDeletionHasRealMoney,
   eventNameConfirmed,
-  isDraftForDeletion,
   type EventDeletionCounts,
   type EventDeletionFacts,
 } from "@/modules/events/deletion";
@@ -21,6 +19,12 @@ const emptyCounts: EventDeletionCounts = {
   forms: 0,
   messages: 0,
   queuedMessages: 0,
+  formSubmissions: 0,
+  imports: 0,
+  merchandiseOrders: 0,
+  clubRegistrationDrafts: 0,
+  communityPosts: 0,
+  announcements: 0,
   realPayments: 0,
 };
 
@@ -29,35 +33,43 @@ function facts(overrides: { isPublished?: boolean; counts?: Partial<EventDeletio
 }
 
 describe("event deletion rules (#620)", () => {
-  it("lets a system administrator delete an event in any state", () => {
-    const admin = { globalRole: "SYSTEM_ADMIN" as const, eventRole: null };
+  const admin = { globalRole: "SYSTEM_ADMIN" as const, eventRole: null };
+
+  it("lets a system administrator delete an event with nothing attached", () => {
     expect(decideEventDeletion(admin, facts())).toEqual({ allowed: true });
-    expect(decideEventDeletion(admin, facts({ isPublished: true, counts: { registrations: 40, payments: 12, realPayments: 3 } }))).toEqual({ allowed: true });
+    // Setup-only records (locations, forms without submissions) do not block.
+    expect(decideEventDeletion(admin, facts({ counts: { locations: 3, forms: 2 } }))).toEqual({ allowed: true });
   });
 
-  it("lets an Event Admin delete only a draft", () => {
-    const eventAdmin = { globalRole: null, eventRole: "EVENT_ADMIN" };
-    expect(decideEventDeletion(eventAdmin, facts())).toEqual({ allowed: true });
-    expect(decideEventDeletion(eventAdmin, facts({ isPublished: true })).allowed).toBe(false);
-    expect(decideEventDeletion(eventAdmin, facts({ counts: { registrations: 1 } })).allowed).toBe(false);
-    expect(decideEventDeletion(eventAdmin, facts({ counts: { payments: 1 } })).allowed).toBe(false);
+  it.each([
+    ["registrations", { registrations: 1 }],
+    ["attendees", { attendees: 2 }],
+    ["payments", { payments: 1 }],
+    ["invoices", { invoices: 1 }],
+    ["honors enrollments", { honorEnrollments: 1 }],
+    ["form submissions", { formSubmissions: 1 }],
+    ["imports", { imports: 1 }],
+    ["merchandise orders", { merchandiseOrders: 1 }],
+    ["club registration drafts", { clubRegistrationDrafts: 1 }],
+    ["community posts", { communityPosts: 1 }],
+    ["announcements", { announcements: 1 }],
+    ["messages", { messages: 1 }],
+  ] as const)("refuses even a system administrator when the event has %s, and points to unpublishing", (_label, counts) => {
+    const decision = decideEventDeletion(admin, facts({ isPublished: true, counts }));
+    expect(decision.allowed).toBe(false);
+    expect(decision.allowed === false && decision.reason).toMatch(/cannot be deleted because it has/);
+    expect(decision.allowed === false && decision.reason).toMatch(/Unpublish it instead/);
   });
 
-  it("never lets other staff or non-members delete", () => {
-    for (const eventRole of ["REGISTRATION_MANAGER", "FINANCE_MANAGER", "READ_ONLY_STAFF", null]) {
+  it("names every kind of attached record in the refusal", () => {
+    const decision = decideEventDeletion(admin, facts({ counts: { registrations: 2, payments: 1, imports: 1 } }));
+    expect(decision.allowed === false && decision.reason).toContain("2 registrations, 1 payment, 1 import run");
+  });
+
+  it("never lets an Event Admin or other staff delete, even an empty event", () => {
+    for (const eventRole of ["EVENT_ADMIN", "REGISTRATION_MANAGER", "FINANCE_MANAGER", "READ_ONLY_STAFF", null]) {
       expect(decideEventDeletion({ globalRole: null, eventRole }, facts()).allowed).toBe(false);
     }
-  });
-
-  it("treats an unpublished event with registrations as not a draft", () => {
-    expect(isDraftForDeletion(facts())).toBe(true);
-    expect(isDraftForDeletion(facts({ counts: { registrations: 2 } }))).toBe(false);
-  });
-
-  it("warns about real money for non-test payments or issued invoices only", () => {
-    expect(eventDeletionHasRealMoney(emptyCounts)).toBe(false);
-    expect(eventDeletionHasRealMoney({ realPayments: 1, invoices: 0 })).toBe(true);
-    expect(eventDeletionHasRealMoney({ realPayments: 0, invoices: 2 })).toBe(true);
   });
 
   it("requires the exact event name, forgiving only surrounding spaces", () => {
@@ -191,10 +203,15 @@ describe("delete event dialog (#620)", () => {
     expect(render("Renamed Camporee 2028")).not.toMatch(/lifecycle-danger-button"[^>]*disabled/);
   });
 
-  it("shows the real-money warning only when payments are not test-mode", () => {
-    const withMoney = { ...preview, counts: { ...emptyCounts, realPayments: 1 } };
-    const render = (value: typeof preview) => renderToStaticMarkup(view(value, ""));
-    expect(render(withMoney)).toContain("payment history will be removed");
-    expect(render(preview)).not.toContain("payment history will be removed");
+  it("explains a refusal and hides the confirmation field when records are attached", () => {
+    const blocked = {
+      name: "Renamed Camporee 2028",
+      counts: { ...emptyCounts, registrations: 4 },
+      decision: { allowed: false, reason: "This event cannot be deleted because it has 4 registrations. Unpublish it instead." } as const,
+    };
+    const markup = renderToStaticMarkup(view(blocked as unknown as typeof preview, ""));
+    expect(markup).toContain("cannot be deleted because it has 4 registrations");
+    expect(markup).not.toContain("Type the event name to confirm");
+    expect(markup).toMatch(/lifecycle-danger-button"[^>]*disabled/);
   });
 });

@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   saveEventTemplateDraft: vi.fn(),
   publishEventTemplateVersion: vi.fn(),
   archiveEventTemplate: vi.fn(),
+  unarchiveEventTemplate: vi.fn(),
   applyEventTemplate: vi.fn(),
   logError: vi.fn(),
 }));
@@ -35,6 +36,7 @@ vi.mock("@/modules/event-templates/repository", async () => {
     saveEventTemplateDraft: mocks.saveEventTemplateDraft,
     publishEventTemplateVersion: mocks.publishEventTemplateVersion,
     archiveEventTemplate: mocks.archiveEventTemplate,
+    unarchiveEventTemplate: mocks.unarchiveEventTemplate,
     applyEventTemplate: mocks.applyEventTemplate,
   };
 });
@@ -43,6 +45,7 @@ import { GET as listRoute, POST as createRoute } from "@/app/api/event-templates
 import { GET as getRoute, PATCH as saveRoute } from "@/app/api/event-templates/[templateId]/route";
 import { POST as publishRoute } from "@/app/api/event-templates/[templateId]/publish/route";
 import { POST as archiveRoute } from "@/app/api/event-templates/[templateId]/archive/route";
+import { POST as unarchiveRoute } from "@/app/api/event-templates/[templateId]/unarchive/route";
 import { POST as applyRoute } from "@/app/api/event-templates/[templateId]/apply/route";
 import { EventTemplateOperationError } from "@/modules/event-templates/repository";
 import { EventTemplateReferenceError } from "@/modules/event-templates/domain";
@@ -71,6 +74,7 @@ const cases: Case[] = [
   { label: "PATCH /api/event-templates/[id]", call: (o) => saveRoute(request("PATCH", validDraft, o), ctx()), mutation: true, repository: mocks.saveEventTemplateDraft },
   { label: "POST /api/event-templates/[id]/publish", call: (o) => publishRoute(request("POST", undefined, o), ctx()), mutation: true, repository: mocks.publishEventTemplateVersion },
   { label: "POST /api/event-templates/[id]/archive", call: (o) => archiveRoute(request("POST", undefined, o), ctx()), mutation: true, repository: mocks.archiveEventTemplate },
+  { label: "POST /api/event-templates/[id]/unarchive", call: (o) => unarchiveRoute(request("POST", undefined, o), ctx()), mutation: true, repository: mocks.unarchiveEventTemplate },
   { label: "POST /api/event-templates/[id]/apply", call: (o) => applyRoute(request("POST", validApply, o), ctx()), mutation: true, repository: mocks.applyEventTemplate },
 ];
 

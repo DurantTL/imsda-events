@@ -235,14 +235,14 @@ const baseFields = {
   updatedAt: "2027-01-01T00:00:00.000Z",
 };
 
-function render(overrides: Partial<EventSettingsRecord> = {}) {
+function render(overrides: Partial<EventSettingsRecord> = {}, canDeleteEvent = false) {
   const fields = { ...baseFields, ...overrides } as typeof baseFields;
   const event = {
     ...fields,
     readiness: getEventPublishReadiness(fields, fields.publishedFormCount),
     warnings: [],
   } as EventSettingsRecord;
-  return renderToStaticMarkup(createElement(EventSettingsWorkspace, { mode: "edit", initialEvent: event }));
+  return renderToStaticMarkup(createElement(EventSettingsWorkspace, { mode: "edit", initialEvent: event, canDeleteEvent }));
 }
 
 /** The markup inside the "More settings" disclosure, or "" when it is absent. */
@@ -273,8 +273,8 @@ describe("event settings render by event type (#624)", () => {
     expect(markup).toContain("Seminar preference deadline");
   });
 
-  it("shows the club-applicable sections in view and keeps Danger zone and Save visible", () => {
-    const markup = render();
+  it("shows the club-applicable sections in view and keeps Danger zone (system admins) and Save visible", () => {
+    const markup = render({}, true);
     const more = moreSettings(markup);
     for (const label of ["Attendee edit verification", "Collect a shirt size", "background checks", "Hotel name"]) {
       expect(markup).toContain(label);
@@ -290,5 +290,12 @@ describe("event settings render by event type (#624)", () => {
     expect(moreSettings(markup)).toBe("");
     expect(markup).toContain("Approved payment instructions");
     expect(markup).toContain("Seminar preference deadline");
+  });
+});
+
+describe("Delete event panel (#704)", () => {
+  it("is offered to system administrators only", () => {
+    expect(render({}, false)).not.toContain("Delete event");
+    expect(render({}, true)).toContain("Delete event");
   });
 });

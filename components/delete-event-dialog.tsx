@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { eventDeletionHasRealMoney, eventNameConfirmed, type EventDeletionCounts } from "@/modules/events/deletion";
+import { eventNameConfirmed, type EventDeletionCounts } from "@/modules/events/deletion";
 
 export type DeletionPreview = {
   name: string;
@@ -138,41 +138,32 @@ export function DeleteEventDialogView({
       open={open}
       title={preview ? `Delete ${eventName}?` : "Delete this event?"}
     >
-      <p>
-        This permanently deletes {preview ? <strong translate="no">{eventName}</strong> : "the event"} and everything it owns. It cannot be undone.
-        People, accounts, clubs and background checks are shared with other events and are kept.
-      </p>
-      {!preview && !loadFailed && <p role="status">Counting what will be removed…</p>}
-      {counts && (
+      {!preview && !loadFailed && <p role="status">Checking what is attached to this event…</p>}
+      {preview?.decision.allowed === false && (
+        <p className="form-error" role="alert">{preview.decision.reason}</p>
+      )}
+      {allowed && counts && (
         <>
-          <p>This will remove:</p>
+          <p>
+            This permanently deletes <strong translate="no">{eventName}</strong>. It has no registrations, payments, imports,
+            form submissions, club drafts, posts, announcements or messages, so only its setup (the locations and forms listed
+            below, plus its settings) is removed. It cannot be undone. People, accounts, clubs and background checks
+            are shared with other events and are kept.
+          </p>
           <ul>
-            <li>{plural(counts.registrations, "registration")} and {plural(counts.attendees, "attendee")}</li>
-            <li>{plural(counts.payments, "payment")} and {plural(counts.invoices, "invoice")}</li>
-            <li>{plural(counts.honorEnrollments, "honors enrollment")}</li>
             <li>{plural(counts.locations, "location")}</li>
             <li>{plural(counts.forms, "registration form")}</li>
-            <li>{plural(counts.messages, "message")}{counts.queuedMessages > 0 ? ` (${counts.queuedMessages.toLocaleString("en-US")} still queued will be cancelled, not sent)` : ""}</li>
           </ul>
-          {eventDeletionHasRealMoney(counts) && (
-            <p className="form-error" role="alert">
-              This event has payments that are not test-mode, or issued invoices. Its payment history will be removed
-              from this system. Records held by the card processor are not affected. You can still continue.
-            </p>
-          )}
-          {preview?.decision.allowed === false && <p className="form-error" role="alert">{preview.decision.reason}</p>}
-          {allowed && (
-            <label className="field">
-              <span>Type the event name to confirm</span>
-              <input
-                autoComplete="off"
-                disabled={busy}
-                onChange={(event) => onTyped(event.target.value)}
-                placeholder={eventName}
-                value={typed}
-              />
-            </label>
-          )}
+          <label className="field">
+            <span>Type the event name to confirm</span>
+            <input
+              autoComplete="off"
+              disabled={busy}
+              onChange={(event) => onTyped(event.target.value)}
+              placeholder={eventName}
+              value={typed}
+            />
+          </label>
         </>
       )}
     </ConfirmDialog>

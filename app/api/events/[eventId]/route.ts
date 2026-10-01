@@ -102,8 +102,8 @@ async function deleteHandler(
     const { eventId } = await context.params;
     const access = await authorize(eventId);
     const input = deleteEventInputSchema.parse(await request.json().catch(() => ({})));
-    // Whether this actor may delete this event (system admin: always; Event
-    // Admin: drafts only) is decided inside the deleting transaction.
+    // Whether this actor may delete this event (system admin only, and only
+    // when nothing is attached to it) is decided inside the deleting transaction.
     const result = await deleteEvent({
       eventId,
       actor: { userId: access.user.id, globalRole: access.user.globalRole },
