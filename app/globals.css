@@ -7132,7 +7132,7 @@ select:focus-visible {
 
 
 /* Club rosters (#356) */
-.club-roster-layout { display: grid; gap: 16px; width: min(1180px, calc(100% - 32px)); margin: 0 auto 48px; }
+.club-roster-layout { display: grid; gap: 16px; width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding-bottom: 48px; }
 .club-roster-stack { display: grid; gap: 16px; }
 .club-roster-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .club-roster-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
@@ -8489,6 +8489,28 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 /* The area overview never grows wider than its container on phones (#703). */
 .area-overview-page, .area-overview-page > * { min-width: 0; max-width: 100%; }
 .public-manage-club-list small.club-meeting-note-collapsed { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; line-clamp: 1; overflow: hidden; }
+/* Honors popup, void action and bulk-record reason (#701). 44px targets on touch. */
+.roster-honors-button { margin-top: 6px; min-height: 36px; }
+.member-honors-dialog { max-width: min(560px, calc(100vw - 24px)); }
+.member-honors-dialog .form-actions { align-items: center; }
+.member-honors-dialog .form-stack { margin-top: 14px; }
+.honor-void-button {
+  display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 6px 12px;
+  border: 1px solid var(--coral); border-radius: 8px; background: #fff; color: var(--coral);
+  font: inherit; font-weight: 700; cursor: pointer;
+}
+.honor-void-button:hover { background: #fdf1ee; }
+.report-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 640px), (pointer: coarse) {
+  .report-actions .secondary-button, .report-actions .primary-button { min-height: 44px; }
+}
+.honor-bulk-submit { display: grid; gap: 4px; align-content: end; }
+@media (max-width: 640px), (pointer: coarse) {
+  .member-honors-dialog .form-grid { grid-template-columns: 1fr; }
+  .member-honors-dialog .modal-close-button { min-width: 44px; min-height: 44px; }
+  .roster-honors-button, .honor-void-button { min-height: 44px; min-width: 44px; }
+  .member-honors-dialog select, .member-honors-dialog input, .member-honors-dialog .primary-button, .member-honors-dialog .secondary-button { min-height: 44px; }
+}
 
 /* Shared pager for long staff lists (#702). Wraps at phone width, never scrolls sideways. */
 .list-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 0; }

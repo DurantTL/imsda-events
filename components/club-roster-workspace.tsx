@@ -1,11 +1,11 @@
 "use client";
 import { useCallback, useState } from "react";
-import Link from "next/link";
 import { Award, Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import { BirthDateField } from "@/components/birth-date-field";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { RosterTypeDefinitions } from "@/components/roster-type-definitions";
 import { validateRosterForm, rosterFormFieldOrder, type RosterFormErrors, type RosterFormField } from "@/modules/club-rosters/form-validation";
+import { ClubMemberHonorsDialog } from "@/components/club-member-honors-dialog";
 import { RosterCsvImport } from "@/components/roster-csv-import";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { complianceFilterLabels, complianceFilterState, type ComplianceFilterValue } from "@/modules/background-checks/display";
@@ -20,7 +20,7 @@ import {
   rosterSectionOf,
 } from "@/modules/club-rosters/domain";
 import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
-import type { CurrentMemberHonor } from "@/modules/honors/member-honor-domain";
+import { honorSummaryByMemberId, type ClubHonorsRow, type CurrentMemberHonor } from "@/modules/honors/member-honor-domain";
 
 type RosterResponse = {
   members?: RosterMemberRecord[];
@@ -53,8 +53,8 @@ export function ClubRosterWorkspace({
   readOnly = false,
   birthDatesEndpoint,
   complianceStatuses,
-  honorSummaries,
-  honorsHref,
+  honorSummaries: initialHonorSummaries,
+  honorsPopup,
   complianceFilter: initialComplianceFilter = null,
   headingActions,
 }: {
@@ -75,14 +75,20 @@ export function ClubRosterWorkspace({
   complianceStatuses?: Record<string, RosterComplianceInfo>;
   /** Each active member's current honors (#486), keyed by roster member id. Omitted where honors aren't shown here. */
   honorSummaries?: Record<string, CurrentMemberHonor[]>;
-  /** The club's Honors page, linked from each honor cell. */
-  honorsHref?: string;
+  /**
+   * Opens each person's honors in a popup (#701) instead of linking away.
+   * `canRecord` shows the record form; without it the popup is view-only.
+   * Omit where the caller can't use the club honors endpoints (staff views).
+   */
+  honorsPopup?: { canRecord: boolean };
   /** `?compliance=` from the What's next reminder link (#479): narrows the list to that one flag. */
   complianceFilter?: ComplianceFilterValue | null;
   /** Extra actions beside "Add to roster", such as "Request a transfer" (#489). */
   headingActions?: React.ReactNode;
 }) {
   const [members, setMembers] = useState(initialMembers);
+  const [honorSummaries, setHonorSummaries] = useState(initialHonorSummaries);
+  const [honorsFor, setHonorsFor] = useState<RosterMemberRecord | null>(null);
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
   /** The type picked in the dialog, so the Role placeholder shows the blank-role default (#424). */
   const [formType, setFormType] = useState<string>("YOUTH");
@@ -101,6 +107,18 @@ export function ClubRosterWorkspace({
     setEditing(null);
   }, []);
   const dialogRef = useAccessibleDialog<HTMLElement>(dialogOpen, closeDialog);
+  const closeHonors = useCallback(() => setHonorsFor(null), []);
+
+  /** After a honor is recorded in the popup, refresh the row's chips from the Honors list. */
+  async function refreshHonorSummaries() {
+    try {
+      const response = await fetch(`/api/attendee/clubs/${encodeURIComponent(organizationId)}/honors`);
+      const body = await response.json().catch(() => ({})) as { rows?: ClubHonorsRow[] };
+      if (response.ok && body.rows) setHonorSummaries(honorSummaryByMemberId(body.rows));
+    } catch {
+      // The chips catch up on the next page load.
+    }
+  }
 
   /** Add and edit happen in a pop-up (#383), so the list never scrolls away. */
   function openDialog(member: RosterMemberRecord | null) {
@@ -405,7 +423,17 @@ export function ClubRosterWorkspace({
                                     ))}
                                   </div>
                                 )}
-                                {honorsHref && <Link className="text-button" href={honorsHref}>Open Honors tab</Link>}
+                                {honorsPopup && (
+                                  <button
+                                    aria-haspopup="dialog"
+                                    aria-label={`Honors for ${member.firstName} ${member.lastName}`}
+                                    className="secondary-button roster-honors-button"
+                                    onClick={() => setHonorsFor(member)}
+                                    type="button"
+                                  >
+                                    <Award aria-hidden="true" size={13} /> Honors
+                                  </button>
+                                )}
                               </td>
                             )}
                             {!readOnly && <td className="roster-card-actions" data-label="Actions">
@@ -533,6 +561,15 @@ export function ClubRosterWorkspace({
       </form>
       </section>
         </div>
+      )}
+      {honorsFor && honorsPopup && (
+        <ClubMemberHonorsDialog
+          canRecord={honorsPopup.canRecord}
+          member={honorsFor}
+          onClose={closeHonors}
+          onRecorded={refreshHonorSummaries}
+          organizationId={organizationId}
+        />
       )}
     </div>
   );

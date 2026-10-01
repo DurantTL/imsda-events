@@ -21,10 +21,10 @@ export function clubPortalNavItems({
   const roster = capabilities.roster;
   return [
     { href: base, label: "Home" },
-    { href: `${base}/roster`, label: "Roster", group: "People" },
-    ...(roster ? [{ href: `${base}/honors`, label: "Honors", group: "People" }] : []),
-    ...(roster ? [{ href: `${base}/class-tracking`, label: "Class tracking", group: "People" }] : []),
-    ...(roster ? [{ href: `${base}/exports`, label: "Honors & class reports", matchChildren: true, group: "People" }] : []),
+    { href: `${base}/roster`, label: "Roster", group: "People", hideGroupLabel: true },
+    // The honors and class exports live on these two pages (#701); the old reports page redirects to Honors.
+    ...(roster ? [{ href: `${base}/honors`, label: "Honors", group: "People", hideGroupLabel: true }] : []),
+    ...(roster ? [{ href: `${base}/class-tracking`, label: "Class tracking", group: "People", hideGroupLabel: true }] : []),
     { href: `${base}/events`, label: "Events", matchChildren: true, group: "Events", hideGroupLabel: true },
     // Club forms (#610) hold health and conduct answers: the club's director and deputy only.
     ...(isClubFormsRole(role) ? [{ href: `${base}/forms`, label: "Forms", matchChildren: true, group: "Events", hideGroupLabel: true }] : []),

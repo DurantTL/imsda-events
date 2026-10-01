@@ -14,7 +14,7 @@ describe("club portal menu (#644)", () => {
     const items = nav("DIRECTOR");
     expect(items.map((item) => `${item.group ?? "-"}:${item.label}`)).toEqual([
       "-:Home",
-      "People:Roster", "People:Honors", "People:Class tracking", "People:Honors & class reports",
+      "People:Roster", "People:Honors", "People:Class tracking",
       "Events:Events", "Events:Forms",
       "Records:Monthly Records",
       "Orders:Orders",
@@ -30,11 +30,11 @@ describe("club portal menu (#644)", () => {
   });
 
   it("gives each role exactly the destinations it had before, with Club info standing for team and profile", () => {
-    const everything = ["/", "/roster", "/honors", "/class-tracking", "/exports", "/events", "/forms", "/records", "/orders", "/club-info"];
+    const everything = ["/", "/roster", "/honors", "/class-tracking", "/events", "/forms", "/records", "/orders", "/club-info"];
     expect(hrefs("DIRECTOR")).toEqual(everything);
     expect(hrefs("DEPUTY")).toEqual(everything);
     // A registrar: no forms, no notes or reports, no club info.
-    expect(hrefs("REGISTRAR")).toEqual(["/", "/roster", "/honors", "/class-tracking", "/exports", "/events", "/orders"]);
+    expect(hrefs("REGISTRAR")).toEqual(["/", "/roster", "/honors", "/class-tracking", "/events", "/orders"]);
   });
 
   it("has one Monthly Records item and no separate notes or reports items (#653)", () => {
@@ -42,7 +42,15 @@ describe("club portal menu (#644)", () => {
     expect(labels).toContain("Monthly Records");
     expect(labels).not.toContain("Meeting notes");
     expect(labels).not.toContain("Monthly reports");
-    expect(nav("DIRECTOR").find((item) => item.label === "Honors & class reports")?.href).toBe(`${base}/exports`);
+  });
+
+  it("has no People heading and no Honors & class reports item (#701)", () => {
+    for (const role of ["DIRECTOR", "DEPUTY", "REGISTRAR"] as const) {
+      const items = nav(role);
+      expect(items.find((item) => item.label === "Honors & class reports")).toBeUndefined();
+      expect(items.some((item) => item.href === `${base}/exports`)).toBe(false);
+      for (const item of items.filter((entry) => entry.group === "People")) expect(item.hideGroupLabel).toBe(true);
+    }
   });
 
   it("hides groups with no visible items for a registrar", () => {
