@@ -19,7 +19,9 @@ import { StaffAccountMenu } from "@/components/staff-account-menu";
 import type { EventPermission } from "@/modules/access/permissions";
 import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-contexts";
 import {
+  canShowMoreLauncher,
   matchesVisibility,
+  mobileActiveTabHref,
   mobileNavigationLabels,
   mobileNavigationOrder,
   navigation,
@@ -38,6 +40,8 @@ type ShellEvent = {
   permissions: readonly EventPermission[];
   /** Whether this event's club oversight (#387) is open to the signed-in user, computed server-side. */
   clubOversight?: boolean;
+  /** Whether the event has a CLUB audience (#737), so the More launcher can admit club-only cards. */
+  clubEvent?: boolean;
 };
 type ShellUser = { displayName: string; email: string; globalRole?: "SYSTEM_ADMIN" | null };
 
@@ -108,7 +112,18 @@ export function AppShell({
   // control and event-scoped nav item would dead-end for them, so hide them.
   const eventlessProfile = isProfileRoute && events.length === 0 && !isSystemAdmin;
   const eventQuery = selectedEventId ? `?event=${encodeURIComponent(selectedEventId)}` : "";
-  const visibleStatic = navigation.filter((item) => matchesVisibility(item, selectedPermissions));
+  const moreNavItem = navigation.find((item) => item.href === "/more");
+  // More shows when any of its destinations is permitted (#737), not only for
+  // the broad permissions it used to require; each page still checks access.
+  const showMore = Boolean(moreNavItem) && canShowMoreLauncher({
+    item: moreNavItem!,
+    permissions: [...selectedPermissions],
+    clubOversight: Boolean(selectedEvent?.clubOversight),
+    clubEvent: Boolean(selectedEvent?.clubEvent),
+    isSystemAdmin: user.globalRole === "SYSTEM_ADMIN",
+    clubFormsAccess: false,
+  });
+  const visibleStatic = navigation.filter((item) => item.href === "/more" ? showMore : matchesVisibility(item, selectedPermissions));
   const dashboardItem = visibleStatic.find((item) => !item.group && item.href !== "/more");
   const moreItem = visibleStatic.find((item) => item.href === "/more");
   // Audience, not billing mode, decides club features (#481): `clubOversight`
@@ -319,7 +334,7 @@ export function AppShell({
 
       {mobileNavigation.length > 0 && <nav className="mobile-nav" aria-label="Mobile navigation">
         {mobileNavigation.map(({ href, icon: Icon, label }) => {
-          const isActive = !isProfileRoute && current.href === href;
+          const isActive = !isProfileRoute && !isSystemRoute && mobileActiveTabHref(current.href) === href;
           return (
             <Link className={isActive ? "active" : undefined} href={`${href}${eventQuery}`} key={href} aria-current={isActive ? "page" : undefined}>
               <Icon aria-hidden="true" size={22} /><span>{mobileNavigationLabels[href] ?? label}</span>

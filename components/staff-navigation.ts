@@ -232,6 +232,18 @@ export const mobileNavigationOrder = [
 ] as const;
 
 /**
+ * The phone tab to highlight for the sidebar item a page belongs to (#737).
+ * Pages the tab bar has no tab for (Settings and its children, the form
+ * builder, Tags, Promo codes, Club export/print/year-end pages, ...) are all
+ * reached from More, so More stays highlighted instead of no tab. Only existing
+ * tabs are used; none is added, renamed or reordered.
+ */
+export function mobileActiveTabHref(currentHref: string): string {
+  if ((mobileNavigationOrder as readonly string[]).includes(currentHref)) return currentHref;
+  return "/more";
+}
+
+/**
  * Short labels for the phone tab bar only (#711). The sidebar keeps the full
  * `label`; a tab not listed here falls back to its full label.
  */
@@ -265,6 +277,22 @@ export function resolveClubsAndChurchesEntry({
     href: isSystemAdmin ? "/admin/organizations" : "/more/clubs",
     visible: clubOversight,
   };
+}
+
+/**
+ * Whether to show the More launcher (the sidebar link and the phone tab). It
+ * follows the destinations the user may actually open (#737): the permissions
+ * the launcher has always admitted, or any More directory card that is allowed
+ * for this user and event. So staff whose only extra grant is
+ * `VIEW_HEALTH_INFORMATION` on a club event still find "Event health
+ * information". Only visibility: every destination keeps its own server check.
+ */
+export function canShowMoreLauncher({
+  item,
+  ...context
+}: Omit<MoreDirectoryContext, "eventQuery"> & { item: Pick<NavigationItem, "requiredPermission" | "requiredAnyPermissions"> }): boolean {
+  if (matchesVisibility(item, new Set(context.permissions))) return true;
+  return buildMoreDirectoryCards({ ...context, eventQuery: "" }).some((card) => card.allowed);
 }
 
 /**
