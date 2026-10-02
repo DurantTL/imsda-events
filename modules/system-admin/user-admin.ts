@@ -6,6 +6,7 @@ import { revokeAllUserSessions } from "@/modules/access/session-store";
 import { revokeAllAttendeeSessions } from "@/modules/attendee-accounts/session-store";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { sendAccountRecoveryEmail } from "@/modules/communications/account-email-dispatch";
+import { sortAccounts, type AccountSort } from "@/modules/system-admin/account-sort";
 
 /**
  * System administrator account tools (#386). Two-step sign-in can't be turned
@@ -91,14 +92,22 @@ export async function sendStaffPasswordReset(userId: string, actorUserId: string
 
 // ---- Attendee accounts ----------------------------------------------------
 
-export async function listAttendeeAccounts(query: string, limit = 50) {
+/** Most accounts one sorted listing will consider; far above the real count. */
+const ACCOUNT_SORT_CEILING = 5000;
+
+/**
+ * Attendee accounts, newest first by default. With a `sort` (#738) the order
+ * is applied across every match before the first `limit` are returned, so a
+ * sort never reorders just one page.
+ */
+export async function listAttendeeAccounts(query: string, sort: AccountSort = null, limit = 50) {
   const text = query.trim().slice(0, 120);
   const accounts = await getPrisma().attendeeAccount.findMany({
     where: text
       ? { OR: [{ email: { contains: text.toLowerCase() } }, { displayName: { contains: text, mode: "insensitive" } }] }
       : undefined,
     orderBy: [{ createdAt: "desc" }],
-    take: limit,
+    take: sort ? ACCOUNT_SORT_CEILING : limit,
     select: {
       id: true,
       email: true,
@@ -116,7 +125,7 @@ export async function listAttendeeAccounts(query: string, limit = 50) {
       },
     },
   });
-  return accounts.map((account) => ({
+  const summaries = accounts.map((account) => ({
     id: account.id,
     email: account.email,
     displayName: account.displayName,
@@ -133,6 +142,7 @@ export async function listAttendeeAccounts(query: string, limit = 50) {
       && (!account.areaCoordinatorGrant.expiresAt || account.areaCoordinatorGrant.expiresAt > new Date()),
     ),
   }));
+  return sort ? sortAccounts(summaries, sort).slice(0, limit) : summaries;
 }
 
 export type AttendeeAccountSummary = Awaited<ReturnType<typeof listAttendeeAccounts>>[number];
