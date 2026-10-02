@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowRightLeft,
   ChevronDown,
   Eye,
+  PanelLeftClose,
+  PanelLeftOpen,
   ShieldCheck,
   UsersRound,
 } from "lucide-react";
@@ -15,6 +17,12 @@ import { EventAutoSelectNotice } from "@/components/event-auto-select-notice";
 import { rememberLastUsedEvent } from "@/components/remember-last-event";
 import { guardedNavigate } from "@/components/unsaved-changes-registry";
 import { eventToRemember, resolveShellEvent, switchEvent } from "@/components/shell-event-selection";
+import {
+  getSidebarCollapsedServerSnapshot,
+  getSidebarCollapsedSnapshot,
+  setSidebarCollapsed,
+  subscribeSidebarCollapsed,
+} from "@/components/sidebar-collapse";
 import { StaffAccountMenu } from "@/components/staff-account-menu";
 import type { EventPermission } from "@/modules/access/permissions";
 import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-contexts";
@@ -64,6 +72,26 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  // Icons-only sidebar (#446). Starts expanded so the server and first client
+  // render match; the saved choice is applied after mount.
+  const collapsed = useSyncExternalStore(subscribeSidebarCollapsed, getSidebarCollapsedSnapshot, getSidebarCollapsedServerSnapshot);
+  const [tooltip, setTooltip] = useState<{ label: string; top: number; left: number } | null>(null);
+  function toggleCollapsed() {
+    setTooltip(null);
+    setSidebarCollapsed(!collapsed);
+  }
+  // A tooltip for the icon-only sidebar, on hover and keyboard focus. It is
+  // drawn outside the sidebar, whose overflow would clip it.
+  function showTip(element: HTMLElement, label: string) {
+    const rect = element.getBoundingClientRect();
+    setTooltip({ label, top: rect.top + rect.height / 2, left: rect.right + 10 });
+  }
+  const tipProps = (label: string) => collapsed ? {
+    onMouseEnter: (event: { currentTarget: HTMLElement }) => showTip(event.currentTarget, label),
+    onFocus: (event: { currentTarget: HTMLElement }) => showTip(event.currentTarget, label),
+    onMouseLeave: () => setTooltip(null),
+    onBlur: () => setTooltip(null),
+  } : {};
   const searchParams = useSearchParams();
   // The staff-only profile page (#623) lives inside the shell but is no nav item.
   const isProfileRoute = pathname === "/profile" || pathname.startsWith("/profile/");
@@ -189,13 +217,26 @@ export function AppShell({
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-sidebar={collapsed ? "collapsed" : "expanded"}
+      onKeyDown={(event) => { if (event.key === "Escape" && tooltip) setTooltip(null); }}>
       <a className="skip-link" href="#workspace-content">Skip to main content</a>
       <aside className="sidebar" aria-label="Application navigation">
-        <Link className="brand" href="/" aria-label="IMSDA Events home">
+        <Link className="brand" href="/" aria-label="IMSDA Events home" {...tipProps("IMSDA Events home")}>
           <BrandMark />
           <span><strong>IMSDA</strong><small>Events</small></span>
         </Link>
+
+        <button
+          type="button"
+          className="sidebar-toggle"
+          aria-expanded={!collapsed}
+          aria-controls="primary-navigation"
+          {...tipProps("Expand sidebar")}
+          onClick={toggleCollapsed}
+        >
+          {collapsed ? <PanelLeftOpen aria-hidden="true" size={18} /> : <PanelLeftClose aria-hidden="true" size={18} />}
+          <span>{collapsed ? "Expand sidebar" : "Collapse sidebar"}</span>
+        </button>
 
         {user.globalRole === "SYSTEM_ADMIN" && (
           <div className="system-navigation">
@@ -204,6 +245,7 @@ export function AppShell({
               className={isSystemRoute ? "system-navigation-link active" : "system-navigation-link"}
               href={withCurrentEvent(systemNavigation.href, selectedEventId)}
               aria-current={isSystemRoute ? "page" : undefined}
+              {...tipProps("System management")}
             >
               <span className="system-navigation-icon">
                 <ShieldCheck aria-hidden="true" size={19} strokeWidth={1.9} />
@@ -233,7 +275,7 @@ export function AppShell({
           </div>
         </div>}
 
-        <nav className="primary-nav" aria-label="Primary navigation">
+        <nav className="primary-nav" id="primary-navigation" aria-label="Primary navigation">
           {visibleNavigation.map(({ href, icon: Icon, label, group }, index) => {
             // Every link carries the current event, /admin included (#616).
             const isActive = isProfileRoute ? false : href.startsWith("/admin") ? pathname.startsWith(href) : current.href === href;
@@ -242,7 +284,7 @@ export function AppShell({
             return (
               <Fragment key={href}>
                 {startsGroup && <span className="nav-group-label">{navigationGroupLabels[group]}</span>}
-                <Link className={isActive ? "nav-item active" : "nav-item"} href={withCurrentEvent(href, selectedEventId)} aria-current={isActive ? "page" : undefined}>
+                <Link className={isActive ? "nav-item active" : "nav-item"} href={withCurrentEvent(href, selectedEventId)} aria-current={isActive ? "page" : undefined} {...tipProps(label)}>
                   <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
                   <span>{label}</span>
                 </Link>
@@ -256,6 +298,7 @@ export function AppShell({
           <span><strong>Event database</strong><small>Access controlled</small></span>
         </div>
       </aside>
+      {collapsed && tooltip && <div className="sidebar-tooltip" aria-hidden="true" style={{ top: tooltip.top, left: tooltip.left }}>{tooltip.label}</div>}
 
       <main className="workspace">
         <header className="workspace-header">

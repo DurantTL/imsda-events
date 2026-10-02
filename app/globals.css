@@ -8752,3 +8752,76 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .club-age-summary { margin: 8px 0; }
 /* The roster link is part of the help sentence, so it stays inline with the full stop after it. */
 :root .club-going-list .club-roster-age .field-help a { display: inline; min-height: 0; padding-inline: 0; text-decoration: underline; }
+
+/* Staff sidebar: collapse to icons only (#446). Desktop only; the phone layout
+   uses the mobile nav and never shows the sidebar. Text is clipped, not
+   removed, so every link keeps its accessible name. */
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  margin: -10px 4px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.17);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.07);
+  color: #d6e3e9;
+  cursor: pointer;
+  padding: 8px 11px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.sidebar-toggle:hover { background: rgba(255, 255, 255, 0.13); color: white; }
+
+.sidebar-tooltip {
+  position: fixed;
+  z-index: 60;
+  transform: translateY(-50%);
+  border-radius: 8px;
+  background: var(--imsda-navy-deep);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  color: white;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+@media (min-width: 801px) {
+  .app-shell[data-sidebar="collapsed"] { --sidebar-width: 76px; }
+  .app-shell[data-sidebar="collapsed"] .sidebar { padding-inline: 10px; }
+
+  .app-shell[data-sidebar="collapsed"] .brand { justify-content: center; margin-inline: 0; }
+  .app-shell[data-sidebar="collapsed"] .sidebar-toggle { justify-content: center; margin-inline: 0; padding-inline: 0; }
+
+  .app-shell[data-sidebar="collapsed"] .brand > span:last-child,
+  .app-shell[data-sidebar="collapsed"] .sidebar-toggle > span,
+  .app-shell[data-sidebar="collapsed"] .nav-item > span,
+  .app-shell[data-sidebar="collapsed"] .system-navigation-link > span:last-child,
+  .app-shell[data-sidebar="collapsed"] .sidebar-foot > span:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* Headings and the event picker need room; the picker is back after expanding. */
+  .app-shell[data-sidebar="collapsed"] .nav-group-label,
+  .app-shell[data-sidebar="collapsed"] .system-navigation-label,
+  .app-shell[data-sidebar="collapsed"] .event-workspace-label,
+  .app-shell[data-sidebar="collapsed"] .event-picker-wrap { display: none; }
+
+  .app-shell[data-sidebar="collapsed"] .system-navigation { margin-inline: 0; }
+  .app-shell[data-sidebar="collapsed"] .system-navigation-link { justify-content: center; }
+  .app-shell[data-sidebar="collapsed"] .nav-item { justify-content: center; padding-inline: 0; }
+  .app-shell[data-sidebar="collapsed"] .nav-item:hover { transform: none; }
+  .app-shell[data-sidebar="collapsed"] .sidebar-foot { justify-content: center; padding-inline: 0; }
+}
+
+@media (max-width: 800px) { .sidebar-toggle, .sidebar-tooltip { display: none; } }
+@media print { .sidebar-tooltip { display: none !important; } }
