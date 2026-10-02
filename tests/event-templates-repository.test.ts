@@ -138,6 +138,7 @@ function mockApply(options: {
     platformSettings: { upsert: vi.fn().mockResolvedValue({ defaultAttendeeEditPolicy: "VERIFY_EVERY_EDIT" }) },
     event: { create: eventCreate },
     eventMembership: { create: vi.fn().mockResolvedValue({}) },
+    eventModule: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     eventAttendeeType: { createMany: attendeeTypeCreateMany },
     eventAttendeeClassification: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     registrationForm: { findUnique: vi.fn().mockResolvedValue(null), create: registrationFormCreate },

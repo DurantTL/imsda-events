@@ -127,6 +127,27 @@ describe("enable and disable", () => {
   });
 });
 
+describe("module defaults and clone copy", () => {
+  it("writes the audience defaults, and copies a source's rows without touching data", async () => {
+    const created: Array<{ eventId: string; moduleKey: string }> = [];
+    const tx = {
+      eventModule: {
+        createMany: vi.fn(async ({ data }: { data: typeof created }) => { created.push(...data); return { count: data.length }; }),
+        findMany: vi.fn(async () => [{ moduleKey: "honors" }, { moduleKey: "merchandise" }]),
+      },
+    };
+    const { writeDefaultModules, copyEventModules } = await import("@/modules/event-modules/defaults");
+    await writeDefaultModules(tx as never, "new-club", "CLUB");
+    expect(created.map((row) => row.moduleKey).sort()).toEqual(["club-assignments", "event-patches", "honors", "public-content"]);
+    created.length = 0;
+    await writeDefaultModules(tx as never, "new-general", "GENERAL");
+    expect(created).toEqual([{ eventId: "new-general", moduleKey: "public-content" }]);
+    created.length = 0;
+    expect(await copyEventModules(tx as never, "source", "clone")).toBe(2);
+    expect(created).toEqual([{ eventId: "clone", moduleKey: "honors" }, { eventId: "clone", moduleKey: "merchandise" }]);
+  });
+});
+
 describe("ranked seminar detection", () => {
   const definition = (field: Record<string, unknown>) => ({
     sections: [{ id: "section-1", title: "Seminars", fields: [{ id: "field-1", key: "seminar_preferences", label: "Seminar preferences", helpText: "", type: "RANKED_CHOICE", scope: "ATTENDEE", required: true, options: ["A", "B"], ...field }] }],
@@ -137,6 +158,9 @@ describe("ranked seminar detection", () => {
     expect(definitionHasRankedSeminars(definition({ availabilityMode: "NONE" }))).toBe(false);
     expect(definitionHasRankedSeminars(definition({ type: "SELECT", availabilityMode: "NONE" }))).toBe(false);
     expect(definitionHasRankedSeminars(definition({ choiceLimits: {} }))).toBe(true);
+    expect(definitionHasRankedSeminars(definition({ availabilityMode: null, choiceLimits: {} }))).toBe(true);
+    expect(definitionHasRankedSeminars(definition({ availabilityMode: "", choiceLimits: {} }))).toBe(true);
+    expect(definitionHasRankedSeminars(definition({ availabilityMode: "", choiceLimits: null }))).toBe(false);
     expect(definitionHasRankedSeminars(definition({}))).toBe(false);
     expect(definitionHasRankedSeminars({ not: "a definition" })).toBe(false);
     expect(definitionHasRankedSeminars(null)).toBe(false);

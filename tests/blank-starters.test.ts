@@ -142,6 +142,7 @@ describe("applying the blank starters through the create-from-template flow (#59
       platformSettings: { upsert: vi.fn().mockResolvedValue({ defaultAttendeeEditPolicy: "VERIFY_EVERY_EDIT" }) },
       event: { create: eventCreate },
       eventMembership: { create: membershipCreate },
+      eventModule: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
       eventAttendeeType: { createMany: vi.fn() },
       eventAttendeeClassification: { createMany: vi.fn() },
       registrationForm: { findUnique: vi.fn().mockResolvedValue(null), create: registrationFormCreate },

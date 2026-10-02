@@ -33,6 +33,7 @@ import { activeCoordinatorAccountIds } from "@/modules/event-locations/coordinat
 import { parseEventContentItems } from "@/modules/events/content-schemas";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { getEventSettings } from "@/modules/events/repository";
+import { copyEventModules, writeDefaultModules } from "@/modules/event-modules/defaults";
 import { createRegistrationFormFromDefinitionInTransaction } from "@/modules/forms/repository";
 
 export class EventCloneOperationError extends Error {
@@ -337,6 +338,8 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
         },
       });
       await tx.eventMembership.create({ data: { eventId: event.id, userId: actorUserId, role: "EVENT_ADMIN", status: "ACTIVE" } });
+      // The source's module switches carry over (#741); a source with none gets the audience defaults.
+      if (await copyEventModules(tx, input.sourceEventId, event.id) === 0) await writeDefaultModules(tx, event.id, event.audience);
 
       const copied: Record<string, number> = Object.fromEntries(cloneDomainKeys.map((key) => [key, 0]));
       const sourceVersions: { forms: Array<{ sourceFormId: string; versionId: string; versionNumber: number; newFormId: string }>; messageTemplates: Array<{ key: string; versionId: string; versionNumber: number }> } = { forms: [], messageTemplates: [] };

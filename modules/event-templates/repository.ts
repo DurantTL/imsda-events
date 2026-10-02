@@ -17,6 +17,7 @@ import { activeCoordinatorAccountIds } from "@/modules/event-locations/coordinat
 import { normalizeLocationName, shiftCalendarDate } from "@/modules/event-locations/domain";
 import { createRegistrationFormFromTemplateInTransaction } from "@/modules/forms/repository";
 import { getEventSettings } from "@/modules/events/repository";
+import { writeDefaultModules } from "@/modules/event-modules/defaults";
 export class EventTemplateOperationError extends Error {
   constructor(
     public readonly code:
@@ -415,6 +416,7 @@ export async function applyEventTemplate(
       await tx.eventMembership.create({
         data: { eventId: event.id, userId: actorUserId, role: "EVENT_ADMIN", status: "ACTIVE" },
       });
+      await writeDefaultModules(tx, event.id, payload.audience);
 
       if (payload.attendeeTypes.length > 0) {
         await tx.eventAttendeeType.createMany({

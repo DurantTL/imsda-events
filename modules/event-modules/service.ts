@@ -43,7 +43,7 @@ export async function isModuleEnabled(eventId: string, key: EventModuleKey): Pro
 /**
  * Whether a stored form definition has a ranked-interest choice field. Reads the
  * raw JSON the same way the migration's backfill does (RANKED_CHOICE with
- * availabilityMode RANKED_INTEREST, or choice limits when no mode is stored), so
+ * availabilityMode RANKED_INTEREST, or choice limits when the mode is null, empty or missing), so
  * a historic definition that no longer parses strictly still counts.
  */
 export function definitionHasRankedSeminars(definition: unknown): boolean {
@@ -54,14 +54,19 @@ export function definitionHasRankedSeminars(definition: unknown): boolean {
     return Array.isArray(fields) && fields.some((field) => {
       const candidate = field as { type?: unknown; availabilityMode?: unknown; choiceLimits?: unknown } | null;
       if (candidate?.type !== "RANKED_CHOICE") return false;
-      return candidate.availabilityMode === undefined
-        ? candidate.choiceLimits !== undefined
-        : candidate.availabilityMode === "RANKED_INTEREST";
+      // Same truthiness as `getAvailabilityMode`: a null or empty mode is no mode.
+      return candidate.availabilityMode
+        ? candidate.availabilityMode === "RANKED_INTEREST"
+        : candidate.choiceLimits !== undefined && candidate.choiceLimits !== null;
     });
   });
 }
 
-/** The event facts an applicability rule reads. */
+/**
+ * The event facts an applicability rule reads. Not called on a request path
+ * yet: it costs a lookup of every form version of the event, so a caller
+ * should use it only where the seminar rule is actually checked.
+ */
 export async function loadEventModuleContext(eventId: string): Promise<EventModuleContext> {
   const prisma = getPrisma();
   const event = await prisma.event.findUnique({ where: { id: eventId }, select: { audience: true } });

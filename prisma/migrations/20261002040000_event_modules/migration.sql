@@ -27,10 +27,14 @@ INSERT INTO "EventModule" ("id", "eventId", "moduleKey")
 SELECT gen_random_uuid()::text, e."id", 'public-content' FROM "Event" e
 ON CONFLICT ("eventId", "moduleKey") DO NOTHING;
 
--- Honors classes: events that already have honors sessions, and club-audience events.
+-- Honors classes: club-audience events, and events that already have honors
+-- sessions, offerings (an all-sessions class has no session) or enrollments.
 INSERT INTO "EventModule" ("id", "eventId", "moduleKey")
 SELECT gen_random_uuid()::text, e."id", 'honors' FROM "Event" e
-WHERE e."audience" = 'CLUB' OR EXISTS (SELECT 1 FROM "HonorSession" h WHERE h."eventId" = e."id")
+WHERE e."audience" = 'CLUB'
+   OR EXISTS (SELECT 1 FROM "HonorSession" h WHERE h."eventId" = e."id")
+   OR EXISTS (SELECT 1 FROM "HonorOffering" o WHERE o."eventId" = e."id")
+   OR EXISTS (SELECT 1 FROM "HonorEnrollment" x WHERE x."eventId" = e."id")
 ON CONFLICT ("eventId", "moduleKey") DO NOTHING;
 
 -- Event patches and Club assignments: club-audience events.
@@ -48,7 +52,7 @@ ON CONFLICT ("eventId", "moduleKey") DO NOTHING;
 
 -- Seminar assignments: events with a ranked-interest choice field on any form
 -- version (the same test program assignments use: RANKED_CHOICE with
--- availabilityMode RANKED_INTEREST, or, when no mode is stored, choice limits),
+-- availabilityMode RANKED_INTEREST, or, when the mode is missing, null or empty, choice limits),
 -- and events that already ran an assignment.
 INSERT INTO "EventModule" ("id", "eventId", "moduleKey")
 SELECT gen_random_uuid()::text, e."id", 'seminar-assignments' FROM "Event" e
@@ -59,7 +63,7 @@ WHERE EXISTS (SELECT 1 FROM "ProgramAssignmentRun" r WHERE r."eventId" = e."id")
      WHERE f."eventId" = e."id"
        AND jsonb_path_exists(
          v."definition"::jsonb,
-         '$.sections[*].fields[*] ? (@.type == "RANKED_CHOICE" && (@.availabilityMode == "RANKED_INTEREST" || (!exists(@.availabilityMode) && exists(@.choiceLimits))))'
+         '$.sections[*].fields[*] ? (@.type == "RANKED_CHOICE" && (@.availabilityMode == "RANKED_INTEREST" || ((!exists(@.availabilityMode) || @.availabilityMode == null || @.availabilityMode == "") && exists(@.choiceLimits) && @.choiceLimits != null)))'
        )
    )
 ON CONFLICT ("eventId", "moduleKey") DO NOTHING;

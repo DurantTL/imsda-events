@@ -13,6 +13,7 @@ import {
 import { CLUB_EVENT_BILLING_MESSAGE, getEventPublishReadiness } from "@/modules/events/readiness";
 import { collectEventReadinessWarnings } from "@/modules/events/readiness-warnings";
 import type { EventSettingsInput } from "@/modules/events/schemas";
+import { writeDefaultModules } from "@/modules/event-modules/defaults";
 
 export class EventOperationError extends Error {
   constructor(
@@ -278,6 +279,7 @@ export async function createEvent(
         status: "ACTIVE",
       },
     });
+    await writeDefaultModules(tx, event.id, audience);
     if (input.approvedPaymentInstructions) {
       await tx.eventPaymentInstructionVersion.create({
         data: {

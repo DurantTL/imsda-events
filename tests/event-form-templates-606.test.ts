@@ -439,6 +439,7 @@ describe("the #606 starters", () => {
       platformSettings: { upsert: vi.fn().mockResolvedValue({ defaultAttendeeEditPolicy: "VERIFY_EVERY_EDIT" }) },
       event: { create: vi.fn().mockResolvedValue({ ...eventRow, billingMode: starter.billingMode }) },
       eventMembership: { create: vi.fn().mockResolvedValue({}) },
+      eventModule: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
       eventAttendeeType: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
       eventAttendeeClassification: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
       eventLocation: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },

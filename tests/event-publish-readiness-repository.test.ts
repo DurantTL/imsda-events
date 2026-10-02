@@ -471,10 +471,12 @@ describe("createEvent audience (#481)", () => {
     const eventCreate = vi.fn(({ data }: { data: Record<string, unknown> }) =>
       Promise.resolve({ id: "event-new", name: data.name, slug: data.slug, audience: data.audience }));
     const auditLogCreate = vi.fn().mockResolvedValue({});
+    const moduleCreateMany = vi.fn().mockResolvedValue({ count: 0 });
     const tx = {
       platformSettings: { upsert: vi.fn().mockResolvedValue({ defaultAttendeeEditPolicy: "VERIFY_EVERY_EDIT" }) },
       event: { create: eventCreate },
       eventMembership: { create: vi.fn().mockResolvedValue({}) },
+      eventModule: { createMany: moduleCreateMany },
       eventPaymentInstructionVersion: { create: vi.fn().mockResolvedValue({}) },
       auditLog: { create: auditLogCreate },
     };
@@ -483,15 +485,18 @@ describe("createEvent audience (#481)", () => {
       $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
     };
     dependencies.getPrisma.mockReturnValue(createPrisma);
-    return { eventCreate, auditLogCreate };
+    return { eventCreate, auditLogCreate, moduleCreateMany };
   }
 
   it("creates a GENERAL event when no audience is given and records it in EVENT_CREATED", async () => {
-    const { eventCreate, auditLogCreate } = mockCreate();
+    const { eventCreate, auditLogCreate, moduleCreateMany } = mockCreate();
     const { audience: _omitted, ...withoutAudience } = baseInput;
     void _omitted;
 
     await createEvent(withoutAudience, "usr_1");
+
+    // A new event starts with public content only (#741).
+    expect(moduleCreateMany.mock.calls[0][0].data).toEqual([{ eventId: "event-new", moduleKey: "public-content" }]);
 
     expect(eventCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ audience: "GENERAL" }),
@@ -505,9 +510,13 @@ describe("createEvent audience (#481)", () => {
   });
 
   it("records an initial CLUB audience in EVENT_CREATED", async () => {
-    const { eventCreate, auditLogCreate } = mockCreate();
+    const { eventCreate, auditLogCreate, moduleCreateMany } = mockCreate();
 
     await createEvent({ ...baseInput, audience: "CLUB" }, "usr_1");
+
+    // A club event starts with the club modules (#741).
+    expect(moduleCreateMany.mock.calls[0][0].data.map((row: { moduleKey: string }) => row.moduleKey).sort())
+      .toEqual(["club-assignments", "event-patches", "honors", "public-content"]);
 
     expect(eventCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ audience: "CLUB" }),

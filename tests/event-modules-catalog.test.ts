@@ -3,19 +3,28 @@ import { describe, expect, it } from "vitest";
 import { buildMoreDirectoryCards } from "@/components/staff-navigation";
 import { eventPermissions } from "@/modules/access/permissions";
 import {
-  clubFormsAvailable,
+  defaultModuleKeys,
   eventModuleCatalog,
   eventModuleKeys,
+  hiddenModuleCardKeys,
   moduleApplies,
-  moduleVisible,
   type EventModuleContext,
   type EventModuleKey,
 } from "@/modules/event-modules/catalog";
 
-const general: EventModuleContext = { audience: "GENERAL", hasRankedSeminars: false };
-const club: EventModuleContext = { audience: "CLUB", hasRankedSeminars: false };
+const general: EventModuleContext = { audience: "GENERAL" };
+const club: EventModuleContext = { audience: "CLUB" };
 const rankedGeneral: EventModuleContext = { audience: "GENERAL", hasRankedSeminars: true };
 const none = new Set<EventModuleKey>();
+const cardKeys: Record<EventModuleKey, string> = {
+  honors: "honors",
+  "event-patches": "event-patches",
+  "club-assignments": "club-assignments",
+  "seminar-assignments": "program-assignments",
+  merchandise: "merchandise",
+  "attendee-community": "community",
+  "public-content": "event-content",
+};
 
 describe("event module catalog (#741)", () => {
   it("defines every key once, with a title, description, group, and the routes it gates", () => {
@@ -25,6 +34,7 @@ describe("event module catalog (#741)", () => {
       expect(entry.description.length).toBeGreaterThan(10);
       expect(["setup", "content-sales", "people-access", "reports"]).toContain(entry.launcherGroup);
       expect(entry.routes.length).toBeGreaterThan(0);
+      expect(entry.cardKey).toBe(cardKeys[entry.key]);
     }
   });
 
@@ -51,21 +61,21 @@ describe("event module catalog (#741)", () => {
     expect(eventModuleCatalog.filter((entry) => entry.alwaysOn).map((entry) => entry.key)).toEqual(["public-content"]);
   });
 
-  it("shows an entry point when the module is on or applies, so existing data keeps its door", () => {
-    expect(moduleVisible("honors", none, general)).toBe(false);
-    expect(moduleVisible("honors", new Set(["honors"]), general)).toBe(true);
-    expect(moduleVisible("honors", none, club)).toBe(true);
+  it("maps every module to a real More card", () => {
+    const real = new Set(buildMoreDirectoryCards({ permissions: eventPermissions, clubOversight: true, clubEvent: true, isSystemAdmin: true, clubFormsAccess: true, eventQuery: "" }).map((card) => card.key));
+    for (const entry of eventModuleCatalog) expect(real.has(entry.cardKey)).toBe(true);
   });
-});
 
-describe("Club forms availability rule", () => {
-  it("is available on club events and on any event with a club module on, never by default on general events", () => {
-    expect(clubFormsAvailable(none, club)).toBe(true);
-    expect(clubFormsAvailable(none, general)).toBe(false);
-    for (const key of ["honors", "event-patches", "club-assignments"] as const) {
-      expect(clubFormsAvailable(new Set([key]), general)).toBe(true);
-    }
-    expect(clubFormsAvailable(new Set(["merchandise", "seminar-assignments"]), general)).toBe(false);
+  it("starts a new event with public content, plus the club modules for a club audience", () => {
+    expect(defaultModuleKeys("GENERAL")).toEqual(["public-content"]);
+    expect(defaultModuleKeys("CLUB").sort()).toEqual(["club-assignments", "event-patches", "honors", "public-content"]);
+  });
+
+  it("hides an applicable module's card when it is off: visibility reads stored rows only", () => {
+    expect(moduleApplies("honors", club)).toBe(true);
+    expect([...hiddenModuleCardKeys(none, ["honors"])]).toEqual(["honors"]);
+    expect([...hiddenModuleCardKeys(new Set(["honors"]), ["honors"])]).toEqual([]);
+    expect([...hiddenModuleCardKeys(new Set(["merchandise"]), ["seminar-assignments"])]).toEqual(["program-assignments"]);
   });
 });
 
@@ -81,14 +91,13 @@ describe("entry points on the More directory", () => {
   const allowedKeys = (hiddenCardKeys?: ReadonlySet<string>) =>
     buildMoreDirectoryCards({ ...base, hiddenCardKeys }).filter((card) => card.allowed).map((card) => card.key);
 
-  it("hides the Honors Weekend builder and Club forms when listed, and only those", () => {
+  it("hides the Honors Weekend builder when listed, and only that", () => {
     const before = allowedKeys();
-    const after = allowedKeys(new Set(["honors", "club-forms"]));
+    const after = allowedKeys(new Set(["honors"]));
     expect(before).toContain("honors");
-    expect(before).toContain("club-forms");
     expect(after).not.toContain("honors");
-    expect(after).not.toContain("club-forms");
-    expect(after).toEqual(before.filter((key) => key !== "honors" && key !== "club-forms"));
+    expect(after).toContain("club-forms");
+    expect(after).toEqual(before.filter((key) => key !== "honors"));
   });
 
   it("changes nothing when no key is hidden", () => {

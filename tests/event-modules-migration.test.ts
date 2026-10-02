@@ -20,11 +20,17 @@ describe("event modules migration (#741)", () => {
     expect(insertFor("public-content")).not.toContain("WHERE");
     expect(insertFor("honors")).toContain(`"audience" = 'CLUB'`);
     expect(insertFor("honors")).toContain('"HonorSession"');
+    // An all-sessions class has no session, so offerings and enrollments count too.
+    expect(insertFor("honors")).toContain('"HonorOffering"');
+    expect(insertFor("honors")).toContain('"HonorEnrollment"');
     expect(insertFor("event-patches")).toContain(`"audience" = 'CLUB'`);
     expect(insertFor("club-assignments")).toContain(`"audience" = 'CLUB'`);
     expect(insertFor("merchandise")).toContain('"MerchandiseProduct"');
     expect(insertFor("seminar-assignments")).toContain("RANKED_CHOICE");
     expect(insertFor("seminar-assignments")).toContain("RANKED_INTEREST");
+    // A null or empty mode counts as no mode, like getAvailabilityMode.
+    expect(insertFor("seminar-assignments")).toContain('@.availabilityMode == null');
+    expect(insertFor("seminar-assignments")).toContain('@.availabilityMode == ""');
     expect(insertFor("seminar-assignments")).toContain('"ProgramAssignmentRun"');
     expect(insertFor("attendee-community")).toContain('"EventCommunitySettings"');
     expect(insertFor("attendee-community")).toContain('"CommunityPost"');

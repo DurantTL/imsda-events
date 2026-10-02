@@ -35,6 +35,8 @@ export type EventModuleDefinition = {
   description: string;
   appliesTo: EventModuleApplicability;
   launcherGroup: EventModuleLauncherGroup;
+  /** The More directory card (`buildMoreDirectoryCards`) this module owns. */
+  cardKey: string;
   /** On for every event with no stored row; cannot be turned off. */
   alwaysOn: boolean;
   /** Routes the module's entry points open. Listing a route here grants nothing. */
@@ -46,6 +48,7 @@ export type EventModuleDefinition = {
 export const eventModuleCatalog: readonly EventModuleDefinition[] = [
   {
     key: "honors",
+    cardKey: "honors",
     title: "Honors classes",
     description: "Name sessions and set the honor classes, seats, and age limits an Honors Weekend offers.",
     appliesTo: "club-audience",
@@ -56,6 +59,7 @@ export const eventModuleCatalog: readonly EventModuleDefinition[] = [
   },
   {
     key: "event-patches",
+    cardKey: "event-patches",
     title: "Event patches",
     description: "Link the patch or pin a club event gives, so directors are suggested it for every member who attended.",
     appliesTo: "club-audience",
@@ -66,6 +70,7 @@ export const eventModuleCatalog: readonly EventModuleDefinition[] = [
   },
   {
     key: "club-assignments",
+    cardKey: "club-assignments",
     title: "Club assignments",
     description: "Set each registered club's campsite, duty, and activity, then email directors after review.",
     appliesTo: "club-audience",
@@ -76,6 +81,7 @@ export const eventModuleCatalog: readonly EventModuleDefinition[] = [
   },
   {
     key: "seminar-assignments",
+    cardKey: "program-assignments",
     title: "Seminar assignments",
     description: "Turn attendee rankings and room limits into reviewed, printable session rosters.",
     appliesTo: "ranked-seminar",
@@ -86,6 +92,7 @@ export const eventModuleCatalog: readonly EventModuleDefinition[] = [
   },
   {
     key: "merchandise",
+    cardKey: "merchandise",
     title: "Merchandise",
     description: "Add products, set artwork and pricing, and control what is available at registration.",
     appliesTo: "any",
@@ -96,6 +103,7 @@ export const eventModuleCatalog: readonly EventModuleDefinition[] = [
   },
   {
     key: "attendee-community",
+    cardKey: "community",
     title: "Attendee community",
     description: "Open or pause discussion, review attendee reports, and moderate posts and replies.",
     appliesTo: "any",
@@ -106,6 +114,7 @@ export const eventModuleCatalog: readonly EventModuleDefinition[] = [
   },
   {
     key: "public-content",
+    cardKey: "event-content",
     title: "Public content",
     description: "Speaker bios, seminar descriptions, lodging, schedules, and downloads shown publicly.",
     appliesTo: "any",
@@ -128,11 +137,15 @@ export function eventModuleDefinition(key: EventModuleKey): EventModuleDefinitio
   return definitionsByKey.get(key)!;
 }
 
-/** The facts an applicability rule reads. */
+/**
+ * The facts an applicability rule reads. Only `audience` is needed for the
+ * club modules; `hasRankedSeminars` is for the seminar rule and is left out
+ * wherever that module is not checked.
+ */
 export type EventModuleContext = {
   audience: "GENERAL" | "CLUB";
   /** The event has a ranked-interest seminar field on a form, or has run an assignment. */
-  hasRankedSeminars: boolean;
+  hasRankedSeminars?: boolean;
 };
 
 export function moduleApplies(key: EventModuleKey, context: EventModuleContext): boolean {
@@ -142,26 +155,27 @@ export function moduleApplies(key: EventModuleKey, context: EventModuleContext):
     case "club-audience":
       return context.audience === "CLUB";
     case "ranked-seminar":
-      return context.hasRankedSeminars;
+      return context.hasRankedSeminars === true;
   }
 }
 
 /**
- * Whether an entry point for a module shows: the module is on for the event
- * (data already there keeps working) or it applies to the event's type.
+ * The modules a new event starts with: public content for every event, and the
+ * club modules for a club-audience event. Everything else is off until a
+ * system administrator turns it on.
  */
-export function moduleVisible(key: EventModuleKey, enabled: ReadonlySet<EventModuleKey>, context: EventModuleContext): boolean {
-  return enabled.has(key) || moduleApplies(key, context);
+export function defaultModuleKeys(audience: "GENERAL" | "CLUB"): EventModuleKey[] {
+  return eventModuleCatalog
+    .filter((entry) => entry.alwaysOn || (entry.appliesTo === "club-audience" && audience === "CLUB"))
+    .map((entry) => entry.key);
 }
 
-/** Modules whose events have club-form work to do. */
-const clubFormsModules: readonly EventModuleKey[] = ["honors", "event-patches", "club-assignments"];
-
 /**
- * Club forms (#610) belong to no event, so they are not a module. Their entry
- * point is available on a club-audience event, or on any event where a club
- * module is enabled. #721's per-form roster setting is unaffected.
+ * Visibility reads stored rows only (#741): a module that is off is hidden even
+ * where it applies, so turning it off, and its audit entry, mean what they say.
+ * New events get their rows at creation (`defaults.ts`). Returns the More card
+ * keys of the given modules that are off for the event.
  */
-export function clubFormsAvailable(enabled: ReadonlySet<EventModuleKey>, context: Pick<EventModuleContext, "audience">): boolean {
-  return context.audience === "CLUB" || clubFormsModules.some((key) => enabled.has(key));
+export function hiddenModuleCardKeys(enabled: ReadonlySet<EventModuleKey>, gated: readonly EventModuleKey[]): Set<string> {
+  return new Set(gated.filter((key) => !enabled.has(key)).map((key) => eventModuleDefinition(key).cardKey));
 }
