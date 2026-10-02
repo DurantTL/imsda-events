@@ -69,4 +69,16 @@ describe("registrations export with a choice-answer filter", () => {
     const response = await call("");
     expect((await response.text()).split("\r\n")[0]).toContain("Account holder");
   });
+
+  it("refuses a user who can view reports but not sensitive data, without reading registrations", async () => {
+    dependencies.requirePermission.mockResolvedValue({ user: { globalRole: null }, membership: { role: "READ_ONLY_STAFF", permissions: ["VIEW_REPORTS"] } });
+    const response = await call("?answerQuestion=ATTENDEE:meal_preference&answerValue=Vegan");
+    expect(response.status).toBe(403);
+    expect(await response.text()).not.toContain("WR26-");
+  });
+
+  it("still lets that user take the general export, whose permission is unchanged", async () => {
+    dependencies.requirePermission.mockResolvedValue({ user: { globalRole: null }, membership: { role: "READ_ONLY_STAFF", permissions: ["VIEW_REPORTS"] } });
+    expect((await call("")).status).toBe(200);
+  });
 });

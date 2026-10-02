@@ -16,6 +16,8 @@ export type ChoiceFilterView = {
     value: string | null;
     choices: ChoiceCount[];
     unanswered: number;
+    /** Stored values the question does not offer; counted, never named. */
+    other: number;
     matches: ChoiceMatch[];
   } | null;
 };
@@ -94,6 +96,7 @@ export function ChoiceAnswerFilter({
                 </Link>
               </li>
             ))}
+            {selected.other > 0 && <li><span className="choice-chip muted"><span>Other / no longer offered</span><strong>{selected.other}</strong></span></li>}
             {selected.unanswered > 0 && <li><span className="choice-chip muted"><span>No answer</span><strong>{selected.unanswered}</strong></span></li>}
           </ul>
           {selected.value && (

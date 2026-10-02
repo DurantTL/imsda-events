@@ -2,6 +2,7 @@ import {
   registrationFormDefinitionSchema,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
+import { isLinkedToBlockedField } from "@/modules/forms/field-dependency-walk";
 import { SENSITIVE_FIELD_STEMS } from "@/modules/forms/sensitive-fields";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 
@@ -13,9 +14,16 @@ import type { RegistrationRecord } from "@/modules/registrations/repository";
  *
  * Privacy: only choice answers can be filtered. Free text never can, and
  * neither can a question that reads as health, dietary need, allergy, custody
- * or otherwise private (see `modules/forms/sensitive-fields.ts`). This runs on
- * the server; the question id from the URL is looked up in the set of
- * filterable questions and ignored when it is not in it.
+ * or otherwise private (see `modules/forms/sensitive-fields.ts`), sits in such
+ * a section, or is wired by `conditional` / `optionalWhen` to such a question.
+ * This runs on the server; the question id from the URL is looked up in the
+ * set of filterable questions and ignored when it is not in it.
+ *
+ * Eligibility is decided per form version. A registration is read for a
+ * question only when ITS OWN definition has that question as filterable, so a
+ * later version that reuses a key for free text is never read as a choice.
+ * Only values the question offers are ever shown or counted by name; any other
+ * stored value falls into an "other" bucket that carries no text.
  */
 
 export const CHOICE_FILTER_QUESTION_PARAM = "answerQuestion";
@@ -31,10 +39,11 @@ const FILTERABLE_TYPES: ReadonlySet<string> = new Set(["SELECT", "RADIO", "MULTI
  * ("Vegetarian", "Vegan", "Gluten-free"). The shared sensitive list treats
  * them as sensitive anywhere, which is right for free text and for a
  * question's own wording. They are skipped only when reading a choice's
- * option text, so an everyday meal menu stays filterable while a question
- * that asks about allergies or medical needs, or has such an option, never is.
+ * option text, so an everyday meal menu stays filterable. "Nut free" and
+ * "lactose" are allergy signals and stay blocked. This is a heuristic: an
+ * explicit staff-set "filterable" flag on a question is a future decision.
  */
-const MEAL_MENU_STEMS: ReadonlySet<string> = new Set(["vegetarian", "vegan", "gluten", "lactose", "nut\\s*free"]);
+const MEAL_MENU_STEMS: ReadonlySet<string> = new Set(["vegetarian", "vegan", "gluten"]);
 
 const QUESTION_PATTERN = new RegExp(`\\b(?:${SENSITIVE_FIELD_STEMS.join("|")})`, "i");
 const OPTION_PATTERN = new RegExp(
@@ -57,42 +66,60 @@ export type ChoiceQuestion = {
   choices: Array<{ value: string; label: string }>;
 };
 
-/** Whether a question may be filtered on at all. */
+type FilterableFieldShape = Pick<RegistrationFormField, "type" | "key" | "label" | "helpText" | "options" | "optionLabels" | "optionSource">;
+
+/** The field's own wording (or its section's title) reads as sensitive, or it is the payment-method field. */
+function isBlockedByItself(field: FilterableFieldShape, paymentMethodFieldKey: string | null | undefined, sectionTitle: string) {
+  if (paymentMethodFieldKey && field.key === paymentMethodFieldKey) return true;
+  if ([words(field.key), field.label, field.helpText ?? "", sectionTitle].some((text) => QUESTION_PATTERN.test(text))) return true;
+  return [...field.options, ...Object.values(field.optionLabels ?? {})].some((text) => OPTION_PATTERN.test(words(text)));
+}
+
+/**
+ * Whether a question may be filtered on at all. With `context` (the form's
+ * fields and section titles) a question is also ruled out when anything in its
+ * `conditional` / `optionalWhen` chain, in either direction, is blocked.
+ */
 export function isFilterableChoiceField(
-  field: Pick<RegistrationFormField, "type" | "key" | "label" | "helpText" | "options" | "optionLabels" | "optionSource">,
+  field: FilterableFieldShape,
   paymentMethodFieldKey?: string | null,
+  context?: { allFields: readonly RegistrationFormField[]; sectionTitleOf: (field: RegistrationFormField) => string },
 ) {
   if (!FILTERABLE_TYPES.has(field.type)) return false;
   // Directory-sourced lists (churches, clubs) are not a short menu of choices.
   if (field.optionSource) return false;
-  if (paymentMethodFieldKey && field.key === paymentMethodFieldKey) return false;
   if (field.options.length === 0) return false;
-  if ([words(field.key), field.label, field.helpText ?? ""].some((text) => QUESTION_PATTERN.test(text))) return false;
-  if ([...field.options, ...Object.values(field.optionLabels ?? {})].some((text) => OPTION_PATTERN.test(words(text)))) return false;
+  const titleOf = context?.sectionTitleOf ?? ((): string => "");
+  if (isBlockedByItself(field, paymentMethodFieldKey, titleOf(field as RegistrationFormField))) return false;
+  if (context && isLinkedToBlockedField(field as RegistrationFormField, context.allFields, (other) => isBlockedByItself(other, paymentMethodFieldKey, titleOf(other)))) return false;
   return true;
 }
 
-const definitionCache = new WeakMap<object, ChoiceQuestion[]>();
+const definitionCache = new WeakMap<object, Map<string, ChoiceQuestion>>();
 
-function questionsFromDefinition(definition: Record<string, unknown>): ChoiceQuestion[] {
+/** The filterable questions of ONE form definition, by id. Empty when it does not parse. */
+function questionsFromDefinition(definition: Record<string, unknown>): Map<string, ChoiceQuestion> {
   const cached = definitionCache.get(definition);
   if (cached) return cached;
   const parsed = registrationFormDefinitionSchema.safeParse(definition);
-  const questions: ChoiceQuestion[] = [];
+  const questions = new Map<string, ChoiceQuestion>();
   if (parsed.success) {
     const paymentKey = parsed.data.payment?.paymentMethodFieldKey ?? null;
-    for (const section of parsed.data.sections) {
-      for (const field of section.fields) {
-        if (!isFilterableChoiceField(field, paymentKey)) continue;
-        questions.push({
-          id: `${field.scope}:${field.key}`,
-          key: field.key,
-          label: field.label,
-          scope: field.scope === "ATTENDEE" ? "ATTENDEE" : "REGISTRATION",
-          multi: field.type === "MULTISELECT",
-          choices: field.options.map((option) => ({ value: option, label: field.optionLabels?.[option] ?? option })),
-        });
-      }
+    const allFields = parsed.data.sections.flatMap((section) => section.fields);
+    const titles = new Map<RegistrationFormField, string>();
+    for (const section of parsed.data.sections) for (const field of section.fields) titles.set(field, section.title);
+    const context = { allFields, sectionTitleOf: (field: RegistrationFormField) => titles.get(field) ?? "" };
+    for (const field of allFields) {
+      if (!isFilterableChoiceField(field, paymentKey, context)) continue;
+      const id = `${field.scope}:${field.key}`;
+      questions.set(id, {
+        id,
+        key: field.key,
+        label: field.label,
+        scope: field.scope === "ATTENDEE" ? "ATTENDEE" : "REGISTRATION",
+        multi: field.type === "MULTISELECT",
+        choices: field.options.map((option) => ({ value: option, label: field.optionLabels?.[option] ?? option })),
+      });
     }
   }
   definitionCache.set(definition, questions);
@@ -105,7 +132,7 @@ export function listChoiceQuestions(registrations: readonly RegistrationRecord[]
   for (const registration of registrations) {
     const definition = registration.publicSubmission?.definition;
     if (!definition) continue;
-    for (const question of questionsFromDefinition(definition)) {
+    for (const question of questionsFromDefinition(definition).values()) {
       const existing = byId.get(question.id);
       if (!existing) {
         byId.set(question.id, { ...question, choices: [...question.choices] });
@@ -140,25 +167,39 @@ function labelFor(question: ChoiceQuestion, value: string) {
   return question.choices.find((choice) => choice.value === value)?.label ?? value;
 }
 
-/** Every (person, chosen values) the question holds for one registration. */
-function answersOf(registration: RegistrationRecord, question: ChoiceQuestion): Array<{ attendeeId: string | null; personName: string; values: string[] }> {
+type PersonAnswer = {
+  attendeeId: string | null;
+  personName: string;
+  /** Values the question offers. */
+  known: string[];
+  /** True when something else was stored (never shown). */
+  hasOther: boolean;
+};
+
+/**
+ * Every person's answer to the question on one registration, or null when the
+ * registration's own form version does not have it as a filterable question
+ * (it was free text there, sensitive, or absent): such a registration is not
+ * read at all, so it is neither listed nor counted as "no answer".
+ */
+function answersOf(registration: RegistrationRecord, question: ChoiceQuestion): PersonAnswer[] | null {
+  const definition = registration.publicSubmission?.definition;
+  if (!definition || !questionsFromDefinition(definition).has(question.id)) return null;
+  const offered = new Set(question.choices.map((choice) => choice.value));
+  const read = (attendeeId: string | null, personName: string, raw: unknown): PersonAnswer => {
+    const values = answerValues(raw);
+    const known = [...new Set(values.filter((value) => offered.has(value)))];
+    return { attendeeId, personName, known, hasOther: values.some((value) => !offered.has(value)) };
+  };
   if (question.scope === "REGISTRATION") {
     const name = `${registration.accountHolder.firstName} ${registration.accountHolder.lastName}`.trim();
-    return [{
-      attendeeId: null,
-      personName: name,
-      values: answerValues(registration.publicSubmission?.responses?.[question.key]),
-    }];
+    return [read(null, name, registration.publicSubmission?.responses?.[question.key])];
   }
   return registration.attendees.map((attendee, index) => {
     const current = Object.keys(attendee.responses ?? {}).length > 0
       ? attendee.responses
       : registration.publicSubmission?.attendeeResponses[index] ?? {};
-    return {
-      attendeeId: attendee.id,
-      personName: `${attendee.firstName} ${attendee.lastName}`.trim(),
-      values: answerValues((current as Record<string, unknown>)[question.key]),
-    };
+    return read(attendee.id, `${attendee.firstName} ${attendee.lastName}`.trim(), (current as Record<string, unknown>)[question.key]);
   });
 }
 
@@ -169,29 +210,33 @@ function countedRegistrations(registrations: readonly RegistrationRecord[]) {
 export type ChoiceCount = { value: string; label: string; count: number };
 
 /**
- * People (or registrations, for a registration-wide question) per choice, plus
- * how many gave no answer. Built from the same rows `matchesForChoice`
- * returns, so a count always equals the list it opens.
+ * People (or registrations, for a registration-wide question) per offered
+ * choice, how many stored something the question does not offer (`other`,
+ * never shown by name), and how many gave no answer among registrations whose
+ * form has the question. Built from the same rows `matchesForChoice` returns,
+ * so a count always equals the list it opens.
  */
 export function choiceAnswerCounts(registrations: readonly RegistrationRecord[], question: ChoiceQuestion) {
   const counts = new Map<string, number>(question.choices.map((choice) => [choice.value, 0]));
   let unanswered = 0;
+  let other = 0;
   for (const registration of countedRegistrations(registrations)) {
-    for (const answer of answersOf(registration, question)) {
-      if (answer.values.length === 0) unanswered += 1;
-      for (const value of answer.values) counts.set(value, (counts.get(value) ?? 0) + 1);
+    for (const answer of answersOf(registration, question) ?? []) {
+      if (answer.known.length === 0 && !answer.hasOther) unanswered += 1;
+      if (answer.hasOther) other += 1;
+      for (const value of answer.known) counts.set(value, (counts.get(value) ?? 0) + 1);
     }
   }
   const choices: ChoiceCount[] = [...counts.entries()].map(([value, count]) => ({ value, label: labelFor(question, value), count }));
-  return { choices, unanswered };
+  return { choices, unanswered, other };
 }
 
 /** The people who chose `value`, one row each. */
 export function matchesForChoice(registrations: readonly RegistrationRecord[], question: ChoiceQuestion, value: string): ChoiceMatch[] {
   const matches: ChoiceMatch[] = [];
   for (const registration of countedRegistrations(registrations)) {
-    for (const answer of answersOf(registration, question)) {
-      if (!answer.values.includes(value)) continue;
+    for (const answer of answersOf(registration, question) ?? []) {
+      if (!answer.known.includes(value)) continue;
       matches.push({
         registrationId: registration.id,
         confirmationCode: registration.confirmationCode,

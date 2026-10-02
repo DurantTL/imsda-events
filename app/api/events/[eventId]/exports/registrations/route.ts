@@ -35,6 +35,10 @@ async function getHandler(
     const searchParams = new URL(request.url).searchParams;
     const choiceQuestion = searchParams.get(CHOICE_FILTER_QUESTION_PARAM);
     if (choiceQuestion) {
+      // The People page needs VIEW_SENSITIVE_DATA to see attendee names; the filtered list is names and answers.
+      if (!actorPermissions.has("VIEW_SENSITIVE_DATA")) {
+        throw new AccessDeniedError("Your event role does not include access to attendee names and answers.", 403, "PERMISSION_DENIED");
+      }
       const choice = resolveChoiceFilter(registrations, { question: choiceQuestion, value: searchParams.get(CHOICE_FILTER_VALUE_PARAM) });
       if (!choice || !choice.value) {
         return Response.json({ error: "CHOICE_FILTER_UNAVAILABLE", message: "That question cannot be used to filter an export." }, { status: 400 });
