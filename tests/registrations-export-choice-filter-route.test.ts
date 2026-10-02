@@ -75,6 +75,7 @@ describe("registrations export with a choice-answer filter", () => {
     const response = await call("?answerQuestion=ATTENDEE:meal_preference&answerValue=Vegan");
     expect(response.status).toBe(403);
     expect(await response.text()).not.toContain("WR26-");
+    expect(dependencies.listRegistrations).not.toHaveBeenCalled();
   });
 
   it("still lets that user take the general export, whose permission is unchanged", async () => {

@@ -79,4 +79,13 @@ describe("People page with a choice-answer filter", () => {
     expect(props.initialRegistrations).toHaveLength(2);
     expect(props.matchingPersonFilter).toBe(false);
   });
+
+  it("hides the export button from staff who cannot use the filtered export", async () => {
+    const query = { event: "evt", answerQuestion: "ATTENDEE:meal_preference", answerValue: "Vegan" };
+    const event = { id: "evt", slug: "wr", timezone: "UTC", waitlistEnabled: false };
+    dependencies.resolveEventContext.mockResolvedValue({ event, permissions: ["VIEW_SENSITIVE_DATA"] });
+    expect(await render(query)).not.toContain("Export this list");
+    dependencies.resolveEventContext.mockResolvedValue({ event, permissions: ["VIEW_SENSITIVE_DATA", "VIEW_REPORTS"] });
+    expect(await render(query)).toContain("Export this list");
+  });
 });

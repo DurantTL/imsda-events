@@ -76,22 +76,23 @@ function isBlockedByItself(field: FilterableFieldShape, paymentMethodFieldKey: s
 }
 
 /**
- * Whether a question may be filtered on at all. With `context` (the form's
- * fields and section titles) a question is also ruled out when anything in its
- * `conditional` / `optionalWhen` chain, in either direction, is blocked.
+ * Whether a question may be filtered on at all. Internal, and `context` (the
+ * form's fields and section titles) is required, so no caller can skip the
+ * check that rules out a question when anything in its `conditional` /
+ * `optionalWhen` chain, in either direction, is blocked.
  */
-export function isFilterableChoiceField(
-  field: FilterableFieldShape,
-  paymentMethodFieldKey?: string | null,
-  context?: { allFields: readonly RegistrationFormField[]; sectionTitleOf: (field: RegistrationFormField) => string },
+function isFilterableChoiceField(
+  field: RegistrationFormField,
+  paymentMethodFieldKey: string | null | undefined,
+  context: { allFields: readonly RegistrationFormField[]; sectionTitleOf: (field: RegistrationFormField) => string },
 ) {
   if (!FILTERABLE_TYPES.has(field.type)) return false;
   // Directory-sourced lists (churches, clubs) are not a short menu of choices.
   if (field.optionSource) return false;
   if (field.options.length === 0) return false;
-  const titleOf = context?.sectionTitleOf ?? ((): string => "");
-  if (isBlockedByItself(field, paymentMethodFieldKey, titleOf(field as RegistrationFormField))) return false;
-  if (context && isLinkedToBlockedField(field as RegistrationFormField, context.allFields, (other) => isBlockedByItself(other, paymentMethodFieldKey, titleOf(other)))) return false;
+  const titleOf = context.sectionTitleOf;
+  if (isBlockedByItself(field, paymentMethodFieldKey, titleOf(field))) return false;
+  if (isLinkedToBlockedField(field, context.allFields, (other) => isBlockedByItself(other, paymentMethodFieldKey, titleOf(other)))) return false;
   return true;
 }
 

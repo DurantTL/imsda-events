@@ -5,7 +5,6 @@ import {
   choiceAnswerCounts,
   choiceExportRows,
   filterRegistrationsByChoice,
-  isFilterableChoiceField,
   listChoiceQuestions,
   matchesForChoice,
   resolveChoiceFilter,
@@ -93,12 +92,14 @@ describe("choice answer filter", () => {
   });
 
   it("classifies fields: allergy or medical wording blocks a choice question, a plain meal menu does not", () => {
-    const base = { helpText: "", optionLabels: undefined, optionSource: undefined };
-    expect(isFilterableChoiceField({ ...base, type: "SELECT", key: "meal_preference", label: "Meal preference", options: ["Standard", "Vegetarian", "Vegan"] })).toBe(true);
-    expect(isFilterableChoiceField({ ...base, type: "SELECT", key: "food_needs", label: "Food allergies", options: ["None", "Nuts"] })).toBe(false);
-    expect(isFilterableChoiceField({ ...base, type: "RADIO", key: "plan", label: "Plan", options: ["None", "Medical assistance"] })).toBe(false);
-    expect(isFilterableChoiceField({ ...base, type: "LONG_TEXT", key: "meal_notes", label: "Meal notes", options: [] })).toBe(false);
-    expect(isFilterableChoiceField({ ...base, type: "SELECT", key: "meal_preference", label: "Meal preference", options: ["A", "B"] }, "meal_preference")).toBe(false);
+    const keys = keysOffered([
+      { key: "meal_preference", label: "Meal preference", type: "SELECT", options: ["Standard", "Vegetarian", "Vegan"] },
+      { key: "food_needs", label: "Food allergies", type: "SELECT", options: ["None", "Nuts"] },
+      { key: "plan", label: "Plan", type: "RADIO", options: ["None", "Medical assistance"] },
+      { key: "meal_notes", label: "Meal notes", type: "LONG_TEXT", options: [] },
+      { key: "pay_by", label: "Pay by", type: "SELECT", options: ["Card", "Check"] },
+    ], "pay_by");
+    expect(keys).toEqual(["meal_preference"]);
   });
 
   it("handles a registration-wide multi-select by value", () => {
@@ -173,10 +174,12 @@ describe("choice answer filter", () => {
   });
 
   it("keeps nut-free and lactose options out; vegetarian, vegan and gluten stay in", () => {
-    const base = { helpText: "", optionLabels: undefined, optionSource: undefined, key: "menu", label: "Menu", type: "SELECT" } as never;
-    expect(isFilterableChoiceField({ ...(base as object), options: ["Standard", "Gluten-free"] } as never)).toBe(true);
-    expect(isFilterableChoiceField({ ...(base as object), options: ["Standard", "Nut free"] } as never)).toBe(false);
-    expect(isFilterableChoiceField({ ...(base as object), options: ["Standard", "Lactose intolerant"] } as never)).toBe(false);
+    const keys = keysOffered([
+      { key: "menu_a", label: "Menu", type: "SELECT", options: ["Standard", "Gluten-free"] },
+      { key: "menu_b", label: "Menu", type: "SELECT", options: ["Standard", "Nut free"] },
+      { key: "menu_c", label: "Menu", type: "SELECT", options: ["Standard", "Lactose intolerant"] },
+    ]);
+    expect(keys).toEqual(["menu_a"]);
   });
 
   it("neutralises spreadsheet formulas in a chosen value and a name through toCsv", () => {
@@ -199,4 +202,19 @@ function withFields(source: Record<string, unknown>, change: (fields: Array<Reco
       section.id === "wr_attendee" ? { ...section, fields: change(section.fields) } : section
     )),
   } as Record<string, unknown>;
+}
+
+/** Question keys offered for a form holding only these fields (the one public way in). */
+function keysOffered(fields: Array<{ key: string; label: string; type: string; options: string[] }>, paymentKey?: string) {
+  const form = {
+    title: "Synthetic form",
+    description: "",
+    confirmationMessage: "Thanks",
+    sections: [{ id: "only_section", title: "Choices", description: "", fields: fields.map((field, index) => ({
+      id: `field_${index}`, helpText: "", scope: field.key === paymentKey ? "REGISTRATION" : "ATTENDEE", required: false, ...field,
+    })) }],
+    ...(paymentKey ? { payment: { enabled: true, currency: "USD", paymentMethodFieldKey: paymentKey, cardOptionValue: "Card" } } : {}),
+  } as Record<string, unknown>;
+  const holder = { ...registration("K1", "CONFIRMED", []), publicSubmission: { definition: form, responses: {}, attendeeResponses: [] } } as unknown as RegistrationRecord;
+  return listChoiceQuestions([holder]).map((question) => question.key);
 }

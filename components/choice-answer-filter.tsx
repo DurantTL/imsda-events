@@ -34,11 +34,14 @@ export function ChoiceAnswerFilter({
   eventId,
   view,
   carry,
+  canExport,
 }: {
   eventId: string;
   view: ChoiceFilterView;
   /** Other URL parameters to keep (status filter, location). */
   carry: Record<string, string | undefined>;
+  /** VIEW_REPORTS and VIEW_SENSITIVE_DATA: the filtered export needs both, so others get no button that would refuse. */
+  canExport: boolean;
 }) {
   if (view.questions.length === 0) return null;
   const { selected } = view;
@@ -50,7 +53,7 @@ export function ChoiceAnswerFilter({
     return params;
   }
   const clearHref = `/people?${query({}).toString()}`;
-  const exportHref = selected?.value
+  const exportHref = canExport && selected?.value
     ? `/api/events/${encodeURIComponent(eventId)}/exports/registrations?${new URLSearchParams([
         ...(carry.location ? [["location", carry.location]] : []),
         [CHOICE_FILTER_QUESTION_PARAM, selected.id],
