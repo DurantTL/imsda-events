@@ -7,8 +7,6 @@ import {
   ArrowRightLeft,
   ChevronDown,
   Eye,
-  PanelLeftClose,
-  PanelLeftOpen,
   ShieldCheck,
   UsersRound,
 } from "lucide-react";
@@ -18,11 +16,13 @@ import { rememberLastUsedEvent } from "@/components/remember-last-event";
 import { guardedNavigate } from "@/components/unsaved-changes-registry";
 import { eventToRemember, resolveShellEvent, switchEvent } from "@/components/shell-event-selection";
 import {
+  applySidebarAttribute,
   getSidebarCollapsedServerSnapshot,
   getSidebarCollapsedSnapshot,
   setSidebarCollapsed,
   subscribeSidebarCollapsed,
 } from "@/components/sidebar-collapse";
+import { SidebarToggle } from "@/components/sidebar-toggle";
 import { StaffAccountMenu } from "@/components/staff-account-menu";
 import type { EventPermission } from "@/modules/access/permissions";
 import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-contexts";
@@ -76,6 +76,8 @@ export function AppShell({
   // render match; the saved choice is applied after mount.
   const collapsed = useSyncExternalStore(subscribeSidebarCollapsed, getSidebarCollapsedSnapshot, getSidebarCollapsedServerSnapshot);
   const [tooltip, setTooltip] = useState<{ label: string; top: number; left: number } | null>(null);
+  // Keep <html> in step with the choice, for the stylesheet (and when the inline script did not run).
+  useEffect(() => { applySidebarAttribute(collapsed); }, [collapsed]);
   function toggleCollapsed() {
     setTooltip(null);
     setSidebarCollapsed(!collapsed);
@@ -217,26 +219,16 @@ export function AppShell({
   }
 
   return (
-    <div className="app-shell" data-sidebar={collapsed ? "collapsed" : "expanded"}
+    <div className="app-shell" 
       onKeyDown={(event) => { if (event.key === "Escape" && tooltip) setTooltip(null); }}>
       <a className="skip-link" href="#workspace-content">Skip to main content</a>
-      <aside className="sidebar" aria-label="Application navigation">
+      <aside className="sidebar" aria-label="Application navigation" onScrollCapture={() => setTooltip(null)}>
         <Link className="brand" href="/" aria-label="IMSDA Events home" {...tipProps("IMSDA Events home")}>
           <BrandMark />
           <span><strong>IMSDA</strong><small>Events</small></span>
         </Link>
 
-        <button
-          type="button"
-          className="sidebar-toggle"
-          aria-expanded={!collapsed}
-          aria-controls="primary-navigation"
-          {...tipProps("Expand sidebar")}
-          onClick={toggleCollapsed}
-        >
-          {collapsed ? <PanelLeftOpen aria-hidden="true" size={18} /> : <PanelLeftClose aria-hidden="true" size={18} />}
-          <span>{collapsed ? "Expand sidebar" : "Collapse sidebar"}</span>
-        </button>
+        <SidebarToggle collapsed={collapsed} onToggle={toggleCollapsed} tipProps={tipProps("Expand sidebar")} />
 
         {user.globalRole === "SYSTEM_ADMIN" && (
           <div className="system-navigation">

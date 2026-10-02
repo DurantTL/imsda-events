@@ -8790,17 +8790,17 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 }
 
 @media (min-width: 801px) {
-  .app-shell[data-sidebar="collapsed"] { --sidebar-width: 76px; }
-  .app-shell[data-sidebar="collapsed"] .sidebar { padding-inline: 10px; }
+  html[data-sidebar="collapsed"] { --sidebar-width: 76px; }
+  html[data-sidebar="collapsed"] .sidebar { padding-inline: 10px; }
 
-  .app-shell[data-sidebar="collapsed"] .brand { justify-content: center; margin-inline: 0; }
-  .app-shell[data-sidebar="collapsed"] .sidebar-toggle { justify-content: center; margin-inline: 0; padding-inline: 0; }
+  html[data-sidebar="collapsed"] .brand { justify-content: center; margin-inline: 0; }
+  html[data-sidebar="collapsed"] .sidebar-toggle { justify-content: center; margin-inline: 0; padding-inline: 0; }
 
-  .app-shell[data-sidebar="collapsed"] .brand > span:last-child,
-  .app-shell[data-sidebar="collapsed"] .sidebar-toggle > span,
-  .app-shell[data-sidebar="collapsed"] .nav-item > span,
-  .app-shell[data-sidebar="collapsed"] .system-navigation-link > span:last-child,
-  .app-shell[data-sidebar="collapsed"] .sidebar-foot > span:last-child {
+  html[data-sidebar="collapsed"] .brand > span:last-child,
+  html[data-sidebar="collapsed"] .sidebar-toggle > span,
+  html[data-sidebar="collapsed"] .nav-item > span,
+  html[data-sidebar="collapsed"] .system-navigation-link > span:last-child,
+  html[data-sidebar="collapsed"] .sidebar-foot > span:last-child {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -8810,17 +8810,45 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
     white-space: nowrap;
   }
 
-  /* Headings and the event picker need room; the picker is back after expanding. */
-  .app-shell[data-sidebar="collapsed"] .nav-group-label,
-  .app-shell[data-sidebar="collapsed"] .system-navigation-label,
-  .app-shell[data-sidebar="collapsed"] .event-workspace-label,
-  .app-shell[data-sidebar="collapsed"] .event-picker-wrap { display: none; }
+  /* Headings and the sidebar event picker need room; the header picker replaces it. */
+  html[data-sidebar="collapsed"] .nav-group-label,
+  html[data-sidebar="collapsed"] .system-navigation-label,
+  html[data-sidebar="collapsed"] .event-workspace-label,
+  html[data-sidebar="collapsed"] .event-picker-wrap { display: none; }
 
-  .app-shell[data-sidebar="collapsed"] .system-navigation { margin-inline: 0; }
-  .app-shell[data-sidebar="collapsed"] .system-navigation-link { justify-content: center; }
-  .app-shell[data-sidebar="collapsed"] .nav-item { justify-content: center; padding-inline: 0; }
-  .app-shell[data-sidebar="collapsed"] .nav-item:hover { transform: none; }
-  .app-shell[data-sidebar="collapsed"] .sidebar-foot { justify-content: center; padding-inline: 0; }
+  /* The sidebar picker is gone, so the header picker takes over: the current
+     event stays visible and changeable without expanding the sidebar. */
+  html[data-sidebar="collapsed"] .workspace-header .mobile-event-picker {
+    position: relative;
+    order: 1;
+    display: flex;
+    flex: 0 1 280px;
+    min-width: 0;
+    align-items: center;
+  }
+  html[data-sidebar="collapsed"] .workspace-header .header-actions { order: 2; }
+  html[data-sidebar="collapsed"] .workspace-header .mobile-event-picker select {
+    width: 100%;
+    min-height: 40px;
+    appearance: none;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: white;
+    color: var(--imsda-navy);
+    padding: 8px 34px 8px 12px;
+    font-size: max(var(--type-body-floor, 0px), 0.78rem);
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  html[data-sidebar="collapsed"] .workspace-header .mobile-event-picker svg { position: absolute; right: 12px; pointer-events: none; }
+
+  html[data-sidebar="collapsed"] .system-navigation { margin-inline: 0; }
+  html[data-sidebar="collapsed"] .system-navigation-link { justify-content: center; }
+  html[data-sidebar="collapsed"] .nav-item { justify-content: center; padding-inline: 0; }
+  html[data-sidebar="collapsed"] .nav-item:hover { transform: none; }
+  html[data-sidebar="collapsed"] .sidebar-foot { justify-content: center; padding-inline: 0; }
 }
 
 @media (max-width: 800px) { .sidebar-toggle, .sidebar-tooltip { display: none; } }
