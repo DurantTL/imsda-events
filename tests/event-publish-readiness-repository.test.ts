@@ -115,6 +115,7 @@ function mockPrisma(
       findFirst: vi.fn().mockResolvedValue(null),
     },
     promoCode: { count: vi.fn().mockResolvedValue(0) },
+    eventModule: { createMany: vi.fn().mockResolvedValue({ count: 0 }), deleteMany: vi.fn() },
     auditLog: { create: auditLogCreate },
   };
   const prisma = {
@@ -527,5 +528,31 @@ describe("createEvent audience (#481)", () => {
         metadata: { slug: "synthetic-retreat", audience: "CLUB" },
       }),
     }));
+  });
+});
+
+describe("changing the audience writes the club modules (#741)", () => {
+  async function save(currentAudience: "GENERAL" | "CLUB", nextAudience: "GENERAL" | "CLUB") {
+    const { prisma, tx } = mockPrisma({ isPublished: false, audience: currentAudience }, 0);
+    dependencies.getPrisma.mockReturnValue(prisma);
+    await updateEventSettings("event-1", { ...baseInput, audience: nextAudience, billingMode: nextAudience === "CLUB" ? "DEFERRED_ORGANIZATION_INVOICE" : "ATTENDEE_PAY" } as never, "usr_1");
+    return tx;
+  }
+
+  it("adds the club defaults when a general event becomes a club event, in the same transaction", async () => {
+    const tx = await save("GENERAL", "CLUB");
+    expect(tx.eventModule.createMany).toHaveBeenCalledTimes(1);
+    const { data, skipDuplicates } = tx.eventModule.createMany.mock.calls[0]![0] as { data: Array<{ eventId: string; moduleKey: string }>; skipDuplicates: boolean };
+    expect(skipDuplicates).toBe(true);
+    expect(data.every((row) => row.eventId === "event-1")).toBe(true);
+    expect(data.map((row) => row.moduleKey).sort()).toEqual(["club-assignments", "event-patches", "honors", "public-content"]);
+  });
+
+  it("writes nothing when the event stays CLUB, stays general, or leaves CLUB, and removes nothing", async () => {
+    for (const [from, to] of [["CLUB", "CLUB"], ["GENERAL", "GENERAL"], ["CLUB", "GENERAL"]] as const) {
+      const tx = await save(from, to);
+      expect(tx.eventModule.createMany).not.toHaveBeenCalled();
+      expect(tx.eventModule.deleteMany).not.toHaveBeenCalled();
+    }
   });
 });

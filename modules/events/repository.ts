@@ -438,6 +438,10 @@ export async function updateEventSettings(
         autoPromoteWaitlist: input.autoPromoteWaitlist,
       },
     });
+    // Switching an event to CLUB is a deliberate act (#741): it gets the club
+    // modules, even one a system administrator had switched off. Switching away
+    // from CLUB removes nothing.
+    if (audience === "CLUB" && current.audience !== "CLUB") await writeDefaultModules(tx, eventId, "CLUB");
     const requestedInstructions = input.approvedPaymentInstructions;
     const previousInstructions = currentPaymentInstructions?.instructions ?? null;
     if (requestedInstructions !== undefined && requestedInstructions !== previousInstructions) {

@@ -127,6 +127,7 @@ function mockApply(options: {
   const attendeeTypeCreateMany = vi.fn().mockResolvedValue({ count: 1 });
   const registrationFormCreate = vi.fn().mockResolvedValue({ id: "form-1", name: "RSVP" });
   const messageTemplateCreate = vi.fn().mockResolvedValue({});
+  const moduleCreateMany = vi.fn().mockResolvedValue({ count: 0 });
 
   const tx = {
     $executeRawUnsafe: vi.fn().mockResolvedValue(0),
@@ -138,7 +139,7 @@ function mockApply(options: {
     platformSettings: { upsert: vi.fn().mockResolvedValue({ defaultAttendeeEditPolicy: "VERIFY_EVERY_EDIT" }) },
     event: { create: eventCreate },
     eventMembership: { create: vi.fn().mockResolvedValue({}) },
-    eventModule: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
+    eventModule: { createMany: moduleCreateMany },
     eventAttendeeType: { createMany: attendeeTypeCreateMany },
     eventAttendeeClassification: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     registrationForm: { findUnique: vi.fn().mockResolvedValue(null), create: registrationFormCreate },
@@ -158,7 +159,7 @@ function mockApply(options: {
     eventLocation: { findMany: vi.fn().mockResolvedValue([]) },
   };
 
-  return { prisma, tx, eventCreate, auditLogCreate, applicationCreate, attendeeTypeCreateMany, registrationFormCreate, messageTemplateCreate };
+  return { prisma, tx, eventCreate, auditLogCreate, applicationCreate, attendeeTypeCreateMany, registrationFormCreate, messageTemplateCreate, moduleCreateMany };
 }
 
 function uniqueViolation(target: string[]) {
@@ -537,6 +538,26 @@ describe("serializing templates for display (N5, N6)", () => {
   it("an archived template can never be applied", async () => {
     mockMutation({ status: "ARCHIVED", versions: [versionRow()] });
     expect((await getEventTemplate("template-1")).canApply).toBe(false);
+  });
+});
+
+describe("applyEventTemplate event modules (#741)", () => {
+  const keysOf = (mock: { mock: { calls: unknown[][] } }) =>
+    (mock.mock.calls[0]![0] as { data: Array<{ moduleKey: string }> }).data.map((row) => row.moduleKey).sort();
+
+  it("gives a club template's event the club modules", async () => {
+    const { prisma, moduleCreateMany } = mockApply();
+    dependencies.getPrisma.mockReturnValue(prisma);
+    await applyEventTemplate("template-1", "usr_actor", applyInput);
+    expect(keysOf(moduleCreateMany)).toEqual(["club-assignments", "event-patches", "honors", "public-content"]);
+  });
+
+  it("gives a general template's event public content only", async () => {
+    const general = versionRow({ payload: eventTemplatePayloadSchema.parse({ audience: "GENERAL" }) });
+    const { prisma, moduleCreateMany } = mockApply({ publishedVersion: general });
+    dependencies.getPrisma.mockReturnValue(prisma);
+    await applyEventTemplate("template-1", "usr_actor", applyInput);
+    expect(keysOf(moduleCreateMany)).toEqual(["public-content"]);
   });
 });
 

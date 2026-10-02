@@ -148,6 +148,45 @@ describe("module defaults and clone copy", () => {
   });
 });
 
+describe("clone modules", () => {
+  function cloneTx(sourceKeys: string[]) {
+    const created: Array<{ eventId: string; moduleKey: string }> = [];
+    const tx = {
+      eventModule: {
+        createMany: vi.fn(async ({ data }: { data: typeof created }) => { created.push(...data); return { count: data.length }; }),
+        findMany: vi.fn(async () => sourceKeys.map((moduleKey) => ({ moduleKey }))),
+      },
+    };
+    return { tx, created };
+  }
+  const base = { sourceEventId: "source", targetEventId: "clone" };
+
+  it("copies the source's rows when event details are copied, ignoring retired keys", async () => {
+    const { writeCloneModules } = await import("@/modules/event-modules/defaults");
+    const { tx, created } = cloneTx(["honors", "retired-key", "merchandise"]);
+    await writeCloneModules(tx as never, { ...base, audience: "GENERAL", detailsCopied: true });
+    expect(created).toEqual([{ eventId: "clone", moduleKey: "honors" }, { eventId: "clone", moduleKey: "merchandise" }]);
+  });
+
+  it("writes the target audience's defaults when details are not copied, so source rows never leak", async () => {
+    const { writeCloneModules } = await import("@/modules/event-modules/defaults");
+    const general = cloneTx(["honors", "merchandise"]);
+    await writeCloneModules(general.tx as never, { ...base, audience: "GENERAL", detailsCopied: false });
+    expect(general.tx.eventModule.findMany).not.toHaveBeenCalled();
+    expect(general.created).toEqual([{ eventId: "clone", moduleKey: "public-content" }]);
+    const club = cloneTx([]);
+    await writeCloneModules(club.tx as never, { ...base, audience: "CLUB", detailsCopied: false });
+    expect(club.created.map((row) => row.moduleKey).sort()).toEqual(["club-assignments", "event-patches", "honors", "public-content"]);
+  });
+
+  it("falls back to the defaults when the source has no usable rows", async () => {
+    const { writeCloneModules } = await import("@/modules/event-modules/defaults");
+    const { tx, created } = cloneTx(["retired-key"]);
+    await writeCloneModules(tx as never, { ...base, audience: "CLUB", detailsCopied: true });
+    expect(created.map((row) => row.moduleKey).sort()).toEqual(["club-assignments", "event-patches", "honors", "public-content"]);
+  });
+});
+
 describe("ranked seminar detection", () => {
   const definition = (field: Record<string, unknown>) => ({
     sections: [{ id: "section-1", title: "Seminars", fields: [{ id: "field-1", key: "seminar_preferences", label: "Seminar preferences", helpText: "", type: "RANKED_CHOICE", scope: "ATTENDEE", required: true, options: ["A", "B"], ...field }] }],

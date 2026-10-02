@@ -483,6 +483,25 @@ writes fictitious events, people, registrations, payments and a refund, and give
 every account one shared password that is published in this repository. It refuses
 to run with `NODE_ENV=production` or against any non-loopback database host.
 
+## Event modules release note (#741)
+
+This release adds per-event modules (`EventModule`). The migration backfills a
+row for every feature an event already uses, so nothing turns off. A club event
+created in the short window between the migration and the new code starting
+would have no club-module rows, and its Honors Weekend card would stay hidden
+until a system administrator enables the module. After such a deploy, run the
+idempotent backfill once from the running app container:
+
+```bash
+npm run event-modules:backfill
+```
+
+It runs the same `INSERT ... ON CONFLICT DO NOTHING` statements as the
+migration (read from the migration file). It only adds missing rows and never
+deletes, updates, or turns off a module, so it is safe in production and safe to
+repeat. Unlike `event-audience:backfill` it has no `--apply` guard for that
+reason.
+
 ## Alerting
 
 Set `ALERT_WEBHOOK_URL` to a Slack or Teams incoming webhook — or anything that
