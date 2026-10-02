@@ -3,6 +3,7 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { DateInput } from "@/components/club-form-date-input";
 import { ClubFormFillIn } from "@/components/club-form-fill-in";
 import { updateField } from "@/components/club-form-builder-state";
 import { withAutoDateAnswers } from "@/components/club-form-state";
@@ -41,14 +42,21 @@ describe("private club form layout (#719)", () => {
     expect(css).not.toMatch(/\.club-form-public \{[^}]*margin/);
   });
 
-  it("pairs fields only when there is room, and caps the field grid for reading", () => {
+  it("pairs fields only when there is room, and lets the grid fill the card (#733)", () => {
     const rule = css.match(/\.club-form-fill \.form-grid\.two-column \{([^}]*)\}/)?.[1] ?? "";
     expect(rule).toContain("repeat(auto-fit, minmax(min(16rem, 100%), 1fr))");
-    expect(rule).toMatch(/max-width: 8[0-9]{2}px/);
+    expect(rule).not.toContain("max-width");
+    expect(css).toMatch(/\.club-form-fill \{[^}]*max-width: 1[0-9]{3}px/);
+    expect(css).toMatch(/\.club-form-fill \.form-grid\.two-column > :not\(\.club-form-field-wide\) \{ max-width: 40rem; \}/);
   });
 
-  it("puts section headings inside the card instead of on its border", () => {
-    expect(css).toMatch(/\.club-form-fill > fieldset\.public-manage-card > legend \{[^}]*float: left;[^}]*width: 100%/);
+  it("puts section headings inside the card: a hidden legend names the group and a block shows the heading (#733)", () => {
+    expect(css).toMatch(/\.club-form-section-legend \{[^}]*position: absolute;[^}]*clip: rect\(0, 0, 0, 0\)/);
+    expect(css).not.toMatch(/fieldset\.public-manage-card > legend \{[^}]*float: left/);
+    expect(css).toMatch(/^\.club-form-section-legend \{/m);
+    const markup = render();
+    expect(markup).toContain("<legend class=\"club-form-section-legend\">Applicant</legend>");
+    expect(markup).toContain("<p aria-hidden=\"true\" class=\"club-form-section-title public-registration-eyebrow\">Applicant</p>");
   });
 
   it("keeps the required marker attached to the label with a non-breaking space", () => {
@@ -66,8 +74,52 @@ describe("empty date fields (#719)", () => {
   });
 
   it("hides the native date text while empty and unfocused, and the hint once focused", () => {
-    expect(css).toContain(".club-form-date.is-empty input:not(:focus)::-webkit-datetime-edit { color: transparent; }");
+    expect(css).toContain(".club-form-date.is-empty input:not(:focus)::-webkit-datetime-edit,");
     expect(css).toContain(".club-form-date:focus-within .club-form-date-hint { display: none; }");
+  });
+});
+
+describe("date inputs fit their card on iOS Safari (#733)", () => {
+  const dateInput = css.match(/\.club-form-date input\[type="date"\] \{([^}]*)\}/)?.[1] ?? "";
+
+  it("resets the native look and sizes the input to its box", () => {
+    for (const declaration of ["-webkit-appearance: none", "appearance: none", "box-sizing: border-box", "width: 100%", "min-width: 0", "max-width: 100%", "min-height: 44px", "text-align: left"]) {
+      expect(dateInput).toContain(declaration);
+    }
+    expect(css).toMatch(/\.club-form-date-field \{ min-width: 0; max-width: 100%; \}/);
+    expect(css).toMatch(/\.club-form-date \{[^}]*width: 100%;[^}]*min-width: 0/);
+  });
+
+  it("hides the native value text of an empty, unfocused date, including iOS's value pseudo-element", () => {
+    expect(css).toMatch(/\.club-form-date\.is-empty input:not\(:focus\)::-webkit-date-and-time-value \{[^}]*color: transparent/);
+    expect(css).toMatch(/\.club-form-date input\[type="date"\]::-webkit-date-and-time-value \{[^}]*text-align: left/);
+    expect(css).toMatch(/\.club-form-date-hint \{[^}]*z-index: 1/);
+  });
+
+  it("caps wide date fields at the same 40rem as the other fields", () => {
+    expect(css).toMatch(/\.club-form-date-field\.club-form-field-wide \{[^}]*max-width: 40rem/);
+  });
+
+  it("marks a date is-empty only while its value is empty", () => {
+    const empty = renderToStaticMarkup(createElement(DateInput, { label: "Day", labelText: "Day", value: "", onChange: () => undefined }));
+    expect(empty).toContain("club-form-date is-empty");
+    expect(empty).toContain("club-form-date-hint");
+    const filled = renderToStaticMarkup(createElement(DateInput, { label: "Day", labelText: "Day", value: "2026-10-01", onChange: () => undefined }));
+    expect(filled).not.toContain("is-empty");
+    expect(filled).not.toContain("club-form-date-hint");
+  });
+
+  it("keeps a partly typed date visible by tracking validity.badInput on input and blur", () => {
+    const source = readFileSync(path.join(process.cwd(), "components/club-form-date-input.tsx"), "utf8");
+    expect(source).toContain("validity.badInput");
+    expect(source).toContain("onBlur={syncPartial}");
+    expect(source).toContain("onInput={syncPartial}");
+    expect(source).toContain("value || partial ? \"\" : \" is-empty\"");
+  });
+
+  it("keeps the calendar button inside the box", () => {
+    expect(css).toMatch(/\.club-form-date-button \{[^}]*position: absolute;[^}]*right: 0/);
+    expect(dateInput).toContain("padding: 10px 52px 10px 11px");
   });
 });
 

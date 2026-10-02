@@ -9,6 +9,12 @@
  *  - no page chrome text ("Skip to main content", "Badge artwork", ...);
  *  - every PDF page is a portrait US Letter page (the sheet is always 8.5 x 11
  *    in, whatever the badge orientation option says);
+ *  - the PDF is printed at 100% (#732): the first label name's font size in
+ *    the PDF (pdfjs) equals its computed font size in the page, ratio 1
+ *    +/- 0.005. Chromium shrinks a page to fit when something in it is wider
+ *    than the paper, so this catches an overflowing element. It cannot catch
+ *    the print dialog's own "Default" scale or a printer driver's "fit to
+ *    page"; those are avoided by printing at Scale: Custom 100;
  *  - the first label sits where the Avery template says (Presta 94237 is
  *    1 in from the top and 0.85 in from the left, +/- 0.02 in), and the whole
  *    2 x 4 grid lands on the measured pitch.
@@ -75,6 +81,11 @@ const targetAttendees = Number(process.env.BADGE_PRINT_ATTENDEES ?? 30);
 const eventId = "evt_wr26";
 const staffEmail = process.env.BADGE_PRINT_STAFF_EMAIL ?? "admin@imsda-events.test";
 const toleranceIn = 0.02;
+const fontRatioTolerance = 0.005;
+// Self-test of the 100% check: BADGE_PRINT_INJECT_WIDTH_PX=1060 adds an
+// absolutely positioned block that wide before printing, which makes Chromium
+// shrink the PDF, so the run must FAIL.
+const injectWidthPx = Number(process.env.BADGE_PRINT_INJECT_WIDTH_PX ?? 0);
 const forbiddenText = ["Skip to main content", "Badge artwork", "Upload artwork", "No background selected"];
 
 /** First-label offsets and pitch, in inches, from each template's sheet layout. */
@@ -181,7 +192,8 @@ async function seedSyntheticAttendees(prisma: PrismaClient) {
   });
 }
 
-type PdfInfo = { pages: number; text: string; pageSizesIn: Array<[number, number]>; textPerPage: string[] };
+type PdfItem = { str: string; sizePt: number; pageIndex: number };
+type PdfInfo = { items: PdfItem[]; pages: number; text: string; pageSizesIn: Array<[number, number]>; textPerPage: string[] };
 
 /** Dynamic import by variable name so tsc and eslint do not need the package. */
 async function loadOptional(name: string) {
@@ -199,14 +211,19 @@ async function readPdf(data: Uint8Array): Promise<PdfInfo> {
   const document = await pdfjs.getDocument({ data, useSystemFonts: true }).promise;
   const textPerPage: string[] = [];
   const pageSizesIn: Array<[number, number]> = [];
+  const items: PdfItem[] = [];
   for (let number = 1; number <= document.numPages; number += 1) {
     const page = await document.getPage(number);
     const [x0, y0, x1, y1] = page.view;
     pageSizesIn.push([(x1 - x0) / 72, (y1 - y0) / 72]);
     const content = await page.getTextContent();
+    for (const item of content.items as Array<{ str?: string; transform: number[] }>) {
+      // Font size in pt from the text matrix (also right for rotated text).
+      items.push({ str: item.str ?? "", sizePt: Math.hypot(item.transform[0], item.transform[1]), pageIndex: number - 1 });
+    }
     textPerPage.push(content.items.map((item: { str?: string }) => (item.str ?? "")).join(" "));
   }
-  return { pages: document.numPages, text: textPerPage.join("\n"), pageSizesIn, textPerPage };
+  return { items, pages: document.numPages, text: textPerPage.join("\n"), pageSizesIn, textPerPage };
 }
 
 /**
@@ -272,7 +289,16 @@ async function main() {
 
       if (variant.omitEvent) {
         const notices = await page.locator(".event-auto-select-notice").count();
-        check(notices > 0, "auto-select notice renders on screen (it must then be hidden in print)");
+        // The shell shows the notice only when the server auto-chose the
+        // event (`autoSelected`: the account has several events and no
+        // remembered choice), which the DOM cannot reveal. The administrator
+        // does get it; a single-event check-in account does not. Where it
+        // renders, the hidden-in-print check below covers it.
+        if (staffEmail === "admin@imsda-events.test") {
+          check(notices > 0, "auto-select notice renders on screen (it must then be hidden in print)");
+        } else {
+          console.log(`  --   auto-select notice on screen: ${notices} (not required for this account)`);
+        }
       }
 
       await page.emulateMedia({ media: "print" });
@@ -312,6 +338,13 @@ async function main() {
       });
       check(gridOk, `all ${boxes.length} labels on the ${grid.columns} x ${grid.rows} grid`);
 
+      if (injectWidthPx > 0) {
+        await page.evaluate((width: number) => {
+          const wide = document.createElement("div");
+          wide.setAttribute("style", `position:absolute;top:0;left:0;height:1px;width:${width}px`);
+          document.body.appendChild(wide);
+        }, injectWidthPx);
+      }
       const pdf = await page.pdf({ format: "Letter", preferCSSPageSize: true, printBackground: true });
       const stem = path.join(outDir, variant.name);
       writeFileSync(`${stem}.pdf`, pdf);
@@ -323,6 +356,23 @@ async function main() {
       check(blank.length === 0, `no blank pages${blank.length ? ` (blank: ${blank.join(", ")})` : ""}`);
       const oddSize = info.pageSizesIn.filter(([w, h]) => Math.abs(w - 8.5) > 0.02 || Math.abs(h - 11) > 0.02);
       check(oddSize.length === 0, `every page is 8.5 x 11 in (${info.pageSizesIn[0]?.map((n) => n.toFixed(2)).join(" x ")})`);
+      // 100% check: font size of the first label's name in the PDF vs the page.
+      const domName = await page.evaluate(() => {
+        const element = document.querySelector(".badge-sheet:first-child .badge-label-name strong:first-child");
+        return element
+          ? { text: (element.textContent ?? "").trim(), px: Number.parseFloat(getComputedStyle(element).fontSize) }
+          : null;
+      });
+      const pdfName = domName ? info.items.find((item) => item.str.trim() === domName.text && item.pageIndex === 0) : undefined;
+      if (!domName || !pdfName) {
+        check(false, "first label name found in both the page and the PDF for the font-size check");
+      } else {
+        const ratio = pdfName.sizePt / (domName.px * 0.75);
+        check(
+          Math.abs(ratio - 1) <= fontRatioTolerance,
+          `PDF prints at 100%: "${domName.text}" is ${pdfName.sizePt.toFixed(2)} pt in the PDF, ${(domName.px * 0.75).toFixed(2)} pt on the page (ratio ${ratio.toFixed(4)}, want 1 +/- ${fontRatioTolerance})`,
+        );
+      }
       // A PNG of the page-1 render for the eye (print emulation, one sheet wide).
       await page.setViewportSize({ width: 816, height: 1056 });
       await page.screenshot({ path: `${stem}-page1.png`, clip: { x: 0, y: 0, width: 816, height: 1056 } });

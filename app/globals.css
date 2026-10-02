@@ -7969,28 +7969,39 @@ select:focus-visible {
    inside each card stays at a comfortable reading width and only pairs fields when there is room. */
 .club-form-public { grid-template-columns: minmax(0, 1fr); }
 .club-form-public > * { min-width: 0; }
+/* #733: the grid fills the card's content width (3-4 columns on a wide card). A very wide screen is
+   limited by the form's own max-width and by each field's, never by the grid. */
+.club-form-fill { width: 100%; max-width: 1500px; margin-inline: auto; }
 .club-form-fill .form-grid.two-column {
-  max-width: 860px;
   grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr));
 }
+.club-form-fill .form-grid.two-column > :not(.club-form-field-wide) { max-width: 40rem; }
 .club-form-fill > fieldset.public-manage-card { grid-template-columns: minmax(0, 1fr); }
 .club-form-fill .form-grid.two-column { min-width: 0; }
 .club-form-fill .form-grid.two-column > * { min-width: 0; }
-/* Section headings sit inside the card's padding instead of on its top border. */
-.club-form-fill > fieldset.public-manage-card > legend { float: left; width: 100%; margin: 0 0 4px; padding: 0; }
-.club-form-fill > fieldset.public-manage-card > legend + * { clear: both; }
+/* #733: iOS Safari ignores a float on a legend and draws it on the card's border, so the legend is only the
+   group's accessible name (visually hidden) and the heading is an ordinary block inside the card's padding. */
+.club-form-section-legend { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.club-form-fill > fieldset.public-manage-card { position: relative; }
+.club-form-section-title { margin: 0; }
 /* Empty date fields: the browser's own placeholder can be today's date (Safari), which reads as a filled-in value. */
 .club-form-date-field { display: grid; gap: 6px; color: var(--ink); font-size: max(var(--type-body-floor, 0px), 0.7rem); font-weight: 700; }
-.club-form-date-field.club-form-field-wide { grid-column: 1 / -1; }
-.club-form-date { position: relative; display: block; }
-.club-form-date.is-empty input:not(:focus)::-webkit-datetime-edit { color: transparent; }
-.club-form-date-hint { position: absolute; top: 50%; left: 11px; transform: translateY(-50%); color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.78rem); pointer-events: none; }
+.club-form-date-field.club-form-field-wide { grid-column: 1 / -1; max-width: 40rem; }
+.club-form-date-field { min-width: 0; max-width: 100%; }
+.club-form-date { position: relative; display: block; width: 100%; min-width: 0; max-width: 100%; }
+/* #733: iOS Safari gives a date input an intrinsic minimum width and its own look, and shows today's date in
+   an empty one. Reset the look, size it to its box, and make the empty value text invisible (the hint shows). */
+.club-form-date input[type="date"] { display: block; position: relative; z-index: 0; box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; min-height: 44px; margin: 0; padding: 10px 52px 10px 11px; -webkit-appearance: none; appearance: none; text-align: left; line-height: 1.3; cursor: pointer; }
+.club-form-date input[type="date"]::-webkit-date-and-time-value { min-width: 0; margin: 0; text-align: left; }
+.club-form-date input[type="date"]::-webkit-datetime-edit { padding: 0; }
+.club-form-date.is-empty input:not(:focus)::-webkit-datetime-edit,
+.club-form-date.is-empty input:not(:focus)::-webkit-date-and-time-value { color: transparent; -webkit-text-fill-color: transparent; }
+.club-form-date-hint { position: absolute; z-index: 1; top: 50%; left: 11px; transform: translateY(-50%); color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.78rem); font-weight: 400; pointer-events: none; }
 .club-form-date:focus-within .club-form-date-hint { display: none; }
-.club-form-date input { display: block; min-height: 44px; padding-right: 52px; cursor: pointer; }
 .club-form-date input::-webkit-calendar-picker-indicator { opacity: 0; position: absolute; right: 0; width: 44px; height: 100%; cursor: pointer; }
-.club-form-date-button { position: absolute; top: 0; right: 0; display: inline-flex; width: 44px; height: 44px; align-items: center; justify-content: center; border: 0; border-radius: 0 10px 10px 0; background: transparent; color: var(--imsda-navy); cursor: pointer; padding: 0; }
+.club-form-date-button { position: absolute; z-index: 2; top: 0; right: 0; display: inline-flex; width: 44px; height: 44px; align-items: center; justify-content: center; border: 0; border-radius: 0 10px 10px 0; background: transparent; color: var(--imsda-navy); cursor: pointer; padding: 0; }
 .club-form-date-button:hover { background: rgba(0, 59, 92, 0.07); }
-.club-form-date.is-locked input { background: #eef2f4; color: var(--ink); cursor: default; padding-right: 11px; }
+.club-form-date.is-locked input[type="date"] { background: #eef2f4; color: var(--ink); cursor: default; padding-right: 11px; }
 .club-form-date.is-locked input::-webkit-calendar-picker-indicator { display: none; }
 @supports (-moz-appearance: none) { .club-form-date-hint { display: none; } }
 .club-form-page { display: grid; gap: 14px; }

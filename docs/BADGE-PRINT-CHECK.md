@@ -20,6 +20,20 @@ emulated and `page.pdf({ format: "Letter", preferCSSPageSize: true })`:
   the top and 0.85 in from the left, within 0.02 in) and all labels sit on the
   template's column and row pitch.
 
+Print scale (#732): the script also proves the PDF is printed at 100%. It
+compares the first label name's font size in the PDF (read with pdfjs) with its
+computed font size on the page; the ratio must be 1 +/- 0.005. Chromium shrinks
+a page to fit when something in it is wider than the paper, so an overflowing
+element would fail this. To see the check catch a real shrink, run it with
+`BADGE_PRINT_INJECT_WIDTH_PX=1060`, which adds a 1060 px absolutely positioned
+block before printing; that run must fail.
+
+The script cannot see the print dialog. The first Presta 94237 test print came
+out at about 77% (8.5 / 11 = 0.773), anchored top-left, although the page
+itself prints at 100%. Chrome's dialog at Scale "Default" (or a printer
+driver's "fit to page") can scale the sheet. Choose **Scale: Custom 100**,
+which bypasses it.
+
 The paper is always portrait letter: Avery sheets feed upright. The page's
 "Badge orientation" option only turns the text inside each label.
 
@@ -61,13 +75,17 @@ The script adds synthetic attendees ("Badgecheck SampleNNN", 30 by default,
 `BADGE_PRINT_ATTENDEES` to change) to the seeded Women's Retreat event and signs
 in as the seeded administrator (`BADGE_PRINT_STAFF_EMAIL` to change). PDFs and a
 PNG of page 1 for each variant are written to `BADGE_PRINT_OUT_DIR`. Variants
-include one without `?event=` so the auto-select notice renders. Acting as
-another user is not covered.
+include one without `?event=` so the auto-select notice renders. Run it once
+as the administrator (artwork panel shown) and once with
+`BADGE_PRINT_STAFF_EMAIL=checkin@imsda-events.test` (check-in staff, no artwork
+panel). Acting as another user is not covered.
 
 ## Printing tip
 
-For exact label alignment print from Chrome or Edge: Margins Default or None,
-Scale 100%, no headers or footers. The badges page shows this tip on screen
+For exact label alignment print from Chrome or Edge, open More settings and set
+Paper size Letter, Margins None, **Scale: Custom 100** (not Default), and
+headers and footers off. Always use Custom 100: Default can scale the
+sheet. The badges page shows this tip on screen
 next to the Print button; it is hidden when printing.
 
 ## Avery CSV
