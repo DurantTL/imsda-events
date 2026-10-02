@@ -6,7 +6,7 @@ import { ActAsButton } from "@/components/act-as-button";
 import { AttendeeAccountsWorkspace } from "@/components/attendee-accounts-workspace";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { parseAccountSort } from "@/modules/system-admin/account-sort";
-import { listAttendeeAccounts } from "@/modules/system-admin/user-admin";
+import { listAttendeeAccountsWithCap } from "@/modules/system-admin/user-admin";
 
 export const metadata: Metadata = { title: "Accounts" };
 export const dynamic = "force-dynamic";
@@ -23,6 +23,7 @@ export default async function AttendeeAccountsPage({
   const params = await searchParams;
   const initialQuery = typeof params.q === "string" ? params.q.slice(0, 120) : "";
   const initialSort = parseAccountSort(params.sort, params.dir);
+  const initial = await listAttendeeAccountsWithCap(initialQuery, initialSort);
   return (
     <>
       <div className="intro-actions club-admin-links">
@@ -36,7 +37,8 @@ export default async function AttendeeAccountsPage({
         />
       </div>
       <AttendeeAccountsWorkspace
-        initialAccounts={await listAttendeeAccounts(initialQuery, initialSort)}
+        initialAccounts={initial.accounts}
+        initialCapped={initial.capped}
         initialQuery={initialQuery}
         initialSort={initialSort}
       />

@@ -4,7 +4,11 @@
  * limiting, and the workspace uses the same keys for its headers and URL.
  */
 
-export const accountSortKeys = ["name", "role", "twostep", "signin"] as const;
+import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
+
+export const accountSortKeys = ["name", "role", "twostep", "signin", "status"] as const;
+/** The keys that have a table column header; status is the chip in the Account cell. */
+export const accountColumnSortKeys = ["name", "role", "twostep", "signin"] as const;
 export type AccountSortKey = (typeof accountSortKeys)[number];
 export type AccountSortDirection = "asc" | "desc";
 export type AccountSort = { key: AccountSortKey; direction: AccountSortDirection } | null;
@@ -14,6 +18,7 @@ export const accountSortLabels: Record<AccountSortKey, string> = {
   role: "Club roles",
   twostep: "Two-step",
   signin: "Last sign-in",
+  status: "Status (Active / Disabled)",
 };
 
 export function parseAccountSort(key: string | null | undefined, direction: string | null | undefined): AccountSort {
@@ -36,11 +41,12 @@ type SortableAccount = {
   id: string;
   email: string;
   displayName: string | null;
+  disabled: boolean;
   lastSignedInAt: string | null;
   authenticatorOn: boolean;
   passkeyCount: number;
   areaCoordinator: boolean;
-  clubRoles: Array<{ role: string; clubName: string }>;
+  clubRoles: Array<{ role: keyof typeof clubDirectorRoleLabels; clubName: string }>;
 };
 
 function text(value: string) {
@@ -50,7 +56,7 @@ function text(value: string) {
 function roleText(account: SortableAccount) {
   const parts = [
     ...(account.areaCoordinator ? ["area coordinator"] : []),
-    ...account.clubRoles.map((role) => `${role.role} ${role.clubName}`),
+    ...account.clubRoles.map((role) => `${clubDirectorRoleLabels[role.role]} ${role.clubName}`),
   ];
   return text(parts.join(" "));
 }
@@ -82,6 +88,9 @@ export function sortAccounts<T extends SortableAccount>(accounts: readonly T[], 
         if (!left !== !right) return left ? -1 : 1;
         return sign * left.localeCompare(right, "en-US") || byName(a, b);
       }
+      case "status":
+        // Active first when ascending.
+        return sign * (Number(a.disabled) - Number(b.disabled)) || byName(a, b);
       case "twostep":
         return sign * (twoStepRank(a) - twoStepRank(b)) || byName(a, b);
       case "signin": {

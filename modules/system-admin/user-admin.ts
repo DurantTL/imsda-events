@@ -101,6 +101,11 @@ const ACCOUNT_SORT_CEILING = 5000;
  * sort never reorders just one page.
  */
 export async function listAttendeeAccounts(query: string, sort: AccountSort = null, limit = 50) {
+  return (await listAttendeeAccountsWithCap(query, sort, limit)).accounts;
+}
+
+/** As `listAttendeeAccounts`, plus whether a sort hit the ceiling and left matches out. */
+export async function listAttendeeAccountsWithCap(query: string, sort: AccountSort = null, limit = 50) {
   const text = query.trim().slice(0, 120);
   const accounts = await getPrisma().attendeeAccount.findMany({
     where: text
@@ -142,7 +147,10 @@ export async function listAttendeeAccounts(query: string, sort: AccountSort = nu
       && (!account.areaCoordinatorGrant.expiresAt || account.areaCoordinatorGrant.expiresAt > new Date()),
     ),
   }));
-  return sort ? sortAccounts(summaries, sort).slice(0, limit) : summaries;
+  return {
+    accounts: sort ? sortAccounts(summaries, sort).slice(0, limit) : summaries,
+    capped: Boolean(sort) && accounts.length >= ACCOUNT_SORT_CEILING,
+  };
 }
 
 export type AttendeeAccountSummary = Awaited<ReturnType<typeof listAttendeeAccounts>>[number];

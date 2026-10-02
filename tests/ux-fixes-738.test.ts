@@ -15,7 +15,7 @@ vi.mock("@/modules/communications/account-email-dispatch", () => ({ sendAccountR
 import { AttendeeAccountsWorkspace } from "@/components/attendee-accounts-workspace";
 import { namedIssueMessage } from "@/modules/forms/roster-cards";
 import { ariaSortFor, nextAccountSort, parseAccountSort, sortAccounts } from "@/modules/system-admin/account-sort";
-import { listAttendeeAccounts, type AttendeeAccountSummary } from "@/modules/system-admin/user-admin";
+import { listAttendeeAccounts, listAttendeeAccountsWithCap, type AttendeeAccountSummary } from "@/modules/system-admin/user-admin";
 
 const read = (file: string) => readFileSync(path.join(process.cwd(), file), "utf8");
 
@@ -41,6 +41,12 @@ describe("named multi-attendee errors (#738)", () => {
   it("keeps registration-level and single-attendee messages plain", () => {
     expect(namedIssueMessage("Contact email is required.", null, names, "Guest")).toBe("Contact email is required.");
     expect(namedIssueMessage("T-shirt size is required.", 0, ["Sam Lee"], "Guest")).toBe("T-shirt size is required.");
+  });
+
+  it("does not name the person twice when the message already says who", () => {
+    expect(namedIssueMessage("Attendee 2: age is required.", 1, names, "Guest")).toBe("Attendee 2: age is required.");
+    expect(namedIssueMessage("Guest 2 needs a meal choice.", 1, names, "Guest")).toBe("Guest 2 needs a meal choice.");
+    expect(namedIssueMessage("Pat Doe is already registered.", 2, names, "Guest")).toBe("Pat Doe is already registered.");
   });
 
   it("adds the roster position when two people share a name", () => {
@@ -99,6 +105,35 @@ describe("account sorting (#738)", () => {
     expect(ids({ key: "twostep", direction: "desc" })).toEqual(["bo", "al", "cy"]);
     expect(ids({ key: "signin", direction: "asc" })).toEqual(["bo", "cy", "al"]);
     expect(ids({ key: "signin", direction: "desc" })).toEqual(["cy", "bo", "al"]);
+  });
+
+  it("sorts roles by the label people see and by Active/Disabled status", () => {
+    const rows = [
+      account("a", { displayName: "A", clubRoles: [{ role: "REPORTER", clubName: "Eagle" }] }),
+      account("b", { displayName: "B", clubRoles: [{ role: "REGISTRAR", clubName: "Eagle" }], disabled: true }),
+      account("c", { displayName: "C", clubRoles: [{ role: "DEPUTY", clubName: "Eagle" }] }),
+    ];
+    expect(sortAccounts(rows, { key: "role", direction: "asc" }).map((row) => row.id)).toEqual(["c", "b", "a"]);
+    expect(sortAccounts(rows, { key: "status", direction: "asc" }).map((row) => row.id)).toEqual(["a", "c", "b"]);
+    expect(sortAccounts(rows, { key: "status", direction: "desc" }).map((row) => row.id)).toEqual(["b", "a", "c"]);
+    expect(parseAccountSort("status", "asc")).toEqual({ key: "status", direction: "asc" });
+  });
+
+  it("reuses the submitted search, ignores stale responses, locks sorting while busy, and flags the cap", () => {
+    const workspace = read("components/attendee-accounts-workspace.tsx");
+    expect(workspace).toContain("const effectiveQuery = event ? query : submittedQuery;");
+    expect(workspace).toContain("requestId !== latestRequest.current");
+    expect(workspace).toContain('disabled={busy !== ""}');
+    expect(workspace).toContain("Sorted the newest 5,000 matches — narrow your search.");
+  });
+
+  it("reports when a sort hit the ceiling", async () => {
+    prismaMock.findMany.mockResolvedValue(Array.from({ length: 5000 }, (_, index) => ({
+      id: `c${index}`, email: `c${index}@example.test`, displayName: `C ${index}`, status: "ACTIVE", disabledAt: null,
+      createdAt: new Date(), mfaEnrollment: null, _count: { passkeys: 0 }, sessions: [], areaCoordinatorGrant: null, clubDirectorGrants: [],
+    })));
+    expect((await listAttendeeAccountsWithCap("", { key: "name", direction: "asc" })).capped).toBe(true);
+    expect((await listAttendeeAccountsWithCap("", null)).capped).toBe(false);
   });
 
   it("sorts on the server across every match, not just the first page", async () => {
@@ -185,11 +220,22 @@ describe("spacing and touch targets (#738)", () => {
     expect(read("components/club-orders.module.css")).toMatch(/\.block h3 \{ display: flex; align-items: center;/);
   });
 
-  it("sets 44px touch and 36-40px desktop targets on the small controls", () => {
+  it("sets screen-only 44px touch and 36px desktop targets on the named small controls", () => {
     const css = read("app/globals.css");
-    expect(css).toContain("--target-desktop: 36px");
-    expect(css).toContain("--target-desktop-icon: 40px");
-    expect(css).toContain("--target-touch: 44px");
-    expect(css).toMatch(/@media \(max-width: 768px\), \(pointer: coarse\) \{\s*:root :is\(\.primary-button, \.secondary-button, \.text-button, \.filter-field select/);
+    const start = css.indexOf("/* Touch and click targets (#738)");
+    const block = css.slice(start);
+    expect(start).toBeGreaterThan(0);
+    expect(block).toContain("--target-desktop: 36px");
+    expect(block).toContain("--target-touch: 44px");
+    expect(block).toMatch(/@media screen \{\s*:root \{ --target-desktop/);
+    expect(block).toContain("@media screen and ((max-width: 768px) or (pointer: coarse))");
+    expect(block).not.toMatch(/@media \(max-width: 768px\), \(pointer: coarse\)/);
+    for (const selector of [".filter-field select", ".report-download", ".club-event-action", ".check-in-queue-actions button", ".check-in-review-list article > button"]) {
+      expect(block).toContain(selector);
+    }
+    // Buttons in general and icon buttons keep their compact base sizes.
+    for (const selector of [".primary-button", ".secondary-button", ".text-button", ".icon-button", ".tag-chip"]) {
+      expect(block).not.toContain(selector);
+    }
   });
 });

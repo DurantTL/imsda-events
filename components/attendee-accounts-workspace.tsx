@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, LogOut, Mail, MapPinned, Search, ShieldOff } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 import {
+  accountColumnSortKeys,
   accountSortKeys,
   accountSortLabels,
   ariaSortFor,
@@ -37,14 +38,19 @@ export function AttendeeAccountsWorkspace({
   initialAccounts,
   initialQuery = "",
   initialSort = null,
+  initialCapped = false,
 }: {
   initialAccounts: AttendeeAccountSummary[];
   initialQuery?: string;
   initialSort?: AccountSort;
+  initialCapped?: boolean;
 }) {
   const [accounts, setAccounts] = useState(initialAccounts);
   const [query, setQuery] = useState(initialQuery);
+  const [submittedQuery, setSubmittedQuery] = useState(initialQuery);
   const [sort, setSort] = useState<AccountSort>(initialSort);
+  const [capped, setCapped] = useState(initialCapped);
+  const latestRequest = useRef(0);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -65,22 +71,30 @@ export function AttendeeAccountsWorkspace({
     return params;
   }
 
+  // A submit searches for what is typed; a sort or refresh reuses the last
+  // submitted search, not whatever is half-typed in the box (#738).
   async function search(event?: React.FormEvent<HTMLFormElement>, nextSort: AccountSort = sort) {
     event?.preventDefault();
+    const effectiveQuery = event ? query : submittedQuery;
+    if (event) setSubmittedQuery(query);
+    const requestId = ++latestRequest.current;
     setBusy("search");
     setError("");
     try {
-      const params = accountParams(query, nextSort);
+      const params = accountParams(effectiveQuery, nextSort);
       const queryString = params.toString();
       window.history.replaceState(null, "", queryString ? `?${queryString}` : window.location.pathname);
       const response = await fetch(`/api/admin/accounts?${queryString}`);
-      const result = await response.json().catch(() => ({})) as { accounts?: AttendeeAccountSummary[]; message?: string };
+      const result = await response.json().catch(() => ({})) as { accounts?: AttendeeAccountSummary[]; capped?: boolean; message?: string };
+      if (requestId !== latestRequest.current) return;
       if (!response.ok || !result.accounts) throw new Error(result.message ?? "Accounts couldn't be loaded.");
       setAccounts(result.accounts);
+      setCapped(Boolean(result.capped));
     } catch (caught) {
+      if (requestId !== latestRequest.current) return;
       setError(caught instanceof Error ? caught.message : "Accounts couldn't be loaded.");
     } finally {
-      setBusy("");
+      if (requestId === latestRequest.current) setBusy("");
     }
   }
 
@@ -155,6 +169,7 @@ export function AttendeeAccountsWorkspace({
       <label className="accounts-sort-field">
           <span>Sort by</span>
           <select
+            disabled={busy !== ""}
             onChange={(event) => {
               const key = event.target.value as AccountSortKey | "";
               if (!key) {
@@ -172,6 +187,7 @@ export function AttendeeAccountsWorkspace({
           <button
             aria-label={`Sorted by ${accountSortLabels[sort.key]}, ${sort.direction === "asc" ? "ascending" : "descending"}. Reverse the order.`}
             className="secondary-button accounts-sort-direction"
+            disabled={busy !== ""}
             onClick={() => sortBy({ key: sort.key, direction: sort.direction === "asc" ? "desc" : "asc" })}
             type="button"
           >
@@ -181,6 +197,7 @@ export function AttendeeAccountsWorkspace({
         )}
       </form>
       <section className="panel">
+        {capped && sort && <p className="inline-notice" role="status">Sorted the newest 5,000 matches — narrow your search.</p>}
         {accounts.length === 0 ? (
           <p className="report-empty">No accounts match.</p>
         ) : (
@@ -188,9 +205,9 @@ export function AttendeeAccountsWorkspace({
             <table role="table" className="report-table table-cards">
               <thead role="rowgroup">
                 <tr role="row">
-                  {accountSortKeys.map((key) => (
+                  {accountColumnSortKeys.map((key) => (
                     <th aria-sort={ariaSortFor(sort, key)} key={key} role="columnheader" scope="col">
-                      <button className="table-sort-button" onClick={() => sortBy(nextAccountSort(sort, key))} type="button">
+                      <button className="table-sort-button" disabled={busy !== ""} onClick={() => sortBy(nextAccountSort(sort, key))} type="button">
                         {accountSortLabels[key]}
                         {sort?.key === key
                           ? (sort.direction === "asc" ? <ArrowUp aria-hidden="true" size={13} /> : <ArrowDown aria-hidden="true" size={13} />)

@@ -8762,16 +8762,18 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 /* The roster link is part of the help sentence, so it stays inline with the full stop after it. */
 :root .club-going-list .club-roster-age .field-help a { display: inline; min-height: 0; padding-inline: 0; text-decoration: underline; }
 
-/* Touch and click targets (#738). One rule for the small controls that were
-   under size: filters, export buttons and arrows, and check-in actions. Touch
-   (phones, tablets, any coarse pointer) gets 44px; desktop admin gets 36px
-   (icon buttons 40px). Heights only grow, so denser local rules still hold. */
-:root { --target-desktop: 36px; --target-desktop-icon: 40px; --target-touch: 44px; }
-:root :is(.primary-button, .secondary-button, .text-button, .filter-field select, .report-record-link) { min-height: var(--target-desktop); }
-:root .icon-button { min-width: var(--target-desktop-icon); min-height: var(--target-desktop-icon); }
-:root .tag-chip .text-button { min-height: 32px; }
-@media (max-width: 768px), (pointer: coarse) {
-  :root :is(.primary-button, .secondary-button, .text-button, .filter-field select, .report-record-link,
+/* Touch and click targets (#738). Screen only, and only the small controls
+   the issue names: the filter select, export and download controls, check-in
+   queue and review actions, and club event actions. Buttons in general are left
+   alone so dense admin tables keep their compact rows. Touch (phones, tablets,
+   any coarse pointer) gets 44px. Desktop gets 36px through :where(), which has
+   no specificity, so a local compact rule still wins. */
+@media screen {
+  :root { --target-desktop: 36px; --target-touch: 44px; }
+  :where(.filter-field select, .report-download, .report-record-link, .roster-csv-actions > a, .roster-csv-actions > button,
+    .club-event-action, .check-in-queue-actions button, .check-in-review-list article > button) { min-height: var(--target-desktop); }
+}
+@media screen and ((max-width: 768px) or (pointer: coarse)) {
+  :root :is(.filter-field select, .report-download, .report-record-link, .roster-csv-actions > a, .roster-csv-actions > button,
     .club-event-action, .check-in-queue-actions button, .check-in-review-list article > button) { min-height: var(--target-touch); }
-  :root .icon-button { width: var(--target-touch); height: var(--target-touch); min-width: var(--target-touch); min-height: var(--target-touch); }
 }
