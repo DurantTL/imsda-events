@@ -231,6 +231,9 @@ export const mobileNavigationOrder = [
   "/more",
 ] as const;
 
+/** Staff pages with no sidebar item, opened from a More card (`/community`). */
+const moreOnlyPaths = ["/community"] as const;
+
 /**
  * The phone tab to highlight for the sidebar item a page belongs to (#737).
  * Pages the tab bar has no tab for (Settings and its children, the form
@@ -238,7 +241,9 @@ export const mobileNavigationOrder = [
  * reached from More, so More stays highlighted instead of no tab. Only existing
  * tabs are used; none is added, renamed or reordered.
  */
-export function mobileActiveTabHref(currentHref: string): string {
+export function mobileActiveTabHref(currentHref: string, pathname?: string): string {
+  // Pages reached only from a More card, with no sidebar item of their own.
+  if (pathname && moreOnlyPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`))) return "/more";
   if ((mobileNavigationOrder as readonly string[]).includes(currentHref)) return currentHref;
   return "/more";
 }

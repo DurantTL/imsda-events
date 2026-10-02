@@ -121,6 +121,7 @@ export function AppShell({
     clubOversight: Boolean(selectedEvent?.clubOversight),
     clubEvent: Boolean(selectedEvent?.clubEvent),
     isSystemAdmin: user.globalRole === "SYSTEM_ADMIN",
+    // Only decides whether the More link shows. Club forms need a system admin or Event Admin, who already pass on permissions, and the page itself decides access.
     clubFormsAccess: false,
   });
   const visibleStatic = navigation.filter((item) => item.href === "/more" ? showMore : matchesVisibility(item, selectedPermissions));
@@ -334,7 +335,7 @@ export function AppShell({
 
       {mobileNavigation.length > 0 && <nav className="mobile-nav" aria-label="Mobile navigation">
         {mobileNavigation.map(({ href, icon: Icon, label }) => {
-          const isActive = !isProfileRoute && !isSystemRoute && mobileActiveTabHref(current.href) === href;
+          const isActive = !isProfileRoute && !isSystemRoute && mobileActiveTabHref(current.href, pathname) === href;
           return (
             <Link className={isActive ? "active" : undefined} href={`${href}${eventQuery}`} key={href} aria-current={isActive ? "page" : undefined}>
               <Icon aria-hidden="true" size={22} /><span>{mobileNavigationLabels[href] ?? label}</span>
