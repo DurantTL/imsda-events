@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ClubFormSectionTitle } from "@/components/club-form-section-title";
 import { DateInput } from "@/components/club-form-date-input";
 
 /**
@@ -127,7 +128,7 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
   return (
     <form className="club-form-fill" onSubmit={(event) => void submit(event)}>
       <fieldset className="public-manage-card form-stack" disabled={saving}>
-        <legend className="public-registration-eyebrow">Participant</legend>
+        <ClubFormSectionTitle>Participant</ClubFormSectionTitle>
         <p><strong translate="no">{memberName}</strong></p>
         <div className="form-grid two-column">
           {field("addressLine1", "Address line 1")}
@@ -141,7 +142,7 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
       </fieldset>
 
       <fieldset className="public-manage-card form-stack" disabled={saving}>
-        <legend className="public-registration-eyebrow">Health</legend>
+        <ClubFormSectionTitle>Health</ClubFormSectionTitle>
         <div className="form-grid two-column">
           {field("lastTetanusBooster", "Date of last tetanus booster", { date: true })}
           <label>Does the participant have allergies?
@@ -157,7 +158,7 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
       </fieldset>
 
       <fieldset className="public-manage-card form-stack" disabled={saving}>
-        <legend className="public-registration-eyebrow">Insurance</legend>
+        <ClubFormSectionTitle>Insurance</ClubFormSectionTitle>
         <div className="form-grid two-column">
           <label>Is the participant covered by medical insurance?
             <select onChange={(event) => setHasInsurance(event.target.value)} value={hasInsurance}>
@@ -177,7 +178,7 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
       </fieldset>
 
       <fieldset className="public-manage-card form-stack" disabled={saving}>
-        <legend className="public-registration-eyebrow">Parent or guardian</legend>
+        <ClubFormSectionTitle>Parent or guardian</ClubFormSectionTitle>
         <div className="form-grid two-column">
           {field("guardianFirstName", "First name")}
           {field("guardianLastName", "Last name")}
@@ -188,7 +189,7 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
       </fieldset>
 
       <fieldset className="public-manage-card form-stack" disabled={saving}>
-        <legend className="public-registration-eyebrow">Emergency contacts and authorized persons</legend>
+        <ClubFormSectionTitle>Emergency contacts and authorized persons</ClubFormSectionTitle>
         {contacts.map((contact, index) => (
           <div className="form-grid two-column" key={index}>
             <label>First name<input onChange={(event) => updateContact(index, "firstName", event.target.value)} type="text" value={contact.firstName} /></label>
@@ -206,12 +207,12 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
       </fieldset>
 
       <fieldset className="public-manage-card form-stack" disabled={saving}>
-        <legend className="public-registration-eyebrow">Club</legend>
+        <ClubFormSectionTitle>Club</ClubFormSectionTitle>
         <p translate="no">{clubName}{sponsoringChurch ? ` · ${sponsoringChurch}` : ""}</p>
       </fieldset>
 
       <fieldset className="public-manage-card form-stack" disabled={saving}>
-        <legend className="public-registration-eyebrow">Consent and signature</legend>
+        <ClubFormSectionTitle>Consent and signature</ClubFormSectionTitle>
         {([
           ["emergencyTreatment", consentText.emergencyTreatment],
           ["activities", consentText.activities],
