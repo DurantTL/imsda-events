@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { clubFormIsDirty, dropStaleRankedChoices, clubFormUnsavedMessage, rankLabel, rankedMaximum, toggleRankedChoice, withAutoDateAnswers } from "@/components/club-form-state";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { LockKeyhole } from "lucide-react";
+import { ClubFormSectionTitle } from "@/components/club-form-section-title";
 import { DateInput } from "@/components/club-form-date-input";
 import { addressComponentKeys, addressComponentLabels } from "@/modules/forms/address";
 import {
@@ -158,7 +159,7 @@ export function ClubFormFillIn(props: Props) {
     >
       {props.mode === "club" && (
         <fieldset className="public-manage-card form-stack" disabled={saving || Boolean(savedId)}>
-          <legend className="public-registration-eyebrow">Who is this form for?</legend>
+          <ClubFormSectionTitle>Who is this form for?</ClubFormSectionTitle>
           {props.rosterMembers.length > 0 && (
             <label>
               Roster member
@@ -183,7 +184,7 @@ export function ClubFormFillIn(props: Props) {
         if (fields.length === 0) return null;
         return (
           <fieldset className="public-manage-card form-stack" disabled={saving} key={section.id}>
-            <legend className="public-registration-eyebrow">{section.title}</legend>
+            <ClubFormSectionTitle>{section.title}</ClubFormSectionTitle>
             {section.description && <p className="field-help">{section.description}</p>}
             {(sectionNotes[section.id] ?? []).map((note, index) => <p className="club-form-note" key={index}>{note}</p>)}
             <div className="form-grid two-column">

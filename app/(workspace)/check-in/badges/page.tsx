@@ -138,8 +138,9 @@ export default async function PrintableNameBadgesPage({
           )}
         </div>
         <p className="badge-print-tip">
-          For exact label alignment print from Chrome or Edge: Margins Default
-          or None, Scale 100%, no headers or footers.
+          For exact label alignment print from Chrome or Edge: Paper size
+          Letter, Margins None, Scale: Custom 100 (not Default), no headers or
+          footers.
         </p>
       </div>
 
