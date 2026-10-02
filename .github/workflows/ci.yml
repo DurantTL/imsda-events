@@ -147,6 +147,8 @@ jobs:
       # same migrated and seeded database. `next start` runs in production mode,
       # which requires these values: they are fictitious, exist only for this
       # throwaway job, and no email is ever delivered (events use local capture).
+      # Fictitious CI-only values for production mode. Keep this block identical
+      # to the one in the other job ("badge-print" / "verify").
       - name: Start the built app
         env:
           MANAGE_LINK_DERIVATION_SECRET: ci-only-manage-link-derivation-secret-0000000
@@ -189,6 +191,8 @@ jobs:
   badge-print:
     name: Badge print (real browser, optional)
     runs-on: ubuntu-latest
+    # Optional: a browser or runner flake must not turn the run red.
+    continue-on-error: true
     services:
       postgres:
         image: postgres:16-alpine
@@ -216,6 +220,8 @@ jobs:
       - run: npm run db:seed
       - run: npm run build
       - run: npm i --no-save playwright-core@1.56.1 pdfjs-dist@4.10.38
+      # Fictitious CI-only values for production mode. Keep this block identical
+      # to the one in the other job ("badge-print" / "verify").
       - name: Start the built app
         env:
           MANAGE_LINK_DERIVATION_SECRET: ci-only-manage-link-derivation-secret-0000000

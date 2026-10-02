@@ -7,7 +7,7 @@
  * hydrated the way the app hydrates it (club, church and attendee-type
  * choices come from the live directory) and publication is gated exactly as
  * it is for staff. It is idempotent: when the published version already
- * matches the template it changes nothing.
+ * matches the template it leaves the form alone (the LOCAL10 promo upsert still runs, so its updatedAt moves).
  *
  * The demo answers use the "Not listed" church choice, which is always valid,
  * so a clean install with an empty church directory still publishes.

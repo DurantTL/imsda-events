@@ -1,12 +1,16 @@
 import { loadEnvConfig } from "@next/env";
+import { assertLocalDatabase, assertLocalUrl } from "./support/local-only-guard";
 import { futureEventWindow } from "./support/fixture-dates";
 import { PrismaClient, RegistrationFormStatus } from "@prisma/client";
 import { registrationFormDefinitionSchema } from "../modules/forms/definition";
 
 loadEnvConfig(process.cwd());
+// Local-only: these suites write fictitious rows and call a local app.
+assertLocalDatabase(process.env, "run the public registration check");
 
 const prisma = new PrismaClient();
 const baseUrl = process.env.PUBLIC_REGISTRATION_TEST_URL ?? "http://localhost:3000";
+assertLocalUrl(baseUrl, "PUBLIC_REGISTRATION_TEST_URL");
 const origin = new URL(baseUrl).origin;
 
 const actorId = "usr_public_roster_verification";

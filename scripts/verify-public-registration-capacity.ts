@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
+import { assertLocalDatabase, assertLocalUrl } from "./support/local-only-guard";
 import { PrismaClient, RegistrationFormStatus } from "@prisma/client";
 import { futureEventWindow } from "./support/fixture-dates";
 import { registrationFormDefinitionSchema } from "../modules/forms/definition";
 
 loadEnvConfig(process.cwd());
+// Local-only: these suites write fictitious rows and call a local app.
+assertLocalDatabase(process.env, "run the public registration check");
 
 const prisma = new PrismaClient();
 const baseUrl = process.env.PUBLIC_REGISTRATION_TEST_URL ?? "http://localhost:3000";
+assertLocalUrl(baseUrl, "PUBLIC_REGISTRATION_TEST_URL");
 // An isolated, throwaway event with fresh relative dates: the capacity race must
 // not depend on a seeded event whose hardcoded dates eventually close.
 const eventId = "evt_public_capacity_verification";

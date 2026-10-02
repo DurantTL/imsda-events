@@ -220,7 +220,7 @@ Each one creates its own throwaway event with dates relative to today, so none d
 | `npm run db:migrate -- --name <name>` | Create and apply a development migration. |
 | `npm run db:deploy` | Apply committed migrations without creating new ones. |
 | `npm run db:seed` | Upsert fictitious `.test` foundation data. |
-| `npm run db:refresh-demo` | Publish the current Women’s Retreat template only in the seeded localhost database, through the same save, test and publish workflow staff use. Safe to run repeatedly. |
+| `npm run db:refresh-demo` | Publish the current Women’s Retreat template only in the seeded localhost database, through the same save, test and publish workflow staff use. Replaces an out-of-date local draft with the template, and is safe to run repeatedly: when the published form already matches it, the form is left as is (the `LOCAL10` promo code is re-upserted each time). |
 | `npm run db:studio` | Open Prisma Studio against the configured database. |
 
 Never place real attendee exports, medical details, production identifiers, or credentials in migrations, seeds, tests, issues, screenshots, or commits.

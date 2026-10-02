@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
+import { assertLocalDatabase, assertLocalUrl } from "./support/local-only-guard";
 import { daysFromNow, futureEventWindow } from "./support/fixture-dates";
 import { PrismaClient } from "@prisma/client";
 import {
@@ -9,10 +10,13 @@ import {
 } from "../modules/access/tokens";
 
 loadEnvConfig(process.cwd());
+// Local-only: these suites write fictitious rows and call a local app.
+assertLocalDatabase(process.env, "run the public registration check");
 
 const prisma = new PrismaClient();
 const baseUrl = process.env.PUBLIC_REGISTRATION_TEST_URL
   ?? "http://localhost:3000";
+assertLocalUrl(baseUrl, "PUBLIC_REGISTRATION_TEST_URL");
 const fixtureKey = randomUUID().replaceAll("-", "").slice(0, 16);
 const eventSlug = `private-access-${fixtureKey}`;
 const email = `private-access-${fixtureKey}@example.test`;

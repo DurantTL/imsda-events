@@ -41,6 +41,7 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadEnvConfig } from "@next/env";
+import { assertLocalDatabase } from "./support/local-only-guard";
 import { fillBlankSyntheticEnv } from "./support/synthetic-env";
 import { PrismaClient } from "@prisma/client";
 import { clubComplianceState, matchableName, parseRosterBackgroundCsv, parseSterlingCsv, rosterRowToListRow, sterlingRowToListRow } from "../modules/background-checks/domain";
@@ -49,6 +50,8 @@ import { clubYearChoices, clubYearFor } from "../modules/club-rosters/domain";
 import { calendarDateInEventTimeZone } from "../modules/events/lifecycle";
 
 loadEnvConfig(process.cwd());
+// Local-only, before any Prisma client or connection exists.
+assertLocalDatabase(process.env, "run this verification");
 
 const BEFORE_527 = "20260928200000";
 const MIGRATION_527 = "20260928240000_background_check_list";

@@ -18,10 +18,13 @@
  */
 import { createHash } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
+import { assertLocalDatabase } from "./support/local-only-guard";
 import { PrismaClient } from "@prisma/client";
 import { fillBlankSyntheticEnv } from "./support/synthetic-env";
 
 loadEnvConfig(process.cwd());
+// Local-only, before any Prisma client or connection exists.
+assertLocalDatabase(process.env, "run this verification");
 fillBlankSyntheticEnv("RESEND_API_KEY", "verify-script-placeholder-never-sent");
 fillBlankSyntheticEnv("ACCOUNT_EMAIL_SENDER_ADDRESS", "events@health.example.test");
 fillBlankSyntheticEnv("SECRET_ENCRYPTION_KEY", "verify-health-records-synthetic-key-not-a-secret");
