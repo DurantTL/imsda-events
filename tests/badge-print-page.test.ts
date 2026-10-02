@@ -67,8 +67,8 @@ describe("printable name badge page layout options", () => {
 
   it("shows a screen-only print tip inside the intro that print CSS hides", async () => {
     const markup = await render({});
-    expect(markup).toContain("print from Chrome or Edge: Margins Default");
-    expect(markup).toContain("Scale 100%, no headers or footers.");
+    expect(markup).toContain("print from Chrome or Edge: Paper size Letter, Margins None");
+    expect(markup).toContain("Scale: Custom 100 (not Default), no headers or footers.");
     expect(markup).toContain('class="badge-print-tip"');
   });
 
