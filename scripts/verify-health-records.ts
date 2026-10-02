@@ -19,13 +19,26 @@
 import { createHash } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
+import { fillBlankSyntheticEnv } from "./support/synthetic-env";
 
 loadEnvConfig(process.cwd());
-process.env.RESEND_API_KEY ||= "verify-script-placeholder-never-sent";
-process.env.ACCOUNT_EMAIL_SENDER_ADDRESS ||= "events@health.example.test";
-process.env.SECRET_ENCRYPTION_KEY ||= "verify-health-records-synthetic-key-not-a-secret";
-process.env.APP_BASE_URL ||= "https://events.health.example.test";
+fillBlankSyntheticEnv("RESEND_API_KEY", "verify-script-placeholder-never-sent");
+fillBlankSyntheticEnv("ACCOUNT_EMAIL_SENDER_ADDRESS", "events@health.example.test");
+fillBlankSyntheticEnv("SECRET_ENCRYPTION_KEY", "verify-health-records-synthetic-key-not-a-secret");
+// The origin the links are built on is set explicitly, whatever .env holds
+// (the local default is http://localhost:3000). Nothing is delivered to it.
+const syntheticOrigin = "https://events.health.example.test";
+process.env.APP_BASE_URL = syntheticOrigin;
 process.env.HEALTH_RECORDS_ENABLED = "false";
+
+/** The delivered link, over http or https, and only on the synthetic origin set above. */
+function linkFrom(bodyText: string) {
+  const link = bodyText.match(/https?:\/\/\S+/)?.[0];
+  if (link && !link.startsWith(`${syntheticOrigin}/`)) {
+    throw new Error("The delivered link is not on the synthetic verification origin.");
+  }
+  return link;
+}
 
 const prisma = new PrismaClient();
 const P = "hr611";
@@ -158,7 +171,7 @@ async function main() {
   assert(!/Riley|allerg|medicat/i.test(outbox.bodyTextSnapshot), "the email names neither the child nor any health text");
   assert((await prisma.healthRecordLink.findUniqueOrThrow({ where: { id: created.linkId } })).tokenHash === null, "no token exists until delivery");
   const delivered = await linkEmail.prepareHealthRecordLinkBodyForDelivery({ messageId: created.messageId, bodyText: outbox.bodyTextSnapshot, now });
-  const url = delivered.bodyText.match(/https:\/\/\S+/)?.[0];
+  const url = linkFrom(delivered.bodyText);
   assert(url, "delivery produces the link");
   const token = decodeURIComponent(url.split("/health-records/")[1]!);
   assert((await prisma.healthRecordLink.findUniqueOrThrow({ where: { id: created.linkId } })).tokenHash === sha256(token), "only the hash of the token is stored");
@@ -174,7 +187,7 @@ async function main() {
   const expiring = await repo.createHealthRecordLink(directorA, { organizationId: clubs.a, rosterMemberId: member.id, recipientEmail: `parent2@${emailDomain}`, expiresInDays: 1 }, now);
   const expiringMessage = await prisma.messageOutbox.findUniqueOrThrow({ where: { id: expiring.messageId } });
   const expiringBody = await linkEmail.prepareHealthRecordLinkBodyForDelivery({ messageId: expiring.messageId, bodyText: expiringMessage.bodyTextSnapshot, now });
-  const expiringToken = decodeURIComponent(expiringBody.bodyText.match(/https:\/\/\S+/)![0].split("/health-records/")[1]!);
+  const expiringToken = decodeURIComponent(linkFrom(expiringBody.bodyText)!.split("/health-records/")[1]!);
   const later = new Date(now.getTime() + 3 * 86_400_000);
   await expectCode(repo.submitHealthRecordViaLink(expiringToken, record, later), "LINK_UNAVAILABLE", "an expired link");
 

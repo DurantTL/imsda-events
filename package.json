@@ -43,7 +43,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
-    "db:refresh-demo": "tsx scripts/refresh-local-demo.ts",
+    "db:refresh-demo": "tsx --require ./scripts/support/allow-server-only.cjs scripts/refresh-local-demo.ts",
     "club-forms:sync": "tsx --require ./scripts/support/allow-server-only.cjs scripts/sync-club-form-templates.ts",
     "admin:create": "tsx scripts/create-admin.ts",
     "admin:reset-mfa": "tsx scripts/reset-mfa.ts",

@@ -41,6 +41,7 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadEnvConfig } from "@next/env";
+import { fillBlankSyntheticEnv } from "./support/synthetic-env";
 import { PrismaClient } from "@prisma/client";
 import { clubComplianceState, matchableName, parseRosterBackgroundCsv, parseSterlingCsv, rosterRowToListRow, sterlingRowToListRow } from "../modules/background-checks/domain";
 import { describeIssues } from "../modules/background-checks/issues";
@@ -207,7 +208,8 @@ async function main() {
   }
   deployWorkDirMigrations();
   process.env.DATABASE_URL = scratchUrl;
-  process.env.SECRET_ENCRYPTION_KEY ??= "bgverify-synthetic-secret-encryption-key-0000";
+  // Deliberate, process-only synthetic key: an unset, empty or blank value is filled, never left empty.
+  fillBlankSyntheticEnv("SECRET_ENCRYPTION_KEY", "bgverify-synthetic-secret-encryption-key-0000");
   const repository = await import("../modules/background-checks/repository");
   const { createRegistration, updateRegistrationAttendeeEmail } = await import("../modules/registrations/repository");
   const { getPrisma } = await import("../lib/prisma");

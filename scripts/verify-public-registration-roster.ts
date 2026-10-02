@@ -1,4 +1,5 @@
 import { loadEnvConfig } from "@next/env";
+import { futureEventWindow } from "./support/fixture-dates";
 import { PrismaClient, RegistrationFormStatus } from "@prisma/client";
 import { registrationFormDefinitionSchema } from "../modules/forms/definition";
 
@@ -279,8 +280,7 @@ async function main() {
       id: eventId,
       slug: eventSlug,
       name: "Public Roster Verification 2026",
-      startsAt: new Date("2026-11-06T21:00:00.000Z"),
-      endsAt: new Date("2026-11-08T18:00:00.000Z"),
+      ...futureEventWindow(),
       timezone: "America/Chicago",
       location: "Fictitious Local Test Venue",
       capacity: 4,

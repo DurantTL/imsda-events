@@ -15,22 +15,44 @@
  *   a church with a street address, skips a hand-set church, and accepting a
  *   match marks the location GEOCODED; a changed address drops the point.
  *
- * Creates and removes its own rows. Needs a migrated database.
+ * Disposable data only (#740): it creates a scratch database next to
+ * DATABASE_URL's (on the same local server), migrates it, runs every check
+ * there, and drops it. The fixed eAdventist ids the fixture uses, the church
+ * geocoding pass (which looks at every church) and the offline fake geocoder
+ * therefore never touch the development database or unrelated local work. It
+ * refuses a non-local database and NODE_ENV=production.
  *
  *   npm run test:eadventist-import
  */
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
 import type { GeocodeRequest } from "../integrations/geocoding/types";
+import { assertLocalDatabase } from "./support/local-only-guard";
 
 loadEnvConfig(process.cwd());
+// First, before any client exists: a local database only, never production.
+assertLocalDatabase(process.env, "run the eAdventist import check");
 
-// "Find map locations" (#724) is off unless this is set; the fake provider is used, never the network.
+const baseUrl = process.env.DATABASE_URL!;
+const scratchName = `imsda_eadvtest_${process.pid}`;
+const scratchUrl = (() => {
+  const url = new URL(baseUrl);
+  url.pathname = `/${scratchName}`;
+  return url.toString();
+})();
+
+// Everything below, including the app modules it imports, talks to the scratch
+// database only. "Find map locations" (#724) is off unless GEOCODING_ENABLED is
+// set; it is set for this process and the scratch database alone, and the
+// offline fake provider is passed in explicitly, so the network is never used.
+process.env.DATABASE_URL = scratchUrl;
 process.env.GEOCODING_ENABLED = "true";
 
-const prisma = new PrismaClient();
+const admin = new PrismaClient({ datasourceUrl: baseUrl });
+const prisma = new PrismaClient({ datasourceUrl: scratchUrl });
 const fixture = readFileSync(join(process.cwd(), "tests", "fixtures", "eadventist-organizations-synthetic.csv"), "utf8");
 const ids = Array.from({ length: 12 }, (_, index) => String(9001 + index));
 const stamp = `ea649${Date.now().toString(36)}`;
@@ -53,6 +75,12 @@ async function wipe(userId: string) {
 }
 
 async function main() {
+  await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${scratchName}" WITH (FORCE)`);
+  await admin.$executeRawUnsafe(`CREATE DATABASE "${scratchName}"`);
+  execFileSync("npx", ["prisma", "migrate", "deploy"], {
+    env: { ...process.env, DATABASE_URL: scratchUrl },
+    stdio: ["ignore", "ignore", "inherit"],
+  });
   const { commitEadventistImport, previewEadventistImport } = await import("../modules/organizations/eadventist-import-repository");
   const user = await prisma.user.create({ data: { email: `${stamp}@example.test`, displayName: `${stamp} admin`, globalRole: "SYSTEM_ADMIN" } });
   let looseId: string | null = null;
@@ -163,7 +191,19 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+main()
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    try {
+      // The app's own client may still hold scratch connections; close them
+      // first so dropping the database is quiet.
+      const { getPrisma } = await import("../lib/prisma");
+      await getPrisma().$disconnect().catch(() => undefined);
+      await admin.$executeRawUnsafe(`DROP DATABASE IF EXISTS "${scratchName}" WITH (FORCE)`);
+    } finally {
+      await admin.$disconnect();
+    }
+  });

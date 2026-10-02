@@ -135,3 +135,115 @@ jobs:
       # name are enforced, the audit row holds counts only, a mid-deletion failure
       # rolls everything back, and the ledger trigger flag never leaks (#620).
       - run: npm run test:event-deletion
+
+      # Real-database check of the eAdventist organizations import and church map
+      # locations (#649, #724). It creates, migrates and drops its own scratch
+      # database on this same Postgres service (the CI role may create databases),
+      # so it cannot touch the seeded data above (#740).
+      - run: npm run test:eadventist-import
+
+      # The four HTTP suites below call the real public routes, so they need the
+      # app running. `npm run verify` just built it; start that build against the
+      # same migrated and seeded database. `next start` runs in production mode,
+      # which requires these values: they are fictitious, exist only for this
+      # throwaway job, and no email is ever delivered (events use local capture).
+      - name: Start the built app
+        env:
+          MANAGE_LINK_DERIVATION_SECRET: ci-only-manage-link-derivation-secret-0000000
+          ATTENDEE_PASS_SIGNING_SECRET: ci-only-attendee-pass-signing-secret-000000
+          RATE_LIMIT_HASH_SECRET: ci-only-rate-limit-hash-secret-0000000000
+          OUTBOX_SWEEP_TOKEN: ci-only-outbox-sweep-token-000000000000
+          SECRET_ENCRYPTION_KEY: ci-only-secret-encryption-key-00000000000
+          ACCOUNT_EMAIL_SENDER_ADDRESS: events@ci.example.test
+          RESEND_API_KEY: ci-placeholder-never-sent
+        run: |
+          nohup npm run start > app.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://localhost:3000/; then exit 0; fi
+            sleep 2
+          done
+          echo "The app did not start:" && cat app.log && exit 1
+
+      # Each suite creates its own throwaway event with dates relative to today
+      # (#740), so none depends on a seeded event whose deadlines have passed.
+      # Concurrent submits for the last seat: exactly one 201 and one 409.
+      - run: npm run test:public-capacity
+      # Hash-only private access links: resolve, contact-only updates, revocation.
+      - run: npm run test:public-access
+      # Locally captured confirmation and internal notification messages.
+      - run: npm run test:public-messaging
+      # Roster registrations: attendee limits and per-attendee capacity.
+      - run: npm run test:public-roster
+
+      - name: Show the app log when a suite failed
+        if: failure()
+        run: cat app.log || true
+
+  # Real-browser check of the printable name badge page (#717, #740). It needs a
+  # browser and two packages that are deliberately not dependencies
+  # (playwright-core, pdfjs-dist), so it is its own job and is not part of
+  # `verify`: a browser or runner problem shows up here and never hides, or
+  # fails, the main gate. GitHub-hosted runners ship Google Chrome, which this
+  # job drives instead of downloading a browser. `--no-save` keeps the
+  # lockfile untouched.
+  badge-print:
+    name: Badge print (real browser, optional)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: imsda_events
+          POSTGRES_USER: imsda
+          POSTGRES_PASSWORD: imsda_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U imsda -d imsda_events"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://imsda:imsda_ci@localhost:5432/imsda_events?schema=public
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:deploy
+      - run: npm run db:seed
+      - run: npm run build
+      - run: npm i --no-save playwright-core@1.56.1 pdfjs-dist@4.10.38
+      - name: Start the built app
+        env:
+          MANAGE_LINK_DERIVATION_SECRET: ci-only-manage-link-derivation-secret-0000000
+          ATTENDEE_PASS_SIGNING_SECRET: ci-only-attendee-pass-signing-secret-000000
+          RATE_LIMIT_HASH_SECRET: ci-only-rate-limit-hash-secret-0000000000
+          OUTBOX_SWEEP_TOKEN: ci-only-outbox-sweep-token-000000000000
+          SECRET_ENCRYPTION_KEY: ci-only-secret-encryption-key-00000000000
+          ACCOUNT_EMAIL_SENDER_ADDRESS: events@ci.example.test
+          RESEND_API_KEY: ci-placeholder-never-sent
+        run: |
+          nohup npm run start > app.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://localhost:3000/; then exit 0; fi
+            sleep 2
+          done
+          echo "The app did not start:" && cat app.log && exit 1
+      - name: Check name badge printing
+        env:
+          BADGE_PRINT_BROWSER: /usr/bin/google-chrome
+          BADGE_PRINT_OUT_DIR: ${{ runner.temp }}/badge-print
+        run: npm run test:badge-print
+      - name: Keep the printed PDFs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: badge-print-output
+          path: ${{ runner.temp }}/badge-print
+          if-no-files-found: ignore
+      - name: Show the app log when the check failed
+        if: failure()
+        run: cat app.log || true
