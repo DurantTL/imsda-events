@@ -326,6 +326,12 @@ export type MoreDirectoryContext = {
   clubFormsAccess: boolean;
   /** `?event=<id>` (or `""` when nothing is selected), appended to every event-scoped href. */
   eventQuery: string;
+  /**
+   * Entry points hidden for this event by the module rules (#741): the Honors
+   * Weekend builder and Club forms where neither the module nor the event type
+   * calls for them. Relevance only; the routes keep their own authorization.
+   */
+  hiddenCardKeys?: ReadonlySet<string>;
 };
 
 export function buildMoreDirectoryCards({
@@ -335,6 +341,7 @@ export function buildMoreDirectoryCards({
   isSystemAdmin,
   clubFormsAccess,
   eventQuery,
+  hiddenCardKeys,
 }: MoreDirectoryContext): readonly MoreDirectoryCard[] {
   const granted = new Set(permissions);
   const has = (permission: EventPermission) => granted.has(permission);
@@ -342,7 +349,7 @@ export function buildMoreDirectoryCards({
   const tagsPermission = requiredPermissionFor("/more/tags");
   const paymentsPermission = requiredPermissionFor("/finance");
 
-  return [
+  const cards: MoreDirectoryCard[] = [
     { key: "event-settings", group: "setup", allowed: has("CONFIGURE_EVENT"), href: `/more/event-settings${eventQuery}`, icon: Settings2, title: "Event settings", description: "Edit dates, location, capacity, registration availability, and publishing.", cta: "Open settings" },
     { key: "attendee-configuration", group: "setup", allowed: Boolean(attendeeConfigurationPermission && has(attendeeConfigurationPermission)), href: `/more/attendee-configuration${eventQuery}`, icon: Tags, title: "Attendee setup", description: "Define the attendee types and per-type pricing this event registers.", cta: "Open attendee setup" },
     { key: "tags", group: "setup", allowed: Boolean(tagsPermission && has(tagsPermission)), href: `/more/tags${eventQuery}`, icon: Tag, title: "Tags", description: "Create and color-code the tags staff use to mark and filter registrations.", cta: "Manage tags" },
@@ -391,4 +398,6 @@ export function buildMoreDirectoryCards({
     { key: "reports", group: "reports", allowed: has("VIEW_REPORTS"), href: `/more/reports${eventQuery}`, icon: ChartNoAxesCombined, title: "Operational reports", description: "Print active attendee rosters and review meal, housing, and ranked seminar totals.", cta: "Open reports" },
     { key: "health", group: "reports", allowed: canAccessOperationalHealth(permissions), href: `/more/health${eventQuery}`, icon: HeartPulse, title: "Operational health", description: "Review failed or delayed work, open balances, import exceptions, and capacity warnings.", cta: "Review exceptions" },
   ];
+  if (!hiddenCardKeys || hiddenCardKeys.size === 0) return cards;
+  return cards.map((card) => (hiddenCardKeys.has(card.key) ? { ...card, allowed: false } : card));
 }

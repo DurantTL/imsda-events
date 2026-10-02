@@ -8,6 +8,8 @@ import { buildMoreDirectoryCards, moreDirectoryGroupLabels, moreDirectoryGroupOr
 import { listUserSessions, SESSION_COOKIE_NAME, SESSION_IDLE_TIMEOUT_SECONDS } from "@/modules/access/session-store";
 import { resolveStaffViewer } from "@/modules/club-forms/access";
 import { listRecentAuditActivity } from "@/modules/audit/audit-service";
+import { clubFormsAvailable, moduleVisible } from "@/modules/event-modules/catalog";
+import { enabledModules } from "@/modules/event-modules/service";
 import { resolveEventContext } from "@/modules/events/selection";
 import { eventKindFromAudience, moreCardApplies, selectActivity } from "@/modules/events/settings-sections";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
@@ -34,7 +36,16 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
   // bottom tabs (#475): built from `buildMoreDirectoryCards`, the same
   // permission and navigation source `AppShell`'s sidebar reads, so the two
   // can't drift — see `tests/mobile-directory-parity.test.ts`.
+  // Event modules (#741): hide the Honors Weekend builder and Club forms where
+  // the module is neither on nor applicable. Relevance only; the routes keep
+  // their own authorization.
+  const modulesOn = await enabledModules(event.id);
+  const moduleContext = { audience: clubEvent ? "CLUB" as const : "GENERAL" as const, hasRankedSeminars: false };
+  const hiddenCardKeys = new Set<string>();
+  if (!moduleVisible("honors", modulesOn, moduleContext)) hiddenCardKeys.add("honors");
+  if (!clubFormsAvailable(modulesOn, moduleContext)) hiddenCardKeys.add("club-forms");
   const cards = buildMoreDirectoryCards({
+    hiddenCardKeys,
     permissions,
     clubOversight,
     clubEvent,
