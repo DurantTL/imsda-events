@@ -61,9 +61,10 @@ beforeEach(() => {
   signedIn();
 });
 
-// Area Coordinator and club director accounts both resolve to a non-OK gate
-// from the shared policy; the route only reuses that answer.
-describe.each([["Area Coordinator"], ["club director"]])("%s with the second step pending", () => {
+// The route only reuses the shared gate's answer. Which roles produce a
+// non-OK gate is proven against the real gate in
+// attendee-profile-route-gate.test.ts.
+describe("second step pending", () => {
   it.each(["VERIFY", "SETUP"])("refuses GET with no profile data (%s)", async (gate) => {
     mocks.accountNeedsSecondStep.mockResolvedValue(gate);
     const response = await callGet();
@@ -102,21 +103,13 @@ describe("cross-origin check", () => {
 });
 
 describe("accounts that may use the profile", () => {
-  it("lets an ordinary attendee GET and PATCH", async () => {
+  it("lets an account whose gate is OK GET and PATCH", async () => {
     const got = await callGet();
     expect(got.status).toBe(200);
     expect(await got.json()).toEqual({ profile });
     const patched = await callPatch(patchRequest());
     expect(patched.status).toBe(200);
     expect(mocks.updateAttendeeProfile).toHaveBeenCalledWith("acct-1", profile);
-  });
-
-  it("lets an account that completed its second step GET and PATCH", async () => {
-    // The shared gate reports OK once this session passed its second step.
-    mocks.accountNeedsSecondStep.mockResolvedValue("OK");
-    expect((await callGet()).status).toBe(200);
-    expect((await callPatch(patchRequest())).status).toBe(200);
-    expect(mocks.updateAttendeeProfile).toHaveBeenCalledTimes(1);
   });
 
   it("still returns 400 for an invalid body", async () => {

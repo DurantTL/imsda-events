@@ -4,6 +4,14 @@ const mocks = vi.hoisted(() => ({
   rejectCrossOriginRequest: vi.fn(),
   getCurrentAttendee: vi.fn(),
   updateTieredAttendeeAnswers: vi.fn(),
+  accountNeedsSecondStep: vi.fn(),
+}));
+
+vi.mock("server-only", () => ({}));
+vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
+vi.mock("@/modules/attendee-accounts/return-redirect", () => ({ twoStepRedirectPath: vi.fn() }));
+vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({
+  accountNeedsSecondStep: mocks.accountNeedsSecondStep,
 }));
 
 vi.mock("@/modules/access/request-security", () => ({
@@ -39,6 +47,7 @@ function request(body: unknown) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
+  mocks.accountNeedsSecondStep.mockResolvedValue("OK");
   mocks.getCurrentAttendee.mockResolvedValue({
     account: {
       id: "account-1",
@@ -46,6 +55,7 @@ beforeEach(() => {
       displayName: "Guest",
     },
     via: "attendee",
+    sessionId: "session-1",
   });
   mocks.updateTieredAttendeeAnswers.mockResolvedValue({
     updatedAt: "2026-07-29T16:00:00.000Z",
@@ -112,5 +122,33 @@ describe("attendee registration answer route", () => {
     expect(response.status).toBe(403);
     expect(mocks.getCurrentAttendee).not.toHaveBeenCalled();
     expect(mocks.updateTieredAttendeeAnswers).not.toHaveBeenCalled();
+  });
+
+  it.each(["VERIFY", "SETUP"])("refuses a pending second step (%s) before parsing or saving", async (gate) => {
+    mocks.accountNeedsSecondStep.mockResolvedValue(gate);
+    const put = request({
+      clientRequestId: "bb02cc2c-462b-4c90-a9f4-29f70c4410cc",
+      expectedUpdatedAt: "2026-07-29T15:00:00.000Z",
+      attendees: [{ attendeeId: "attendee-1", responses: {} }],
+    });
+    const parse = vi.spyOn(put, "json");
+    const response = await PUT(put, context);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ code: "SECOND_STEP_REQUIRED" });
+    expect(parse).not.toHaveBeenCalled();
+    expect(mocks.updateTieredAttendeeAnswers).not.toHaveBeenCalled();
+    expect(mocks.accountNeedsSecondStep).toHaveBeenCalledWith("account-1", "session-1");
+  });
+
+  it("lets an account whose second step is complete (gate OK) save", async () => {
+    mocks.accountNeedsSecondStep.mockResolvedValue("OK");
+    const response = await PUT(request({
+      clientRequestId: "bb02cc2c-462b-4c90-a9f4-29f70c4410cc",
+      expectedUpdatedAt: "2026-07-29T15:00:00.000Z",
+      attendees: [{ attendeeId: "attendee-1", responses: {} }],
+    }), context);
+    expect(response.status).toBe(200);
+    expect(mocks.updateTieredAttendeeAnswers).toHaveBeenCalledTimes(1);
   });
 });
