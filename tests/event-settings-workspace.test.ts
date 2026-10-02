@@ -90,8 +90,10 @@ describe("EventSettingsWorkspace never folds publish state into a settings save 
   it("gates Publish on the saved settings, not unsaved edits or an in-flight save", () => {
     expect(workspaceSource).toContain("getEventPublishReadiness(savedDraft, publishedFormCount)");
     expect(workspaceSource).toContain("const publishBlockedBySave = dirty || saving;");
-    expect(workspaceSource).toContain("disabled={!canPublish}");
-    expect(workspaceSource).toContain("Save your changes first.");
+    // Publish stays focusable and explains itself (#742); the request itself is still gated.
+    expect(workspaceSource).toContain("aria-disabled={Boolean(publishBlocker) || publishing}");
+    expect(workspaceSource).toMatch(/async function publish\(\) \{\s*if \(!canPublish\) return;/);
+    expect(workspaceSource).toContain("Save event settings first; Publish checks the saved settings.");
   });
 
   it("publishes and unpublishes through their own endpoints, not the settings PATCH", () => {
@@ -110,13 +112,14 @@ describe("EventSettingsWorkspace never folds publish state into a settings save 
     expect(markup).not.toMatch(/<input[^>]*type="checkbox"[^>]*event-publish-toggle/);
   });
 
-  it("shows a private draft with a disabled Publish button when the checklist isn't ready", () => {
+  it("shows a private draft with an aria-disabled Publish button and the reason when the checklist isn't ready", () => {
     const markup = renderToStaticMarkup(createElement(EventSettingsWorkspace, {
       mode: "edit",
       initialEvent: { ...baseEvent, isPublished: false, supportContact: null },
     }));
     expect(markup).toContain("Private draft");
-    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Publish event<\/button>/);
+    expect(markup).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Publish event<\/button>/);
+    expect(markup).toContain("the registration support contact is missing");
   });
 
   it("enables Publish for a ready, saved, unpublished event", () => {
@@ -125,7 +128,7 @@ describe("EventSettingsWorkspace never folds publish state into a settings save 
       initialEvent: { ...baseEvent, isPublished: false },
     }));
     expect(markup).toMatch(/Publish event<\/button>/);
-    expect(markup).not.toMatch(/<button[^>]*disabled=""[^>]*>Publish event<\/button>/);
+    expect(markup).not.toMatch(/<button[^>]*aria-disabled="true"[^>]*>Publish event<\/button>/);
   });
 });
 

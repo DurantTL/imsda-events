@@ -45,6 +45,7 @@ import {
   listEnabledClubFormTemplates,
   setClubFormTemplateEnabled,
   syncClubFormTemplates,
+  runClubFormTemplateSync,
   listClubFormTemplatesForAdmin,
 } from "@/modules/club-forms/templates";
 
@@ -162,6 +163,38 @@ describe("club form templates are off until a system administrator turns them on
     ]).mockResolvedValueOnce([]);
     await syncClubFormTemplates(client as never);
     expect(mocks.submissionUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports which templates were updated, created and unchanged", async () => {
+    mocks.templateFindMany.mockResolvedValue(storedRows({ [slip.key]: { version: slip.version } }).filter((row) => row.key !== clubFormTemplateSeeds[0].key));
+    const result = await syncClubFormTemplates(client as never);
+    expect(result.unchanged.map((item) => item.key)).toContain(slip.key);
+    expect(result.updated.some((item) => item.key === clubFormTemplateSeeds[0].key && item.created)).toBe(true);
+    expect(result.updated.length + result.unchanged.length).toBe(clubFormTemplateSeeds.length);
+  });
+
+  it("the in-app Sync templates action reuses the sync, keeps its safety rules and audits counts only (#742)", async () => {
+    const other = clubFormTemplateSeeds.find((seed) => seed.key !== slip.key)!;
+    const third = clubFormTemplateSeeds.find((seed) => seed.key !== slip.key && seed.key !== other.key)!;
+    const rows = storedRows({
+      [slip.key]: { sensitiveFieldKeys: [...slip.sensitiveFieldKeys, "activity"] },
+      [third.key]: { version: third.version },
+    }).map((row) => (row.key === other.key ? { ...row, customizedAt: new Date("2026-10-01T00:00:00Z") } : row));
+    mocks.templateFindMany.mockResolvedValue(rows);
+    const report = await runClubFormTemplateSync("admin-1");
+    const status = (key: string) => report.results.find((item) => item.key === key)?.status;
+    expect(status(slip.key)).toBe("REFUSED");
+    expect(status(other.key)).toBe("SKIPPED");
+    expect(status(third.key)).toBe("UNCHANGED");
+    expect(report.results.some((item) => item.status === "UPDATED")).toBe(true);
+    // A refused or customized template is never written over.
+    const written = mocks.templateUpdate.mock.calls.map(([call]) => call.where.key);
+    expect(written).not.toContain(slip.key);
+    expect(written).not.toContain(other.key);
+    const [entry] = mocks.writeAuditLog.mock.calls.at(-1)!;
+    expect(entry).toMatchObject({ actorUserId: "admin-1", action: "CLUB_FORM_TEMPLATES_SYNCED" });
+    expect(entry.metadata).toEqual(report.counts);
+    expect(Object.values(entry.metadata).every((value) => typeof value === "number")).toBe(true);
   });
 
   it("refuses a version that would stop a birth-date field being one (ADR 0005 Addendum A)", async () => {

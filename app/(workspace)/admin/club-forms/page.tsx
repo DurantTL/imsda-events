@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ClubFormCreate } from "@/components/club-form-create";
+import { ClubFormSync } from "@/components/club-form-sync";
 import { ClubFormTemplateToggle } from "@/components/club-forms-actions";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { listClubFormTemplatesForAdmin } from "@/modules/club-forms/templates";
@@ -37,6 +38,7 @@ export default async function AdminClubFormsPage() {
           <Link className="secondary-button" href="/more/club-forms">See submitted forms</Link>
         </div>
       </div>
+      <ClubFormSync pendingCount={templates.filter((template) => template.needsSync).length} />
       <section className="panel">
         <div className="report-table-wrap">
           <table className="report-table">
@@ -48,7 +50,7 @@ export default async function AdminClubFormsPage() {
               {templates.map((template) => (
                 <tr key={template.key}>
                   <th scope="row">{template.name}<small className="quiet-copy"> · {template.description}</small></th>
-                  <td>{template.enabled ? "On" : "Off"}{template.needsSync && <small className="club-report-problem"> · Needs sync: an operator must run <code>npm run club-forms:sync</code></small>}</td>
+                  <td>{template.enabled ? "On" : "Off"}{template.needsSync && <small className="club-report-problem"> · Needs sync: use Sync templates above</small>}</td>
                   <td>{template.submissionCount}</td>
                   <td>
                     {template.version}

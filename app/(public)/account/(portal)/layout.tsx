@@ -65,7 +65,7 @@ export default async function AccountPortalLayout({ children }: { children: Reac
   const actingAsDirector = acting?.role === "CLUB_DIRECTOR";
 
   const items: AccountNavItem[] = [
-    ...(chromeAccount ? [{ href: "/account", label: "Overview" }, { href: "/account/registrations", label: "Registrations" }] : []),
+    ...(chromeAccount ? [{ href: "/account", label: "Overview" }, { href: "/account/registrations", label: "My registrations" }] : []),
     // Area Coordinators see every club (#387), so the tab is just "Clubs".
     ...(areaCoordinator || actingAsAreaCoordinator
       ? [{ href: "/account/clubs", label: "Clubs", matchChildren: true, alsoMatchPrefix: "/account/area" }]

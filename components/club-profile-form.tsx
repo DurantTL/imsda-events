@@ -52,7 +52,7 @@ export function ClubProfileForm({
         throw new Error(result.message ?? result.issues?.[0]?.message ?? "The club profile could not be saved.");
       }
       setProfile(result.profile);
-      setNotice("Club profile saved.");
+      setNotice("Club settings saved.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The club profile could not be saved.");
     } finally {
@@ -66,7 +66,7 @@ export function ClubProfileForm({
     <form className={card} key={profile.updatedAt ?? "new"} onSubmit={save}>
       <div className={variant === "account" ? "public-manage-card-heading" : "section-heading"}>
         <div>
-          <p className={variant === "account" ? "public-registration-eyebrow" : "eyebrow"}>Club profile</p>
+          <p className={variant === "account" ? "public-registration-eyebrow" : "eyebrow"}>Club settings</p>
           <h2>About the club</h2>
         </div>
       </div>

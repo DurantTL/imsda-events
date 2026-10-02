@@ -299,3 +299,40 @@ describe("Delete event panel (#704)", () => {
     expect(render({}, true)).toContain("Delete event");
   });
 });
+
+describe("Event settings save and publish clarity (#742)", () => {
+  it("has no second Event settings title: the staff header carries the H1", () => {
+    const markup = render();
+    expect(markup).not.toMatch(/<h1/);
+    expect(markup).not.toMatch(/<h2[^>]*>Event settings<\/h2>/);
+  });
+
+  it("makes Save event settings the one submit button, in a sticky bar", () => {
+    const markup = render();
+    expect(markup.match(/type="submit"/g)).toHaveLength(1);
+    expect(markup).toContain('class="event-savebar"');
+    expect(markup.slice(markup.indexOf('class="event-savebar"'))).toContain("Save event settings");
+    expect(markup).toContain("Saving never publishes the event");
+  });
+
+  it("explains the first missing requirement and points at its control instead of a dead button", () => {
+    const markup = render({ supportContact: null });
+    expect(markup).toContain("Can&#x27;t publish yet: the registration support contact is missing.");
+    expect(markup).toContain("Go to Registration support contact");
+    expect(markup).toContain('id="event-field-support-contact"');
+    expect(markup).toContain('aria-disabled="true"');
+  });
+
+  it("links to the registration builder when the form is the missing piece", () => {
+    const markup = render({ publishedFormCount: 0 });
+    expect(markup).toContain("a published registration form is missing");
+    expect(markup).toContain('href="/registration-builder?event=event-1"');
+  });
+
+  it("offers Publish with no blocker once everything is ready", () => {
+    const markup = render();
+    expect(markup).not.toContain("Can&#x27;t publish yet");
+    expect(markup).toContain("Every checklist item is complete");
+    expect(markup).toContain('aria-disabled="false"');
+  });
+});

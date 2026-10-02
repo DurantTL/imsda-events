@@ -15,21 +15,21 @@ describe("club portal menu (#644)", () => {
     expect(items.map((item) => `${item.group ?? "-"}:${item.label}`)).toEqual([
       "-:Home",
       "People:Roster", "People:Honors", "People:Class tracking",
-      "Events:Events", "Events:Forms", "Events:Health",
+      "Events:Club events", "Events:Forms", "Events:Health",
       "Records:Monthly Records",
       "Orders:Orders",
-      "Club:Club info",
+      "Club:Club settings",
     ]);
     expect(items.find((item) => item.label === "Class tracking")?.href).toBe(`${base}/class-tracking`);
-    expect(items.find((item) => item.label === "Club info")?.href).toBe(`${base}/club-info`);
+    expect(items.find((item) => item.label === "Club settings")?.href).toBe(`${base}/club-info`);
   });
 
   it("no longer uses the old labels", () => {
     const labels = nav("DIRECTOR").map((item) => item.label);
-    for (const old of ["Events & classes", "Earned awards", "Club admins", "Club profile", "Club home"]) expect(labels).not.toContain(old);
+    for (const old of ["Events & classes", "Events", "Earned awards", "Club admins", "Club profile", "Club info", "Club home"]) expect(labels).not.toContain(old);
   });
 
-  it("gives each role exactly the destinations it had before, with Club info standing for team and profile", () => {
+  it("gives each role exactly the destinations it had before, with Club settings standing for team and profile", () => {
     const everything = ["/", "/roster", "/honors", "/class-tracking", "/events", "/forms", "/health", "/records", "/orders", "/club-info"];
     expect(hrefs("DIRECTOR")).toEqual(everything);
     expect(hrefs("DEPUTY")).toEqual(everything);
