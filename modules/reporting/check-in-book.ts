@@ -6,6 +6,7 @@ import { attendeeAgeKey } from "@/modules/club-registrations/domain";
 import { withLocationColumn, type ClubEventRecord } from "@/modules/reporting/club-event-reports";
 import { isSensitiveField, sensitiveFieldPattern } from "@/modules/forms/sensitive-fields";
 import { isLinkedToBlockedField } from "@/modules/forms/field-dependency-walk";
+import { isFieldSensitive } from "@/modules/forms/field-flags";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -57,7 +58,8 @@ const checkInSensitivePattern = sensitiveFieldPattern([
 ]);
 
 function isBlockedByItself(field: RegistrationFormField) {
-  return blockedKeys.has(field.key) || isSensitiveField(field, checkInSensitivePattern);
+  // The staff "Sensitive" flag (#743), explicit or defaulted for health-type fields, also rules a field out.
+  return blockedKeys.has(field.key) || isSensitiveField(field, checkInSensitivePattern) || isFieldSensitive(field);
 }
 
 /**

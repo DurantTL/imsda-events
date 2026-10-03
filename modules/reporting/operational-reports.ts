@@ -183,7 +183,8 @@ function fieldContextText(metadata: FieldMetadata) {
 }
 
 function isSensitiveField(metadata: FieldMetadata) {
-  return sensitiveSemanticPattern.test(fieldCoreText(metadata.field));
+  // A staff-set "Sensitive" flag (#743) keeps the field out of these reports, whatever its wording.
+  return metadata.field.sensitive === true || sensitiveSemanticPattern.test(fieldCoreText(metadata.field));
 }
 
 function definitionFields(definition: RegistrationFormDefinition): FieldMetadata[] {

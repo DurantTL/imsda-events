@@ -141,6 +141,19 @@ export const formFieldSchema = z.object({
    * pre-fills it but lets them change it.
    */
   autoDate: z.literal("TODAY").optional(),
+  /**
+   * "Show as a filter" (#743): the field is offered in the People &
+   * registrations answer filter. Absent means the read-time default in
+   * `modules/forms/field-flags.ts`. Only a choice field with options is ever
+   * offered, whatever this says.
+   */
+  filterable: z.boolean().optional(),
+  /**
+   * "Sensitive" (#743): only staff with VIEW_SENSITIVE_DATA see the answer or
+   * filter on it. Absent means the read-time default (health-type fields are
+   * sensitive) in `modules/forms/field-flags.ts`.
+   */
+  sensitive: z.boolean().optional(),
 }).superRefine((field, context) => {
   if (field.autoDate && field.type !== "DATE") {
     context.addIssue({ code: "custom", path: ["autoDate"], message: "Only a date question can fill in today's date." });

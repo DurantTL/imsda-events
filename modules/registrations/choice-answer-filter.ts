@@ -3,7 +3,7 @@ import {
   type RegistrationFormField,
 } from "@/modules/forms/definition";
 import { isLinkedToBlockedField } from "@/modules/forms/field-dependency-walk";
-import { SENSITIVE_FIELD_STEMS } from "@/modules/forms/sensitive-fields";
+import { hasOfferedChoices, resolveFieldFlags } from "@/modules/forms/field-flags";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 
 /**
@@ -12,12 +12,17 @@ import type { RegistrationRecord } from "@/modules/registrations/repository";
  * Vegetarian" (#739). It is generic over the form definition: nothing here
  * knows about meals.
  *
- * Privacy: only choice answers can be filtered. Free text never can, and
- * neither can a question that reads as health, dietary need, allergy, custody
- * or otherwise private (see `modules/forms/sensitive-fields.ts`), sits in such
- * a section, or is wired by `conditional` / `optionalWhen` to such a question.
- * This runs on the server; the question id from the URL is looked up in the
- * set of filterable questions and ignored when it is not in it.
+ * Which questions are offered is a staff decision made in the form builder
+ * (#743): a question is offered only when it is flagged "Show as a filter"
+ * AND is a choice field with options (free text never can be, and neither can
+ * a directory-sourced list or the payment-method field). A question that is
+ * also "Sensitive", or that is wired by `conditional` / `optionalWhen` to a
+ * sensitive question in either direction, is offered only to a viewer who
+ * holds VIEW_SENSITIVE_DATA. Absent flags fall back to the read-time defaults
+ * in `modules/forms/field-flags.ts`, so forms published before the flags
+ * existed behave as they did. This runs on the server; the question id from
+ * the URL is looked up in the set the viewer may filter on and ignored when
+ * it is not in it.
  *
  * Eligibility is decided per form version. A registration is read for a
  * question only when ITS OWN definition has that question as filterable, so a
@@ -32,29 +37,6 @@ export const CHOICE_FILTER_VALUE_PARAM = "answerValue";
 /** Active registrations only: the people actually expected at the event. */
 const COUNTED_STATUSES: ReadonlySet<string> = new Set(["SUBMITTED", "CONFIRMED"]);
 
-const FILTERABLE_TYPES: ReadonlySet<string> = new Set(["SELECT", "RADIO", "MULTISELECT"]);
-
-/**
- * Stems that name a dietary choice an ordinary meal drop-down offers
- * ("Vegetarian", "Vegan", "Gluten-free"). The shared sensitive list treats
- * them as sensitive anywhere, which is right for free text and for a
- * question's own wording. They are skipped only when reading a choice's
- * option text, so an everyday meal menu stays filterable. "Nut free" and
- * "lactose" are allergy signals and stay blocked. This is a heuristic: an
- * explicit staff-set "filterable" flag on a question is a future decision.
- */
-const MEAL_MENU_STEMS: ReadonlySet<string> = new Set(["vegetarian", "vegan", "gluten"]);
-
-const QUESTION_PATTERN = new RegExp(`\\b(?:${SENSITIVE_FIELD_STEMS.join("|")})`, "i");
-const OPTION_PATTERN = new RegExp(
-  `\\b(?:${SENSITIVE_FIELD_STEMS.filter((stem) => !MEAL_MENU_STEMS.has(stem)).join("|")})`,
-  "i",
-);
-
-function words(text: string) {
-  return text.replaceAll("_", " ");
-}
-
 export type ChoiceQuestion = {
   /** Unique across scopes: `${scope}:${key}`. This is what the URL carries. */
   id: string;
@@ -64,36 +46,40 @@ export type ChoiceQuestion = {
   multi: boolean;
   /** The choices staff can pick, in form order, with the label people see. */
   choices: Array<{ value: string; label: string }>;
+  /** Sensitive (flagged, or linked to a sensitive question): only VIEW_SENSITIVE_DATA holders may filter on it. */
+  sensitive: boolean;
 };
 
-type FilterableFieldShape = Pick<RegistrationFormField, "type" | "key" | "label" | "helpText" | "options" | "optionLabels" | "optionSource">;
-
-/** The field's own wording (or its section's title) reads as sensitive, or it is the payment-method field. */
-function isBlockedByItself(field: FilterableFieldShape, paymentMethodFieldKey: string | null | undefined, sectionTitle: string) {
-  if (paymentMethodFieldKey && field.key === paymentMethodFieldKey) return true;
-  if ([words(field.key), field.label, field.helpText ?? "", sectionTitle].some((text) => QUESTION_PATTERN.test(text))) return true;
-  return [...field.options, ...Object.values(field.optionLabels ?? {})].some((text) => OPTION_PATTERN.test(words(text)));
-}
+/** Who is asking. Required, so no caller can skip the sensitive check. */
+export type ChoiceFilterViewer = { canViewSensitive: boolean };
 
 /**
- * Whether a question may be filtered on at all. Internal, and `context` (the
- * form's fields and section titles) is required, so no caller can skip the
- * check that rules out a question when anything in its `conditional` /
- * `optionalWhen` chain, in either direction, is blocked.
+ * Whether a question is offered, and whether it is sensitive. Internal, and
+ * `context` (the form's fields, section titles and payment key) is required,
+ * so no caller can skip the check that treats a question as sensitive when
+ * anything in its `conditional` / `optionalWhen` chain, in either direction,
+ * is sensitive.
  */
-function isFilterableChoiceField(
+function offeredQuestion(
   field: RegistrationFormField,
-  paymentMethodFieldKey: string | null | undefined,
-  context: { allFields: readonly RegistrationFormField[]; sectionTitleOf: (field: RegistrationFormField) => string },
-) {
-  if (!FILTERABLE_TYPES.has(field.type)) return false;
-  // Directory-sourced lists (churches, clubs) are not a short menu of choices.
-  if (field.optionSource) return false;
-  if (field.options.length === 0) return false;
-  const titleOf = context.sectionTitleOf;
-  if (isBlockedByItself(field, paymentMethodFieldKey, titleOf(field))) return false;
-  if (isLinkedToBlockedField(field, context.allFields, (other) => isBlockedByItself(other, paymentMethodFieldKey, titleOf(other)))) return false;
-  return true;
+  context: {
+    allFields: readonly RegistrationFormField[];
+    sectionTitleOf: (field: RegistrationFormField) => string;
+    paymentMethodFieldKey: string | null;
+  },
+): { sensitive: boolean } | null {
+  const flagsOf = (candidate: RegistrationFormField) => resolveFieldFlags(candidate, {
+    sectionTitle: context.sectionTitleOf(candidate),
+    paymentMethodFieldKey: context.paymentMethodFieldKey,
+  });
+  if (!hasOfferedChoices(field)) return null;
+  // The payment-method answer is never a filter, whatever its flags say.
+  if (context.paymentMethodFieldKey && field.key === context.paymentMethodFieldKey) return null;
+  const flags = flagsOf(field);
+  if (!flags.filterable) return null;
+  const sensitive = flags.sensitive
+    || isLinkedToBlockedField(field, context.allFields, (other) => flagsOf(other).sensitive);
+  return { sensitive };
 }
 
 const definitionCache = new WeakMap<object, Map<string, ChoiceQuestion>>();
@@ -109,9 +95,10 @@ function questionsFromDefinition(definition: Record<string, unknown>): Map<strin
     const allFields = parsed.data.sections.flatMap((section) => section.fields);
     const titles = new Map<RegistrationFormField, string>();
     for (const section of parsed.data.sections) for (const field of section.fields) titles.set(field, section.title);
-    const context = { allFields, sectionTitleOf: (field: RegistrationFormField) => titles.get(field) ?? "" };
+    const context = { allFields, sectionTitleOf: (field: RegistrationFormField) => titles.get(field) ?? "", paymentMethodFieldKey: paymentKey };
     for (const field of allFields) {
-      if (!isFilterableChoiceField(field, paymentKey, context)) continue;
+      const offered = offeredQuestion(field, context);
+      if (!offered) continue;
       const id = `${field.scope}:${field.key}`;
       questions.set(id, {
         id,
@@ -120,6 +107,7 @@ function questionsFromDefinition(definition: Record<string, unknown>): Map<strin
         scope: field.scope === "ATTENDEE" ? "ATTENDEE" : "REGISTRATION",
         multi: field.type === "MULTISELECT",
         choices: field.options.map((option) => ({ value: option, label: field.optionLabels?.[option] ?? option })),
+        sensitive: offered.sensitive,
       });
     }
   }
@@ -127,14 +115,19 @@ function questionsFromDefinition(definition: Record<string, unknown>): Map<strin
   return questions;
 }
 
-/** Every filterable question across the event's registration forms, deduplicated. */
-export function listChoiceQuestions(registrations: readonly RegistrationRecord[]): ChoiceQuestion[] {
+/**
+ * Every question this viewer may filter on across the event's registration
+ * forms, deduplicated. A question that is sensitive in any form version is
+ * sensitive here, and is left out for a viewer without VIEW_SENSITIVE_DATA.
+ */
+export function listChoiceQuestions(registrations: readonly RegistrationRecord[], viewer: ChoiceFilterViewer): ChoiceQuestion[] {
   const byId = new Map<string, ChoiceQuestion>();
   for (const registration of registrations) {
     const definition = registration.publicSubmission?.definition;
     if (!definition) continue;
     for (const question of questionsFromDefinition(definition).values()) {
       const existing = byId.get(question.id);
+      if (existing && question.sensitive) existing.sensitive = true;
       if (!existing) {
         byId.set(question.id, { ...question, choices: [...question.choices] });
         continue;
@@ -145,7 +138,7 @@ export function listChoiceQuestions(registrations: readonly RegistrationRecord[]
       }
     }
   }
-  return [...byId.values()];
+  return [...byId.values()].filter((question) => viewer.canViewSensitive || !question.sensitive);
 }
 
 function answerValues(raw: unknown): string[] {
@@ -180,7 +173,7 @@ type PersonAnswer = {
 /**
  * Every person's answer to the question on one registration, or null when the
  * registration's own form version does not have it as a filterable question
- * (it was free text there, sensitive, or absent): such a registration is not
+ * (it was free text there, not flagged, or absent): such a registration is not
  * read at all, so it is neither listed nor counted as "no answer".
  */
 function answersOf(registration: RegistrationRecord, question: ChoiceQuestion): PersonAnswer[] | null {
@@ -260,16 +253,18 @@ export type ResolvedChoiceFilter = {
 
 /**
  * Turns the URL's question id and value into a filter, or null. A question
- * that is not in the filterable set (free text, sensitive, unknown) resolves
+ * that is not in the set this viewer may filter on (not flagged, free text,
+ * sensitive without VIEW_SENSITIVE_DATA, unknown) resolves
  * to null however the URL is edited. An unknown value for a real question
  * is treated as no value picked.
  */
 export function resolveChoiceFilter(
   registrations: readonly RegistrationRecord[],
   request: ChoiceFilterRequest,
+  viewer: ChoiceFilterViewer,
 ): ResolvedChoiceFilter | null {
   if (!request.question) return null;
-  const question = listChoiceQuestions(registrations).find((candidate) => candidate.id === request.question);
+  const question = listChoiceQuestions(registrations, viewer).find((candidate) => candidate.id === request.question);
   if (!question) return null;
   const known = Boolean(request.value) && question.choices.some((choice) => choice.value === request.value);
   return { question, value: known ? (request.value as string) : null };
