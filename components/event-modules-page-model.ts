@@ -135,3 +135,16 @@ export function healthStripState(summary: { total: number; urgent: number; watch
     message: `${summary.total} ${summary.total === 1 ? "item needs" : "items need"} attention (${parts.join(", ")}).`,
   };
 }
+
+/**
+ * The optional task search on the More page (#743): a card or tool matches when
+ * every word typed appears in its name, ignoring case and extra spacing. A blank
+ * search matches everything. Names only, so it can never reveal a card the
+ * viewer was not already shown.
+ */
+export function taskNameMatches(name: string, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return true;
+  const haystack = name.toLowerCase();
+  return words.every((word) => haystack.includes(word));
+}

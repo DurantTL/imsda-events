@@ -9325,3 +9325,96 @@ th[aria-sort="ascending"], th[aria-sort="descending"] { background: var(--paper,
 .public-registration-date-guidance, .club-form-date-guidance { display: block; margin: 0; }
 .date-guidance-pick { display: none; }
 @media (pointer: coarse) { .date-guidance-typed { display: none; } .date-guidance-pick { display: inline; } }
+
+/* ==========================================================================
+   #743 slice: First screens.
+   Registrations' Actions menu, the More page's compact groups and task search,
+   the builder's device hint, Club home's Next task, the Dashboard setup
+   checklist, and Class tracking's member search.
+   ========================================================================== */
+
+/* A card or group the task search hides must stay hidden whatever display it has. */
+[data-task-name][hidden], [data-task-group][hidden] { display: none !important; }
+
+/* --- Actions menu: one outlined disclosure for a screen's maintenance work --- */
+.actions-menu { position: relative; display: inline-block; }
+.actions-menu > summary.actions-menu-trigger { list-style: none; cursor: pointer; user-select: none; }
+.actions-menu > summary.actions-menu-trigger::-webkit-details-marker { display: none; }
+.actions-menu[open] > summary.actions-menu-trigger { border-color: var(--imsda-navy); background: var(--imsda-navy-soft); }
+.actions-menu-list { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; display: grid; min-width: 15rem; margin: 0; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: #fff; box-shadow: var(--shadow); list-style: none; }
+.actions-menu-list li { margin: 0; }
+.actions-menu-list :is(a, button) { display: flex; width: 100%; min-height: 40px; align-items: center; gap: 9px; border: 0; border-radius: 8px; background: transparent; color: var(--imsda-navy); cursor: pointer; padding: 8px 10px; font: inherit; font-size: max(var(--type-body-floor, 0px), 0.82rem); font-weight: 600; text-align: left; text-decoration: none; }
+.actions-menu-list :is(a, button):hover:not(:disabled) { background: var(--imsda-navy-soft); }
+.actions-menu-list :is(a, button):focus-visible { outline: 3px solid var(--imsda-navy); outline-offset: -2px; }
+.actions-menu-list button:disabled { cursor: not-allowed; opacity: 0.55; }
+@media (max-width: 640px) {
+  .actions-menu { display: block; width: 100%; }
+  .actions-menu > summary.actions-menu-trigger { width: 100%; justify-content: center; min-height: 44px; }
+  .actions-menu-list { position: static; margin-top: 6px; box-shadow: none; }
+  .actions-menu-list :is(a, button) { min-height: 44px; }
+}
+
+/* --- More: compact groups and the optional task search ----------------------- */
+.more-task-search { display: grid; gap: 4px; }
+.more-task-search .search-field { padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.more-task-search .search-field input { font-size: max(var(--type-body-floor, 0px), 0.9rem); }
+.more-task-search-status { min-height: 1.2em; margin: 0; color: var(--muted); font-size: max(var(--type-helper-min, 0px), 0.8rem); }
+.event-modules-page .more-task-groups { display: grid; gap: 14px; }
+.event-modules-page .foundation-group + .foundation-group { margin-top: 0; }
+.event-modules-page .foundation-group-label { margin-bottom: 6px; }
+.event-modules-page .foundation-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr)); gap: 8px; }
+.event-modules-page .foundation-card { padding: 10px 12px; border-radius: 14px; }
+.event-modules-page :is(.event-module-card-link, a.foundation-card) { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: start; column-gap: 10px; }
+.event-modules-page :is(.event-module-card-link, a.foundation-card) > span:first-child { width: 32px; height: 32px; border-radius: 10px; grid-row: 1 / span 3; }
+.event-modules-page :is(.event-module-card-link, a.foundation-card) h3 { margin: 0 0 2px; }
+.event-modules-page :is(.event-module-card-link, a.foundation-card) p { display: -webkit-box; min-height: 0; overflow: hidden; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.event-modules-page :is(.event-module-card-link, a.foundation-card) small { margin-top: 4px; }
+.event-modules-page .event-module-reason { margin: 6px 0 0; min-height: 0; }
+
+/* --- Form builder: the device it is made for, marked before anyone clicks ---- */
+.builder-device-hint { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px; }
+.builder-device-hint-label { color: var(--muted); font-size: max(var(--type-helper-min, 0px), 0.8rem); font-weight: 700; }
+.builder-device-hint ul { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.builder-device-hint li { display: inline-flex; min-height: 36px; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--muted); padding: 4px 12px; font-size: max(var(--type-body-floor, 0px), 0.82rem); }
+.builder-device-hint li small { font-size: max(var(--type-helper-min, 0px), 0.75rem); }
+.builder-device-hint li.is-selected { border: 2px solid var(--imsda-navy); background: var(--imsda-navy-soft); color: var(--imsda-navy); padding: 3px 11px; }
+.builder-device-hint li.is-selected small { font-weight: 800; }
+.builder-device-hint li.is-muted { border-style: dashed; }
+
+/* --- Club home: the next task and its deadline, before the statistics -------- */
+.club-next-task { border-left: 5px solid var(--imsda-purple); }
+.club-next-task.is-clear { border-left-color: var(--green); }
+.club-next-task.club-step-danger { border-left-color: #a3271b; }
+.club-next-task-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-top: 12px; }
+.club-next-task-deadline { display: inline-flex; align-items: center; gap: 7px; margin: 0; color: var(--ink); font-weight: 700; }
+.club-next-task.club-step-danger .club-next-task-deadline { color: #a3271b; }
+@media (max-width: 480px) { .club-next-task-row .primary-button { width: 100%; min-height: 44px; } }
+
+/* --- Dashboard: the setup checklist ------------------------------------------ */
+.setup-checklist { border-left: 5px solid var(--imsda-gold); }
+.setup-checklist-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 16px; }
+.setup-checklist-head h2 { margin: 0; }
+.setup-checklist-progress { margin: 4px 0 0; color: var(--muted); font-size: max(var(--type-helper-min, 0px), 0.82rem); font-weight: 700; }
+.setup-checklist-steps { display: grid; gap: 4px; margin: 12px 0 0; padding: 0; list-style: none; }
+.setup-checklist-steps[hidden] { display: none; }
+.setup-step { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; border-radius: 10px; padding: 8px 10px; }
+.setup-step > svg { color: var(--muted); }
+.setup-step.is-done > svg { color: var(--green); }
+.setup-step-copy { display: grid; min-width: 0; gap: 1px; }
+.setup-step-copy small { color: var(--muted); font-size: max(var(--type-helper-min, 0px), 0.8rem); }
+.setup-step.is-done .setup-step-copy strong { color: var(--muted); font-weight: 600; }
+.setup-step.is-next { background: var(--imsda-gold-soft); }
+.setup-step.is-next .setup-step-copy strong { font-weight: 800; }
+.setup-step .text-button { display: inline-flex; min-height: 36px; align-items: center; gap: 5px; font-weight: 700; white-space: nowrap; }
+@media (max-width: 480px) {
+  .setup-step { grid-template-columns: auto minmax(0, 1fr); }
+  .setup-step .text-button { grid-column: 2; justify-self: start; min-height: 44px; }
+}
+
+/* --- Class tracking: long member lists scroll inside their block and can be searched --- */
+.earned-member-search { display: grid; gap: 4px; margin: 6px 0 8px; }
+.earned-member-search .search-field { padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.earned-member-search .search-field input { font-size: max(var(--type-body-floor, 0px), 0.9rem); }
+.earned-scroll-list { max-height: 20rem; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.earned-scroll-list li + li { margin-top: 2px; }
+p.field-help.earned-help > a { display: inline !important; min-height: 0 !important; padding: 0 !important; text-decoration: underline; }

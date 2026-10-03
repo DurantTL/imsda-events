@@ -521,7 +521,8 @@ describe("the #743 settings/errors/status CSS block", () => {
     const radioMarker = "/* Issue 743: radio cards for short choice lists";
     expect(css.split(marker)).toHaveLength(2);
     expect(css.split(radioMarker)).toHaveLength(2);
-    expect(css.lastIndexOf("/* ====")).toBeLessThan(css.indexOf(marker));
+    // The first-screens block (#743) is the only banner comment after this one.
+    expect(css.slice(css.indexOf(marker)).split("/* ====").length - 1).toBe(1);
     expect(css.indexOf(radioMarker)).toBeGreaterThan(css.indexOf(marker));
     expect(block).toContain(".field-error-message");
     expect(block).toContain(".form-error-summary");

@@ -324,6 +324,33 @@ export function CheckInWorkspace({
   return (
     <>
     <section className="page-stack">
+      {/* Search and Scan come first (#743): the desk opens on the two things staff do all day. */}
+      <div className="checkin-tools">
+        <CheckInScanner
+          conflictAttendeeIds={queue
+            .filter((item) => item.state === "CONFLICT")
+            .map((item) => item.attendeeId)}
+          eventId={eventId}
+          paymentDueByConfirmationCode={paymentDueByConfirmationCode}
+          backgroundFlaggedAttendeeIds={backgroundFlaggedAttendeeIds}
+          clubsByConfirmationCode={Object.fromEntries(clubByConfirmationCode)}
+          onConfirmCheckIn={(attendee) => requestCheckIn(attendee.id)}
+          savedQueueUnreadable={unreadableItemCount > 0}
+          queuedAttendeeIds={queue
+            .filter((item) => item.state === "QUEUED")
+            .map((item) => item.attendeeId)}
+        />
+        <label className="search-field panel">
+          <Search aria-hidden="true" size={18} />
+          <span className="sr-only">Search arrivals</span>
+          <input
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search name, club, or confirmation code"
+            value={query}
+          />
+        </label>
+      </div>
+
       <div className="checkin-hero">
         <div>
           <p className="hero-eyebrow">On-site operations</p>
@@ -509,32 +536,6 @@ export function CheckInWorkspace({
           </div>
         </section>
       )}
-
-      <div className="checkin-tools">
-        <CheckInScanner
-          conflictAttendeeIds={queue
-            .filter((item) => item.state === "CONFLICT")
-            .map((item) => item.attendeeId)}
-          eventId={eventId}
-          paymentDueByConfirmationCode={paymentDueByConfirmationCode}
-          backgroundFlaggedAttendeeIds={backgroundFlaggedAttendeeIds}
-          clubsByConfirmationCode={Object.fromEntries(clubByConfirmationCode)}
-          onConfirmCheckIn={(attendee) => requestCheckIn(attendee.id)}
-          savedQueueUnreadable={unreadableItemCount > 0}
-          queuedAttendeeIds={queue
-            .filter((item) => item.state === "QUEUED")
-            .map((item) => item.attendeeId)}
-        />
-        <label className="search-field panel">
-          <Search aria-hidden="true" size={18} />
-          <span className="sr-only">Search arrivals</span>
-          <input
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search name, club, or confirmation code"
-            value={query}
-          />
-        </label>
-      </div>
 
       {message && (
         <div aria-live="polite" className="inline-notice" role="status">

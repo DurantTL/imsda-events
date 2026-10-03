@@ -32,6 +32,7 @@ const eventRow = {
     id: "announcement-1",
     title: "Arrival update",
     body: "Check-in opens at 4 PM.",
+    audience: { type: "ALL_ATTENDEES" },
     priority: "IMPORTANT" as const,
     publishedAt: new Date("2026-10-08T14:00:00.000Z"),
   }],

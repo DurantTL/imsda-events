@@ -2,13 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight, CheckCircle2, CircleAlert, FileText } from "lucide-react";
 import { BackLink } from "@/components/back-link";
+import { ClubNextTaskCard } from "@/components/club-next-task";
 import { ClubYearTiles } from "@/components/club-year-tiles";
 import { clubPortalComplianceReminderCounts } from "@/modules/background-checks/repository";
 import { complianceReminders } from "@/modules/background-checks/domain";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { getRosterAccessStateForPage, type ClubActor } from "@/modules/club-rosters/access";
 import { clubYearFor, rosterYearSummary } from "@/modules/club-rosters/domain";
+import { pickClubNextTask } from "@/modules/club-rosters/home-next-task";
 import { listRoster } from "@/modules/club-rosters/repository";
+import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { clubEventRegistrationSteps, listClubEvents } from "@/modules/club-registrations/repository";
 import { calendarDateIn } from "@/modules/calendar/domain";
 import { formatDueDate, isLockedForClub, monthlyReportProgress, reportDueDate, reportMonthLabel, reportableMonths } from "@/modules/club-reports/domain";
@@ -85,6 +88,8 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
     : null;
 
   const steps: Array<{ key: string; text: string; href: string; action: string; danger?: boolean }> = [];
+  // Each step's deadline, worded for the Next task card (#743). A step with none says "No deadline".
+  const deadlines: Record<string, string> = {};
   if (active.length === 0) {
     steps.push({ key: "roster", text: "Add your club members to this year's roster.", href: `${base}/roster`, action: "Add people" });
   }
@@ -99,9 +104,14 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
         href: `${base}/records?month=${month}`,
         action: "Open report",
       });
+      deadlines[`report-${month}`] = `Due ${formatDueDate(reportDueDate(month))}`;
     }
   }
   steps.push(...clubEventRegistrationSteps(events, base));
+  for (const event of events) {
+    if (event.registrationClosesOn) deadlines[event.id] = `Register by ${formatCalendarDate(event.registrationClosesOn)}`;
+  }
+  const nextTask = pickClubNextTask(steps, deadlines);
   // Flags only, never blocks registration (#405, #479).
   if (compliance) {
     for (const reminder of complianceReminders(compliance, `${base}/roster`)) {
@@ -112,6 +122,8 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
   return (
     <>
       {clubsLink}
+      {/* The next task and its deadline come before the statistics (#743). */}
+      <ClubNextTaskCard next={nextTask} />
       <ClubYearTiles
         // Background-check problems live only in "What's next" below, in red (#644); no tile.
         compliance={null}
@@ -135,14 +147,14 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
           <p className="public-manage-empty"><CheckCircle2 size={17} aria-hidden="true" /> You&apos;re all caught up.</p>
         ) : (
           <ul className="public-manage-club-list">
-            {steps.map((step, stepIndex) => (
+            {steps.map((step) => (
               <li className={step.danger ? "club-step-danger" : undefined} key={step.key}>
                 <CircleAlert size={17} aria-hidden="true" />
                 <span>
                   {step.danger && <small className="club-step-flag">Background check</small>}
                   <strong>{step.text}</strong>
                 </span>
-                <Link className={`${stepIndex === 0 ? "primary-button" : "secondary-button"} club-event-action`} href={step.href}>
+                <Link className="secondary-button club-event-action" href={step.href}>
                   {step.action} <ArrowRight size={14} aria-hidden="true" />
                 </Link>
               </li>
