@@ -527,14 +527,21 @@ export function PublicRegistrationForm({
   // reader hears the new card's announcement from inside the sheet, since the page behind is inert.
   const lastSheetIdRef = useRef<string | null>(null);
   const [sheetNotice, setSheetNotice] = useState("");
+  const announceSheetRef = useRef(false);
   useEffect(() => {
     if (phoneSheetActive) {
       lastSheetIdRef.current = activeAttendeeId;
-      const timer = window.setTimeout(() => setSheetNotice(rosterAnnouncement), 150);
+      // Only a sheet opened by "Add another attendee" announces; Edit must not replay an old message.
+      if (!announceSheetRef.current) return;
+      const timer = window.setTimeout(() => {
+        announceSheetRef.current = false;
+        setSheetNotice(rosterAnnouncement);
+      }, 150);
       return () => window.clearTimeout(timer);
     }
     const closedId = lastSheetIdRef.current;
     lastSheetIdRef.current = null;
+    announceSheetRef.current = false;
     if (!closedId) return;
     window.requestAnimationFrame(() => document.getElementById(`public_attendee_${safeId(closedId)}_toggle`)?.focus());
     window.setTimeout(() => setSheetNotice(""), 0);
@@ -1272,6 +1279,7 @@ export function PublicRegistrationForm({
     const nextNumber = attendees.length + 1;
     setAttendees((current) => [...current, { clientId, responses: {} }]);
     // The new person is the active card; whoever was open becomes a summary.
+    announceSheetRef.current = true;
     openAttendee(clientId);
     setIssues([]);
     setError("");
@@ -1827,7 +1835,7 @@ export function PublicRegistrationForm({
           <label htmlFor={id}>{fieldLabel(field, context)}</label>
           <SearchableSelect
             id={id}
-            sheet
+            sheet={!embedded}
             value={typeof context.values[field.key] === "string" ? context.values[field.key] as string : ""}
             required={field.required && !excused}
             invalid={Boolean(issue)}

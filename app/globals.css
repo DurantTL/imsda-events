@@ -9093,8 +9093,8 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 
 /* Issue 743 (print): expandable descriptions print in full, with no Read more button. */
 @media print {
-  .expandable-text-body.is-clamped { display: block; overflow: visible; -webkit-line-clamp: unset; line-clamp: unset; }
-  .expandable-text-toggle { display: none; }
+  html body .expandable-text-body.is-clamped { display: block; overflow: visible; -webkit-line-clamp: unset; line-clamp: unset; }
+  html body .expandable-text-toggle { display: none; }
 }
 
 /* ==========================================================================

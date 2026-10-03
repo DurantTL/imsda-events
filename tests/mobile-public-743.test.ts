@@ -108,8 +108,8 @@ describe("sticky registration CTA (#743)", () => {
     expect(block.match(/position: sticky/g)?.length).toBeGreaterThan(0);
     expect(block.slice(0, block.indexOf("@media screen"))).not.toContain("position: sticky");
     const printRule = css.slice(css.indexOf("Issue 743 (print)"), css.indexOf("#743 slice: Type scale"));
-    expect(printRule).toMatch(/@media print \{[^}]*\.expandable-text-body\.is-clamped \{[^}]*overflow: visible/);
-    expect(printRule).toContain(".expandable-text-toggle { display: none; }");
+    expect(printRule).toMatch(/@media print \{[^}]*html body \.expandable-text-body\.is-clamped \{[^}]*overflow: visible/);
+    expect(printRule).toContain("html body .expandable-text-toggle { display: none; }");
   });
 
   it("has a Submit in the bar on review and the stylesheet braces balance", () => {
@@ -247,5 +247,19 @@ describe("review fixes (#743)", () => {
   it("keeps reorder controls reachable in a collapsed row on a phone", () => {
     expect(block).not.toMatch(/is-collapsed \.public-registration-attendee-actions button:not\(\.public-registration-attendee-toggle\):not\(\.is-danger\) \{ display: none/);
     expect(block).toContain("flex: 0 0 44px");
+  });
+
+  it("does not render the pick-list bottom sheet in an embed", () => {
+    expect(form).toContain("sheet={!embedded}");
+    const select = read("components/searchable-select.tsx");
+    expect(select).toContain('sheet ? " is-sheet-picker" : ""');
+    // The screen clamp rule has specificity (0,2,0); the print override is (0,2,2) so order cannot undo it.
+    expect(css.indexOf("Issue 743 (print)")).toBeLessThan(css.indexOf(".expandable-text-body.is-clamped { display: -webkit-box"));
+  });
+
+  it("announces in the sheet only when Add another attendee opened it", () => {
+    expect(form).toMatch(/function addAttendee[\s\S]*?announceSheetRef\.current = true;[\s\S]*?openAttendee\(clientId\)/);
+    expect(form).toContain("if (!announceSheetRef.current) return;");
+    expect(form).not.toMatch(/function openAttendee[^}]*announceSheetRef/);
   });
 });
