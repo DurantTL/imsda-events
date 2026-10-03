@@ -22,6 +22,13 @@ function contrast(foreground: string, background: string) {
 
 const declared = (name: string) => css.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1] ?? "";
 
+// The phone token block: the media query that declares --touch-target. Anchored on the declaration, not on
+// the last phone media query in the file, so later phone rules (#743) cannot move it.
+function phoneBlock() {
+  const at = css.lastIndexOf("--touch-target: 44px;");
+  return css.slice(css.lastIndexOf("@media", at));
+}
+
 describe("mobile foundations (issue #684)", () => {
   it("keeps the muted text colour and the calendar outside-day colour at 4.5:1 on the tinted panel backgrounds", () => {
     const backgrounds = ["#ffffff", "#f4f7f8", "#e6f0f4", "#f1eaf7"];
@@ -36,7 +43,7 @@ describe("mobile foundations (issue #684)", () => {
   it("defines the type floors as :root tokens that are 0 by default (print), raised on screen (#743) and on phones", () => {
     expect(css).toMatch(/:root \{[^}]*--type-floor: 0px;[^}]*--type-body-floor: 0px;/);
     expect(css).toMatch(/@media screen \{\s*:root \{\s*--type-floor: 0\.75rem;\s*--type-body-floor: 0\.875rem;/);
-    const phone = css.slice(css.lastIndexOf("@media screen and (max-width: 768px)"));
+    const phone = phoneBlock();
     expect(phone).toMatch(/--type-floor: 0\.75rem;/);
     expect(phone).toMatch(/--type-body-floor: 0\.875rem;/);
     expect(phone).toMatch(/--touch-target: 44px;/);
@@ -54,7 +61,7 @@ describe("mobile foundations (issue #684)", () => {
 
   it("gives inputs, selects and textareas one 2px focus outline, and sizes the password toggle and checkbox rows to 44px", () => {
     expect(css).toMatch(/:focus-visible\s*\{\s*outline: 2px solid var\(--imsda-purple\);/);
-    const phone = css.slice(css.lastIndexOf("@media screen and (max-width: 768px)"));
+    const phone = phoneBlock();
     expect(phone).toMatch(/\.password-field button \{[^}]*width: var\(--touch-target\);[^}]*height: var\(--touch-target\);/);
     expect(phone).toMatch(/input\[type="checkbox"\], input\[type="radio"\]\) \{[^}]*width: 22px;[^}]*height: 22px;/);
     expect(phone).toMatch(/\.checkbox-label[^{]*\{\s*min-height: var\(--touch-target\);/);
