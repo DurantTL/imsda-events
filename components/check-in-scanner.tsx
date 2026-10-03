@@ -610,7 +610,7 @@ export function CheckInScanner({
                   </button>
                 ) : (
                   <button
-                    className="primary-button"
+                    className={resolution ? "secondary-button" : "primary-button"}
                     disabled={cameraState === "starting" || lookupBusy}
                     onClick={() => void startCamera()}
                     type="button"

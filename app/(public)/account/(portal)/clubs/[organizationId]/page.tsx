@@ -135,14 +135,14 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
           <p className="public-manage-empty"><CheckCircle2 size={17} aria-hidden="true" /> You&apos;re all caught up.</p>
         ) : (
           <ul className="public-manage-club-list">
-            {steps.map((step) => (
+            {steps.map((step, stepIndex) => (
               <li className={step.danger ? "club-step-danger" : undefined} key={step.key}>
                 <CircleAlert size={17} aria-hidden="true" />
                 <span>
                   {step.danger && <small className="club-step-flag">Background check</small>}
                   <strong>{step.text}</strong>
                 </span>
-                <Link className="primary-button club-event-action" href={step.href}>
+                <Link className={`${stepIndex === 0 ? "primary-button" : "secondary-button"} club-event-action`} href={step.href}>
                   {step.action} <ArrowRight size={14} aria-hidden="true" />
                 </Link>
               </li>

@@ -26,6 +26,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
 import { RegistrationAccountPrompt } from "@/components/registration-account-prompt";
 import { SearchableSelect } from "@/components/searchable-select";
+import { SubmitButton } from "@/components/submit-button";
 import { TranslateHint } from "@/components/translate-hint";
 import { planAttendeeRemoval, withoutAttendee } from "@/modules/forms/attendee-removal";
 import { confirmationEmailHeadline } from "@/modules/forms/confirmation-email-status";
@@ -2046,7 +2047,7 @@ export function PublicRegistrationForm({
             <div className="public-registration-roster-actions">
               <button
                 id="public_registration_add_attendee"
-                className="accent-button"
+                className="public-registration-add-attendee"
                 type="button"
                 disabled={attendees.length >= roster.maxAttendees}
                 onClick={addAttendee}
@@ -2920,9 +2921,13 @@ export function PublicRegistrationForm({
             <section className="public-registration-submit-card">
               <div><ShieldCheck size={21} aria-hidden="true" /><span><strong>Server-verified registration</strong><small>Pricing and remaining capacity are checked again when you submit.</small></span></div>
               {cardSelected && !joiningWaitlist && !deferredOrganizationBilling && <p>Submitting saves the registration first. Your private registration page will then offer secure Square checkout when online payments are configured.</p>}
-              <button type="submit" disabled={submitting}>
-                <ClipboardCheck size={19} aria-hidden="true" /> {submitting ? "Submitting…" : club?.submitLabel ?? (joiningWaitlist ? "Join waitlist" : "Submit registration")}
-              </button>
+              <SubmitButton
+                className="public-registration-submit-button"
+                icon={<ClipboardCheck size={19} aria-hidden="true" />}
+                iconSize={19}
+                label={club?.submitLabel ?? (joiningWaitlist ? "Join waitlist" : "Submit registration")}
+                submitting={submitting}
+              />
             </section>
           )}
         </div>
@@ -2967,7 +2972,7 @@ export function PublicRegistrationForm({
           : roster.attendeeLabel;
         return (
           <ConfirmDialog
-            confirmLabel={`Remove ${roster.attendeeLabel.toLowerCase()}`}
+            confirmLabel={`Remove ${pendingName}`}
             destructive
             onCancel={() => setPendingRemoveClientId(null)}
             onConfirm={confirmRemoveAttendee}

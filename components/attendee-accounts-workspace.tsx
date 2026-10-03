@@ -250,7 +250,7 @@ export function AttendeeAccountsWorkspace({
                               body: { action: "reset-two-step" },
                               title: `Reset two-step sign-in for ${account.email}?`,
                               description: "Their authenticator and passkeys are removed and they're signed out.",
-                              confirmLabel: "Reset two-step",
+                              confirmLabel: `Reset two-step for ${account.email}`,
                               destructive: true,
                             })}
                             type="button"
@@ -267,7 +267,7 @@ export function AttendeeAccountsWorkspace({
                               body: { action: "area-coordinator", on: false },
                               title: `Remove Area Coordinator from ${account.email}?`,
                               description: "They'll no longer see other clubs.",
-                              confirmLabel: "Remove Area Coordinator",
+                              confirmLabel: `Remove Area Coordinator from ${account.email}`,
                               destructive: true,
                             }
                             : {
@@ -275,7 +275,7 @@ export function AttendeeAccountsWorkspace({
                               body: { action: "area-coordinator", on: true },
                               title: `Make ${account.email} an Area Coordinator?`,
                               description: "They'll see every club, view only (ages, not birth dates), after a second sign-in step.",
-                              confirmLabel: "Make Area Coordinator",
+                              confirmLabel: `Make ${account.email} an Area Coordinator`,
                               destructive: false,
                             })}
                           type="button"
@@ -290,7 +290,7 @@ export function AttendeeAccountsWorkspace({
                             body: { action: "sign-out" },
                             title: `Sign ${account.email} out on every device?`,
                             description: "This immediately ends every active session for this account.",
-                            confirmLabel: "Sign out everywhere",
+                            confirmLabel: `Sign ${account.email} out everywhere`,
                             destructive: true,
                           })}
                           type="button"

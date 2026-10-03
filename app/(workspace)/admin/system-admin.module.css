@@ -376,6 +376,7 @@
 
 .moduleList small {
   margin-top: 3px;
+  overflow-wrap: anywhere; /* #743: floored text must wrap long paths instead of overflowing */
   color: var(--muted);
   font-size: max(var(--type-floor, 0px), 0.54rem);
   line-height: 1.45;

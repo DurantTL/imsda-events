@@ -3,10 +3,20 @@
 :root {
   /* #645 heading scale. rem resolves against the html root (16px), not body. */
   --text-helper-min: 0.875rem;
-  /* #684 phone type floors. Both are 0 outside the phone media query below, so
-     desktop sizes are untouched; declarations use max(var(--type-floor, 0px), X). */
+  /* #684 type floors. 0 here, so print keeps its own sizes (packets, check-in
+     book, report headings). #743 raises them for every screen size in the
+     @media screen block right after this :root, and #684 again on phones.
+     Declarations use max(var(--type-floor, 0px), X). */
   --type-floor: 0px;
   --type-body-floor: 0px;
+  /* #743 type scale. Public: body and inputs 16px, labels and help 14px, section
+     titles 20-24px. Admin: body and inputs 14px, meta 12-13px. Buttons are at
+     least 14px, and 16px for public or mobile primary actions. */
+  --type-public-body: 1rem;
+  --type-public-label: 0.875rem;
+  --type-public-title: 1.5rem;
+  --type-button: 0.875rem;
+  --type-button-cta: 1rem;
   --text-badge: 0.75rem;
   --heading-section: 1.3rem;
   --heading-sub: 1.075rem;
@@ -30,6 +40,18 @@
   --coral: #a95549;
   --shadow: 0 14px 40px rgba(0, 59, 92, 0.08);
   --sidebar-width: 260px;
+}
+
+/* #743: on screen the floors apply at every size. Measured before: desktop admin
+   rendered buttons and labels at 11.2px, inputs at 12.5px, helper text at
+   8.6-10.6px (phones were already floored). Meta and helper text is never under
+   12px; body, inputs, labels and buttons are never under 14px. Not applied in
+   print. */
+@media screen {
+  :root {
+    --type-floor: 0.75rem;
+    --type-body-floor: 0.875rem;
+  }
 }
 
 /* Program assignments */
@@ -9068,6 +9090,134 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .event-modules-leftover { border-left: 5px solid var(--imsda-gold); }
 .event-modules-leftover .foundation-grid { margin-top: 14px; }
 .event-modules-leftover .foundation-card h3 { margin-top: 0; }
+
+/* ==========================================================================
+   #743 slice: Type scale, Buttons and Destructive actions.
+   Self-contained. Screen rules sit in @media screen so print and the badge and
+   packet layouts keep their own sizes. Tap targets extend the named-control
+   approach of #738; there is deliberately no global button rule.
+   ========================================================================== */
+
+/* --- Type: admin body is 14px; public body and inputs are 16px ------------- */
+@media screen {
+  :root {
+    --type-admin-body: 0.875rem;
+    --target-cta: 48px;
+    --danger: #8f3a30;
+    --danger-soft: #fdf4f2;
+    --danger-line: #e3b8b1;
+  }
+  .app-shell { font-size: var(--type-admin-body); }
+  /* Public pages and the club portal: unsized text inherits 16px; labels and help
+     stay at the 14px helper size set above. */
+  .public-registration-page { font-size: var(--type-public-body); }
+  .public-registration-page :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]) { font-size: var(--type-public-body); }
+  .public-registration-field input:not([type="checkbox"]):not([type="radio"]),
+  .public-registration-field select,
+  .public-registration-field textarea { font-size: var(--type-public-body); }
+  /* Section titles 20-24px (the step heading was up to 28.8px on desktop). */
+  .public-registration-step-heading h2 { font-size: clamp(1.25rem, 3vw, var(--type-public-title)); }
+  /* Sidebar group labels: #7d97a2 on the navy gradient was 3.83:1 at the top; #93abb6 is 4.91:1 there. */
+  .nav-group-label { color: #93abb6; }
+}
+
+/* --- Buttons: one filled primary per screen -------------------------------- */
+@media screen {
+  /* Public registration: Add another attendee is a full-width secondary button
+     (14px, weight 800, solid border). It used to be a second filled purple button
+     next to Continue. */
+  .public-registration-roster-footer button.public-registration-add-attendee {
+    flex: 1 1 100%;
+    width: 100%;
+    min-height: 44px;
+    border: 2px solid var(--imsda-purple);
+    background: #fff;
+    color: var(--imsda-purple);
+    font-size: var(--type-button);
+    font-weight: 800;
+  }
+  .public-registration-roster-footer button.public-registration-add-attendee:hover:not(:disabled) { background: var(--imsda-purple-soft); }
+  .public-registration-roster-actions { width: 100%; }
+  /* Primary calls to action on public pages: 16px text, 48px and up. */
+  .public-registration-step-actions .is-continue,
+  .public-registration-submit-card > button { font-size: var(--type-button-cta); min-height: var(--target-cta); }
+  /* Public secondary and in-card buttons: 44px. */
+  .public-registration-attendee-actions button,
+  .public-registration-roster-footer button,
+  .public-registration-draft-notice button,
+  .public-registration-step-actions .is-back,
+  .public-registration-page :is(.primary-button, .secondary-button):not(:where(td, th) *),
+  .public-registration-page .text-button:not(:where(td, th, p, small, summary, label, li, dd, dt) *) { min-height: var(--target-touch, 44px); }
+  /* Outlined variant for a primary-sized action that must not be the filled one on its screen. */
+  .outline-action { border: 2px solid var(--imsda-navy); background: #fff; color: var(--imsda-navy); }
+  .outline-action:hover:not(:disabled) { background: var(--imsda-navy-soft); }
+}
+@media screen {
+  /* Desktop admin: 36px controls, 40px for the filled primary. :where() keeps the
+     containers at zero specificity so a local compact rule still wins. */
+  :where(.form-actions, .page-intro-actions, .intro-actions, .builder-actions, .registration-management-actions, .event-savebar) > :is(.primary-button, .secondary-button) { min-height: var(--target-desktop, 36px); }
+  :where(.form-actions, .page-intro-actions, .intro-actions, .builder-actions, .registration-management-actions, .event-savebar) > .primary-button { min-height: 40px; }
+  .event-savebar .primary-button { min-height: 40px; }
+}
+@media screen and (min-width: 769px) {
+  /* At 14px text the base 9px padding made these 41-43px tall; tighten it so desktop admin
+     buttons land in the 36-40px range. Phones keep their 44px/48px targets. */
+  :where(.form-actions, .page-intro-actions, .intro-actions, .builder-actions, .registration-management-actions, .event-savebar) > :is(.primary-button, .secondary-button),
+  :is(.primary-button, .secondary-button).full-button { padding-block: 8px; line-height: 1.3; }
+}
+@media only screen and (max-width: 768px) {
+  /* Phone: the filled primary of a form or page is 48px and 16px. */
+  :root :is(.primary-button.full-button, .form-actions > .primary-button, .event-savebar .primary-button, .intro-actions > .primary-button, .page-intro-actions > .primary-button, .confirm-dialog .primary-button) {
+    min-height: var(--target-cta);
+    font-size: var(--type-button-cta);
+  }
+  :root :is(.form-actions, .page-intro-actions, .intro-actions, .builder-actions, .registration-management-actions) > .secondary-button { min-height: var(--target-touch, 44px); }
+}
+
+/* --- Heading hierarchy ------------------------------------------------------
+   Floored subtitles (14px body, 12px meta) made some card and panel headings
+   smaller than the text under them. On screen these headings are at least 1rem. */
+@media screen {
+  .assignment-step-content h3, .assignment-empty h3, .assignment-run-main h3,
+  .record-card h3, .empty-state h3, .template-cleanup-checklist-head h3,
+  .announcement-card h3, .foundation-card h3, .template-card h3,
+  .registration-related-panel > header h3, .amendment-section h4,
+  .amendment-attendee-card h4, .amendment-attendees .inline-heading h4,
+  .message-test-form h2, .message-detail-head h2, .confirmation-resend-form h3,
+  .report-field-heading h3, .roster-report-group h3, .badge-background-heading h3,
+  .attendee-hub-announcement-list h3, .attendee-community-conduct h3,
+  .attendee-timeline-official h3, .roster-guardian-slot h3, .club-assignments-block h3,
+  .transfer-section h3, .choice-filter-head h3, .event-module-card-link h3,
+  .auto-info-card h4 { font-size: 1rem; }
+}
+
+/* --- Submitting state ------------------------------------------------------- */
+/* The spinner is the existing LoaderCircle + .is-spinning pair (public Square checkout uses it too). */
+.submit-button-spinner { flex: none; }
+@media (prefers-reduced-motion: reduce) { .submit-button-spinner.is-spinning { animation-duration: 3s; } }
+button[aria-busy="true"] { cursor: progress; }
+
+/* --- Danger zone ------------------------------------------------------------ */
+/* A separate red section for destructive actions. The triggers are outlined; only the
+   confirm button inside the dialog is filled (.lifecycle-danger-button, white on #8f3a30 = 7.46:1). */
+.danger-zone {
+  border: 1px solid var(--danger-line, #e3b8b1);
+  border-left: 5px solid var(--danger, #8f3a30);
+  background: var(--danger-soft, #fdf4f2);
+}
+.danger-zone > .danger-zone-eyebrow { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; color: var(--danger, #8f3a30); font-size: max(var(--type-floor, 0px), 0.75rem); font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+.danger-zone > h2 { margin: 0 0 4px; color: var(--danger, #8f3a30); font-size: 1.05rem; }
+.danger-zone-item { display: grid; gap: 8px; border-top: 1px solid var(--danger-line, #e3b8b1); padding-top: 12px; margin-top: 12px; }
+.danger-zone-item:first-of-type { border-top: 0; padding-top: 0; margin-top: 8px; }
+.danger-zone-item > h3 { margin: 0; color: var(--ink); font-size: 1rem; }
+.danger-zone-item > p { margin: 0; color: var(--ink); font-size: max(var(--type-body-floor, 0px), 0.8rem); line-height: 1.55; }
+.danger-outline-button { border: 2px solid var(--danger, #8f3a30); background: #fff; color: var(--danger, #8f3a30); }
+.danger-outline-button:hover:not(:disabled) { background: #fbe9e5; }
+@media screen { .danger-zone .danger-outline-button { min-height: var(--target-desktop, 36px); } }
+@media only screen and (max-width: 768px) { .danger-zone .danger-outline-button { min-height: var(--target-touch, 44px); } }
+/* Bulk and scope previews inside a confirmation. */
+.confirm-scope { margin: 10px 0 0; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); padding: 10px 12px; font-size: max(var(--type-body-floor, 0px), 0.85rem); line-height: 1.5; }
+.confirm-scope strong { color: var(--ink); }
 
 /* Issue 743: the "Show as a filter" and "Sensitive" checkboxes in the form builder field settings. */
 .field-visibility-flags { display: grid; gap: 4px; }

@@ -616,7 +616,7 @@ export function RegistrationAmendmentEditor({
 
     <ConfirmDialog
       busy={false}
-      confirmLabel="Remove attendee"
+      confirmLabel={removeAttendeeIndex !== null ? `Remove ${removeAttendeeName(removeAttendeeIndex)}` : "Remove attendee"}
       destructive
       error=""
       onCancel={() => setRemoveAttendeeIndex(null)}

@@ -164,6 +164,8 @@ export function ClubCheckInPanel({
     setSelected(new Set());
   }
 
+  // One filled primary per screen (#743): with a scanned person, their confirm button is the
+  // primary and this one is outlined; the scanner demotes "Start camera" once a pass resolves.
   const bulkButtonClass = scanned ? "secondary-button" : "primary-button";
   const clubActions = (
     <>

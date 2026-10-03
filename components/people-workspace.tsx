@@ -27,6 +27,9 @@ import {
 import { RegistrationAmendmentEditor } from "@/components/registration-amendment-editor";
 import { RegistrationNotesTagsPanel } from "@/components/registration-notes-tags-panel";
 import { SelectedAudienceDialog } from "@/components/selected-audience-dialog";
+import { DangerZone, DangerZoneItem } from "@/components/danger-zone";
+import { SubmitButton } from "@/components/submit-button";
+import { attendeeCountPhrase, lifecycleActionButtonClass, registrationLifecycleLabel } from "@/lib/confirmation-copy";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import { registrationMatchesSearch } from "@/modules/registrations/search";
@@ -669,7 +672,7 @@ export function PeopleWorkspace({
               <button className="text-button" type="button" onClick={selectAllVisible}>Select all {visible.length} shown</button>
             )}
             <button className="text-button" type="button" onClick={() => setSelectedIds(new Set())}>Clear selection</button>
-            <button className="primary-button" type="button" onClick={() => setEmailingSelection(true)}><MailPlus aria-hidden="true" size={16} /> Email selected</button>
+            <button className="secondary-button outline-action" type="button" onClick={() => setEmailingSelection(true)}><MailPlus aria-hidden="true" size={16} /> Email selected</button>
           </div>
         </div>
       )}
@@ -949,21 +952,28 @@ export function PeopleWorkspace({
                       <button className="secondary-button" type="button" onClick={() => { setError(""); setNotice(""); setModal("edit"); }}><UserRoundPen aria-hidden="true" size={17} /> Edit contact</button>
                       <button className="secondary-button" type="button" onClick={beginTransfer}><ArrowRightLeft aria-hidden="true" size={17} /> Transfer registration</button>
                       {(selected.status === "SUBMITTED" || selected.status === "CONFIRMED") && waitlistEnabled && <button className="secondary-button" type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("waitlist"); }}><ListPlus aria-hidden="true" size={17} /> Move to waitlist</button>}
-                      {selected.status === "WAITLISTED" && <button className="primary-button" type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("promote"); }}><UserCheck aria-hidden="true" size={17} /> Promote</button>}
-                      {selected.status === "CANCELLED" && <button className="primary-button" type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("reactivate"); }}><RotateCcw aria-hidden="true" size={17} /> Reactivate</button>}
-                      {selected.status !== "CANCELLED" && <button className="secondary-button lifecycle-danger" type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("cancel"); }}><Ban aria-hidden="true" size={17} /> Cancel registration</button>}
+                      {selected.status === "WAITLISTED" && <button className={lifecycleActionButtonClass(Boolean(selected.publicSubmission?.rosterEnabled))} type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("promote"); }}><UserCheck aria-hidden="true" size={17} /> Promote</button>}
+                      {selected.status === "CANCELLED" && <button className={lifecycleActionButtonClass(Boolean(selected.publicSubmission?.rosterEnabled))} type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("reactivate"); }}><RotateCcw aria-hidden="true" size={17} /> Reactivate</button>}
                     </div>
                     <p className="quiet-copy">Status changes use the actions above so capacity, room limits, waitlist position, payments, and the audit history stay correct.</p>
+                    {selected.status !== "CANCELLED" && (
+                      <DangerZone className="registration-danger-zone" heading="Cancel this registration">
+                        <DangerZoneItem title={`Cancel ${selected.accountHolder.firstName} ${selected.accountHolder.lastName}'s registration`}>
+                          <p>Releases the capacity held by {attendeeCountPhrase(selected.attendeeCount)}. The registration stays in your records, and payment history is preserved.</p>
+                          <button className="secondary-button danger-outline-button" type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("cancel"); }}><Ban aria-hidden="true" size={17} /> Cancel registration…</button>
+                        </DangerZoneItem>
+                      </DangerZone>
+                    )}
                   </>
                 )}
                 {lifecycleAction && (
                   <form className="form-stack lifecycle-confirmation" onSubmit={updateLifecycle}>
-                    <div><p className="eyebrow">{lifecycleCopy[lifecycleAction].eyebrow}</p><h3>{lifecycleCopy[lifecycleAction].title}</h3><p>{lifecycleCopy[lifecycleAction].detail}</p></div>
+                    <div><p className="eyebrow">{lifecycleCopy[lifecycleAction].eyebrow}</p><h3>{lifecycleAction === "cancel" ? `${registrationLifecycleLabel("cancel", `${selected.accountHolder.firstName} ${selected.accountHolder.lastName}`)}?` : lifecycleCopy[lifecycleAction].title}</h3><p>{lifecycleCopy[lifecycleAction].detail}</p>{lifecycleAction === "cancel" && <p className="confirm-scope">This releases the space held by <strong>{attendeeCountPhrase(selected.attendeeCount)}</strong> ({selected.confirmationCode}).</p>}</div>
                     <label>Reason or staff note <textarea name="reason" rows={3} maxLength={500} placeholder="Optional — saved in the event audit history" /></label>
                     {error && <p className="form-error" role="alert">{error}</p>}
                     <div className="form-actions">
                       <button className="secondary-button" type="button" disabled={saving} onClick={() => { setLifecycleAction(null); setError(""); }}>Keep as is</button>
-                      <button className={lifecycleAction === "cancel" ? "primary-button lifecycle-danger-button" : "primary-button"} type="submit" disabled={saving}>{saving ? "Updating…" : lifecycleCopy[lifecycleAction].submit}</button>
+                      <SubmitButton className={lifecycleAction === "cancel" ? "primary-button lifecycle-danger-button" : "primary-button"} label={registrationLifecycleLabel(lifecycleAction, `${selected.accountHolder.firstName} ${selected.accountHolder.lastName}`)} submitting={saving} submittingLabel="Updating…" />
                     </div>
                   </form>
                 )}

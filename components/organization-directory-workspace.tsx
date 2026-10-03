@@ -540,7 +540,7 @@ export function OrganizationDirectoryWorkspace({
                   {editor.check && editor.check.blockers.length === 0 && (
                     <button className="primary-button lifecycle-danger-button" disabled={saving} type="submit">
                       <Trash2 aria-hidden="true" size={15} />
-                      {saving ? "Deleting…" : "Delete for good"}
+                      {saving ? "Deleting…" : `Delete ${editor.check.name}`}
                     </button>
                   )}
                 </div>
