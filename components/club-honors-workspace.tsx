@@ -1,5 +1,7 @@
 "use client";
 
+import { SortOrderNote, SortableHeader } from "@/components/list-sort";
+import { flipDirection, nameSortLabel, sortByName, sortOrderText, type SortDirection } from "@/lib/list-sort";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Download, History, UsersRound } from "lucide-react";
@@ -85,13 +87,14 @@ export function ClubHonorsWorkspace({
   const base = staff
     ? `/api/admin/organizations/${encodeURIComponent(organizationId)}`
     : `/api/attendee/clubs/${encodeURIComponent(organizationId)}`;
+  const [nameDirection, setNameDirection] = useState<SortDirection>("asc");
   const visible = useMemo(
-    () => filterClubHonorsRows(rows, {
+    () => sortByName(filterClubHonorsRows(rows, {
       honorId: honorFilter || undefined,
       status: (statusFilter || undefined) as "IN_PROGRESS" | "COMPLETED" | undefined,
       classLevel: unitFilter || undefined,
-    }),
-    [rows, honorFilter, statusFilter, unitFilter],
+    }), nameDirection),
+    [rows, honorFilter, statusFilter, unitFilter, nameDirection],
   );
 
   const emptyState = clubHonorsEmptyState(rows, visible);
@@ -286,11 +289,12 @@ export function ClubHonorsWorkspace({
           <p className="public-manage-empty" role="status"><UsersRound size={17} aria-hidden="true" /> {clubHonorsEmptyCopy[emptyState]}</p>
         ) : (
           <div className="report-table-wrap">
+            <SortOrderNote>{sortOrderText(nameSortLabel, nameDirection)}</SortOrderNote>
             <table aria-labelledby="club-honors-heading" className="report-table">
               <thead>
                 <tr>
                   {!readOnly && <th><span className="sr-only">Select</span></th>}
-                  <th>Name</th>
+                  <SortableHeader active direction={nameDirection} label="Name" onSort={() => setNameDirection(flipDirection(nameDirection))} />
                   <th>Current class</th>
                   <th>Honors</th>
                   <th><span className="sr-only">History</span></th>

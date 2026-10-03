@@ -98,11 +98,17 @@ describe("tags: readable table headers and where-this-shows-up (#474)", () => {
     }
   });
 
-  it("renders headers even with an empty table (no tags yet)", () => {
-    const markup = renderToStaticMarkup(createElement(TagConfigurationWorkspace, {
+  it("renders headers with a tag, and explains an empty list instead of showing a bare table (#743)", () => {
+    const withTag = renderToStaticMarkup(createElement(TagConfigurationWorkspace, {
+      eventId: "event_1", eventName: "Fall Retreat",
+      initialTags: [{ id: "t1", name: "Fixture", color: "#4F46E5", description: "", isActive: true }],
+    }));
+    expect(withTag).toContain("<th>Color</th><th>Name</th><th>Description</th><th>Status</th><th>Actions</th>");
+    const empty = renderToStaticMarkup(createElement(TagConfigurationWorkspace, {
       eventId: "event_1", eventName: "Fall Retreat", initialTags: [],
     }));
-    expect(markup).toContain("<th>Color</th><th>Name</th><th>Description</th><th>Status</th><th>Actions</th>");
+    expect(empty).toContain("No tags yet");
+    expect(empty).not.toContain("<th>Color</th>");
   });
 
   it("tells staff in plain language where tags show up, with a link, and only claims wiring that exists", () => {

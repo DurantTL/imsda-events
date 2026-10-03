@@ -1,15 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  CalendarDays,
   CheckCircle2,
   Code2,
   Copy,
   ExternalLink,
-  Globe2,
   MapPin,
   Save,
   ShieldCheck,
@@ -38,6 +36,28 @@ import { DeleteEventDialog } from "@/components/delete-event-dialog";
 import { SubmitButton } from "@/components/submit-button";
 import { UnpublishEventDialog } from "@/components/unpublish-event-dialog";
 import { DraftCreatedGuideBanner } from "@/components/draft-created-guide-banner";
+import { FieldError, fieldErrorProps } from "@/components/field-error";
+import { FormErrorSummary } from "@/components/form-error-summary";
+import { SettingsBlock } from "@/components/settings-block";
+import {
+  blockForControlId,
+  blockSummary,
+  fieldErrorsFromIssues,
+  firstFieldWithError,
+  saveStatusLabel,
+  settingsBlockDomId,
+  settingsBlockIds,
+  effectiveBlockForField,
+  optionFieldSection,
+  takePendingFocus,
+  settingsBlockJumpLabels,
+  settingsBlockTitles,
+  settingsFieldBlock,
+  settingsFieldDomId,
+  settingsFieldErrorId,
+  type SettingsBlockId,
+  type SettingsFieldIssue,
+} from "@/modules/events/settings-layout";
 
 type EventSettingsWorkspaceProps = {
   mode: "create" | "edit";
@@ -54,7 +74,7 @@ type PublishBlocker = { text: string; actionLabel?: string; targetId?: string; h
 type EventApiResult = {
   event?: EventSettingsRecord;
   message?: string;
-  issues?: Array<{ message?: string }>;
+  issues?: SettingsFieldIssue[];
   warnings?: string[];
 };
 
@@ -148,6 +168,13 @@ export function EventSettingsWorkspace({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copiedFormSlug, setCopiedFormSlug] = useState("");
+  // Which blocks are open (#743). Only the first is open on load; closing a
+  // block hides it (a native <details>) and never unmounts its fields, so typed
+  // values and validation survive.
+  const [openBlocks, setOpenBlocks] = useState<Record<string, boolean>>({ basics: true });
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const errorSummaryRef = useRef<HTMLDivElement>(null);
+  const pendingFocusRef = useRef<string | null>(null);
   // Readiness reflects the saved event (#471), not unsaved edits: that is
   // what the server checks when Publish is clicked, so the checklist and the
   // button never promise something a save hasn't made true yet.
@@ -170,8 +197,31 @@ export function EventSettingsWorkspace({
     "These event settings have not been saved. Leave and discard the changes?",
   );
 
+  function clearFieldError(key: string) {
+    setFieldErrors((current) => {
+      if (!(key in current)) return current;
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
+  function setBlockOpen(id: SettingsBlockId, open: boolean) {
+    setOpenBlocks((current) => (current[id] === open ? current : { ...current, [id]: open }));
+  }
+
+  const fieldAria = (key: string) => fieldErrorProps(settingsFieldErrorId(key), fieldErrors[key]);
+  const fieldNote = (key: string) => <FieldError id={settingsFieldErrorId(key)}>{fieldErrors[key]}</FieldError>;
+  const blockHasError = (id: SettingsBlockId) => Object.keys(fieldErrors).some((key) => (
+    effectiveBlockForField(key, {
+      optionsInMore: (field) => placementOf(optionFieldSection[field as keyof typeof optionFieldSection]) === "more",
+      lodgingInMore: placementOf("lodging") === "more",
+    }) === id
+  ));
+
   function update<K extends keyof EventSettingsInput>(key: K, value: EventSettingsInput[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
+    clearFieldError(key);
     setError("");
     setNotice("");
     setSaveMessage(null);
@@ -183,6 +233,7 @@ export function EventSettingsWorkspace({
       name,
       slug: slugWasEdited ? current.slug : slugFromName(name),
     }));
+    clearFieldError("name");
     setError("");
     setNotice("");
     setSaveMessage(null);
@@ -192,6 +243,7 @@ export function EventSettingsWorkspace({
     event.preventDefault();
     setSaving(true);
     setSaveMessage(null);
+    setFieldErrors({});
     setError("");
     setNotice("");
     try {
@@ -216,6 +268,8 @@ export function EventSettingsWorkspace({
       );
       const result = await response.json().catch(() => ({})) as EventApiResult;
       if (!response.ok || !result.event) {
+        const errors = fieldErrorsFromIssues(result.issues);
+        if (Object.keys(errors).length > 0) showFieldErrors(errors);
         throw new Error(
           result.message
           ?? result.issues?.[0]?.message
@@ -236,12 +290,28 @@ export function EventSettingsWorkspace({
       setPublishedFormCount(result.event.publishedFormCount);
       setPublished(result.event.isPublished);
       setSetupWarnings(result.event.warnings ?? []);
-      setSaveMessage({ kind: "success", text: "Event settings saved." });
+      const nextReadiness = getEventPublishReadiness(nextDraft, result.event.publishedFormCount);
+      const nextStep = result.event.isPublished
+        ? "Public registration stays on."
+        : nextReadiness.items.find((item) => !item.complete)
+          ? `Next: ${nextReadiness.items.find((item) => !item.complete)!.label.toLowerCase()} before you publish.`
+          : "Next: publish the event when you are ready.";
+      setSaveMessage({ kind: "success", text: `Event settings saved. ${nextStep}` });
     } catch (caught) {
       setSaveMessage({ kind: "error", text: caught instanceof Error ? caught.message : "The event could not be saved." });
     } finally {
       setSaving(false);
     }
+  }
+
+  // A failed save: open the block holding the first problem, focus that field,
+  // and let the summary link to the rest. The answers stay where they are.
+  function showFieldErrors(errors: Record<string, string>) {
+    setFieldErrors(errors);
+    const first = firstFieldWithError(errors);
+    if (!first) return;
+    setBlockOpen(first.block, true);
+    pendingFocusRef.current = settingsFieldDomId(first.key);
   }
 
   // The first thing standing between this event and Publish (#742): unsaved
@@ -275,14 +345,38 @@ export function EventSettingsWorkspace({
     return { text: "Can't publish yet: club registration needs church billing.", actionLabel: "Go to Billing mode", targetId: "event-field-billing-mode" };
   }, [publishBlockedBySave, saving, readiness, savedDraft, initialEvent?.id]);
 
+  // Open the block that holds a control (a "Go to ..." link, an error, a jump
+  // link), then scroll to it and focus it. The block is opened in the DOM at
+  // once, so focus works now, and in state, so React keeps it open.
   function goToControl(targetId: string) {
+    const blockId = blockForControlId(targetId);
+    if (blockId) setBlockOpen(blockId, true);
     const target = document.getElementById(targetId);
     if (!target) return;
-    const details = target.closest("details");
-    if (details && !details.open) details.open = true;
+    for (let node = target.closest("details"); node; node = node.parentElement?.closest("details") ?? null) {
+      if (!node.open) node.open = true;
+    }
     target.scrollIntoView({ behavior: "smooth", block: "center" });
     target.focus({ preventScroll: true });
   }
+
+  function jumpToBlock(id: SettingsBlockId) {
+    setBlockOpen(id, true);
+    const block = document.getElementById(settingsBlockDomId(id)) as HTMLDetailsElement | null;
+    if (!block) return;
+    block.open = true;
+    block.scrollIntoView({ behavior: "smooth", block: "start" });
+    block.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
+  }
+
+  // After a failed save the first invalid field takes focus, once. goToControl
+  // opens every closed <details> around it, "More settings" included. Later
+  // changes to the errors (one clearing as someone types) never move focus.
+  useEffect(() => {
+    const targetId = takePendingFocus(pendingFocusRef);
+    if (targetId) goToControl(targetId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldErrors]);
 
   function openPublishDialog() {
     if (publishBlocker) {
@@ -379,23 +473,26 @@ export function EventSettingsWorkspace({
   const attendeeEditField = (
     <RadioCardGroup
       legend="Attendee edit verification"
+      id={settingsFieldDomId("attendeeEditPolicy")}
+      idOn="selected"
       name="attendeeEditPolicy"
+      {...fieldAria("attendeeEditPolicy")}
       value={draft.attendeeEditPolicy}
       onChange={(value) => update("attendeeEditPolicy", value as EventSettingsInput["attendeeEditPolicy"])}
       options={[
         { value: "VERIFY_EVERY_EDIT", label: "Email a code for every edit" },
         { value: "TIERED", label: "Allow low-risk answers without a code" },
       ]}
-      help={<small>
+      help={<><small>
         Contact changes, cancellations, and transfers always require a fresh emailed
         code. Medical and club data always require an authenticator.
-      </small>}
+      </small>{fieldNote("attendeeEditPolicy")}</>}
     />
   );
   const paymentInstructionsField = (
     <label>
       Approved payment instructions
-      <textarea
+      <textarea id={settingsFieldDomId("approvedPaymentInstructions")} {...fieldAria("approvedPaymentInstructions")}
         value={draft.approvedPaymentInstructions ?? ""}
         maxLength={2_000}
         rows={5}
@@ -406,13 +503,13 @@ export function EventSettingsWorkspace({
         Versioned event guidance appears only on applicable unpaid messages. Amounts, payment
         state, waitlist, complimentary, and organization-billed wording remain server-derived.
       </small>
-    </label>
+    {fieldNote("approvedPaymentInstructions")}</label>
   );
   const seminarField = (
     <div className="form-grid two-column">
       <label>
         Seminar preference deadline
-        <input
+        <input id={settingsFieldDomId("seminarPreferenceClosesOn")} {...fieldAria("seminarPreferenceClosesOn")}
           type="date"
           value={draft.seminarPreferenceClosesOn ?? ""}
           onChange={(event) => update(
@@ -421,9 +518,9 @@ export function EventSettingsWorkspace({
           )}
         />
         <small>Holders can update ranked seminar preferences through this date in the event timezone.</small>
-      </label>
+      {fieldNote("seminarPreferenceClosesOn")}</label>
       <label className="event-setting-toggle">
-        <input
+        <input id={settingsFieldDomId("seminarPreferenceSelfServiceLocked")} {...fieldAria("seminarPreferenceSelfServiceLocked")}
           type="checkbox"
           checked={draft.seminarPreferenceSelfServiceLocked}
           onChange={(event) => update(
@@ -431,13 +528,13 @@ export function EventSettingsWorkspace({
             event.target.checked,
           )}
         />
-        <span><strong>Lock seminar preference self-service</strong><small>Current preferences remain visible; staff can still make a documented override.</small></span>
+        <span><strong>Lock seminar preference self-service</strong><small>Current preferences remain visible; staff can still make a documented override.</small>{fieldNote("seminarPreferenceSelfServiceLocked")}</span>
       </label>
     </div>
   );
   const shirtField = (
     <label className="event-setting-toggle">
-      <input
+      <input id={settingsFieldDomId("collectsShirtSizes")} {...fieldAria("collectsShirtSizes")}
         type="checkbox"
         checked={draft.collectsShirtSizes}
         onChange={(event) => update("collectsShirtSizes", event.target.checked)}
@@ -449,12 +546,12 @@ export function EventSettingsWorkspace({
           request to everyone still missing one. Turning this off hides the question and
           stops the request being sent.
         </small>
-      </span>
+      {fieldNote("collectsShirtSizes")}</span>
     </label>
   );
   const backgroundField = (
     <label className="event-setting-toggle">
-      <input
+      <input id={settingsFieldDomId("checksAdultBackgrounds")} {...fieldAria("checksAdultBackgrounds")}
         type="checkbox"
         checked={draft.checksAdultBackgrounds}
         onChange={(event) => update("checksAdultBackgrounds", event.target.checked)}
@@ -466,50 +563,51 @@ export function EventSettingsWorkspace({
           staff or not, is flagged until a current Sterling Volunteers check is on file.
           Registration and check-in are never blocked.
         </small>
-      </span>
+      {fieldNote("checksAdultBackgrounds")}</span>
     </label>
   );
   const lodgingPanel = (
-    <section className="panel form-stack event-settings-panel">
-      <div className="section-heading">
-        <div>
-          <p className="eyebrow">Optional</p>
-          <h2>Lodging</h2>
-          <p>
-            Rooms held for this event. Registration messages that use the hotel token show
-            these details, and leave the section out entirely when the hotel name is blank —
-            so an event with no room block never carries another event&rsquo;s hotel.
-          </p>
-        </div>
-        <Globe2 size={21} aria-hidden="true" />
-      </div>
+    <SettingsBlock
+      eyebrow="Optional"
+      hasError={Object.keys(fieldErrors).some((key) => settingsFieldBlock[key] === "lodging")}
+      blockId="lodging"
+      onOpenChange={(open) => setBlockOpen("lodging", open)}
+      open={openBlocks.lodging ?? false}
+      summary={blockSummary("lodging", draft)}
+      title={settingsBlockTitles.lodging}
+    >
+      <p className="settings-block-intro">
+        Rooms held for this event. Registration messages that use the hotel token show
+        these details, and leave the section out entirely when the hotel name is blank —
+        so an event with no room block never carries another event&rsquo;s hotel.
+      </p>
       <label>
         Hotel name
-        <input value={draft.hotelName ?? ""} maxLength={200} placeholder="Holiday Inn Des Moines – Airport Conference Center" onChange={(event) => update("hotelName", event.target.value || null)} />
+        <input id={settingsFieldDomId("hotelName")} {...fieldAria("hotelName")} value={draft.hotelName ?? ""} maxLength={200} placeholder="Holiday Inn Des Moines – Airport Conference Center" onChange={(event) => update("hotelName", event.target.value || null)} />
         <small>Leave blank for an event with no room block. Everything below is then unused.</small>
-      </label>
+      {fieldNote("hotelName")}</label>
       <label>
         Reservation link
-        <input type="url" value={draft.hotelBookingUrl ?? ""} maxLength={500} placeholder="https://…" onChange={(event) => update("hotelBookingUrl", event.target.value || null)} />
-      </label>
+        <input id={settingsFieldDomId("hotelBookingUrl")} {...fieldAria("hotelBookingUrl")} type="url" value={draft.hotelBookingUrl ?? ""} maxLength={500} placeholder="https://…" onChange={(event) => update("hotelBookingUrl", event.target.value || null)} />
+      {fieldNote("hotelBookingUrl")}</label>
       <label>
         Reservation phone
-        <input value={draft.hotelPhone ?? ""} maxLength={60} placeholder="(515) 287-2400" onChange={(event) => update("hotelPhone", event.target.value || null)} />
-      </label>
+        <input id={settingsFieldDomId("hotelPhone")} {...fieldAria("hotelPhone")} value={draft.hotelPhone ?? ""} maxLength={60} placeholder="(515) 287-2400" onChange={(event) => update("hotelPhone", event.target.value || null)} />
+      {fieldNote("hotelPhone")}</label>
       <label>
         Group name to ask for
-        <input value={draft.hotelGroupName ?? ""} maxLength={200} placeholder="IA-MO Conference of Seventh-day Adventists Women’s Retreat" onChange={(event) => update("hotelGroupName", event.target.value || null)} />
-      </label>
+        <input id={settingsFieldDomId("hotelGroupName")} {...fieldAria("hotelGroupName")} value={draft.hotelGroupName ?? ""} maxLength={200} placeholder="IA-MO Conference of Seventh-day Adventists Women’s Retreat" onChange={(event) => update("hotelGroupName", event.target.value || null)} />
+      {fieldNote("hotelGroupName")}</label>
       <label>
         Group rate
-        <input value={draft.hotelRate ?? ""} maxLength={120} placeholder="$120 per night plus tax" onChange={(event) => update("hotelRate", event.target.value || null)} />
-      </label>
+        <input id={settingsFieldDomId("hotelRate")} {...fieldAria("hotelRate")} value={draft.hotelRate ?? ""} maxLength={120} placeholder="$120 per night plus tax" onChange={(event) => update("hotelRate", event.target.value || null)} />
+      {fieldNote("hotelRate")}</label>
       <label>
         Additional lodging notes
-        <textarea value={draft.hotelInstructions ?? ""} rows={3} maxLength={1000} placeholder="Pro tip: share a room with a friend and split the cost." onChange={(event) => update("hotelInstructions", event.target.value || null)} />
+        <textarea id={settingsFieldDomId("hotelInstructions")} {...fieldAria("hotelInstructions")} value={draft.hotelInstructions ?? ""} rows={3} maxLength={1000} placeholder="Pro tip: share a room with a friend and split the cost." onChange={(event) => update("hotelInstructions", event.target.value || null)} />
         <small>Shown under the reservation details in every message that includes lodging.</small>
-      </label>
-    </section>
+      {fieldNote("hotelInstructions")}</label>
+    </SettingsBlock>
   );
 
   const eventKind = eventKindFromAudience(draft.audience);
@@ -533,18 +631,33 @@ export function EventSettingsWorkspace({
     more: optionFields.filter((field) => placementOf(field.id) === "more"),
   };
   const lodgingInMore = placementOf("lodging") === "more";
-  const moreSettingsRef = useRef<HTMLDetailsElement>(null);
+  const visibleBlocks = settingsBlockIds.filter((id) => (
+    id === "options" ? optionalFields.primary.length > 0
+      : id === "lodging" ? !lodgingInMore
+        : id === "more" ? optionalFields.more.length > 0 || lodgingInMore
+          : true
+  ));
+  const saveStatus = saveStatusLabel({ saving, dirty });
+  const errorItems = Object.entries(fieldErrors)
+    .filter(([key]) => key in settingsFieldBlock)
+    .sort(([left], [right]) => settingsBlockIds.indexOf(settingsFieldBlock[left]) - settingsBlockIds.indexOf(settingsFieldBlock[right]))
+    .map(([key, message]) => ({ targetId: settingsFieldDomId(key), message }));
 
-  // A field inside the closed "More settings" can fail native validation (a bad
-  // URL, say). The browser cannot show a message on a hidden field, so Save
-  // would do nothing; open the disclosure and focus the field instead.
-  function openMoreSettingsForInvalidField(event: React.FormEvent<HTMLFormElement>) {
-    const details = moreSettingsRef.current;
+  // A field inside a closed block can fail native validation (a bad URL, say).
+  // The browser cannot show a message on a hidden field, so Save would do
+  // nothing; open the block and focus the field instead.
+  function openBlockForInvalidField(event: React.FormEvent<HTMLFormElement>) {
     const target = event.target as HTMLElement;
-    if (details && !details.open && details.contains(target)) {
-      details.open = true;
-      target.focus();
+    let opened = false;
+    for (let node = target.closest("details"); node; node = node.parentElement?.closest("details") ?? null) {
+      if (!node.open) {
+        node.open = true;
+        opened = true;
+      }
+      const id = node.dataset.settingsBlock as SettingsBlockId | undefined;
+      if (id) setBlockOpen(id, true);
     }
+    if (opened) target.focus();
   }
 
   return (
@@ -572,16 +685,40 @@ export function EventSettingsWorkspace({
       {error && <div className="inline-notice error" role="alert"><AlertTriangle size={17} aria-hidden="true" /> {error}</div>}
       {notice && <div className="inline-notice success" role="status"><CheckCircle2 size={17} aria-hidden="true" /> {notice}</div>}
 
-      <form className="event-settings-layout" onSubmit={save} onInvalidCapture={openMoreSettingsForInvalidField}>
+      <nav aria-label="Jump to a settings section" className="settings-jump-bar">
+        <span aria-live="polite" className={`settings-save-status ${dirty ? "is-dirty" : "is-clean"}`} role="status">
+          {dirty ? <AlertTriangle aria-hidden="true" size={14} /> : <CheckCircle2 aria-hidden="true" size={14} />}
+          <strong>{saveStatus}</strong>
+        </span>
+        <ul>
+          {visibleBlocks.map((id) => (
+            <li key={id}><a href={`#${settingsBlockDomId(id)}`} onClick={(event) => { event.preventDefault(); jumpToBlock(id); }}>{settingsBlockJumpLabels[id]}</a></li>
+          ))}
+        </ul>
+      </nav>
+
+      <form className="event-settings-layout" onSubmit={save} onInvalidCapture={openBlockForInvalidField}>
         <div className="event-settings-main">
-          <section className="panel form-stack event-settings-panel">
-            <div className="section-heading">
-              <div><p className="eyebrow">Step 1</p><h2>Event basics</h2><p>Use the public event name and the dates attendees will recognize.</p></div>
-              <CalendarDays size={21} aria-hidden="true" />
-            </div>
+          {errorItems.length > 0 && (
+            <FormErrorSummary
+              items={errorItems}
+              onFollow={(event, item) => { event.preventDefault(); if (item.targetId) goToControl(item.targetId); }}
+              ref={errorSummaryRef}
+            />
+          )}
+          <SettingsBlock
+            eyebrow="Step 1"
+            hasError={blockHasError("basics")}
+            blockId="basics"
+            onOpenChange={(open) => setBlockOpen("basics", open)}
+            open={openBlocks["basics"] ?? false}
+            summary={blockSummary("basics", draft)}
+            title={settingsBlockTitles["basics"]}
+          >
+            <p className="settings-block-intro">Use the public event name and the dates attendees will recognize.</p>
             <label>
               Event name
-              <input
+              <input {...fieldAria("name")}
                 id="event-field-name"
                 value={draft.name}
                 minLength={3}
@@ -591,10 +728,10 @@ export function EventSettingsWorkspace({
                 placeholder="Women’s Retreat 2027"
                 onChange={(event) => updateName(event.target.value)}
               />
-            </label>
+            {fieldNote("name")}</label>
             <label>
               Short web address
-              <span className="event-slug-input"><b>/register/</b><input
+              <span className="event-slug-input"><b>/register/</b><input {...fieldAria("slug")}
                 id="event-field-slug"
                 value={draft.slug}
                 minLength={3}
@@ -608,40 +745,46 @@ export function EventSettingsWorkspace({
                 }}
               /></span>
               <small>Lowercase letters, numbers, and hyphens. Changing this later changes registration links.</small>
-            </label>
+            {fieldNote("slug")}</label>
             <div className="form-grid two-column">
-              <label>Starts on<input id="event-field-starts-on" type="date" required value={draft.startsOn} onChange={(event) => update("startsOn", event.target.value)} /></label>
-              <label>Ends on<input id="event-field-ends-on" type="date" required min={draft.startsOn || undefined} value={draft.endsOn} onChange={(event) => update("endsOn", event.target.value)} /></label>
+              <label>Starts on<input {...fieldAria("startsOn")} id="event-field-starts-on" type="date" required value={draft.startsOn} onChange={(event) => update("startsOn", event.target.value)} />{fieldNote("startsOn")}</label>
+              <label>Ends on<input {...fieldAria("endsOn")} id="event-field-ends-on" type="date" required min={draft.startsOn || undefined} value={draft.endsOn} onChange={(event) => update("endsOn", event.target.value)} />{fieldNote("endsOn")}</label>
             </div>
             <label>
               Event timezone
-              <select id="event-field-timezone" value={draft.timezone} onChange={(event) => update("timezone", event.target.value as EventSettingsInput["timezone"])}>
+              <select {...fieldAria("timezone")} id="event-field-timezone" value={draft.timezone} onChange={(event) => update("timezone", event.target.value as EventSettingsInput["timezone"])}>
                 {eventTimeZones.map((zone) => <option value={zone} key={zone}>{timeZoneLabels[zone]} ({zone})</option>)}
               </select>
               <small>Registration opening, closing, and late-price dates use this timezone.</small>
-            </label>
+            {fieldNote("timezone")}</label>
             <div className="form-grid two-column">
               <label>
                 Location
-                <span className="input-with-icon"><MapPin size={16} aria-hidden="true" /><input id="event-field-location" value={draft.location ?? ""} maxLength={200} placeholder="Camp Heritage, Clarksburg, MO" onChange={(event) => update("location", event.target.value || null)} /></span>
-              </label>
+                <span className="input-with-icon"><MapPin size={16} aria-hidden="true" /><input {...fieldAria("location")} id="event-field-location" value={draft.location ?? ""} maxLength={200} placeholder="Camp Heritage, Clarksburg, MO" onChange={(event) => update("location", event.target.value || null)} /></span>
+              {fieldNote("location")}</label>
               <label>
                 Overall attendee limit
-                <span className="input-with-icon"><UsersRound size={16} aria-hidden="true" /><input id="event-field-capacity" type="number" min={1} max={100000} value={draft.capacity ?? ""} placeholder="No overall limit" onChange={(event) => update("capacity", event.target.value ? Number(event.target.value) : null)} /></span>
-              </label>
+                <span className="input-with-icon"><UsersRound size={16} aria-hidden="true" /><input {...fieldAria("capacity")} id="event-field-capacity" type="number" min={1} max={100000} value={draft.capacity ?? ""} placeholder="No overall limit" onChange={(event) => update("capacity", event.target.value ? Number(event.target.value) : null)} /></span>
+              {fieldNote("capacity")}</label>
             </div>
-          </section>
+          </SettingsBlock>
 
-          <section className="panel form-stack event-settings-panel">
-            <div className="section-heading">
-              <div><p className="eyebrow">Step 2</p><h2>Registration timing &amp; waitlist</h2><p>Leave either date blank when registration should remain open-ended.</p></div>
-            </div>
+          <SettingsBlock
+            eyebrow="Step 2"
+            hasError={blockHasError("timing")}
+            blockId="timing"
+            onOpenChange={(open) => setBlockOpen("timing", open)}
+            open={openBlocks["timing"] ?? false}
+            summary={blockSummary("timing", draft)}
+            title={settingsBlockTitles["timing"]}
+          >
+            <p className="settings-block-intro">Leave either date blank when registration should remain open-ended.</p>
             <div className="form-grid two-column">
-              <label>Registration opens<input type="date" value={draft.registrationOpensOn ?? ""} onChange={(event) => update("registrationOpensOn", event.target.value || null)} /></label>
-              <label>Registration closes<input type="date" min={draft.registrationOpensOn || undefined} value={draft.registrationClosesOn ?? ""} onChange={(event) => update("registrationClosesOn", event.target.value || null)} /></label>
+              <label>Registration opens<input id={settingsFieldDomId("registrationOpensOn")} {...fieldAria("registrationOpensOn")} type="date" value={draft.registrationOpensOn ?? ""} onChange={(event) => update("registrationOpensOn", event.target.value || null)} />{fieldNote("registrationOpensOn")}</label>
+              <label>Registration closes<input id={settingsFieldDomId("registrationClosesOn")} {...fieldAria("registrationClosesOn")} type="date" min={draft.registrationOpensOn || undefined} value={draft.registrationClosesOn ?? ""} onChange={(event) => update("registrationClosesOn", event.target.value || null)} />{fieldNote("registrationClosesOn")}</label>
             </div>
             <label className="event-setting-toggle">
-              <input
+              <input id={settingsFieldDomId("waitlistEnabled")} {...fieldAria("waitlistEnabled")}
                 type="checkbox"
                 checked={draft.waitlistEnabled}
                 onChange={(event) => {
@@ -653,110 +796,127 @@ export function EventSettingsWorkspace({
                   }));
                 }}
               />
-              <span><strong>Offer a waitlist when the event is full</strong><small>People can submit without taking a confirmed event spot.</small></span>
+              <span><strong>Offer a waitlist when the event is full</strong><small>People can submit without taking a confirmed event spot.</small>{fieldNote("waitlistEnabled")}</span>
             </label>
             <RadioCardGroup
+              id={settingsFieldDomId("audience")}
+              idOn="selected"
               legend="Audience"
               name="audience"
+              {...fieldAria("audience")}
               value={draft.audience ?? "GENERAL"}
               onChange={(value) => update("audience", value as EventSettingsInput["audience"])}
               options={[
                 { value: "GENERAL", label: "General event" },
                 { value: "CLUB", label: "Club or church event" },
               ]}
-              help={<small>
+              help={<><small>
                 Controls Clubs and churches navigation, club oversight, and club reports —
                 Club registration uses church billing. For an event where individuals pay
                 (for example Man Camp), choose General.
-              </small>}
+              </small>{fieldNote("audience")}</>}
             />
             <RadioCardGroup
-              id="event-field-billing-mode"
+              id={settingsFieldDomId("billingMode")}
               idOn="selected"
               legend="Billing mode"
               name="billingMode"
+              {...fieldAria("billingMode")}
               value={draft.billingMode}
               onChange={(value) => update("billingMode", value as EventSettingsInput["billingMode"])}
               options={[
                 { value: "ATTENDEE_PAY", label: "Attendees pay online" },
                 { value: "DEFERRED_ORGANIZATION_INVOICE", label: "Bill the responsible organization later" },
               ]}
-              help={<small>
+              help={<><small>
                 Club/church group events such as Spring Camporee: registration shows informational
                 rates only, no attendee balance or online payment is created, and the responsible
                 organization is billed later based on final attendance.
-              </small>}
+              </small>{fieldNote("billingMode")}</>}
             />
             <label className="event-setting-toggle nested">
-              <input
+              <input id={settingsFieldDomId("autoPromoteWaitlist")} {...fieldAria("autoPromoteWaitlist")}
                 type="checkbox"
                 disabled={!draft.waitlistEnabled}
                 checked={draft.autoPromoteWaitlist}
                 onChange={(event) => update("autoPromoteWaitlist", event.target.checked)}
               />
-              <span><strong>Automatically promote the next eligible registration</strong><small>Use the saved queue order when capacity becomes available.</small></span>
+              <span><strong>Automatically promote the next eligible registration</strong><small>Use the saved queue order when capacity becomes available.</small>{fieldNote("autoPromoteWaitlist")}</span>
             </label>
-          </section>
+          </SettingsBlock>
 
-          {optionalFields.primary.length > 0 && <section className="panel form-stack event-settings-panel">
-            <div className="section-heading">
-              <div><p className="eyebrow">Options</p><h2>Registration options</h2><p>Settings that apply to this kind of event.</p></div>
-            </div>
+          {optionalFields.primary.length > 0 && <SettingsBlock
+            eyebrow="Options"
+            hasError={blockHasError("options")}
+            blockId="options"
+            onOpenChange={(open) => setBlockOpen("options", open)}
+            open={openBlocks.options ?? false}
+            summary={blockSummary("options", draft, { count: optionalFields.primary.length })}
+            title={settingsBlockTitles.options}
+          >
+            <p className="settings-block-intro">Settings that apply to this kind of event.</p>
             {optionalFields.primary.map((field) => <div className="event-settings-option" key={field.id}>{field.node}</div>)}
-          </section>}
+          </SettingsBlock>}
 
 
-          <section className="panel form-stack event-settings-panel">
-            <div className="section-heading">
-              <div><p className="eyebrow">Step 3</p><h2>Public information &amp; help</h2><p>Event information lives on IMSDA Events. Link an IMSDA.org page too only if one still exists for this event.</p></div>
-              <Globe2 size={21} aria-hidden="true" />
-            </div>
+          <SettingsBlock
+            eyebrow="Step 3"
+            hasError={blockHasError("public-info")}
+            blockId="public-info"
+            onOpenChange={(open) => setBlockOpen("public-info", open)}
+            open={openBlocks["public-info"] ?? false}
+            summary={blockSummary("public-info", draft)}
+            title={settingsBlockTitles["public-info"]}
+          >
+            <p className="settings-block-intro">Event information lives on IMSDA Events. Link an IMSDA.org page too only if one still exists for this event.</p>
             <label>
               IMSDA.org event page (optional)
-              <input type="url" value={draft.publicInfoUrl ?? ""} maxLength={500} placeholder="https://imsda.org/event/your-event/" onChange={(event) => update("publicInfoUrl", event.target.value || null)} />
+              <input id={settingsFieldDomId("publicInfoUrl")} {...fieldAria("publicInfoUrl")} type="url" value={draft.publicInfoUrl ?? ""} maxLength={500} placeholder="https://imsda.org/event/your-event/" onChange={(event) => update("publicInfoUrl", event.target.value || null)} />
               <small>Not required to publish. Leave blank when schedules, speakers, and event details live only on this event&rsquo;s IMSDA Events page.</small>
-            </label>
+            {fieldNote("publicInfoUrl")}</label>
             <label>
               Registration support contact
-              <input id="event-field-support-contact" value={draft.supportContact ?? ""} maxLength={200} placeholder="registration@imsda.org or conference office phone" onChange={(event) => update("supportContact", event.target.value || null)} />
+              <input {...fieldAria("supportContact")} id="event-field-support-contact" value={draft.supportContact ?? ""} maxLength={200} placeholder="registration@imsda.org or conference office phone" onChange={(event) => update("supportContact", event.target.value || null)} />
               <small>Enter the email, phone number, or office name attendees should use for help.</small>
-            </label>
+            {fieldNote("supportContact")}</label>
             <label>
               Event theme or tagline (optional)
-              <input value={draft.tagline ?? ""} maxLength={120} placeholder="Lest We Forget" onChange={(event) => update("tagline", event.target.value || null)} />
+              <input id={settingsFieldDomId("tagline")} {...fieldAria("tagline")} value={draft.tagline ?? ""} maxLength={120} placeholder="Lest We Forget" onChange={(event) => update("tagline", event.target.value || null)} />
               <small>Shown under the event title on the public page of a club event. Plain text only.</small>
-            </label>
+            {fieldNote("tagline")}</label>
             <label>
               Header subtitle (optional)
-              <input value={draft.subtitle ?? ""} maxLength={200} placeholder="Register all of your club's attendees using only one form" onChange={(event) => update("subtitle", event.target.value || null)} />
+              <input id={settingsFieldDomId("subtitle")} {...fieldAria("subtitle")} value={draft.subtitle ?? ""} maxLength={200} placeholder="Register all of your club's attendees using only one form" onChange={(event) => update("subtitle", event.target.value || null)} />
               <small>One line under the dates. Plain text only.</small>
-            </label>
+            {fieldNote("subtitle")}</label>
             <label>
               Help email (optional)
-              <input type="email" value={draft.helpEmail ?? ""} maxLength={200} placeholder="youth@imsda.org" onChange={(event) => update("helpEmail", event.target.value || null)} />
+              <input id={settingsFieldDomId("helpEmail")} {...fieldAria("helpEmail")} type="email" value={draft.helpEmail ?? ""} maxLength={200} placeholder="youth@imsda.org" onChange={(event) => update("helpEmail", event.target.value || null)} />
               <small>Used by the help card on a club event&rsquo;s public page. Club events fall back to youth@imsda.org.</small>
-            </label>
+            {fieldNote("helpEmail")}</label>
             {draft.publicInfoUrl && (
               <a className="secondary-button event-info-preview" href={draft.publicInfoUrl} target="_blank" rel="noreferrer">
                 <ExternalLink size={15} aria-hidden="true" /> Open IMSDA.org page
               </a>
             )}
-          </section>
+          </SettingsBlock>
 
 
           {!lodgingInMore && lodgingPanel}
 
           {(optionalFields.more.length > 0 || lodgingInMore) && (
-            <details className="panel event-more-settings" ref={moreSettingsRef}>
-              <summary>
-                <strong>More settings</strong>
-                <small>Settings that do not apply to this kind of event. They are kept, not removed.</small>
-              </summary>
-              <div className="form-stack">
-                {optionalFields.more.map((field) => <div className="event-settings-option" key={field.id}>{field.node}</div>)}
-                {lodgingInMore && lodgingPanel}
-              </div>
-            </details>
+            <SettingsBlock
+              className="panel event-more-settings"
+              hasError={blockHasError("more")}
+              blockId="more"
+              onOpenChange={(open) => setBlockOpen("more", open)}
+              open={openBlocks.more ?? false}
+              summary="Settings that do not apply to this kind of event. They are kept, not removed."
+              title={settingsBlockTitles.more}
+            >
+              {optionalFields.more.map((field) => <div className="event-settings-option" key={field.id}>{field.node}</div>)}
+              {lodgingInMore && lodgingPanel}
+            </SettingsBlock>
           )}
         </div>
 
@@ -901,10 +1061,10 @@ export function EventSettingsWorkspace({
               : saving
                 ? "Saving…"
                 : dirty
-                  ? <span className="unsaved-dot">Unsaved changes</span>
+                  ? <span className="unsaved-dot">Changes not saved</span>
                   : mode === "create"
-                    ? "Nothing is public when this draft is created."
-                    : published ? "All changes saved. Saving never changes whether this event is published." : "All changes saved. Saving never publishes the event."}
+                    ? "No unsaved changes. Nothing is public when this draft is created."
+                    : published ? "No unsaved changes. Saving never changes whether this event is published." : "No unsaved changes. Saving never publishes the event."}
           </p>
           <SubmitButton
             disabled={!dirty}

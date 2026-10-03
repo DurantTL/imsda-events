@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@/components/empty-state";
 import { staffPageTitles } from "@/components/staff-navigation";
 import { PUBLIC_DRAFT_STAFF_HELP } from "@/modules/forms/public-draft";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -910,7 +911,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
     {notice && <div className="inline-notice" role="status">{notice}</div>}
 
     {duplicatePublishedGroups.length > 0 && <section className="panel builder-duplicate-warning" role="alert" data-testid="duplicate-public-forms-warning"><p className="builder-gate"><AlertTriangle size={15} /> <strong>{DUPLICATE_PUBLIC_FORMS_MESSAGE}</strong> {duplicatePublishedGroups.map((group) => `“${group[0]!.title}” (${group.map((form) => form.name).join(", ")})`).join("; ")}.</p></section>}
-    {forms.length === 0 ? <section className="panel builder-empty"><CopyPlus size={32} /><h2>Create the first registration form</h2><p>Choose “Blank form” or a tested local template to begin. Nothing will be published publicly or sent to an external service.</p></section> : <div className="builder-layout">
+    {forms.length === 0 ? <EmptyState action={{ label: "Choose a template", onClick: () => setShowTemplates(true) }} canCreate={canEdit && !showTemplates} className="panel builder-empty" hint={canEdit ? undefined : "Ask an event administrator with form access to create the first form."} icon={<CopyPlus size={32} />} title="No registration form yet">Without a form, nobody can register for this event. Choose “Blank form” or a tested local template to begin. Nothing will be published publicly or sent to an external service.</EmptyState> : <div className="builder-layout">
       <aside className="panel builder-form-list"><div className="section-heading"><div><p className="eyebrow">Event forms</p><h2>{forms.length} form{forms.length === 1 ? "" : "s"}</h2></div></div><div className="builder-form-buttons">{forms.map((form) => <button aria-pressed={form.id === selectedFormId} className={form.id === selectedFormId ? "selected" : ""} type="button" key={form.id} onClick={() => chooseForm(form)}><span><strong>{form.name}</strong><small>Version {form.activeVersion.versionNumber} · {statusLabel(form.activeVersion.status)}</small></span><ChevronRight size={16} /></button>)}</div>{selectedForm && <div className="version-history"><p className="eyebrow">Version history</p>{selectedForm.versions.map((version) => <button aria-pressed={version.id === selectedVersion?.id} className={version.id === selectedVersion?.id ? "selected" : ""} type="button" key={version.id} onClick={() => chooseVersion(version)}><FileClock size={15} /><span><strong>Version {version.versionNumber}</strong><small>{statusLabel(version.status)} · {version.testSubmissionCount} tests</small></span></button>)}</div>}</aside>
 
 	      {selectedForm && selectedVersion && definition && <>

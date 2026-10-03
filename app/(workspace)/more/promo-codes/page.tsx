@@ -37,6 +37,7 @@ export default async function PromoCodesPage({
       <PromoCodeWorkspace
         eventId={event.id}
         initialPromoCodes={promoCodes}
+        canCreate={permissions.includes("MANAGE_FINANCE")}
         canSponsorByChurch={canSponsorByChurch}
         sponsorChurches={sponsorChurches}
       />

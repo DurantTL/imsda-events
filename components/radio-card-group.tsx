@@ -25,6 +25,8 @@ export function RadioCardGroup<Value extends string>({
   idOn = "first",
   required = false,
   disabled = false,
+  "aria-describedby": ariaDescribedBy,
+  "aria-invalid": ariaInvalid,
 }: {
   legend: ReactNode;
   name: string;
@@ -37,12 +39,15 @@ export function RadioCardGroup<Value extends string>({
   idOn?: "first" | "selected";
   required?: boolean;
   disabled?: boolean;
+  /** Optional error wiring (#743), passed to the fieldset so the group announces its error. */
+  "aria-describedby"?: string;
+  "aria-invalid"?: boolean;
 }) {
   const firstEnabled = options.findIndex((option) => !option.disabled);
   const selected = options.findIndex((option) => option.value === value);
   const idIndex = idOn === "selected" && selected >= 0 ? selected : Math.max(firstEnabled, 0);
   return (
-    <fieldset className="radio-card-group" disabled={disabled}>
+    <fieldset aria-describedby={ariaDescribedBy} aria-invalid={ariaInvalid} className="radio-card-group" disabled={disabled}>
       <legend>{legend}</legend>
       <div className="radio-card-group-options">
         {options.map((option, index) => (

@@ -235,7 +235,7 @@ function render(overrides: Partial<EventSettingsRecord> = {}, canDeleteEvent = f
 
 /** The markup inside the "More settings" disclosure, or "" when it is absent. */
 function moreSettings(markup: string) {
-  const start = markup.indexOf('<details class="panel event-more-settings"');
+  const start = markup.indexOf('<details class="settings-block panel event-more-settings"');
   if (start === -1) return "";
   return markup.slice(start, markup.indexOf("</details>", start));
 }
@@ -244,7 +244,7 @@ describe("event settings render by event type (#624)", () => {
   it("keeps hidden fields in the form, inside the closed More settings, so a save still sends them", () => {
     const markup = render();
     const more = moreSettings(markup);
-    expect(markup).toMatch(/<details class="panel event-more-settings"(?![^>]*\sopen)/);
+    expect(markup).toMatch(/<details class="settings-block panel event-more-settings"(?![^>]*\sopen)/);
     expect(more).toContain("Seminar preference deadline");
     expect(more).toContain("Approved payment instructions");
     // The save body spreads the whole draft, hidden fields included.

@@ -22,5 +22,5 @@ export default async function AttendeeConfigurationPage({ searchParams }: { sear
     id: row.id, kind: row.kind, code: row.code, label: row.label,
     description: row.description, sortOrder: row.sortOrder, isActive: row.isActive,
   }));
-  return <AttendeeConfigurationWorkspace eventId={event.id} eventName={event.name} initialTypes={types} initialClassifications={classifications} />;
+  return <AttendeeConfigurationWorkspace eventId={event.id} eventName={event.name} initialTypes={types} initialClassifications={classifications} canCreate={permissions.includes("CONFIGURE_EVENT")} />;
 }
