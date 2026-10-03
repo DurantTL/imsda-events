@@ -106,3 +106,26 @@ export function isPlainClick(event: { button: number; metaKey: boolean; ctrlKey:
  */
 export const phoneMaxWidthPx = 800;
 export const desktopBreakpointQuery = `(min-width: ${phoneMaxWidthPx + 1}px)`;
+
+/**
+ * Where the directory was left (#741 slice 4): the card last opened and how far
+ * the list was scrolled. Reopening the launcher after coming back from a child
+ * page puts focus on that card and restores the scroll, instead of starting at
+ * the top. Kept in memory for the life of the staff shell (which persists across
+ * client navigations), and per event so another event starts fresh.
+ */
+export type LauncherPosition = { eventQuery: string; cardKey: string | null; scrollTop: number };
+
+let rememberedPosition: LauncherPosition | null = null;
+
+export function rememberLauncherPosition(position: LauncherPosition): void {
+  rememberedPosition = position;
+}
+
+export function recallLauncherPosition(eventQuery: string): LauncherPosition | null {
+  return rememberedPosition && rememberedPosition.eventQuery === eventQuery ? rememberedPosition : null;
+}
+
+export function forgetLauncherPosition(): void {
+  rememberedPosition = null;
+}

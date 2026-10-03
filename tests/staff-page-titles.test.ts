@@ -19,7 +19,7 @@ describe("staff page names (#685)", () => {
     expect(labelByHref["/people"]).toBe("Registrations");
     expect(labelByHref["/finance"]).toBe("Payments");
     expect(labelByHref["/more/promo-codes"]).toBe("Promo codes");
-    expect(labelByHref["/registration-builder"]).toBe("Registration form");
+    expect(labelByHref["/registration-builder"]).toBe("Registration forms");
   });
 
   it("keeps five phone tabs with short labels while the sidebar keeps full labels (#711)", () => {

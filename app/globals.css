@@ -9524,3 +9524,27 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
   }
   .searchable-select.is-sheet-picker .searchable-select-options > button { min-height: 48px; font-size: max(16px, 1rem); }
 }
+
+/* #741 slice 4: fixed staff navigation order.
+   The sidebar now lists up to six groups and fifteen items, so the rhythm is
+   tighter (the nav still scrolls inside the sidebar, #468) and the icons-only
+   sidebar (#446) keeps a thin rule where each hidden group heading was.
+   Self-contained block; nothing above this comment is changed by it.
+   (plain comment, not a banner: the #743 block test counts banners) */
+.primary-nav { gap: 3px; }
+.primary-nav .nav-item { padding-block: 9px; }
+.primary-nav .nav-group-label { margin: 9px 0 0; }
+.primary-nav .nav-group-label:first-child { margin-top: 2px; }
+@media (min-width: 801px) {
+  html[data-sidebar="collapsed"] .primary-nav .nav-group-label {
+    display: block;
+    height: 1px;
+    margin: 7px 8px 4px;
+    padding: 0;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.16);
+    color: transparent;
+    font-size: 0;
+  }
+  html[data-sidebar="collapsed"] .primary-nav .nav-group-label:first-child { display: none; }
+}
