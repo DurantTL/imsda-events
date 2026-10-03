@@ -7,9 +7,11 @@ import { BackgroundCheckList } from "@/components/background-check-flags";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { canSeeIssuesText } from "@/modules/background-checks/notes-access";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
+import { ClubGuardiansPanel } from "@/components/club-guardians-panel";
 import { ClubOverview } from "@/components/club-overview";
 import { getPrisma } from "@/lib/prisma";
 import { getClubAssignmentForClub } from "@/modules/club-registrations/assignments-repository";
+import { resolveStaffGuardianViewer } from "@/modules/club-rosters/guardians-access";
 import { isClubRegisteredForEvent, resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 import { staffPageTitles } from "@/components/staff-navigation";
 
@@ -38,6 +40,8 @@ export default async function EventClubPage({
   const { user } = await getCurrentSession();
   const backgroundFlags = await listEventBackgroundFlags(event.id, { organizationId, includeNotes: canSeeIssuesText(user) });
   const assignment = await getClubAssignmentForClub(event.id, organizationId);
+  // Guardian contacts (#510): only for staff who hold the sensitive-data permission on this event.
+  const guardianViewer = await resolveStaffGuardianViewer(event.id);
   return (
     <section className="page-stack">
       <BackLink href={`/more/clubs${query}`} variant="staff">Back to clubs</BackLink>
@@ -77,6 +81,7 @@ export default async function EventClubPage({
         reportHref={(month) => `/more/clubs/reports/${organizationId}/${month}${fromHere}`}
         reportsEditable={false}
       />
+      {guardianViewer && <ClubGuardiansPanel headingLevel={3} organizationId={organizationId} viewer={guardianViewer} />}
     </section>
   );
 }

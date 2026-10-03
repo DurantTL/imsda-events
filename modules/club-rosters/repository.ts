@@ -5,7 +5,8 @@ import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { lockClubOrders } from "@/modules/club-orders/repository";
 import { openBirthDate, sealBirthDate } from "@/modules/club-rosters/birth-dates";
-import { ageOn, birthDateProblem, calendarDateOf, defaultRosterRole } from "@/modules/club-rosters/domain";
+import { ageOn, birthDateProblem, calendarDateOf, clubYearFor, defaultRosterRole } from "@/modules/club-rosters/domain";
+import { deleteGuardiansForMember, replaceGuardians } from "@/modules/club-rosters/guardians-repository";
 import type { RosterMemberInput, RosterMemberUpdate } from "@/modules/club-rosters/schemas";
 
 /**
@@ -19,7 +20,8 @@ export type RosterErrorCode =
   | "DUPLICATE_MEMBER"
   | "BIRTH_DATE_INVALID"
   | "MEMBER_REMOVED"
-  | "GENDER_REQUIRED";
+  | "GENDER_REQUIRED"
+  | "GUARDIANS_PRIOR_YEAR";
 
 export class RosterOperationError extends Error {
   constructor(public readonly code: RosterErrorCode, message: string) {
@@ -203,10 +205,14 @@ export async function addRosterMember(
       },
       select: { id: true },
     });
+    // Guardian contacts (#510): the route has already refused anyone but a club leader.
+    const guardianCounts = input.guardians ? await replaceGuardians(tx, member.id, input.guardians) : null;
     await audit(tx, actor, "CLUB_ROSTER_MEMBER_ADDED", organizationId, member.id, "Added a person to a club roster.", {
       clubYear,
       attendeeType: input.attendeeType,
       source: options.source ?? "DIRECTOR",
+      // Counts only, never a guardian's name, email or phone.
+      ...(guardianCounts ? { guardiansStored: guardianCounts.stored } : {}),
     });
     return { memberId: member.id, personId: person.id };
   });
@@ -224,6 +230,11 @@ export async function updateRosterMember(
   if (input.birthDate !== undefined) assertBirthDate(input.birthDate, now);
   return getPrisma().$transaction(async (tx) => {
     const member = await findMember(tx, organizationId, memberId);
+    // Guardian contacts live only on the current club year's row (#510): a
+    // crafted request against a prior or later year's row is refused.
+    if (input.guardians !== undefined && member.clubYear !== clubYearFor(now)) {
+      throw new RosterOperationError("GUARDIANS_PRIOR_YEAR", "Guardian contacts can only be changed on the current club year's roster.");
+    }
     // Nothing to change (an older client sending only `willingToDrive`, which
     // the schema strips, or an empty edit): no write, no audit entry.
     if (Object.keys(input).length === 0) return { personId: member.personId };
@@ -268,13 +279,16 @@ export async function updateRosterMember(
         ...(input.birthDate === undefined ? {} : { sealedBirthDate: sealBirthDate(input.birthDate), reportedAge: null }),
       },
     });
+    const guardianCounts = input.guardians ? await replaceGuardians(tx, memberId, input.guardians) : null;
     const action = input.status === "INACTIVE" && member.status !== "INACTIVE"
       ? "CLUB_ROSTER_MEMBER_DEACTIVATED"
       : input.status === "ACTIVE" && member.status !== "ACTIVE"
         ? "CLUB_ROSTER_MEMBER_REACTIVATED"
         : "CLUB_ROSTER_MEMBER_UPDATED";
     await audit(tx, actor, action, organizationId, memberId, "Updated a person on a club roster.", {
+      // Field names and counts only: a guardian's values never reach the audit log.
       fields: Object.keys(input),
+      ...(guardianCounts ? { guardiansStored: guardianCounts.stored, guardiansCleared: guardianCounts.cleared } : {}),
     });
     return { personId: member.personId };
   });
@@ -289,7 +303,9 @@ export async function updateRosterMember(
  * `personId` also frees the `[organizationId, clubYear, personId]` unique
  * key, which is what lets the same person transfer back later in the year.
  */
-export async function eraseRosterRow(tx: Prisma.TransactionClient, memberId: string, now: Date) {
+export async function eraseRosterRow(tx: Prisma.TransactionClient, memberId: string, now: Date): Promise<{ guardiansErased: number }> {
+  // Guardian contacts are kept only while the member is on the roster (#510).
+  const guardiansErased = await deleteGuardiansForMember(tx, memberId);
   // A meeting check-off names the member by roster row; it goes with them (#653).
   await tx.clubMeetingAttendance.deleteMany({ where: { rosterMemberId: memberId } });
   // Removing someone erases their Health Record at once, whether or not the
@@ -321,6 +337,7 @@ export async function eraseRosterRow(tx: Prisma.TransactionClient, memberId: str
       willingToDrive: false,
     },
   });
+  return { guardiansErased };
 }
 
 /**
@@ -384,7 +401,7 @@ export async function removeRosterMember(organizationId: string, memberId: strin
     }
     // Both waits are done: a stuck lock gave up fast (55P03 -> 503) above.
     await tx.$executeRawUnsafe("SET LOCAL lock_timeout = 0");
-    await eraseRosterRow(tx, memberId, now);
+    const { guardiansErased } = await eraseRosterRow(tx, memberId, now);
     // A need this club has not ordered yet has no reason to outlive the
     // membership (#566). ORDERED, RECEIVED and AWARDED needs are history and stay.
     let ordersCancelled = 0;
@@ -453,6 +470,7 @@ export async function removeRosterMember(organizationId: string, memberId: strin
       honorEntriesErased,
       ordersCancelled,
       classCompletionsErased,
+      guardiansErased,
       nameKept,
     });
     // The person kept (still registered, on another roster…) is refreshed by the caller (#527).

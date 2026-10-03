@@ -49,6 +49,10 @@ vi.mock("@/modules/club-rosters/repository", async () => {
   const actual = await vi.importActual<typeof import("@/modules/club-rosters/repository")>("@/modules/club-rosters/repository");
   return { ...actual, listRoster: mocks.listRoster, addRosterMember: mocks.addRosterMember };
 });
+vi.mock("@/modules/club-rosters/guardians-repository", async () => {
+  const actual = await vi.importActual<typeof import("@/modules/club-rosters/guardians-repository")>("@/modules/club-rosters/guardians-repository");
+  return { ...actual, listGuardiansByMember: async () => ({}) };
+});
 vi.mock("@/modules/background-checks/refresh-after-write", () => ({ refreshBackgroundCheckMatchesSafely: mocks.refreshBackgroundCheckMatchesSafely }));
 
 import { GET, POST } from "@/app/api/attendee/clubs/[organizationId]/roster/route";

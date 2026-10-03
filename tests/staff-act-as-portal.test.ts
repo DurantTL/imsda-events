@@ -33,6 +33,7 @@ const client = {
   attendeeSession: { findUnique: async () => ({ secondFactorVerifiedAt: new Date(Date.now() - 60_000) }) },
   areaCoordinatorGrant: { findUnique: async () => null },
   clubRosterMember: { findMany: mocks.memberFindMany, create: mocks.memberCreate },
+  clubRosterGuardian: { findMany: async () => [] },
   clubMonthlyReport: { findUnique: mocks.reportFindUnique },
   clubProfile: { findUnique: mocks.profileFindUnique },
   person: { create: mocks.personCreate },

@@ -77,6 +77,7 @@ describe("POST .../roster/export (#490)", () => {
       { mode: "preview", columns: [{ key: "birthDate", header: "DOB" }], confirmSensitive: true },
       true,
       { accountId: "director-1" },
+      undefined,
     );
   });
 
@@ -107,6 +108,37 @@ describe("POST .../roster/export (#490)", () => {
     mocks.runRosterExport.mockRejectedValueOnce(new RosterExportError("SENSITIVE_ACCESS_DENIED", "Your club role doesn't include birth dates."));
     response = await postExport(jsonRequest("https://events.imsda.test/x", "POST", { columns: [{ key: "birthDate", header: "DOB" }], confirmSensitive: true }), ctx);
     expect(response.status).toBe(403);
+  });
+});
+
+describe("guardian columns on the export routes (#510)", () => {
+  const guardianBody = { mode: "preview", columns: [{ key: "guardian1Name", header: "Guardian 1 name" }], confirmSensitive: true };
+
+  it("passes the club role's guardians capability down to the export", async () => {
+    mocks.requireRosterAccess.mockResolvedValueOnce({ ...openAccess, capabilities: { seeBirthDates: true, guardians: true } });
+    mocks.runRosterExport.mockResolvedValueOnce({ headers: ["Guardian 1 name"], rows: [["Synthetic Guardian"]], totalRows: 1 });
+    const response = await postExport(jsonRequest("https://events.imsda.test/x", "POST", guardianBody), ctx);
+    expect(response.status).toBe(200);
+    expect(mocks.runRosterExport).toHaveBeenCalledWith("club-1", expect.any(String), guardianBody, true, { accountId: "director-1" }, true);
+  });
+
+  it("answers 403 when the repository refuses a role without guardians access", async () => {
+    mocks.runRosterExport.mockRejectedValueOnce(new RosterExportError("SENSITIVE_ACCESS_DENIED", "Guardian contacts are for your club's director and deputy."));
+    const response = await postExport(jsonRequest("https://events.imsda.test/x", "POST", guardianBody), ctx);
+    expect(response.status).toBe(403);
+  });
+
+  it("refuses to save a format with guardian columns for a role without guardians access, and allows it for a director", async () => {
+    const body = { name: "With guardians", columns: [{ key: "firstName", header: "First" }, { key: "guardian1Email", header: "G1 email" }] };
+    let response = await postFormat(jsonRequest("https://events.imsda.test/x", "POST", body), ctx);
+    expect(response.status).toBe(403);
+    expect(mocks.saveRosterExportFormat).not.toHaveBeenCalled();
+
+    mocks.requireRosterAccess.mockResolvedValueOnce({ ...openAccess, capabilities: { seeBirthDates: true, guardians: true } });
+    mocks.saveRosterExportFormat.mockResolvedValueOnce({ id: "format-2", name: "With guardians", columns: body.columns, updatedAt: "" });
+    mocks.listRosterExportFormats.mockResolvedValueOnce([]);
+    response = await postFormat(jsonRequest("https://events.imsda.test/x", "POST", body), ctx);
+    expect(response.status).toBe(201);
   });
 });
 

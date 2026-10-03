@@ -32,20 +32,22 @@ export type ClubCapabilities = {
   manageTeam: boolean;
   editProfile: boolean;
   submitReports: boolean;
+  /** Guardian contacts on the roster (#510): the club's director and deputy only; a registrar never sees them. */
+  guardians: boolean;
 };
 
 const leader: ClubCapabilities = {
-  roster: true, registerForEvents: true, seeBirthDates: true, manageTeam: true, editProfile: true, submitReports: true,
+  roster: true, registerForEvents: true, seeBirthDates: true, manageTeam: true, editProfile: true, submitReports: true, guardians: true,
 };
 
 const capabilitiesByRole: Record<ClubRole, ClubCapabilities> = {
   DIRECTOR: leader,
   DEPUTY: leader,
   REGISTRAR: {
-    roster: true, registerForEvents: true, seeBirthDates: false, manageTeam: false, editProfile: false, submitReports: false,
+    roster: true, registerForEvents: true, seeBirthDates: false, manageTeam: false, editProfile: false, submitReports: false, guardians: false,
   },
   REPORTER: {
-    roster: false, registerForEvents: false, seeBirthDates: false, manageTeam: false, editProfile: false, submitReports: true,
+    roster: false, registerForEvents: false, seeBirthDates: false, manageTeam: false, editProfile: false, submitReports: true, guardians: false,
   },
 };
 

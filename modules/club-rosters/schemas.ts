@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { rosterRoleOrDefault } from "@/modules/club-rosters/domain";
+import { guardiansInputSchema } from "@/modules/club-rosters/guardians-domain";
 
 const classLevel = z.enum(["FRIEND", "COMPANION", "EXPLORER", "RANGER", "VOYAGER", "GUIDE", "TLT", "MASTER_GUIDE"]).nullable();
 
@@ -46,6 +47,8 @@ export const rosterMemberInputSchema = z.object({
   role: role.default(""),
   classLevel: classLevel.default(null),
   gender: gender.default(null),
+  /** Guardian contacts (#510): replaces the set when sent; only a club director or deputy may send it (the route checks). */
+  guardians: guardiansInputSchema.optional(),
   willingToDrive: ignoredWillingToDrive,
 }).strict()
   .refine((data) => data.gender !== null, { message: "Choose Male or Female.", path: ["gender"] })
@@ -60,6 +63,7 @@ export const rosterMemberUpdateSchema = z.object({
   classLevel,
   gender,
   status: z.enum(["ACTIVE", "INACTIVE"]),
+  guardians: guardiansInputSchema,
   willingToDrive: ignoredWillingToDrive,
 }).partial().strict().refine((data) => !("gender" in data) || data.gender !== null, {
   message: "Choose Male or Female.",

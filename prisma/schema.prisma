@@ -3912,10 +3912,35 @@ model ClubRosterMember {
   clubFormSubmissions ClubFormSubmission[]
   clubFormLinks       ClubFormLink[]
   meetingAttendance   ClubMeetingAttendance[]
+  /// Up to two guardian contacts (#510). Deleted with the member's removal.
+  guardians           ClubRosterGuardian[]
 
   @@unique([organizationId, clubYear, personId])
   @@index([organizationId, clubYear, status])
   @@index([personId])
+}
+
+/// A guardian contact for a roster member (#510): slot 1 or 2, every field
+/// optional, plain text (director decision Oct 1, 2026: not encrypted). Only
+/// the club's director and deputy, Area Coordinators and staff holding
+/// VIEW_SENSITIVE_DATA may read it. The row lives exactly as long as the
+/// member is on the roster: it cascades with the member and is deleted when the
+/// member is removed or erased. Values never go into audit metadata or logs.
+model ClubRosterGuardian {
+  id             String   @id @default(cuid())
+  rosterMemberId String
+  /// 1 or 2 (a CHECK constraint in the migration enforces it).
+  position       Int
+  name           String   @default("")
+  relationship   String   @default("")
+  email          String   @default("")
+  phone          String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  rosterMember ClubRosterMember @relation(fields: [rosterMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([rosterMemberId, position])
 }
 
 /// A club-owned, named roster export format (#490): which columns, in what

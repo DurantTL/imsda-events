@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import {
   DEFAULT_ROSTER_EXPORT_COLUMNS,
   ROSTER_EXPORT_COLUMNS,
-  ROSTER_EXPORT_COLUMN_KEYS,
+  isGuardianRosterExportColumn,
+  rosterExportColumnKeysFor,
   isSensitiveRosterExportColumn,
   sensitiveRosterExportColumns,
   type RosterExportColumn,
@@ -28,11 +29,14 @@ function withDefaultHeader(key: RosterExportColumnKey): RosterExportColumn {
 export function RosterExportBuilder({
   organizationId,
   canSeeBirthDates,
+  canSeeGuardians = false,
   initialFormats,
 }: {
   organizationId: string;
   /** Directors and deputies only (#375); a registrar can build an export but never the birth-date column. */
   canSeeBirthDates: boolean;
+  /** Directors and deputies only (#510): everyone else is never offered the guardian columns. */
+  canSeeGuardians?: boolean;
   initialFormats: RosterExportFormatRecord[];
 }) {
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/roster/export`;
@@ -46,11 +50,13 @@ export function RosterExportBuilder({
   const [notice, setNotice] = useState("");
 
   const chosenKeys = useMemo(() => new Set(columns.map((column) => column.key)), [columns]);
-  const available = ROSTER_EXPORT_COLUMN_KEYS.filter((key) => !chosenKeys.has(key));
+  const offeredKeys = useMemo(() => rosterExportColumnKeysFor(canSeeGuardians), [canSeeGuardians]);
+  const available = offeredKeys.filter((key) => !chosenKeys.has(key));
   const sensitiveChosen = sensitiveRosterExportColumns(columns);
   const needsConfirmation = sensitiveChosen.length > 0;
 
   function addColumn(key: RosterExportColumnKey) {
+    if (!offeredKeys.includes(key)) return;
     setPreview(null);
     setColumns((current) => (current.some((column) => column.key === key) ? current : [...current, withDefaultHeader(key)]));
   }
@@ -141,8 +147,10 @@ export function RosterExportBuilder({
     setPreview(null);
     setError("");
     setNotice(`Loaded "${format.name}".`);
-    setColumns(format.columns);
-    if (!sensitiveRosterExportColumns(format.columns).length) setConfirmSensitive(false);
+    // A format saved by someone who could see guardians never brings those columns in for someone who can't (#510).
+    const offered = format.columns.filter((column) => canSeeGuardians || !isGuardianRosterExportColumn(column.key));
+    setColumns(offered);
+    if (!sensitiveRosterExportColumns(offered).length) setConfirmSensitive(false);
   }
 
   async function deleteFormat(format: RosterExportFormatRecord) {
@@ -244,6 +252,13 @@ export function RosterExportBuilder({
         )}
       </section>
 
+      {canSeeGuardians && (
+        <p className="field-help">
+          Guardian columns are sensitive. Phone numbers that start with + are exported with a leading apostrophe so
+          spreadsheets don&apos;t treat them as formulas.
+        </p>
+      )}
+
       {needsConfirmation && (
         <div className="roster-export-confirm status-chip gold">
           <p>
@@ -312,5 +327,5 @@ export function RosterExportBuilder({
 }
 
 function isRosterExportColumnValue(value: string): value is RosterExportColumnKey {
-  return (ROSTER_EXPORT_COLUMN_KEYS as string[]).includes(value);
+  return Object.hasOwn(ROSTER_EXPORT_COLUMNS, value);
 }

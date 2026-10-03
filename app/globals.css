@@ -7287,6 +7287,18 @@ select:focus-visible {
 .passkey-sign-in-button { width: 100%; justify-content: center; min-height: 46px; }
 .club-roster-heading-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
 .roster-dialog { width: min(640px, 100%); }
+/* Guardian contacts in the roster popup (#510). */
+.roster-guardians { min-width: 0; margin: 0; padding: 0; border: 0; }
+.roster-guardians > * + * { margin-top: 10px; }
+.roster-guardians legend { padding: 0; margin-bottom: 6px; font-weight: 700; }
+.roster-guardian-slot .form-grid { align-items: start; }
+.roster-guardian-slot { display: grid; gap: 6px; min-width: 0; padding: 10px 12px; border: 1px solid var(--line, #d8dee6); border-radius: 10px; }
+.roster-guardian-slot h3 { margin: 0; font-size: 0.95rem; }
+.club-guardians-table-wrap { overflow-x: auto; }
+.club-guardian-cell { display: grid; gap: 2px; min-width: 11rem; }
+@media (max-width: 520px) {
+  .roster-guardian-slot .form-grid.two-column { grid-template-columns: minmax(0, 1fr); }
+}
 .birth-date-field { min-width: 0; }
 .birth-date-parsed { display: block; margin-top: 4px; }
 .accounts-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }

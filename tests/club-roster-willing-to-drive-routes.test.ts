@@ -28,6 +28,11 @@ vi.mock("@/modules/club-rosters/access", async () => {
   return { ...actual, requireRosterAccess: mocks.requireRosterAccess };
 });
 
+vi.mock("@/modules/club-rosters/guardians-repository", async () => {
+  const actual = await vi.importActual<typeof import("@/modules/club-rosters/guardians-repository")>("@/modules/club-rosters/guardians-repository");
+  return { ...actual, listGuardiansByMember: async () => ({}) };
+});
+
 import { POST as addMember } from "@/app/api/attendee/clubs/[organizationId]/roster/route";
 import { PATCH as editMember } from "@/app/api/attendee/clubs/[organizationId]/roster/[memberId]/route";
 
@@ -58,7 +63,7 @@ const jsonRequest = (method: string, url: string, body: unknown) => new Request(
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
-  mocks.requireRosterAccess.mockResolvedValue({ state: "OPEN", actor: { kind: "ATTENDEE", accountId: "director-1", sessionId: "session-1" } });
+  mocks.requireRosterAccess.mockResolvedValue({ state: "OPEN", capabilities: { guardians: false }, actor: { kind: "ATTENDEE", accountId: "director-1", sessionId: "session-1" } });
   const client = {
     clubRosterMember: {
       findFirst: vi.fn(async () => storedYouth),

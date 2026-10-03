@@ -17,6 +17,7 @@ export default async function ClubRosterExportPage({ params }: { params: Promise
       <BackLink href={`/account/clubs/${organizationId}/roster`}>Back to {access.club.name}&apos;s roster</BackLink>
       <RosterExportBuilder
         canSeeBirthDates={access.capabilities.seeBirthDates}
+        canSeeGuardians={access.capabilities.guardians}
         initialFormats={formats}
         organizationId={organizationId}
       />
