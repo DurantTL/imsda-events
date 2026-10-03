@@ -334,7 +334,7 @@ export function ClubOrderWorkspace({
       {readOnly ? (
         <p className="inline-notice" role="status"><Eye aria-hidden="true" size={14} /> View only. Shows what&apos;s on file. The club director or deputy builds the list.</p>
       ) : (
-        <p className="field-help">Completed honors, uniform needs, and earned awards that haven&apos;t been handed out appear here on their own. Change a quantity, add an item, or take one off. Stock on hand comes off what you need.</p>
+        <p className={`field-help ${styles.helpText}`}>Completed honors, uniform needs, and earned awards that haven&apos;t been handed out appear here on their own. Change a quantity, add an item, or take one off. Stock on hand comes off what you need.</p>
       )}
       {notice && <p className="inline-notice success" role="status">{notice}</p>}
       {error && <p className="inline-notice error" role="alert">{error}</p>}
@@ -473,7 +473,7 @@ export function ClubOrderWorkspace({
           })
         )}
         {onList.length > 0 && (
-          <p className="field-help">To order is the quantity less what is available, never below zero. Available = in stock minus items set aside for someone. {totalToOrder} to order in all.</p>
+          <p className={`field-help ${styles.helpText}`}>To order is the quantity less what is available, never below zero. Available = in stock minus items set aside for someone. {totalToOrder} to order in all.</p>
         )}
 
         {takenOff.length > 0 && (
@@ -535,7 +535,7 @@ export function ClubOrderWorkspace({
             <a className="secondary-button" href={`${base}/csv?view=picklist`}><Download aria-hidden="true" size={14} /> Pick list (who gets what)</a>
           ) : null}
         </div>
-        {onList.length === 0 && <p className="field-help" id="club-order-nothing">Nothing on the list to export yet.</p>}
+        {onList.length === 0 && <p className={`field-help ${styles.helpText}`} id="club-order-nothing">Nothing on the list to export yet.</p>}
       </section>
 
       <section className={styles.block} id="inventory">
@@ -551,7 +551,7 @@ export function ClubOrderWorkspace({
       {waitingBatches.length > 0 && (
         <section className={styles.block}>
           <h3>Orders waiting to arrive</h3>
-          <p className="field-help">Earlier orders, from before this helper list. Mark one received when it arrives and its items join your stock. New orders can&apos;t be placed here.</p>
+          <p className={`field-help ${styles.helpText}`}>Earlier orders, from before this helper list. Mark one received when it arrives and its items join your stock. New orders can&apos;t be placed here.</p>
           <ul className={styles.list}>
             {waitingBatches.map((batch) => (
               <li className={styles.row} key={batch.id}>

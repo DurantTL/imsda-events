@@ -1,9 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import { LogOut, Mail, MapPinned, Search, ShieldOff } from "lucide-react";
+import { useRef, useState } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown, LogOut, Mail, MapPinned, Search, ShieldOff } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
+import {
+  accountColumnSortKeys,
+  accountSortKeys,
+  accountSortLabels,
+  ariaSortFor,
+  nextAccountSort,
+  type AccountSort,
+  type AccountSortKey,
+} from "@/modules/system-admin/account-sort";
 import type { AttendeeAccountSummary } from "@/modules/system-admin/user-admin";
 import { cardCell } from "@/components/table-card-labels";
 
@@ -25,9 +34,23 @@ function when(value: string | null) {
  * its two-step sign-in after a lost device, sign it out everywhere, or change
  * its email. Passwords are never set here; people use "Forgot password".
  */
-export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts: AttendeeAccountSummary[] }) {
+export function AttendeeAccountsWorkspace({
+  initialAccounts,
+  initialQuery = "",
+  initialSort = null,
+  initialCapped = false,
+}: {
+  initialAccounts: AttendeeAccountSummary[];
+  initialQuery?: string;
+  initialSort?: AccountSort;
+  initialCapped?: boolean;
+}) {
   const [accounts, setAccounts] = useState(initialAccounts);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery);
+  const [submittedQuery, setSubmittedQuery] = useState(initialQuery);
+  const [sort, setSort] = useState<AccountSort>(initialSort);
+  const [capped, setCapped] = useState(initialCapped);
+  const latestRequest = useRef(0);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -37,20 +60,47 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
   const [pendingAction, setPendingAction] = useState<PendingAccountAction | null>(null);
   const [dialogError, setDialogError] = useState("");
 
-  async function search(event?: React.FormEvent<HTMLFormElement>) {
+  // The search and sort stay in the URL together (#738).
+  function accountParams(nextQuery: string, nextSort: AccountSort) {
+    const params = new URLSearchParams();
+    if (nextQuery.trim()) params.set("q", nextQuery.trim());
+    if (nextSort) {
+      params.set("sort", nextSort.key);
+      params.set("dir", nextSort.direction);
+    }
+    return params;
+  }
+
+  // A submit searches for what is typed; a sort or refresh reuses the last
+  // submitted search, not whatever is half-typed in the box (#738).
+  async function search(event?: React.FormEvent<HTMLFormElement>, nextSort: AccountSort = sort) {
     event?.preventDefault();
+    const effectiveQuery = event ? query : submittedQuery;
+    if (event) setSubmittedQuery(query);
+    const requestId = ++latestRequest.current;
     setBusy("search");
     setError("");
     try {
-      const response = await fetch(`/api/admin/accounts?q=${encodeURIComponent(query)}`);
-      const result = await response.json().catch(() => ({})) as { accounts?: AttendeeAccountSummary[]; message?: string };
+      const params = accountParams(effectiveQuery, nextSort);
+      const queryString = params.toString();
+      window.history.replaceState(null, "", queryString ? `?${queryString}` : window.location.pathname);
+      const response = await fetch(`/api/admin/accounts?${queryString}`);
+      const result = await response.json().catch(() => ({})) as { accounts?: AttendeeAccountSummary[]; capped?: boolean; message?: string };
+      if (requestId !== latestRequest.current) return;
       if (!response.ok || !result.accounts) throw new Error(result.message ?? "Accounts couldn't be loaded.");
       setAccounts(result.accounts);
+      setCapped(Boolean(result.capped));
     } catch (caught) {
+      if (requestId !== latestRequest.current) return;
       setError(caught instanceof Error ? caught.message : "Accounts couldn't be loaded.");
     } finally {
-      setBusy("");
+      if (requestId === latestRequest.current) setBusy("");
     }
+  }
+
+  function sortBy(next: NonNullable<AccountSort>) {
+    setSort(next);
+    void search(undefined, next);
   }
 
   /** Resolves to `null` on success, or the specific message to show on failure. */
@@ -116,14 +166,58 @@ export function AttendeeAccountsWorkspace({ initialAccounts }: { initialAccounts
           <input onChange={(event) => setQuery(event.target.value)} placeholder="Search by email or name" type="search" value={query} />
         </label>
         <button className="secondary-button" disabled={busy === "search"} type="submit"><Search aria-hidden="true" size={15} /> Search</button>
+      <label className="accounts-sort-field">
+          <span>Sort by</span>
+          <select
+            disabled={busy !== ""}
+            onChange={(event) => {
+              const key = event.target.value as AccountSortKey | "";
+              if (!key) {
+                setSort(null);
+                void search(undefined, null);
+              } else sortBy({ key, direction: sort?.direction ?? "asc" });
+            }}
+            value={sort?.key ?? ""}
+          >
+            <option value="">Newest first</option>
+            {accountSortKeys.map((key) => <option key={key} value={key}>{accountSortLabels[key]}</option>)}
+          </select>
+        </label>
+        {sort && (
+          <button
+            aria-label={`Sorted by ${accountSortLabels[sort.key]}, ${sort.direction === "asc" ? "ascending" : "descending"}. Reverse the order.`}
+            className="secondary-button accounts-sort-direction"
+            disabled={busy !== ""}
+            onClick={() => sortBy({ key: sort.key, direction: sort.direction === "asc" ? "desc" : "asc" })}
+            type="button"
+          >
+            {sort.direction === "asc" ? <ArrowUp aria-hidden="true" size={15} /> : <ArrowDown aria-hidden="true" size={15} />}
+            {sort.direction === "asc" ? "Ascending" : "Descending"}
+          </button>
+        )}
       </form>
       <section className="panel">
+        {capped && sort && <p className="inline-notice" role="status">Sorted the newest 5,000 matches — narrow your search.</p>}
         {accounts.length === 0 ? (
           <p className="report-empty">No accounts match.</p>
         ) : (
           <div className="report-table-wrap">
             <table role="table" className="report-table table-cards">
-              <thead role="rowgroup"><tr role="row"><th role="columnheader">Account</th><th role="columnheader">Club roles</th><th role="columnheader">Two-step</th><th role="columnheader">Last sign-in</th><th role="columnheader"><span className="sr-only">Actions</span></th></tr></thead>
+              <thead role="rowgroup">
+                <tr role="row">
+                  {accountColumnSortKeys.map((key) => (
+                    <th aria-sort={ariaSortFor(sort, key)} key={key} role="columnheader" scope="col">
+                      <button className="table-sort-button" disabled={busy !== ""} onClick={() => sortBy(nextAccountSort(sort, key))} type="button">
+                        {accountSortLabels[key]}
+                        {sort?.key === key
+                          ? (sort.direction === "asc" ? <ArrowUp aria-hidden="true" size={13} /> : <ArrowDown aria-hidden="true" size={13} />)
+                          : <ArrowUpDown aria-hidden="true" size={13} />}
+                      </button>
+                    </th>
+                  ))}
+                  <th role="columnheader"><span className="sr-only">Actions</span></th>
+                </tr>
+              </thead>
               <tbody role="rowgroup">
                 {accounts.map((account) => (
                   <tr role="row" key={account.id}>

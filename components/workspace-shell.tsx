@@ -31,6 +31,7 @@ export async function WorkspaceShell({ anyStaffWithoutEvents = false, children }
     slug: event.slug,
     name: event.name,
     permissions: permissionsByEvent.get(event.id) ?? [],
+    clubEvent: event.audience === "CLUB",
     clubOversight: event.audience === "CLUB"
       && (isSystemAdmin || rolesByEvent.get(event.id) === "EVENT_ADMIN"),
   }));

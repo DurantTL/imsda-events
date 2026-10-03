@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildMoreDirectoryCards,
+  canShowMoreLauncher,
   matchesVisibility,
   mobileNavigationOrder,
   navigation,
@@ -130,6 +131,24 @@ const specialScenarios: Scenario[] = [
     clubEvent: false,
     clubFormsAccess: false,
   },
+  {
+    // The only extra grant is MANAGE_IMPORTS: More must show and reach its card (#737).
+    name: "custom: READ_ONLY_STAFF plus MANAGE_IMPORTS",
+    permissions: [...rolePermissions.READ_ONLY_STAFF, "MANAGE_IMPORTS"],
+    isSystemAdmin: false,
+    clubOversight: false,
+    clubEvent: false,
+    clubFormsAccess: false,
+  },
+  {
+    // Check-in staff whose only extra grant is health information, on a club event (#737).
+    name: "custom: CHECK_IN_STAFF plus VIEW_HEALTH_INFORMATION on a CLUB-audience event",
+    permissions: [...rolePermissions.CHECK_IN_STAFF, "VIEW_HEALTH_INFORMATION"],
+    isSystemAdmin: false,
+    clubOversight: false,
+    clubEvent: true,
+    clubFormsAccess: false,
+  },
 ];
 
 const scenarios: Scenario[] = [...roleScenarios, ...specialScenarios];
@@ -174,6 +193,18 @@ const moreOnlyPages: Record<string, (scenario: Scenario) => boolean> = {
 const moreItem = navigation.find((item) => item.href === "/more");
 if (!moreItem) throw new Error("navigation has no /more entry");
 
+/** What the shell renders: the More launcher follows the cards the user may open (#737). */
+function moreLauncherVisible(scenario: Scenario): boolean {
+  return canShowMoreLauncher({
+    item: moreItem!,
+    permissions: scenario.permissions,
+    clubOversight: scenario.clubOversight,
+    clubEvent: scenario.clubEvent,
+    isSystemAdmin: scenario.isSystemAdmin,
+    clubFormsAccess: false,
+  });
+}
+
 function allowedMoreCardHrefs(scenario: Scenario): string[] {
   return buildMoreDirectoryCards({
     permissions: scenario.permissions,
@@ -214,7 +245,7 @@ function phoneDestinations(scenario: Scenario): Set<string> {
     .filter((item) => (mobileNavigationOrder as readonly string[]).includes(item.href))
     .filter((item) => matchesVisibility(item, granted))
     .map((item) => item.href);
-  const moreHrefs = moreItem && matchesVisibility(moreItem, granted) ? allowedMoreCardHrefs(scenario) : [];
+  const moreHrefs = moreLauncherVisible(scenario) ? allowedMoreCardHrefs(scenario) : [];
   return new Set([...tabHrefs, ...moreHrefs]);
 }
 
@@ -241,6 +272,8 @@ const deniedOnPhone: Record<string, readonly string[]> = {
   "custom: READ_ONLY_STAFF plus VIEW_REPORTS": [...configPages, "/more/health", "/people", "/finance", "/staff", "/imports", "/community", ...clubPages],
   "custom: CHECK_IN_STAFF plus MANAGE_REGISTRATION on a CLUB-audience event": [...configPages, "/more/clubs", "/admin/organizations", "/more/reports", "/finance", "/staff"],
   "custom: READ_ONLY_STAFF plus MANAGE_REGISTRATION": [...configPages, "/more/program-assignments", "/finance", "/staff", "/community", ...clubPages],
+  "custom: READ_ONLY_STAFF plus MANAGE_IMPORTS": [...configPages, "/more/event-health", "/more/reports", "/finance", "/staff", "/community", ...clubPages],
+  "custom: CHECK_IN_STAFF plus VIEW_HEALTH_INFORMATION on a CLUB-audience event": [...configPages, "/more/reports", "/more/health", "/finance", "/staff", "/imports", "/community", "/more/clubs", "/admin/organizations", "/more/club-assignments"],
 };
 
 describe("phone navigation reaches every page the desktop sidebar reaches (#475)", () => {
@@ -264,9 +297,8 @@ describe("phone navigation reaches every page the desktop sidebar reaches (#475)
       });
 
       it("shows a More card for every More-only page its guard admits", () => {
-        const granted = new Set(scenario.permissions);
         const phone = phoneDestinations(scenario);
-        const moreVisible = moreItem ? matchesVisibility(moreItem, granted) : false;
+        const moreVisible = moreLauncherVisible(scenario);
         for (const [href, guard] of Object.entries(moreOnlyPages)) {
           const expected = moreVisible && guard(scenario);
           expect(phone.has(href), `${href} on phone`).toBe(expected);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Download, Pencil, Plus, Trash2, X } from "lucide-react";
 import { notePreview } from "@/components/club-form-state";
@@ -100,8 +100,37 @@ export function ClubMeetingNotes({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/notes`;
+  const containerRef = useRef<HTMLDivElement>(null);
+  const editorHeadingRef = useRef<HTMLHeadingElement>(null);
+  // What opened the editor (#738): closing it returns focus there.
+  const openerRef = useRef<{ kind: "add" } | { kind: "edit"; id: string } | null>(null);
+  const restoreFocusRef = useRef(false);
+
+  // With a long list the editor mounts far below the control that opened it:
+  // bring it into view and focus it when it opens, and put focus back on the
+  // opener when it closes (#738).
+  const editorOpen = adding || editingId !== null;
+  useEffect(() => {
+    if (editorOpen) {
+      editorHeadingRef.current?.scrollIntoView({ block: "start" });
+      editorHeadingRef.current?.focus({ preventScroll: true });
+    }
+  }, [editorOpen, editingId]);
+  useEffect(() => {
+    if (editorOpen || !restoreFocusRef.current) return;
+    restoreFocusRef.current = false;
+    const opener = openerRef.current;
+    const container = containerRef.current;
+    if (opener && container) {
+      const selector = opener.kind === "add"
+        ? "[data-meeting-note-add]"
+        : `[data-meeting-note-edit="${CSS.escape(opener.id)}"]`;
+      (container.querySelector(selector) as HTMLElement | null)?.focus();
+    }
+  }, [editorOpen]);
 
   function startAdd() {
+    openerRef.current = { kind: "add" };
     setDraft(emptyDraft(newMeetingDate));
     setAdding(true);
     setEditingId(null);
@@ -110,6 +139,7 @@ export function ClubMeetingNotes({
   }
 
   function startEdit(note: ClubMeetingNoteRecord) {
+    openerRef.current = { kind: "edit", id: note.id };
     setDraft(draftFromNote(note));
     setEditingId(note.id);
     setAdding(false);
@@ -118,6 +148,7 @@ export function ClubMeetingNotes({
   }
 
   function cancel() {
+    restoreFocusRef.current = true;
     setAdding(false);
     setEditingId(null);
     setError("");
@@ -199,6 +230,7 @@ export function ClubMeetingNotes({
         return [...withoutThis, result.note!].sort((a, b) => (a.meetingDate < b.meetingDate ? 1 : -1));
       });
       setNotice(editingId ? "Meeting note updated." : "Meeting note added.");
+      restoreFocusRef.current = true;
       setAdding(false);
       setEditingId(null);
       // The report below prefills from this month's notes.
@@ -233,7 +265,7 @@ export function ClubMeetingNotes({
   const formOpen = adding || editingId !== null;
 
   return (
-    <div className="club-roster-stack" data-month={month}>
+    <div className="club-roster-stack" data-month={month} ref={containerRef}>
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
       {error && <div className="inline-notice error" role="alert">{error}</div>}
 
@@ -250,7 +282,7 @@ export function ClubMeetingNotes({
               </a>
             )}
             {!formOpen && (
-              <button className="primary-button" disabled={saving} onClick={startAdd} type="button">
+              <button className="primary-button" data-meeting-note-add="" disabled={saving} onClick={startAdd} type="button">
                 <Plus aria-hidden="true" size={16} /> Add meeting note
               </button>
             )}
@@ -285,7 +317,7 @@ export function ClubMeetingNotes({
                 )}
               </span>
               <span className="club-team-invite-actions">
-                <button aria-label={`Edit the meeting note for ${formatMeetingDate(note.meetingDate)}`} className="secondary-button club-event-action" disabled={saving} onClick={() => startEdit(note)} type="button">
+                <button aria-label={`Edit the meeting note for ${formatMeetingDate(note.meetingDate)}`} className="secondary-button club-event-action" data-meeting-note-edit={note.id} disabled={saving} onClick={() => startEdit(note)} type="button">
                   <Pencil aria-hidden="true" size={14} /> Edit
                 </button>
                 <button aria-label={`Delete the meeting note for ${formatMeetingDate(note.meetingDate)}`} className="secondary-button club-event-action" disabled={saving} onClick={() => remove(note)} type="button">
@@ -301,7 +333,7 @@ export function ClubMeetingNotes({
         <form className="public-manage-card form-stack" onSubmit={save}>
           <div className="public-manage-card-heading">
             <p className="public-registration-eyebrow">{editingId ? "Edit meeting note" : "New meeting note"}</p>
-            <h2>{editingId ? "Edit" : "Add"} meeting note</h2>
+            <h2 ref={editorHeadingRef} style={{ scrollMarginTop: 96 }} tabIndex={-1}>{editingId ? "Edit" : "Add"} meeting note</h2>
           </div>
           <div className="form-grid two-column">
             <label>Meeting date

@@ -95,3 +95,28 @@ export function issueAttendeeIndex(
   if (pathIndex !== undefined) return Number(pathIndex);
   return fieldScope === "ATTENDEE" ? 0 : null;
 }
+
+/**
+ * Error-summary wording for a multi-attendee form (#738): a missing-field
+ * message says whose field it is ("Guest Two — T-shirt size is required.").
+ * `names` are the attendees' display names in roster order; a name shared by
+ * two people gets its roster position so the links stay distinguishable.
+ * Registration-level issues (null index) and single-attendee forms keep the
+ * plain message.
+ */
+export function namedIssueMessage(
+  message: string,
+  attendeeIndex: number | null,
+  names: readonly string[],
+  positionLabel: string,
+): string {
+  if (attendeeIndex === null || names.length < 2) return message;
+  const name = names[attendeeIndex];
+  if (!name) return message;
+  // A server message that already says who ("Attendee 2: ...") is not named twice.
+  const escaped = positionLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`\\b(attendee|${escaped})\\s+\\d+\\b`, "i").test(message) || message.includes(name)) return message;
+  const shared = names.filter((candidate) => candidate === name).length > 1;
+  const who = shared ? `${name} (${positionLabel} ${attendeeIndex + 1})` : name;
+  return `${who} — ${message}`;
+}

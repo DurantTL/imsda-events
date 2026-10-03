@@ -1,6 +1,7 @@
 /* Club honor orders (#487). Built to hold at 390px: 44px targets, 16px inputs, no sideways scroll. */
 .block { display: grid; gap: 10px; margin-top: 16px; }
-.block h3 { margin: 0; color: var(--imsda-navy); font-size: .86rem; }
+.block h3 { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--imsda-navy); font-size: max(var(--type-body-floor, 0px), .86rem); font-weight: 800; line-height: 1.35; }
+.block h3 svg { flex: 0 0 auto; }
 .list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
 .text { display: grid; flex: 1 1 200px; gap: 2px; min-width: 0; }
@@ -51,3 +52,5 @@
 .printTable th, .printTable td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; overflow-wrap: anywhere; }
 .noPrint { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 @media print { .noPrint { display: none !important; } }
+/* Helper copy that follows a notice or list, not a form label: the global .field-help pulls up by 9px, which overlapped the notice above (#738). */
+.helpText:global(.field-help) { margin: 6px 0 0; }
