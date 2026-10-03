@@ -9068,3 +9068,7 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .event-modules-leftover { border-left: 5px solid var(--imsda-gold); }
 .event-modules-leftover .foundation-grid { margin-top: 14px; }
 .event-modules-leftover .foundation-card h3 { margin-top: 0; }
+
+/* Issue 743: the "Show as a filter" and "Sensitive" checkboxes in the form builder field settings. */
+.field-visibility-flags { display: grid; gap: 4px; }
+.field-visibility-flags small { color: var(--muted, inherit); }

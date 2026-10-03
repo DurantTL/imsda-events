@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { formTemplates, registrationFormDefinitionSchema, type RegistrationFormField } from "@/modules/forms/definition";
-import { isHealthTypeField, resolveFieldFlags } from "@/modules/forms/field-flags";
+import { isHealthTypeField, resolveFieldFlags, withExplicitSensitiveFlags } from "@/modules/forms/field-flags";
 import { choiceAnswerCounts, choiceExportRows, listChoiceQuestions, matchesForChoice, resolveChoiceFilter } from "@/modules/registrations/choice-answer-filter";
-import { badgePositionOptions } from "@/modules/checkin/badge-csv";
+import { badgePositionOptions, buildBadgeCsvRows } from "@/modules/checkin/badge-csv";
 import { isCheckInBookExtraField } from "@/modules/reporting/check-in-book";
 import { buildOperationalReport, type OperationalReportRegistration } from "@/modules/reporting/operational-reports";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
@@ -34,7 +34,7 @@ function registrationFor(definition: Record<string, unknown>, id: string, attend
     confirmationCode: `SYN-${id}`,
     status: "CONFIRMED",
     accountHolder: { id: `p-${id}`, firstName: "Holder", lastName: id, email: `${id}@example.test`, phone: "" },
-    attendees: [{ id: `at-${id}`, firstName: "Guest", lastName: id, email: "", phone: "", responses: attendeeResponses }],
+    attendees: [{ id: `at-${id}`, firstName: "Guest", lastName: id, email: "", phone: "", attendeeType: "ADULT", position: 0, source: "PUBLIC_REGISTRATION", responses: attendeeResponses }],
     publicSubmission: { definition, responses: {}, attendeeResponses: [] },
   } as unknown as RegistrationRecord;
 }
@@ -218,9 +218,155 @@ describe("field flags: the form builder", () => {
     expect(builder).toContain("Sensitive</label>");
     expect(builder).toContain("resolveFieldFlags(field, { sectionTitle: section.title");
     expect(builder).toContain("checked={flags.filterable}");
-    expect(builder).toContain("checked={flags.sensitive}");
+    expect(builder).toContain("checked={flags.sensitive || linkedToSensitive}");
     expect(builder).toContain("updateField(sectionIndex, fieldIndex, { filterable: event.target.checked })");
     expect(builder).toContain("updateField(sectionIndex, fieldIndex, { sensitive: event.target.checked })");
-    expect(builder).toContain("Health, allergy and insurance questions start checked.");
+    expect(builder).toContain("only staff with sensitive-data access can filter on it");
+  });
+});
+
+function template(key: string) {
+  return formTemplates.find((candidate) => candidate.key === key)!.definition as unknown as Record<string, unknown>;
+}
+
+describe("field flags: #739 parity for published forms with no flags", () => {
+  it("offers the live Women's Retreat meal field to a staff viewer, and no health, payment or directory field", () => {
+    const keys = offeredKeys(template("womens_retreat_export"), staff);
+    expect(keys).toContain("meal_preference");
+    expect(keys).not.toContain("dietary_needs");
+    expect(keys).not.toContain("payment_method");
+    expect(keys).not.toContain("church");
+  });
+
+  it("does not offer Man Camp is_minor, Camp Meeting housing_selection or their linked fields by default", () => {
+    expect(offeredKeys(template("man_camp_export"), staff)).not.toContain("is_minor");
+    const campMeeting = offeredKeys(template("camp_meeting_export"), staff);
+    expect(campMeeting).not.toContain("housing_selection");
+    expect(campMeeting).not.toContain("first_floor_needed");
+  });
+
+  it("an explicit tick offers a field the default would not", () => {
+    const definition = template("man_camp_export");
+    const ticked = {
+      ...definition,
+      sections: (definition.sections as Array<{ fields: Array<Record<string, unknown>> }>).map((section) => ({
+        ...section,
+        fields: section.fields.map((candidate) => candidate.key === "is_minor" ? { ...candidate, filterable: true } : candidate),
+      })),
+    };
+    expect(offeredKeys(ticked, staff)).toContain("is_minor");
+  });
+
+  it("does not offer a field linked, in either direction, to a sensitive field by default, even for staff", () => {
+    const down = form([
+      { key: "special", label: "Special request" },
+      { key: "detail", label: "Describe allergies", type: "LONG_TEXT", options: [], conditional: { fieldKey: "special", operator: "EQUALS", value: "A" } },
+    ]);
+    expect(offeredKeys(down, staff)).toEqual([]);
+    const up = form([
+      { key: "needs_care", label: "Medical support needed?" },
+      { key: "table_choice", label: "Table choice", conditional: { fieldKey: "needs_care", operator: "EQUALS", value: "A" } },
+    ]);
+    expect(offeredKeys(up, staff)).toEqual([]);
+  });
+
+  it("does not offer a field linked to the payment-method field by default", () => {
+    const payment = { payment: { enabled: true, currency: "USD", paymentMethodFieldKey: "pay_by", cardOptionValue: "Card" } };
+    const down = form([
+      { key: "pay_by", scope: "REGISTRATION", options: ["Card", "Check"] },
+      { key: "check_note", label: "Check number", scope: "REGISTRATION", conditional: { fieldKey: "pay_by", operator: "EQUALS", value: "Check" } },
+    ], payment);
+    expect(offeredKeys(down, staff)).toEqual([]);
+    const ticked = form([
+      { key: "pay_by", scope: "REGISTRATION", options: ["Card", "Check"] },
+      { key: "check_note", label: "Check number", scope: "REGISTRATION", filterable: true, conditional: { fieldKey: "pay_by", operator: "EQUALS", value: "Check" } },
+    ], payment);
+    expect(offeredKeys(ticked, staff)).toEqual(["check_note"]);
+  });
+
+  it("resolves the live meal question and refuses a health question for the staff viewer", () => {
+    const registrations = [registrationFor(template("womens_retreat_export"), "W1", { meal_preference: "Vegan" })];
+    expect(resolveChoiceFilter(registrations, { question: "ATTENDEE:meal_preference", value: "Vegan" }, staff)?.value).toBe("Vegan");
+    expect(resolveChoiceFilter(registrations, { question: "ATTENDEE:dietary_needs", value: "x" }, staff)).toBeNull();
+  });
+});
+
+describe("field flags: section titles and other form versions", () => {
+  it("badge Position and the builder agree: a field in a health-titled section is not offered", () => {
+    const definition = form([{ key: "seating", label: "Seating" }], {}, "Health and dietary");
+    expect(badgePositionOptions([registrationFor(definition, "T1", {})])).toEqual([]);
+    const plainSection = form([{ key: "seating", label: "Seating" }], {}, "Choices");
+    expect(badgePositionOptions([registrationFor(plainSection, "T2", {})]).map((option) => option.key)).toEqual(["seating"]);
+  });
+
+  it("the badge CSV bans a key that is ineligible in ANY form version", () => {
+    const open = form([{ key: "seating", label: "Seating" }]);
+    const closed = form([{ key: "seating", label: "Seating", sensitive: true }]);
+    const mixed = [registrationFor(open, "O1", { seating: "AAA" }), registrationFor(closed, "O2", { seating: "BBB" })];
+    expect(badgePositionOptions(mixed)).toEqual([]);
+    const rows = buildBadgeCsvRows(mixed, "seating");
+    expect(rows.slice(1).every((row) => row[2] === "")).toBe(true);
+    expect(JSON.stringify(rows)).not.toContain("AAA");
+  });
+
+  it("operational reports exclude a key flagged Sensitive in any form version for every registration", () => {
+    const open = form([{ key: "food_selection", label: "Friday supper preference", options: ["Standard", "Vegan"] }], {}, "Food service");
+    const closed = form([{ key: "food_selection", label: "Friday supper preference", options: ["Standard", "Vegan"], sensitive: true }], {}, "Food service");
+    const report = (definition: Record<string, unknown>, id: string): OperationalReportRegistration => ({
+      id,
+      confirmationCode: `SYN-${id}`,
+      status: "SUBMITTED",
+      accountHolder: { firstName: "Ana", lastName: "Synthetic" },
+      attendees: [{ id: `a-${id}`, firstName: "Ana", lastName: "Synthetic", attendeeType: "Adult", position: 0, responses: {} }],
+      publicSubmission: { definition, responses: {}, attendeeResponses: [{ food_selection: "Vegan" }] },
+    });
+    expect(JSON.stringify(buildOperationalReport([report(open, "r1")]))).toContain("Friday supper preference");
+    expect(JSON.stringify(buildOperationalReport([report(open, "r1"), report(closed, "r2")]))).not.toContain("Friday supper preference");
+  });
+
+  it("operational reports: Leadership Weekend meals is dropped by the health-wording default and a director's explicit false re-enables it", () => {
+    const definition = template("leadership_weekend");
+    const run = (change: Record<string, unknown>) => {
+      const edited = {
+        ...definition,
+        sections: (definition.sections as Array<{ fields: Array<Record<string, unknown>> }>).map((section) => ({
+          ...section,
+          fields: section.fields.map((candidate) => candidate.key === "meals" ? { ...candidate, ...change } : candidate),
+        })),
+      };
+      return JSON.stringify(buildOperationalReport([{
+        id: "lw",
+        confirmationCode: "SYN-LW",
+        status: "SUBMITTED",
+        accountHolder: { firstName: "Ana", lastName: "Synthetic" },
+        attendees: [{ id: "a", firstName: "Ana", lastName: "Synthetic", attendeeType: "Adult", position: 0, responses: {} }],
+        publicSubmission: { definition: edited, responses: {}, attendeeResponses: [{ meals: ["Friday Supper"] }] },
+      }]));
+    };
+    expect(run({ sensitive: false })).toContain("Friday Supper");
+    // Default read: the "All meals are vegetarian." help text reads as health-type wording.
+    expect(run({})).not.toContain("Friday Supper");
+  });
+});
+
+describe("field flags: the builder writes explicit defaults", () => {
+  it("writes sensitive: true on a health-type field with no flag, and leaves flagged fields alone", () => {
+    const parsed = registrationFormDefinitionSchema.parse(form([
+      { key: "needs", label: "Allergies" },
+      { key: "seating", label: "Seating" },
+      { key: "kept", label: "Medical", sensitive: false },
+    ]));
+    const saved = withExplicitSensitiveFlags(parsed);
+    const [needs, seating, kept] = saved.sections[0].fields;
+    expect(needs.sensitive).toBe(true);
+    expect("sensitive" in seating).toBe(false);
+    expect(kept.sensitive).toBe(false);
+  });
+
+  it("hides Show as a filter for the payment-method field and explains linked sensitive fields", () => {
+    const builder = readFileSync(path.join(process.cwd(), "components/registration-builder-workspace.tsx"), "utf8");
+    expect(builder).toContain("field.key !== paymentKey");
+    expect(builder).toContain("Treated as sensitive because it is shown by, or controls, a sensitive question.");
+    expect(builder).toContain("withExplicitSensitiveFlags(definition)");
   });
 });

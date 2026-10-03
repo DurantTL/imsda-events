@@ -3,7 +3,7 @@ import {
   type RegistrationFormField,
 } from "@/modules/forms/definition";
 import { isLinkedToBlockedField } from "@/modules/forms/field-dependency-walk";
-import { hasOfferedChoices, resolveFieldFlags } from "@/modules/forms/field-flags";
+import { hasOfferedChoices, resolveFieldFlags, sectionTitleLookup } from "@/modules/forms/field-flags";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 
 /**
@@ -14,7 +14,8 @@ import type { RegistrationRecord } from "@/modules/registrations/repository";
  *
  * Which questions are offered is a staff decision made in the form builder
  * (#743): a question is offered only when it is flagged "Show as a filter"
- * AND is a choice field with options (free text never can be, and neither can
+ * (or, for a form saved before the flags existed, when #739 would have
+ * offered it: see `modules/forms/field-flags.ts`) AND is a choice field with options (free text never can be, and neither can
  * a directory-sourced list or the payment-method field). A question that is
  * also "Sensitive", or that is wired by `conditional` / `optionalWhen` to a
  * sensitive question in either direction, is offered only to a viewer who
@@ -72,14 +73,21 @@ function offeredQuestion(
     sectionTitle: context.sectionTitleOf(candidate),
     paymentMethodFieldKey: context.paymentMethodFieldKey,
   });
-  if (!hasOfferedChoices(field)) return null;
+  const isPayment = (candidate: RegistrationFormField) => Boolean(context.paymentMethodFieldKey) && candidate.key === context.paymentMethodFieldKey;
   // The payment-method answer is never a filter, whatever its flags say.
-  if (context.paymentMethodFieldKey && field.key === context.paymentMethodFieldKey) return null;
+  if (!hasOfferedChoices(field) || isPayment(field)) return null;
   const flags = flagsOf(field);
-  if (!flags.filterable) return null;
-  const sensitive = flags.sensitive
-    || isLinkedToBlockedField(field, context.allFields, (other) => flagsOf(other).sensitive);
-  return { sensitive };
+  const linkedToSensitive = isLinkedToBlockedField(field, context.allFields, (other) => flagsOf(other).sensitive);
+  if (field.filterable === undefined) {
+    // Legacy default (#739 parity): offered only when it would have been offered before
+    // the flags existed, so also not linked, in either direction, to a sensitive or payment field.
+    if (!flags.filterable || linkedToSensitive) return null;
+    if (isLinkedToBlockedField(field, context.allFields, isPayment)) return null;
+  } else if (!field.filterable) {
+    return null;
+  }
+  // An explicit tick on a sensitive or linked field is offered, to VIEW_SENSITIVE_DATA holders only.
+  return { sensitive: flags.sensitive || linkedToSensitive };
 }
 
 const definitionCache = new WeakMap<object, Map<string, ChoiceQuestion>>();
@@ -93,9 +101,7 @@ function questionsFromDefinition(definition: Record<string, unknown>): Map<strin
   if (parsed.success) {
     const paymentKey = parsed.data.payment?.paymentMethodFieldKey ?? null;
     const allFields = parsed.data.sections.flatMap((section) => section.fields);
-    const titles = new Map<RegistrationFormField, string>();
-    for (const section of parsed.data.sections) for (const field of section.fields) titles.set(field, section.title);
-    const context = { allFields, sectionTitleOf: (field: RegistrationFormField) => titles.get(field) ?? "", paymentMethodFieldKey: paymentKey };
+    const context = { allFields, sectionTitleOf: sectionTitleLookup(parsed.data.sections), paymentMethodFieldKey: paymentKey };
     for (const field of allFields) {
       const offered = offeredQuestion(field, context);
       if (!offered) continue;

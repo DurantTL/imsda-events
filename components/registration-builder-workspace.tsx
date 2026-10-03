@@ -42,7 +42,8 @@ import {
   planModuleInsert,
   type BuilderModuleDefinition,
 } from "@/modules/forms/builder-modules";
-import { hasOfferedChoices, resolveFieldFlags } from "@/modules/forms/field-flags";
+import { hasOfferedChoices, resolveFieldFlags, withExplicitSensitiveFlags } from "@/modules/forms/field-flags";
+import { isLinkedToBlockedField } from "@/modules/forms/field-dependency-walk";
 import { defaultTypeForNewChoiceField, singleChoiceTypeHint } from "@/modules/forms/choice-defaults";
 import { creditPatchForKindChange, creditSummary, hasCredit, removeCreditPatch } from "@/modules/forms/credit-fields";
 import { getPublicRegistrationStepPlan, isPublicReviewSection, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
@@ -361,7 +362,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
     try {
       const response = await fetch(`/api/events/${eventId}/forms/${selectedForm.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ definition, expectedUpdatedAt: selectedVersion.updatedAt }),
+        body: JSON.stringify({ definition: withExplicitSensitiveFlags(definition), expectedUpdatedAt: selectedVersion.updatedAt }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "Unable to save this draft.");
@@ -1018,12 +1019,15 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
                 <label className="required-toggle"><input disabled={!canEdit || field.type === "CALCULATED" || field.optionSource === "ATTENDEE_TYPES"} type="checkbox" checked={field.optionSource === "ATTENDEE_TYPES" ? true : field.required} onChange={(event) => updateField(sectionIndex, fieldIndex, { required: event.target.checked, optionalWhen: event.target.checked ? field.optionalWhen : undefined })} /> Required{field.optionSource === "ATTENDEE_TYPES" && <small> — the attendee-type selector is always required</small>}</label>
                 <div className="field-full field-visibility-flags" data-testid={`field-flags-${field.key}`}>
                   {(() => {
-                    const flags = resolveFieldFlags(field, { sectionTitle: section.title, paymentMethodFieldKey: definition.payment?.paymentMethodFieldKey });
+                    const paymentKey = definition.payment?.paymentMethodFieldKey;
+                    const flags = resolveFieldFlags(field, { sectionTitle: section.title, paymentMethodFieldKey: paymentKey });
+                    const linkedToSensitive = !flags.sensitive && isLinkedToBlockedField(field, allFields, (other) => resolveFieldFlags(other, { sectionTitle: definition.sections.find((candidate) => candidate.fields.includes(other))?.title ?? "", paymentMethodFieldKey: paymentKey }).sensitive);
+                    const canFilter = hasOfferedChoices(field) && field.key !== paymentKey;
                     return <>
-                      {hasOfferedChoices(field) && <label className="required-toggle"><input disabled={!canEdit} type="checkbox" checked={flags.filterable} onChange={(event) => updateField(sectionIndex, fieldIndex, { filterable: event.target.checked })} /> Show as a filter</label>}
-                      {hasOfferedChoices(field) && <small>Staff can find people by this answer on People &amp; registrations.</small>}
-                      <label className="required-toggle"><input disabled={!canEdit} type="checkbox" checked={flags.sensitive} onChange={(event) => updateField(sectionIndex, fieldIndex, { sensitive: event.target.checked })} /> Sensitive</label>
-                      <small>Only staff who can view sensitive data see this answer or filter on it. Health, allergy and insurance questions start checked.</small>
+                      {canFilter && <label className="required-toggle"><input disabled={!canEdit} type="checkbox" checked={flags.filterable} onChange={(event) => updateField(sectionIndex, fieldIndex, { filterable: event.target.checked })} /> Show as a filter</label>}
+                      {canFilter && <small>Staff can find people by this answer on People &amp; registrations.</small>}
+                      <label className="required-toggle"><input disabled={!canEdit || linkedToSensitive} type="checkbox" checked={flags.sensitive || linkedToSensitive} onChange={(event) => updateField(sectionIndex, fieldIndex, { sensitive: event.target.checked })} /> Sensitive</label>
+                      <small>{linkedToSensitive ? "Treated as sensitive because it is shown by, or controls, a sensitive question." : "Hidden from the check-in book, badges and reports; only staff with sensitive-data access can filter on it. Health, allergy and insurance questions start checked."}</small>
                     </>;
                   })()}
                 </div>

@@ -82,4 +82,10 @@ describe("registrations export with a choice-answer filter", () => {
     dependencies.requirePermission.mockResolvedValue({ user: { globalRole: null }, membership: { role: "READ_ONLY_STAFF", permissions: ["VIEW_REPORTS"] } });
     expect((await call("")).status).toBe(200);
   });
+
+  it("refuses a legacy question that is not offered by default (is_minor), even for a full-access user", async () => {
+    const manCamp = formTemplates.find((template) => template.key === "man_camp_export")!.definition;
+    dependencies.listRegistrations.mockResolvedValue([{ ...registration("M1", "x"), publicSubmission: { definition: manCamp, responses: {}, attendeeResponses: [] } }]);
+    expect((await call("?answerQuestion=ATTENDEE:is_minor&answerValue=Yes")).status).toBe(400);
+  });
 });
