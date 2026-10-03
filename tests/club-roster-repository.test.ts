@@ -207,6 +207,18 @@ describe("club roster storage", () => {
       expect(removedAudit.metadata).toMatchObject({ guardiansErased: 2 });
     });
 
+    it("refuses guardian writes on a row from another club year, and writes nothing", async () => {
+      const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [first] }, actor, { now });
+      db.members.find((row) => row.id === memberId)!.clubYear = "2025-26";
+      await expect(updateRosterMember("club-1", memberId, { guardians: [second] }, actor, now))
+        .rejects.toMatchObject({ code: "GUARDIANS_PRIOR_YEAR" });
+      await expect(updateRosterMember("club-1", memberId, { guardians: [] }, actor, now))
+        .rejects.toMatchObject({ code: "GUARDIANS_PRIOR_YEAR" });
+      expect(onFile(memberId)).toEqual([{ position: 1, name: first.name }]);
+      // Other edits to that row still work.
+      await expect(updateRosterMember("club-1", memberId, { role: "TLT" }, actor, now)).resolves.toBeDefined();
+    });
+
     it("keeps guardian values out of every audit entry: field names and counts only", async () => {
       const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [first, second] }, actor, { now });
       await updateRosterMember("club-1", memberId, { guardians: [second, blank] }, actor, now);

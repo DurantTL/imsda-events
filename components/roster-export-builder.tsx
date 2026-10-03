@@ -252,6 +252,13 @@ export function RosterExportBuilder({
         )}
       </section>
 
+      {canSeeGuardians && (
+        <p className="field-help">
+          Guardian columns are sensitive. Phone numbers that start with + are exported with a leading apostrophe so
+          spreadsheets don&apos;t treat them as formulas.
+        </p>
+      )}
+
       {needsConfirmation && (
         <div className="roster-export-confirm status-chip gold">
           <p>

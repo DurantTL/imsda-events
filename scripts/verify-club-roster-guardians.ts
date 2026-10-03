@@ -17,12 +17,16 @@
  */
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
+import { assertLocalDatabase } from "./support/local-only-guard";
+import { fillBlankSyntheticEnv } from "./support/synthetic-env";
 import { addRosterMember, removeRosterMember, updateRosterMember } from "@/modules/club-rosters/repository";
 import { GuardianAccessError, listGuardianContactsForClub, listGuardiansByMember } from "@/modules/club-rosters/guardians-repository";
 import type { GuardianViewer } from "@/modules/club-rosters/guardians-domain";
 
 loadEnvConfig(process.cwd());
-process.env.SECRET_ENCRYPTION_KEY ||= "verify-guardians-synthetic-key-not-a-secret";
+// Local-only, before any Prisma client or connection exists.
+assertLocalDatabase(process.env, "run this verification");
+fillBlankSyntheticEnv("SECRET_ENCRYPTION_KEY", "verify-guardians-synthetic-key-not-a-secret");
 
 const prisma = new PrismaClient();
 const P = "gd510";
@@ -85,6 +89,12 @@ async function main() {
   await updateRosterMember(clubs.a, added.memberId, { role: "TLT" }, actor);
   assert((await countFor(added.memberId)) === 1, "an edit that doesn't send guardians leaves them alone");
   await updateRosterMember(clubs.a, added.memberId, { guardians: [guardian(SECRET_NAME, { email: SECRET_EMAIL, phone: SECRET_PHONE }), guardian("Verify Second", { relationship: "Uncle" })] }, actor);
+
+  // Guardian writes are refused on a row from another club year.
+  await prisma.clubRosterMember.update({ where: { id: other.memberId }, data: { clubYear: "2025-26" } });
+  assert(await rejects(updateRosterMember(clubs.a, other.memberId, { guardians: [guardian("Verify Prior Year")] }, actor)), "a guardian write on a prior-year row is refused");
+  assert((await countFor(other.memberId)) === 1, "the refused write changed nothing");
+  await prisma.clubRosterMember.update({ where: { id: other.memberId }, data: { clubYear } });
 
   // Readers.
   const leaderA: GuardianViewer = { kind: "CLUB_LEADER", organizationId: clubs.a, actor: { kind: "ATTENDEE", accountId: actor.accountId } };

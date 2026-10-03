@@ -1,7 +1,6 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
-import { AccessDeniedError } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rolePermissions } from "@/modules/access/permissions";
 import { resolveAreaCoordinatorViewer } from "@/modules/club-forms/access";
@@ -9,6 +8,7 @@ import type { requireRosterAccess } from "@/modules/club-rosters/access";
 import { RosterAccessError } from "@/modules/club-rosters/access";
 import { listGuardiansByMember } from "@/modules/club-rosters/guardians-repository";
 import { staffHoldsSensitiveData, type GuardianRecord, type GuardianViewer } from "@/modules/club-rosters/guardians-domain";
+import { hasEventEnded } from "@/modules/events/lifecycle";
 
 /**
  * Turns a session into a `GuardianViewer` (#510). Three ways in and nothing
@@ -67,18 +67,26 @@ export async function resolveAreaGuardianViewer(): Promise<Extract<GuardianViewe
 }
 
 /**
- * Conference staff with the sensitive-data permission (or a system
- * administrator), or null. `eventId` narrows it to that event's membership.
+ * Conference staff with the sensitive-data permission, or null. A system
+ * administrator is always allowed. Anyone else must hold the permission on the
+ * given event's membership, and that event must not have ended (the same
+ * precedent as `staffClubFormsAccess`); with no event named they get nothing.
  */
-export async function resolveStaffGuardianViewer(eventId?: string): Promise<Extract<GuardianViewer, { kind: "STAFF" }> | null> {
+export async function resolveStaffGuardianViewer(eventId?: string, now = new Date()): Promise<Extract<GuardianViewer, { kind: "STAFF" }> | null> {
   const { user } = await getCurrentSession();
   if (!user) return null;
-  const memberships = user.globalRole === "SYSTEM_ADMIN"
-    ? []
-    : await getPrisma().eventMembership.findMany({
-      where: { userId: user.id, status: "ACTIVE", ...(eventId ? { eventId } : {}) },
+  const viewer = { kind: "STAFF" as const, userId: user.id };
+  if (user.globalRole === "SYSTEM_ADMIN") return viewer;
+  if (!eventId) return null;
+  const prisma = getPrisma();
+  const [memberships, event] = await Promise.all([
+    prisma.eventMembership.findMany({
+      where: { userId: user.id, status: "ACTIVE", eventId },
       select: { eventId: true, status: true, role: true, permissions: true },
-    });
+    }),
+    prisma.event.findUnique({ where: { id: eventId }, select: { timezone: true, endsAt: true } }),
+  ]);
+  if (!event || hasEventEnded(event, now)) return null;
   const allowed = staffHoldsSensitiveData(
     user,
     memberships.map((membership) => ({
@@ -89,19 +97,5 @@ export async function resolveStaffGuardianViewer(eventId?: string): Promise<Extr
     })),
     eventId,
   );
-  return allowed ? { kind: "STAFF", userId: user.id } : null;
-}
-
-/** For staff API routes: the staff viewer, or a 401 / 403. */
-export async function requireStaffGuardianViewer(eventId?: string) {
-  const { user } = await getCurrentSession();
-  if (!user) throw new AccessDeniedError("Authentication is required.", 401, "AUTHENTICATION_REQUIRED");
-  const viewer = await resolveStaffGuardianViewer(eventId);
-  if (!viewer) throw new AccessDeniedError("Guardian contacts need the sensitive data permission.", 403, "PERMISSION_DENIED");
-  return viewer;
-}
-
-/** Any signed-in viewer allowed on a club's coordinator or staff page: coordinator first, then staff. */
-export async function resolveCoordinatorOrStaffGuardianViewer(eventId?: string): Promise<GuardianViewer | null> {
-  return (await resolveAreaGuardianViewer()) ?? (await resolveStaffGuardianViewer(eventId));
+  return allowed ? viewer : null;
 }

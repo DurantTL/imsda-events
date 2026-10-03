@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Award, Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import { BirthDateField } from "@/components/birth-date-field";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
@@ -131,6 +131,10 @@ export function ClubRosterWorkspace({
   const [guardianMap, setGuardianMap] = useState(initialGuardians);
   const [guardianErrors, setGuardianErrors] = useState<GuardianFormErrors>({});
   const canEditGuardians = initialGuardians !== undefined && !readOnly;
+  /** Whether the dialog has this member's current guardians (#510): "failed" leaves guardians untouched on save. */
+  const [guardianState, setGuardianState] = useState<"ready" | "loading" | "failed">("ready");
+  const [guardianRev, setGuardianRev] = useState(0);
+  const guardianLoadToken = useRef(0);
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/roster`;
   const closeDialog = useCallback(() => {
     setDialogOpen(false);
@@ -160,6 +164,30 @@ export function ClubRosterWorkspace({
     setFieldErrors({});
     setGuardianErrors({});
     setDialogOpen(true);
+    // Re-read this member's guardians as the dialog opens, so a page left open
+    // can't save over a co-leader's newer edit (#510). Until the answer is
+    // in, the guardian fields are read-only and a save is held back.
+    const token = ++guardianLoadToken.current;
+    if (canEditGuardians && member) {
+      setGuardianState("loading");
+      fetch(base)
+        .then(async (response) => ({ ok: response.ok, body: await response.json().catch(() => ({})) as RosterResponse }))
+        .then(({ ok, body }) => {
+          if (token !== guardianLoadToken.current) return;
+          if (ok && body.guardians) {
+            setGuardianMap(body.guardians);
+            setGuardianRev((current) => current + 1);
+            setGuardianState("ready");
+          } else {
+            setGuardianState("failed");
+          }
+        })
+        .catch(() => {
+          if (token === guardianLoadToken.current) setGuardianState("failed");
+        });
+    } else {
+      setGuardianState("ready");
+    }
   }
 
   const typeHint = formBirthDate
@@ -227,7 +255,11 @@ export function ClubRosterWorkspace({
     });
     setFieldErrors(errors);
     // Guardian contacts (#510): two slots, every field optional; only email and phone format are checked.
-    const guardianSlots = canEditGuardians
+    if (canEditGuardians && guardianState === "loading") {
+      setError("Still loading this person's guardian contacts. Try again in a moment.");
+      return;
+    }
+    const guardianSlots = canEditGuardians && guardianState === "ready"
       ? Array.from({ length: GUARDIAN_SLOTS }, (_, index) => ({
         name: String(form.get(`g${index + 1}Name`) ?? "").trim(),
         relationship: String(form.get(`g${index + 1}Relationship`) ?? "").trim(),
@@ -599,12 +631,15 @@ export function ClubRosterWorkspace({
           </label>
         </div>
         {canEditGuardians && (
-          <fieldset className="roster-guardians">
+          <fieldset className="roster-guardians" key={`${editing?.id ?? "new"}-${guardianRev}`}>
             <legend>Guardians (optional)</legend>
             <p className="field-help">
               Up to two guardians. Your club&apos;s director and deputy, Area Coordinators and conference staff with
               sensitive-data access can see them. They are erased when this person is removed from the roster.
             </p>
+            {guardianState === "failed" && (
+              <p className="field-help" role="status">Guardian contacts couldn&apos;t be loaded, so saving won&apos;t change them. Close and reopen this person to try again.</p>
+            )}
             {Array.from({ length: GUARDIAN_SLOTS }, (_, index) => {
               const slot = index + 1;
               const stored = guardianSlotValues(editing ? guardianMap?.[editing.id] : undefined)[index]!;
@@ -616,20 +651,20 @@ export function ClubRosterWorkspace({
                   <div className="form-grid two-column">
                     <label>
                       {guardianFieldLabels.name}
-                      <input autoComplete="off" defaultValue={stored.name} maxLength={120} name={`g${slot}Name`} />
+                      <input autoComplete="off" defaultValue={stored.name} readOnly={guardianState !== "ready"} maxLength={120} name={`g${slot}Name`} />
                     </label>
                     <label>
                       {guardianFieldLabels.relationship}
-                      <input autoComplete="off" defaultValue={stored.relationship} maxLength={60} name={`g${slot}Relationship`} placeholder="e.g. Mother" />
+                      <input autoComplete="off" defaultValue={stored.relationship} readOnly={guardianState !== "ready"} maxLength={60} name={`g${slot}Relationship`} placeholder="e.g. Mother" />
                     </label>
                     <label>
                       {guardianFieldLabels.email}
-                      <input aria-describedby={emailError ? `roster-g${slot}Email-error` : undefined} aria-invalid={emailError ? true : undefined} autoComplete="off" defaultValue={stored.email} inputMode="email" maxLength={254} name={`g${slot}Email`} type="text" />
+                      <input aria-describedby={emailError ? `roster-g${slot}Email-error` : undefined} aria-invalid={emailError ? true : undefined} autoComplete="off" defaultValue={stored.email} readOnly={guardianState !== "ready"} inputMode="email" maxLength={254} name={`g${slot}Email`} type="text" />
                       {emailError && <span className="roster-field-error" id={`roster-g${slot}Email-error`} role="alert">{emailError}</span>}
                     </label>
                     <label>
                       {guardianFieldLabels.phone}
-                      <input aria-describedby={phoneError ? `roster-g${slot}Phone-error` : undefined} aria-invalid={phoneError ? true : undefined} autoComplete="off" defaultValue={stored.phone} inputMode="tel" maxLength={40} name={`g${slot}Phone`} type="text" />
+                      <input aria-describedby={phoneError ? `roster-g${slot}Phone-error` : undefined} aria-invalid={phoneError ? true : undefined} autoComplete="off" defaultValue={stored.phone} readOnly={guardianState !== "ready"} inputMode="tel" maxLength={40} name={`g${slot}Phone`} type="text" />
                       {phoneError && <span className="roster-field-error" id={`roster-g${slot}Phone-error`} role="alert">{phoneError}</span>}
                     </label>
                   </div>

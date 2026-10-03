@@ -5,7 +5,7 @@ import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { lockClubOrders } from "@/modules/club-orders/repository";
 import { openBirthDate, sealBirthDate } from "@/modules/club-rosters/birth-dates";
-import { ageOn, birthDateProblem, calendarDateOf, defaultRosterRole } from "@/modules/club-rosters/domain";
+import { ageOn, birthDateProblem, calendarDateOf, clubYearFor, defaultRosterRole } from "@/modules/club-rosters/domain";
 import { deleteGuardiansForMember, replaceGuardians } from "@/modules/club-rosters/guardians-repository";
 import type { RosterMemberInput, RosterMemberUpdate } from "@/modules/club-rosters/schemas";
 
@@ -20,7 +20,8 @@ export type RosterErrorCode =
   | "DUPLICATE_MEMBER"
   | "BIRTH_DATE_INVALID"
   | "MEMBER_REMOVED"
-  | "GENDER_REQUIRED";
+  | "GENDER_REQUIRED"
+  | "GUARDIANS_PRIOR_YEAR";
 
 export class RosterOperationError extends Error {
   constructor(public readonly code: RosterErrorCode, message: string) {
@@ -229,6 +230,11 @@ export async function updateRosterMember(
   if (input.birthDate !== undefined) assertBirthDate(input.birthDate, now);
   return getPrisma().$transaction(async (tx) => {
     const member = await findMember(tx, organizationId, memberId);
+    // Guardian contacts live only on the current club year's row (#510): a
+    // crafted request against a prior or later year's row is refused.
+    if (input.guardians !== undefined && member.clubYear !== clubYearFor(now)) {
+      throw new RosterOperationError("GUARDIANS_PRIOR_YEAR", "Guardian contacts can only be changed on the current club year's roster.");
+    }
     // Nothing to change (an older client sending only `willingToDrive`, which
     // the schema strips, or an empty edit): no write, no audit entry.
     if (Object.keys(input).length === 0) return { personId: member.personId };

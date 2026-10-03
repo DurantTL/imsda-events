@@ -116,7 +116,7 @@ export default async function StaffOpenClubPage({
         rosterYear={view.clubYear}
       />
 
-      {guardianViewer && <ClubGuardiansPanel headingLevel={3} organizationId={organizationId} viewer={guardianViewer} />}
+      {guardianViewer && !view.readOnly && <ClubGuardiansPanel headingLevel={3} organizationId={organizationId} viewer={guardianViewer} />}
 
       {/* Keyed by the imports' years, so the panel starts fresh after a move refreshes the page. */}
       {imports.length > 0 && (

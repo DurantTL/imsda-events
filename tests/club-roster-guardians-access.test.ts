@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   getCurrentSession: vi.fn(),
   resolveAreaCoordinatorViewer: vi.fn(),
   membershipFindMany: vi.fn(),
+  eventFindUnique: vi.fn(),
   guardianFindMany: vi.fn(),
   memberFindMany: vi.fn(),
 }));
@@ -25,7 +26,6 @@ import {
   clubLeaderGuardianViewerFromAccess,
   requireGuardianEditor,
   resolveAreaGuardianViewer,
-  resolveCoordinatorOrStaffGuardianViewer,
   resolveStaffGuardianViewer,
   rosterGuardiansForAccess,
 } from "@/modules/club-rosters/guardians-access";
@@ -49,10 +49,12 @@ beforeEach(() => {
   mocks.writeAuditLog.mockResolvedValue({});
   mocks.getPrisma.mockReturnValue({
     eventMembership: { findMany: mocks.membershipFindMany },
+    event: { findUnique: mocks.eventFindUnique },
     clubRosterGuardian: { findMany: mocks.guardianFindMany },
     clubRosterMember: { findMany: mocks.memberFindMany },
   });
   mocks.membershipFindMany.mockResolvedValue([]);
+  mocks.eventFindUnique.mockResolvedValue({ timezone: "America/Chicago", endsAt: new Date("2099-01-01T00:00:00Z") });
   mocks.guardianFindMany.mockResolvedValue([]);
   mocks.memberFindMany.mockResolvedValue([]);
 });
@@ -127,7 +129,7 @@ describe("guardian viewers for coordinators and staff (#510)", () => {
   ])("staff role %s with extra grants %j: allowed is %s", async (role, permissions, allowed) => {
     mocks.getCurrentSession.mockResolvedValue({ user: { id: "staff-1", globalRole: "STAFF" } });
     mocks.membershipFindMany.mockResolvedValue([{ eventId: "event-1", status: "ACTIVE", role, permissions }]);
-    await expect(resolveStaffGuardianViewer()).resolves.toEqual(allowed ? { kind: "STAFF", userId: "staff-1" } : null);
+    await expect(resolveStaffGuardianViewer("event-1")).resolves.toEqual(allowed ? { kind: "STAFF", userId: "staff-1" } : null);
   });
 
   it("narrows to one event's membership when a page is scoped to an event", async () => {
@@ -137,11 +139,29 @@ describe("guardian viewers for coordinators and staff (#510)", () => {
     expect(mocks.membershipFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: "staff-1", status: "ACTIVE", eventId: "event-1" } }));
   });
 
+  it("refuses staff once the event has ended, but never a system administrator", async () => {
+    mocks.eventFindUnique.mockResolvedValue({ timezone: "America/Chicago", endsAt: new Date("2026-06-01T00:00:00Z") });
+    mocks.membershipFindMany.mockResolvedValue([{ eventId: "event-1", status: "ACTIVE", role: "EVENT_ADMIN", permissions: [] }]);
+    mocks.getCurrentSession.mockResolvedValue({ user: { id: "staff-1", globalRole: "STAFF" } });
+    await expect(resolveStaffGuardianViewer("event-1", new Date("2026-10-03T12:00:00Z"))).resolves.toBeNull();
+    // Still open on the event's last day, in the event's time zone.
+    await expect(resolveStaffGuardianViewer("event-1", new Date("2026-05-31T12:00:00Z"))).resolves.toEqual({ kind: "STAFF", userId: "staff-1" });
+    mocks.getCurrentSession.mockResolvedValue({ user: { id: "admin-1", globalRole: "SYSTEM_ADMIN" } });
+    await expect(resolveStaffGuardianViewer("event-1", new Date("2026-10-03T12:00:00Z"))).resolves.toEqual({ kind: "STAFF", userId: "admin-1" });
+  });
+
+  it("gives non-admin staff nothing when no event is named, or the event is unknown", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user: { id: "staff-1", globalRole: "STAFF" } });
+    mocks.membershipFindMany.mockResolvedValue([{ eventId: "event-1", status: "ACTIVE", role: "EVENT_ADMIN", permissions: [] }]);
+    await expect(resolveStaffGuardianViewer()).resolves.toBeNull();
+    mocks.eventFindUnique.mockResolvedValue(null);
+    await expect(resolveStaffGuardianViewer("event-1")).resolves.toBeNull();
+  });
+
   it("gives nothing to a signed-out visitor or an ordinary attendee (no staff session)", async () => {
     mocks.getCurrentSession.mockResolvedValue({ user: null });
     mocks.resolveAreaCoordinatorViewer.mockResolvedValue(null);
     await expect(resolveStaffGuardianViewer()).resolves.toBeNull();
-    await expect(resolveCoordinatorOrStaffGuardianViewer()).resolves.toBeNull();
     expect(mocks.membershipFindMany).not.toHaveBeenCalled();
   });
 });

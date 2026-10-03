@@ -124,6 +124,9 @@ jobs:
       # Real-database check of the Pathfinder Health Record: switched off stores nothing (the script turns the flag on only inside its own process), every field is sealed on its own and appears in no stored or audit row, one audit row per view, a single-use private link that submits exactly once under a race, Needs update by club year, and removal erasing every year's record (#611).
       - run: npm run test:health-records
 
+      # Real-database check of roster guardian contacts: slot constraints, replace-on-edit, prior-year writes refused, deletion on removal, reader scoping, and no guardian value in any audit row (#510).
+      - run: npm run test:club-roster-guardians
+
       # Real-database check of Honors Weekend sessions at sites: per-site names beside the
       # no-site rule, copying and cloning by site name with the no-match warning (#589).
       - run: npm run test:honor-sites

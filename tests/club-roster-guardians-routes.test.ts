@@ -35,6 +35,7 @@ vi.mock("@/modules/background-checks/refresh-after-write", () => ({ refreshBackg
 
 import { GET as getRoster, POST as postRoster } from "@/app/api/attendee/clubs/[organizationId]/roster/route";
 import { DELETE as deleteMember, PATCH as patchMember } from "@/app/api/attendee/clubs/[organizationId]/roster/[memberId]/route";
+import { RosterOperationError } from "@/modules/club-rosters/repository";
 import { clubCapabilities, type ClubRole } from "@/modules/organizations/director-grants-domain";
 
 const orgCtx = { params: Promise.resolve({ organizationId: "club-1" }) };
@@ -123,6 +124,14 @@ describe("roster routes and guardian contacts (#510)", () => {
     response = await deleteMember(request("DELETE", { confirm: true }), memberCtx);
     await expect(response.json()).resolves.toMatchObject({ guardians: {} });
     expect(mocks.removeRosterMember).toHaveBeenCalledWith("club-1", "member-1", { accountId: "account-1" });
+  });
+
+  it("answers a crafted guardian edit against a prior-year member with the usual 409 roster error", async () => {
+    mocks.requireRosterAccess.mockResolvedValue(accessFor("DIRECTOR"));
+    mocks.updateRosterMember.mockRejectedValueOnce(new RosterOperationError("GUARDIANS_PRIOR_YEAR", "Guardian contacts can only be changed on the current club year's roster."));
+    const response = await patchMember(request("PATCH", { guardians }), memberCtx);
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "GUARDIANS_PRIOR_YEAR", message: expect.any(String) });
   });
 
   it("rejects a malformed guardian with 400 before anything is written", async () => {

@@ -15,8 +15,10 @@ import {
 
 /**
  * Guardian contact storage (#510). Plain text by decision, so the protection
- * is who may ask: every read below takes a `GuardianViewer`, which only
- * `guardians-access.ts` can build from a real session, and checks it again.
+ * is who may ask: every read below takes a `GuardianViewer`, which callers are
+ * expected to build only through `guardians-access.ts` (the type is
+ * structural, so that is a convention, not a compile-time guarantee), and the
+ * read checks it again.
  *
  * Audit entries and logs carry field names and counts only, never a name,
  * email, phone number or relationship.
