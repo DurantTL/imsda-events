@@ -35,6 +35,10 @@ Only public `https` hosts are fetched: no credentials in the URL, no port other 
 the name and again on every connection), 10 second timeout, 2 MB and 2,000 events at
 most, and at most three redirects, each re-checked.
 
+Changing `SECRET_ENCRYPTION_KEY` makes the saved feed addresses unreadable and changes
+every feed fingerprint, so after a key change re-enter each feed's address (edit the
+feed and paste it again).
+
 ## What happens to imported items
 
 - **Mapping:** title, description (plain text), location, link (http/https only),

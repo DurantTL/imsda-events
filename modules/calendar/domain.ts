@@ -66,11 +66,16 @@ export function isCalendarDate(value: string) {
 }
 
 const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+const maxCachedFormatters = 600;
+
+/** For tests: how many formatters are cached. */
+export const dateFormatterCacheSize = () => dateFormatters.size;
 
 export function calendarDateIn(date: Date, timeZone = CONFERENCE_TIME_ZONE) {
   // Building a formatter is the slow part; one per zone serves every call.
   let formatter = dateFormatters.get(timeZone);
   if (!formatter) {
+    if (dateFormatters.size >= maxCachedFormatters) dateFormatters.clear(); // a backstop; callers pass canonical zone names
     formatter = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
     dateFormatters.set(timeZone, formatter);
   }

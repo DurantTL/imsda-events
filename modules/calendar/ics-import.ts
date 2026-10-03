@@ -143,6 +143,7 @@ const wallClockFormatters = new Map<string, Intl.DateTimeFormat>();
 function wallClockFormatter(timeZone: string) {
   let formatter = wallClockFormatters.get(timeZone);
   if (!formatter) {
+    if (wallClockFormatters.size >= 600) wallClockFormatters.clear(); // a backstop; keys are canonical zone names
     formatter = new Intl.DateTimeFormat("en-US", {
       timeZone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric",
     });
@@ -169,23 +170,39 @@ function zonedInstant(wall: number, timeZone: string) {
   return new Date(guess);
 }
 
-const zoneValidity = new Map<string, boolean>();
+const aliasZones = new Map<string, string | null>();
+const maxAliasZones = 200;
+let canonicalByLowercase: Map<string, string> | null = null;
 
-function validZone(name: string) {
-  if (name.length > 64) return false;
-  let valid = zoneValidity.get(name);
-  if (valid === undefined) {
-    try {
-      wallClockFormatter(name);
-      valid = true;
-    } catch {
-      valid = false;
-    }
-    if (zoneValidity.size > 500) zoneValidity.clear(); // names come from untrusted feeds
-    zoneValidity.set(name, valid);
+/**
+ * The canonical IANA name for a feed's TZID, or null when it is not a zone.
+ * Intl accepts any letter case, so a feed could otherwise supply endless
+ * spellings of one zone; every cache below is keyed by the canonical name only.
+ * Names that are not canonical (aliases like US/Central) resolve through a
+ * hard-capped cache.
+ */
+function canonicalZone(name: string): string | null {
+  if (name.length === 0 || name.length > 64) return null;
+  if (!canonicalByLowercase) {
+    canonicalByLowercase = new Map(["UTC", ...Intl.supportedValuesOf("timeZone")].map((zone) => [zone.toLowerCase(), zone]));
   }
-  return valid;
+  const key = name.toLowerCase();
+  const known = canonicalByLowercase.get(key);
+  if (known) return known;
+  if (aliasZones.has(key)) return aliasZones.get(key) ?? null;
+  let resolved: string | null = null;
+  try {
+    resolved = new Intl.DateTimeFormat("en-US", { timeZone: name }).resolvedOptions().timeZone;
+  } catch {
+    resolved = null;
+  }
+  if (aliasZones.size >= maxAliasZones) aliasZones.clear();
+  aliasZones.set(key, resolved);
+  return resolved;
 }
+
+/** For tests: the sizes of the zone caches. */
+export const zoneCacheSizes = () => ({ wallClock: wallClockFormatters.size, aliases: aliasZones.size });
 
 function parseMoment(property: Property, warn: (message: string) => void): Moment | null {
   const value = property.value.trim();
@@ -202,7 +219,8 @@ function parseMoment(property: Property, warn: (message: string) => void): Momen
   if (utc) return { kind: "time", instant: new Date(wall), zone: "UTC" };
   let zone = CONFERENCE_TIME_ZONE;
   if (property.params.TZID) {
-    if (validZone(property.params.TZID)) zone = property.params.TZID;
+    const canonical = canonicalZone(property.params.TZID);
+    if (canonical) zone = canonical;
     else warn(`A time zone name was not recognized, so its times were read as ${CONFERENCE_TIME_ZONE}.`);
   }
   return { kind: "time", instant: zonedInstant(wall, zone), zone };

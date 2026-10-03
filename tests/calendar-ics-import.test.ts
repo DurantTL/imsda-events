@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { IcsParseError, maxFeedBytes, maxFeedEvents, parseIcsFeed } from "@/modules/calendar/ics-import";
+import { dateFormatterCacheSize } from "@/modules/calendar/domain";
+import { IcsParseError, maxFeedBytes, maxFeedEvents, parseIcsFeed, zoneCacheSizes } from "@/modules/calendar/ics-import";
 import { expandOccurrences, parseRepeatRule } from "@/modules/calendar/recurrence";
 
 const fixture = readFileSync(new URL("./fixtures/calendar-feed.ics", import.meta.url), "utf8");
@@ -178,6 +179,29 @@ describe("ICS import: hostile and edge input", () => {
     const feed = quick(wrap(`UID:ex\r\nDTSTART;TZID=America/Chicago:20261006T180000\r\nDTEND;TZID=America/Chicago:20261006T190000\r\nRRULE:FREQ=DAILY\r\nEXDATE;TZID=America/Chicago:${dates}\r\nSUMMARY:Many skips`));
     expect(feed.entries[0].repeatExceptions.length).toBeLessThanOrEqual(200);
     expect(feed.warnings.some((warning) => warning.includes("skipped dates"))).toBe(true);
+  });
+
+  it("keeps the zone caches bounded however many spellings of a zone a feed uses, and still resolves each", () => {
+    const spell = (name: string, seed: number) => [...name].map((character, index) => ((seed >> (index % 20)) + index) % 2 === 0 ? character.toUpperCase() : character.toLowerCase()).join("");
+    const before = zoneCacheSizes();
+    const beforeDates = dateFormatterCacheSize();
+    for (let round = 0; round < 2; round += 1) {
+      const events = Array.from({ length: 1900 }, (_unused, index) => {
+        const zone = index % 2 === 0 ? "America/Chicago" : "US/Central"; // a canonical name and an alias
+        const tzid = spell(zone, index * 7 + round);
+        return `UID:v${round}-${index}\r\nDTSTART;TZID=${tzid}:20261015T190000\r\nDTEND;TZID=${tzid}:20261015T210000\r\nSUMMARY:V`;
+      });
+      const feed = quick(wrap(...events));
+      expect(feed.entries).toHaveLength(1900);
+      expect(feed.warnings).toEqual([]);
+      for (const entry of feed.entries) expect(entry).toMatchObject({ startsOn: "2026-10-15", timeLabel: "7:00 PM – 9:00 PM CDT" });
+    }
+    const after = zoneCacheSizes();
+    expect(after.wallClock - before.wallClock).toBeLessThanOrEqual(3);
+    expect(after.aliases).toBeLessThanOrEqual(200);
+    expect(dateFormatterCacheSize() - beforeDates).toBeLessThanOrEqual(3);
+    // A genuinely unknown zone is still refused.
+    expect(parseIcsFeed(wrap("UID:n\r\nDTSTART;TZID=Mars/Olympus:20261015T090000\r\nSUMMARY:N")).warnings).toHaveLength(1);
   });
 
   it("treats a very long TZID as unrecognized instead of building a time zone from it", () => {
