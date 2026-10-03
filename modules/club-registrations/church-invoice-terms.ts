@@ -1,5 +1,6 @@
 import type { RegistrationFormDefinition, RegistrationFormField } from "@/modules/forms/definition";
-import { formatPerPersonAmount } from "@/modules/club-registrations/per-person-price";
+import { resolveResponsibleOrganization } from "@/modules/forms/definition";
+import { formatPerPersonAmount, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 
 /**
  * The wording a church-invoiced (DEFERRED_ORGANIZATION_INVOICE) registration
@@ -48,24 +49,35 @@ function dayBefore(iso: string) {
   return new Date(Date.UTC(year, month - 1, day - 1)).toISOString().slice(0, 10);
 }
 
-function feeFields(definition: RegistrationFormDefinition): RegistrationFormField[] {
-  const fields = definition.sections.flatMap((section) => section.fields);
-  return fields.filter((field) => (
-    field.type === "CALCULATED"
-    && field.priceCents !== undefined
-    && field.priceCents > 0
-    && !field.choicePricesCents
-    && !field.latePricing?.choicePricesCents
-  ));
+function isPriced(field: RegistrationFormField) {
+  return (field.priceCents !== undefined && field.priceCents > 0)
+    || Object.keys(field.choicePricesCents ?? {}).length > 0
+    || Object.keys(field.latePricing?.choicePricesCents ?? {}).length > 0
+    || (field.latePricing?.priceCents !== undefined && field.latePricing.priceCents > 0);
+}
+
+/**
+ * The one fee the sentence can honestly describe: the only priced field in the
+ * whole form, a plain per-attendee amount (not a choice price, a checkbox or a
+ * quantity), charged to every attendee (attendee scope, or a form with no
+ * roster) with no condition that could skip it. Otherwise null.
+ */
+function soleFeeField(definition: RegistrationFormDefinition): RegistrationFormField | null {
+  const priced = definition.sections.flatMap((section) => section.fields).filter(isPriced);
+  if (priced.length !== 1) return null;
+  const fee = priced[0];
+  if (fee.type !== "CALCULATED" || !fee.priceCents || fee.choicePricesCents || fee.latePricing?.choicePricesCents) return null;
+  if (fee.conditional || fee.optionalWhen) return null;
+  if (definition.attendeeRoster?.enabled && fee.scope !== "ATTENDEE") return null;
+  return fee;
 }
 
 export function churchInvoiceTerms(
   definition: RegistrationFormDefinition,
   options: { pricingDate: string; attendeeLabel?: string },
 ): ChurchInvoiceTerms | null {
-  const fields = feeFields(definition);
-  if (fields.length !== 1) return null;
-  const fee = fields[0];
+  const fee = soleFeeField(definition);
+  if (!fee) return null;
   const regular = fee.priceCents as number;
   const late = fee.latePricing && fee.latePricing.priceCents !== undefined && fee.latePricing.priceCents !== regular
     ? { amountCents: fee.latePricing.priceCents, startsOn: fee.latePricing.startsOn }
@@ -96,16 +108,31 @@ export function churchInvoiceTerms(
 }
 
 /**
- * The church the invoice goes to, from the registrant's own answer to the
- * form's churches-directory question; null when there is none or it is blank.
+ * The organization the invoice goes to: the same reading the staff invoice
+ * uses (`resolveResponsibleOrganization`), so a "Not listed" church shows the
+ * name typed beside it. Null when nothing resolves.
  */
 export function invoiceRecipientName(
-  definition: RegistrationFormDefinition,
+  _definition: RegistrationFormDefinition,
   responses: Record<string, unknown>,
 ): string | null {
-  const field = definition.sections
-    .flatMap((section) => section.fields)
-    .find((candidate) => candidate.optionSource === "CHURCHES_DIRECTORY");
-  const answer = field ? responses[field.key] : undefined;
-  return typeof answer === "string" && answer.trim() !== "" ? answer.trim() : null;
+  return resolveResponsibleOrganization(responses);
+}
+
+/**
+ * True only when what the form is pricing right now is exactly the rate the
+ * sentence states, so the sentence can never contradict the amounts. With a
+ * roster every attendee must owe that one rate; without one the fee's own
+ * price line must be that rate.
+ */
+export function termsMatchPrice(terms: ChurchInvoiceTerms, price: PerPersonPrice) {
+  const active = terms.tiers[0].amountCents;
+  if (price.roster) return price.uniformAmountCents === active;
+  return price.registrationLines.some((line) => line.label === terms.feeLabel && line.amountCents === active);
+}
+
+/** The price lines still worth listing: the fee line is dropped only when the sentence covers it exactly. */
+export function linesNotCoveredByTerms(terms: ChurchInvoiceTerms, price: PerPersonPrice) {
+  const active = terms.tiers[0].amountCents;
+  return price.registrationLines.filter((line) => !(line.label === terms.feeLabel && line.amountCents === active));
 }

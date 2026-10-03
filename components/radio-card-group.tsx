@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 export type RadioCardOption<Value extends string> = {
   value: Value;
   label: string;
+  disabled?: boolean;
   description?: ReactNode;
 };
 
@@ -21,6 +22,7 @@ export function RadioCardGroup<Value extends string>({
   onChange,
   help,
   id,
+  idOn = "first",
   required = false,
   disabled = false,
 }: {
@@ -30,11 +32,15 @@ export function RadioCardGroup<Value extends string>({
   value: Value | "";
   onChange: (value: Value) => void;
   help?: ReactNode;
-  /** Put on the first radio, so a "Go to" link can focus the group. */
+  /** Put on one radio, so a "Go to" link can focus the group: the first enabled one, or the selected one (the first when none is). */
   id?: string;
+  idOn?: "first" | "selected";
   required?: boolean;
   disabled?: boolean;
 }) {
+  const firstEnabled = options.findIndex((option) => !option.disabled);
+  const selected = options.findIndex((option) => option.value === value);
+  const idIndex = idOn === "selected" && selected >= 0 ? selected : Math.max(firstEnabled, 0);
   return (
     <fieldset className="radio-card-group" disabled={disabled}>
       <legend>{legend}</legend>
@@ -43,7 +49,8 @@ export function RadioCardGroup<Value extends string>({
           <label className="radio-card" key={option.value}>
             <input
               checked={value === option.value}
-              id={index === 0 ? id : undefined}
+              disabled={option.disabled}
+              id={index === idIndex ? id : undefined}
               name={name}
               onChange={() => onChange(option.value)}
               required={required}

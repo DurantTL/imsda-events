@@ -1,4 +1,4 @@
-import { MAX_AGE_YEARS, MIN_AGE_YEARS } from "@/modules/attendee-types/age-limits";
+import { MAX_AGE_BAND_YEARS, MIN_AGE_YEARS } from "@/modules/attendee-types/age-limits";
 import { z } from "zod";
 
 export const attendeeClassificationKinds = ["CATEGORY", "TRACK", "DEPARTMENT"] as const;
@@ -21,8 +21,8 @@ const attendeeTypeBaseSchema = z.object({
   description: z.string().trim().max(500).default(""),
   sortOrder: z.number().int().min(-10000).max(10000).default(0),
   isActive: z.boolean().default(true),
-  minimumAge: z.number().int().min(MIN_AGE_YEARS).max(MAX_AGE_YEARS).nullable().default(null),
-  maximumAge: z.number().int().min(MIN_AGE_YEARS).max(MAX_AGE_YEARS).nullable().default(null),
+  minimumAge: z.number().int().min(MIN_AGE_YEARS).max(MAX_AGE_BAND_YEARS).nullable().default(null),
+  maximumAge: z.number().int().min(MIN_AGE_YEARS).max(MAX_AGE_BAND_YEARS).nullable().default(null),
 });
 
 export const attendeeTypeInputSchema = attendeeTypeBaseSchema.superRefine(ageBandInvariant);

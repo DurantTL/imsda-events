@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -6,15 +7,17 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), refresh: 
 
 import { ChurchInvoiceNotice, ChurchInvoiceReviewFacts } from "@/components/church-invoice-notice";
 import { PublicRegistrationForm } from "@/components/public-registration-form";
+import { DateInput } from "@/components/club-form-date-input";
 import { RadioCardGroup } from "@/components/radio-card-group";
 import { MAX_AGE_YEARS, MIN_AGE_YEARS, ageInputAttributes, isWholeAgeInRange } from "@/modules/attendee-types/age-limits";
-import { attendeeTypeInputSchema } from "@/modules/attendee-types/domain";
-import { churchInvoiceTerms, invoiceRecipientName } from "@/modules/club-registrations/church-invoice-terms";
+import { attendeeTypeInputSchema, attendeeTypeUpdateSchema } from "@/modules/attendee-types/domain";
+import { templateAttendeeTypeSchema } from "@/modules/event-templates/domain";
+import { churchInvoiceTerms, invoiceRecipientName, termsMatchPrice } from "@/modules/club-registrations/church-invoice-terms";
 import { perPersonPrice } from "@/modules/club-registrations/per-person-price";
 import { parseTypedAge } from "@/modules/club-registrations/roster-ages";
-import { usesRadioCards } from "@/modules/forms/choice-controls";
+import { selectUsesRadioCards, usesRadioCards } from "@/modules/forms/choice-controls";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
-import { formatTypedDate, parseTypedDate } from "@/modules/forms/typed-date";
+import { CALENDAR_DATE_GUIDANCE, PUBLIC_DATE_GUIDANCE, formatTypedDate, parseTypedDate } from "@/modules/forms/typed-date";
 import { parseGroupAge } from "@/modules/group-registrations/domain";
 
 // Synthetic data only.
@@ -94,10 +97,12 @@ describe("age fields (#743)", () => {
     expect(parseGroupAge("121")).toBeNull();
   });
 
-  it("holds an attendee type's age band to the same range", () => {
+  it("keeps an attendee type's stored age band maximum of 130, so existing rows and templates still save", () => {
     const base = { code: "YOUTH", label: "Youth" };
-    expect(attendeeTypeInputSchema.safeParse({ ...base, minimumAge: 0, maximumAge: 120 }).success).toBe(true);
-    expect(attendeeTypeInputSchema.safeParse({ ...base, minimumAge: 0, maximumAge: 121 }).success).toBe(false);
+    expect(attendeeTypeInputSchema.safeParse({ ...base, minimumAge: 0, maximumAge: 125 }).success).toBe(true);
+    expect(templateAttendeeTypeSchema.safeParse({ ...base, minimumAge: 0, maximumAge: 125 }).success).toBe(true);
+    expect(attendeeTypeUpdateSchema.safeParse({ label: "Youth", minimumAge: 0, maximumAge: 125 }).success).toBe(true);
+    expect(attendeeTypeInputSchema.safeParse({ ...base, minimumAge: 0, maximumAge: 131 }).success).toBe(false);
   });
 });
 
@@ -117,8 +122,25 @@ describe("typed dates (#743)", () => {
 
   it("shows the M/D/YYYY guidance under a public date question and keeps the date input", () => {
     const markup = render(definition(null, [field("arrival", { type: "DATE", label: "Arrival" })]));
-    expect(markup).toContain("Type the date as M/D/YYYY");
+    expect(markup).toContain(PUBLIC_DATE_GUIDANCE);
+    expect(markup).toContain("Pick a date.");
+    expect(markup).not.toContain("calendar button");
     expect(markup).toContain('type="date"');
+    // The helper line is linked to the input.
+    const id = /aria-describedby="([^"]*_date_guidance)"/.exec(markup)?.[1];
+    expect(id).toBeTruthy();
+    expect(markup).toContain(`id="${id}"`);
+  });
+
+  it("says 'use the calendar button' only on the club date input, which has the button, and not when it is locked", () => {
+    const render = (locked: boolean) => renderToStaticMarkup(createElement(DateInput, {
+      label: "Date", labelText: "Date", value: "", onChange: () => undefined, locked,
+    }));
+    expect(render(false)).toContain(CALENDAR_DATE_GUIDANCE);
+    expect(render(false)).toContain("Choose date for Date");
+    expect(render(true)).not.toContain("calendar button");
+    expect(render(true)).not.toContain("Choose date for");
+    expect(PUBLIC_DATE_GUIDANCE).not.toContain("calendar button");
   });
 });
 
@@ -178,10 +200,10 @@ describe("church-invoice review screen (#743)", () => {
       field("church", { type: "SELECT", label: "Church", optionSource: "CHURCHES_DIRECTORY" }),
     ]);
     const terms = churchInvoiceTerms(def, { pricingDate: "2026-03-01" });
-    const recipient = invoiceRecipientName(def, { church: " Synthetic Valley Church " });
+    const recipient = invoiceRecipientName(def, { church_name: " Synthetic Valley Church " });
     expect(recipient).toBe("Synthetic Valley Church");
     const markup = renderToStaticMarkup(createElement("div", null,
-      createElement(ChurchInvoiceNotice, { terms, price: perPersonPrice({ lineItems: [], roster: false }) }),
+      createElement(ChurchInvoiceNotice, { terms, price: perPersonPrice({ lineItems: [{ label: "registration_fee", amountCents: 900 }], roster: false }) }),
       createElement(ChurchInvoiceReviewFacts, { recipient }),
     ));
     expect(markup).toContain("$9 per attendee through April 10; $14 afterward.");
@@ -198,5 +220,114 @@ describe("church-invoice review screen (#743)", () => {
     const source = readFileSync("components/public-registration-form.tsx", "utf8");
     expect(source).toContain("<ChurchInvoiceReviewFacts recipient={invoiceRecipient} />");
     expect(source).toContain("Attendees</p>");
+  });
+});
+
+describe("church-invoice terms only when they are the whole truth (#743)", () => {
+  const rosterDefinition = (fields: Array<Record<string, unknown>>) => registrationFormDefinitionSchema.parse({
+    title: "Synthetic event", description: "", confirmationMessage: "Received.",
+    attendeeRoster: { enabled: true, minAttendees: 1, maxAttendees: 10, attendeeLabel: "Person", addButtonLabel: "Add a person" },
+    sections: [{ id: "s_main", title: "People", description: "", fields: [
+      field("first_name", { scope: "ATTENDEE", required: true }),
+      field("last_name", { scope: "ATTENDEE", required: true }),
+      ...fields,
+    ] }],
+  });
+  const attendeeFee = (extra: Record<string, unknown> = {}) => field("registration_fee", { type: "CALCULATED", scope: "ATTENDEE", priceCents: 900, ...extra });
+  const rates = { pricingDate: "2026-03-01" };
+  const people = (count: number, amounts: number[]) => perPersonPrice({
+    lineItems: amounts.map((amountCents, attendeeIndex) => ({ label: "Registration fee", amountCents, attendeeIndex })),
+    roster: true, attendeeCount: count,
+  });
+
+  it("states no rate for a registration-scoped fee on a roster of three", () => {
+    const def = rosterDefinition([field("registration_fee", { type: "CALCULATED", scope: "REGISTRATION", priceCents: 900 })]);
+    expect(churchInvoiceTerms(def, rates)).toBeNull();
+  });
+
+  it("states no rate when a $9 fee has a $10 add-on for everyone, and keeps the notice if the amounts differ", () => {
+    const def = rosterDefinition([attendeeFee(), field("meal", { type: "CALCULATED", scope: "ATTENDEE", priceCents: 1000 })]);
+    expect(churchInvoiceTerms(def, rates)).toBeNull();
+    const single = churchInvoiceTerms(rosterDefinition([attendeeFee()]), rates);
+    expect(single).not.toBeNull();
+    expect(termsMatchPrice(single!, people(3, [900, 900, 900]))).toBe(true);
+    expect(termsMatchPrice(single!, people(3, [1900, 1900, 1900]))).toBe(false);
+    expect(termsMatchPrice(single!, people(3, [900, 900, 0]))).toBe(false);
+    expect(termsMatchPrice(single!, people(0, []))).toBe(false);
+  });
+
+  it("states no rate for choice-priced, checkbox-priced, quantity-priced or conditional fees", () => {
+    expect(churchInvoiceTerms(rosterDefinition([attendeeFee({ conditional: { fieldKey: "first_name", operator: "EQUALS", value: "Sam" } })]), rates)).toBeNull();
+    expect(churchInvoiceTerms(rosterDefinition([attendeeFee({ choicePricesCents: { A: 900 }, options: ["A"] })]), rates)).toBeNull();
+    expect(churchInvoiceTerms(rosterDefinition([field("shirt", { type: "CHECKBOX", scope: "ATTENDEE", priceCents: 900 })]), rates)).toBeNull();
+    expect(churchInvoiceTerms(rosterDefinition([field("meals", { type: "NUMBER", scope: "ATTENDEE", priceCents: 900 })]), rates)).toBeNull();
+  });
+
+  it("still states the rate for the single attendee-scoped fee", () => {
+    const terms = churchInvoiceTerms(rosterDefinition([attendeeFee()]), { pricingDate: "2026-03-01", attendeeLabel: "Person" });
+    expect(terms?.rateSentence).toBe("$9 per person.");
+    const markup = renderToStaticMarkup(createElement(ChurchInvoiceNotice, { terms, price: people(3, [900, 900, 900]) }));
+    expect(markup).toContain("$9 per person.");
+    // A price that disagrees falls back to the per-person notice, with no stated rate.
+    const mismatch = renderToStaticMarkup(createElement(ChurchInvoiceNotice, { terms, price: people(2, [1900, 1900]) }));
+    expect(mismatch).not.toContain("$9 per person.");
+    expect(mismatch).toContain("$19 per person.");
+  });
+
+  it("does not hide a fee line the sentence does not cover exactly", () => {
+    const terms = churchInvoiceTerms(definition({ priceCents: 900 }), rates);
+    const price = perPersonPrice({ lineItems: [{ label: "registration_fee", amountCents: 900 }, { label: "Extra", amountCents: 500 }], roster: false });
+    const markup = renderToStaticMarkup(createElement(ChurchInvoiceNotice, { terms, price }));
+    expect(markup).toContain("$9 per attendee.");
+    expect(markup).toContain("Extra");
+    expect(markup).not.toContain("registration_fee");
+  });
+
+  it("titles the review card 'Price' when no rate sentence applies", () => {
+    const def = definition({ priceCents: 900 }, [field("meal", { type: "CHECKBOX", priceCents: 500, label: "Meal" })]);
+    const markup = render(def, "DEFERRED_ORGANIZATION_INVOICE");
+    expect(markup).not.toContain("per attendee.");
+    const source = readFileSync("components/public-registration-form.tsx", "utf8");
+    expect(source).toContain('shownInvoiceTerms ? "Rate per person" : "Price per person"');
+  });
+});
+
+describe("church-invoice recipient (#743)", () => {
+  const def = definition({ priceCents: 900 });
+  it("reads a Not listed church from the name typed beside it, as the staff invoice does", () => {
+    expect(invoiceRecipientName(def, { church_name: "Not listed", church_name_other: "Synthetic Chapel" })).toBe("Synthetic Chapel");
+    expect(invoiceRecipientName(def, { church_name: "Synthetic Valley Church" })).toBe("Synthetic Valley Church");
+  });
+  it("uses the club when the club is the responsible organization", () => {
+    expect(invoiceRecipientName(def, { club_name: "Synthetic Pathfinders", church_name: "Synthetic Valley Church" })).toBe("Synthetic Pathfinders");
+  });
+  it("resolves to nothing when no organization is named, so the review says 'Your church'", () => {
+    expect(invoiceRecipientName(def, {})).toBeNull();
+    expect(renderToStaticMarkup(createElement(ChurchInvoiceReviewFacts, { recipient: null }))).toContain("Your church");
+  });
+});
+
+describe("dropdowns that stay dropdowns (#743)", () => {
+  it("keeps directories, country, state, timezone and quantity selects as dropdowns", () => {
+    const opt = ["A", "B", "C"];
+    expect(selectUsesRadioCards({ key: "gender", label: "Gender", options: opt })).toBe(true);
+    expect(selectUsesRadioCards({ key: "mc_country", label: "Home", options: opt })).toBe(false);
+    expect(selectUsesRadioCards({ key: "home", label: "State or province", options: opt })).toBe(false);
+    expect(selectUsesRadioCards({ key: "mc_region", label: "Home", options: opt })).toBe(false);
+    expect(selectUsesRadioCards({ key: "tz", label: "Time zone", options: opt })).toBe(false);
+    expect(selectUsesRadioCards({ key: "meal_qty", label: "Meals", options: opt })).toBe(false);
+    expect(selectUsesRadioCards({ key: "church_name", label: "Church", options: opt, optionSource: "CHURCHES_DIRECTORY" })).toBe(false);
+  });
+
+  it("renders a three-entry directory and a country select as dropdowns on the form", () => {
+    const markup = render(definition(null, [
+      field("church_name", { type: "SELECT", label: "Church", optionSource: "CHURCHES_DIRECTORY", options: ["A", "B", "C"] }),
+      field("mc_country", { type: "SELECT", label: "Home", options: ["US", "CA", "MX"] }),
+      field("gender", { type: "SELECT", label: "Gender", options: ["Female", "Male"] }),
+    ]));
+    expect(markup).toContain("Search church");
+    expect(markup).toContain("Search home");
+    expect(markup).not.toMatch(/name="mc_country"/);
+    expect(markup).toMatch(/name="gender"/);
   });
 });

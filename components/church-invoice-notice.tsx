@@ -2,6 +2,8 @@ import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
 import {
   CHURCH_INVOICE_TIMING,
   NO_PAYMENT_ONLINE,
+  linesNotCoveredByTerms,
+  termsMatchPrice,
   type ChurchInvoiceTerms,
 } from "@/modules/club-registrations/church-invoice-terms";
 import type { PerPersonPrice } from "@/modules/club-registrations/per-person-price";
@@ -22,7 +24,7 @@ export function ChurchInvoiceNotice({
   price: PerPersonPrice;
   className?: string;
 }) {
-  if (!terms) return <PerPersonPriceNotice price={price} className={className} />;
+  if (!terms || !termsMatchPrice(terms, price)) return <PerPersonPriceNotice price={price} className={className} />;
   return (
     <div className={`church-invoice-notice${className ? ` ${className}` : ""}`} data-testid="church-invoice-terms">
       <p className="church-invoice-rate"><strong translate="no">{terms.rateSentence}</strong></p>
@@ -30,7 +32,7 @@ export function ChurchInvoiceNotice({
         No payment is collected with this form — your church will be invoiced after the event based on confirmed attendance.
       </p>
       <PerPersonPriceNotice
-        price={{ ...price, registrationLines: price.registrationLines.filter((line) => line.label !== terms.feeLabel) }}
+        price={{ ...price, registrationLines: linesNotCoveredByTerms(terms, price) }}
         showNotice={false}
       />
     </div>

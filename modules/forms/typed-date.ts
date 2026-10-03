@@ -1,7 +1,11 @@
 import { parseCalendarDate } from "@/modules/club-rosters/domain";
 
-/** The guidance shown under a date question (#743). Dates are stored as YYYY-MM-DD. */
-export const TYPED_DATE_GUIDANCE = "Type the date as M/D/YYYY, or use the calendar button.";
+/** The guidance shown under a date question (#743), by surface. Dates are stored as YYYY-MM-DD. */
+export const PUBLIC_DATE_GUIDANCE = "Type M/D/YYYY or pick a date.";
+/** Only where a calendar button exists beside the field. */
+export const CALENDAR_DATE_GUIDANCE = "Type M/D/YYYY or use the calendar button.";
+/** Shown instead on touch screens, where the picker is the way in. */
+export const PICK_DATE_GUIDANCE = "Pick a date.";
 
 /**
  * Reads a date a person typed or pasted as M/D/YYYY (or already as

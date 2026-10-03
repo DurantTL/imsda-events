@@ -5,9 +5,15 @@
 export const MIN_AGE_YEARS = 0;
 export const MAX_AGE_YEARS = 120;
 
+/** Attendee-type age bands keep their stored maximum of 130, so existing rows and templates still save. */
+export const MAX_AGE_BAND_YEARS = 130;
+
 export function isWholeAgeInRange(age: number) {
   return Number.isInteger(age) && age >= MIN_AGE_YEARS && age <= MAX_AGE_YEARS;
 }
+
+/** The attributes an age band box carries (0 to 130, as stored). */
+export const ageBandInputAttributes = { inputMode: "numeric" as const, min: MIN_AGE_YEARS, max: MAX_AGE_BAND_YEARS, step: 1 };
 
 /** The attributes an age text box carries: numeric keypad on phones, and the shared range. */
 export const ageInputAttributes = { inputMode: "numeric" as const, min: MIN_AGE_YEARS, max: MAX_AGE_YEARS, step: 1 };

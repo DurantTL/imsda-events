@@ -2,7 +2,8 @@
 
 import { useId, useRef, useState, type ReactNode } from "react";
 import { CalendarDays } from "lucide-react";
-import { parseTypedDate, TYPED_DATE_GUIDANCE } from "@/modules/forms/typed-date";
+import { DateGuidance } from "@/components/date-guidance";
+import { CALENDAR_DATE_GUIDANCE, parseTypedDate } from "@/modules/forms/typed-date";
 
 /**
  * A date question (#719). The browser's own empty date can show today's date
@@ -110,7 +111,9 @@ export function DateInput({
           </button>
         )}
       </span>
-      <small className="field-help club-form-date-guidance" id={guidanceId}>{locked ? "This date is set and cannot be changed." : TYPED_DATE_GUIDANCE}</small>
+      {locked
+        ? <small className="field-help club-form-date-guidance" id={guidanceId}>This date is set and cannot be changed.</small>
+        : <DateGuidance className="club-form-date-guidance" id={guidanceId} typed={CALENDAR_DATE_GUIDANCE} />}
       {help}
     </div>
   );

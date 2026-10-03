@@ -672,6 +672,7 @@ export function EventSettingsWorkspace({
             />
             <RadioCardGroup
               id="event-field-billing-mode"
+              idOn="selected"
               legend="Billing mode"
               name="billingMode"
               value={draft.billingMode}

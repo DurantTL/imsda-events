@@ -9248,3 +9248,5 @@ button[aria-busy="true"] { cursor: progress; }
 .church-invoice-facts dd { margin: 0; font-weight: 700; }
 @media (max-width: 480px) { .church-invoice-facts > div { grid-template-columns: 1fr; } }
 .public-registration-date-guidance, .club-form-date-guidance { display: block; margin: 0; }
+.date-guidance-pick { display: none; }
+@media (pointer: coarse) { .date-guidance-typed { display: none; } .date-guidance-pick { display: inline; } }
