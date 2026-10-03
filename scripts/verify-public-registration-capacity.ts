@@ -1,13 +1,23 @@
 import { randomUUID } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
+import { assertLocalDatabase, assertLocalUrl } from "./support/local-only-guard";
 import { PrismaClient, RegistrationFormStatus } from "@prisma/client";
+import { futureEventWindow } from "./support/fixture-dates";
 import { registrationFormDefinitionSchema } from "../modules/forms/definition";
 
 loadEnvConfig(process.cwd());
+// Local-only: these suites write fictitious rows and call a local app.
+assertLocalDatabase(process.env, "run the public registration check");
 
 const prisma = new PrismaClient();
 const baseUrl = process.env.PUBLIC_REGISTRATION_TEST_URL ?? "http://localhost:3000";
-const eventSlug = "womens-retreat-2026";
+assertLocalUrl(baseUrl, "PUBLIC_REGISTRATION_TEST_URL");
+// An isolated, throwaway event with fresh relative dates: the capacity race must
+// not depend on a seeded event whose hardcoded dates eventually close.
+const eventId = "evt_public_capacity_verification";
+const eventSlug = "public-capacity-verification-2026";
+const actorId = "usr_public_capacity_verification";
+const actorEmail = "capacity.actor@example.test";
 const formId = "form_public_capacity_verification";
 const formVersionId = "formver_public_capacity_verification_1";
 const formSlug = "public-capacity-verification";
@@ -42,14 +52,28 @@ async function cleanup() {
     await prisma.registration.deleteMany({ where: { id: { in: registrationIds } } });
   }
   await prisma.registrationForm.deleteMany({ where: { id: formId } });
+  await prisma.event.deleteMany({ where: { id: eventId } });
+  await prisma.user.deleteMany({ where: { id: actorId } });
   await prisma.person.deleteMany({ where: { normalizedEmail: { in: testEmails }, heldRegistrations: { none: {} }, registrationEvents: { none: {} } } });
 }
 
 async function main() {
   await cleanup();
-  const event = await prisma.event.findUnique({ where: { slug: eventSlug }, select: { id: true, isPublished: true } });
-  const actor = await prisma.user.findUnique({ where: { email: "admin@imsda-events.test" }, select: { id: true } });
-  if (!event?.isPublished || !actor) throw new Error("The published local event and fixture administrator are required.");
+  const actor = await prisma.user.create({
+    data: { id: actorId, email: actorEmail, displayName: "Capacity Verification Actor" },
+  });
+  const event = await prisma.event.create({
+    data: {
+      id: eventId,
+      slug: eventSlug,
+      name: "Public Capacity Verification 2026",
+      ...futureEventWindow(),
+      timezone: "America/Chicago",
+      location: "Fictitious Local Test Venue",
+      capacity: 25,
+      isPublished: true,
+    },
+  });
 
   await prisma.registrationForm.create({
     data: {

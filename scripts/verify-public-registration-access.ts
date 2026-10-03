@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { loadEnvConfig } from "@next/env";
+import { assertLocalDatabase, assertLocalUrl } from "./support/local-only-guard";
+import { daysFromNow, futureEventWindow } from "./support/fixture-dates";
 import { PrismaClient } from "@prisma/client";
 import {
   createOpaqueToken,
@@ -8,10 +10,13 @@ import {
 } from "../modules/access/tokens";
 
 loadEnvConfig(process.cwd());
+// Local-only: these suites write fictitious rows and call a local app.
+assertLocalDatabase(process.env, "run the public registration check");
 
 const prisma = new PrismaClient();
 const baseUrl = process.env.PUBLIC_REGISTRATION_TEST_URL
   ?? "http://localhost:3000";
+assertLocalUrl(baseUrl, "PUBLIC_REGISTRATION_TEST_URL");
 const fixtureKey = randomUUID().replaceAll("-", "").slice(0, 16);
 const eventSlug = `private-access-${fixtureKey}`;
 const email = `private-access-${fixtureKey}@example.test`;
@@ -35,8 +40,7 @@ async function main() {
     data: {
       slug: eventSlug,
       name: "Private access verification event",
-      startsAt: new Date("2026-10-09T21:00:00.000Z"),
-      endsAt: new Date("2026-10-11T17:00:00.000Z"),
+      ...futureEventWindow(),
       timezone: "America/Chicago",
       location: "Fictitious verification venue",
       publicInfoUrl: "https://imsda.org/events/",
@@ -86,7 +90,7 @@ async function main() {
     data: {
       registrationId: registration.id,
       tokenHash: hashOpaqueToken(token),
-      expiresAt: new Date("2026-11-10T17:00:00.000Z"),
+      expiresAt: daysFromNow(60),
     },
   });
   assert.notEqual(stored.tokenHash, token, "the database must not store the raw token");

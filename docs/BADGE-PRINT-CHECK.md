@@ -63,6 +63,13 @@ npm run test:badge-print
 ```
 
 If either package is missing the script prints the install line above and exits.
+`DATABASE_URL` is read from `.env` like the app does, so it does not need to be
+exported; the local-only checks above still apply to whatever it resolves to.
+`playwright-core install` needs network access; with no download available,
+point `BADGE_PRINT_BROWSER` at any Chromium or Chrome executable instead.
+
+CI runs this check in its own job, "Badge print (real browser, optional)",
+separate from `verify`, using the Google Chrome that GitHub-hosted runners ship.
 
 The script adds synthetic attendees ("Badgecheck SampleNNN", 30 by default,
 `BADGE_PRINT_ATTENDEES` to change) to the seeded Women's Retreat event and signs

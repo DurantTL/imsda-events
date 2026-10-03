@@ -32,6 +32,13 @@
  * bloat the production image); install them first with
  *   npm i --no-save playwright-core@1.56.1 pdfjs-dist@4.10.38
  *
+ * Optional dependencies, not in package.json or the lockfile: playwright-core
+ * drives the browser and pdfjs-dist reads the PDF back. Chromium itself is not
+ * installed by npm; either run `npx playwright-core install chromium` or point
+ * BADGE_PRINT_BROWSER at an existing Chromium/Chrome executable. Without them
+ * the script exits early with an install hint (CI runs it in its own optional
+ * job).
+ *
  *   BADGE_PRINT_BASE_URL=http://localhost:3717 \
  *   BADGE_PRINT_OUT_DIR=/tmp/badge-print npm run test:badge-print
  *
@@ -43,11 +50,13 @@
  *                          use checkin@imsda-events.test to render without the artwork panel)
  *   BADGE_PRINT_ONLY       run only the variants whose name contains this text
  *   BADGE_PRINT_BROWSER    path to a Chromium executable (default: Playwright's)
- *   DATABASE_URL           the local database the app uses
+ *   DATABASE_URL           the local database the app uses (read from .env when not exported;
+ *                          still refused unless it points at this machine)
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { loadEnvConfig } from "@next/env";
 import type { PrismaClient } from "@prisma/client";
 import { badgeTemplates, type BadgeTemplateId } from "../modules/checkin/badge-labels";
 import {
@@ -55,6 +64,11 @@ import {
   assertLocalUrl,
   assertSeededStaffEmail,
 } from "./support/local-only-guard";
+
+// Read DATABASE_URL (and the rest of the app's settings) from .env/.env.local the
+// way the app and the other scripts do, so an exported variable is not required.
+// The local-only guard below still runs on whatever this resolves to.
+loadEnvConfig(process.cwd());
 
 // Structural stand-in: playwright-core is installed on demand, not a dependency.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

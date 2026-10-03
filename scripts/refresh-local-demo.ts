@@ -1,36 +1,28 @@
-import { randomUUID } from "node:crypto";
+/**
+ * Refreshes the local Women's Retreat demo form to the code's current
+ * template (npm run db:refresh-demo).
+ *
+ * It goes through the application's own form workflow (save draft, run a
+ * test submission, publish), never raw writes, so the definition is
+ * hydrated the way the app hydrates it (club, church and attendee-type
+ * choices come from the live directory) and publication is gated exactly as
+ * it is for staff. It is idempotent: when the published version already
+ * matches the template it leaves the form alone (the LOCAL10 promo upsert still runs, so its updatedAt moves).
+ *
+ * The demo answers use the "Not listed" church choice, which is always valid,
+ * so a clean install with an empty church directory still publishes.
+ */
 import { loadEnvConfig } from "@next/env";
-import {
-  Prisma,
-  PrismaClient,
-  RegistrationFormStatus,
-} from "@prisma/client";
-import {
-  formTemplates,
-  registrationFormDefinitionSchema,
-} from "../modules/forms/definition";
-import { preparePublicRegistration } from "../modules/forms/public-domain";
+import { assertLocalDatabase } from "./support/local-only-guard";
 
 loadEnvConfig(process.cwd());
-
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  throw new Error("DATABASE_URL is required.");
-}
-
-const parsedDatabaseUrl = new URL(databaseUrl);
-if (!["localhost", "127.0.0.1", "::1"].includes(parsedDatabaseUrl.hostname)) {
-  throw new Error(
-    `Refusing to refresh demo data outside a local database (received ${parsedDatabaseUrl.hostname}).`,
-  );
-}
+// Same refusal rules as the seed: a local database only, never NODE_ENV=production.
+assertLocalDatabase(process.env, "refresh demo data");
 
 const eventId = "evt_wr26";
 const actorUserId = "usr_event_admin";
-const formId = "form_wr26_registration";
 const formSlug = "womens-retreat-registration";
 const templateKey = "womens_retreat_export";
-const prisma = new PrismaClient();
 
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -44,35 +36,37 @@ function stableJson(value: unknown): string {
 }
 
 async function main() {
-  const [event, actor] = await Promise.all([
-    prisma.event.findUnique({
-      where: { id: eventId },
-      select: { id: true, name: true, timezone: true },
-    }),
-    prisma.user.findUnique({
-      where: { id: actorUserId },
-      select: { id: true, email: true },
-    }),
-  ]);
+  // Loaded after the guard so nothing server-side initialises on a refused run.
+  const { getPrisma } = await import("../lib/prisma");
+  const { formTemplates, registrationFormDefinitionSchema } = await import("../modules/forms/definition");
+  const { stripAttendeeTypeOptions } = await import("../modules/attendee-types/form-options");
+  const { stripDirectoryOptions } = await import("../modules/organizations/directory-form-options");
+  const forms = await import("../modules/forms/repository");
+  const prisma = getPrisma();
+  const { RegistrationFormStatus } = await import("@prisma/client");
 
+  const [event, actor] = await Promise.all([
+    prisma.event.findUnique({ where: { id: eventId }, select: { id: true, name: true } }),
+    prisma.user.findUnique({ where: { id: actorUserId }, select: { id: true, email: true } }),
+  ]);
   if (!event || !actor || !actor.email.endsWith("@imsda-events.test")) {
-    throw new Error(
-      "The seeded local event and test administrator must exist. Run npm run db:seed first.",
-    );
+    throw new Error("The seeded local event and test administrator must exist. Run npm run db:seed first.");
   }
 
   const template = formTemplates.find((candidate) => candidate.key === templateKey);
   if (!template) throw new Error(`Template ${templateKey} is unavailable.`);
-  const definition = registrationFormDefinitionSchema.parse(
-    structuredClone(template.definition),
-  );
+  const definition = registrationFormDefinitionSchema.parse(structuredClone(template.definition));
+  const storedShape = (value: unknown) =>
+    stableJson(stripDirectoryOptions(stripAttendeeTypeOptions(registrationFormDefinitionSchema.parse(value))));
+  const templateShape = storedShape(definition);
 
   const registrationResponses = {
     primary_contact_first_name: "Demo",
     primary_contact_last_name: "Registrant",
     email: "demo.registrant@example.test",
     phone: "515-555-0100",
-    church: "Des Moines SDA Church",
+    church: "Not listed",
+    church_other: "Fictitious Demo Church",
     emergency_contact_name: "Demo Emergency Contact",
     emergency_contact_phone: "515-555-0101",
     payment_method: "Pay later",
@@ -99,199 +93,93 @@ async function main() {
     },
   }];
 
-  const prepared = preparePublicRegistration(
-    definition,
-    {
-      versionId: "local-demo-validation",
-      idempotencyKey: randomUUID(),
-      responses: registrationResponses,
-      attendees,
-      website: "",
+  // The demo promo code keeps at least 25 uses available after every refresh.
+  const existingLocalPromo = await prisma.promoCode.findUnique({
+    where: { eventId_normalizedCode: { eventId, normalizedCode: "LOCAL10" } },
+    select: { redeemedCount: true },
+  });
+  const localPromoMaximumUses = (existingLocalPromo?.redeemedCount ?? 0) + 25;
+  await prisma.promoCode.upsert({
+    where: { eventId_normalizedCode: { eventId, normalizedCode: "LOCAL10" } },
+    update: {
+      code: "LOCAL10",
+      isActive: true,
+      discountType: "PERCENT_BPS",
+      discountValue: 1000,
+      startsOn: null,
+      endsOn: null,
+      minimumSubtotalCents: 10000,
+      maximumUses: localPromoMaximumUses,
+      maximumDiscountCents: 5000,
     },
-    { timeZone: event.timezone, now: new Date("2026-07-23T12:00:00.000Z") },
-  );
-  if (!prepared.isValid) {
-    throw new Error(
-      `The Women’s Retreat template is not publishable:\n${prepared.issues
-        .map((issue) => `- ${issue.message}`)
-        .join("\n")}`,
-    );
-  }
-
-  const result = await prisma.$transaction(async (tx) => {
-    const existingLocalPromo = await tx.promoCode.findUnique({
-      where: {
-        eventId_normalizedCode: {
-          eventId,
-          normalizedCode: "LOCAL10",
-        },
-      },
-      select: { redeemedCount: true },
-    });
-    const localPromoMaximumUses =
-      (existingLocalPromo?.redeemedCount ?? 0) + 25;
-    await tx.promoCode.upsert({
-      where: {
-        eventId_normalizedCode: {
-          eventId,
-          normalizedCode: "LOCAL10",
-        },
-      },
-      update: {
-        code: "LOCAL10",
-        isActive: true,
-        discountType: "PERCENT_BPS",
-        discountValue: 1000,
-        startsOn: null,
-        endsOn: null,
-        minimumSubtotalCents: 10000,
-        maximumUses: localPromoMaximumUses,
-        maximumDiscountCents: 5000,
-      },
-      create: {
-        id: "promo_wr26_local10",
-        eventId,
-        code: "LOCAL10",
-        normalizedCode: "LOCAL10",
-        isActive: true,
-        discountType: "PERCENT_BPS",
-        discountValue: 1000,
-        minimumSubtotalCents: 10000,
-        maximumUses: localPromoMaximumUses,
-        maximumDiscountCents: 5000,
-      },
-    });
-    let form = await tx.registrationForm.findUnique({
-      where: { id: formId },
-      include: { versions: { orderBy: { versionNumber: "desc" } } },
-    });
-
-    if (!form) {
-      const existingSlug = await tx.registrationForm.findUnique({
-        where: { eventId_slug: { eventId, slug: formSlug } },
-        include: { versions: { orderBy: { versionNumber: "desc" } } },
-      });
-      form = existingSlug ?? await tx.registrationForm.create({
-        data: {
-          id: formId,
-          eventId,
-          createdByUserId: actorUserId,
-          name: definition.title,
-          slug: formSlug,
-        },
-        include: { versions: { orderBy: { versionNumber: "desc" } } },
-      });
-    }
-
-    if (form.eventId !== eventId) {
-      throw new Error("The seeded form ID belongs to a different event.");
-    }
-
-    const currentPublished = form.versions.find(
-      (version) => version.status === RegistrationFormStatus.PUBLISHED,
-    );
-    if (
-      currentPublished
-      && stableJson(currentPublished.definition) === stableJson(definition)
-    ) {
-      await tx.registrationForm.update({
-        where: { id: form.id },
-        data: { name: definition.title, status: RegistrationFormStatus.PUBLISHED },
-      });
-      return {
-        changed: false,
-        formId: form.id,
-        versionNumber: currentPublished.versionNumber,
-      };
-    }
-
-    await tx.registrationFormVersion.updateMany({
-      where: {
-        formId: form.id,
-        status: {
-          in: [
-            RegistrationFormStatus.DRAFT,
-            RegistrationFormStatus.PUBLISHED,
-          ],
-        },
-      },
-      data: { status: RegistrationFormStatus.ARCHIVED },
-    });
-
-    const nextVersionNumber = (form.versions[0]?.versionNumber ?? 0) + 1;
-    const version = await tx.registrationFormVersion.create({
-      data: {
-        formId: form.id,
-        createdByUserId: actorUserId,
-        versionNumber: nextVersionNumber,
-        status: RegistrationFormStatus.PUBLISHED,
-        definition: definition as Prisma.InputJsonValue,
-        publishedAt: new Date(),
-      },
-    });
-    await tx.formTestSubmission.create({
-      data: {
-        eventId,
-        formVersionId: version.id,
-        submittedByUserId: actorUserId,
-        responses: {
-          registrationResponses: prepared.registrationResponses,
-          attendees: prepared.attendees.map((attendee) => ({
-            clientId: attendee.clientId,
-            responses: attendee.responses,
-          })),
-        } as Prisma.InputJsonValue,
-        validation: {
-          isValid: true,
-          issues: [],
-          calculation: prepared.calculation,
-        } as Prisma.InputJsonValue,
-        isValid: true,
-      },
-    });
-    await tx.registrationForm.update({
-      where: { id: form.id },
-      data: {
-        name: definition.title,
-        status: RegistrationFormStatus.PUBLISHED,
-      },
-    });
-    await tx.auditLog.create({
-      data: {
-        eventId,
-        actorUserId,
-        action: "LOCAL_DEMO_FORM_REFRESHED",
-        entityType: "RegistrationForm",
-        entityId: form.id,
-        correlationId: randomUUID(),
-        summary: `Published the current ${template.name} demo template as version ${nextVersionNumber}.`,
-        metadata: {
-          templateKey,
-          localFixtureRefresh: true,
-          productionWrite: false,
-        },
-      },
-    });
-    return {
-      changed: true,
-      formId: form.id,
-      versionNumber: nextVersionNumber,
-    };
+    create: {
+      id: "promo_wr26_local10",
+      eventId,
+      code: "LOCAL10",
+      normalizedCode: "LOCAL10",
+      isActive: true,
+      discountType: "PERCENT_BPS",
+      discountValue: 1000,
+      minimumSubtotalCents: 10000,
+      maximumUses: localPromoMaximumUses,
+      maximumDiscountCents: 5000,
+    },
   });
 
-  console.log(
-    result.changed
-      ? `Published ${event.name} demo form version ${result.versionNumber}.`
-      : `Demo form version ${result.versionNumber} is already current.`,
-  );
-  console.log(`Public URL: http://localhost:3000/events/womens-retreat-2026`);
+  let form = await prisma.registrationForm.findUnique({
+    where: { eventId_slug: { eventId, slug: formSlug } },
+    select: { id: true },
+  });
+  if (!form) {
+    const created = await prisma.$transaction((tx) =>
+      forms.createRegistrationFormFromTemplateInTransaction(tx, eventId, actorUserId, templateKey),
+    );
+    form = { id: created.id };
+  }
+
+  const current = await forms.getRegistrationForm(eventId, form.id);
+  if (!current) throw new Error("The demo registration form could not be loaded.");
+  const published = current.versions.find((version) => version.status === RegistrationFormStatus.PUBLISHED);
+  if (published && storedShape(published.definition) === templateShape) {
+    console.log(`Demo form version ${published.versionNumber} is already current.`);
+  } else {
+    // Save the template as the draft (a new draft beside any live version),
+    // prove it with a test submission, then publish it: the staff workflow.
+    const editable = current.versions.find((version) => version.status === RegistrationFormStatus.DRAFT)
+      ?? current.versions[0];
+    if (!editable) throw new Error("The demo registration form has no version to refresh.");
+    const saved = await forms.updateRegistrationForm(eventId, form.id, actorUserId, {
+      definition,
+      expectedUpdatedAt: editable.updatedAt,
+    });
+    const draft = saved.versions.find((version) => version.status === RegistrationFormStatus.DRAFT);
+    if (!draft) throw new Error("Saving the demo draft did not produce a draft version.");
+    const test = await forms.createTestSubmission(eventId, form.id, actorUserId, {
+      versionId: draft.id,
+      responses: registrationResponses,
+      attendees,
+    });
+    if (!test.isValid) {
+      const issues = (test.validation.issues as Array<{ message: string }>)
+        .map((issue) => `- ${issue.message}`)
+        .join("\n");
+      throw new Error(`The Women’s Retreat template is not publishable:\n${issues}`);
+    }
+    const result = await forms.publishRegistrationForm(eventId, form.id, actorUserId);
+    const live = result.versions.find((version) => version.status === RegistrationFormStatus.PUBLISHED);
+    console.log(`Published ${event.name} demo form version ${live?.versionNumber ?? draft.versionNumber}.`);
+  }
+
+  console.log("Public URL: http://localhost:3000/events/womens-retreat-2026");
   console.log("Fictitious promo code: LOCAL10 (10% off, $50 maximum, at least 25 uses remaining)");
 }
 
 main()
-  .then(async () => prisma.$disconnect())
+  .then(async () => {
+    const { getPrisma } = await import("../lib/prisma");
+    await getPrisma().$disconnect();
+  })
   .catch(async (error) => {
     console.error(error);
-    await prisma.$disconnect();
     process.exit(1);
   });

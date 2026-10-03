@@ -41,6 +41,8 @@ import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadEnvConfig } from "@next/env";
+import { assertLocalDatabase } from "./support/local-only-guard";
+import { fillBlankSyntheticEnv } from "./support/synthetic-env";
 import { PrismaClient } from "@prisma/client";
 import { clubComplianceState, matchableName, parseRosterBackgroundCsv, parseSterlingCsv, rosterRowToListRow, sterlingRowToListRow } from "../modules/background-checks/domain";
 import { describeIssues } from "../modules/background-checks/issues";
@@ -48,6 +50,8 @@ import { clubYearChoices, clubYearFor } from "../modules/club-rosters/domain";
 import { calendarDateInEventTimeZone } from "../modules/events/lifecycle";
 
 loadEnvConfig(process.cwd());
+// Local-only, before any Prisma client or connection exists.
+assertLocalDatabase(process.env, "run this verification");
 
 const BEFORE_527 = "20260928200000";
 const MIGRATION_527 = "20260928240000_background_check_list";
@@ -207,7 +211,8 @@ async function main() {
   }
   deployWorkDirMigrations();
   process.env.DATABASE_URL = scratchUrl;
-  process.env.SECRET_ENCRYPTION_KEY ??= "bgverify-synthetic-secret-encryption-key-0000";
+  // Deliberate, process-only synthetic key: an unset, empty or blank value is filled, never left empty.
+  fillBlankSyntheticEnv("SECRET_ENCRYPTION_KEY", "bgverify-synthetic-secret-encryption-key-0000");
   const repository = await import("../modules/background-checks/repository");
   const { createRegistration, updateRegistrationAttendeeEmail } = await import("../modules/registrations/repository");
   const { getPrisma } = await import("../lib/prisma");

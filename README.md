@@ -201,7 +201,7 @@ npm run verify
 
 `npm run verify` runs lint, generated route types plus TypeScript, unit tests, and the production build. CI additionally starts PostgreSQL, applies the migration, and seeds a clean database before verification.
 
-With PostgreSQL and the development server running, the live concurrency/integration checks are:
+With PostgreSQL and the app running (`npm run dev`, or a build started with `npm run start` and its production settings), the live concurrency/integration checks are:
 
 ```bash
 npm run test:public-capacity
@@ -209,6 +209,8 @@ npm run test:public-access
 npm run test:public-messaging
 npm run test:public-roster
 ```
+
+Each one creates its own throwaway event with dates relative to today, so none depends on a seeded event's deadlines. CI runs all four against the built app, plus `npm run test:eadventist-import`, which migrates and drops its own scratch database and so never touches your development data. The real-browser name-badge check, `npm run test:badge-print`, runs in its own optional CI job; see `docs/BADGE-PRINT-CHECK.md`.
 
 ## Database commands
 
@@ -218,7 +220,7 @@ npm run test:public-roster
 | `npm run db:migrate -- --name <name>` | Create and apply a development migration. |
 | `npm run db:deploy` | Apply committed migrations without creating new ones. |
 | `npm run db:seed` | Upsert fictitious `.test` foundation data. |
-| `npm run db:refresh-demo` | Publish the current Women’s Retreat template only in the seeded localhost database. |
+| `npm run db:refresh-demo` | Publish the current Women’s Retreat template only in the seeded localhost database, through the same save, test and publish workflow staff use. Replaces an out-of-date local draft with the template, and is safe to run repeatedly: when the published form already matches it, the form is left as is (the `LOCAL10` promo code is re-upserted each time). |
 | `npm run db:studio` | Open Prisma Studio against the configured database. |
 
 Never place real attendee exports, medical details, production identifiers, or credentials in migrations, seeds, tests, issues, screenshots, or commits.
