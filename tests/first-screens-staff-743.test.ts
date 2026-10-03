@@ -47,6 +47,7 @@ import OverviewPage from "@/app/(workspace)/overview/page";
 import { ActionsMenu } from "@/components/actions-menu";
 import { BuilderDeviceHint } from "@/components/builder-device-hint";
 import { CheckInWorkspace } from "@/components/check-in-workspace";
+import { projectCheckInArrivals } from "@/modules/checkin/arrival-view";
 import { filterTasks, taskNameMatches } from "@/components/event-modules-page-model";
 import { MoreTaskSearch } from "@/components/more-task-search";
 import { PeopleWorkspace } from "@/components/people-workspace";
@@ -83,9 +84,8 @@ describe("Check-in opens on Search and Scan", () => {
   const html = renderToStaticMarkup(createElement(CheckInWorkspace, {
     eventName: "Synthetic Event",
     eventId: "event-1",
-    initialRegistrations: [registration(1), registration(2)],
+    initialArrivals: projectCheckInArrivals([registration(1), registration(2)], { showBalances: false }),
     canCheckIn: true,
-    showBalances: false,
   }));
 
   it("puts the scan and search tools before the heading, the status line and the roster", () => {

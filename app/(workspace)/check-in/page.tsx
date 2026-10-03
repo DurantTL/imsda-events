@@ -8,6 +8,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { findDefaultCheckInEventId } from "@/modules/checkin/default-event";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
 import { resolveEventContext } from "@/modules/events/selection";
+import { projectCheckInArrivals } from "@/modules/checkin/arrival-view";
 import { listRegistrations } from "@/modules/registrations/repository";
 import { backgroundFlaggedAttendeeIds } from "@/modules/background-checks/repository";
 import { listClubCheckInInfo } from "@/modules/club-registrations/repository";
@@ -49,8 +50,11 @@ export default async function CheckInPage({ searchParams }: { searchParams: Prom
     backgroundFlaggedAttendeeIds(event.id),
     listClubCheckInInfo(event.id, { locationId }),
   ]);
+  // #757: the client gets a projection of what the desk renders, never the full
+  // registration records (which carry every form answer).
+  const arrivals = projectCheckInArrivals(registrations, { showBalances: event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE" });
   return <>
     <LocationFilter basePath="/check-in" locations={locations} params={{ event: event.id }} selectedId={locationId} />
-    <CheckInWorkspace key={event.id} eventName={event.name} eventId={event.id} initialRegistrations={registrations} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} showBalances={event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE"} backgroundFlaggedAttendeeIds={[...flagged]} clubs={clubs} />
+    <CheckInWorkspace key={event.id} eventName={event.name} eventId={event.id} initialArrivals={arrivals} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} backgroundFlaggedAttendeeIds={[...flagged]} clubs={clubs} />
   </>;
 }

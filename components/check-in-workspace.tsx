@@ -39,8 +39,7 @@ import {
   type SequentialCheckInStatus,
 } from "@/modules/checkin/bulk-check-in";
 import { arrivalMatchesSearch, offlineCheckInErrorMessage } from "@/modules/checkin/domain";
-import type { RegistrationRecord } from "@/modules/registrations/repository";
-import { attendeeBalanceCents } from "@/modules/registrations/finance-view";
+import type { CheckInArrival } from "@/modules/checkin/arrival-view";
 import type { ClubCheckInInfo } from "@/modules/club-registrations/repository";
 
 /** Arrivals rendered per page; search always runs across the whole roster (#702). */
@@ -49,54 +48,35 @@ export const ARRIVALS_PAGE_SIZE = 50;
 /** The tally label for people not yet checked in; matches the row status text. */
 export const AWAITING_ARRIVAL_LABEL = "Awaiting arrival";
 
-type Arrival = RegistrationRecord["attendees"][number] & {
-  confirmationCode: string;
-  email: string;
-  balanceCents: number;
-  partySize: number;
-};
+type Arrival = CheckInArrival;
 
 export function CheckInWorkspace({
   eventName,
   eventId,
-  initialRegistrations,
+  initialArrivals,
   canCheckIn,
-  showBalances,
   backgroundFlaggedAttendeeIds = [],
   clubs = [],
 }: {
   eventName: string;
   eventId: string;
-  initialRegistrations: RegistrationRecord[];
+  /** Server-projected arrivals (#757): only what this screen renders, never form answers. Balances are already 0 for events billed to an organization. */
+  initialArrivals: CheckInArrival[];
   canCheckIn: boolean;
-  /** False for events billed to an organization: attendees owe nothing at the door. */
-  showBalances: boolean;
   /** Adults at a youth or children's event without a current check (#388). Shown, never blocking. */
   backgroundFlaggedAttendeeIds?: string[];
   /** Active club registrations for this event (#412): who to check in as a group, and what their church owes. */
   clubs?: ClubCheckInInfo[];
 }) {
-  const [arrivals, setArrivals] = useState<Arrival[]>(
-    initialRegistrations.flatMap((registration) => (
-      registration.attendees.map((attendee) => ({
-        ...attendee,
-        confirmationCode: registration.confirmationCode,
-        email: registration.accountHolder.email,
-        balanceCents: showBalances ? attendeeBalanceCents(registration) : 0,
-        partySize: registration.attendees.length,
-      }))
-    )),
-  );
+  const [arrivals, setArrivals] = useState<Arrival[]>(initialArrivals);
   const paymentDueByConfirmationCode = useMemo(() => Object.fromEntries(
-    showBalances
-      ? initialRegistrations
-        .filter((registration) => attendeeBalanceCents(registration) > 0)
-        .map((registration) => [registration.confirmationCode, {
-          balanceCents: attendeeBalanceCents(registration),
-          partySize: registration.attendees.length,
-        }])
-      : [],
-  ), [initialRegistrations, showBalances]);
+    initialArrivals
+      .filter((arrival) => arrival.balanceCents > 0)
+      .map((arrival) => [arrival.confirmationCode, {
+        balanceCents: arrival.balanceCents,
+        partySize: arrival.partySize,
+      }]),
+  ), [initialArrivals]);
   const owingCount = Object.keys(paymentDueByConfirmationCode).length;
   const [query, setQueryText] = useState("");
   const [rosterPage, setRosterPageState] = useState(1);
