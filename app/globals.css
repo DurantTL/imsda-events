@@ -9595,16 +9595,16 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
     position: sticky;
     bottom: 0;
     z-index: 1;
+    /* Opaque so items scroll out of sight beneath it. The same gradient as the
+       sidebar, fixed to the viewport (the sidebar is full height), so it blends in. */
     background-color: var(--imsda-navy-deep);
-    /* A soft edge so items scrolling beneath it fade out instead of colliding. */
-    box-shadow: 0 -12px 10px -4px var(--imsda-navy-deep);
-    /* The scroll box clips an outside focus ring at its bottom edge, so draw it inside. */
-    outline-offset: -3px;
+    background-image: linear-gradient(180deg, var(--imsda-navy) 0%, var(--imsda-navy-deep) 100%);
+    background-attachment: fixed;
   }
-  /* The active tint is layered over the solid fill, so the item stays opaque. */
+  /* The active tint is layered over that fill, so the item stays opaque. */
   .primary-nav > .nav-item.active[aria-haspopup="dialog"]:last-child {
-    background-image: linear-gradient(rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.13));
-    box-shadow: inset 3px 0 var(--imsda-gold), 0 -12px 10px -4px var(--imsda-navy-deep);
+    background-image: linear-gradient(rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.13)), linear-gradient(180deg, var(--imsda-navy) 0%, var(--imsda-navy-deep) 100%);
+    background-attachment: scroll, fixed;
   }
 }
 

@@ -233,4 +233,18 @@ describe("check-in desk location (#413)", () => {
     expect(filter.props.selectedId).toBe("loc_b");
     expect(workspace.props.locationName).toBe("Old Campus (inactive)");
   });
+
+  it("keys the workspace on event and location, so a soft navigation between locations resets its arrivals", async () => {
+    const locations = [{ id: "loc_a", name: "Sunnydale Academy", isActive: true }];
+    dependencies.listEventsForUser.mockResolvedValue([event("event_a")]);
+    dependencies.findActiveMembership.mockResolvedValue({ eventId: "event_a", userId: "user_one", role: "CHECK_IN_STAFF", status: "ACTIVE", permissions: ["MANAGE_CHECK_IN"] });
+    const keyFor = async (locationId: string | null) => {
+      vi.mocked(resolveLocationFilter).mockResolvedValueOnce({ locations, locationId, selected: locationId ? locations[0] : null });
+      const element = await CheckInPage({ searchParams: Promise.resolve({ event: "event_a", location: locationId ?? undefined }) });
+      return (element as { props: { children: Array<{ key: string | null }> } }).props.children[1].key;
+    };
+    const [all, filtered] = [await keyFor(null), await keyFor("loc_a")];
+    expect(all).toBe("event_a:all");
+    expect(filtered).toBe("event_a:loc_a");
+  });
 });

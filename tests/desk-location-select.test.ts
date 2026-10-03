@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
-import { DeskLocationSelect, deskLocationHref, deskLocationLabel } from "@/components/desk-location-select";
+import { DeskLocationSelect, deskLocationHref, deskLocationLabel, isSelectStepKey } from "@/components/desk-location-select";
 
 /** Check-in desk location control (#413). Synthetic names and ids only. */
 const locations = [
@@ -47,5 +47,10 @@ describe("desk location select", () => {
 
   it("renders nothing for an event with no locations", () => {
     expect(render(null, [])).toBe("");
+  });
+
+  it("treats arrow, paging and letter keys as steps that do not navigate, but not Enter", () => {
+    for (const key of ["ArrowDown", "ArrowUp", "Home", "End", "PageUp", "PageDown", "s"]) expect(isSelectStepKey(key)).toBe(true);
+    for (const key of ["Enter", "Tab", "Escape"]) expect(isSelectStepKey(key)).toBe(false);
   });
 });

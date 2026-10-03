@@ -21,6 +21,15 @@ export function deskLocationHref(basePath: string, params: Record<string, string
   return text ? `${basePath}?${text}` : basePath;
 }
 
+/**
+ * Keys that change a closed select's value one step at a time (arrows, Home,
+ * End, paging, type-ahead letters). Each fires `change`, so they must not
+ * navigate; Enter or Apply does.
+ */
+export function isSelectStepKey(key: string) {
+  return ["ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(key) || (key.length === 1 && key !== " ");
+}
+
 /** A location's name, with inactive ones marked the way LocationFilter marks them. */
 export function deskLocationLabel(location: DeskLocation) {
   return `${location.name}${location.isActive === false ? " (inactive)" : ""}`;
@@ -49,6 +58,7 @@ export function DeskLocationSelect({
   // False on the server and during hydration, true once scripts run.
   const enhanced = useSyncExternalStore(subscribeNever, () => true, () => false);
   const selectRef = useRef<HTMLSelectElement>(null);
+  const steppedByKeyboard = useRef(false);
   if (locations.length === 0) return null;
   const hidden = Object.entries(params).filter(([key, value]) => value && key !== "location") as Array<[string, string]>;
   return (
@@ -70,8 +80,22 @@ export function DeskLocationSelect({
       <select
         defaultValue={selectedId ?? ""}
         id="desk-location-select"
+        key={selectedId ?? "all"}
         name="location"
-        onChange={() => { if (enhanced) selectRef.current?.form?.requestSubmit(); }}
+        onChange={() => {
+          // Pointer and picker choices navigate at once; keyboard steps wait for Enter or Apply.
+          const keyboard = steppedByKeyboard.current;
+          steppedByKeyboard.current = false;
+          if (enhanced && !keyboard) selectRef.current?.form?.requestSubmit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            steppedByKeyboard.current = false;
+            selectRef.current?.form?.requestSubmit();
+          } else steppedByKeyboard.current = isSelectStepKey(event.key);
+        }}
+        onPointerDown={() => { steppedByKeyboard.current = false; }}
         ref={selectRef}
       >
         <option value="">All locations</option>

@@ -55,6 +55,6 @@ export default async function CheckInPage({ searchParams }: { searchParams: Prom
   const arrivals = projectCheckInArrivals(registrations, { showBalances: event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE" });
   return <>
     <DeskLocationSelect basePath="/check-in" locations={locations} params={{ event: event.id }} selectedId={locationId} />
-    <CheckInWorkspace key={event.id} locationName={selected ? deskLocationLabel(selected) : undefined} eventName={event.name} eventId={event.id} initialArrivals={arrivals} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} backgroundFlaggedAttendeeIds={[...flagged]} clubs={clubs} />
+    <CheckInWorkspace key={`${event.id}:${locationId ?? "all"}`} locationName={selected ? deskLocationLabel(selected) : undefined} eventName={event.name} eventId={event.id} initialArrivals={arrivals} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} backgroundFlaggedAttendeeIds={[...flagged]} clubs={clubs} />
   </>;
 }
