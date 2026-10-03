@@ -1,5 +1,6 @@
 "use client";
 
+import { ageInputAttributes } from "@/modules/attendee-types/age-limits";
 import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Pencil, Trash2, UserPlus, X } from "lucide-react";
@@ -243,7 +244,7 @@ export function GroupRegistrationEditor({ token, workspace }: { token: string; w
           <div className="form-grid two-column">
             <label>First name<input autoComplete="off" maxLength={80} name="firstName" required /></label>
             <label>Last name<input autoComplete="off" maxLength={80} name="lastName" required /></label>
-            <label>Age on the first day of the event<input inputMode="numeric" max={120} min={0} name="age" required type="number" /></label>
+            <label>Age on the first day of the event<input {...ageInputAttributes} name="age" required type="number" /></label>
           </div>
           <div className="club-registration-toolbar">
             <button className="secondary-button" onClick={() => { setError(""); setAdding(false); }} type="button">Cancel</button>

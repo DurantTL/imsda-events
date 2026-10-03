@@ -5,10 +5,11 @@ import { formatPerPersonAmount, registrationLineText, type PerPersonPrice } from
  * event (#621). Attendee lines appear only when attendees' prices differ,
  * registration-level lines are listed on their own, and nothing is summed.
  */
-export function PerPersonPriceNotice({ price, className }: { price: PerPersonPrice; className?: string }) {
+export function PerPersonPriceNotice({ price, className, showNotice = true }: { price: PerPersonPrice; className?: string; showNotice?: boolean }) {
+  if (!showNotice && price.attendeeLines.length === 0 && price.registrationLines.length === 0) return null;
   return (
     <div className={className} data-testid="per-person-price">
-      <p><strong translate="no">{price.notice}</strong></p>
+      {showNotice && <p><strong translate="no">{price.notice}</strong></p>}
       {(price.attendeeLines.length > 0 || price.registrationLines.length > 0) && (
         <ul>
           {price.attendeeLines.map((line, index) => (

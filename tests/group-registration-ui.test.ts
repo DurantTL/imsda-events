@@ -81,7 +81,8 @@ describe("the group's registration form (#650)", () => {
 
   it("keeps a church-billed club registrant's per-person price, with no total", () => {
     const markup = render(undefined);
-    expect(markup).toContain("Your church is billed after the event.");
+    expect(markup).toContain("$25 per person.");
+    expect(markup).toContain("your church will be invoiced after the event based on confirmed attendance.");
     expect(markup).not.toContain("Estimated total");
   });
 

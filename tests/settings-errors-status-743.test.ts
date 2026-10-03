@@ -516,9 +516,16 @@ describe("status clarity (#743)", () => {
 });
 
 describe("the #743 settings/errors/status CSS block", () => {
-  it("is one commented block at the end of the file with balanced braces", () => {
+  it("is one commented block, followed only by the radio-card block, with balanced braces", () => {
+    // #761 appended its radio-card block after this one; this block is still a single, commented block.
+    const radioMarker = "/* Issue 743: radio cards for short choice lists";
     expect(css.split(marker)).toHaveLength(2);
+    expect(css.split(radioMarker)).toHaveLength(2);
     expect(css.lastIndexOf("/* ====")).toBeLessThan(css.indexOf(marker));
+    expect(css.indexOf(radioMarker)).toBeGreaterThan(css.indexOf(marker));
+    expect(block).toContain(".field-error-message");
+    expect(block).toContain(".form-error-summary");
+    expect(block).toContain(".sort-order-note");
     const stripped = block.replace(/\/\*[\s\S]*?\*\//g, "");
     let depth = 0;
     for (const char of stripped) {

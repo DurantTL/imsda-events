@@ -1,5 +1,6 @@
 "use client";
 
+import { ageInputAttributes } from "@/modules/attendee-types/age-limits";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -528,7 +529,7 @@ export function ClubRegistrationWorkspace({
             <div className="form-grid two-column">
               <label>First name<input autoComplete="off" maxLength={80} name="firstName" required /></label>
               <label>Last name<input autoComplete="off" maxLength={80} name="lastName" required /></label>
-              <label>Age at the event<input inputMode="numeric" max={120} min={0} name="age" required type="number" /></label>
+              <label>Age at the event<input {...ageInputAttributes} name="age" required type="number" /></label>
               <label>
                 Email (optional)
                 <input autoComplete="off" maxLength={254} name="email" type="email" />

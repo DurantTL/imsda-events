@@ -1,5 +1,6 @@
 "use client";
 
+import { ageInputAttributes } from "@/modules/attendee-types/age-limits";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ArrowRight, Check, Pencil, Trash2, UserPlus, X } from "lucide-react";
@@ -450,7 +451,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
             <div className="form-grid two-column">
               <label>First name<input autoComplete="off" maxLength={80} name="firstName" required /></label>
               <label>Last name<input autoComplete="off" maxLength={80} name="lastName" required /></label>
-              <label>Age at the event<input inputMode="numeric" max={120} min={0} name="age" required type="number" /></label>
+              <label>Age at the event<input {...ageInputAttributes} name="age" required type="number" /></label>
               <label>Email (optional)<input autoComplete="off" maxLength={254} name="email" type="email" /></label>
             </div>
             <div className="club-registration-toolbar">
