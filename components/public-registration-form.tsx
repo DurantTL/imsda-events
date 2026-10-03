@@ -69,6 +69,7 @@ import {
   attendeeRoleLabel,
   isAttendeeCardComplete,
   issueAttendeeIndex,
+  namedIssueMessage,
   startsCollapsed,
 } from "@/modules/forms/roster-cards";
 import { summarizeRosterAttendees } from "@/modules/forms/roster-summary";
@@ -1153,16 +1154,30 @@ export function PublicRegistrationForm({
 
   // An error-summary link into a card the director collapsed again opens that
   // card first, then moves to the control once it has rendered (#483).
+  // Always handled here (#738) so focus doesn't depend on hash navigation.
   function followIssueLink(clickEvent: ReactMouseEvent<HTMLAnchorElement>, issue: FormIssue, targetId: string) {
-    const attendee = attendeeForIssue(issue);
-    if (!attendee || !collapsedAttendeeIds.has(attendee.clientId)) return;
     clickEvent.preventDefault();
-    expandAttendeeCardsFor([issue]);
+    const attendee = attendeeForIssue(issue);
+    if (attendee && collapsedAttendeeIds.has(attendee.clientId)) expandAttendeeCardsFor([issue]);
     window.requestAnimationFrame(() => {
       const target = document.getElementById(targetId);
       target?.scrollIntoView({ block: "center" });
       target?.focus();
     });
+  }
+
+  // The summary names whose field a message is about (#738).
+  function issueSummaryMessage(issue: FormIssue) {
+    if (!rosterEnabled) return issue.message;
+    const field = allFields.find((candidate) => (
+      candidate.id === issue.fieldId || candidate.key === issue.key
+    ));
+    return namedIssueMessage(
+      issue.message,
+      issueAttendeeIndex(issue, field?.scope ?? null),
+      attendees.map((attendee, index) => attendeeName(attendee, index, roster.attendeeLabel)),
+      roster.attendeeLabel,
+    );
   }
 
   function toggleAttendeeCollapse(clientId: string) {
@@ -2839,7 +2854,7 @@ export function PublicRegistrationForm({
               {issues.length > 0 && (
                 <ul>{issues.map((issue, index) => {
                   const targetId = issueTargetId(issue);
-                  return <li key={`${issue.path ?? issue.key}_${index}`}>{targetId ? <a href={`#${targetId}`} onClick={(clickEvent) => followIssueLink(clickEvent, issue, targetId)}>{issue.message}</a> : issue.message}</li>;
+                  return <li key={`${issue.path ?? issue.key}_${index}`}>{targetId ? <a href={`#${targetId}`} onClick={(clickEvent) => followIssueLink(clickEvent, issue, targetId)}>{issueSummaryMessage(issue)}</a> : issueSummaryMessage(issue)}</li>;
                 })}</ul>
               )}
             </div>

@@ -5,15 +5,25 @@ import { redirect } from "next/navigation";
 import { ActAsButton } from "@/components/act-as-button";
 import { AttendeeAccountsWorkspace } from "@/components/attendee-accounts-workspace";
 import { getCurrentSession } from "@/modules/access/current-session";
-import { listAttendeeAccounts } from "@/modules/system-admin/user-admin";
+import { parseAccountSort } from "@/modules/system-admin/account-sort";
+import { listAttendeeAccountsWithCap } from "@/modules/system-admin/user-admin";
 
 export const metadata: Metadata = { title: "Accounts" };
 export const dynamic = "force-dynamic";
 
-export default async function AttendeeAccountsPage() {
+export default async function AttendeeAccountsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; sort?: string; dir?: string }>;
+}) {
   const { user } = await getCurrentSession();
   if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
+  // Search and sort live in the URL (#738) so a reload or shared link keeps them.
+  const params = await searchParams;
+  const initialQuery = typeof params.q === "string" ? params.q.slice(0, 120) : "";
+  const initialSort = parseAccountSort(params.sort, params.dir);
+  const initial = await listAttendeeAccountsWithCap(initialQuery, initialSort);
   return (
     <>
       <div className="intro-actions club-admin-links">
@@ -26,7 +36,12 @@ export default async function AttendeeAccountsPage() {
           role="Area Coordinator"
         />
       </div>
-      <AttendeeAccountsWorkspace initialAccounts={await listAttendeeAccounts("")} />
+      <AttendeeAccountsWorkspace
+        initialAccounts={initial.accounts}
+        initialCapped={initial.capped}
+        initialQuery={initialQuery}
+        initialSort={initialSort}
+      />
     </>
   );
 }
