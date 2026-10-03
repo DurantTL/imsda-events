@@ -9218,3 +9218,7 @@ button[aria-busy="true"] { cursor: progress; }
 /* Bulk and scope previews inside a confirmation. */
 .confirm-scope { margin: 10px 0 0; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); padding: 10px 12px; font-size: max(var(--type-body-floor, 0px), 0.85rem); line-height: 1.5; }
 .confirm-scope strong { color: var(--ink); }
+
+/* Issue 743: the "Show as a filter" and "Sensitive" checkboxes in the form builder field settings. */
+.field-visibility-flags { display: grid; gap: 4px; }
+.field-visibility-flags small { color: var(--muted, inherit); }

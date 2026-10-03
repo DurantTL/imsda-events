@@ -42,6 +42,7 @@ import {
   planModuleInsert,
   type BuilderModuleDefinition,
 } from "@/modules/forms/builder-modules";
+import { hasOfferedChoices, resolveFieldFlags, resolveFieldOffer, sectionTitleLookup, withExplicitSensitiveFlags } from "@/modules/forms/field-flags";
 import { defaultTypeForNewChoiceField, singleChoiceTypeHint } from "@/modules/forms/choice-defaults";
 import { creditPatchForKindChange, creditSummary, hasCredit, removeCreditPatch } from "@/modules/forms/credit-fields";
 import { getPublicRegistrationStepPlan, isPublicReviewSection, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
@@ -361,7 +362,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
     try {
       const response = await fetch(`/api/events/${eventId}/forms/${selectedForm.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ definition, expectedUpdatedAt: selectedVersion.updatedAt }),
+        body: JSON.stringify({ definition: withExplicitSensitiveFlags(definition), expectedUpdatedAt: selectedVersion.updatedAt }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.message ?? "Unable to save this draft.");
@@ -1016,6 +1017,21 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
                   });
                 }}>{formFieldScopes.map((scope) => <option key={scope} value={scope}>{scope === "ATTENDEE" ? "Each attendee" : "Registration"}</option>)}</select></label>
                 <label className="required-toggle"><input disabled={!canEdit || field.type === "CALCULATED" || field.optionSource === "ATTENDEE_TYPES"} type="checkbox" checked={field.optionSource === "ATTENDEE_TYPES" ? true : field.required} onChange={(event) => updateField(sectionIndex, fieldIndex, { required: event.target.checked, optionalWhen: event.target.checked ? field.optionalWhen : undefined })} /> Required{field.optionSource === "ATTENDEE_TYPES" && <small> — the attendee-type selector is always required</small>}</label>
+                <div className="field-full field-visibility-flags" data-testid={`field-flags-${field.key}`}>
+                  {(() => {
+                    const paymentKey = definition.payment?.paymentMethodFieldKey;
+                    // The same helper the answer filter uses, so the box shows what the filter will do.
+                    const offer = resolveFieldOffer(field, { allFields, sectionTitleOf: sectionTitleLookup(definition.sections), paymentMethodFieldKey: paymentKey });
+                    const linkedToSensitive = offer.linkedToSensitive && !resolveFieldFlags(field, { sectionTitle: section.title, paymentMethodFieldKey: paymentKey }).sensitive;
+                    const canFilter = hasOfferedChoices(field) && field.key !== paymentKey;
+                    return <>
+                      {canFilter && <label className="required-toggle"><input disabled={!canEdit} type="checkbox" checked={offer.filterable} onChange={(event) => updateField(sectionIndex, fieldIndex, { filterable: event.target.checked })} /> Show as a filter</label>}
+                      {canFilter && <small>Staff can find people by this answer on People &amp; registrations.</small>}
+                      <label className="required-toggle"><input disabled={!canEdit || linkedToSensitive} type="checkbox" checked={offer.sensitive} onChange={(event) => updateField(sectionIndex, fieldIndex, { sensitive: event.target.checked })} /> Sensitive</label>
+                      <small>{linkedToSensitive ? "Treated as sensitive because it is shown by, or controls, a sensitive question." : "Hidden from the check-in book, badges and reports; only staff with sensitive-data access can filter on it. Health, allergy and insurance questions start checked."}</small>
+                    </>;
+                  })()}
+                </div>
                 {(field.type === "SELECT" || field.type === "RADIO") && field.scope === "ATTENDEE" && <label className="required-toggle"><input disabled={!canEdit || (!field.optionSource && allFields.some((candidate) => candidate.optionSource === "ATTENDEE_TYPES"))} type="checkbox" checked={field.optionSource === "ATTENDEE_TYPES"} onChange={(event) => updateField(sectionIndex, fieldIndex, { optionSource: event.target.checked ? "ATTENDEE_TYPES" : undefined, optionLabels: event.target.checked ? field.optionLabels : undefined, required: event.target.checked ? true : field.required, availabilityMode: event.target.checked ? "NONE" : field.availabilityMode, choiceLimits: event.target.checked ? undefined : field.choiceLimits, choicePricesCents: event.target.checked ? undefined : field.choicePricesCents, latePricing: event.target.checked ? undefined : field.latePricing })} /> Source attendee types from event configuration</label>}
                 {(field.type === "SELECT" || field.type === "RADIO") && field.scope === "REGISTRATION" && (["CLUBS_DIRECTORY", "CHURCHES_DIRECTORY", "SCHOOLS_DIRECTORY"] as const).map((source) => (
                   <label className="required-toggle" key={source}>

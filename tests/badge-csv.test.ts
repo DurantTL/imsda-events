@@ -276,13 +276,13 @@ describe("badge CSV option labels, form names and mixed form versions", () => {
         conditional: { fieldKey: "medical_question", operator: "EQUALS", value: "Option A" },
       }),
     )],
-  ])("leaves Position blank for a registration whose form version makes the key %s", (_name, otherDefinition) => {
+  ])("leaves Position blank for every registration when any form version makes the key %s (#743)", (_name, otherDefinition) => {
     const rows = buildBadgeCsvRows([
       registration("REG-AAAA1111", [{ id: "m1", first: "Amy", last: "Adams", responses: { church_role: "Greeter" } }]),
       registration("REG-BBBB2222", [{ id: "m2", first: "Bo", last: "Brown", responses: { church_role: "Secret" } }], {}, otherDefinition),
     ], "church_role");
     expect(rows.slice(1)).toEqual([
-      ["REG-AAAA1111", "Amy Adams", "Greeter", "Adult"],
+      ["REG-AAAA1111", "Amy Adams", "", "Adult"],
       ["REG-BBBB2222", "Bo Brown", "", "Adult"],
     ]);
   });

@@ -20,6 +20,7 @@ export const SENSITIVE_FIELD_STEMS: readonly string[] = [
   "custody", "emergency", "background", "ssn", "social\\s*security",
   "injur", "surg", "ill(?:ness)?\\b", "sick", "symptom", "treatment", "anxi", "depress", "adhd", "autis",
   "hearing", "vision", "impair", "lactose", "nut\\s*free", "care\\s*plan",
+  "celiac", "intoleran",
 ];
 
 export function sensitiveFieldPattern(extraStems: readonly string[] = []) {

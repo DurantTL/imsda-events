@@ -6,6 +6,7 @@ import { attendeeAgeKey } from "@/modules/club-registrations/domain";
 import { withLocationColumn, type ClubEventRecord } from "@/modules/reporting/club-event-reports";
 import { isSensitiveField, sensitiveFieldPattern } from "@/modules/forms/sensitive-fields";
 import { isLinkedToBlockedField } from "@/modules/forms/field-dependency-walk";
+import { isFieldSensitive, sectionTitleLookup } from "@/modules/forms/field-flags";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -56,8 +57,9 @@ const checkInSensitivePattern = sensitiveFieldPattern([
   "meal", "food", "kosher", "halal", "\\bsex\\b", "gender", "\\bminor", "under\\s*18", "\\bage\\b",
 ]);
 
-function isBlockedByItself(field: RegistrationFormField) {
-  return blockedKeys.has(field.key) || isSensitiveField(field, checkInSensitivePattern);
+function isBlockedByItself(field: RegistrationFormField, sectionTitle = "") {
+  // The staff "Sensitive" flag (#743), explicit or defaulted for health-type fields, also rules a field out.
+  return blockedKeys.has(field.key) || isSensitiveField(field, checkInSensitivePattern) || isFieldSensitive(field, { sectionTitle });
 }
 
 /**
@@ -68,12 +70,13 @@ function isBlockedByItself(field: RegistrationFormField) {
 export function isCheckInBookExtraField(
   field: RegistrationFormField,
   allFields: readonly RegistrationFormField[] = [],
-  options: { scopes?: readonly string[]; types?: ReadonlySet<string> } = {},
+  options: { scopes?: readonly string[]; types?: ReadonlySet<string>; sectionTitleOf?: (field: RegistrationFormField) => string } = {},
 ) {
   const scopes = options.scopes ?? ["ATTENDEE"];
   if (!scopes.includes(field.scope) || !(options.types ?? extraColumnFieldTypes).has(field.type)) return false;
-  if (displayedKeys.has(field.key) || isBlockedByItself(field)) return false;
-  return !isLinkedToBlockedField(field, allFields, isBlockedByItself);
+  const titleOf = options.sectionTitleOf ?? (() => "");
+  if (displayedKeys.has(field.key) || isBlockedByItself(field, titleOf(field))) return false;
+  return !isLinkedToBlockedField(field, allFields, (other) => isBlockedByItself(other, titleOf(other)));
 }
 
 export type CheckInBookExtraOption = { key: string; label: string };
@@ -104,9 +107,10 @@ function eligibleExtraFields(registrations: CheckInBookRegistration[]) {
     const parsed = registrationFormDefinitionSchema.safeParse(raw);
     if (!parsed.success) continue;
     const allFields = parsed.data.sections.flatMap((section) => section.fields);
+    const sectionTitleOf = sectionTitleLookup(parsed.data.sections);
     for (const field of allFields) {
       // A key that is ineligible in any form version stays out for all of them.
-      if (!isCheckInBookExtraField(field, allFields)) {
+      if (!isCheckInBookExtraField(field, allFields, { sectionTitleOf })) {
         banned.add(field.key);
         continue;
       }

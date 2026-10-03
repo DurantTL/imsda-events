@@ -88,4 +88,17 @@ describe("People page with a choice-answer filter", () => {
     dependencies.resolveEventContext.mockResolvedValue({ event, permissions: ["VIEW_SENSITIVE_DATA", "VIEW_REPORTS"] });
     expect(await render(query)).toContain("Export this list");
   });
+
+  it("with the staff viewer on a legacy form: offers the meal question, not is_minor or health questions", async () => {
+    dependencies.resolveEventContext.mockResolvedValue({ event: { id: "evt", slug: "wr", timezone: "UTC", waitlistEnabled: false }, permissions: ["VIEW_SENSITIVE_DATA"] });
+    const html = await render({ event: "evt" });
+    expect(html).toContain("Meal preference");
+    expect(html).not.toContain("Dietary needs");
+    const manCamp = formTemplates.find((template) => template.key === "man_camp_export")!.definition;
+    dependencies.listRegistrations.mockResolvedValue([{ ...registration("R9", "x"), publicSubmission: { definition: manCamp, responses: {}, attendeeResponses: [] } }]);
+    const manCampHtml = await render({ event: "evt", answerQuestion: "ATTENDEE:is_minor", answerValue: "Yes" });
+    expect(manCampHtml).not.toContain("Is this attendee under 18?");
+    const props = dependencies.workspaceProps.mock.calls.at(-1)![0] as { matchingPersonFilter: boolean };
+    expect(props.matchingPersonFilter).toBe(false);
+  });
 });
