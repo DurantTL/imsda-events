@@ -19,12 +19,21 @@ import {
   missingRosterFields,
   rosterSectionOf,
 } from "@/modules/club-rosters/domain";
+import {
+  GUARDIAN_SLOTS,
+  guardianFieldLabels,
+  guardianSlotValues,
+  validateGuardianForm,
+  type GuardianFormErrors,
+  type GuardianRecord,
+} from "@/modules/club-rosters/guardians-domain";
 import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
 import { honorSummaryByMemberId, type ClubHonorsRow, type CurrentMemberHonor } from "@/modules/honors/member-honor-domain";
 
 type RosterResponse = {
   members?: RosterMemberRecord[];
   birthDates?: Record<string, string>;
+  guardians?: Record<string, GuardianRecord[]>;
   nameKept?: boolean;
   message?: string;
   issues?: Array<{ message?: string }>;
@@ -59,6 +68,7 @@ export function ClubRosterWorkspace({
   headingActions,
   healthTab,
   healthRecordFlags,
+  guardians: initialGuardians,
 }: {
   /** Directors and deputies only; a registrar enters birth dates but sees ages (#375). */
   canSeeBirthDates: boolean;
@@ -95,6 +105,13 @@ export function ClubRosterWorkspace({
   healthTab?: Record<string, { status: "NONE" | "CURRENT" | "NEEDS_UPDATE"; hasHealthNote: boolean }>;
   /** A neutral "Has a health record" marker (#611): a record exists, nothing more. Ids only, never text. */
   healthRecordFlags?: Record<string, boolean>;
+  /**
+   * Guardian contacts per roster member id (#510). Present only for the club's
+   * director and deputy on the current year: it is what turns the guardian
+   * fields on in the add/edit popup. Omitted for every other role, so nothing
+   * about guardians is rendered or sent.
+   */
+  guardians?: Record<string, GuardianRecord[]>;
 }) {
   const [members, setMembers] = useState(initialMembers);
   const [honorSummaries, setHonorSummaries] = useState(initialHonorSummaries);
@@ -111,6 +128,9 @@ export function ClubRosterWorkspace({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [fieldErrors, setFieldErrors] = useState<RosterFormErrors>({});
+  const [guardianMap, setGuardianMap] = useState(initialGuardians);
+  const [guardianErrors, setGuardianErrors] = useState<GuardianFormErrors>({});
+  const canEditGuardians = initialGuardians !== undefined && !readOnly;
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/roster`;
   const closeDialog = useCallback(() => {
     setDialogOpen(false);
@@ -138,6 +158,7 @@ export function ClubRosterWorkspace({
     setNotice("");
     setError("");
     setFieldErrors({});
+    setGuardianErrors({});
     setDialogOpen(true);
   }
 
@@ -178,6 +199,7 @@ export function ClubRosterWorkspace({
         throw new Error(result.message ?? result.issues?.[0]?.message ?? "The roster could not be updated.");
       }
       if (result.members) setMembers(result.members);
+      if (result.guardians) setGuardianMap(result.guardians);
       if (success) setNotice(success);
       return result;
     } catch (caught) {
@@ -204,10 +226,26 @@ export function ClubRosterWorkspace({
       editing: Boolean(editing),
     });
     setFieldErrors(errors);
+    // Guardian contacts (#510): two slots, every field optional; only email and phone format are checked.
+    const guardianSlots = canEditGuardians
+      ? Array.from({ length: GUARDIAN_SLOTS }, (_, index) => ({
+        name: String(form.get(`g${index + 1}Name`) ?? "").trim(),
+        relationship: String(form.get(`g${index + 1}Relationship`) ?? "").trim(),
+        email: String(form.get(`g${index + 1}Email`) ?? "").trim(),
+        phone: String(form.get(`g${index + 1}Phone`) ?? "").trim(),
+      }))
+      : null;
+    const guardianProblems = guardianSlots ? validateGuardianForm(guardianSlots) : {};
+    setGuardianErrors(guardianProblems);
     const firstInvalid = rosterFormFieldOrder.find((field) => errors[field]);
     if (firstInvalid) {
       const target = firstInvalid === "birthDate" ? "birthDateText" : firstInvalid;
       (formElement.elements.namedItem(target) as HTMLElement | null)?.focus();
+      return;
+    }
+    const firstGuardianProblem = Object.keys(guardianProblems)[0];
+    if (firstGuardianProblem) {
+      (formElement.elements.namedItem(firstGuardianProblem) as HTMLElement | null)?.focus();
       return;
     }
     const details = {
@@ -217,6 +255,7 @@ export function ClubRosterWorkspace({
       role: String(form.get("role") ?? ""),
       classLevel: String(form.get("classLevel") ?? "") || null,
       gender: String(form.get("gender") ?? "") || null,
+      ...(guardianSlots ? { guardians: guardianSlots } : {}),
     };
     const result = editing
       ? await call(`${base}/${encodeURIComponent(editing.id)}`, "PATCH", {
@@ -559,6 +598,46 @@ export function ClubRosterWorkspace({
             {fieldErrors.gender && <span className="roster-field-error" id="roster-gender-error" role="alert">{fieldErrors.gender}</span>}
           </label>
         </div>
+        {canEditGuardians && (
+          <fieldset className="roster-guardians">
+            <legend>Guardians (optional)</legend>
+            <p className="field-help">
+              Up to two guardians. Your club&apos;s director and deputy, Area Coordinators and conference staff with
+              sensitive-data access can see them. They are erased when this person is removed from the roster.
+            </p>
+            {Array.from({ length: GUARDIAN_SLOTS }, (_, index) => {
+              const slot = index + 1;
+              const stored = guardianSlotValues(editing ? guardianMap?.[editing.id] : undefined)[index]!;
+              const emailError = guardianErrors[`g${slot as 1 | 2}Email`];
+              const phoneError = guardianErrors[`g${slot as 1 | 2}Phone`];
+              return (
+                <div className="roster-guardian-slot" key={slot} role="group" aria-label={`Guardian ${slot}`}>
+                  <h3>Guardian {slot}</h3>
+                  <div className="form-grid two-column">
+                    <label>
+                      {guardianFieldLabels.name}
+                      <input autoComplete="off" defaultValue={stored.name} maxLength={120} name={`g${slot}Name`} />
+                    </label>
+                    <label>
+                      {guardianFieldLabels.relationship}
+                      <input autoComplete="off" defaultValue={stored.relationship} maxLength={60} name={`g${slot}Relationship`} placeholder="e.g. Mother" />
+                    </label>
+                    <label>
+                      {guardianFieldLabels.email}
+                      <input aria-describedby={emailError ? `roster-g${slot}Email-error` : undefined} aria-invalid={emailError ? true : undefined} autoComplete="off" defaultValue={stored.email} inputMode="email" maxLength={254} name={`g${slot}Email`} type="text" />
+                      {emailError && <span className="roster-field-error" id={`roster-g${slot}Email-error`} role="alert">{emailError}</span>}
+                    </label>
+                    <label>
+                      {guardianFieldLabels.phone}
+                      <input aria-describedby={phoneError ? `roster-g${slot}Phone-error` : undefined} aria-invalid={phoneError ? true : undefined} autoComplete="off" defaultValue={stored.phone} inputMode="tel" maxLength={40} name={`g${slot}Phone`} type="text" />
+                      {phoneError && <span className="roster-field-error" id={`roster-g${slot}Phone-error`} role="alert">{phoneError}</span>}
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+          </fieldset>
+        )}
         <p className="field-help">
           Birth dates are encrypted and shown only to your club&apos;s director and deputy. Registrars and event
           staff see age only. Don&apos;t enter medical or insurance information here.

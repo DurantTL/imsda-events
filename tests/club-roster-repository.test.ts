@@ -33,7 +33,7 @@ const youth = {
 
 function fakeDatabase() {
   let sequence = 0;
-  const db = { people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], blankedTransferWhere: [] as unknown[], classCompletions: [] as Row[], attendanceErased: [] as string[], calls: [] as string[], transferBlanks: [] as unknown[] };
+  const db = { guardians: [] as Row[], people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], blankedTransferWhere: [] as unknown[], classCompletions: [] as Row[], attendanceErased: [] as string[], calls: [] as string[], transferBlanks: [] as unknown[] };
   const matches = (row: Row, where: Record<string, unknown> = {}) => Object.entries(where).every(([key, value]) => {
     if (value === undefined) return true;
     if (value && typeof value === "object" && "not" in value) return row[key] !== (value as { not: unknown }).not;
@@ -76,6 +76,22 @@ function fakeDatabase() {
     },
     memberTransferRegistrationMove: {
       updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 0 }; },
+    },
+    clubRosterGuardian: {
+      upsert: async ({ where, create, update }: { where: { rosterMemberId_position: { rosterMemberId: string; position: number } }; create: Row; update: Row }) => {
+        const key = where.rosterMemberId_position;
+        const found = db.guardians.find((row) => row.rosterMemberId === key.rosterMemberId && row.position === key.position);
+        if (found) return Object.assign(found, update);
+        const row = { ...create, id: `guardian-${++sequence}` };
+        db.guardians.push(row);
+        return row;
+      },
+      deleteMany: async ({ where }: { where: { rosterMemberId: string; position?: { in: number[] } } }) => {
+        const before = db.guardians.length;
+        db.guardians = db.guardians.filter((row) => !(row.rosterMemberId === where.rosterMemberId
+          && (where.position === undefined || where.position.in.includes(row.position as number))));
+        return { count: before - db.guardians.length };
+      },
     },
     healthRecord: { deleteMany: async () => ({ count: 0 }) },
     healthRecordLink: { updateMany: async () => ({ count: 0 }) },
@@ -153,6 +169,54 @@ describe("club roster storage", () => {
       "CLUB_ROSTER_BIRTH_DATES_REVEALED",
       "CLUB_ROSTER_MEMBER_REMOVED",
     ]);
+  });
+
+  describe("guardian contacts (#510)", () => {
+    const first = { name: "Synthetic Guardian One", relationship: "Mother", email: "guardian.one@example.test", phone: "(555) 010-0101" };
+    const second = { name: "Synthetic Guardian Two", relationship: "Uncle", email: "", phone: "555-010-0202" };
+    const blank = { name: "", relationship: "", email: "", phone: "" };
+    const onFile = (id: string) => db.guardians.filter((row) => row.rosterMemberId === id).map((row) => ({ position: row.position, name: row.name }));
+
+    it("keeps up to two guardians under positions 1 and 2 when a member is added", async () => {
+      const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [first, second] }, actor, { now });
+      expect(onFile(memberId)).toEqual([{ position: 1, name: first.name }, { position: 2, name: second.name }]);
+      expect(db.guardians[0]).toMatchObject({ relationship: "Mother", email: first.email, phone: first.phone });
+    });
+
+    it("leaves guardians alone when an edit does not send them", async () => {
+      const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [first] }, actor, { now });
+      await updateRosterMember("club-1", memberId, { role: "TLT" }, actor, now);
+      expect(onFile(memberId)).toEqual([{ position: 1, name: first.name }]);
+    });
+
+    it("replaces the whole set on an edit: a blank or missing slot removes that guardian", async () => {
+      const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [first, second] }, actor, { now });
+      await updateRosterMember("club-1", memberId, { guardians: [{ ...first, name: "Renamed Guardian" }, blank] }, actor, now);
+      expect(onFile(memberId)).toEqual([{ position: 1, name: "Renamed Guardian" }]);
+      await updateRosterMember("club-1", memberId, { guardians: [] }, actor, now);
+      expect(onFile(memberId)).toEqual([]);
+    });
+
+    it("deletes every guardian when the member is removed, and only that member's", async () => {
+      const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [first, second] }, actor, { now });
+      const { memberId: other } = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Other", guardians: [first] }, actor, { now });
+      await removeRosterMember("club-1", memberId, actor, now);
+      expect(onFile(memberId)).toEqual([]);
+      expect(onFile(other)).toHaveLength(1);
+      const removedAudit = mocks.writeAuditLog.mock.calls.map(([entry]) => entry).find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED");
+      expect(removedAudit.metadata).toMatchObject({ guardiansErased: 2 });
+    });
+
+    it("keeps guardian values out of every audit entry: field names and counts only", async () => {
+      const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [first, second] }, actor, { now });
+      await updateRosterMember("club-1", memberId, { guardians: [second, blank] }, actor, now);
+      await removeRosterMember("club-1", memberId, actor, now);
+      const entries = mocks.writeAuditLog.mock.calls.map(([entry]) => entry);
+      const text = JSON.stringify(entries);
+      for (const value of [first.name, second.name, first.email, first.phone, second.phone, "Mother", "Uncle"]) expect(text).not.toContain(value);
+      expect(entries.find((entry) => entry.action === "CLUB_ROSTER_MEMBER_ADDED").metadata).toMatchObject({ guardiansStored: 2 });
+      expect(entries.find((entry) => entry.action === "CLUB_ROSTER_MEMBER_UPDATED").metadata).toMatchObject({ fields: ["guardians"], guardiansStored: 1, guardiansCleared: 1 });
+    });
   });
 
   it("lists ages, never birth dates, and computes age on an event date on the server", async () => {

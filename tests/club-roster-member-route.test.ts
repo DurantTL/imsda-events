@@ -19,6 +19,10 @@ vi.mock("@/modules/club-rosters/repository", async () => {
   const actual = await vi.importActual<typeof import("@/modules/club-rosters/repository")>("@/modules/club-rosters/repository");
   return { ...actual, listRoster: mocks.listRoster, updateRosterMember: mocks.updateRosterMember, removeRosterMember: mocks.removeRosterMember };
 });
+vi.mock("@/modules/club-rosters/guardians-repository", async () => {
+  const actual = await vi.importActual<typeof import("@/modules/club-rosters/guardians-repository")>("@/modules/club-rosters/guardians-repository");
+  return { ...actual, listGuardiansByMember: async () => ({}) };
+});
 vi.mock("@/modules/background-checks/refresh-after-write", () => ({ refreshBackgroundCheckMatchesSafely: mocks.refreshBackgroundCheckMatchesSafely }));
 
 import { Prisma } from "@prisma/client";
@@ -35,7 +39,7 @@ const request = (method: string, body: unknown) => new Request("https://events.i
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
-  mocks.requireRosterAccess.mockResolvedValue({ state: "OPEN", actor: { kind: "ATTENDEE", accountId: "director-1", sessionId: "session-1" } });
+  mocks.requireRosterAccess.mockResolvedValue({ state: "OPEN", capabilities: { guardians: false }, actor: { kind: "ATTENDEE", accountId: "director-1", sessionId: "session-1" } });
   mocks.listRoster.mockResolvedValue([]);
   mocks.updateRosterMember.mockResolvedValue({ personId: "person-1" });
   mocks.removeRosterMember.mockResolvedValue(undefined);

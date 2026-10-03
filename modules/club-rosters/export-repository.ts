@@ -7,12 +7,14 @@ import type { actorAttribution } from "@/modules/club-rosters/access";
 import { buildRosterExportTable } from "@/modules/club-rosters/export";
 import {
   ROSTER_EXPORT_PREVIEW_ROW_LIMIT,
+  isGuardianRosterExportColumn,
   isRosterExportColumnKey,
   sensitiveRosterExportColumns,
   type RosterExportColumn,
 } from "@/modules/club-rosters/export-columns";
 import type { RosterExportFormatInput, RosterExportRequest } from "@/modules/club-rosters/export-schemas";
 import { openBirthDate } from "@/modules/club-rosters/birth-dates";
+import { guardiansForExport } from "@/modules/club-rosters/guardians-repository";
 import { listRoster } from "@/modules/club-rosters/repository";
 import { toCsv } from "@/modules/reporting/csv";
 
@@ -141,6 +143,11 @@ export async function deleteRosterExportFormat(organizationId: string, formatId:
  * `CLUB_ROSTER_EXPORTED`, a preview that shows birth dates as
  * `CLUB_ROSTER_EXPORT_PREVIEWED`. A preview without birth dates shows only
  * what the roster page already shows, and isn't audited.
+ *
+ * Guardian columns (#510) are sensitive like birth dates: they need the
+ * confirmation, and `canSeeGuardians` (the club's director or deputy). Without
+ * it the request is refused, never silently blanked. Their opening is audited
+ * the same way (column keys and counts, never a value).
  */
 export async function runRosterExport(
   organizationId: string,
@@ -148,6 +155,7 @@ export async function runRosterExport(
   request: RosterExportRequest,
   canSeeBirthDates: boolean,
   actor: Actor,
+  canSeeGuardians = false,
 ) {
   const sensitiveChosen = sensitiveRosterExportColumns(request.columns);
   if (sensitiveChosen.length > 0 && !request.confirmSensitive) {
@@ -160,13 +168,18 @@ export async function runRosterExport(
   if (needsBirthDate && !canSeeBirthDates) {
     throw new RosterExportError("SENSITIVE_ACCESS_DENIED", "Your club role doesn't include birth dates. Ask your club director.");
   }
+  const needsGuardians = request.columns.some((column) => isGuardianRosterExportColumn(column.key));
+  if (needsGuardians && !canSeeGuardians) {
+    throw new RosterExportError("SENSITIVE_ACCESS_DENIED", "Guardian contacts are for your club's director and deputy.");
+  }
 
   const allMembers = await listRoster(organizationId, clubYear);
   const columnKeys = request.columns.map((column) => column.key);
 
   if (request.mode === "csv") {
     const birthDates = needsBirthDate ? await revealBirthDatesForExport(organizationId, clubYear, null) : null;
-    const table = buildRosterExportTable(allMembers, request.columns, birthDates);
+    const guardians = needsGuardians ? await guardiansForExport(organizationId, clubYear, null) : null;
+    const table = buildRosterExportTable(allMembers, request.columns, birthDates, guardians);
     await writeAuditLog({
       ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_ROSTER_EXPORTED",
@@ -178,6 +191,7 @@ export async function runRosterExport(
         clubYear,
         columns: columnKeys,
         rowCount: allMembers.length,
+        ...(guardians ? { guardianContactsExported: Object.values(guardians).reduce((total, list) => total + list.length, 0) } : {}),
       }),
     });
     return { ...table, totalRows: allMembers.length, csv: toCsv([table.headers, ...table.rows]) };
@@ -187,20 +201,24 @@ export async function runRosterExport(
   const birthDates = needsBirthDate && shown.length > 0
     ? await revealBirthDatesForExport(organizationId, clubYear, shown.map((member) => member.id))
     : null;
-  const table = buildRosterExportTable(shown, request.columns, birthDates);
-  if (needsBirthDate) {
+  const guardians = needsGuardians && shown.length > 0
+    ? await guardiansForExport(organizationId, clubYear, shown.map((member) => member.id))
+    : null;
+  const table = buildRosterExportTable(shown, request.columns, birthDates, guardians);
+  if (needsBirthDate || needsGuardians) {
     await writeAuditLog({
       ...("userId" in actor ? { actorUserId: actor.userId } : {}),
       action: "CLUB_ROSTER_EXPORT_PREVIEWED",
       entityType: "Organization",
       entityId: organizationId,
-      summary: "Previewed a club roster export that shows birth dates.",
+      summary: "Previewed a club roster export that shows birth dates or guardian contacts.",
       metadata: auditMetadata(actor, {
         organizationId,
         clubYear,
         columns: columnKeys,
         rowsShown: shown.length,
         birthDatesOpened: birthDates ? Object.keys(birthDates).length : 0,
+        guardianContactsOpened: guardians ? Object.values(guardians).reduce((total, list) => total + list.length, 0) : 0,
       }),
     });
   }

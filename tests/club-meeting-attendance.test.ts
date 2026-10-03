@@ -431,7 +431,7 @@ describe("counts the editor leaves for the server to fill", () => {
 
 describe("erasing a roster member (#653)", () => {
   it("deletes that member's meeting attendance rows", async () => {
-    const tx = { clubMeetingAttendance: { deleteMany: vi.fn() }, healthRecord: { deleteMany: vi.fn() }, healthRecordLink: { updateMany: vi.fn() }, clubRosterMember: { update: vi.fn(), findUnique: vi.fn(async () => null) } };
+    const tx = { clubRosterGuardian: { deleteMany: vi.fn(async () => ({ count: 0 })) }, clubMeetingAttendance: { deleteMany: vi.fn() }, healthRecord: { deleteMany: vi.fn() }, healthRecordLink: { updateMany: vi.fn() }, clubRosterMember: { update: vi.fn(), findUnique: vi.fn(async () => null) } };
     await eraseRosterRow(tx as never, "m-1", new Date("2026-10-20T15:00:00Z"));
     expect(tx.clubMeetingAttendance.deleteMany).toHaveBeenCalledWith({ where: { rosterMemberId: "m-1" } });
     expect(tx.clubRosterMember.update.mock.calls[0][0].data).toMatchObject({ status: "REMOVED", personId: null });

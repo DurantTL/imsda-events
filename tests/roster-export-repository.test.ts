@@ -28,7 +28,7 @@ const actor = { accountId: "director-1" };
 
 function fakeDatabase() {
   let sequence = 0;
-  const db = { members: [] as Row[], formats: [] as Row[] };
+  const db = { members: [] as Row[], formats: [] as Row[], guardians: [] as Row[] };
   const client = {
     clubRosterMember: {
       findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
@@ -38,6 +38,10 @@ function fakeDatabase() {
           .filter((row) => (ids ? ids.includes(row.id) : true))
           .map((row) => ({ ...row, person: { firstName: row.firstName, lastName: row.lastName }, updatedAt: now }));
       }),
+    },
+    clubRosterGuardian: {
+      findMany: vi.fn(async ({ where }: { where: { rosterMemberId?: { in: string[] } } }) => db.guardians
+        .filter((row) => (where.rosterMemberId ? where.rosterMemberId.in.includes(row.rosterMemberId as string) : true))),
     },
     clubRosterExportFormat: {
       findFirst: async ({ where }: { where: Row & { name?: { equals: string; mode?: string } } }) => db.formats.find((row) => {
@@ -243,5 +247,61 @@ describe("saved export formats (#490)", () => {
     await expect(deleteRosterExportFormat("club-2", format.id, actor)).rejects.toMatchObject({ code: "FORMAT_NOT_FOUND" });
     await deleteRosterExportFormat("club-1", format.id, actor);
     expect(await listRosterExportFormats("club-1")).toEqual([]);
+  });
+});
+
+describe("guardian columns in a roster export (#510)", () => {
+  const guardianColumns = [
+    { key: "firstName" as const, header: "First" },
+    { key: "guardian1Name" as const, header: "Guardian 1 name" },
+    { key: "guardian1Phone" as const, header: "Guardian 1 cell phone" },
+  ];
+
+  beforeEach(() => {
+    db.guardians.push(
+      { id: "g1", rosterMemberId: "member-1", position: 1, name: "Synthetic Guardian One", relationship: "Mother", email: "one@example.test", phone: "(555) 010-0101" },
+      { id: "g2", rosterMemberId: "member-1", position: 2, name: "Synthetic Guardian Two", relationship: "", email: "", phone: "555-010-0202" },
+    );
+  });
+
+  it("needs the sensitive-column confirmation", async () => {
+    await expect(runRosterExport("club-1", "2026-27", { mode: "preview", columns: guardianColumns, confirmSensitive: false }, true, actor, true))
+      .rejects.toMatchObject({ code: "CONFIRMATION_REQUIRED" });
+    expect(db.client.clubRosterGuardian.findMany).not.toHaveBeenCalled();
+  });
+
+  it("refuses a role that may not see guardians, even confirmed and even with birth-date access", async () => {
+    for (const mode of ["preview", "csv"] as const) {
+      await expect(runRosterExport("club-1", "2026-27", { mode, columns: guardianColumns, confirmSensitive: true }, true, actor, false))
+        .rejects.toMatchObject({ code: "SENSITIVE_ACCESS_DENIED" });
+    }
+    // The default is closed: callers that never pass the flag cannot export guardians.
+    await expect(runRosterExport("club-1", "2026-27", { mode: "csv", columns: guardianColumns, confirmSensitive: true }, true, actor))
+      .rejects.toMatchObject({ code: "SENSITIVE_ACCESS_DENIED" });
+    expect(db.client.clubRosterGuardian.findMany).not.toHaveBeenCalled();
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("returns the guardian values to someone allowed, in a preview and in the CSV", async () => {
+    const preview = await runRosterExport("club-1", "2026-27", { mode: "preview", columns: guardianColumns, confirmSensitive: true }, false, actor, true);
+    expect(preview.rows).toEqual([["Ana", "Synthetic Guardian One", "(555) 010-0101"]]);
+    const csvResult = await runRosterExport("club-1", "2026-27", { mode: "csv", columns: guardianColumns, confirmSensitive: true }, false, actor, true);
+    expect("csv" in csvResult && csvResult.csv).toContain('"Ana","Synthetic Guardian One","(555) 010-0101"');
+  });
+
+  it("audits column keys and counts, never a guardian value", async () => {
+    await runRosterExport("club-1", "2026-27", { mode: "preview", columns: guardianColumns, confirmSensitive: true }, false, actor, true);
+    await runRosterExport("club-1", "2026-27", { mode: "csv", columns: guardianColumns, confirmSensitive: true }, false, actor, true);
+    const entries = mocks.writeAuditLog.mock.calls.map(([entry]) => entry);
+    expect(entries.map((entry) => entry.action)).toEqual(["CLUB_ROSTER_EXPORT_PREVIEWED", "CLUB_ROSTER_EXPORTED"]);
+    expect(entries[0].metadata).toMatchObject({ columns: ["firstName", "guardian1Name", "guardian1Phone"], guardianContactsOpened: 2 });
+    expect(entries[1].metadata).toMatchObject({ guardianContactsExported: 2 });
+    const serialized = JSON.stringify(entries);
+    for (const value of ["Synthetic Guardian", "one@example.test", "010-0101", "010-0202", "Ana"]) expect(serialized).not.toContain(value);
+  });
+
+  it("never reads guardians for an export that does not ask for them", async () => {
+    await runRosterExport("club-1", "2026-27", { mode: "csv", columns: [{ key: "firstName", header: "First" }], confirmSensitive: false }, true, actor, true);
+    expect(db.client.clubRosterGuardian.findMany).not.toHaveBeenCalled();
   });
 });

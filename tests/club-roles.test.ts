@@ -130,10 +130,10 @@ beforeEach(() => {
 describe("club role capabilities (#375)", () => {
   it("keeps full birth dates, the team, and the profile with directors and deputies", () => {
     for (const role of ["DIRECTOR", "DEPUTY"] as const) {
-      expect(clubCapabilities(role)).toMatchObject({ roster: true, seeBirthDates: true, manageTeam: true, editProfile: true });
+      expect(clubCapabilities(role)).toMatchObject({ roster: true, seeBirthDates: true, manageTeam: true, editProfile: true, guardians: true });
     }
     expect(clubCapabilities("REGISTRAR")).toEqual({
-      roster: true, registerForEvents: true, seeBirthDates: false, manageTeam: false, editProfile: false, submitReports: false,
+      roster: true, registerForEvents: true, seeBirthDates: false, manageTeam: false, editProfile: false, submitReports: false, guardians: false,
     });
     expect(clubCapabilities("REPORTER")).toMatchObject({ roster: false, registerForEvents: false, submitReports: true });
   });

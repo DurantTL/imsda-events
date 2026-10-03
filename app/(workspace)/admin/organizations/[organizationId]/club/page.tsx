@@ -6,10 +6,12 @@ import { Award, Eye, IdCard, UserCog } from "lucide-react";
 import { ActAsButton } from "@/components/act-as-button";
 import { BackLink } from "@/components/back-link";
 import { ClubImportYearMove } from "@/components/club-import-year-move";
+import { ClubGuardiansPanel } from "@/components/club-guardians-panel";
 import { ClubOverview } from "@/components/club-overview";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { listClubImports } from "@/modules/club-imports/move-year";
 import { rosterYearView } from "@/modules/club-rosters/domain";
+import { resolveStaffGuardianViewer } from "@/modules/club-rosters/guardians-access";
 import { getPrisma } from "@/lib/prisma";
 
 export const metadata: Metadata = { title: "Open club" };
@@ -41,6 +43,8 @@ export default async function StaffOpenClubPage({
   });
   if (!club || club.type !== "CLUB") notFound();
   const imports = await listClubImports(organizationId);
+  // Guardian contacts (#510): staff holding the sensitive-data permission (a system administrator always does).
+  const guardianViewer = await resolveStaffGuardianViewer();
   const selfHref = `/admin/organizations/${organizationId}/club`;
   const fromHere = `?from=${encodeURIComponent(selfHref)}`;
 
@@ -111,6 +115,8 @@ export default async function StaffOpenClubPage({
         reportsEditable
         rosterYear={view.clubYear}
       />
+
+      {guardianViewer && <ClubGuardiansPanel headingLevel={3} organizationId={organizationId} viewer={guardianViewer} />}
 
       {/* Keyed by the imports' years, so the panel starts fresh after a move refreshes the page. */}
       {imports.length > 0 && (

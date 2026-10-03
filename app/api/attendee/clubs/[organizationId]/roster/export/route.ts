@@ -26,6 +26,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
       input,
       access.capabilities.seeBirthDates,
       actorAttribution(access.actor),
+      access.capabilities.guardians,
     );
     if ("csv" in result) {
       return new Response(result.csv, {

@@ -7,6 +7,7 @@ import { COMPLIANCE_FILTER_VALUES, type ComplianceFilterValue } from "@/modules/
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { registrationReturnTo } from "@/modules/club-registrations/roster-return";
 import { rosterYearView } from "@/modules/club-rosters/domain";
+import { rosterGuardiansForAccess } from "@/modules/club-rosters/guardians-access";
 import { listRoster } from "@/modules/club-rosters/repository";
 import { listTransferClubOptions } from "@/modules/club-transfers/repository";
 import { honorSummaryByMemberId } from "@/modules/honors/member-honor-domain";
@@ -39,11 +40,13 @@ export default async function ClubRosterPage({
   // Status only, never the note, and only for a director or deputy: this is the club's own page (#427).
   // Transfers (#489) are the same leader-only capability that manages the club's team.
   const canTransfer = access.capabilities.manageTeam && !readOnly;
-  const [members, complianceStatuses, honorRows, clubOptions] = await Promise.all([
+  const [members, complianceStatuses, honorRows, clubOptions, guardians] = await Promise.all([
     listRoster(organizationId, clubYear),
     clubPortalComplianceStatuses(organizationId, clubYear, access.capabilities),
     listClubHonorsPage(organizationId, clubYear),
     canTransfer ? listTransferClubOptions(organizationId) : Promise.resolve([]),
+    // Guardian contacts (#510): the club's director and deputy only, and only on the current year, where they can be edited.
+    readOnly ? Promise.resolve(undefined) : rosterGuardiansForAccess(access, organizationId, clubYear),
   ]);
   // The Health tab (#611): only with the feature on, for the current year, and
   // for the club's own director or deputy. Status and a plain flag, never text.
@@ -77,6 +80,7 @@ export default async function ClubRosterPage({
         complianceStatuses={complianceStatuses}
         headingActions={canTransfer ? <RequestTransferButton clubOptions={clubOptions} organizationId={organizationId} /> : undefined}
         honorSummaries={honorSummaryByMemberId(honorRows)}
+        guardians={guardians}
         healthRecordFlags={healthRecordFlags}
         healthTab={healthTab}
         honorsPopup={{ canRecord: !readOnly }}
