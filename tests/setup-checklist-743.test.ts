@@ -5,7 +5,6 @@ import { EventSetupChecklist } from "@/components/event-setup-checklist";
 import { eventPermissions, rolePermissions, type EventPermission } from "@/modules/access/permissions";
 import {
   buildSetupChecklist,
-  definitionHasPrice,
   setupStepIds,
   type SetupChecklistFacts,
 } from "@/modules/events/setup-checklist";
@@ -20,7 +19,6 @@ const blank: SetupChecklistFacts = {
   endsOn: "2027-10-10",
   isPublished: false,
   activeAttendeeTypeCount: 0,
-  hasPricedField: false,
   formCount: 0,
   testSubmissionCount: 0,
   publishedFormCount: 0,
@@ -29,7 +27,6 @@ const allDone: SetupChecklistFacts = {
   ...blank,
   isPublished: true,
   activeAttendeeTypeCount: 2,
-  hasPricedField: true,
   formCount: 1,
   testSubmissionCount: 3,
   publishedFormCount: 1,
@@ -61,6 +58,8 @@ describe("the setup checklist steps", () => {
     ]);
     // The public page opens in a new tab; every staff control stays in the workspace.
     expect(steps.filter((step) => step.external).map((step) => step.id)).toEqual(["public-page"]);
+    // Not published yet: the public page is text, not a live link.
+    expect(steps.filter((step) => !step.linkable).map((step) => step.id)).toEqual(["public-page"]);
   });
 
   it("points at the first step still to do", () => {
@@ -79,11 +78,10 @@ describe("done and not done come from existing data only", () => {
     expect(done({ ...blank, endsOn: null }).basics).toBe(false);
   });
 
-  it("attendee types and prices: an active type and a priced field, not either alone", () => {
+  it("attendee types and prices: done with one active type, so a free event can finish it", () => {
     expect(done(blank)["attendee-types"]).toBe(false);
-    expect(done({ ...blank, activeAttendeeTypeCount: 1 })["attendee-types"]).toBe(false);
-    expect(done({ ...blank, hasPricedField: true })["attendee-types"]).toBe(false);
-    expect(done({ ...blank, activeAttendeeTypeCount: 1, hasPricedField: true })["attendee-types"]).toBe(true);
+    expect(done({ ...blank, activeAttendeeTypeCount: 1 })["attendee-types"]).toBe(true);
+    expect(buildSetupChecklist(blank, eventPermissions).steps[1]!.label).toBe("Attendee types and prices");
   });
 
   it("registration forms, test form and publish form each follow their own count", () => {
@@ -99,17 +97,6 @@ describe("done and not done come from existing data only", () => {
     expect(done({ ...blank, publishedFormCount: 1 })["public-page"]).toBe(false);
     expect(done({ ...blank, isPublished: true, publishedFormCount: 1 })["public-page"]).toBe(true);
   });
-
-  it("finds a price on a field, a priced choice, or a late price, and ignores zero and malformed definitions", () => {
-    const section = (fields: unknown[]) => ({ sections: [{ fields }] });
-    expect(definitionHasPrice(section([{ priceCents: 12500 }]))).toBe(true);
-    expect(definitionHasPrice(section([{ choicePricesCents: { Lunch: 0, Dinner: 800 } }]))).toBe(true);
-    expect(definitionHasPrice(section([{ latePricing: { priceCents: 14500 } }]))).toBe(true);
-    expect(definitionHasPrice(section([{ priceCents: 0 }, { choicePricesCents: { A: 0 } }, {}]))).toBe(false);
-    expect(definitionHasPrice({ sections: [] })).toBe(false);
-    expect(definitionHasPrice(null)).toBe(false);
-    expect(definitionHasPrice({ sections: [null, { fields: "nope" }] })).toBe(false);
-  });
 });
 
 describe("the checklist hides once every step is done", () => {
@@ -118,6 +105,15 @@ describe("the checklist hides once every step is done", () => {
     const complete = buildSetupChecklist(allDone, eventPermissions);
     expect(complete).toMatchObject({ hidden: true, doneCount: 7, nextStepId: null });
     expect(renderToStaticMarkup(createElement(EventSetupChecklist, { eventId: "event-1", checklist: complete }))).toBe("");
+  });
+
+  it("shows the public page as a live link only once the event is published", () => {
+    const unpublished = renderToStaticMarkup(createElement(EventSetupChecklist, { eventId: "event-1", checklist: buildSetupChecklist(blank, eventPermissions) }));
+    expect(unpublished).not.toContain('href="/events/synthetic-retreat"');
+    expect(unpublished).toContain("Available once the event is published.");
+    const published = renderToStaticMarkup(createElement(EventSetupChecklist, { eventId: "event-1", checklist: buildSetupChecklist({ ...blank, isPublished: true }, eventPermissions) }));
+    expect(published).toContain('href="/events/synthetic-retreat"');
+    expect(published).not.toContain("Available once the event is published.");
   });
 
   it("can be collapsed: a labelled toggle controls the steps", () => {

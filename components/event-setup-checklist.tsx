@@ -89,9 +89,11 @@ function StepRow({ step, isNext }: { step: SetupStep; isNext: boolean }) {
         <strong>{step.label}</strong>
         <small>{step.done ? "Done" : step.detail}</small>
       </span>
-      {step.external
-        ? <a className="text-button" href={step.href} rel="noreferrer" target="_blank">{step.actionLabel} <ExternalLink aria-hidden="true" size={14} /></a>
-        : <Link className="text-button" href={step.href}>{step.actionLabel} <ArrowRight aria-hidden="true" size={14} /></Link>}
+      {!step.linkable
+        ? <small className="setup-step-unavailable">{step.unavailableNote ?? "Not available yet."}</small>
+        : step.external
+          ? <a className="text-button" href={step.href} rel="noreferrer" target="_blank">{step.actionLabel} <ExternalLink aria-hidden="true" size={14} /></a>
+          : <Link className="text-button" href={step.href}>{step.actionLabel} <ArrowRight aria-hidden="true" size={14} /></Link>}
     </li>
   );
 }

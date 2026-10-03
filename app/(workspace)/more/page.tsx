@@ -85,7 +85,8 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
 
       {view.enabled.length === 0 && <p className="quiet-copy">No optional features are turned on for this event.</p>}
       {/* Optional task search (#743): filters the cards and tools below by name, in the browser. */}
-      {(view.enabled.length + view.tools.length) > 6 && <MoreTaskSearch containerId="more-task-groups" />}
+      {/* The search decides in the browser whether enough tasks are drawn to be worth showing (phone and desktop show different lists). */}
+      {(view.enabled.length + view.tools.length) > 0 && <MoreTaskSearch containerId="more-task-groups" />}
       <div className="more-task-groups" id="more-task-groups">
       {groupEnabledModules(view.enabled).map(({ group, entries }) => (
         <section aria-label={moreDirectoryGroupLabels[group]} className="foundation-group" data-task-group key={group}>

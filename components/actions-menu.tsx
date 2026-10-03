@@ -25,9 +25,15 @@ export function ActionsMenu({ label = "Actions", children }: { label?: string; c
         menu.querySelector("summary")?.focus();
       }
     };
+    // Tabbing out of the menu closes it (focus moving to something outside it).
+    const onFocusOut = (event: FocusEvent) => {
+      if (menu.open && event.relatedTarget instanceof Node && !menu.contains(event.relatedTarget)) close();
+    };
+    menu.addEventListener("focusout", onFocusOut);
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     return () => {
+      menu.removeEventListener("focusout", onFocusOut);
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
     };

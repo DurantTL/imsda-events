@@ -35,6 +35,34 @@ export function memberMatchesSearch(member: { firstName: string; lastName: strin
   return words.every((word) => haystack.includes(word));
 }
 
+type SearchableMember = { personId: string; firstName: string; lastName: string; classLabel?: string | null };
+
+/** Members the search currently shows. */
+export function shownMembers<T extends SearchableMember>(members: readonly T[], query: string): T[] {
+  return members.filter((member) => memberMatchesSearch(member, query));
+}
+
+/**
+ * The ids a bulk action acts on: selected AND currently shown. A member hidden by
+ * the search stays ticked but is never included, so nobody is acted on out of sight.
+ */
+export function visibleSelectedIds(members: readonly SearchableMember[], selected: ReadonlySet<string>, query: string): string[] {
+  return shownMembers(members, query).map((member) => member.personId).filter((id) => selected.has(id));
+}
+
+/** "Select all" with a search active ticks only the members shown, keeping earlier ticks. */
+export function selectShown(members: readonly SearchableMember[], selected: ReadonlySet<string>, query: string): Set<string> {
+  return new Set([...selected, ...shownMembers(members, query).map((member) => member.personId)]);
+}
+
+/** The request bodies the two bulk actions post, built from visible selected members only. */
+export function completionPayload(members: readonly SearchableMember[], selected: ReadonlySet<string>, query: string, classLevel: ClubClassLevel, completedOn: string) {
+  return { personIds: visibleSelectedIds(members, selected, query), classLevel, completedOn };
+}
+export function recordPayload(members: readonly SearchableMember[], selected: ReadonlySet<string>, query: string, itemIds: string[], alreadyHasIt: boolean) {
+  return { personIds: visibleSelectedIds(members, selected, query), itemIds, alreadyHasIt };
+}
+
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 
 function today() {
@@ -167,7 +195,7 @@ export function ClubEarnedAwardsWorkspace({
   // ---- classes
   async function markClass() {
     const ok = await act(async () => {
-      const result = await post(`${base}/completions`, { personIds: [...classMembers], classLevel, completedOn });
+      const result = await post(`${base}/completions`, completionPayload(data.members, classMembers, classQuery, classLevel, completedOn));
       const created = result.created ?? 0;
       return `Marked ${plural(created, "member", "members")} as having completed ${clubClassLevelLabels[classLevel]}.${skippedNote(result.skipped)} Their insignia is suggested above; nothing is added until you confirm.`;
     });
@@ -194,7 +222,7 @@ export function ClubEarnedAwardsWorkspace({
 
   async function record() {
     const ok = await act(async () => {
-      const result = await post(base, { personIds: [...handMembers], itemIds: chosen.map((entry) => entry.itemId), alreadyHasIt });
+      const result = await post(base, recordPayload(data.members, handMembers, handQuery, chosen.map((entry) => entry.itemId), alreadyHasIt));
       const created = result.created ?? 0;
       const marked = result.marked ?? 0;
       const what = alreadyHasIt
@@ -249,20 +277,26 @@ export function ClubEarnedAwardsWorkspace({
     if (ok) setMasterPicked((current) => ({ ...current, [ruleId]: new Set() }));
   }
 
-  const entryCount = chosen.length * handMembers.size;
-  const tooMany = awardEntryTooLarge(handMembers.size, chosen.length);
-  const canRecord = !busy && chosen.length > 0 && handMembers.size > 0 && !tooMany;
+  // Bulk actions count and send only members that are selected and shown (search can hide ticked ones).
+  const classQuery = memberQueries.class ?? "";
+  const handQuery = memberQueries.hand ?? "";
+  const classCount = visibleSelectedIds(data.members, classMembers, classQuery).length;
+  const handCount = visibleSelectedIds(data.members, handMembers, handQuery).length;
+  const entryCount = chosen.length * handCount;
+  const tooMany = awardEntryTooLarge(handCount, chosen.length);
+  const canRecord = !busy && chosen.length > 0 && handCount > 0 && !tooMany;
   const suggestionCount = data.insignia.length + data.patches.length;
 
   const memberList = (selected: ReadonlySet<string>, setSelected: (next: Set<string>) => void, label: string, listKey: string) => {
     const query = memberQueries[listKey] ?? "";
-    const shown = data.members.filter((member) => memberMatchesSearch(member, query));
+    const shown = shownMembers(data.members, query);
+    const hiddenSelected = selected.size - visibleSelectedIds(data.members, selected, query).length;
     return (
     <>
       <div className={styles.groupHead}>
         <strong>{label}</strong>
         <span className={styles.actions}>
-          <button className="text-button" onClick={() => setSelected(new Set([...selected, ...shown.map((member) => member.personId)]))} type="button">{query.trim() ? `Select ${shown.length} shown` : "Select all"}</button>
+          <button className="text-button" onClick={() => setSelected(selectShown(data.members, selected, query))} type="button">{query.trim() ? `Select ${shown.length} shown` : "Select all"}</button>
           <button className="text-button" onClick={() => setSelected(new Set())} type="button">Clear</button>
         </span>
       </div>
@@ -282,6 +316,11 @@ export function ClubEarnedAwardsWorkspace({
           </label>
           <small aria-live="polite" className={styles.muted} role="status">{query.trim() ? `${shown.length} of ${data.members.length} members` : ""}</small>
         </div>
+      )}
+      {hiddenSelected > 0 && (
+        <p className={styles.flag} role="status">
+          {hiddenSelected} selected {hiddenSelected === 1 ? "member is" : "members are"} hidden by the search and won&apos;t be included.
+        </p>
       )}
       {data.members.length === 0 ? (
         <p className="quiet-copy">No active members are on this year&apos;s roster yet.</p>
@@ -433,8 +472,8 @@ export function ClubEarnedAwardsWorkspace({
             {memberList(classMembers, setClassMembers, "Members", "class")}
           </div>
           <div className={styles.actions}>
-            <button className="primary-button" disabled={busy || classMembers.size === 0 || !completedOn} onClick={markClass} type="button">
-              <GraduationCap aria-hidden="true" size={16} /> Mark completed{classMembers.size > 0 ? ` (${classMembers.size})` : ""}
+            <button className="primary-button" disabled={busy || classCount === 0 || !completedOn} onClick={markClass} type="button">
+              <GraduationCap aria-hidden="true" size={16} /> Mark completed{classCount > 0 ? ` (${classCount})` : ""}
             </button>
           </div>
         </section>
@@ -489,7 +528,7 @@ export function ClubEarnedAwardsWorkspace({
               <div className={styles.actions}>
                 <button className="primary-button" disabled={!canRecord} onClick={record} type="button">
                   <CheckCircle2 aria-hidden="true" size={16} /> {alreadyHasIt ? "Record as already awarded" : "Record items"}
-                  {chosen.length > 0 && handMembers.size > 0 ? ` (${entryCount})` : ""}
+                  {chosen.length > 0 && handCount > 0 ? ` (${entryCount})` : ""}
                 </button>
               </div>
             </div>

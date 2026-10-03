@@ -679,12 +679,13 @@ export function PeopleWorkspace({
       <SortOrderNote>{registrationListOrderText}</SortOrderNote>
       {canEmail && selectedIds.size > 0 && (
         <div className="panel selection-bar">
-          <span><strong>{selectedIds.size}</strong> selected{visibleSelectedCount !== selectedIds.size ? ` · ${visibleSelectedCount} in this view` : ""}. Email them from Actions.</span>
+          <span><strong>{selectedIds.size}</strong> selected{visibleSelectedCount !== selectedIds.size ? ` · ${visibleSelectedCount} in this view` : ""}</span>
           <div className="selection-bar-actions">
             {visibleSelectedCount < visible.length && (
               <button className="text-button" type="button" onClick={selectAllVisible}>Select all {visible.length} shown</button>
             )}
             <button className="text-button" type="button" onClick={() => setSelectedIds(new Set())}>Clear selection</button>
+            <button className="secondary-button outline-action" type="button" onClick={() => setEmailingSelection(true)}><MailPlus aria-hidden="true" size={16} /> Email selected</button>
           </div>
         </div>
       )}

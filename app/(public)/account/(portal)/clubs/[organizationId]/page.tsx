@@ -104,20 +104,23 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
         href: `${base}/records?month=${month}`,
         action: "Open report",
       });
-      deadlines[`report-${month}`] = `Due ${formatDueDate(reportDueDate(month))}`;
+      // A report locks for the club the day after it is due, so only a due-today report is listed; the passed-date wording is a guard.
+      const due = reportDueDate(month);
+      deadlines[`report-${month}`] = due < calendarDateIn(now) ? `Overdue since ${formatDueDate(due)}` : `Due ${formatDueDate(due)}`;
     }
   }
   steps.push(...clubEventRegistrationSteps(events, base));
   for (const event of events) {
     if (event.registrationClosesOn) deadlines[event.id] = `Register by ${formatCalendarDate(event.registrationClosesOn)}`;
   }
-  const nextTask = pickClubNextTask(steps, deadlines);
   // Flags only, never blocks registration (#405, #479).
   if (compliance) {
     for (const reminder of complianceReminders(compliance, `${base}/roster`)) {
       steps.push({ key: reminder.key, text: reminder.text, href: reminder.href, action: "Open roster", danger: true });
     }
   }
+  // Picked after every step is in, so a red background-check item can be the next task (#743).
+  const nextTask = pickClubNextTask(steps, deadlines);
 
   return (
     <>
@@ -138,16 +141,14 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
         rosterHref={`${base}/roster`}
       />
 
-      <section className="public-manage-card" aria-labelledby="club-next-heading">
+      {/* The next task is the card above, so the list holds only what comes after it. */}
+      {nextTask && nextTask.others.length > 0 && <section className="public-manage-card" aria-labelledby="club-next-heading">
         <div className="public-manage-card-heading">
           <p className="public-registration-eyebrow">What&apos;s next</p>
           <h2 id="club-next-heading">To do</h2>
         </div>
-        {steps.length === 0 ? (
-          <p className="public-manage-empty"><CheckCircle2 size={17} aria-hidden="true" /> You&apos;re all caught up.</p>
-        ) : (
-          <ul className="public-manage-club-list">
-            {steps.map((step) => (
+        <ul className="public-manage-club-list">
+            {nextTask.others.map((step) => (
               <li className={step.danger ? "club-step-danger" : undefined} key={step.key}>
                 <CircleAlert size={17} aria-hidden="true" />
                 <span>
@@ -159,9 +160,8 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
                 </Link>
               </li>
             ))}
-          </ul>
-        )}
-      </section>
+        </ul>
+      </section>}
 
       {registered.length > 0 && (
         <section className="public-manage-card" aria-labelledby="club-registered-heading">

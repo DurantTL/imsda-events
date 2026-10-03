@@ -197,7 +197,7 @@ describe("More: compact groups and the optional task search", () => {
     expect(container).toMatch(/<a class="panel foundation-card" data-task-name="Event settings"/);
   });
 
-  it("shows no search to a viewer who has only a handful of cards", async () => {
+  it("renders no search when the viewer has no card or tool to search", async () => {
     mocks.resolveEventContext.mockResolvedValue({
       event: { id: "event_1", name: "Synthetic Camporee", slug: "synthetic-camporee" },
       permissions: ["VIEW_EVENT"] as EventPermission[],
@@ -206,6 +206,15 @@ describe("More: compact groups and the optional task search", () => {
     mocks.resolveStaffViewer.mockResolvedValue(null);
     const html = renderToStaticMarkup(await MorePage({ searchParams: Promise.resolve({ event: "event_1" }) }));
     expect(html).not.toContain('role="search"');
+  });
+
+  it("decides in the browser, from drawn tasks only, whether the search is worth showing", () => {
+    const source = read("components/more-task-search.tsx");
+    expect(source).toContain("getClientRects().length > 0");
+    expect(source).toContain("MORE_SEARCH_MIN_TASKS = 7");
+    expect(source).toContain("if (match && isRendered(card)) visible += 1;");
+    // The server no longer counts the desktop-hidden phone list toward a threshold.
+    expect(read("app/(workspace)/more/page.tsx")).not.toContain("> 6 &&");
   });
 
   it("styles hidden cards away and keeps compact groups in one commented block at the end of the stylesheet", () => {
@@ -224,7 +233,7 @@ describe("More: compact groups and the optional task search", () => {
 describe("Form builder marks Computer or tablet before any click", () => {
   it("pre-selects Computer or tablet and shows Phone as not suited", () => {
     const html = renderToStaticMarkup(createElement(BuilderDeviceHint));
-    expect(html).toContain('<li aria-current="true" class="is-selected">');
+    expect(html).toContain('<li class="is-selected">');
     expect(html).toContain("Computer or tablet");
     expect(html).toContain("Recommended");
     expect(html).toMatch(/<li class="is-muted">[\s\S]*Phone[\s\S]*Not suited/);
@@ -241,7 +250,7 @@ describe("Form builder marks Computer or tablet before any click", () => {
 describe("Dashboard setup checklist is gated by permission", () => {
   const facts = {
     eventId: "event_1", slug: "synthetic-camporee", name: "Synthetic Camporee", startsOn: "2027-10-08", endsOn: "2027-10-10",
-    isPublished: false, activeAttendeeTypeCount: 0, hasPricedField: false, formCount: 0, testSubmissionCount: 0, publishedFormCount: 0,
+    isPublished: false, activeAttendeeTypeCount: 0, formCount: 0, testSubmissionCount: 0, publishedFormCount: 0,
   };
   const overview = {
     metrics: { registrations: 0, people: 0, checkedIn: 0, pendingPaymentCount: 0, outstandingCents: 0, churchBilledCents: 0, churchSponsoredCents: 0, groupBilledCents: 0, isDeferredOrganizationBilling: false },

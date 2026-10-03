@@ -134,10 +134,37 @@ describe("Club home shows the next task and its deadline before the statistics",
   });
 
   it("leaves only secondary buttons in the To do list, so the page keeps one filled button", async () => {
+    mocks.listRoster.mockResolvedValue([]);
     const tree = await ClubHomePage({ params: Promise.resolve({ organizationId: "club-1" }) });
     const actions = allElements(tree).filter((element) => String(element.props.className ?? "").includes("club-event-action"));
     expect(actions.length).toBeGreaterThan(0);
     expect(actions.some((element) => String(element.props.className).includes("primary-button"))).toBe(false);
+  });
+});
+
+describe("Next task picks from every step, and the list does not repeat it", () => {
+  it("lets a red background-check item be the next task when it is the only step", async () => {
+    mocks.listClubEvents.mockResolvedValue([]);
+    mocks.clubPortalComplianceReminderCounts.mockResolvedValue({ notInCompliance: 1, expiringSoon: 0, missing: 0 });
+    const tree = await ClubHomePage({ params: Promise.resolve({ organizationId: "club-1" }) });
+    const card = componentElements(tree).find((element) => element.type === ClubNextTaskCard)!;
+    const next = card.props.next as NonNullable<ReturnType<typeof pickClubNextTask>>;
+    expect(next.step.danger).toBe(true);
+    expect(next.others).toEqual([]);
+    const html = renderToStaticMarkup(ClubNextTaskCard({ next }) as ReactElement);
+    expect(html).toContain("club-step-danger");
+    expect(html).not.toContain("all caught up");
+    // Nothing else is due, so there is no To do list repeating it.
+    expect(allElements(tree).some((element) => element.type === "li" && element.props.className === "club-step-danger")).toBe(false);
+  });
+
+  it("lists only the steps after the next task", async () => {
+    mocks.listRoster.mockResolvedValue([]);
+    const tree = await ClubHomePage({ params: Promise.resolve({ organizationId: "club-1" }) });
+    const card = componentElements(tree).find((element) => element.type === ClubNextTaskCard)!;
+    const next = card.props.next as NonNullable<ReturnType<typeof pickClubNextTask>>;
+    expect(next.step.key).toBe("roster");
+    expect(next.others.map((step) => step.key)).toEqual(["event-open"]);
   });
 });
 

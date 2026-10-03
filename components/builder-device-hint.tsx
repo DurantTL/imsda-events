@@ -12,7 +12,7 @@ export function BuilderDeviceHint() {
     <div aria-label="Best device for the form builder" className="builder-device-hint" role="group">
       <span className="builder-device-hint-label">Works best on</span>
       <ul>
-        <li aria-current="true" className="is-selected">
+        <li className="is-selected">
           <Monitor aria-hidden="true" size={16} />
           <strong>Computer or tablet</strong>
           <small>Recommended</small>

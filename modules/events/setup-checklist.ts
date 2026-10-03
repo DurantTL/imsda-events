@@ -30,10 +30,8 @@ export type SetupChecklistFacts = {
   isPublished: boolean;
   /** Active attendee types. */
   activeAttendeeTypeCount: number;
-  /** At least one form field charges a price (a per-attendee fee, a priced choice, or a quantity price). */
-  hasPricedField: boolean;
   formCount: number;
-  /** FormTestSubmission rows for the event. */
+  /** Valid FormTestSubmission rows for the event (a failed test does not count). */
   testSubmissionCount: number;
   publishedFormCount: number;
 };
@@ -48,6 +46,10 @@ export type SetupStep = {
   href: string;
   /** Opens in a new tab: the public page. */
   external?: boolean;
+  /** False when the destination is not live yet: the step shows as text, with no link. */
+  linkable: boolean;
+  /** Said instead of the link while it is not linkable. */
+  unavailableNote?: string;
   actionLabel: string;
 };
 
@@ -61,6 +63,8 @@ type StepDefinition = {
   done: (facts: SetupChecklistFacts) => boolean;
   href: (facts: SetupChecklistFacts) => string;
   external?: boolean;
+  linkable?: (facts: SetupChecklistFacts) => boolean;
+  unavailableNote?: string;
 };
 
 const hasText = (value: string | null | undefined) => Boolean(value?.trim());
@@ -80,10 +84,10 @@ const definitions: readonly StepDefinition[] = [
   {
     id: "attendee-types",
     label: "Attendee types and prices",
-    detail: "At least one attendee type, and a price on a form field.",
+    detail: "At least one attendee type. Set prices on the form's fields.",
     actionLabel: "Open attendee setup",
     requires: ["CONFIGURE_EVENT"],
-    done: (facts) => facts.activeAttendeeTypeCount > 0 && facts.hasPricedField,
+    done: (facts) => facts.activeAttendeeTypeCount > 0,
     href: (facts) => `/more/attendee-configuration${query(facts.eventId)}`,
   },
   {
@@ -98,7 +102,7 @@ const definitions: readonly StepDefinition[] = [
   {
     id: "test-form",
     label: "Test form",
-    detail: "A test submission has been run.",
+    detail: "A valid test submission has been run.",
     actionLabel: "Run a test",
     requires: ["MANAGE_FORMS"],
     done: (facts) => facts.testSubmissionCount > 0,
@@ -131,6 +135,9 @@ const definitions: readonly StepDefinition[] = [
     done: (facts) => facts.isPublished && facts.publishedFormCount > 0 && hasText(facts.slug),
     href: (facts) => `/events/${encodeURIComponent(facts.slug)}`,
     external: true,
+    // No live link until the event is published: an unpublished page is not there to open.
+    linkable: (facts) => facts.isPublished,
+    unavailableNote: "Available once the event is published.",
   },
 ];
 
@@ -165,6 +172,8 @@ export function buildSetupChecklist(
     href: definition.href(facts),
     actionLabel: definition.actionLabel,
     ...(definition.external ? { external: true } : {}),
+    linkable: definition.linkable?.(facts) ?? true,
+    ...(definition.unavailableNote ? { unavailableNote: definition.unavailableNote } : {}),
   }));
   const next = steps.find((step) => !step.done);
   return {
@@ -173,22 +182,4 @@ export function buildSetupChecklist(
     nextStepId: next?.id ?? null,
     hidden: steps.length === 0 || !next,
   };
-}
-
-type FieldShape = { priceCents?: number; choicePricesCents?: Record<string, number>; latePricing?: { priceCents?: number; choicePricesCents?: Record<string, number> } };
-
-/** Whether any field in a stored form definition charges something. Reads only what the definition already holds. */
-export function definitionHasPrice(definition: unknown): boolean {
-  if (!definition || typeof definition !== "object") return false;
-  const sections = (definition as { sections?: unknown }).sections;
-  if (!Array.isArray(sections)) return false;
-  const positive = (value: unknown) => typeof value === "number" && value > 0;
-  const anyPositive = (record: Record<string, number> | undefined) => Boolean(record) && Object.values(record!).some(positive);
-  return sections.some((section) => {
-    const fields = (section as { fields?: unknown } | null)?.fields;
-    return Array.isArray(fields) && fields.some((field: FieldShape | null) => Boolean(field) && (
-      positive(field!.priceCents) || anyPositive(field!.choicePricesCents)
-      || positive(field!.latePricing?.priceCents) || anyPositive(field!.latePricing?.choicePricesCents)
-    ));
-  });
 }
