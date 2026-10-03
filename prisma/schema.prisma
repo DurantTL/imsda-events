@@ -1185,6 +1185,7 @@ model EventAsset {
   links      EventContentLink[]
   merchandiseArtworkProducts MerchandiseProduct[] @relation("MerchandiseProductArtwork")
   badgeBackgroundEvents      Event[]              @relation("EventBadgeBackground")
+
   @@index([eventId, createdAt])
 }
 
@@ -4691,12 +4692,64 @@ model CalendarEntry {
   /// Skipped occurrences (EXDATEs): start dates, YYYY-MM-DD, that don't happen.
   repeatExceptions String[]           @default([])
   isPublished     Boolean             @default(false)
+  /// Imported from an ICS feed (#444 part B). All null for entries staff made.
+  /// The feed link is cleared (not the entry deleted) when its feed is deleted.
+  sourceFeedId              String?
+  sourceUid                 String?
+  /// The overridden occurrence's id for a RECURRENCE-ID item; "" for the master.
+  sourceRecurrenceId        String?
+  /// Hash of the last imported mapped fields; an unchanged hash means no write.
+  sourceHash                String?
+  /// Set when the item is gone from the feed. It is unpublished, never deleted,
+  /// so anything linked to it (#445) survives and relinks if it comes back.
+  sourceRemovedAt           DateTime?
+  sourceRemovedWasPublished Boolean             @default(false)
+  /// Mapped fields staff changed after import; a refresh never overwrites these.
+  locallyEditedFields       String[]            @default([])
+  /// Hidden by staff here only; a refresh never unhides it.
+  isHiddenLocally           Boolean             @default(false)
   createdByUserId String
   updatedByUserId String
   createdAt       DateTime            @default(now())
   updatedAt       DateTime            @updatedAt
 
+  sourceFeed CalendarFeed? @relation(fields: [sourceFeedId], references: [id], onDelete: SetNull)
+
+  @@unique([sourceFeedId, sourceUid, sourceRecurrenceId])
   @@index([isPublished, startsOn])
+}
+
+enum CalendarFeedStatus {
+  OK
+  FAILED
+}
+
+/// A read-only ICS feed (for example a Google Calendar) whose events are
+/// imported into the public calendar (#444 part B). The URL can be a private
+/// "secret address", so it is stored sealed and only a short hint is shown back.
+model CalendarFeed {
+  id               String              @id @default(cuid())
+  name             String
+  sealedUrl        String
+  /// Host and the last four characters: the only form of the URL ever shown.
+  urlHint          String
+  defaultCategory  String              @default("")
+  defaultEntryType CalendarEntryType   @default(STANDARD)
+  publishNewItems  Boolean             @default(false)
+  isEnabled        Boolean             @default(true)
+  refreshMinutes   Int                 @default(60)
+  lastFetchedAt    DateTime?
+  lastSucceededAt  DateTime?
+  lastStatus       CalendarFeedStatus?
+  /// A short, sanitized message. Never contains the feed URL.
+  lastError        String?
+  lastItemCount    Int?
+  createdByUserId  String
+  updatedByUserId  String
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  entries CalendarEntry[]
 }
 
 /// A passkey an attendee registered as their second step (e.g. to open club

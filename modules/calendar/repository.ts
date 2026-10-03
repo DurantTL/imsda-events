@@ -9,12 +9,24 @@ import {
   sortCalendarItems,
   type CalendarItem,
 } from "@/modules/calendar/domain";
+import { importedFieldNames } from "@/modules/calendar/ics-import";
 import { expandOccurrences, parseRepeatRule, repeatStartProblem, serializeRepeatRule } from "@/modules/calendar/recurrence";
 import type { CalendarEntryInput, CalendarEntryUpdate, CalendarEventSettings, CalendarRepeatInput } from "@/modules/calendar/schemas";
 import { evaluateEventRegistrationPhase } from "@/modules/events/lifecycle";
 
 export class CalendarError extends Error {
-  constructor(public readonly code: "ENTRY_NOT_FOUND" | "EVENT_NOT_FOUND" | "INVALID_REPEAT", message: string) {
+  constructor(
+    public readonly code:
+      | "ENTRY_NOT_FOUND"
+      | "EVENT_NOT_FOUND"
+      | "INVALID_REPEAT"
+      | "FEED_NOT_FOUND"
+      | "INVALID_FEED"
+      | "FEED_FETCH_FAILED"
+      | "FEED_SECRET_MISSING"
+      | "NOT_IMPORTED",
+    message: string,
+  ) {
     super(message);
     this.name = "CalendarError";
   }
@@ -62,8 +74,11 @@ export async function listPublicCalendarItems(
     prisma.calendarEntry.findMany({
       // A repeating entry can reach into the window from long before it, so
       // only its first date is bounded here; its occurrences are cut below.
+      // Imported items staff hid, or that left their feed, never show.
       where: {
         isPublished: true,
+        isHiddenLocally: false,
+        sourceRemovedAt: null,
         startsOn: { lte: to },
         OR: [{ endsOn: { gte: from } }, { repeatRule: { not: null } }],
       },
@@ -147,7 +162,11 @@ function entryItems(entry: PublicEntryRow, from: string, to: string, expandRepea
 export type CalendarAdminEntry = Awaited<ReturnType<typeof listCalendarEntries>>[number];
 
 export async function listCalendarEntries() {
-  const entries = await getPrisma().calendarEntry.findMany({ orderBy: [{ startsOn: "desc" }, { title: "asc" }], take: 300 });
+  const entries = await getPrisma().calendarEntry.findMany({
+    orderBy: [{ startsOn: "desc" }, { title: "asc" }],
+    take: 300,
+    include: { sourceFeed: { select: { name: true } } },
+  });
   return entries.map((entry) => ({
     id: entry.id,
     title: entry.title,
@@ -163,6 +182,11 @@ export async function listCalendarEntries() {
     repeat: parseRepeatRule(entry.repeatRule),
     repeatExceptions: entry.repeatExceptions,
     isPublished: entry.isPublished,
+    sourceFeedId: entry.sourceFeedId,
+    sourceFeedName: entry.sourceFeed?.name ?? null,
+    isHiddenLocally: entry.isHiddenLocally,
+    sourceRemovedAt: entry.sourceRemovedAt?.toISOString() ?? null,
+    locallyEditedFields: entry.locallyEditedFields,
     updatedAt: entry.updatedAt.toISOString(),
   }));
 }
@@ -229,7 +253,15 @@ export async function updateCalendarEntry(entryId: string, input: CalendarEntryU
     const rule = input.repeat === undefined ? parseRepeatRule(existing.repeatRule) : input.repeat;
     const problem = rule ? repeatStartProblem(rule, input.startsOn ?? existing.startsOn) : null;
     if (problem) throw new CalendarError("INVALID_REPEAT", problem);
-    const entry = await tx.calendarEntry.update({ where: { id: entryId }, data: { ...fields, ...columns, updatedByUserId: actorUserId } });
+    // An imported item remembers which of its imported fields staff changed, so a refresh leaves them alone.
+    const edits: Record<string, unknown> = { ...fields, ...columns };
+    const locallyEdited = existing.sourceFeedId
+      ? importedFieldNames.filter((name) => name in edits && JSON.stringify(existing[name]) !== JSON.stringify(edits[name]))
+      : [];
+    const locallyEditedFields = locallyEdited.length > 0
+      ? { locallyEditedFields: [...new Set([...existing.locallyEditedFields, ...locallyEdited])] }
+      : {};
+    const entry = await tx.calendarEntry.update({ where: { id: entryId }, data: { ...fields, ...columns, ...locallyEditedFields, updatedByUserId: actorUserId } });
     const changed = Object.keys({ ...fields, ...columns }).filter((key) =>
       JSON.stringify(existing[key as keyof typeof existing]) !== JSON.stringify(entry[key as keyof typeof entry]));
     await writeAuditLog({
@@ -251,6 +283,10 @@ export async function deleteCalendarEntry(entryId: string, actorUserId: string) 
   await prisma.$transaction(async (tx) => {
     const existing = await tx.calendarEntry.findUnique({ where: { id: entryId } });
     if (!existing) throw new CalendarError("ENTRY_NOT_FOUND", "That calendar entry could not be found.");
+    // A refresh would bring a deleted import straight back; hiding it is the way to take it off.
+    if (existing.sourceFeedId) {
+      throw new CalendarError("INVALID_FEED", "Imported items can't be deleted. Hide it instead, or remove it in the source calendar.");
+    }
     await tx.calendarEntry.delete({ where: { id: entryId } });
     await writeAuditLog({
       actorUserId,

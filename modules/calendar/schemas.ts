@@ -90,3 +90,33 @@ export type CalendarRepeatInput = z.infer<typeof repeatSchema>;
 export type CalendarEntryInput = z.infer<typeof calendarEntryInputSchema>;
 export type CalendarEntryUpdate = z.infer<typeof calendarEntryUpdateSchema>;
 export type CalendarEventSettings = z.infer<typeof calendarEventSettingsSchema>;
+
+export const minFeedRefreshMinutes = 15;
+
+const feedFields = {
+  name: text(80).min(1, "Enter a name for this calendar."),
+  // Write-only. On an edit, blank keeps the saved address.
+  url: z.string().trim().max(2000),
+  defaultCategory: text(40),
+  defaultEntryType: z.enum(["STANDARD", "CLOSURE"]),
+  publishNewItems: z.boolean(),
+  isEnabled: z.boolean(),
+  refreshMinutes: z.number().int().min(minFeedRefreshMinutes, `Refresh at most every ${minFeedRefreshMinutes} minutes.`).max(10_080),
+};
+
+export const calendarFeedInputSchema = z.object({
+  ...feedFields,
+  url: feedFields.url.min(1, "Enter the calendar's address."),
+  defaultCategory: feedFields.defaultCategory.default(""),
+  defaultEntryType: feedFields.defaultEntryType.default("STANDARD"),
+  publishNewItems: feedFields.publishNewItems.default(false),
+  isEnabled: feedFields.isEnabled.default(true),
+  refreshMinutes: feedFields.refreshMinutes.default(60),
+}).strict();
+
+export const calendarFeedUpdateSchema = z.object(feedFields).partial().strict();
+
+export const calendarEntrySourceActionSchema = z.object({ action: z.enum(["hide", "show", "reset"]) }).strict();
+
+export type CalendarFeedInput = z.infer<typeof calendarFeedInputSchema>;
+export type CalendarFeedUpdate = z.infer<typeof calendarFeedUpdateSchema>;
