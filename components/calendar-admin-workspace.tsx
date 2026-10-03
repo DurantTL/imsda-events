@@ -2,7 +2,9 @@
 
 import { useRef, useState } from "react";
 import { CalendarDays, Eye, EyeOff, Pencil, Plus, Save, Trash2, X } from "lucide-react";
+import { CalendarFeedsPanel } from "@/components/calendar-feeds-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import type { CalendarAdminFeed } from "@/modules/calendar/feeds";
 import { calendarStatusLabels, closureLabel, formatDateRange } from "@/modules/calendar/domain";
 import { describeRepeat, previewOccurrences, weekdayLabels, type RepeatRule } from "@/modules/calendar/recurrence";
 import type { CalendarAdminEntry, CalendarAdminEvent } from "@/modules/calendar/repository";
@@ -11,6 +13,7 @@ type ApiResponse = {
   entries?: CalendarAdminEntry[];
   events?: CalendarAdminEvent[];
   message?: string;
+  applied?: boolean;
   issues?: Array<{ message?: string }>;
 };
 
@@ -80,11 +83,13 @@ export function draftToRepeat(draft: RepeatDraft, startsOn = ""): RepeatRule | n
 export function CalendarAdminWorkspace({
   initialEntries,
   initialEvents,
+  initialFeeds = [],
 }: {
   initialEntries: CalendarAdminEntry[];
   initialEvents: CalendarAdminEvent[];
+  initialFeeds?: CalendarAdminFeed[];
 }) {
-  const [tab, setTab] = useState<"entries" | "events">("entries");
+  const [tab, setTab] = useState<"entries" | "events" | "imports">("entries");
   const [entries, setEntries] = useState(initialEntries);
   const [events, setEvents] = useState(initialEvents);
   const [editing, setEditing] = useState<CalendarAdminEntry | null>(null);
@@ -114,7 +119,8 @@ export function CalendarAdminWorkspace({
       if (!response.ok) throw new Error(result.message ?? result.issues?.[0]?.message ?? "The calendar could not be updated.");
       if (result.entries) setEntries(result.entries);
       if (result.events) setEvents(result.events);
-      setNotice(success);
+      if (result.applied === false) setNotice("Your edits are cleared. Google could not be reached, so its version arrives at the next refresh.");
+      else setNotice(success);
       return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The calendar could not be updated.");
@@ -216,6 +222,14 @@ export function CalendarAdminWorkspace({
         <button aria-selected={tab === "events"} className={tab === "events" ? "active" : ""} onClick={() => setTab("events")} role="tab" type="button">
           Events <span>{events.filter((event) => event.isPublished && event.showOnCalendar).length}</span>
         </button>
+        <button aria-selected={tab === "imports"} className={tab === "imports" ? "active" : ""} onClick={() => setTab("imports")} role="tab" type="button">
+          Imported calendars <span>{initialFeeds.length}</span>
+        </button>
+      </div>
+
+      {/* Kept mounted so the list of feeds survives switching tabs. */}
+      <div hidden={tab !== "imports"}>
+        <CalendarFeedsPanel initialFeeds={initialFeeds} onEntriesChange={setEntries} />
       </div>
 
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
@@ -236,6 +250,11 @@ export function CalendarAdminWorkspace({
                 </button>
               )}
             </div>
+            {editing?.sourceFeedName && (
+              <p className="calendar-repeat-hint" role="note">
+                Imported from {editing.sourceFeedName}. Fields you change here are kept when the calendar refreshes, and Google is never changed.
+              </p>
+            )}
             <label>
               Title
               <input defaultValue={editing?.title ?? ""} maxLength={140} name="title" placeholder="e.g. Pathfinder Bible Experience" required />
@@ -324,29 +343,62 @@ export function CalendarAdminWorkspace({
                         <span className={`status-chip ${entry.isPublished ? "green" : "gold"}`}>{entry.isPublished ? "On calendar" : "Draft"}</span>
                         {entry.status !== "SCHEDULED" && <span className="status-chip coral">{calendarStatusLabels[entry.status]}</span>}
                         {entry.entryType === "CLOSURE" && <span className="status-chip gold">{closureLabel}</span>}
+                        {entry.sourceFeedName && <span className="status-chip">Imported from {entry.sourceFeedName}</span>}
+                        {entry.sourceRemovedAt && <span className="status-chip coral">No longer in the source</span>}
+                        {entry.isHiddenLocally && <span className="status-chip gold">Hidden here</span>}
+                        {entry.locallyEditedFields.length > 0 && <span className="status-chip">Edited here</span>}
                       </span>
                     </div>
                     <div className="calendar-admin-actions">
-                      <button
-                        className="secondary-button"
-                        disabled={saving}
-                        onClick={() => call(
-                          `/api/admin/calendar/entries/${encodeURIComponent(entry.id)}`,
-                          "PATCH",
-                          { isPublished: !entry.isPublished },
-                          entry.isPublished ? "Hidden from the public calendar." : "Shown on the public calendar.",
-                        )}
-                        type="button"
-                      >
-                        {entry.isPublished ? <EyeOff aria-hidden="true" size={14} /> : <Eye aria-hidden="true" size={14} />}
-                        {entry.isPublished ? " Hide" : " Show"}
-                      </button>
+                      {entry.sourceFeedId ? (
+                        // An imported item is hidden here only (a refresh never unhides it); a draft is published instead.
+                        <button
+                          className="secondary-button"
+                          disabled={saving}
+                          onClick={() => entry.isPublished
+                            ? call(`/api/admin/calendar/entries/${encodeURIComponent(entry.id)}/source`, "POST", { action: entry.isHiddenLocally ? "show" : "hide" },
+                              entry.isHiddenLocally ? "Shown on the public calendar." : "Hidden from the public calendar. Google is unchanged.")
+                            : call(`/api/admin/calendar/entries/${encodeURIComponent(entry.id)}`, "PATCH", { isPublished: true }, "Shown on the public calendar.")}
+                          type="button"
+                        >
+                          {entry.isPublished && !entry.isHiddenLocally ? <EyeOff aria-hidden="true" size={14} /> : <Eye aria-hidden="true" size={14} />}
+                          {entry.isPublished && !entry.isHiddenLocally ? " Hide" : " Show"}
+                        </button>
+                      ) : (
+                        <button
+                          className="secondary-button"
+                          disabled={saving}
+                          onClick={() => call(
+                            `/api/admin/calendar/entries/${encodeURIComponent(entry.id)}`,
+                            "PATCH",
+                            { isPublished: !entry.isPublished },
+                            entry.isPublished ? "Hidden from the public calendar." : "Shown on the public calendar.",
+                          )}
+                          type="button"
+                        >
+                          {entry.isPublished ? <EyeOff aria-hidden="true" size={14} /> : <Eye aria-hidden="true" size={14} />}
+                          {entry.isPublished ? " Hide" : " Show"}
+                        </button>
+                      )}
+                      {entry.sourceFeedId && entry.locallyEditedFields.length > 0 && (
+                        <button
+                          className="secondary-button"
+                          disabled={saving}
+                          onClick={() => call(`/api/admin/calendar/entries/${encodeURIComponent(entry.id)}/source`, "POST", { action: "reset" }, "Reset to Google's version.")}
+                          type="button"
+                        >
+                          Reset to Google&apos;s version
+                        </button>
+                      )}
                       <button aria-label={`Edit ${entry.title}`} className="secondary-button" disabled={saving} onClick={() => beginEdit(entry)} type="button">
                         <Pencil aria-hidden="true" size={14} />
                       </button>
-                      <button aria-label={`Remove ${entry.title}`} className="secondary-button" disabled={saving} onClick={() => remove(entry)} type="button">
-                        <Trash2 aria-hidden="true" size={14} />
-                      </button>
+                      {/* A refresh would bring a deleted import back, so imports are hidden, not removed. */}
+                      {!entry.sourceFeedId && (
+                        <button aria-label={`Remove ${entry.title}`} className="secondary-button" disabled={saving} onClick={() => remove(entry)} type="button">
+                          <Trash2 aria-hidden="true" size={14} />
+                        </button>
+                      )}
                     </div>
                   </li>
                 ))}

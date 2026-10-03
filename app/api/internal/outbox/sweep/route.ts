@@ -3,6 +3,7 @@ import {
   isAuthorizedSweepRequest,
   sweepOutbox,
 } from "@/modules/communications/outbox-sweep";
+import { refreshDueCalendarFeeds } from "@/modules/calendar/feeds";
 import { sendDueLocationWaitlistDigests } from "@/modules/event-locations/waitlist-digest";
 import { pruneExpiredCommunityContent } from "@/modules/community/repository";
 import { runAlertScan } from "@/modules/operations/alert-scan";
@@ -52,6 +53,13 @@ async function postHandler(request: Request) {
       logError("The location waitlist digest failed after a successful outbox sweep", error);
       return null;
     });
+    // Imported Google calendars (#444): feeds whose own refresh interval has
+    // passed, a few per sweep. Each feed's failure is recorded on the feed; none
+    // of it may make a successful sweep look failed.
+    const calendarFeeds = await refreshDueCalendarFeeds().catch((error) => {
+      logError("The calendar feed refresh failed after a successful outbox sweep", error);
+      return null;
+    });
     return Response.json({
       sweptEventCount: result.sweptEventIds.length,
       sweptAccountMessages: result.sweptAccountMessages,
@@ -64,6 +72,7 @@ async function postHandler(request: Request) {
         cleared: alerts.cleared,
       },
       communityRetention,
+      calendarFeeds,
       locationWaitlistDigest: locationWaitlistDigest && {
         status: locationWaitlistDigest.status,
         changesCovered: locationWaitlistDigest.changesCovered,

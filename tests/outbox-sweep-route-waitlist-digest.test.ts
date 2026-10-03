@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   pruneExpiredCommunityContent: vi.fn(),
   sendDueLocationWaitlistDigests: vi.fn(),
   logError: vi.fn(),
+  refreshDueCalendarFeeds: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -22,6 +23,7 @@ vi.mock("@/modules/communications/outbox-sweep", () => ({
 vi.mock("@/modules/community/repository", () => ({ pruneExpiredCommunityContent: mocks.pruneExpiredCommunityContent }));
 vi.mock("@/modules/operations/alert-scan", () => ({ runAlertScan: mocks.runAlertScan }));
 vi.mock("@/modules/operations/sweep-heartbeat-repository", () => ({ recordSweepHeartbeat: mocks.recordSweepHeartbeat }));
+vi.mock("@/modules/calendar/feeds", () => ({ refreshDueCalendarFeeds: mocks.refreshDueCalendarFeeds }));
 vi.mock("@/modules/event-locations/waitlist-digest", () => ({ sendDueLocationWaitlistDigests: mocks.sendDueLocationWaitlistDigests }));
 
 import { POST } from "@/app/api/internal/outbox/sweep/route";
@@ -39,6 +41,7 @@ beforeEach(() => {
   mocks.recordSweepHeartbeat.mockResolvedValue(undefined);
   mocks.runAlertScan.mockResolvedValue({ sent: [], suppressed: [], undelivered: [], cleared: [] });
   mocks.pruneExpiredCommunityContent.mockResolvedValue({ removed: 0 });
+  mocks.refreshDueCalendarFeeds.mockResolvedValue({ due: 0, refreshed: 0, failed: 0 });
   mocks.sendDueLocationWaitlistDigests.mockResolvedValue({ status: "QUEUED", dateKey: "2026-10-06", changesCovered: 4, recipients: 2, messageIds: ["m1", "m2"], delivered: 2 });
 });
 
@@ -66,6 +69,18 @@ describe("the sweep and the daily waitlist digest", () => {
     expect((await response.json()).locationWaitlistDigest).toBeNull();
     expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining("location waitlist digest failed"), expect.any(Error));
     expect(mocks.recordSweepHeartbeat).toHaveBeenCalledWith("SUCCEEDED");
+  });
+
+  it("refreshes due calendar feeds after the outbox work, and a feed fault never fails the sweep", async () => {
+    mocks.refreshDueCalendarFeeds.mockResolvedValueOnce({ due: 2, refreshed: 1, failed: 1 });
+    const ok = await POST(request());
+    expect((await ok.json()).calendarFeeds).toEqual({ due: 2, refreshed: 1, failed: 1 });
+
+    mocks.refreshDueCalendarFeeds.mockRejectedValueOnce(new Error("synthetic feed fault"));
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).calendarFeeds).toBeNull();
+    expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining("calendar feed refresh failed"), expect.any(Error));
   });
 
   it("does not send the digest when the sweep itself fails", async () => {
