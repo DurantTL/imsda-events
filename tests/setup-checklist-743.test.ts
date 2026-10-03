@@ -39,8 +39,8 @@ describe("the setup checklist steps", () => {
     const { steps } = buildSetupChecklist(blank, eventPermissions);
     expect(steps.map((step) => step.label)).toEqual([
       "Event basics",
-      "Attendee types and prices",
-      "Registration forms",
+      "Attendee types",
+      "Registration forms and prices",
       "Test form",
       "Publish form",
       "Publish event",
@@ -78,10 +78,10 @@ describe("done and not done come from existing data only", () => {
     expect(done({ ...blank, endsOn: null }).basics).toBe(false);
   });
 
-  it("attendee types and prices: done with one active type, so a free event can finish it", () => {
+  it("attendee types: done with one active type, so a free event can finish it", () => {
     expect(done(blank)["attendee-types"]).toBe(false);
     expect(done({ ...blank, activeAttendeeTypeCount: 1 })["attendee-types"]).toBe(true);
-    expect(buildSetupChecklist(blank, eventPermissions).steps[1]!.label).toBe("Attendee types and prices");
+    expect(buildSetupChecklist(blank, eventPermissions).steps[1]!.label).toBe("Attendee types");
   });
 
   it("registration forms, test form and publish form each follow their own count", () => {

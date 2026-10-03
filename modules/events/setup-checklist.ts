@@ -83,8 +83,8 @@ const definitions: readonly StepDefinition[] = [
   },
   {
     id: "attendee-types",
-    label: "Attendee types and prices",
-    detail: "At least one attendee type. Set prices on the form's fields.",
+    label: "Attendee types",
+    detail: "At least one active attendee type. Prices are set on the registration form's fields.",
     actionLabel: "Open attendee setup",
     requires: ["CONFIGURE_EVENT"],
     done: (facts) => facts.activeAttendeeTypeCount > 0,
@@ -92,8 +92,8 @@ const definitions: readonly StepDefinition[] = [
   },
   {
     id: "forms",
-    label: "Registration forms",
-    detail: "A registration form exists.",
+    label: "Registration forms and prices",
+    detail: "A registration form exists. Add its prices in the form builder.",
     actionLabel: "Open form builder",
     requires: ["MANAGE_FORMS"],
     done: (facts) => facts.formCount > 0,

@@ -47,7 +47,7 @@ import OverviewPage from "@/app/(workspace)/overview/page";
 import { ActionsMenu } from "@/components/actions-menu";
 import { BuilderDeviceHint } from "@/components/builder-device-hint";
 import { CheckInWorkspace } from "@/components/check-in-workspace";
-import { taskNameMatches } from "@/components/event-modules-page-model";
+import { filterTasks, taskNameMatches } from "@/components/event-modules-page-model";
 import { MoreTaskSearch } from "@/components/more-task-search";
 import { PeopleWorkspace } from "@/components/people-workspace";
 import { eventPermissions, rolePermissions, type EventPermission } from "@/modules/access/permissions";
@@ -163,6 +163,30 @@ describe("More: compact groups and the optional task search", () => {
     expect(taskNameMatches("Registration forms", "forms payments")).toBe(false);
   });
 
+  it("keeps the count right when a query that hid a group is followed by one that matches in it", () => {
+    const cards = [
+      { id: "1", name: "Tags", groupIds: ["setup"], drawn: true },
+      { id: "2", name: "Event settings", groupIds: ["setup"], drawn: true },
+      { id: "3", name: "Merchandise", groupIds: ["sales"], drawn: true },
+      { id: "4", name: "Payments", groupIds: ["tools", "tools-sales"], drawn: false },
+    ];
+    const miss = filterTasks({ cards, query: "tagsx" });
+    expect(miss.count).toBe(0);
+    expect([...miss.shownGroupIds]).toEqual([]);
+    // Typing on: the group the first query hid is shown again and the card counts.
+    const hit = filterTasks({ cards, query: "tags" });
+    expect([...hit.shownCardIds]).toEqual(["1"]);
+    expect([...hit.shownGroupIds]).toEqual(["setup"]);
+    expect(hit.count).toBe(1);
+    // Blank: every card and group again. A card the screen does not draw is shown but never counted.
+    const blank = filterTasks({ cards, query: "" });
+    expect(blank.shownCardIds.size).toBe(4);
+    expect([...blank.shownGroupIds].sort()).toEqual(["sales", "setup", "tools", "tools-sales"]);
+    expect(filterTasks({ cards, query: "payments" }).count).toBe(0);
+    // A nested group shows when a card inside it does.
+    expect([...filterTasks({ cards, query: "payments" }).shownGroupIds].sort()).toEqual(["tools", "tools-sales"]);
+  });
+
   it("renders a labelled search box that filters the named container", () => {
     const html = renderToStaticMarkup(createElement(MoreTaskSearch, { containerId: "more-task-groups" }));
     expect(html).toContain('role="search"');
@@ -212,7 +236,7 @@ describe("More: compact groups and the optional task search", () => {
     const source = read("components/more-task-search.tsx");
     expect(source).toContain("getClientRects().length > 0");
     expect(source).toContain("MORE_SEARCH_MIN_TASKS = 7");
-    expect(source).toContain("if (match && isRendered(card)) visible += 1;");
+    expect(source).toContain("drawn: isRendered(card)");
     // The server no longer counts the desktop-hidden phone list toward a threshold.
     expect(read("app/(workspace)/more/page.tsx")).not.toContain("> 6 &&");
   });

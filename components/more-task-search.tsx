@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 import { Search } from "lucide-react";
-import { taskNameMatches } from "@/components/event-modules-page-model";
+import { filterTasks } from "@/components/event-modules-page-model";
 
 /**
  * Hides the whole search while fewer than MORE_SEARCH_MIN_TASKS tasks and tools are actually drawn
@@ -46,18 +46,22 @@ export function MoreTaskSearch({ containerId }: { containerId: string }) {
     setQuery(next);
     const container = document.getElementById(containerId);
     if (!container) return;
-    let visible = 0;
-    container.querySelectorAll<HTMLElement>("[data-task-name]").forEach((card) => {
-      const match = taskNameMatches(card.dataset.taskName ?? "", next);
-      card.hidden = !match;
-      // Count only what is drawn, so a card hidden by the screen size never inflates the number.
-      if (match && isRendered(card)) visible += 1;
+    const cardElements = [...container.querySelectorAll<HTMLElement>("[data-task-name]")];
+    const groupElements = [...container.querySelectorAll<HTMLElement>("[data-task-group]")];
+    // Start from everything shown, so what the browser draws does not depend on the previous query.
+    [...cardElements, ...groupElements].forEach((element) => { element.hidden = false; });
+    const result = filterTasks({
+      query: next,
+      cards: cardElements.map((card, index) => ({
+        id: String(index),
+        name: card.dataset.taskName ?? "",
+        groupIds: groupElements.flatMap((group, groupIndex) => (group.contains(card) ? [String(groupIndex)] : [])),
+        drawn: isRendered(card),
+      })),
     });
-    // A group with no matching card hides, heading and all; a blank search shows every group again.
-    container.querySelectorAll<HTMLElement>("[data-task-group]").forEach((group) => {
-      group.hidden = next.trim() !== "" && group.querySelectorAll("[data-task-name]:not([hidden])").length === 0;
-    });
-    setShown(next.trim() === "" ? null : visible);
+    cardElements.forEach((card, index) => { card.hidden = !result.shownCardIds.has(String(index)); });
+    groupElements.forEach((group, index) => { group.hidden = !result.shownGroupIds.has(String(index)); });
+    setShown(next.trim() === "" ? null : result.count);
   }
 
   return (

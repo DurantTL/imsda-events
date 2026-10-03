@@ -148,3 +148,28 @@ export function taskNameMatches(name: string, query: string): boolean {
   const haystack = name.toLowerCase();
   return words.every((word) => haystack.includes(word));
 }
+
+export type TaskFilterCard = {
+  id: string;
+  name: string;
+  /** Every group the card sits inside, outermost last (groups can nest). */
+  groupIds: readonly string[];
+  /** Whether the browser draws the card when nothing is filtered: the phone-only list is not drawn on desktop. */
+  drawn: boolean;
+};
+
+/**
+ * What the task search shows for a query. Pure, so the order of the work cannot
+ * matter: a card is shown when its name matches; a group is shown when a blank
+ * search is typed or any card inside it is shown; the count is the shown cards
+ * the browser actually draws, so a card hidden by screen size never counts and a
+ * card in a group that was hidden by an earlier query is counted again.
+ */
+export function filterTasks({ cards, query }: { cards: readonly TaskFilterCard[]; query: string }) {
+  const blank = query.trim() === "";
+  const shownCards = cards.filter((card) => taskNameMatches(card.name, query));
+  const shownCardIds = new Set(shownCards.map((card) => card.id));
+  const allGroupIds = new Set(cards.flatMap((card) => card.groupIds));
+  const shownGroupIds = new Set(blank ? allGroupIds : shownCards.flatMap((card) => card.groupIds));
+  return { shownCardIds, shownGroupIds, count: shownCards.filter((card) => card.drawn).length };
+}
