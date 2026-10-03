@@ -9,7 +9,7 @@ import {
   sortCalendarItems,
   type CalendarItem,
 } from "@/modules/calendar/domain";
-import { expandOccurrences, parseRepeatRule, serializeRepeatRule } from "@/modules/calendar/recurrence";
+import { expandOccurrences, parseRepeatRule, repeatStartProblem, serializeRepeatRule } from "@/modules/calendar/recurrence";
 import type { CalendarEntryInput, CalendarEntryUpdate, CalendarEventSettings, CalendarRepeatInput } from "@/modules/calendar/schemas";
 import { evaluateEventRegistrationPhase } from "@/modules/events/lifecycle";
 
@@ -137,6 +137,7 @@ function entryItems(entry: PublicEntryRow, from: string, to: string, expandRepea
   return expandOccurrences(entry, rule, entry.repeatExceptions ?? [], from, to).map((occurrence) => ({
     ...base,
     key: rule ? `entry-${entry.id}:${occurrence.startsOn}` : `entry-${entry.id}`,
+    seriesId: rule ? `entry-${entry.id}` : undefined,
     startsOn: occurrence.startsOn,
     endsOn: occurrence.endsOn,
     recurrence: null,
@@ -224,11 +225,10 @@ export async function updateCalendarEntry(entryId: string, input: CalendarEntryU
     if (!existing) throw new CalendarError("ENTRY_NOT_FOUND", "That calendar entry could not be found.");
     const fields = withoutRepeat(input);
     const columns = repeatColumns(input);
-    // The end-of-repeat check needs the start date, which a PATCH may not carry.
-    const until = input.repeat?.until ?? null;
-    if (until && until < (input.startsOn ?? existing.startsOn)) {
-      throw new CalendarError("INVALID_REPEAT", "A repeat can't end before the first date.");
-    }
+    // A PATCH may carry only the start date or only the repeat, so check the pair as it will be stored.
+    const rule = input.repeat === undefined ? parseRepeatRule(existing.repeatRule) : input.repeat;
+    const problem = rule ? repeatStartProblem(rule, input.startsOn ?? existing.startsOn) : null;
+    if (problem) throw new CalendarError("INVALID_REPEAT", problem);
     const entry = await tx.calendarEntry.update({ where: { id: entryId }, data: { ...fields, ...columns, updatedByUserId: actorUserId } });
     const changed = Object.keys({ ...fields, ...columns }).filter((key) =>
       JSON.stringify(existing[key as keyof typeof existing]) !== JSON.stringify(entry[key as keyof typeof entry]));

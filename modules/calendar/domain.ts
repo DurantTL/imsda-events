@@ -32,7 +32,23 @@ export type CalendarItem = {
    * the ICS feed emits as RRULE/EXDATE; expanded occurrences on the page leave it null.
    */
   recurrence?: { rule: string; exceptions: string[] } | null;
+  /** Set on every occurrence of a repeating entry, so lists can show a series once. */
+  seriesId?: string;
 };
+
+/** The first occurrence of each repeating entry; one-off items all stay. Items must already be in date order. */
+export function firstPerSeries(items: CalendarItem[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (!item.seriesId) return true;
+    if (seen.has(item.seriesId)) return false;
+    seen.add(item.seriesId);
+    return true;
+  });
+}
+
+/** How far either side of today the month view will go. */
+export const calendarMonthSpanYears = 5;
 
 /** The label and the feed category that mark an office closure. */
 export const closureLabel = "Office closed";
@@ -78,7 +94,8 @@ export function parseMonthParam(value: string | undefined, today: string): Calen
   if (match) {
     const year = Number(match[1]);
     const month = Number(match[2]);
-    if (year >= 2000 && year <= 2100 && month >= 1 && month <= 12) return { year, month };
+    const todayYear = Number(today.slice(0, 4));
+    if (Math.abs(year - todayYear) <= calendarMonthSpanYears && month >= 1 && month <= 12) return { year, month };
   }
   const [year, month] = today.split("-").map(Number);
   return { year, month };

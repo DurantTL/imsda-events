@@ -8,6 +8,7 @@ import {
   calendarCategories,
   closureLabel,
   filterByCategory,
+  firstPerSeries,
   firstOfMonth,
   itemsOnDate,
   itemsOverlapping,
@@ -181,7 +182,7 @@ export default async function PublicCalendarPage({ searchParams }: { searchParam
           ) : items.length === 0 ? (
             <p className="calendar-empty">Nothing is on the calendar yet{category ? ` in ${category}` : ""}. Check back soon.</p>
           ) : (
-            groupByMonth(items, today).map(([key, group]) => (
+            groupByMonth(firstPerSeries(items), today).map(([key, group]) => (
               <div className="calendar-agenda-group" key={key}>
                 <h3 className="calendar-agenda-month">{monthLabel(parseMonthParam(key, today))}</h3>
                 <ul className="calendar-agenda-list">{group.map((item) => <AgendaItem item={item} key={item.key} />)}</ul>

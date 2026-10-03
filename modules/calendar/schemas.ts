@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { isCalendarDate } from "@/modules/calendar/domain";
-import { maxRepeatCount, maxRepeatInterval, repeatFrequencies } from "@/modules/calendar/recurrence";
+import { maxRepeatCount, maxRepeatInterval, repeatFrequencies, repeatStartProblem } from "@/modules/calendar/recurrence";
 
 const text = (max: number) => z.string().trim().max(max);
 const calendarDate = (label: string) =>
@@ -13,6 +13,8 @@ export const repeatSchema = z.object({
   weekdays: z.array(z.number().int().min(0).max(6)).max(7).default([]),
   until: calendarDate("last repeat date").nullable().default(null),
   count: z.number().int().min(1).max(maxRepeatCount).nullable().default(null),
+  /** 0 = weeks start on Sunday (the editor's choice), 1 = Monday (an RRULE with no WKST). */
+  weekStart: z.union([z.literal(0), z.literal(1)]).default(0),
 }).strict().superRefine((repeat, context) => {
   if (repeat.until && repeat.count) {
     context.addIssue({ code: "custom", path: ["count"], message: "End a repeat on a date or after a number of times, not both." });
@@ -59,15 +61,14 @@ const entryInputFields = {
 };
 
 function endsAfterStart(
-  input: { startsOn?: string; endsOn?: string; repeat?: { until: string | null } | null },
+  input: { startsOn?: string; endsOn?: string; repeat?: { frequency: "DAILY" | "WEEKLY" | "MONTHLY" | "YEARLY"; weekdays: number[]; until: string | null } | null },
   context: z.RefinementCtx,
 ) {
   if (input.startsOn && input.endsOn && input.endsOn < input.startsOn) {
     context.addIssue({ code: "custom", path: ["endsOn"], message: "The end date can't be before the start date." });
   }
-  if (input.startsOn && input.repeat?.until && input.repeat.until < input.startsOn) {
-    context.addIssue({ code: "custom", path: ["repeat", "until"], message: "A repeat can't end before the first date." });
-  }
+  const problem = input.startsOn && input.repeat ? repeatStartProblem(input.repeat, input.startsOn) : null;
+  if (problem) context.addIssue({ code: "custom", path: ["repeat"], message: problem });
 }
 
 export const calendarEntryInputSchema = z.object(entryInputFields).strict().superRefine(endsAfterStart);

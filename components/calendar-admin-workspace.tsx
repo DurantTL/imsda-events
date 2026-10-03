@@ -22,9 +22,25 @@ export type RepeatDraft = {
   endMode: "never" | "until" | "count";
   until: string;
   count: number;
+  weekStart: RepeatRule["weekStart"];
 };
 
-export const noRepeat: RepeatDraft = { frequency: "NEVER", interval: 1, weekdays: [], endMode: "never", until: "", count: 10 };
+export const noRepeat: RepeatDraft = { frequency: "NEVER", interval: 1, weekdays: [], endMode: "never", until: "", count: 10, weekStart: 0 };
+
+/** 0 = Sunday ... 6 = Saturday for a YYYY-MM-DD date, or null while the date is blank. */
+function weekdayOf(calendarDate: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(calendarDate) ? new Date(`${calendarDate}T00:00:00Z`).getUTCDay() : null;
+}
+
+/** A hint for repeats that land on a day some months lack, or null. */
+export function shortMonthHint(draft: RepeatDraft, startsOn: string) {
+  const day = Number(startsOn.slice(8, 10));
+  const month = Number(startsOn.slice(5, 7));
+  const risky = (draft.frequency === "MONTHLY" && day >= 29) || (draft.frequency === "YEARLY" && month === 2 && day === 29);
+  return risky
+    ? "Some calendar apps (e.g. Outlook) may show this on the last day of shorter months."
+    : null;
+}
 
 export function repeatToDraft(repeat: RepeatRule | null): RepeatDraft {
   if (!repeat) return noRepeat;
@@ -35,16 +51,23 @@ export function repeatToDraft(repeat: RepeatRule | null): RepeatDraft {
     endMode: repeat.until ? "until" : repeat.count ? "count" : "never",
     until: repeat.until ?? "",
     count: repeat.count ?? 10,
+    weekStart: repeat.weekStart,
   };
 }
 
 /** The rule sent to the API, or null for "never". A weekly repeat with no weekday follows the start date's. */
-export function draftToRepeat(draft: RepeatDraft): RepeatRule | null {
+export function draftToRepeat(draft: RepeatDraft, startsOn = ""): RepeatRule | null {
   if (draft.frequency === "NEVER") return null;
+  const startDay = weekdayOf(startsOn);
+  // The start date's weekday is always part of a weekly repeat.
+  const picked = draft.weekdays.length > 0 && startDay !== null && !draft.weekdays.includes(startDay)
+    ? [...draft.weekdays, startDay].sort()
+    : draft.weekdays;
   return {
     frequency: draft.frequency,
     interval: Math.max(1, Math.floor(draft.interval) || 1),
-    weekdays: draft.frequency === "WEEKLY" ? draft.weekdays : [],
+    weekdays: draft.frequency === "WEEKLY" ? picked : [],
+    weekStart: draft.weekStart,
     until: draft.endMode === "until" && draft.until ? draft.until : null,
     count: draft.endMode === "count" ? Math.max(1, Math.floor(draft.count) || 1) : null,
   };
@@ -131,7 +154,7 @@ export function CalendarAdminWorkspace({
       status: String(form.get("status") ?? "SCHEDULED"),
       isPublished: form.get("isPublished") === "on",
       entryType: form.get("entryType") === "CLOSURE" ? "CLOSURE" : "STANDARD",
-      repeat: draftToRepeat(repeat),
+      repeat: draftToRepeat(repeat, startsOn),
       repeatExceptions: repeat.frequency === "NEVER" ? [] : skipped,
     };
     const ok = editing
@@ -426,7 +449,9 @@ function RepeatEditor({
   startsOn: string;
 }) {
   const update = (patch: Partial<RepeatDraft>) => onChange({ ...draft, ...patch });
-  const rule = draftToRepeat(draft);
+  const rule = draftToRepeat(draft, startsOn);
+  const startDay = weekdayOf(startsOn);
+  const hint = shortMonthHint(draft, startsOn);
   const preview = rule && startsOn ? previewOccurrences({ startsOn }, rule, skipped, 12) : [];
   const unit = { DAILY: "day(s)", WEEKLY: "week(s)", MONTHLY: "month(s)", YEARLY: "year(s)" };
 
@@ -467,13 +492,16 @@ function RepeatEditor({
         )}
       </div>
 
+      {hint && <p className="calendar-repeat-hint" role="note">{hint}</p>}
+
       {draft.frequency === "WEEKLY" && (
         <div role="group" aria-label="Repeat on these weekdays">
           <div className="calendar-weekday-picks">
             {weekdayLabels.map((label, day) => (
               <label key={label}>
                 <input
-                  checked={draft.weekdays.includes(day)}
+                  checked={draft.weekdays.includes(day) || day === startDay}
+                  disabled={day === startDay}
                   onChange={(event) => update({
                     weekdays: event.target.checked ? [...draft.weekdays, day].sort() : draft.weekdays.filter((value) => value !== day),
                   })}
@@ -483,7 +511,7 @@ function RepeatEditor({
               </label>
             ))}
           </div>
-          <small>No weekday picked repeats on the start date&apos;s weekday.</small>
+          <small>The start date&apos;s weekday is always included.</small>
         </div>
       )}
 

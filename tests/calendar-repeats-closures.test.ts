@@ -27,8 +27,8 @@ vi.mock("@/lib/prisma", () => {
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: vi.fn() }));
 
 import { AgendaItem } from "@/components/calendar-agenda-item";
-import { draftToRepeat, noRepeat, repeatToDraft } from "@/components/calendar-admin-workspace";
-import { buildCalendarIcs, closureCategory, type CalendarItem } from "@/modules/calendar/domain";
+import { draftToRepeat, noRepeat, repeatToDraft, shortMonthHint } from "@/components/calendar-admin-workspace";
+import { buildCalendarIcs, closureCategory, firstPerSeries, parseMonthParam, type CalendarItem } from "@/modules/calendar/domain";
 import { createCalendarEntry, listPublicCalendarItems, updateCalendarEntry, CalendarError } from "@/modules/calendar/repository";
 import { parseRepeatRule } from "@/modules/calendar/recurrence";
 import { calendarEntryInputSchema, calendarEntryUpdateSchema } from "@/modules/calendar/schemas";
@@ -85,7 +85,7 @@ describe("repeating entries on the public calendar", () => {
     mocks.entryFindMany.mockResolvedValue([entryRow({ repeatRule: "FREQ=WEEKLY;COUNT=4", repeatExceptions: ["2026-10-12"] })]);
     const items = await listPublicCalendarItems("2026-10-01", "2026-10-31", now, { expandRepeats: false });
     expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({ key: "entry-entry-1", recurrence: { rule: "FREQ=WEEKLY;COUNT=4", exceptions: ["2026-10-12"] } });
+    expect(items[0]).toMatchObject({ key: "entry-entry-1", recurrence: { rule: "FREQ=WEEKLY;WKST=MO;COUNT=4", exceptions: ["2026-10-12"] } });
   });
 
   it("keeps a feed master whose first date is long before the window", async () => {
@@ -161,6 +161,24 @@ describe("closure rendering", () => {
   });
 });
 
+describe("lists and the month view", () => {
+  it("shows only the first occurrence of a repeating entry in a list", () => {
+    const list = [
+      item({ key: "entry-1:2026-10-06", seriesId: "entry-1", startsOn: "2026-10-06", endsOn: "2026-10-06" }),
+      item({ key: "entry-9", title: "Rally", startsOn: "2026-10-07", endsOn: "2026-10-07" }),
+      item({ key: "entry-1:2026-10-13", seriesId: "entry-1", startsOn: "2026-10-13", endsOn: "2026-10-13" }),
+    ];
+    expect(firstPerSeries(list).map((entry) => entry.key)).toEqual(["entry-1:2026-10-06", "entry-9"]);
+  });
+
+  it("keeps ?month= within five years of today", () => {
+    expect(parseMonthParam("2031-12", "2026-10-03")).toEqual({ year: 2031, month: 12 });
+    expect(parseMonthParam("2032-01", "2026-10-03")).toEqual({ year: 2026, month: 10 });
+    expect(parseMonthParam("2100-12", "2026-10-03")).toEqual({ year: 2026, month: 10 });
+    expect(parseMonthParam("2000-01", "2026-10-03")).toEqual({ year: 2026, month: 10 });
+  });
+});
+
 describe("subscribe links", () => {
   const links = buildSubscribeLinks("https://events.example.test/");
 
@@ -216,7 +234,7 @@ describe("editor save and load", () => {
     });
     const entries = await createCalendarEntry(input, "admin-1");
     expect(mocks.entryCreate.mock.calls[0][0].data).toMatchObject({
-      repeatRule: "FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6",
+      repeatRule: "FREQ=WEEKLY;BYDAY=MO,WE;WKST=SU;COUNT=6",
       repeatExceptions: ["2026-10-12"],
       entryType: "CLOSURE",
     });
@@ -228,6 +246,41 @@ describe("editor save and load", () => {
     });
   });
 
+  it("rejects a weekly repeat whose weekdays leave out the start date's weekday", () => {
+    // 2026-10-06 is a Tuesday.
+    const base = { title: "Staff meeting", startsOn: "2026-10-06", endsOn: "2026-10-06" };
+    const result = calendarEntryInputSchema.safeParse({ ...base, repeat: { frequency: "WEEKLY", weekdays: [1, 3] } });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toMatch(/start date's weekday \(Tue\)/);
+    expect(calendarEntryInputSchema.safeParse({ ...base, repeat: { frequency: "WEEKLY", weekdays: [2, 3] } }).success).toBe(true);
+    expect(calendarEntryUpdateSchema.safeParse({ startsOn: "2026-10-06", endsOn: "2026-10-06", repeat: { frequency: "WEEKLY", weekdays: [1] } }).success).toBe(false);
+  });
+
+  it("re-checks the stored repeat when only the start date changes", async () => {
+    const existing = entryRow({ startsOn: "2026-10-06", endsOn: "2026-10-06", repeatRule: "FREQ=WEEKLY;BYDAY=TU,TH;WKST=SU;UNTIL=20261231" });
+    mocks.entryFindUnique.mockResolvedValue(existing);
+    mocks.entryUpdate.mockResolvedValue(existing);
+    mocks.entryFindMany.mockResolvedValue([]);
+    // Monday is not among Tue/Thu.
+    await expect(updateCalendarEntry("entry-1", { startsOn: "2026-10-05", endsOn: "2026-10-05" }, "admin-1")).rejects.toMatchObject({ code: "INVALID_REPEAT" });
+    // Moving past the UNTIL date fails too.
+    await expect(updateCalendarEntry("entry-1", { startsOn: "2027-01-05", endsOn: "2027-01-05" }, "admin-1")).rejects.toMatchObject({ code: "INVALID_REPEAT" });
+    expect(mocks.entryUpdate).not.toHaveBeenCalled();
+    // Thursday is fine.
+    await updateCalendarEntry("entry-1", { startsOn: "2026-10-08", endsOn: "2026-10-08" }, "admin-1");
+    expect(mocks.entryUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("makes the start weekday part of a weekly repeat and hints about short months", () => {
+    // 2026-10-06 is a Tuesday (2).
+    expect(draftToRepeat({ ...noRepeat, frequency: "WEEKLY", weekdays: [1, 3] }, "2026-10-06")?.weekdays).toEqual([1, 2, 3]);
+    expect(draftToRepeat({ ...noRepeat, frequency: "WEEKLY" }, "2026-10-06")?.weekdays).toEqual([]);
+    expect(shortMonthHint({ ...noRepeat, frequency: "MONTHLY" }, "2026-10-31")).toMatch(/Outlook/);
+    expect(shortMonthHint({ ...noRepeat, frequency: "MONTHLY" }, "2026-10-28")).toBeNull();
+    expect(shortMonthHint({ ...noRepeat, frequency: "YEARLY" }, "2028-02-29")).toMatch(/shorter months/);
+    expect(shortMonthHint({ ...noRepeat, frequency: "YEARLY" }, "2026-10-31")).toBeNull();
+  });
+
   it("clears a repeat, and refuses an end date before the first date", async () => {
     const existing = entryRow({ repeatRule: "FREQ=DAILY" });
     mocks.entryFindUnique.mockResolvedValue(existing);
@@ -236,7 +289,7 @@ describe("editor save and load", () => {
     await updateCalendarEntry("entry-1", { repeat: null }, "admin-1");
     expect(mocks.entryUpdate.mock.calls[0][0].data).toMatchObject({ repeatRule: null });
 
-    await expect(updateCalendarEntry("entry-1", { repeat: { frequency: "DAILY", interval: 1, weekdays: [], until: "2026-09-01", count: null } }, "admin-1"))
+    await expect(updateCalendarEntry("entry-1", { repeat: { frequency: "DAILY", interval: 1, weekdays: [], until: "2026-09-01", count: null, weekStart: 0 } }, "admin-1"))
       .rejects.toBeInstanceOf(CalendarError);
   });
 });

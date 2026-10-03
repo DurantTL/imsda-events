@@ -2,14 +2,16 @@ import { describe, expect, it } from "vitest";
 import {
   describeRepeat,
   expandOccurrences,
+  expansionDiagnostics,
   parseRepeatRule,
   previewOccurrences,
+  repeatStartProblem,
   serializeRepeatRule,
   type RepeatRule,
 } from "@/modules/calendar/recurrence";
 
 function rule(overrides: Partial<RepeatRule>): RepeatRule {
-  return { frequency: "DAILY", interval: 1, weekdays: [], until: null, count: null, ...overrides };
+  return { frequency: "DAILY", interval: 1, weekdays: [], until: null, count: null, weekStart: 0, ...overrides };
 }
 
 const starts = (occurrences: Array<{ startsOn: string }>) => occurrences.map((occurrence) => occurrence.startsOn);
@@ -19,12 +21,25 @@ describe("repeat rules as RRULE", () => {
     for (const value of [
       "FREQ=DAILY",
       "FREQ=DAILY;INTERVAL=3;COUNT=5",
-      "FREQ=WEEKLY;BYDAY=MO,WE,FR;UNTIL=20270601",
+      "FREQ=WEEKLY;BYDAY=MO,WE,FR;WKST=SU;UNTIL=20270601",
+      "FREQ=WEEKLY;WKST=MO",
       "FREQ=MONTHLY;INTERVAL=2",
       "FREQ=YEARLY;COUNT=4",
     ]) {
       expect(serializeRepeatRule(parseRepeatRule(value)!)).toBe(value);
     }
+  });
+
+  it("always writes WKST=SU for a weekly rule the editor makes, and no WKST for other frequencies", () => {
+    expect(serializeRepeatRule(rule({ frequency: "WEEKLY", weekdays: [1] }))).toBe("FREQ=WEEKLY;BYDAY=MO;WKST=SU");
+    expect(serializeRepeatRule(rule({ frequency: "MONTHLY" }))).toBe("FREQ=MONTHLY");
+  });
+
+  it("reads a missing WKST as Monday, per RFC 5545, and accepts SU", () => {
+    expect(parseRepeatRule("FREQ=WEEKLY;BYDAY=SU")?.weekStart).toBe(1);
+    expect(parseRepeatRule("FREQ=WEEKLY;WKST=MO")?.weekStart).toBe(1);
+    expect(parseRepeatRule("FREQ=WEEKLY;WKST=SU")?.weekStart).toBe(0);
+    expect(parseRepeatRule("FREQ=WEEKLY;WKST=WE")).toBeNull();
   });
 
   it("reads an imported RRULE with a UTC UNTIL and a leading RRULE: prefix", () => {
@@ -42,6 +57,78 @@ describe("repeat rules as RRULE", () => {
     expect(describeRepeat(rule({ frequency: "YEARLY" }))).toBe("Yearly");
   });
 });
+
+describe("weekly intervals and WKST", () => {
+  // 2026-10-05 is a Monday. BYDAY=MO,SU every 2 weeks: Sunday sits at the start of a Sunday-week
+  // but the end of a Monday-week, so the two WKST values disagree.
+  const monday = { startsOn: "2026-10-05", endsOn: "2026-10-05" };
+  const days = { frequency: "WEEKLY" as const, interval: 2, weekdays: [0, 1] };
+
+  it("with WKST=SU, Sunday opens the week it belongs to", () => {
+    // Weeks: Sun 10-04..Sat 10-10 (taken), skip 10-11..17, take 10-18..24 (Sun 10-18, Mon 10-19).
+    expect(starts(expandOccurrences(monday, rule({ ...days, weekStart: 0 }), [], "2026-10-01", "2026-11-03")))
+      .toEqual(["2026-10-05", "2026-10-18", "2026-10-19", "2026-11-01", "2026-11-02"]);
+  });
+
+  it("with WKST=MO, Sunday closes the week it belongs to", () => {
+    // Weeks: Mon 10-05..Sun 10-11 (taken: Mon 10-05, Sun 10-11), skip, take 10-19 and 10-25.
+    expect(starts(expandOccurrences(monday, rule({ ...days, weekStart: 1 }), [], "2026-10-01", "2026-11-03")))
+      .toEqual(["2026-10-05", "2026-10-11", "2026-10-19", "2026-10-25", "2026-11-02"]);
+  });
+
+  it("counts correctly through a jump (first week holds fewer dates)", () => {
+    const all = starts(expandOccurrences(monday, rule({ ...days, count: 7 }), [], "2026-10-01", "2030-01-01"));
+    expect(all).toHaveLength(7);
+    // The same rule read through a far-away window returns the tail of that list, not a fresh count.
+    const late = starts(expandOccurrences(monday, rule({ ...days, count: 7 }), [], all[5], "2030-01-01"));
+    expect(late).toEqual(all.slice(5));
+    expect(starts(expandOccurrences(monday, rule({ ...days, count: 7 }), [], "2028-01-01", "2030-01-01"))).toEqual([]);
+  });
+});
+
+describe("start date against the weekdays", () => {
+  it("requires a weekly repeat with weekdays to include the start date's weekday", () => {
+    expect(repeatStartProblem(rule({ frequency: "WEEKLY", weekdays: [1, 3] }), "2026-10-06")).toMatch(/Tue/);
+    expect(repeatStartProblem(rule({ frequency: "WEEKLY", weekdays: [2, 3] }), "2026-10-06")).toBeNull();
+    expect(repeatStartProblem(rule({ frequency: "WEEKLY" }), "2026-10-06")).toBeNull();
+    expect(repeatStartProblem(rule({ frequency: "DAILY", until: "2026-10-01" }), "2026-10-06")).toMatch(/end before/);
+  });
+});
+
+describe("cost of a far-off window", () => {
+  it("expands a daily rule from 2000 with no end in a bounded number of steps", () => {
+    expansionDiagnostics.steps = 0;
+    const result = expandOccurrences({ startsOn: "2000-01-01", endsOn: "2000-01-01" }, rule({}), [], "2100-12-01", "2100-12-31");
+    expect(result).toHaveLength(31);
+    expect(expansionDiagnostics.steps).toBeLessThan(100);
+  });
+
+  it("jumps weekly rules, and daily rules with a count, too", () => {
+    expansionDiagnostics.steps = 0;
+    const weekly = expandOccurrences({ startsOn: "2000-01-03", endsOn: "2000-01-03" }, rule({ frequency: "WEEKLY", weekdays: [1, 3] }), [], "2100-12-01", "2100-12-31");
+    expect(weekly.length).toBeGreaterThan(5);
+    expect(expansionDiagnostics.steps).toBeLessThan(100);
+    expansionDiagnostics.steps = 0;
+    expect(expandOccurrences({ startsOn: "2000-01-01", endsOn: "2000-01-01" }, rule({ count: 40000 }), [], "2100-12-01", "2100-12-31").length).toBeGreaterThan(0);
+    expect(expansionDiagnostics.steps).toBeLessThan(100);
+  });
+
+  it("gives the same dates with the jump as stepping from the start", () => {
+    const sample = rule({ frequency: "WEEKLY", interval: 3, weekdays: [1, 4, 6] });
+    const item = { startsOn: "2026-10-05", endsOn: "2026-10-06" };
+    const everything = starts(expandOccurrences(item, sample, [], "2026-01-01", "2027-12-31"));
+    for (const [from, to] of [["2027-02-10", "2027-03-20"], ["2026-12-31", "2027-01-15"]]) {
+      const windowed = starts(expandOccurrences(item, sample, [], from, to));
+      expect(windowed).toEqual(everything.filter((date) => date <= to && date >= addDay(from, -1)));
+    }
+  });
+});
+
+function addDay(date: string, days: number) {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
 
 describe("expanding occurrences", () => {
   const first = { startsOn: "2026-10-05", endsOn: "2026-10-05" }; // a Monday

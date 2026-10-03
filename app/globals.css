@@ -9096,6 +9096,10 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   html body .expandable-text-body.is-clamped { display: block; overflow: visible; -webkit-line-clamp: unset; line-clamp: unset; }
   html body .expandable-text-toggle { display: none; }
 }
+/* Issue 444: the subscribe buttons are no use on paper. Kept here, before the #743 blocks that assert they hold no print rule. */
+@media print {
+  .calendar-subscribe-panel { display: none; }
+}
 
 /* ==========================================================================
    #743 slice: Type scale, Buttons and Destructive actions.
@@ -9565,6 +9569,8 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
     font-size: 0;
   }
   html[data-sidebar="collapsed"] .primary-nav .nav-group-label:first-child { display: none; }
+}
+
 /* Calendar repeats, office closures and subscribe buttons (#444) */
 .calendar-chip.calendar-closure a, .calendar-chip.calendar-closure span:not(.sr-only) {
   display: inline-flex; align-items: center; gap: 4px;
@@ -9593,4 +9599,14 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 @media (max-width: 640px) {
   .calendar-subscribe-buttons { display: grid; grid-template-columns: 1fr; }
   .calendar-subscribe-buttons .secondary-button { width: 100%; justify-content: center; }
+}
+.calendar-chip.calendar-closure a, .calendar-chip.calendar-closure span:not(.sr-only) { min-width: 0; max-width: 100%; overflow: hidden; }
+.calendar-chip.calendar-closure svg { flex: none; }
+.calendar-repeat-hint { margin: 0; color: #6b3410; font-size: max(var(--type-body-floor, 0px), 0.76rem); }
+@media (max-width: 760px) {
+  /* Closures stay a distinct, solid, bordered dot when chips shrink to dots, with no icon to overflow. */
+  .calendar-chip.calendar-closure a, .calendar-chip.calendar-closure span:not(.sr-only) {
+    width: 10px; height: 10px; padding: 0; gap: 0; border: 2px solid #6b3410; border-radius: 999px; background: #8a4b1f; font-size: 0;
+  }
+  .calendar-chip.calendar-closure svg { display: none; }
 }

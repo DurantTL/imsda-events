@@ -4,12 +4,14 @@
  * `/calendar/feed.ics` for existing subscribers.
  */
 
+import { getServerEnv } from "@/lib/env";
+
 export const calendarFeedPath = "/calendar/feed.ics";
 export const calendarFeedName = "IMSDA conference calendar";
 
 /** The canonical site origin, without a trailing slash. */
 export function siteBaseUrl() {
-  return (process.env.APP_BASE_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+  return getServerEnv().APP_BASE_URL.replace(/\/+$/, "");
 }
 
 export type CalendarSubscribeLinks = {

@@ -20,7 +20,16 @@ export type RepeatRule = {
   /** Inclusive last date. At most one of `until` and `count`. */
   until: string | null;
   count: number | null;
+  /**
+   * First day of the week (WKST): 0 = Sunday, 1 = Monday. It decides which
+   * weeks an INTERVAL above 1 skips. The page and the editor use Sunday; an
+   * RRULE with no WKST means Monday under RFC 5545, as Google exports assume.
+   */
+  weekStart: 0 | 1;
 };
+
+/** Loop steps taken by the generator, so tests can show a far-off window costs a bounded number. */
+export const expansionDiagnostics = { steps: 0 };
 
 export const maxRepeatCount = 500;
 export const maxRepeatInterval = 99;
@@ -60,6 +69,7 @@ export function serializeRepeatRule(rule: RepeatRule) {
     const days = [...new Set(rule.weekdays)].sort((a, b) => a - b);
     parts.push(`BYDAY=${days.map((day) => weekdayCodes[day]).join(",")}`);
   }
+  if (rule.frequency === "WEEKLY") parts.push(`WKST=${rule.weekStart === 0 ? "SU" : "MO"}`);
   if (rule.until) parts.push(`UNTIL=${rule.until.replace(/-/g, "")}`);
   else if (rule.count) parts.push(`COUNT=${rule.count}`);
   return parts.join(";");
@@ -68,7 +78,7 @@ export function serializeRepeatRule(rule: RepeatRule) {
 /** Reads an RRULE value, or null when it uses anything outside the supported subset. */
 export function parseRepeatRule(value: string | null | undefined): RepeatRule | null {
   if (!value) return null;
-  const rule: RepeatRule = { frequency: "DAILY", interval: 1, weekdays: [], until: null, count: null };
+  const rule: RepeatRule = { frequency: "DAILY", interval: 1, weekdays: [], until: null, count: null, weekStart: 1 };
   let frequency: RepeatFrequency | null = null;
   for (const part of value.replace(/^RRULE:/i, "").split(";")) {
     const [rawKey, rawValue = ""] = part.split("=");
@@ -94,7 +104,8 @@ export function parseRepeatRule(value: string | null | undefined): RepeatRule | 
       if (days.some((day) => day < 0)) return null;
       rule.weekdays = [...new Set(days)].sort((a, b) => a - b);
     } else if (key === "WKST") {
-      if (text !== "SU") return null;
+      if (text !== "SU" && text !== "MO") return null;
+      rule.weekStart = text === "SU" ? 0 : 1;
     } else {
       return null;
     }
@@ -106,32 +117,52 @@ export function parseRepeatRule(value: string | null | undefined): RepeatRule | 
 }
 
 /**
- * Start dates of every occurrence in the rule, in order. COUNT counts skipped
+ * Start dates of the occurrences in the rule, in order. COUNT counts skipped
  * (EXDATE) occurrences too, as RFC 5545 says. Callers stop reading when they
  * pass the dates they need; `until`, `count` and a 200-year horizon end it.
+ *
+ * With `skipBefore`, DAILY and WEEKLY rules jump arithmetically (COUNT
+ * included) to the period containing that date instead of stepping from the
+ * first date, so a window far from the start costs a bounded number of steps.
+ * Dates before `skipBefore` may still be yielded; callers filter them.
  */
-function* generate(firstStart: string, rule: RepeatRule): Generator<string> {
+function* generate(firstStart: string, rule: RepeatRule, skipBefore?: string): Generator<string> {
   const [startYear, startMonth, startDay] = firstStart.split("-").map(Number);
   const horizon = `${startYear + 200}-12-31`;
-  let emitted = 0;
   const within = (date: string) => date <= horizon && (!rule.until || date <= rule.until);
+  let emitted = 0;
   const counted = () => {
     emitted += 1;
     return rule.count === null || emitted <= rule.count;
   };
+  const jumpDays = skipBefore && skipBefore > firstStart ? daysBetween(firstStart, skipBefore) : 0;
 
   if (rule.frequency === "DAILY") {
-    for (let date = firstStart; within(date); date = shiftDays(date, rule.interval)) {
+    const skipped = Math.floor(jumpDays / rule.interval);
+    emitted = skipped;
+    for (let date = shiftDays(firstStart, skipped * rule.interval); within(date); date = shiftDays(date, rule.interval)) {
+      expansionDiagnostics.steps += 1;
       if (!counted()) return;
       yield date;
     }
   } else if (rule.frequency === "WEEKLY") {
-    const weekdays = rule.weekdays.length > 0 ? rule.weekdays : [toDate(firstStart).getUTCDay()];
-    // Weeks start on Sunday (WKST=SU).
-    const firstWeek = shiftDays(firstStart, -toDate(firstStart).getUTCDay());
-    for (let week = firstWeek; within(week); week = shiftDays(week, 7 * rule.interval)) {
-      for (const weekday of weekdays) {
-        const date = shiftDays(week, weekday);
+    const weekdays = [...(rule.weekdays.length > 0 ? rule.weekdays : [toDate(firstStart).getUTCDay()])].sort((x, y) => x - y);
+    // Days of the week in WKST order, so a Sunday BYDAY falls at the end of a Monday-start week.
+    const order = weekdays.map((day) => (day - rule.weekStart + 7) % 7).sort((x, y) => x - y);
+    const firstOffset = (toDate(firstStart).getUTCDay() - rule.weekStart + 7) % 7;
+    const firstWeek = shiftDays(firstStart, -firstOffset);
+    const inFirstWeek = order.filter((offset) => offset >= firstOffset).length;
+    const stride = 7 * rule.interval;
+    // Whole periods skipped (the first week holds fewer occurrences than later ones).
+    const skippedWeeks = Math.floor(jumpDays / stride);
+    const jumped = skippedWeeks > 0 ? skippedWeeks - 1 : 0;
+    // Jump to the week before the target so every date overlapping the window is still reached.
+    const startWeek = jumped;
+    emitted = startWeek === 0 ? 0 : inFirstWeek + (startWeek - 1) * order.length;
+    for (let week = shiftDays(firstWeek, startWeek * stride); within(week); week = shiftDays(week, stride)) {
+      expansionDiagnostics.steps += 1;
+      for (const offset of order) {
+        const date = shiftDays(week, offset);
         if (date < firstStart) continue;
         if (!within(date)) return;
         if (!counted()) return;
@@ -140,6 +171,7 @@ function* generate(firstStart: string, rule: RepeatRule): Generator<string> {
     }
   } else if (rule.frequency === "MONTHLY") {
     for (let step = 0; ; step += 1) {
+      expansionDiagnostics.steps += 1;
       const index = startYear * 12 + (startMonth - 1) + step * rule.interval;
       if (!within(`${pad(Math.floor(index / 12), 4)}-${pad((index % 12) + 1)}-01`)) return;
       // A day that doesn't exist in the month (the 31st in April) is skipped, not moved.
@@ -151,6 +183,7 @@ function* generate(firstStart: string, rule: RepeatRule): Generator<string> {
     }
   } else {
     for (let step = 0; ; step += 1) {
+      expansionDiagnostics.steps += 1;
       const year = startYear + step * rule.interval;
       if (!within(`${pad(year, 4)}-01-01`)) return;
       const date = validDate(year, startMonth, startDay); // no February 29 in a common year
@@ -162,12 +195,27 @@ function* generate(firstStart: string, rule: RepeatRule): Generator<string> {
   }
 }
 
+/**
+ * Why a rule can't start on `startsOn`, or null. A weekly rule that names
+ * weekdays must include the start date's own weekday, and a repeat can't end
+ * before its first date.
+ */
+export function repeatStartProblem(rule: Pick<RepeatRule, "frequency" | "weekdays" | "until">, startsOn: string) {
+  if (rule.until && rule.until < startsOn) return "A repeat can't end before the first date.";
+  if (rule.frequency === "WEEKLY" && rule.weekdays.length > 0 && !rule.weekdays.includes(toDate(startsOn).getUTCDay())) {
+    return `A weekly repeat must include the start date's weekday (${weekdayLabels[toDate(startsOn).getUTCDay()]}).`;
+  }
+  return null;
+}
+
 export type RepeatOccurrence = { startsOn: string; endsOn: string };
 
 /**
  * Occurrences of an item that overlap `[from, to]` (inclusive calendar dates),
- * minus `exceptions`. The first occurrence is the item's own start date; each
- * occurrence lasts as long as the item (a three-day camp repeats as three days).
+ * minus `exceptions`. Each occurrence lasts as long as the item (a three-day
+ * camp repeats as three days). Occurrences begin at the first date the rule
+ * matches on or after the start date: staff-made rules always match the start
+ * date itself (`repeatStartProblem`), but an imported weekly rule may not.
  * Without a rule the item is its own single occurrence.
  */
 export function expandOccurrences(
@@ -183,7 +231,8 @@ export function expandOccurrences(
   const length = Math.max(0, daysBetween(item.startsOn, item.endsOn));
   const skipped = new Set(exceptions);
   const occurrences: RepeatOccurrence[] = [];
-  for (const startsOn of generate(item.startsOn, rule)) {
+  const reach = shiftDays(from, -length);
+  for (const startsOn of generate(item.startsOn, rule, reach)) {
     if (startsOn > to) break;
     const endsOn = shiftDays(startsOn, length);
     if (endsOn < from || skipped.has(startsOn)) continue;
