@@ -55,15 +55,12 @@ a later rename cannot clear it.
 Changed: check-in book extra column and badge-CSV Position (a sensitive field
 or a field linked to one is never offered; section titles are honoured; a key
 that is ineligible in any form version is out for all); operational reports (a
-field is excluded when explicitly flagged sensitive, or, with no flag, when the
-health default or the existing wording rules say so; an explicit false
-re-enables it; a key flagged sensitive in any version present is excluded for
-all registrations); the answer filter and its export.
-
-Known side effect: in operational reports, the Leadership Weekend "Meals"
-field drops out of meal counts by default, because its help text ("All meals
-are vegetarian.") reads as health-type wording. A director can re-enable it by
-unticking Sensitive on that field.
+field is excluded when explicitly flagged sensitive in any form version
+present, or by the report's existing wording rules; the builder's health
+default is deliberately not applied there, because its shared stems, such as
+"accommod", would drop the report's own housing field and the Leadership
+Weekend "Meals" field, whose help text says "All meals are vegetarian");
+the answer filter and its export.
 
 Left alone: People page registration detail and the answers editor, the
 registration list/detail API (all already require VIEW_SENSITIVE_DATA, so staff

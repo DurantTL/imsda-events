@@ -1,4 +1,3 @@
-import { isFieldSensitive } from "@/modules/forms/field-flags";
 import {
   registrationFormDefinitionSchema,
   type RegistrationFormDefinition,
@@ -187,12 +186,12 @@ function fieldContextText(metadata: FieldMetadata) {
 
 function isSensitiveField(metadata: FieldMetadata) {
   const { field } = metadata;
-  // A key flagged Sensitive in any form version stays out for all of them (#743).
+  // A staff-set "Sensitive" flag (#743) keeps the field out of these reports, in any form version
+  // present, whatever its wording. Only the explicit flag is used here, not the builder's
+  // health-wording default: its shared stems would drop the report's own housing
+  // ("accommodation") and meal fields.
   if (metadata.sensitiveInAnyVersion || field.sensitive === true) return true;
-  // The director's explicit "not sensitive" decision re-enables a field the wording rules would drop.
-  if (field.sensitive === false) return false;
-  return isFieldSensitive(field, { sectionTitle: metadata.sectionTitle })
-    || sensitiveSemanticPattern.test(fieldCoreText(field));
+  return sensitiveSemanticPattern.test(fieldCoreText(field));
 }
 
 function definitionFields(definition: RegistrationFormDefinition, flaggedKeys: ReadonlySet<string> = new Set()): FieldMetadata[] {

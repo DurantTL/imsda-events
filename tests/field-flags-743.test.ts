@@ -324,7 +324,7 @@ describe("field flags: section titles and other form versions", () => {
     expect(JSON.stringify(buildOperationalReport([report(open, "r1"), report(closed, "r2")]))).not.toContain("Friday supper preference");
   });
 
-  it("operational reports: Leadership Weekend meals is dropped by the health-wording default and a director's explicit false re-enables it", () => {
+  it("operational reports keep Leadership Weekend meals by default and drop it when flagged Sensitive", () => {
     const definition = template("leadership_weekend");
     const run = (change: Record<string, unknown>) => {
       const edited = {
@@ -343,9 +343,8 @@ describe("field flags: section titles and other form versions", () => {
         publicSubmission: { definition: edited, responses: {}, attendeeResponses: [{ meals: ["Friday Supper"] }] },
       }]));
     };
-    expect(run({ sensitive: false })).toContain("Friday Supper");
-    // Default read: the "All meals are vegetarian." help text reads as health-type wording.
-    expect(run({})).not.toContain("Friday Supper");
+    expect(run({})).toContain("Friday Supper");
+    expect(run({ sensitive: true })).not.toContain("Friday Supper");
   });
 });
 
