@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   qrToString: vi.fn(),
 }));
 
+vi.mock("@/modules/attendee-accounts/portal-second-step", () => ({ attendeeSecondStepPending: async () => false }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({
   getCurrentAttendee: mocks.getCurrentAttendee,
 }));

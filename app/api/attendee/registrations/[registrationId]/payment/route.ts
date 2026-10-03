@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import { authorizeAttendeeRegistration } from "@/modules/attendee-accounts/registrations-repository";
 import { squarePaymentInputSchema } from "@/modules/payments/square-domain";
 import {
@@ -25,11 +26,24 @@ function json(body: unknown, init?: ResponseInit) {
   });
 }
 
-async function access(context: Context) {
+/** Same role-dependent second step the portal enforces (decision 2026-09-23, #744). */
+function secondStepRequired() {
+  return json(
+    { code: "SECOND_STEP_REQUIRED", message: "Finish two-step sign-in to manage payment." },
+    { status: 403 },
+  );
+}
+
+type Access =
+  | { blocked: Response }
+  | { authorized: Awaited<ReturnType<typeof authorizeAttendeeRegistration>> };
+
+async function access(context: Context): Promise<Access> {
   const { account, via } = await getCurrentAttendee();
-  if (!account || via !== "attendee") return null;
+  if (!account || via !== "attendee") return { authorized: null };
+  if (await attendeeSecondStepPending()) return { blocked: secondStepRequired() };
   const { registrationId } = await context.params;
-  return authorizeAttendeeRegistration(account.verifiedEmail, registrationId);
+  return { authorized: await authorizeAttendeeRegistration(account.verifiedEmail, registrationId) };
 }
 
 function failure(error: unknown) {
@@ -56,7 +70,9 @@ function failure(error: unknown) {
 }
 
 async function getHandler(_request: Request, context: Context) {
-  const authorized = await access(context);
+  const result = await access(context);
+  if ("blocked" in result) return result.blocked;
+  const authorized = result.authorized;
   if (!authorized) {
     return json({ message: "This registration is unavailable." }, { status: 404 });
   }
@@ -69,7 +85,9 @@ async function getHandler(_request: Request, context: Context) {
 async function postHandler(request: Request, context: Context) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
-  const authorized = await access(context);
+  const result = await access(context);
+  if ("blocked" in result) return result.blocked;
+  const authorized = result.authorized;
   if (!authorized) {
     return json({ message: "This registration is unavailable." }, { status: 404 });
   }

@@ -1,5 +1,6 @@
 import QRCode from "qrcode";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import { createAccountAttendeePass } from "@/modules/checkin/attendee-pass-repository";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
@@ -18,11 +19,23 @@ type Context = {
 
 async function getHandler(_request: Request, context: Context) {
   try {
-    const { account } = await getCurrentAttendee();
+    const { account, via } = await getCurrentAttendee();
     if (!account) {
       return Response.json(
         { error: "SIGN_IN_REQUIRED", message: "Sign in to view an attendee pass." },
         { status: 401, headers: privateHeaders },
+      );
+    }
+    if (via !== "attendee") {
+      return Response.json(
+        { error: "ACT_AS_NOT_ALLOWED", message: "Attendee passes cannot be shown while acting as an attendee." },
+        { status: 403, headers: privateHeaders },
+      );
+    }
+    if (await attendeeSecondStepPending()) {
+      return Response.json(
+        { code: "SECOND_STEP_REQUIRED", message: "Finish two-step sign-in to view an attendee pass." },
+        { status: 403, headers: privateHeaders },
       );
     }
     const { registrationId, attendeeId } = await context.params;

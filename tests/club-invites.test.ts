@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const secondStepPending = vi.hoisted(() => vi.fn(async () => true));
 const mocks = vi.hoisted(() => ({
   writeAuditLog: vi.fn(),
   configured: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock("@/modules/communications/account-email", () => ({
   getAccountEmailSender: () => ({ name: "IMSDA Events", address: "events@example.test", replyTo: null }),
 }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
+vi.mock("@/modules/attendee-accounts/portal-second-step", () => ({ attendeeSecondStepPending: secondStepPending }));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 
 import { POST as ACCEPT } from "@/app/api/attendee/club-invites/[inviteId]/accept/route";
@@ -187,6 +189,16 @@ describe("accepting a club invite", () => {
     await expect(acceptClubInvite("invite-1", account, now)).rejects.toMatchObject({ code: "INVITE_NOT_OPEN" });
     expect(mocks.grantCreate).not.toHaveBeenCalled();
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("stays reachable for an account whose second step is pending (#744)", async () => {
+    mocks.getCurrentAttendee.mockResolvedValue({ account: { ...account, displayName: "Pat" }, via: "attendee", sessionId: "session-1" });
+    const response = await ACCEPT(new Request("https://events.imsda.test/api/attendee/club-invites/invite-1/accept", {
+      method: "POST", headers: { origin: "https://events.imsda.test" }, body: "{}",
+    }), { params: Promise.resolve({ inviteId: "invite-1" }) });
+    expect(response.status).toBe(200);
+    expect(secondStepPending).not.toHaveBeenCalled();
+    expect(mocks.grantCreate).toHaveBeenCalled();
   });
 
   it("needs the person's own sign-in", async () => {
