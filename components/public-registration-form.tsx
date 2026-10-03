@@ -76,9 +76,13 @@ import {
   attendeeRoleLabel,
   isAttendeeCardComplete,
   issueAttendeeIndex,
+  attendeeToOpenForIssues,
   namedIssueMessage,
-  startsCollapsed,
+  pickInitialActiveAttendee,
 } from "@/modules/forms/roster-cards";
+import { ExpandableOptionDescription, ExpandableText } from "@/components/expandable-text";
+import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import { useInertBackground, usePhoneViewport } from "@/components/use-attendee-sheet";
 import { NeedsAttention, StatusComplete } from "@/components/needs-attention";
 import { FieldError } from "@/components/field-error";
 import { errorSummaryHeading } from "@/components/form-error-summary";
@@ -477,23 +481,29 @@ export function PublicRegistrationForm({
     return initial;
   }
   const [attendees, setAttendees] = useState<RosterAttendee[]>(buildInitialAttendees);
-  // Compact attendee cards (#483): a complete card carried over from the
-  // roster starts collapsed; one with a carryover prompt or a missing answer,
-  // and every other card (freshly added, or from CSV import), starts open.
-  // Later toggles are tracked by client id, so a card keeps its state through
-  // re-renders and reordering.
-  const [collapsedAttendeeIds, setCollapsedAttendeeIds] = useState<Set<string>>(
-    () => new Set(
-      (club ? club.initialAttendees : [])
-        .filter((attendee) => startsCollapsed({
-          carriedFromRoster: Boolean(attendee.carriedFromRoster),
-          complete: isAttendeeCardComplete(definition, initialResponses, attendee.responses),
-          mismatchCount: attendee.carryoverMismatches?.length ?? 0,
-          targetedByIssue: false,
-        }))
-        .map((attendee) => attendee.clientId),
-    ),
-  );
+  // One active attendee at a time (#483, #743). Only the active card shows its
+  // fields; every other card is a one-line summary with an Edit button. The
+  // fields of a collapsed card stay mounted (just hidden), and every answer
+  // lives in `attendees`, so collapsing never loses anything. The active card
+  // starts as the first person who still needs something. Tracked by client
+  // id, so it survives re-renders and reordering.
+  function initialActiveAttendeeId(list: RosterAttendee[]) {
+    return pickInitialActiveAttendee(list.map((attendee) => ({
+      clientId: attendee.clientId,
+      complete: isAttendeeCardComplete(definition, initialResponses, attendee.responses),
+      mismatchCount: attendee.carryoverMismatches?.length ?? 0,
+    })));
+  }
+  const [activeAttendeeId, setActiveAttendeeId] = useState<string | null>(() => initialActiveAttendeeId(buildInitialAttendees()));
+  // On a phone the active card is a full-screen sheet, but only once someone
+  // opens it (a sheet never opens by itself on page load).
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const isPhone = usePhoneViewport();
+  const phoneSheetActive = isPhone && sheetOpen && activeAttendeeId !== null && rosterEnabled && roster.maxAttendees > 1;
+  // Focus trap, Escape and focus return are the shared dialog behaviour; Escape
+  // closes the sheet and the card's Edit button, which opened it, gets focus back.
+  const attendeeSheetRef = useAccessibleDialog<HTMLElement>(phoneSheetActive, () => setSheetOpen(false));
+  useInertBackground(phoneSheetActive ? activeAttendeeId : null, attendeeSheetRef);
   const [website, setWebsite] = useState("");
   const [issues, setIssues] = useState<FormIssue[]>([]);
   const [error, setError] = useState("");
@@ -561,6 +571,9 @@ export function PublicRegistrationForm({
             clientId: attendee.clientId,
             responses: attendee.responses,
           }))) as RosterAttendee[]);
+          setActiveAttendeeId((current) => (
+            draft.attendees.some((attendee) => attendee.clientId === current) ? current : draft.attendees[0]?.clientId ?? current
+          ));
         } else {
           setResponses((current) => ({ ...current, ...draft.responses } as FormResponses));
         }
@@ -719,8 +732,10 @@ export function PublicRegistrationForm({
     // Rebuild exactly what the first render started from.
     setResponses(initialResponses);
     setRegistrationResponses(initialResponses);
-    setAttendees(buildInitialAttendees());
-    setCollapsedAttendeeIds(new Set());
+    const rebuiltAttendees = buildInitialAttendees();
+    setAttendees(rebuiltAttendees);
+    setActiveAttendeeId(initialActiveAttendeeId(rebuiltAttendees));
+    setSheetOpen(false);
     setWebsite("");
     setIssues([]);
     setError("");
@@ -1159,16 +1174,21 @@ export function PublicRegistrationForm({
     return attendeeIndex === null ? null : attendees[attendeeIndex] ?? null;
   }
 
-  // A collapsed card doesn't render its fields, so any card a validation
-  // issue points into is opened (#483): the error summary's link then has a
-  // control to land on, and the message shows next to it.
+  // Only the active card shows its fields, so the card a validation issue
+  // points into becomes the active one (#483, #743): the error summary's link
+  // then has a control to land on, and the message shows next to it. On a phone
+  // the sheet is not opened from here (it would cover the summary): the card
+  // reads "Needs attention" and the summary link opens it. A sheet that is
+  // already open moves to the card with the problem.
   function expandAttendeeCardsFor(targetIssues: FormIssue[]) {
-    const targetIds = new Set(targetIssues.map((issue) => attendeeForIssue(issue)?.clientId).filter(Boolean));
-    if (targetIds.size === 0) return;
-    setCollapsedAttendeeIds((current) => {
-      if (![...current].some((clientId) => targetIds.has(clientId))) return current;
-      return new Set([...current].filter((clientId) => !targetIds.has(clientId)));
-    });
+    const targetId = attendeeToOpenForIssues(
+      targetIssues.map((issue) => {
+        const field = allFields.find((candidate) => candidate.id === issue.fieldId || candidate.key === issue.key);
+        return { path: issue.path, attendeeIndex: issue.attendeeIndex, scope: field?.scope ?? null };
+      }),
+      attendees.map((attendee) => attendee.clientId),
+    );
+    if (rosterEnabled && roster.maxAttendees > 1 && targetId) setActiveAttendeeId(targetId);
   }
 
   // An error-summary link into a card the director collapsed again opens that
@@ -1177,12 +1197,14 @@ export function PublicRegistrationForm({
   function followIssueLink(clickEvent: ReactMouseEvent<HTMLAnchorElement>, issue: FormIssue, targetId: string) {
     clickEvent.preventDefault();
     const attendee = attendeeForIssue(issue);
-    if (attendee && collapsedAttendeeIds.has(attendee.clientId)) expandAttendeeCardsFor([issue]);
-    window.requestAnimationFrame(() => {
+    expandAttendeeCardsFor([issue]);
+    if (attendee && isPhone && rosterEnabled && roster.maxAttendees > 1) setSheetOpen(true);
+    // Two frames: the card (or its sheet, which also moves focus when it opens) has to be showing first.
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
       const target = document.getElementById(targetId);
       target?.scrollIntoView({ block: "center" });
       target?.focus();
-    });
+    }));
   }
 
   // The summary names whose field a message is about (#738).
@@ -1199,13 +1221,15 @@ export function PublicRegistrationForm({
     );
   }
 
-  function toggleAttendeeCollapse(clientId: string) {
-    setCollapsedAttendeeIds((current) => {
-      const next = new Set(current);
-      if (next.has(clientId)) next.delete(clientId);
-      else next.add(clientId);
-      return next;
-    });
+  // Edit opens one card and closes the one that was open; Done closes it.
+  function openAttendee(clientId: string) {
+    setActiveAttendeeId(clientId);
+    setSheetOpen(true);
+  }
+
+  function closeAttendee() {
+    setActiveAttendeeId(null);
+    setSheetOpen(false);
   }
 
   function addAttendee() {
@@ -1214,6 +1238,8 @@ export function PublicRegistrationForm({
     const clientId = crypto.randomUUID();
     const nextNumber = attendees.length + 1;
     setAttendees((current) => [...current, { clientId, responses: {} }]);
+    // The new person is the active card; whoever was open becomes a summary.
+    openAttendee(clientId);
     setIssues([]);
     setError("");
     setIdempotencyKey(null);
@@ -1256,7 +1282,8 @@ export function PublicRegistrationForm({
         clientId: crypto.randomUUID(),
         responses,
       })));
-      setCollapsedAttendeeIds(new Set());
+      setActiveAttendeeId(null);
+      setSheetOpen(false);
       setIssues([]);
       setIdempotencyKey(null);
       setRosterAnnouncement(
@@ -1305,11 +1332,10 @@ export function PublicRegistrationForm({
     const attendee = attendees[index];
     const focusId = attendees[index - 1]?.clientId ?? attendees[index + 1]?.clientId;
     setAttendees((current) => withoutAttendee(current, attendee.clientId));
-    setCollapsedAttendeeIds((current) => {
-      const next = new Set(current);
-      next.delete(attendee.clientId);
-      return next;
-    });
+    if (activeAttendeeId === attendee.clientId) {
+      setActiveAttendeeId(null);
+      setSheetOpen(false);
+    }
     setIssues([]);
     setError("");
     setIdempotencyKey(null);
@@ -1631,21 +1657,23 @@ export function PublicRegistrationForm({
               // The error link focuses the base id, so it goes on the first option that can be picked.
               const firstEnabled = Math.max(field.options.findIndex((candidate) => context.values[field.key] === candidate || !choiceState(field, candidate).full), 0);
               return (
-                <label className={`public-registration-option${full ? " is-full" : ""}`} key={option}>
-                  <input
-                    id={index === firstEnabled ? controlId(field, context.idContext) : `${controlId(field, context.idContext)}_option_${index}`}
-                    name={context.idContext ? `${context.idContext}_${field.key}` : field.key}
-                    type="radio"
-                    checked={checked}
-                    disabled={full && !checked}
-                    onChange={() => context.setValue(field.key, option)}
-                  />
-                  <span>
-                    <strong>{optionLabel(option)}</strong>
-                    {optionDescription(option) && <small className="public-registration-option-description">{optionDescription(option)}</small>}
-                    {details && <small className="public-registration-option-details">{details}</small>}
-                  </span>
-                </label>
+                <ExpandableOptionDescription key={option} text={optionDescription(option)} renderChoice={(descriptionNode) => (
+                  <label className={`public-registration-option${full ? " is-full" : ""}`}>
+                    <input
+                      id={index === firstEnabled ? controlId(field, context.idContext) : `${controlId(field, context.idContext)}_option_${index}`}
+                      name={context.idContext ? `${context.idContext}_${field.key}` : field.key}
+                      type="radio"
+                      checked={checked}
+                      disabled={full && !checked}
+                      onChange={() => context.setValue(field.key, option)}
+                    />
+                    <span>
+                      <strong>{optionLabel(option)}</strong>
+                      {descriptionNode}
+                      {details && <small className="public-registration-option-details">{details}</small>}
+                    </span>
+                  </label>
+                )} />
               );
             })}
           </div>
@@ -1668,20 +1696,22 @@ export function PublicRegistrationForm({
               const details = choiceDetails(field, option);
               const checked = selectedValues.includes(option);
               return (
-                <label className={`public-registration-option${full ? " is-full" : ""}`} key={option}>
-                  <input
-                    id={controlId(field, context.idContext, index)}
-                    type="checkbox"
-                    checked={checked}
-                    disabled={!checked && (full || selectedValues.length >= maximum)}
-                    onChange={() => toggleChoice(option)}
-                  />
-                  <span>
-                    <strong>{optionLabel(option)}</strong>
-                    {optionDescription(option) && <small className="public-registration-option-description">{optionDescription(option)}</small>}
-                    {details && <small className="public-registration-option-details">{details}</small>}
-                  </span>
-                </label>
+                <ExpandableOptionDescription key={option} text={optionDescription(option)} renderChoice={(descriptionNode) => (
+                  <label className={`public-registration-option${full ? " is-full" : ""}`}>
+                    <input
+                      id={controlId(field, context.idContext, index)}
+                      type="checkbox"
+                      checked={checked}
+                      disabled={!checked && (full || selectedValues.length >= maximum)}
+                      onChange={() => toggleChoice(option)}
+                    />
+                    <span>
+                      <strong>{optionLabel(option)}</strong>
+                      {descriptionNode}
+                      {details && <small className="public-registration-option-details">{details}</small>}
+                    </span>
+                  </label>
+                )} />
               );
             })}
           </div>
@@ -1782,13 +1812,16 @@ export function PublicRegistrationForm({
             })}
           />
           {field.options.some((option) => Boolean(optionDescription(option))) && (
-            <span className="public-registration-select-descriptions">
-              {field.options.flatMap((option) => (
-                optionDescription(option)
-                  ? [<small key={option}><strong>{optionLabel(option)}:</strong> {optionDescription(option)}</small>]
-                  : []
-              ))}
-            </span>
+            <details className="public-registration-select-descriptions-disclosure">
+              <summary>About these choices</summary>
+              <span className="public-registration-select-descriptions">
+                {field.options.flatMap((option) => (
+                  optionDescription(option)
+                    ? [<small key={option}><strong>{optionLabel(option)}:</strong> {optionDescription(option)}</small>]
+                    : []
+                ))}
+              </span>
+            </details>
           )}
           {fieldSupport(field, context)}
         </div>
@@ -1966,7 +1999,11 @@ export function PublicRegistrationForm({
             const displayName = attendeeName(attendee, attendeeIndex, roster.attendeeLabel);
             const roleLabel = attendeeRoleLabel(definition, registrationResponses, attendee.responses);
             const complete = isAttendeeCardComplete(definition, registrationResponses, attendee.responses);
-            const collapsed = canCollapse && collapsedAttendeeIds.has(attendee.clientId);
+            const isActive = attendee.clientId === activeAttendeeId;
+            // Collapse hides the fields; it never unmounts them.
+            const collapsed = canCollapse && !(isActive && (!isPhone || sheetOpen));
+            const inSheet = canCollapse && phoneSheetActive && isActive;
+            const cardId = `public_attendee_${safeId(attendee.clientId)}`;
             const visibleAttendeeSections = attendeeSections.map((section) => ({
               ...section,
               fields: section.fields.filter((field) => (
@@ -1976,10 +2013,13 @@ export function PublicRegistrationForm({
             })).filter((section) => section.fields.length > 0);
             return (
               <article
-                className={`public-registration-attendee${collapsed ? " is-collapsed" : ""}`}
-                id={`public_attendee_${safeId(attendee.clientId)}`}
+                className={`public-registration-attendee${collapsed ? " is-collapsed" : " is-active"}${inSheet ? " is-sheet" : ""}`}
+                id={cardId}
                 key={attendee.clientId}
+                ref={inSheet ? attendeeSheetRef : undefined}
                 tabIndex={-1}
+                role={inSheet ? "dialog" : undefined}
+                aria-modal={inSheet ? "true" : undefined}
                 aria-labelledby={`public_attendee_${safeId(attendee.clientId)}_title`}
               >
                 <header className="public-registration-attendee-heading">
@@ -2002,13 +2042,20 @@ export function PublicRegistrationForm({
                     <div className="public-registration-attendee-actions">
                       {canCollapse && (
                         <button
+                          id={`${cardId}_toggle`}
+                          className="public-registration-attendee-toggle"
                           type="button"
                           aria-expanded={!collapsed}
-                          aria-controls={`public_attendee_${safeId(attendee.clientId)}_body`}
-                          aria-label={`${collapsed ? "Show" : "Hide"} details for ${displayName}`}
-                          onClick={() => toggleAttendeeCollapse(attendee.clientId)}
+                          aria-controls={`${cardId}_body`}
+                          aria-label={`${collapsed ? "Edit" : "Done editing"} ${displayName}`}
+                          onClick={(clickEvent) => {
+                            // Safari does not focus a button on click; focus it so the sheet hands focus back here.
+                            clickEvent.currentTarget.focus();
+                            if (collapsed) openAttendee(attendee.clientId);
+                            else closeAttendee();
+                          }}
                         >
-                          <span>{collapsed ? "Show details" : "Hide details"}</span>
+                          <span>{collapsed ? "Edit" : "Done"}</span>
                         </button>
                       )}
                       {manageRoster && (
@@ -2047,8 +2094,7 @@ export function PublicRegistrationForm({
                   )}
                 </header>
 
-                {!collapsed && (
-                  <div className="public-registration-attendee-body" id={`public_attendee_${safeId(attendee.clientId)}_body`}>
+                <div className="public-registration-attendee-body" id={`${cardId}_body`} hidden={collapsed}>
                     {manageRoster && attendeeIndex === 0 && primaryAttendeeNameSync && (
                       <p className="public-registration-attendee-name-sync">
                         The first attendee starts with the primary contact’s name. You can edit it
@@ -2072,8 +2118,12 @@ export function PublicRegistrationForm({
                       </p>
                     )}
                     {(group ?? club)?.renderAttendeeExtras?.(attendee, attendeeIndex)}
-                  </div>
-                )}
+                    {canCollapse && (
+                      <div className="public-registration-attendee-sheet-footer">
+                        <button type="button" onClick={closeAttendee}>Done with {displayName}</button>
+                      </div>
+                    )}
+                </div>
               </article>
             );
           })}
@@ -2640,8 +2690,10 @@ export function PublicRegistrationForm({
     setDraftNotice(null);
     setResponses(initialResponses);
     setRegistrationResponses(initialResponses);
-    setAttendees(buildInitialAttendees());
-    setCollapsedAttendeeIds(new Set());
+    const rebuiltAttendees = buildInitialAttendees();
+    setAttendees(rebuiltAttendees);
+    setActiveAttendeeId(initialActiveAttendeeId(rebuiltAttendees));
+    setSheetOpen(false);
     setWebsite("");
     setIssues([]);
     setError("");
@@ -2836,7 +2888,7 @@ export function PublicRegistrationForm({
           <section className="public-registration-intro">
             <p className="public-registration-eyebrow">Registration form</p>
             <h2>{definition.title}</h2>
-            {definition.description && <p>{definition.description}</p>}
+            {definition.description && <ExpandableText text={definition.description} />}
             <span><span aria-hidden="true">*</span> Required field</span>
           </section>
 
@@ -2928,7 +2980,7 @@ export function PublicRegistrationForm({
           </div>
 
           <nav
-            className="public-registration-step-actions"
+            className="public-registration-step-actions is-sticky-cta"
             aria-label="Registration steps"
           >
             {currentStepIndex > 0 ? (
@@ -2950,6 +3002,16 @@ export function PublicRegistrationForm({
                 Continue
                 <ArrowRight size={17} aria-hidden="true" />
               </button>
+            )}
+            {currentStep.isReview && (
+              // The same submit as the card's, kept in the sticky bar on a phone (the card's is hidden there).
+              <SubmitButton
+                className="public-registration-submit-button is-sticky-submit"
+                icon={<ClipboardCheck size={19} aria-hidden="true" />}
+                iconSize={19}
+                label={club?.submitLabel ?? (joiningWaitlist ? "Join waitlist" : "Submit registration")}
+                submitting={submitting}
+              />
             )}
           </nav>
 

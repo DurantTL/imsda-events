@@ -120,3 +120,40 @@ export function namedIssueMessage(
   const who = shared ? `${name} (${positionLabel} ${attendeeIndex + 1})` : name;
   return `${who} — ${message}`;
 }
+
+/** Phone width (#743): an attendee card opens as a full-screen sheet at or below this. */
+export const PHONE_SHEET_QUERY = "(max-width: 768px)";
+
+/**
+ * One active attendee at a time (#743). The card that is open when the roster
+ * first renders: the first person who still needs something (an unanswered
+ * required field, or a carried-over value that did not match), else nobody, so
+ * a fully carried-over club roster starts as a list of one-line summaries.
+ */
+export function pickInitialActiveAttendee(
+  attendees: ReadonlyArray<{ clientId: string; complete: boolean; mismatchCount?: number }>,
+): string | null {
+  return attendees.find((attendee) => !attendee.complete || (attendee.mismatchCount ?? 0) > 0)?.clientId ?? null;
+}
+
+/**
+ * The attendee a validation issue list should open: the first issue that points
+ * into a card. A registration-level issue points at no card (null), so the open
+ * card stays as it is.
+ */
+export function attendeeToOpenForIssues(
+  issues: ReadonlyArray<{ path?: string; attendeeIndex?: number | null; scope?: RegistrationFormField["scope"] | null }>,
+  attendeeIds: readonly string[],
+): string | null {
+  for (const issue of issues) {
+    const index = issueAttendeeIndex(issue, issue.scope ?? null);
+    const clientId = index === null ? undefined : attendeeIds[index];
+    if (clientId) return clientId;
+  }
+  return null;
+}
+
+/** The one-line summary a collapsed card reads as: name, role if any, then the status words. */
+export function attendeeSummaryText(name: string, roleLabel: string | null, complete: boolean): string {
+  return [name, roleLabel, complete ? "Complete" : "Needs attention"].filter(Boolean).join(" · ");
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search, X } from "lucide-react";
 import { filterSearchableChoices } from "@/modules/forms/searchable-choice";
 
@@ -40,6 +40,28 @@ export function SearchableSelect({
     () => filterSearchableChoices(options, query ?? ""),
     [options, query],
   );
+
+  // On a phone the open list is a bottom sheet (CSS, #743). It sits above the
+  // on-screen keyboard: --searchable-sheet-inset is how far the keyboard covers
+  // the layout viewport, so the search box and the choices stay visible together.
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const wrapper = wrapperRef.current;
+    if (!open || !viewport || !wrapper) return;
+    function update() {
+      if (!viewport || !wrapper) return;
+      const covered = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      wrapper.style.setProperty("--searchable-sheet-inset", `${Math.round(covered)}px`);
+    }
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+      wrapper.style.removeProperty("--searchable-sheet-inset");
+    };
+  }, [open]);
 
   function choose(nextValue: string) {
     const option = options.find((candidate) => candidate.value === nextValue);
@@ -89,6 +111,10 @@ export function SearchableSelect({
             setOpen(true);
             setActiveIndex(-1);
             event.currentTarget.select();
+            // On a phone the list is a bottom sheet over the lower part of the screen: lift the box clear of it.
+            if (typeof window.matchMedia === "function" && window.matchMedia("(max-width: 768px)").matches) {
+              event.currentTarget.scrollIntoView({ block: "start", behavior: "smooth" });
+            }
           }}
           onChange={(event) => {
             const nextQuery = event.target.value;
