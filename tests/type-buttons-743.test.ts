@@ -361,14 +361,17 @@ describe("one filled primary per screen (#743)", () => {
     expect(markup).toMatch(/class="secondary-button club-event-action" href="\/account\/clubs\/org-1\/events\/a"/);
   });
 
-  it("club home: only the first To do step is filled", () => {
+  it("club home: the Next task card holds the one filled button; the To do list is outlined (first screens)", () => {
     const source = read("app/(public)/account/(portal)/clubs/[organizationId]/page.tsx");
-    expect(source).toContain('stepIndex === 0 ? "primary-button" : "secondary-button"');
+    expect(source).toContain('<Link className="secondary-button club-event-action" href={step.href}>');
+    expect(source).not.toContain('"primary-button"');
+    expect(read("components/club-next-task.tsx")).toContain('className="primary-button club-event-action"');
   });
 
-  it("registrations: Start registration is the filled action and Email selected is outlined", () => {
+  it("registrations: Start registration is the filled action and Email selected sits in the outlined Actions menu", () => {
     const source = read("components/people-workspace.tsx");
-    expect(source).toContain('<button className="secondary-button outline-action" type="button" onClick={() => setEmailingSelection(true)}>');
+    expect(source).toContain("<ActionsMenu>");
+    expect(source).toContain("onClick={() => setEmailingSelection(true)}");
     expect(source.match(/lifecycleActionButtonClass\(Boolean\(selected\.publicSubmission\?\.rosterEnabled\)\)/g)).toHaveLength(2);
     // Roster form: Edit is the one filled button. No roster (rosterEnabled false): Promote and Reactivate are.
     expect(lifecycleActionButtonClass(true)).toBe("secondary-button");

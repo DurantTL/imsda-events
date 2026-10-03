@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2 } from "lucide-react";
 import { DetailsOpenOnHash } from "@/components/details-open-on-hash";
 import { EventActivityPanel } from "@/components/event-activity-panel";
 import { EventModuleToggle } from "@/components/event-module-toggle";
+import { MoreTaskSearch } from "@/components/more-task-search";
 import {
   applicabilityLabels,
   buildEventModulesView,
@@ -83,12 +84,16 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
       )}
 
       {view.enabled.length === 0 && <p className="quiet-copy">No optional features are turned on for this event.</p>}
+      {/* Optional task search (#743): filters the cards and tools below by name, in the browser. */}
+      {/* The search decides in the browser whether enough tasks are drawn to be worth showing (phone and desktop show different lists). */}
+      {(view.enabled.length + view.tools.length) > 0 && <MoreTaskSearch containerId="more-task-groups" />}
+      <div className="more-task-groups" id="more-task-groups">
       {groupEnabledModules(view.enabled).map(({ group, entries }) => (
-        <section aria-label={moreDirectoryGroupLabels[group]} className="foundation-group" key={group}>
+        <section aria-label={moreDirectoryGroupLabels[group]} className="foundation-group" data-task-group key={group}>
           <h2 className="foundation-group-label">{moreDirectoryGroupLabels[group]}</h2>
           <div className="foundation-grid">
             {entries.map(({ definition, card, canToggle, dataReason }) => (
-              <article className="panel foundation-card event-module-card" data-module={definition.key} key={definition.key}>
+              <article className="panel foundation-card event-module-card" data-module={definition.key} data-task-name={card.title} key={definition.key}>
                 <Link className="event-module-card-link" href={card.href}>
                   <span><card.icon aria-hidden="true" size={21} /></span>
                   <h3>{card.title}</h3>
@@ -141,17 +146,17 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
 
       {/* Phone fallback (#741): the launcher is a bottom sheet there, but this page keeps every universal tool too, so nothing depends on scripts. Hidden on desktop by CSS. */}
       {view.tools.length > 0 && (
-        <section aria-label="All tools" className="more-page-tools">
+        <section aria-label="All tools" className="more-page-tools" data-task-group>
           <h2 className="foundation-group-label">All tools</h2>
           {moreDirectoryGroupOrder
             .map((group) => ({ group, tools: view.tools.filter((card) => card.group === group) }))
             .filter(({ tools }) => tools.length > 0)
             .map(({ group, tools }) => (
-              <section aria-label={moreDirectoryGroupLabels[group]} className="foundation-group" key={group}>
+              <section aria-label={moreDirectoryGroupLabels[group]} className="foundation-group" data-task-group key={group}>
                 <h3 className="foundation-group-label">{moreDirectoryGroupLabels[group]}</h3>
                 <div className="foundation-grid">
                   {tools.map((card) => (
-                    <Link className="panel foundation-card" href={card.href} key={card.key}>
+                    <Link className="panel foundation-card" data-task-name={card.title} href={card.href} key={card.key}>
                       <span><card.icon aria-hidden="true" size={21} /></span>
                       <h3>{card.title}</h3>
                       <p>{card.description}</p>
@@ -163,6 +168,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
             ))}
         </section>
       )}
+      </div>
 
       {permissions.includes("VIEW_REPORTS") && <EventActivityPanel eventId={event.id} kind={kind} selection={activity} showAll={showAllActivity} />}
       {/* Two-step verification, passkeys and signed-in devices are on the one Edit profile page (#543, #741). The anchors keep older links to them landing here. */}

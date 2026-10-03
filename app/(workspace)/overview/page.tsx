@@ -1,4 +1,5 @@
 import { NeedsAttention } from "@/components/needs-attention";
+import { EventSetupChecklist } from "@/components/event-setup-checklist";
 import type { Metadata } from "next";
 import Link from "next/link";
 import {
@@ -18,6 +19,8 @@ import { getEventOverview } from "@/modules/events/repository";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listRegistrations } from "@/modules/registrations/repository";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
+import { buildSetupChecklist } from "@/modules/events/setup-checklist";
+import { getSetupChecklistFacts } from "@/modules/events/setup-checklist-repository";
 import { staffPageTitles } from "@/components/staff-navigation";
 
 export const metadata: Metadata = { title: staffPageTitles.overview };
@@ -50,12 +53,16 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
   const { event, permissions } = await resolveEventContext(requested);
   const canSeeSensitiveData = permissions.includes("VIEW_SENSITIVE_DATA");
   const canViewReports = permissions.includes("VIEW_REPORTS");
-  const [overview, registrations, backgroundFlags] = await Promise.all([
+  // Setup steps only for viewers who can act on one (#743); everyone else never reads the counts.
+  const canSetUp = permissions.includes("CONFIGURE_EVENT") || permissions.includes("MANAGE_FORMS");
+  const [overview, registrations, backgroundFlags, setupFacts] = await Promise.all([
     getEventOverview(event.id),
     canSeeSensitiveData ? listRegistrations(event.id) : Promise.resolve([]),
     canViewReports ? listEventBackgroundFlags(event.id) : Promise.resolve(null),
+    canSetUp ? getSetupChecklistFacts(event) : Promise.resolve(null),
   ]);
   if (!overview) return null;
+  const setupChecklist = setupFacts ? buildSetupChecklist(setupFacts, permissions) : null;
 
   const { metrics } = overview;
   const query = `?event=${encodeURIComponent(event.id)}`;
@@ -104,6 +111,8 @@ export default async function OverviewPage({ searchParams }: { searchParams: Pro
         </div>
         <div className="hero-capacity" aria-label="Event capacity"><span>Capacity</span><strong>{metrics.people} / {event.capacity ?? "Open"}</strong><div className="capacity-track"><span style={{ width: `${capacityUsed}%` }} /></div></div>
       </section>
+
+      {setupChecklist && !setupChecklist.hidden && <EventSetupChecklist checklist={setupChecklist} eventId={event.id} />}
 
       <section className="metric-grid" aria-label="Event metrics">
         {metricsCards.map((metric) => <article className={`metric-card accent-${metric.tone}`} key={metric.label}><strong>{metric.value}</strong><p>{metric.label}</p><small>{metric.detail}</small></article>)}

@@ -5,6 +5,7 @@ import {
   matchingRegistrationIdsForVerifiedEmail,
 } from "@/modules/attendee-accounts/registrations-repository";
 import { listEventsForUser } from "@/modules/events/repository";
+import { isExactAllAttendeesAudience } from "@/modules/events/public-domain";
 import { publicAttendeeName } from "@/modules/public-access/domain";
 
 export type AttendeeRetreatHub = NonNullable<
@@ -31,6 +32,8 @@ const retreatHubEventSelect = {
       id: true,
       title: true,
       body: true,
+      // Read only to filter: the hub shows attendee-wide notices, never one aimed at a narrower audience.
+      audience: true,
       priority: true,
       publishedAt: true,
       pinnedAt: true,
@@ -77,21 +80,34 @@ function retreatHubEventRecord(event: {
   };
 }
 
-function retreatHubAnnouncementRecords(event: {
+/**
+ * The notices an attendee's hub shows (#743, notice privacy). Only an announcement
+ * whose audience is exactly "all attendees" appears, the same rule as the public
+ * event page and the account banner, so a notice written for club directors (or
+ * any narrower audience) never reaches an attendee through the hub. The audience
+ * is dropped from what is returned.
+ */
+export function retreatHubAnnouncementRecords(event: {
   announcements: Array<{
     id: string;
     title: string;
     body: string;
+    audience: unknown;
     priority: "NORMAL" | "IMPORTANT" | "URGENT";
     publishedAt: Date | null;
     pinnedAt: Date | null;
   }>;
 }) {
-  return event.announcements.map((announcement) => ({
-    ...announcement,
-    publishedAt: announcement.publishedAt?.toISOString() ?? null,
-    pinnedAt: announcement.pinnedAt?.toISOString() ?? null,
-  }));
+  return event.announcements
+    .filter((announcement) => isExactAllAttendeesAudience(announcement.audience))
+    .map((announcement) => ({
+      id: announcement.id,
+      title: announcement.title,
+      body: announcement.body,
+      priority: announcement.priority,
+      publishedAt: announcement.publishedAt?.toISOString() ?? null,
+      pinnedAt: announcement.pinnedAt?.toISOString() ?? null,
+    }));
 }
 
 export async function getAttendeeRetreatHub(

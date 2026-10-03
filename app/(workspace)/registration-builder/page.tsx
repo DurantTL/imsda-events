@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { AccessRestricted } from "@/components/access-restricted";
+import { BuilderDeviceHint } from "@/components/builder-device-hint";
 import { BuilderPhoneNotice } from "@/components/builder-phone-notice";
 import { RegistrationBuilderWorkspace } from "@/components/registration-builder-workspace";
 import { resolveEventContext } from "@/modules/events/selection";
@@ -16,6 +17,6 @@ export default async function RegistrationBuilderPage({ searchParams }: { search
   }
   return <>
     <BuilderPhoneNotice eventId={event.id} />
-    <div className="builder-phone-hidden"><RegistrationBuilderWorkspace key={event.id} eventId={event.id} eventSlug={event.slug} eventName={event.name} eventAudience={event.audience} eventBillingMode={event.billingMode} initialForms={await listRegistrationForms(event.id)} templates={listFormTemplates()} focusTarget={focusForm && focusField ? { formId: focusForm, fieldId: focusField } : null} /></div>
+    <div className="builder-phone-hidden"><BuilderDeviceHint /><RegistrationBuilderWorkspace key={event.id} eventId={event.id} eventSlug={event.slug} eventName={event.name} eventAudience={event.audience} eventBillingMode={event.billingMode} initialForms={await listRegistrationForms(event.id)} templates={listFormTemplates()} focusTarget={focusForm && focusField ? { formId: focusForm, fieldId: focusField } : null} /></div>
   </>;
 }
