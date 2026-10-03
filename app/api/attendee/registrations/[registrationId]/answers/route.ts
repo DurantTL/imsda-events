@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import {
   AttendeeAnswerUpdateError,
 } from "@/modules/attendee-accounts/registration-answer-policy";
@@ -30,6 +31,12 @@ async function putHandler(request: Request, context: Context) {
     return Response.json(
       { error: "SIGN_IN_REQUIRED", message: "Sign in to update attendee choices." },
       { status: 401 },
+    );
+  }
+  if (await attendeeSecondStepPending()) {
+    return Response.json(
+      { code: "SECOND_STEP_REQUIRED", error: "SECOND_STEP_REQUIRED", message: "Finish two-step sign-in to update attendee choices." },
+      { status: 403, headers: { "Cache-Control": "private, no-store" } },
     );
   }
   try {
