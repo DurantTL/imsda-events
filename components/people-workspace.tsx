@@ -29,7 +29,7 @@ import { RegistrationNotesTagsPanel } from "@/components/registration-notes-tags
 import { SelectedAudienceDialog } from "@/components/selected-audience-dialog";
 import { DangerZone, DangerZoneItem } from "@/components/danger-zone";
 import { SubmitButton } from "@/components/submit-button";
-import { attendeeCountPhrase, registrationLifecycleLabel } from "@/lib/confirmation-copy";
+import { attendeeCountPhrase, lifecycleActionButtonClass, registrationLifecycleLabel } from "@/lib/confirmation-copy";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import { registrationMatchesSearch } from "@/modules/registrations/search";
@@ -952,8 +952,8 @@ export function PeopleWorkspace({
                       <button className="secondary-button" type="button" onClick={() => { setError(""); setNotice(""); setModal("edit"); }}><UserRoundPen aria-hidden="true" size={17} /> Edit contact</button>
                       <button className="secondary-button" type="button" onClick={beginTransfer}><ArrowRightLeft aria-hidden="true" size={17} /> Transfer registration</button>
                       {(selected.status === "SUBMITTED" || selected.status === "CONFIRMED") && waitlistEnabled && <button className="secondary-button" type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("waitlist"); }}><ListPlus aria-hidden="true" size={17} /> Move to waitlist</button>}
-                      {selected.status === "WAITLISTED" && <button className={selected.publicSubmission?.rosterEnabled ? "secondary-button" : "primary-button"} type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("promote"); }}><UserCheck aria-hidden="true" size={17} /> Promote</button>}
-                      {selected.status === "CANCELLED" && <button className={selected.publicSubmission?.rosterEnabled ? "secondary-button" : "primary-button"} type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("reactivate"); }}><RotateCcw aria-hidden="true" size={17} /> Reactivate</button>}
+                      {selected.status === "WAITLISTED" && <button className={lifecycleActionButtonClass(Boolean(selected.publicSubmission?.rosterEnabled))} type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("promote"); }}><UserCheck aria-hidden="true" size={17} /> Promote</button>}
+                      {selected.status === "CANCELLED" && <button className={lifecycleActionButtonClass(Boolean(selected.publicSubmission?.rosterEnabled))} type="button" onClick={() => { setError(""); setNotice(""); setLifecycleAction("reactivate"); }}><RotateCcw aria-hidden="true" size={17} /> Reactivate</button>}
                     </div>
                     <p className="quiet-copy">Status changes use the actions above so capacity, room limits, waitlist position, payments, and the audit history stay correct.</p>
                     {selected.status !== "CANCELLED" && (

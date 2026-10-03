@@ -20,6 +20,7 @@ import { SubmitButton, submitButtonState } from "@/components/submit-button";
 import { UnpublishEventDialog } from "@/components/unpublish-event-dialog";
 import {
   attendeeCountPhrase,
+  lifecycleActionButtonClass,
   bulkScopeSummary,
   namedActionLabel,
   registrationLifecycleLabel,
@@ -48,7 +49,7 @@ function contrast(foreground: string, background: string) {
 
 describe("type scale tokens (#743)", () => {
   it("floors meta at 12px and body, inputs, labels and buttons at 14px on every screen size", () => {
-    expect(css).toMatch(/:root \{[^}]*--type-floor: 0\.75rem;[^}]*--type-body-floor: 0\.875rem;/);
+    expect(css).toMatch(/@media screen \{\s*:root \{\s*--type-floor: 0\.75rem;\s*--type-body-floor: 0\.875rem;/);
     expect(css).toMatch(/--type-public-body: 1rem;/);
     expect(css).toMatch(/--type-public-label: 0\.875rem;/);
     expect(css).toMatch(/--type-public-title: 1\.5rem;/);
@@ -74,14 +75,36 @@ describe("type scale tokens (#743)", () => {
   });
 });
 
+describe("type floors never apply in print (#743)", () => {
+  it("sets the floor variables to a non-zero value only inside @media screen, anywhere in the file", () => {
+    const stack: boolean[] = [];
+    let offenders = 0;
+    let screenDeclarations = 0;
+    const tokens = css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{};]*)\{|\}|(--type-(?:body-)?floor):\s*([^;}]+)/g);
+    for (const token of tokens) {
+      if (token[0] === "}") stack.pop();
+      else if (token[1] !== undefined && token[0].endsWith("{")) stack.push(/@media[^{]*\bscreen\b/.test(token[1]));
+      else if (token[2]) {
+        const value = token[3].trim();
+        if (stack.some(Boolean)) screenDeclarations += 1;
+        else if (value !== "0px" && value !== "0") offenders += 1;
+      }
+    }
+    expect(offenders).toBe(0);
+    expect(screenDeclarations).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe("CSS hygiene for the #743 block", () => {
   it("keeps brace depth at zero", () => {
     let depth = 0;
+    let lowest = 0;
     for (const char of css) {
       if (char === "{") depth += 1;
       else if (char === "}") depth -= 1;
-      expect(depth).toBeGreaterThanOrEqual(0);
+      lowest = Math.min(lowest, depth);
     }
+    expect(lowest).toBe(0);
     expect(depth).toBe(0);
   });
 
@@ -93,8 +116,15 @@ describe("CSS hygiene for the #743 block", () => {
     expect(block).toContain(":where(.form-actions, .page-intro-actions");
   });
 
-  it("scopes the public tap target rule away from table cells", () => {
+  it("scopes the public tap target rule away from table cells and inline text buttons", () => {
     expect(block).toContain(":not(:where(td, th) *)");
+    expect(block).toContain(".public-registration-page .text-button:not(:where(td, th, p, small, summary, label, li, dd, dt) *)");
+    expect(block).not.toMatch(/\.public-registration-page :is\(\.primary-button, \.secondary-button, \.text-button\)/);
+  });
+
+  it("keeps floored subtitles from outgrowing their headings", () => {
+    expect(block).toMatch(/\.report-field-heading h3[^}]*\{ font-size: 1rem; \}/);
+    expect(block).toMatch(/\.danger-zone-item > h3 \{[^}]*font-size: 1rem;/);
   });
 });
 
@@ -205,7 +235,7 @@ describe("confirmation copy names the object and the consequence (#743)", () => 
       preview: { name: "Women's Retreat 2027", counts: { locations: 1, forms: 2 } as never, decision: { allowed: true } },
     }));
     expect(markup).toContain("Delete Women&#x27;s Retreat 2027?");
-    expect(markup).toContain(">Delete Women&#x27;s Retreat 2027</button>");
+    expect(markup).toContain(">Permanently delete Women&#x27;s Retreat 2027</button>");
     expect(markup).toContain("cannot be undone");
     expect(markup).not.toContain("Delete event permanently");
   });
@@ -339,7 +369,10 @@ describe("one filled primary per screen (#743)", () => {
   it("registrations: Start registration is the filled action and Email selected is outlined", () => {
     const source = read("components/people-workspace.tsx");
     expect(source).toContain('<button className="secondary-button outline-action" type="button" onClick={() => setEmailingSelection(true)}>');
-    expect(source).toContain('selected.publicSubmission?.rosterEnabled ? "secondary-button" : "primary-button"');
+    expect(source.match(/lifecycleActionButtonClass\(Boolean\(selected\.publicSubmission\?\.rosterEnabled\)\)/g)).toHaveLength(2);
+    // Roster form: Edit is the one filled button. No roster (rosterEnabled false): Promote and Reactivate are.
+    expect(lifecycleActionButtonClass(true)).toBe("secondary-button");
+    expect(lifecycleActionButtonClass(false)).toBe("primary-button");
   });
 
   it("check-in: Start camera hands the filled primary to the resolved pass", () => {
@@ -364,6 +397,37 @@ describe("one filled primary per screen (#743)", () => {
     } as never));
     expect(primaryCount(markup)).toBe(1);
     expect(markup).toMatch(/class="primary-button"[^>]*>(?:(?!<\/button>)[\s\S])*Publish version/);
+  });
+
+  it("form builder: the Danger zone renders inside builder-canvas, not as a third grid column", () => {
+    const definition = structuredClone(formTemplates[0].definition) as RegistrationFormDefinition;
+    const version = {
+      id: "version-1", versionNumber: 1, status: "PUBLISHED" as const, definition, publishedAt: "2028-08-01T00:00:00.000Z",
+      createdAt: "2028-08-01T00:00:00.000Z", updatedAt: "2028-08-01T00:00:00.000Z", createdBy: "Synthetic Staff",
+      testSubmissionCount: 0, choiceUsage: {}, testSubmissions: [],
+    };
+    const markup = renderToStaticMarkup(createElement(RegistrationBuilderWorkspace, {
+      eventId: "event-1", eventSlug: "fall-camporee-2028", eventName: "Fall Camporee 2028",
+      initialForms: [{
+        id: "form-1", eventId: "event-1", name: definition.title, slug: "synthetic-form", status: "PUBLISHED",
+        createdAt: "2028-08-01T00:00:00.000Z", updatedAt: "2028-08-01T00:00:00.000Z", createdBy: "Synthetic Staff",
+        activeVersion: version, versions: [version],
+      }],
+      templates: [],
+    } as never));
+    const canvasStart = markup.lastIndexOf("<div", markup.indexOf('class="builder-canvas"'));
+    const zoneStart = markup.indexOf('class="panel danger-zone');
+    expect(canvasStart).toBeGreaterThan(-1);
+    expect(zoneStart).toBeGreaterThan(markup.indexOf('class="panel confirmation-editor"'));
+    // Walk the div nesting from the canvas open tag to find where the canvas closes.
+    let depth = 0;
+    let canvasEnd = -1;
+    for (const tag of markup.slice(canvasStart).matchAll(/<div\b|<\/div>/g)) {
+      depth += tag[0] === "</div>" ? -1 : 1;
+      if (depth === 0) { canvasEnd = canvasStart + tag.index! ; break; }
+    }
+    expect(canvasEnd).toBeGreaterThan(zoneStart);
+    expect(markup.indexOf('class="panel builder-preview"')).toBeGreaterThan(canvasEnd);
   });
 
   it("form builder: Withdraw moves into a Danger zone for a published form", () => {

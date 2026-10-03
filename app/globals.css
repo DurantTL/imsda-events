@@ -3,14 +3,12 @@
 :root {
   /* #645 heading scale. rem resolves against the html root (16px), not body. */
   --text-helper-min: 0.875rem;
-  /* #684 type floors, made global by #743. Measured before #743: desktop admin
-     rendered buttons and labels at 11.2px, inputs at 12.5px, helper text at
-     8.6-10.6px; phones were already floored. Declarations use
-     max(var(--type-floor, 0px), X), so raising the tokens lifts every one of
-     them at once: meta and helper text is never under 12px (--type-floor), and
-     body, inputs, labels and buttons are never under 14px (--type-body-floor). */
-  --type-floor: 0.75rem;
-  --type-body-floor: 0.875rem;
+  /* #684 type floors. 0 here, so print keeps its own sizes (packets, check-in
+     book, report headings). #743 raises them for every screen size in the
+     @media screen block right after this :root, and #684 again on phones.
+     Declarations use max(var(--type-floor, 0px), X). */
+  --type-floor: 0px;
+  --type-body-floor: 0px;
   /* #743 type scale. Public: body and inputs 16px, labels and help 14px, section
      titles 20-24px. Admin: body and inputs 14px, meta 12-13px. Buttons are at
      least 14px, and 16px for public or mobile primary actions. */
@@ -42,6 +40,18 @@
   --coral: #a95549;
   --shadow: 0 14px 40px rgba(0, 59, 92, 0.08);
   --sidebar-width: 260px;
+}
+
+/* #743: on screen the floors apply at every size. Measured before: desktop admin
+   rendered buttons and labels at 11.2px, inputs at 12.5px, helper text at
+   8.6-10.6px (phones were already floored). Meta and helper text is never under
+   12px; body, inputs, labels and buttons are never under 14px. Not applied in
+   print. */
+@media screen {
+  :root {
+    --type-floor: 0.75rem;
+    --type-body-floor: 0.875rem;
+  }
 }
 
 /* Program assignments */
@@ -9136,7 +9146,8 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   .public-registration-roster-footer button,
   .public-registration-draft-notice button,
   .public-registration-step-actions .is-back,
-  .public-registration-page :is(.primary-button, .secondary-button, .text-button):not(:where(td, th) *) { min-height: var(--target-touch, 44px); }
+  .public-registration-page :is(.primary-button, .secondary-button):not(:where(td, th) *),
+  .public-registration-page .text-button:not(:where(td, th, p, small, summary, label, li, dd, dt) *) { min-height: var(--target-touch, 44px); }
   /* Outlined variant for a primary-sized action that must not be the filled one on its screen. */
   .outline-action { border: 2px solid var(--imsda-navy); background: #fff; color: var(--imsda-navy); }
   .outline-action:hover:not(:disabled) { background: var(--imsda-navy-soft); }
@@ -9163,6 +9174,23 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   :root :is(.form-actions, .page-intro-actions, .intro-actions, .builder-actions, .registration-management-actions) > .secondary-button { min-height: var(--target-touch, 44px); }
 }
 
+/* --- Heading hierarchy ------------------------------------------------------
+   Floored subtitles (14px body, 12px meta) made some card and panel headings
+   smaller than the text under them. On screen these headings are at least 1rem. */
+@media screen {
+  .assignment-step-content h3, .assignment-empty h3, .assignment-run-main h3,
+  .record-card h3, .empty-state h3, .template-cleanup-checklist-head h3,
+  .announcement-card h3, .foundation-card h3, .template-card h3,
+  .registration-related-panel > header h3, .amendment-section h4,
+  .amendment-attendee-card h4, .amendment-attendees .inline-heading h4,
+  .message-test-form h2, .message-detail-head h2, .confirmation-resend-form h3,
+  .report-field-heading h3, .roster-report-group h3, .badge-background-heading h3,
+  .attendee-hub-announcement-list h3, .attendee-community-conduct h3,
+  .attendee-timeline-official h3, .roster-guardian-slot h3, .club-assignments-block h3,
+  .transfer-section h3, .choice-filter-head h3, .event-module-card-link h3,
+  .auto-info-card h4 { font-size: 1rem; }
+}
+
 /* --- Submitting state ------------------------------------------------------- */
 /* The spinner is the existing LoaderCircle + .is-spinning pair (public Square checkout uses it too). */
 .submit-button-spinner { flex: none; }
@@ -9181,7 +9209,7 @@ button[aria-busy="true"] { cursor: progress; }
 .danger-zone > h2 { margin: 0 0 4px; color: var(--danger, #8f3a30); font-size: 1.05rem; }
 .danger-zone-item { display: grid; gap: 8px; border-top: 1px solid var(--danger-line, #e3b8b1); padding-top: 12px; margin-top: 12px; }
 .danger-zone-item:first-of-type { border-top: 0; padding-top: 0; margin-top: 8px; }
-.danger-zone-item > h3 { margin: 0; color: var(--ink); font-size: 0.95rem; }
+.danger-zone-item > h3 { margin: 0; color: var(--ink); font-size: 1rem; }
 .danger-zone-item > p { margin: 0; color: var(--ink); font-size: max(var(--type-body-floor, 0px), 0.8rem); line-height: 1.55; }
 .danger-outline-button { border: 2px solid var(--danger, #8f3a30); background: #fff; color: var(--danger, #8f3a30); }
 .danger-outline-button:hover:not(:disabled) { background: #fbe9e5; }

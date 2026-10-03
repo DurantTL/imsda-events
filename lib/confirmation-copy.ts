@@ -57,3 +57,12 @@ export function registrationLifecycleLabel(action: RegistrationLifecycleAction, 
 export function attendeeCountPhrase(count: number) {
   return countPhrase(count, "attendee", "attendees");
 }
+
+/**
+ * Promote and Reactivate are the filled primary of a registration's action row
+ * only when "Edit choices & attendees" is not offered (a roster-less form);
+ * otherwise Edit is the one filled button (#743).
+ */
+export function lifecycleActionButtonClass(rosterEditOffered: boolean) {
+  return rosterEditOffered ? "secondary-button" : "primary-button";
+}

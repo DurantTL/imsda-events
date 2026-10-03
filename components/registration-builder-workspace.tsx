@@ -1178,8 +1178,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
           {scheduledPriceFields.length > 0 && <div className="pricing-preview-control"><label>Preview calculation date<input type="date" value={pricingPreviewDate} onInput={(event) => setPricingPreviewDate(event.currentTarget.value)} /></label><span><strong>{scheduledPriceFields.length} scheduled price{scheduledPriceFields.length === 1 ? "" : "s"}</strong><small>Change this test date to verify deadline pricing. A public checkout will recompute the date server-side.</small></span></div>}
           <div className="boundary-callout"><ShieldCheck size={18} /><span><strong>Square-ready, sandbox first</strong><small>Totals work now. Card details stay outside this builder and a Square Web Payments token is required before a charge can be submitted.</small></span></div>
         </section>
-        <section className="panel confirmation-editor"><label>Confirmation message<textarea disabled={!canEdit} value={definition.confirmationMessage} rows={3} maxLength={500} onChange={(event) => replaceDefinition({ ...definition, confirmationMessage: event.target.value })} /></label></section></div>
-
+        <section className="panel confirmation-editor"><label>Confirmation message<textarea disabled={!canEdit} value={definition.confirmationMessage} rows={3} maxLength={500} onChange={(event) => replaceDefinition({ ...definition, confirmationMessage: event.target.value })} /></label></section>
         {publishedVersion && selectedForm && (
           <DangerZone className="builder-danger-zone" heading="Withdraw this form">
             <DangerZoneItem title="Withdraw from public page">
@@ -1188,6 +1187,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
             </DangerZoneItem>
           </DangerZone>
         )}
+        </div>
 
         <aside className="panel builder-preview" data-testid="live-form-preview" id="live-form-preview" ref={previewRef} tabIndex={-1}>
           <div className="section-heading"><div><p className="eyebrow">Live preview</p><h2>Preview &amp; test</h2></div><span className="live-preview-badge"><span /> Live</span></div>
