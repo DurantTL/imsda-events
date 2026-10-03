@@ -11,6 +11,9 @@ import {
   launcherFooterLinks,
   launcherGroups,
   nextLauncherIndex,
+  forgetLauncherPosition,
+  recallLauncherPosition,
+  rememberLauncherPosition,
   returnsFocusToTrigger,
   type LauncherCloseReason,
 } from "@/components/more-launcher-model";
@@ -60,7 +63,7 @@ export function MoreLauncherPanel({
   eventQuery: string;
   id?: string;
   panelRef?: Ref<HTMLDivElement>;
-  onNavigate?: () => void;
+  onNavigate?: (card?: { key: string; href: string }) => void;
   variant: "sidebar" | "tab";
   style?: HTMLAttributes<HTMLDivElement>["style"];
 }) {
@@ -83,7 +86,7 @@ export function MoreLauncherPanel({
             <ul>
               {groupCards.map((card) => (
                 <li key={card.key}>
-                  <Link className="more-launcher-item" href={card.href} onClick={onNavigate} data-card={card.key}>
+                  <Link className="more-launcher-item" href={card.href} onClick={() => onNavigate?.({ key: card.key, href: card.href })} data-card={card.key}>
                     <card.icon aria-hidden="true" size={18} strokeWidth={1.9} />
                     <span>{card.title}</span>
                   </Link>
@@ -96,7 +99,7 @@ export function MoreLauncherPanel({
       {footer.length > 0 && (
         <div className="more-launcher-footer">
           {footer.map((link) => (
-            <Link className="more-launcher-item more-launcher-footer-link" href={link.href} key={link.key} onClick={onNavigate} data-footer={link.key}>
+            <Link className="more-launcher-item more-launcher-footer-link" href={link.href} key={link.key} onClick={() => onNavigate?.()} data-footer={link.key}>
               {link.label}
             </Link>
           ))}
@@ -115,6 +118,7 @@ export function MoreLauncher({
   isSystemAdmin,
   canRequestFeature = false,
   eventQuery,
+  userId = "",
   tipProps = {},
   children,
 }: {
@@ -127,6 +131,8 @@ export function MoreLauncher({
   isSystemAdmin: boolean;
   canRequestFeature?: boolean;
   eventQuery: string;
+  /** The signed-in user, so a remembered position never carries to another person on a shared tab. */
+  userId?: string;
   tipProps?: HTMLAttributes<HTMLElement>;
   children: ReactNode;
 }) {
@@ -143,6 +149,8 @@ export function MoreLauncher({
   const close = useCallback((reason: LauncherCloseReason) => {
     setBackgroundInert(false);
     setOpen(false);
+    // Escape means "start over": the next open begins at the first card.
+    if (reason === "escape") forgetLauncherPosition();
     if (returnsFocusToTrigger(reason)) triggerRef.current?.focus();
   }, []);
 
@@ -150,7 +158,13 @@ export function MoreLauncher({
   useEffect(() => {
     if (!open) return;
     if (variant === "tab") setBackgroundInert(true);
-    panelRef.current?.querySelector<HTMLElement>("a[href]")?.focus();
+    // Coming back: focus the card last opened and restore the scroll (#741 slice 4); otherwise the first item.
+    const panel = panelRef.current;
+    // The memory applies only back on the page it opened (or a child); otherwise first card, top.
+    const remembered = recallLauncherPosition({ userId, eventQuery, pathname });
+    const rememberedCard = remembered?.cardKey ? panel?.querySelector<HTMLElement>(`a[data-card="${remembered.cardKey}"]`) : null;
+    (rememberedCard ?? panel?.querySelector<HTMLElement>("a[href]"))?.focus({ preventScroll: Boolean(rememberedCard) });
+    if (panel) panel.scrollTop = rememberedCard && remembered ? remembered.scrollTop : 0;
     function onPointerDown(event: PointerEvent) {
       const target = event.target as Node | null;
       if (target && (panelRef.current?.contains(target) || triggerRef.current?.contains(target))) return;
@@ -174,7 +188,7 @@ export function MoreLauncher({
       desktop?.removeEventListener("change", onDesktop);
       setBackgroundInert(false);
     };
-  }, [open, close, variant]);
+  }, [open, close, variant, eventQuery, userId, pathname]);
 
   function openFromTrigger() {
     if (variant === "sidebar" && triggerRef.current) {
@@ -242,7 +256,10 @@ export function MoreLauncher({
               id={panelId}
               isSystemAdmin={isSystemAdmin}
               canRequestFeature={canRequestFeature}
-              onNavigate={() => close("navigate")}
+              onNavigate={(card) => {
+                if (card) rememberLauncherPosition({ userId, eventQuery, cardKey: card.key, href: card.href, scrollTop: panelRef.current?.scrollTop ?? 0 });
+                close("navigate");
+              }}
               panelRef={panelRef}
               style={variant === "sidebar" && anchor ? { left: anchor.left, bottom: anchor.bottom } : undefined}
               variant={variant}

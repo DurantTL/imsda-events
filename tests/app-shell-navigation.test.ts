@@ -113,17 +113,15 @@ describe("application shell navigation", () => {
       ),
     );
 
-    expect(markup).toContain(groupHeading("Events"));
+    // The fixed order (#741 slice 4); the exact item order is in issue-741-nav-order.test.ts.
+    expect(markup).toContain(groupHeading("Run the event"));
     expect(markup).toContain(groupHeading("People"));
-    expect(markup).toContain(groupHeading("Finance"));
-    expect(markup).toContain(groupHeading("Communications"));
+    expect(markup).toContain(groupHeading("Money"));
     // No club oversight and not a system admin: no Clubs and churches or System heading.
     expect(markup).not.toContain(groupHeading("Clubs and churches"));
     expect(markup).not.toContain(groupHeading("System"));
-    // Group order: Events, then People, then Finance, then Communications.
-    expect(markup.indexOf(groupHeading("Events"))).toBeLessThan(markup.indexOf(groupHeading("People")));
-    expect(markup.indexOf(groupHeading("People"))).toBeLessThan(markup.indexOf(groupHeading("Finance")));
-    expect(markup.indexOf(groupHeading("Finance"))).toBeLessThan(markup.indexOf(groupHeading("Communications")));
+    expect(markup.indexOf(groupHeading("Run the event"))).toBeLessThan(markup.indexOf(groupHeading("People")));
+    expect(markup.indexOf(groupHeading("People"))).toBeLessThan(markup.indexOf(groupHeading("Money")));
     // Every existing destination stays reachable.
     expect(markup).toContain("Check-in");
     expect(markup).toContain("Registrations");
@@ -133,7 +131,7 @@ describe("application shell navigation", () => {
     expect(markup).toContain("More");
   });
 
-  it("shows only the Events heading for a role with just MANAGE_CHECK_IN", () => {
+  it("shows only the Main and Run the event headings for a role with just MANAGE_CHECK_IN", () => {
     const checkInOnlyEvents = [{
       id: "event_1",
       slug: "womens-retreat-2026",
@@ -154,11 +152,13 @@ describe("application shell navigation", () => {
       ),
     );
 
-    expect(markup).toContain(groupHeading("Events"));
+    expect(markup).toContain(groupHeading("Main"));
+    expect(markup).toContain(groupHeading("Run the event"));
     expect(markup).not.toContain(groupHeading("Clubs and churches"));
     expect(markup).not.toContain(groupHeading("People"));
-    expect(markup).not.toContain(groupHeading("Finance"));
-    expect(markup).not.toContain(groupHeading("Communications"));
+    expect(markup).not.toContain(groupHeading("Money"));
+    expect(markup).not.toContain(groupHeading("Set up the event"));
+    expect(markup).not.toContain(groupHeading("Reports"));
     expect(markup).not.toContain(groupHeading("System"));
   });
 
@@ -193,8 +193,9 @@ describe("application shell navigation", () => {
     // No longer a pinned sidebar group (#741); it is a club-audience launcher card.
     expect(markup).not.toContain(groupHeading("Clubs and churches"));
     expect(markup).not.toContain('href="/admin/organizations?event=event_1"');
+    // System management is drawn once, above the picker, not as a nav group (#741 slice 4).
     expect(markup).toContain('href="/admin?event=event_1"');
-    expect(markup).toContain(groupHeading("System"));
+    expect(markup).not.toContain(groupHeading("System"));
     const cards = buildMoreDirectoryCards({
       permissions: clubAudienceEvents[0].permissions,
       clubOversight: true,
@@ -235,7 +236,8 @@ describe("application shell navigation", () => {
     );
 
     expect(markup).not.toContain(groupHeading("Clubs and churches"));
-    expect(markup).toContain(groupHeading("System"));
+    expect(markup).not.toContain(groupHeading("System"));
+    expect(markup).toContain('href="/admin?event=event_1"');
   });
 
   it("lists Clubs and churches in the More launcher, pointed at club oversight, for an event manager with club oversight on the selected event (#741)", () => {

@@ -30,12 +30,12 @@ import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-conte
 import {
   buildMoreDirectoryCards,
   canShowMoreLauncher,
-  matchesVisibility,
   mobileActiveTabHref,
   mobileNavigationLabels,
-  mobileNavigationOrder,
   navigation,
   navigationGroupLabels,
+  orderedMobileTabs,
+  orderedSidebarItems,
   staffSubpageTitle,
   systemNavigation,
   withCurrentEvent,
@@ -59,7 +59,7 @@ type ShellEvent = {
   /** Club forms (#610) are open to system admins and Event Admins of a current event; computed server-side. */
   clubFormsAccess?: boolean;
 };
-type ShellUser = { displayName: string; email: string; globalRole?: "SYSTEM_ADMIN" | null };
+type ShellUser = { id?: string; displayName: string; email: string; globalRole?: "SYSTEM_ADMIN" | null };
 
 export function AppShell({
   attendeeAccountAvailable = false,
@@ -182,30 +182,13 @@ export function AppShell({
     eventQuery,
     hiddenCardKeys: selectedHiddenCardKeys,
   }) : [];
-  const visibleStatic = navigation.filter((item) => item.href === "/more" ? showMore : matchesVisibility(item, selectedPermissions));
-  const dashboardItem = visibleStatic.find((item) => !item.group && item.href !== "/more");
-  const moreItem = visibleStatic.find((item) => item.href === "/more");
-  const systemEntry: NavigationItem | null = isSystemAdmin ? {
-    href: systemNavigation.href,
-    label: "System management",
-    icon: ShieldCheck,
-    desktopOnly: true,
-    group: "system",
-  } : null;
-  const visibleNavigation: NavigationItem[] = eventlessProfile ? [] : [
-    ...(dashboardItem ? [dashboardItem] : []),
-    ...visibleStatic.filter((item) => item.group === "events"),
-    ...visibleStatic.filter((item) => item.group === "people"),
-    ...visibleStatic.filter((item) => item.group === "finance"),
-    ...visibleStatic.filter((item) => item.group === "communications"),
-    ...(systemEntry ? [systemEntry] : []),
-    ...(moreItem ? [moreItem] : []),
-  ];
-  // The mobile tab bar keeps its own, unrelated order (#428 review) rather
-  // than deriving from the sidebar's grouping — see `mobileNavigationOrder`.
-  const mobileNavigation = mobileNavigationOrder
-    .map((href) => visibleNavigation.find((item) => item.href === href))
-    .filter((item): item is NavigationItem => Boolean(item));
+  // The fixed order (#741 slice 4) lives in `orderedSidebarItems`. System
+  // management is not here: it is drawn once, above the event picker.
+  const visibleNavigation: NavigationItem[] = eventlessProfile
+    ? []
+    : orderedSidebarItems(selectedPermissions, showMore);
+  // The mobile tab bar keeps its own, shorter order (see `mobileNavigationOrder`).
+  const mobileNavigation = orderedMobileTabs(visibleNavigation);
   const attendeePreviewHref = selectedEvent
     ? `/account/events/${encodeURIComponent(selectedEvent.slug)}?preview=staff`
     : "/account";
@@ -312,6 +295,7 @@ export function AppShell({
                   isSystemAdmin={isSystemAdmin}
                   canRequestFeature={canRequestFeature}
                   eventQuery={eventQuery}
+                  userId={user.id ?? ""}
                   tipProps={tipProps(label)}
                 >
                   <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
@@ -413,6 +397,7 @@ export function AppShell({
                 isSystemAdmin={isSystemAdmin}
                 canRequestFeature={canRequestFeature}
                 eventQuery={eventQuery}
+                userId={user.id ?? ""}
               >
                 <Icon aria-hidden="true" size={22} /><span>{mobileNavigationLabels[href] ?? label}</span>
               </MoreLauncher>

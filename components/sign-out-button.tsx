@@ -3,6 +3,7 @@
 import { LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { forgetLauncherPosition } from "@/components/more-launcher-model";
 
 export function SignOutButton({ className = "text-button", label = "Sign out" }: { className?: string; label?: string }) {
   const router = useRouter();
@@ -10,6 +11,8 @@ export function SignOutButton({ className = "text-button", label = "Sign out" }:
 
   async function signOut() {
     setBusy(true);
+    // A shared tab must not carry this person's More position to the next sign-in.
+    forgetLauncherPosition();
     try {
       await fetch("/api/auth/logout", { method: "POST" });
     } finally {

@@ -36,22 +36,26 @@ import { canManageProgramAssignments } from "@/modules/program-assignments/acces
  * this list, so which pages a role can open can't drift between desktop and
  * phone (#475).
  *
- * Groups for the sidebar (#428): items with no group render above any
- * heading (Dashboard) or after every group (More, a catch-all that spans
- * several of them). "Clubs and churches" and "System" are computed per
- * render, not statically, since their destination and visibility depend on
- * the signed-in user's role and (for Clubs and churches) the selected
- * event's club oversight.
+ * The sidebar order is fixed (#741 slice 4): System management and the event
+ * picker sit above it, then the groups in `navigationGroupOrder`, each listing
+ * its items in the order they appear in `navigation`, then More last (the one
+ * item with no group). A group with no visible item is left out. System
+ * management is not a nav item: the shell draws it once above the picker. Club
+ * features (the club directory, This event's clubs) are More launcher cards,
+ * not sidebar items (#741 slice 1).
  */
-export type NavigationGroup = "events" | "clubs" | "people" | "finance" | "communications" | "system";
+export type NavigationGroup = "main" | "run" | "setup" | "people" | "money" | "reports";
+
+/** The sidebar's groups, in the fixed order they render (#741 slice 4). */
+export const navigationGroupOrder: readonly NavigationGroup[] = ["main", "run", "setup", "people", "money", "reports"];
 
 export const navigationGroupLabels: Record<NavigationGroup, string> = {
-  events: "Events",
-  clubs: "Clubs and churches",
+  main: "Main",
+  run: "Run the event",
+  setup: "Set up the event",
   people: "People",
-  finance: "Finance",
-  communications: "Communications",
-  system: "System",
+  money: "Money",
+  reports: "Reports",
 };
 
 export type NavigationItem = {
@@ -88,7 +92,7 @@ export function withCurrentEvent(href: string, eventId: string | null | undefine
 export const staffPageTitles = {
   overview: "Dashboard",
   checkIn: "Check-in",
-  registrationForm: "Registration form",
+  registrationForm: "Registration forms",
   attendeeSetup: "Attendee setup",
   tags: "Tags",
   eventSettings: "Event settings",
@@ -171,18 +175,20 @@ export const systemNavigation: NavigationItem = {
 };
 
 export const navigation: readonly NavigationItem[] = [
-  { href: "/overview", label: staffPageTitles.overview, icon: LayoutDashboard },
-  { href: "/check-in", label: staffPageTitles.checkIn, icon: CheckCircle2, requiredPermission: "MANAGE_CHECK_IN", group: "events" },
-  { href: "/registration-builder", label: staffPageTitles.registrationForm, icon: PanelsTopLeft, desktopOnly: true, requiredPermission: "MANAGE_FORMS", group: "events" },
-  { href: "/more/attendee-configuration", label: staffPageTitles.attendeeSetup, icon: Tags, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
-  { href: "/more/tags", label: staffPageTitles.tags, icon: Tag, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
-  { href: "/more/event-settings", label: staffPageTitles.eventSettings, icon: Settings2, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "events" },
-  { href: "/people", label: staffPageTitles.registrations, icon: UsersRound, requiredPermission: "VIEW_SENSITIVE_DATA", group: "people" },
-  { href: "/imports", label: staffPageTitles.imports, icon: FileUp, desktopOnly: true, requiredPermission: "MANAGE_IMPORTS", group: "people" },
+  { href: "/overview", label: staffPageTitles.overview, icon: LayoutDashboard, group: "main" },
+  { href: "/check-in", label: staffPageTitles.checkIn, icon: CheckCircle2, requiredPermission: "MANAGE_CHECK_IN", group: "run" },
+  { href: "/people", label: staffPageTitles.registrations, icon: UsersRound, requiredPermission: "VIEW_SENSITIVE_DATA", group: "run" },
+  { href: "/imports", label: staffPageTitles.imports, icon: FileUp, desktopOnly: true, requiredPermission: "MANAGE_IMPORTS", group: "run" },
+  { href: "/more/event-settings", label: staffPageTitles.eventSettings, icon: Settings2, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "setup" },
+  { href: "/registration-builder", label: staffPageTitles.registrationForm, icon: PanelsTopLeft, desktopOnly: true, requiredPermission: "MANAGE_FORMS", group: "setup" },
+  { href: "/more/attendee-configuration", label: staffPageTitles.attendeeSetup, icon: Tags, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "setup" },
+  { href: "/more/tags", label: staffPageTitles.tags, icon: Tag, desktopOnly: true, requiredPermission: "CONFIGURE_EVENT", group: "setup" },
   { href: "/staff", label: staffPageTitles.team, icon: UserCog, desktopOnly: true, requiredPermission: "MANAGE_STAFF", group: "people" },
-  { href: "/finance", label: staffPageTitles.payments, icon: WalletCards, requiredPermission: "MANAGE_FINANCE", group: "finance" },
-  { href: "/more/promo-codes", label: staffPageTitles.promoCodes, icon: TicketPercent, requiredPermission: "MANAGE_FINANCE", group: "finance" },
-  { href: "/communications", label: staffPageTitles.emails, icon: Megaphone, requiredPermission: "MANAGE_COMMUNICATIONS", group: "communications" },
+  { href: "/communications", label: staffPageTitles.emails, icon: Megaphone, requiredPermission: "MANAGE_COMMUNICATIONS", group: "people" },
+  { href: "/finance", label: staffPageTitles.payments, icon: WalletCards, requiredPermission: "MANAGE_FINANCE", group: "money" },
+  { href: "/more/promo-codes", label: staffPageTitles.promoCodes, icon: TicketPercent, requiredPermission: "MANAGE_FINANCE", group: "money" },
+  { href: "/more/reports", label: staffPageTitles.operationalReports, icon: ChartNoAxesCombined, desktopOnly: true, requiredPermission: "VIEW_REPORTS", group: "reports" },
+  { href: "/more/health", label: staffPageTitles.operationalHealth, icon: HeartPulse, desktopOnly: true, requiredAnyPermissions: operationalHealthEntryPermissions, group: "reports" },
   {
     href: "/more",
     label: staffPageTitles.more,
@@ -195,6 +201,35 @@ export const navigation: readonly NavigationItem[] = [
     ],
   },
 ];
+
+/**
+ * The sidebar's visible items in their fixed order: grouped items by group,
+ * then by their order in `navigation`, with More last. `showMore` is the
+ * launcher rule (`canShowMoreLauncher`), which can admit More when no single
+ * permission does.
+ */
+export function orderedSidebarItems(
+  selectedPermissions: ReadonlySet<EventPermission>,
+  showMore: boolean,
+): NavigationItem[] {
+  const visible = navigation.filter((item) => (item.href === "/more" ? showMore : matchesVisibility(item, selectedPermissions)));
+  return [
+    ...navigationGroupOrder.flatMap((group) => visible.filter((item) => item.group === group)),
+    ...visible.filter((item) => item.href === "/more"),
+  ];
+}
+
+/**
+ * The phone tabs, in `mobileNavigationOrder`, for the items visible to this
+ * viewer. "People" is the Registrations page (`/people`): on a phone it is the
+ * attendee list staff look people up in, while Team stays a desktop task reached
+ * from More. A tab the viewer may not open is dropped, never shown disabled.
+ */
+export function orderedMobileTabs(visibleItems: readonly NavigationItem[]): NavigationItem[] {
+  return mobileNavigationOrder
+    .map((href) => visibleItems.find((item) => item.href === href))
+    .filter((item): item is NavigationItem => Boolean(item));
+}
 
 export function matchesVisibility(
   item: Pick<NavigationItem, "requiredPermission" | "requiredAnyPermissions">,

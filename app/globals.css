@@ -9539,3 +9539,30 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 .module-request-item small { display: block; margin-top: 2px; color: var(--muted, #5b6b73); }
 .module-request-item p { margin: 8px 0 0; overflow-wrap: anywhere; }
 .module-request-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* #741 slice 4: fixed staff navigation order.
+   The sidebar now lists up to six groups and fifteen items, so the rhythm is
+   tighter (the nav still scrolls inside the sidebar, #468) and the icons-only
+   sidebar (#446) keeps a thin rule where each hidden group heading was.
+   Self-contained block; nothing above this comment is changed by it.
+   (plain comment, not a banner: the #743 block test counts banners) */
+.primary-nav { gap: 1px; }
+.primary-nav .nav-item { padding-block: 6px; }
+.primary-nav .nav-group-label { margin: 7px 0 0; }
+.system-navigation { margin-bottom: 12px; }
+.event-workspace-label { margin-bottom: 4px; }
+.event-picker-wrap { margin-bottom: 8px; }
+.primary-nav .nav-group-label:first-child { margin-top: 2px; }
+@media (min-width: 801px) {
+  html[data-sidebar="collapsed"] .primary-nav .nav-group-label {
+    display: block;
+    height: 1px;
+    margin: 7px 8px 4px;
+    padding: 0;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.16);
+    color: transparent;
+    font-size: 0;
+  }
+  html[data-sidebar="collapsed"] .primary-nav .nav-group-label:first-child { display: none; }
+}
