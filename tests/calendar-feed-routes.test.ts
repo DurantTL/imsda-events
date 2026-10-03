@@ -138,7 +138,7 @@ describe("imported calendar routes", () => {
     expect((await PREVIEW(request("POST"), feedCtx)).status).toBe(200);
     expect(mocks.previewCalendarFeed).toHaveBeenCalledWith("feed-1");
     expect((await SYNC(request("POST"), feedCtx)).status).toBe(200);
-    expect(mocks.syncCalendarFeed).toHaveBeenCalledWith("feed-1", { actorUserId: "admin-1" });
+    expect(mocks.syncCalendarFeed).toHaveBeenCalledWith("feed-1", { actorUserId: "admin-1", allowEmpty: false });
     await SOURCE(request("POST", { action: "hide" }), entryCtx);
     expect(mocks.setCalendarEntryHidden).toHaveBeenCalledWith("entry-1", true, "admin-1");
     await SOURCE(request("POST", { action: "show" }), entryCtx);

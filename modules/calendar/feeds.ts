@@ -6,7 +6,7 @@ import { getPrisma } from "@/lib/prisma";
 import { isSecretEncryptionConfigured, openSecret, SecretBoxError, sealSecret } from "@/lib/secret-box";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { FeedFetchError, feedUrlHint, fetchFeedText, normalizeFeedUrl, type FeedTransport, type HostResolver } from "@/modules/calendar/feed-fetch";
-import { planFeedSync, previewOfPlan, type FeedPlan, type FeedPreview, type StoredFeedEntry } from "@/modules/calendar/feed-plan";
+import { feedLockKey, planFeedSync, previewOfPlan, type FeedPlan, type FeedPreview, type StoredFeedEntry } from "@/modules/calendar/feed-plan";
 import { IcsParseError, parseIcsFeed, type ParsedIcsFeed } from "@/modules/calendar/ics-import";
 import { CalendarError, listCalendarEntries } from "@/modules/calendar/repository";
 import type { CalendarFeedInput, CalendarFeedUpdate } from "@/modules/calendar/schemas";
@@ -50,7 +50,23 @@ export async function listCalendarFeeds() {
   }));
 }
 
-function sealedAddress(rawUrl: string) {
+/** The same calendar can't be connected twice: compare the normalized address with every other feed's. */
+async function assertNotConnected(url: URL, exceptFeedId?: string) {
+  const others = await getPrisma().calendarFeed.findMany({ select: { id: true, name: true, sealedUrl: true } });
+  for (const other of others) {
+    if (other.id === exceptFeedId) continue;
+    try {
+      if (normalizeFeedUrl(openSecret(other.sealedUrl, feedSecretPurpose)).toString() === url.toString()) {
+        throw new CalendarError("INVALID_FEED", `This calendar is already connected as ${other.name}.`);
+      }
+    } catch (error) {
+      if (error instanceof CalendarError) throw error;
+      // An unreadable saved address can't match anything.
+    }
+  }
+}
+
+async function sealedAddress(rawUrl: string, exceptFeedId?: string) {
   let url: URL;
   try {
     url = normalizeFeedUrl(rawUrl);
@@ -61,12 +77,13 @@ function sealedAddress(rawUrl: string) {
   if (!isSecretEncryptionConfigured()) {
     throw new CalendarError("FEED_SECRET_MISSING", "Saving calendar addresses needs the encryption key (SECRET_ENCRYPTION_KEY) to be set on the server.");
   }
+  await assertNotConnected(url, exceptFeedId);
   return { sealedUrl: sealSecret(url.toString(), feedSecretPurpose), urlHint: feedUrlHint(url) };
 }
 
 export async function createCalendarFeed(input: CalendarFeedInput, actorUserId: string) {
   const { url, ...fields } = input;
-  const address = sealedAddress(url);
+  const address = await sealedAddress(url);
   await getPrisma().$transaction(async (tx) => {
     const feed = await tx.calendarFeed.create({ data: { ...fields, ...address, createdByUserId: actorUserId, updatedByUserId: actorUserId } });
     await writeAuditLog({
@@ -84,7 +101,7 @@ export async function createCalendarFeed(input: CalendarFeedInput, actorUserId: 
 export async function updateCalendarFeed(feedId: string, input: CalendarFeedUpdate, actorUserId: string) {
   const { url, ...fields } = input;
   // A blank address on an edit keeps the saved one.
-  const address = url ? sealedAddress(url) : {};
+  const address = url ? await sealedAddress(url, feedId) : {};
   await getPrisma().$transaction(async (tx) => {
     const existing = await tx.calendarFeed.findUnique({ where: { id: feedId }, select: { id: true } });
     if (!existing) throw new CalendarError("FEED_NOT_FOUND", "That imported calendar could not be found.");
@@ -157,6 +174,20 @@ async function findFeed(feedId: string) {
   return feed;
 }
 
+/** Items left behind by a deleted feed that this feed's items would re-link to rather than duplicate. */
+async function loadDetached(client: { calendarEntry: Pick<ReturnType<typeof getPrisma>["calendarEntry"], "findMany"> }, parsed: ParsedIcsFeed) {
+  const uids = [...new Set(parsed.entries.map((entry) => entry.uid))];
+  if (uids.length === 0) return [];
+  const rows = await client.calendarEntry.findMany({
+    where: { sourceFeedId: null, sourceUid: { in: uids } },
+    select: storedSelect,
+    orderBy: { createdAt: "asc" },
+  });
+  return rows.map(toStored);
+}
+
+const emptyMessage = "The calendar came back empty; nothing was changed.";
+
 /** What an import would do, with nothing written. */
 export async function previewCalendarFeed(feedId: string, deps: Deps = {}): Promise<FeedPreview> {
   const feed = await findFeed(feedId);
@@ -168,7 +199,13 @@ export async function previewCalendarFeed(feedId: string, deps: Deps = {}): Prom
   }
   const rows = await getPrisma().calendarEntry.findMany({ where: { sourceFeedId: feedId }, select: storedSelect });
   const existing = rows.map(toStored);
-  return previewOfPlan(planFeedSync(existing, parsed.entries, feed), existing, parsed.entries, parsed.warnings);
+  const detached = await loadDetached(getPrisma(), parsed);
+  const warnings = [...parsed.warnings];
+  const active = existing.filter((row) => !row.sourceRemovedAt).length;
+  if (parsed.entries.length === 0 && active > 0) {
+    warnings.unshift(`The calendar came back empty. Applying this would remove all ${active} imported items from the public calendar; automatic refreshes refuse to do that.`);
+  }
+  return previewOfPlan(planFeedSync(existing, parsed.entries, feed, detached), existing, parsed.entries, warnings, detached);
 }
 
 export type FeedSyncSummary = FeedPreview["counts"] & { warnings: string[]; totalInFeed: number };
@@ -187,7 +224,7 @@ async function recordFailure(feedId: string, message: string, now: Date) {
  */
 export async function syncCalendarFeed(
   feedId: string,
-  options: { actorUserId?: string; now?: Date } & Deps = {},
+  options: { actorUserId?: string; now?: Date; allowEmpty?: boolean } & Deps = {},
 ): Promise<FeedSyncSummary> {
   const now = options.now ?? new Date();
   const feed = await findFeed(feedId);
@@ -205,9 +242,15 @@ export async function syncCalendarFeed(
   try {
     plan = await getPrisma().$transaction(async (tx) => {
       // One sync of a feed at a time; a manual refresh and the sweep can overlap.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`calendar-feed:${feedId}`}))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${feedLockKey(feedId)}))`;
       const rows = await tx.calendarEntry.findMany({ where: { sourceFeedId: feedId }, select: storedSelect });
-      const planned = planFeedSync(rows.map(toStored), parsed.entries, feed);
+      const stored = rows.map(toStored);
+      // A feed that suddenly has nothing is far more often a fault than an emptied calendar: don't unpublish everything.
+      if (parsed.entries.length === 0 && !options.allowEmpty && stored.some((row) => !row.sourceRemovedAt)) {
+        throw new FeedFetchError(emptyMessage);
+      }
+      const detached = await loadDetached(tx, parsed);
+      const planned = planFeedSync(stored, parsed.entries, feed, detached);
       const actor = options.actorUserId ?? feed.updatedByUserId;
 
       if (planned.creates.length > 0) {
@@ -224,7 +267,10 @@ export async function syncCalendarFeed(
         });
       }
       for (const update of planned.updates) {
-        await tx.calendarEntry.update({ where: { id: update.id }, data: { ...update.patch, updatedByUserId: actor } });
+        await tx.calendarEntry.update({
+          where: { id: update.id },
+          data: { ...update.patch, ...(update.kind === "RELINK" ? { sourceFeedId: feedId } : {}), updatedByUserId: actor },
+        });
       }
       for (const wasPublished of [true, false]) {
         const ids = planned.removals.filter((removal) => removal.wasPublished === wasPublished).map((removal) => removal.id);
@@ -258,11 +304,12 @@ export async function syncCalendarFeed(
     throw new CalendarError("FEED_FETCH_FAILED", message);
   }
 
-  const visibleUpdates = plan.updates.filter((update) => update.kind === "REVIVE" || update.changedFields.length > 0);
+  const visibleUpdates = plan.updates.filter((update) => update.kind === "REVIVE" || update.kind === "RELINK" || update.changedFields.length > 0);
   return {
     create: plan.creates.length,
     update: visibleUpdates.filter((update) => update.kind === "UPDATE").length,
     revive: visibleUpdates.filter((update) => update.kind === "REVIVE").length,
+    relink: visibleUpdates.filter((update) => update.kind === "RELINK").length,
     remove: plan.removals.length,
     unchanged: plan.unchanged,
     warnings: parsed.warnings,

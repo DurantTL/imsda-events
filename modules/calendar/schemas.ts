@@ -116,6 +116,8 @@ export const calendarFeedInputSchema = z.object({
 
 export const calendarFeedUpdateSchema = z.object(feedFields).partial().strict();
 
+export const calendarFeedSyncSchema = z.object({ allowEmpty: z.boolean().optional() }).strict();
+
 export const calendarEntrySourceActionSchema = z.object({ action: z.enum(["hide", "show", "reset"]) }).strict();
 
 export type CalendarFeedInput = z.infer<typeof calendarFeedInputSchema>;

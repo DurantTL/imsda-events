@@ -24,7 +24,7 @@ vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: async (entry: R
 vi.mock("@/lib/prisma", () => {
   const matches = (row: Record<string, unknown>, where: Record<string, unknown> = {}): boolean => Object.entries(where).every(([key, condition]) => {
     if (key === "OR") return (condition as Array<Record<string, unknown>>).some((branch) => matches(row, branch));
-    if (key === "id" && condition && typeof condition === "object" && "in" in condition) return (condition as { in: string[] }).in.includes(String(row.id));
+    if (condition && typeof condition === "object" && "in" in (condition as object)) return (condition as { in: unknown[] }).in.includes(row[key]);
     if (condition && typeof condition === "object" && "not" in (condition as object)) return row[key] !== (condition as { not: unknown }).not;
     return row[key] === condition;
   });
@@ -273,6 +273,74 @@ describe("imported calendar feeds", () => {
     expect(camporee).toMatchObject({ locallyEditedFields: [], sourceHash: null });
     await syncCalendarFeed(feedId, deps);
     expect(camporee.title).toBe("Synthetic Camporee");
+  });
+
+  it("refuses to connect the same calendar twice, however it is spelled, without echoing the address", async () => {
+    await addFeed();
+    for (const url of [privateUrl, privateUrl.replace("https://", "webcal://")]) {
+      const error = await createCalendarFeed({ ...input, name: "Second", url }, "admin-1").catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code: "INVALID_FEED", message: "This calendar is already connected as Synthetic Google calendar." });
+      expect(JSON.stringify(error instanceof Error ? error.message : "")).not.toMatch(/SECRET|calendar\.example/);
+    }
+    expect(state.feeds).toHaveLength(1);
+    // A different address is fine, and an edit may keep or re-save its own address.
+    await createCalendarFeed({ ...input, name: "Other", url: "https://calendar.example.test/ical/other/basic.ics" }, "admin-1");
+    await updateCalendarFeed(state.feeds[0].id, { url: privateUrl }, "admin-1");
+    await expect(updateCalendarFeed(state.feeds[1].id, { url: privateUrl }, "admin-1")).rejects.toMatchObject({ code: "INVALID_FEED" });
+  });
+
+  it("re-links a detached item (same id and edits, still not public) instead of duplicating it", async () => {
+    const feedId = await addFeed();
+    await syncCalendarFeed(feedId, deps);
+    const camporee = entriesOf(feedId).find((entry) => entry.sourceUid === "allday-1@synthetic.test")!;
+    Object.assign(camporee, { title: "Our title", locallyEditedFields: ["title"], isHiddenLocally: true, isPublished: true });
+    const id = camporee.id;
+    await deleteCalendarFeed(feedId, "admin-1");
+    expect(camporee.sourceFeedId).toBeNull();
+    const total = state.entries.length;
+
+    const second = await createCalendarFeed({ ...input, url: "https://calendar.example.test/ical/second/basic.ics" }, "admin-1").then(() => state.feeds[0].id);
+    const preview = await previewCalendarFeed(second, deps);
+    expect(preview.counts.relink).toBe(total);
+    expect(preview.counts.create).toBe(0);
+    expect(preview.rows.every((row) => row.action === "RELINK")).toBe(true);
+    expect(state.entries.every((entry) => entry.sourceFeedId === null)).toBe(true); // preview wrote nothing
+
+    const summary = await syncCalendarFeed(second, deps);
+    expect(summary).toMatchObject({ relink: total, create: 0 });
+    expect(state.entries).toHaveLength(total);
+    expect(entriesOf(second)).toHaveLength(total);
+    expect(camporee).toMatchObject({ id, sourceFeedId: second, title: "Our title", locallyEditedFields: ["title"] });
+    // Deleting the first feed turned the hidden item into an unpublished draft; re-linking keeps it off the calendar.
+    expect(camporee).toMatchObject({ isPublished: false, isHiddenLocally: false });
+
+    state.entryWrites = 0;
+    await syncCalendarFeed(second, deps);
+    expect(state.entryWrites).toBe(0);
+  });
+
+  it("an empty feed fails automatic and manual refreshes without touching entries, unless staff apply it from the preview", async () => {
+    const feedId = await addFeed();
+    await syncCalendarFeed(feedId, deps);
+    entriesOf(feedId).forEach((entry) => { entry.isPublished = true; });
+    const before = JSON.stringify(state.entries);
+    body = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR";
+
+    await expect(syncCalendarFeed(feedId, deps)).rejects.toMatchObject({ message: "The calendar came back empty; nothing was changed." });
+    expect(state.feeds[0]).toMatchObject({ lastStatus: "FAILED", lastError: "The calendar came back empty; nothing was changed." });
+    expect(JSON.stringify(state.entries)).toBe(before);
+
+    const sweep = await refreshDueCalendarFeeds(new Date(Date.now() + 3 * 3_600_000), deps);
+    expect(sweep).toMatchObject({ failed: 1, refreshed: 0 });
+    expect(JSON.stringify(state.entries)).toBe(before);
+
+    const preview = await previewCalendarFeed(feedId, deps);
+    expect(preview.warnings[0]).toMatch(/came back empty/);
+    expect(preview.counts.remove).toBeGreaterThan(5);
+
+    const applied = await syncCalendarFeed(feedId, { ...deps, allowEmpty: true });
+    expect(applied.remove).toBeGreaterThan(5);
+    expect(entriesOf(feedId).every((entry) => entry.isPublished === false && entry.sourceRemovedAt !== null)).toBe(true);
   });
 
   it("lists feeds without the sealed address", async () => {

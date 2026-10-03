@@ -37,6 +37,7 @@ function blockedIpv4([a, b, c]: number[]) {
     (a === 172 && b >= 16 && b <= 31) ||
     (a === 192 && b === 0 && c === 0) ||
     (a === 192 && b === 0 && c === 2) ||
+    (a === 192 && b === 88 && c === 99) || // 6to4 relay anycast
     (a === 192 && b === 168) ||
     (a === 198 && (b === 18 || b === 19)) ||
     (a === 198 && b === 51 && c === 100) ||
@@ -78,8 +79,12 @@ export function isBlockedAddress(address: string): boolean {
     const embeddedV4 = [g6 >> 8, g6 & 255, g7 >> 8, g7 & 255];
     if (groups.every((group) => group === 0)) return true; // ::
     if (groups.slice(0, 7).every((group) => group === 0) && g7 === 1) return true; // ::1
-    if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && (g5 === 0xffff || g5 === 0)) return blockedIpv4(embeddedV4); // ::ffff:a.b.c.d and ::a.b.c.d
+    // ::ffff:0:0/96 (IPv4-mapped) and ::/96 (IPv4-compatible): a public host never resolves to these.
+    if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && (g5 === 0xffff || g5 === 0)) return true;
+    if (g0 === 0x64 && g1 === 0xff9b && g2 === 1) return true; // 64:ff9b:1::/48 local-use NAT64
     if (g0 === 0x64 && g1 === 0xff9b) return blockedIpv4(embeddedV4); // NAT64
+    if (g0 === 0x100 && g1 === 0 && g2 === 0 && g3 === 0) return true; // 100::/64 discard-only
+    if (g0 === 0x2001 && g1 === 0) return true; // 2001::/32 Teredo
     if (g0 === 0x2002) return blockedIpv4([g1 >> 8, g1 & 255, g2 >> 8]); // 6to4
     if ((g0 & 0xfe00) === 0xfc00) return true; // fc00::/7 unique local
     if ((g0 & 0xffc0) === 0xfe80) return true; // fe80::/10 link-local
@@ -141,13 +146,26 @@ const defaultResolver: HostResolver = async (hostname) => {
 };
 
 /** Every address the name resolves to must be public. */
-async function assertResolvesPublic(url: URL, resolve: HostResolver) {
+function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new FeedFetchError("The feed took too long to respond."));
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(
+      (value) => { signal.removeEventListener("abort", onAbort); resolve(value); },
+      (error) => { signal.removeEventListener("abort", onAbort); reject(error); },
+    );
+  });
+}
+
+async function assertResolvesPublic(url: URL, resolve: HostResolver, signal: AbortSignal) {
   const hostname = url.hostname.replace(/^\[|\]$/g, "");
   if (isIP(hostname)) return;
   let addresses: string[];
   try {
-    addresses = await resolve(hostname);
-  } catch {
+    addresses = await abortable(resolve(hostname), signal);
+  } catch (error) {
+    if (error instanceof FeedFetchError) throw error;
     throw new FeedFetchError(generic.unreachable);
   }
   if (addresses.length === 0 || addresses.some(isBlockedAddress)) {
@@ -236,7 +254,7 @@ export async function fetchFeedText(
   try {
     let url = normalizeFeedUrl(rawUrl);
     for (let hop = 0; hop <= maxRedirects; hop += 1) {
-      await assertResolvesPublic(url, resolve);
+      await assertResolvesPublic(url, resolve, controller.signal);
       let response: TransportResponse;
       try {
         response = await transport(url, controller.signal);

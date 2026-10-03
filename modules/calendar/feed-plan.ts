@@ -35,7 +35,7 @@ export type FieldPatch = Partial<ImportedEntryFields> & {
 
 export type FeedPlan = {
   creates: Array<{ entry: ImportedEntry; hash: string; data: ImportedEntryFields & { category: string; entryType: "STANDARD" | "CLOSURE"; isPublished: boolean } }>;
-  updates: Array<{ id: string; title: string; kind: "UPDATE" | "REVIVE"; changedFields: string[]; patch: FieldPatch }>;
+  updates: Array<{ id: string; title: string; kind: "UPDATE" | "REVIVE" | "RELINK"; changedFields: string[]; patch: FieldPatch }>;
   removals: Array<{ id: string; title: string; wasPublished: boolean }>;
   unchanged: number;
 };
@@ -52,17 +52,33 @@ export function hashImportedFields(entry: ImportedEntryFields) {
 
 const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-export function planFeedSync(existing: StoredFeedEntry[], parsed: ImportedEntry[], defaults: FeedDefaults): FeedPlan {
+/** One lock per feed, shared by a refresh and a staff edit of one of its items. */
+export const feedLockKey = (feedId: string) => `calendar-feed:${feedId}`;
+
+/**
+ * `detached` are items that once came from a feed that was deleted (no feed now).
+ * A parsed item with no row in this feed but a detached row with the same
+ * (uid, recurrence id) is re-linked to this feed instead of duplicated, so the
+ * row keeps its id (and anything linked to it), its edits and its hidden state.
+ */
+export function planFeedSync(existing: StoredFeedEntry[], parsed: ImportedEntry[], defaults: FeedDefaults, detached: StoredFeedEntry[] = []): FeedPlan {
   const plan: FeedPlan = { creates: [], updates: [], removals: [], unchanged: 0 };
   const byKey = new Map(existing.map((row) => [`${row.sourceUid}\n${row.sourceRecurrenceId ?? ""}`, row]));
   const seen = new Set<string>();
+  const detachedByKey = new Map<string, StoredFeedEntry>();
+  for (const row of detached) {
+    const key = `${row.sourceUid}\n${row.sourceRecurrenceId ?? ""}`;
+    if (!detachedByKey.has(key)) detachedByKey.set(key, row);
+  }
 
   for (const entry of parsed) {
     const key = `${entry.uid}\n${entry.recurrenceId}`;
     if (seen.has(key)) continue; // a duplicate within the feed: the first one wins
     seen.add(key);
     const hash = hashImportedFields(entry);
-    const row = byKey.get(key);
+    const own = byKey.get(key);
+    const row = own ?? detachedByKey.get(key);
+    const relink = !own && row !== undefined;
     if (!row) {
       plan.creates.push({
         entry,
@@ -73,7 +89,7 @@ export function planFeedSync(existing: StoredFeedEntry[], parsed: ImportedEntry[
     }
     const returning = row.sourceRemovedAt !== null;
     const hashChanged = hash !== row.sourceHash;
-    if (!returning && !hashChanged) {
+    if (!returning && !hashChanged && !relink) {
       plan.unchanged += 1;
       continue;
     }
@@ -96,6 +112,10 @@ export function planFeedSync(existing: StoredFeedEntry[], parsed: ImportedEntry[
       patch.sourceRemovedWasPublished = false;
       patch.isPublished = row.sourceRemovedWasPublished;
     }
+    if (relink) {
+      plan.updates.push({ id: row.id, title: entry.title, kind: "RELINK", changedFields, patch });
+      continue;
+    }
     if (!returning && changedFields.length === 0) {
       // Only the hash moved (every change was one staff made themselves): record it, show nothing.
       plan.updates.push({ id: row.id, title: row.title, kind: "UPDATE", changedFields, patch });
@@ -116,9 +136,9 @@ export function planFeedSync(existing: StoredFeedEntry[], parsed: ImportedEntry[
 
 /** What the reviewer sees: counts and a row per change. */
 export type FeedPreview = {
-  counts: { create: number; update: number; revive: number; remove: number; unchanged: number };
+  counts: { create: number; update: number; revive: number; relink: number; remove: number; unchanged: number };
   rows: Array<{
-    action: "CREATE" | "UPDATE" | "REVIVE" | "REMOVE";
+    action: "CREATE" | "UPDATE" | "REVIVE" | "RELINK" | "REMOVE";
     title: string;
     startsOn: string;
     endsOn: string;
@@ -132,12 +152,12 @@ export type FeedPreview = {
 
 export const previewRowLimit = 300;
 
-export function previewOfPlan(plan: FeedPlan, existing: StoredFeedEntry[], parsed: ImportedEntry[], warnings: string[]): FeedPreview {
+export function previewOfPlan(plan: FeedPlan, existing: StoredFeedEntry[], parsed: ImportedEntry[], warnings: string[], detached: StoredFeedEntry[] = []): FeedPreview {
   const rows: FeedPreview["rows"] = [];
   for (const created of plan.creates) {
     rows.push({ action: "CREATE", title: created.entry.title, startsOn: created.entry.startsOn, endsOn: created.entry.endsOn, timeLabel: created.entry.timeLabel, repeatRule: created.entry.repeatRule, changedFields: [] });
   }
-  const byId = new Map(existing.map((row) => [row.id, row]));
+  const byId = new Map([...detached, ...existing].map((row) => [row.id, row]));
   for (const update of plan.updates) {
     if (update.kind === "UPDATE" && update.changedFields.length === 0) continue;
     const row = byId.get(update.id);
@@ -156,12 +176,13 @@ export function previewOfPlan(plan: FeedPlan, existing: StoredFeedEntry[], parse
     const row = byId.get(removal.id);
     rows.push({ action: "REMOVE", title: removal.title, startsOn: row?.startsOn ?? "", endsOn: row?.endsOn ?? "", timeLabel: row?.timeLabel ?? "", repeatRule: row?.repeatRule ?? null, changedFields: [] });
   }
-  const visibleUpdates = plan.updates.filter((update) => update.kind === "REVIVE" || update.changedFields.length > 0);
+  const visibleUpdates = plan.updates.filter((update) => update.kind === "REVIVE" || update.kind === "RELINK" || update.changedFields.length > 0);
   return {
     counts: {
       create: plan.creates.length,
       update: visibleUpdates.filter((update) => update.kind === "UPDATE").length,
       revive: visibleUpdates.filter((update) => update.kind === "REVIVE").length,
+      relink: visibleUpdates.filter((update) => update.kind === "RELINK").length,
       remove: plan.removals.length,
       unchanged: plan.unchanged,
     },

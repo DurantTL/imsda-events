@@ -55,6 +55,16 @@ most, and at most three redirects, each re-checked.
   republished only if it was published before it left.
 - **Deleting a feed** keeps every imported item as an ordinary entry; hidden or
   removed ones become unpublished drafts, so deleting never makes anything appear.
+- **The same calendar can't be connected twice** (matched by address, whatever the
+  spelling); the error names the existing feed, never the address.
+- **Re-linking:** if a feed is deleted and the same calendar is connected again, items
+  with the same UID are re-linked to the new feed (same row, same id, edits kept)
+  instead of duplicated. Preview shows these as "Re-linked".
+- **An empty feed is treated as a fault.** If a refresh (automatic or Refresh now)
+  comes back with no events while the feed has imported items, it is recorded as failed
+  ("The calendar came back empty; nothing was changed.") and nothing is unpublished.
+  Staff can still apply it deliberately from Preview, which shows a warning first.
+- Links are imported only when they are `https://`; others are left off with a warning.
 - One feed failing records a short message on that feed (shown in the list) and
   changes nothing else.
 

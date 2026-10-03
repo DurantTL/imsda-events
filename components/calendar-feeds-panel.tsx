@@ -13,11 +13,11 @@ type FeedResponse = {
   feeds?: CalendarAdminFeed[];
   entries?: CalendarAdminEntry[];
   preview?: FeedPreview;
-  summary?: { create: number; update: number; revive: number; remove: number; unchanged: number; warnings: string[] };
+  summary?: { create: number; update: number; revive: number; relink: number; remove: number; unchanged: number; warnings: string[] };
   message?: string;
 };
 
-const actionLabels = { CREATE: "New", UPDATE: "Updated", REVIVE: "Back in feed", REMOVE: "Left the feed" } as const;
+const actionLabels = { CREATE: "New", UPDATE: "Updated", REVIVE: "Back in feed", RELINK: "Re-linked", REMOVE: "Left the feed" } as const;
 const fieldLabels: Record<string, string> = {
   title: "title", description: "description", location: "location", linkUrl: "link", status: "status", startsOn: "start date",
   endsOn: "end date", timeLabel: "time", repeatRule: "repeat", repeatExceptions: "skipped dates",
@@ -100,11 +100,12 @@ export function CalendarFeedsPanel({
     if (result?.preview) setPreview({ feedId: feed.id, data: result.preview });
   }
 
-  async function runSync(feed: CalendarAdminFeed) {
-    const result = await call(`/api/admin/calendar/feeds/${encodeURIComponent(feed.id)}/sync`, "POST", undefined);
+  async function runSync(feed: CalendarAdminFeed, allowEmpty = false) {
+    // allowEmpty is only sent from the preview, after its warning has been shown.
+    const result = await call(`/api/admin/calendar/feeds/${encodeURIComponent(feed.id)}/sync`, "POST", allowEmpty ? { allowEmpty: true } : undefined);
     if (result?.summary) {
-      const { create, update, revive, remove, unchanged } = result.summary;
-      setNotice(`Imported: ${create} new, ${update + revive} updated, ${remove} removed, ${unchanged} unchanged.`);
+      const { create, update, revive, relink, remove, unchanged } = result.summary;
+      setNotice(`Imported: ${create} new, ${update + revive} updated, ${relink} re-linked, ${remove} removed, ${unchanged} unchanged.`);
       setPreview(null);
     }
   }
@@ -252,12 +253,12 @@ export function CalendarFeedsPanel({
               <p className="eyebrow">Preview, nothing saved yet</p>
               <h2>{previewFeed.name}</h2>
               <p>
-                {preview.data.totalInFeed} items in the feed: {preview.data.counts.create} new, {preview.data.counts.update + preview.data.counts.revive} updated,{" "}
+                {preview.data.totalInFeed} items in the feed: {preview.data.counts.create} new, {preview.data.counts.update + preview.data.counts.revive} updated, {preview.data.counts.relink} re-linked,{" "}
                 {preview.data.counts.remove} leaving, {preview.data.counts.unchanged} unchanged.
                 {" "}New items arrive as {previewFeed.publishNewItems ? "published items" : "drafts"}.
               </p>
             </div>
-            <button className="primary-button" disabled={busy} onClick={() => void runSync(previewFeed)} type="button">
+            <button className="primary-button" disabled={busy} onClick={() => void runSync(previewFeed, true)} type="button">
               <Download aria-hidden="true" size={15} /> {previewFeed.imported ? "Apply refresh" : "Import"}
             </button>
           </div>

@@ -132,6 +132,59 @@ describe("ICS import: repeats", () => {
   });
 });
 
+describe("ICS import: hostile and edge input", () => {
+  const quick = (feedText: string) => {
+    const started = performance.now();
+    const feed = parseIcsFeed(feedText);
+    expect(performance.now() - started).toBeLessThan(500);
+    return feed;
+  };
+
+  it("cleans huge whitespace, tag and entity runs in linear time", () => {
+    const big = 600_000; // three fields per event stay under the 2 MB feed cap
+    for (const value of [" ".repeat(big), "<".repeat(big), `<${" ".repeat(big)}`, "< ".repeat(big / 2), `${" ".repeat(big / 2)}\\n`.repeat(2), "&".repeat(big), "<br".repeat(big / 3)]) {
+      const feed = quick(wrap(`UID:r\r\nDTSTART;VALUE=DATE:20261201\r\nSUMMARY:${value}\r\nDESCRIPTION:${value}\r\nLOCATION:${value}`));
+      expect(feed.entries[0].description.length).toBeLessThanOrEqual(2000);
+    }
+  });
+
+  it("imports only https links and warns about the rest", () => {
+    const feed = parseIcsFeed(wrap(
+      "UID:a\r\nDTSTART;VALUE=DATE:20261201\r\nSUMMARY:Plain http\r\nURL:http://example.test/x",
+      "UID:b\r\nDTSTART;VALUE=DATE:20261201\r\nSUMMARY:Secure\r\nURL:https://example.test/x",
+    ));
+    expect(feed.entries.map((entry) => entry.linkUrl)).toEqual([null, "https://example.test/x"]);
+    expect(feed.warnings.some((warning) => warning.includes("Plain http") && warning.includes("link"))).toBe(true);
+  });
+
+  it("skips an over-long UID instead of letting it break the feed", () => {
+    const feed = parseIcsFeed(wrap(`UID:${"u".repeat(256)}\r\nDTSTART;VALUE=DATE:20261201\r\nSUMMARY:Long id`, `UID:${"u".repeat(255)}\r\nDTSTART;VALUE=DATE:20261201\r\nSUMMARY:Fine`));
+    expect(feed.entries.map((entry) => entry.title)).toEqual(["Fine"]);
+    expect(feed.warnings.some((warning) => warning.includes("Long id") && warning.includes("255"))).toBe(true);
+  });
+
+  it("moves BYDAY with the day shift when conference time is a different day than the series' own", () => {
+    // 00:30 Monday in New York is 23:30 Sunday in Chicago.
+    const feed = parseIcsFeed(wrap("UID:ny\r\nDTSTART;TZID=America/New_York:20261005T003000\r\nDTEND;TZID=America/New_York:20261005T013000\r\nRRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=4\r\nSUMMARY:Late NY"));
+    const entry = feed.entries[0];
+    expect(entry.startsOn).toBe("2026-10-04");
+    expect(entry.repeatRule).toBe("FREQ=WEEKLY;BYDAY=SU,TU;WKST=MO;COUNT=4");
+    const dates = expandOccurrences(entry, parseRepeatRule(entry.repeatRule), [], "2026-10-01", "2026-11-30").map((occurrence) => occurrence.startsOn);
+    expect(dates).toEqual(["2026-10-04", "2026-10-06", "2026-10-11", "2026-10-13"]);
+  });
+
+  it("leaves BYDAY alone when the two zones agree on the day", () => {
+    const feed = parseIcsFeed(wrap("UID:ok\r\nDTSTART;TZID=America/New_York:20261005T100000\r\nDTEND;TZID=America/New_York:20261005T110000\r\nRRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=2\r\nSUMMARY:Morning NY"));
+    expect(feed.entries[0].repeatRule).toBe("FREQ=WEEKLY;BYDAY=MO;WKST=MO;COUNT=2");
+  });
+
+  it("reads a DATE end on a timed item as conference-zone midnight", () => {
+    const feed = parseIcsFeed(wrap("UID:mix\r\nDTSTART;TZID=America/Chicago:20261015T180000\r\nDTEND;VALUE=DATE:20261017\r\nSUMMARY:Mixed"));
+    // Ends at midnight starting the 17th, so the last day is the 16th.
+    expect(feed.entries[0]).toMatchObject({ startsOn: "2026-10-15", endsOn: "2026-10-16", timeLabel: "" });
+  });
+});
+
 describe("ICS import: limits and bad input", () => {
   it("rejects something that is not a calendar", () => {
     expect(() => parseIcsFeed("<html>sign in</html>")).toThrow(IcsParseError);

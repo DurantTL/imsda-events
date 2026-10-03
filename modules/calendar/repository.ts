@@ -9,6 +9,7 @@ import {
   sortCalendarItems,
   type CalendarItem,
 } from "@/modules/calendar/domain";
+import { feedLockKey } from "@/modules/calendar/feed-plan";
 import { importedFieldNames } from "@/modules/calendar/ics-import";
 import { expandOccurrences, parseRepeatRule, repeatStartProblem, serializeRepeatRule } from "@/modules/calendar/recurrence";
 import type { CalendarEntryInput, CalendarEntryUpdate, CalendarEventSettings, CalendarRepeatInput } from "@/modules/calendar/schemas";
@@ -245,8 +246,14 @@ export async function createCalendarEntry(input: CalendarEntryInput, actorUserId
 export async function updateCalendarEntry(entryId: string, input: CalendarEntryUpdate, actorUserId: string) {
   const prisma = getPrisma();
   await prisma.$transaction(async (tx) => {
-    const existing = await tx.calendarEntry.findUnique({ where: { id: entryId } });
+    let existing = await tx.calendarEntry.findUnique({ where: { id: entryId } });
     if (!existing) throw new CalendarError("ENTRY_NOT_FOUND", "That calendar entry could not be found.");
+    if (existing.sourceFeedId) {
+      // Wait out a refresh of this feed (it holds the same lock), then read again, so a refresh can't overwrite this edit.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${feedLockKey(existing.sourceFeedId)}))`;
+      existing = await tx.calendarEntry.findUnique({ where: { id: entryId } });
+      if (!existing) throw new CalendarError("ENTRY_NOT_FOUND", "That calendar entry could not be found.");
+    }
     const fields = withoutRepeat(input);
     const columns = repeatColumns(input);
     // A PATCH may carry only the start date or only the repeat, so check the pair as it will be stored.

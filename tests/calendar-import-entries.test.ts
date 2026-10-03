@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   entryFindUnique: vi.fn(),
   entryUpdate: vi.fn(),
   entryDelete: vi.fn(),
+  executeRaw: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -13,6 +14,7 @@ vi.mock("@/lib/prisma", () => {
   const client = {
     event: { findMany: mocks.eventFindMany },
     calendarEntry: { findMany: mocks.entryFindMany, findUnique: mocks.entryFindUnique, update: mocks.entryUpdate, delete: mocks.entryDelete },
+    $executeRaw: mocks.executeRaw,
     $transaction: async (run: (tx: unknown) => unknown) => run(client),
   };
   return { getPrisma: () => client };
@@ -71,6 +73,17 @@ describe("editing an imported item", () => {
       isPublished: false, // nor this
     }, "admin-1");
     expect(mocks.entryUpdate.mock.calls[0][0].data).toMatchObject({ title: "Our title", locallyEditedFields: ["title"] });
+  });
+
+  it("takes the feed's lock before reading, so a concurrent refresh can't overwrite the edit", async () => {
+    await updateCalendarEntry("entry-1", { title: "Mine" }, "admin-1");
+    expect(mocks.executeRaw).toHaveBeenCalledTimes(1);
+    expect(mocks.executeRaw.mock.invocationCallOrder[0]).toBeLessThan(mocks.entryUpdate.mock.invocationCallOrder[0]);
+    expect(mocks.entryFindUnique).toHaveBeenCalledTimes(2); // read, lock, read again
+    mocks.executeRaw.mockClear();
+    mocks.entryFindUnique.mockResolvedValue({ ...imported, sourceFeedId: null });
+    await updateCalendarEntry("entry-1", { title: "Mine" }, "admin-1");
+    expect(mocks.executeRaw).not.toHaveBeenCalled();
   });
 
   it("accumulates edits and treats an unchanged save as no edit", async () => {

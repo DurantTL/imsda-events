@@ -20,6 +20,7 @@ import { parseRepeatRule, serializeRepeatRule } from "@/modules/calendar/recurre
 export const maxFeedBytes = 2 * 1024 * 1024;
 export const maxFeedEvents = 2000;
 export const maxExceptions = 200;
+export const maxUidLength = 255;
 
 export class IcsParseError extends Error {
   constructor(message: string) {
@@ -111,13 +112,17 @@ function unescapeText(value: string) {
 const htmlEntities: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", "#39": "'" };
 
 /** Google sometimes sends HTML in DESCRIPTION; the calendar shows plain text. */
-function plainText(value: string) {
-  return unescapeText(value)
-    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
-    .replace(/<\/\s*(p|div|li)\s*>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
+function plainText(value: string, max: number) {
+  // Bound the work first: a feed is untrusted, and a megabyte of one character must not cost more than the field it fills.
+  const bounded = value.slice(0, max * 4);
+  return unescapeText(bounded)
+    .replace(/<\s{0,8}br\s{0,8}\/?\s{0,8}>/gi, "\n")
+    .replace(/<\/\s{0,8}(p|div|li)\s{0,8}>/gi, "\n")
+    .replace(/<[^<>]*>/g, "")
     .replace(/&(#39|[a-z]+);/gi, (match, name: string) => htmlEntities[name.toLowerCase()] ?? match)
-    .replace(/[ \t]+\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -128,7 +133,7 @@ function cap(value: string, max: number) {
 
 type Moment =
   | { kind: "date"; date: string }
-  | { kind: "time"; instant: Date };
+  | { kind: "time"; instant: Date; zone: string };
 
 const datePattern = /^(\d{4})(\d{2})(\d{2})$/;
 const dateTimePattern = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)$/i;
@@ -174,13 +179,13 @@ function parseMoment(property: Property, warn: (message: string) => void): Momen
   const [, year, month, day, hour, minute, second, utc] = match;
   if (!isCalendarDate(`${year}-${month}-${day}`)) return null;
   const wall = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
-  if (utc) return { kind: "time", instant: new Date(wall) };
+  if (utc) return { kind: "time", instant: new Date(wall), zone: "UTC" };
   let zone = CONFERENCE_TIME_ZONE;
   if (property.params.TZID) {
     if (validZone(property.params.TZID)) zone = property.params.TZID;
     else warn(`A time zone name was not recognized, so its times were read as ${CONFERENCE_TIME_ZONE}.`);
   }
-  return { kind: "time", instant: zonedInstant(wall, zone) };
+  return { kind: "time", instant: zonedInstant(wall, zone), zone };
 }
 
 function parseDuration(value: string) {
@@ -195,6 +200,12 @@ function isConferenceMidnight(instant: Date) {
   const parts = new Intl.DateTimeFormat("en-US", { timeZone: CONFERENCE_TIME_ZONE, hourCycle: "h23", hour: "numeric", minute: "numeric", second: "numeric" })
     .formatToParts(instant);
   return parts.every((part) => !["hour", "minute", "second"].includes(part.type) || Number(part.value) === 0);
+}
+
+function dayOffset(from: string, to: string) {
+  const [fy, fm, fd] = from.split("-").map(Number);
+  const [ty, tm, td] = to.split("-").map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000);
 }
 
 function conferenceDate(instant: Date) {
@@ -281,11 +292,15 @@ export function parseIcsFeed(text: string): ParsedIcsFeed {
   for (const event of raw.slice(0, maxFeedEvents)) {
     const first = (name: string) => event.props.find((property) => property.name === name);
     const all = (name: string) => event.props.filter((property) => property.name === name);
-    const title = cap(plainText(first("SUMMARY")?.value ?? "").replace(/\s+/g, " "), 140) || "(No title)";
+    const title = cap(plainText(first("SUMMARY")?.value ?? "", 140).replace(/\s+/g, " "), 140) || "(No title)";
     const label = `"${cap(title, 40)}"`;
     const uid = first("UID")?.value.trim() ?? "";
     if (!uid) {
       warn(`${label} has no unique id (UID) and was skipped.`);
+      continue;
+    }
+    if (uid.length > maxUidLength) {
+      warn(`${label} has an id (UID) longer than ${maxUidLength} characters and was skipped.`);
       continue;
     }
     const startProperty = first("DTSTART");
@@ -333,7 +348,10 @@ export function parseIcsFeed(text: string): ParsedIcsFeed {
       const endInstant = endProperty ? parseMoment(endProperty, warn) : null;
       let end: Date = start.instant;
       if (endInstant?.kind === "time") end = endInstant.instant;
-      else if (endInstant?.kind === "date") end = new Date(`${endInstant.date}T00:00:00Z`);
+      else if (endInstant?.kind === "date") {
+        const [y, m, d] = endInstant.date.split("-").map(Number);
+        end = zonedInstant(Date.UTC(y, m - 1, d), CONFERENCE_TIME_ZONE); // conference-zone midnight
+      }
       else {
         const duration = first("DURATION") ? parseDuration(first("DURATION")!.value) : null;
         if (duration !== null) end = new Date(start.instant.getTime() + duration);
@@ -361,6 +379,13 @@ export function parseIcsFeed(text: string): ParsedIcsFeed {
       } else if (parsed.until && parsed.until < startsOn) {
         warn(`${label} has a repeat that ends before it starts; only its first date was imported.`);
       } else {
+        // BYDAY and a plain-date UNTIL are in the series' own zone; the item's dates are in conference time.
+        // When the two zones put the first occurrence on different days, move them by the same offset.
+        const offset = start.kind === "time" ? dayOffset(calendarDateIn(start.instant, start.zone), startsOn) : 0;
+        if (offset !== 0) {
+          parsed.weekdays = parsed.weekdays.map((day) => (((day + offset) % 7) + 7) % 7).sort((a, b) => a - b);
+          if (parsed.until && !/UNTIL=\d{8}T/i.test(rruleProperty.value)) parsed.until = addDays(parsed.until, offset);
+        }
         repeatRule = serializeRepeatRule(parsed);
         for (const exdate of all("EXDATE")) {
           for (const piece of exdate.value.split(",")) {
@@ -373,6 +398,9 @@ export function parseIcsFeed(text: string): ParsedIcsFeed {
     }
 
     const url = first("URL")?.value.trim() ?? "";
+    // The editor only accepts https links, so only those are imported.
+    const linkUrl = /^https:\/\//i.test(url) && url.length <= 500 ? url : null;
+    if (url && !linkUrl) warn(`${label} has a link that is not a short https:// address, so the link was left off.`);
     const statusValue = (first("STATUS")?.value ?? "").trim().toUpperCase();
     drafts.push({
       uid,
@@ -382,9 +410,9 @@ export function parseIcsFeed(text: string): ParsedIcsFeed {
       exceptions,
       fields: {
         title,
-        description: cap(plainText(first("DESCRIPTION")?.value ?? ""), 2000),
-        location: cap(plainText(first("LOCATION")?.value ?? "").replace(/\s+/g, " "), 160),
-        linkUrl: /^https?:\/\//i.test(url) && url.length <= 500 ? url : null,
+        description: cap(plainText(first("DESCRIPTION")?.value ?? "", 2000), 2000),
+        location: cap(plainText(first("LOCATION")?.value ?? "", 160).replace(/\s+/g, " "), 160),
+        linkUrl,
         status: statusValue === "CANCELLED" ? "CANCELLED" : "SCHEDULED",
         startsOn,
         endsOn,
