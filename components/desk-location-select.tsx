@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { MapPin } from "lucide-react";
 
 const subscribeNever = () => () => {};
@@ -59,6 +59,22 @@ export function DeskLocationSelect({
   const enhanced = useSyncExternalStore(subscribeNever, () => true, () => false);
   const selectRef = useRef<HTMLSelectElement>(null);
   const steppedByKeyboard = useRef(false);
+  const recentlySubmitted = useRef(false);
+  // Controlled, so the element (and keyboard focus) survives a location change, and
+  // Back/Forward show the right value: the value follows `selectedId` when it changes.
+  const [value, setValue] = useState(selectedId ?? "");
+  const [syncedId, setSyncedId] = useState(selectedId);
+  if (syncedId !== selectedId) {
+    setSyncedId(selectedId);
+    setValue(selectedId ?? "");
+  }
+  // One navigation per choice, even if both a change and an Enter ask for it.
+  function submitOnce() {
+    if (recentlySubmitted.current) return;
+    recentlySubmitted.current = true;
+    setTimeout(() => { recentlySubmitted.current = false; }, 300);
+    selectRef.current?.form?.requestSubmit();
+  }
   if (locations.length === 0) return null;
   const hidden = Object.entries(params).filter(([key, value]) => value && key !== "location") as Array<[string, string]>;
   return (
@@ -78,25 +94,26 @@ export function DeskLocationSelect({
         <MapPin aria-hidden="true" size={14} /> Desk location
       </label>
       <select
-        defaultValue={selectedId ?? ""}
         id="desk-location-select"
-        key={selectedId ?? "all"}
         name="location"
-        onChange={() => {
+        onChange={(event) => {
+          setValue(event.target.value);
           // Pointer and picker choices navigate at once; keyboard steps wait for Enter or Apply.
           const keyboard = steppedByKeyboard.current;
           steppedByKeyboard.current = false;
-          if (enhanced && !keyboard) selectRef.current?.form?.requestSubmit();
+          if (enhanced && !keyboard) submitOnce();
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
-            event.preventDefault();
+            // No preventDefault: with the list open the browser still commits the pick.
+            // Submit after that change has landed; submitOnce drops a second request.
             steppedByKeyboard.current = false;
-            selectRef.current?.form?.requestSubmit();
+            setTimeout(submitOnce, 0);
           } else steppedByKeyboard.current = isSelectStepKey(event.key);
         }}
         onPointerDown={() => { steppedByKeyboard.current = false; }}
         ref={selectRef}
+        value={value}
       >
         <option value="">All locations</option>
         {locations.map((location) => <option key={location.id} value={location.id}>{deskLocationLabel(location)}</option>)}

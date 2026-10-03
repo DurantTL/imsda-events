@@ -9593,14 +9593,20 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 @media (min-width: 801px) {
   .primary-nav > .nav-item[aria-haspopup="dialog"]:last-child {
     position: sticky;
-    bottom: 0;
+    /* The nav has 6px of padding; stick to the very edge so scrolled items never show in that strip. */
+    bottom: -6px;
     z-index: 1;
     /* Opaque so items scroll out of sight beneath it. The same gradient as the
        sidebar, fixed to the viewport (the sidebar is full height), so it blends in. */
     background-color: var(--imsda-navy-deep);
     background-image: linear-gradient(180deg, var(--imsda-navy) 0%, var(--imsda-navy-deep) 100%);
     background-attachment: fixed;
+    /* At the edge the scroll box would clip an outside focus ring, so draw it inside. */
+    outline-offset: -3px;
   }
+  /* The hover nudge (a transform) would make the fixed fill fall back to scrolling: no nudge here. */
+  .primary-nav > .nav-item[aria-haspopup="dialog"]:last-child:hover,
+  .primary-nav > .nav-item[aria-haspopup="dialog"]:last-child:focus-visible { transform: none; }
   /* The active tint is layered over that fill, so the item stays opaque. */
   .primary-nav > .nav-item.active[aria-haspopup="dialog"]:last-child {
     background-image: linear-gradient(rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.13)), linear-gradient(180deg, var(--imsda-navy) 0%, var(--imsda-navy-deep) 100%);
