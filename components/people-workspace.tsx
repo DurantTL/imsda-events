@@ -236,6 +236,7 @@ export function PeopleWorkspace({
   initialRegistrationId,
   backgroundFlaggedAttendeeIds = [],
   locationId = null,
+  matchingPersonFilter = false,
 }: {
   eventId: string;
   eventSlug: string;
@@ -250,6 +251,8 @@ export function PeopleWorkspace({
   backgroundFlaggedAttendeeIds?: string[];
   /** The location filter (#413) the CSV export follows; null exports every location. */
   locationId?: string | null;
+  /** The list was narrowed by a choice answer (#739): each row holds at least one matching person. */
+  matchingPersonFilter?: boolean;
 }) {
   const initialSelected = initialRegistrations.find((registration) => registration.id === initialRegistrationId) ?? null;
   const [registrations, setRegistrations] = useState(initialRegistrations);
@@ -657,7 +660,7 @@ export function PeopleWorkspace({
         <label className="search-field"><Search aria-hidden="true" size={18} /><span className="sr-only">Search people</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name, email, or confirmation code" /></label>
         <label className="filter-field"><Filter aria-hidden="true" size={17} /><span className="sr-only">Filter registrations</span><select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="ALL">All records</option><option value="BALANCE">Balance due</option><option value="PAID">Paid</option><option value="DRAFT">Draft</option><option value="WAITLISTED">Waitlisted</option><option value="CANCELLED">Cancelled</option></select></label>
       </div>
-      <p className="result-summary">Showing {visible.length} of {registrations.length} registrations</p>
+      <p className="result-summary">Showing {visible.length} of {registrations.length} {matchingPersonFilter ? "registrations with a matching person" : "registrations"}</p>
       {canEmail && selectedIds.size > 0 && (
         <div className="panel selection-bar">
           <span><strong>{selectedIds.size}</strong> selected{visibleSelectedCount !== selectedIds.size ? ` · ${visibleSelectedCount} in this view` : ""}</span>

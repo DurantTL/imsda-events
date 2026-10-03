@@ -6,6 +6,12 @@ import { listRegistrations } from "@/modules/registrations/repository";
 import { computeRegistrationFlags } from "@/modules/registrations/flags";
 import { listNotesForRegistration } from "@/modules/notes/repository";
 import { toCsv } from "@/modules/reporting/csv";
+import {
+  CHOICE_FILTER_QUESTION_PARAM,
+  CHOICE_FILTER_VALUE_PARAM,
+  choiceExportRows,
+  resolveChoiceFilter,
+} from "@/modules/registrations/choice-answer-filter";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 
@@ -20,10 +26,32 @@ async function getHandler(
     // permissions: a note restricted to a permission this user does not hold
     // must not surface here even though the export otherwise covers everyone.
     const actorPermissions = new Set(effectivePermissions(access.user, access.membership));
+    // ?answerQuestion=&answerValue= exports exactly the people the filtered list shows (#739).
+    // A question that cannot be filtered on (free text, sensitive, unknown) is not exported.
+    const searchParams = new URL(request.url).searchParams;
+    const choiceQuestion = searchParams.get(CHOICE_FILTER_QUESTION_PARAM);
+    // The People page needs VIEW_SENSITIVE_DATA to see attendee names; the filtered list is names and answers.
+    // Refused before anything is read.
+    if (choiceQuestion && !actorPermissions.has("VIEW_SENSITIVE_DATA")) {
+      throw new AccessDeniedError("Your event role does not include access to attendee names and answers.", 403, "PERMISSION_DENIED");
+    }
     // ?location= narrows the export to one location; without it every location is combined,
     // each row naming its location (#413). The column exists only for events with locations.
     const { locationId, locations } = await resolveLocationFilter(eventId, locationParam(request));
     const registrations = await listRegistrations(eventId, { locationId });
+    if (choiceQuestion) {
+      const choice = resolveChoiceFilter(registrations, { question: choiceQuestion, value: searchParams.get(CHOICE_FILTER_VALUE_PARAM) });
+      if (!choice || !choice.value) {
+        return Response.json({ error: "CHOICE_FILTER_UNAVAILABLE", message: "That question cannot be used to filter an export." }, { status: 400 });
+      }
+      return new Response(toCsv(choiceExportRows(registrations, { ...choice, value: choice.value })), {
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${eventId}-registrations-by-answer.csv"`,
+          "Cache-Control": "no-store",
+        },
+      });
+    }
     const showLocation = locations.length > 0;
     const rows: Array<Array<string | number>> = [[
       "Confirmation code",
