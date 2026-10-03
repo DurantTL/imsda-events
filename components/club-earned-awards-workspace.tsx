@@ -292,7 +292,7 @@ export function ClubEarnedAwardsWorkspace({
       {readOnly ? (
         <p className="inline-notice" role="status"><Eye aria-hidden="true" size={14} /> View only. Shows what&apos;s on file. The club director or deputy records and confirms awards.</p>
       ) : (
-        <p className="field-help">Class insignia, event patches, Good Conduct and TLT items, and Master Awards. They join the order list on <Link href={ordersHref}>Orders</Link> with honors and uniforms.</p>
+        <p className={`field-help ${styles.helpText}`}>Class insignia, event patches, Good Conduct and TLT items, and Master Awards. They join the order list on <Link href={ordersHref}>Orders</Link> with honors and uniforms.</p>
       )}
       {notice && <p className="inline-notice success" role="status">{notice}</p>}
       {error && <p className="inline-notice error" role="alert">{error}</p>}
@@ -300,7 +300,7 @@ export function ClubEarnedAwardsWorkspace({
       {!readOnly && (
         <section aria-labelledby="earned-suggestions" className={styles.block}>
           <h3 id="earned-suggestions"><Sparkles aria-hidden="true" size={14} /> Suggested ({suggestionCount})</h3>
-          <p className="field-help">Nothing here is added until you confirm it. Untick anything a member already has.</p>
+          <p className={`field-help ${styles.helpText}`}>Nothing here is added until you confirm it. Untick anything a member already has.</p>
           {suggestionCount === 0 && (
             <p className="quiet-copy">No suggestions right now. Mark a class completed below to suggest its insignia. Event patches appear after a club event that staff linked a patch to.</p>
           )}
@@ -384,7 +384,7 @@ export function ClubEarnedAwardsWorkspace({
       {!readOnly && (
         <section aria-labelledby="earned-classes" className={styles.block}>
           <h3 id="earned-classes"><GraduationCap aria-hidden="true" size={14} /> Mark a class completed</h3>
-          <p className="field-help">Records that members finished a class, which suggests that class&apos;s insignia above. It orders nothing by itself.</p>
+          <p className={`field-help ${styles.helpText}`}>Records that members finished a class, which suggests that class&apos;s insignia above. It orders nothing by itself.</p>
           <div className={styles.pickerRow}>
             <span className={styles.pickerField}>
               <label htmlFor="earned-class-level">Class</label>
@@ -411,7 +411,7 @@ export function ClubEarnedAwardsWorkspace({
       {!readOnly && (
         <section aria-labelledby="earned-hand" className={styles.block}>
           <h3 id="earned-hand"><Plus aria-hidden="true" size={14} /> Add by hand</h3>
-          <p className="field-help">For Good Conduct bars and stars, TLT items, and anything else from the supply catalog.</p>
+          <p className={`field-help ${styles.helpText}`}>For Good Conduct bars and stars, TLT items, and anything else from the supply catalog.</p>
           {data.catalog.length === 0 ? (
             <p className="quiet-copy">No earned-award items are in the supply catalog yet. Conference staff add them in the catalog.</p>
           ) : (
