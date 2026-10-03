@@ -157,7 +157,6 @@ export default async function AttendeeRegistrationsPage() {
     <>
       <section className="public-registration-hero public-manage-hero account-page-hero">
         <div>
-          <p className="public-registration-eyebrow">Your registrations</p>
           <h1>My registrations</h1>
           <p>
             Everything registered with <strong>{account.verifiedEmail}</strong>

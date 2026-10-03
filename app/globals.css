@@ -5834,9 +5834,13 @@ select:focus-visible {
 .event-publish-blocker svg { align-self: center; flex: none; }
 .event-publish-button[aria-disabled="true"] { opacity: 0.6; }
 
-/* Clear the fixed phone tab bar (67px). */
+/* Clear the fixed phone tab bar (67px), only where that bar exists (the staff workspace; /event-setup has none). */
 @media (max-width: 800px) {
-  .event-savebar { bottom: calc(67px + env(safe-area-inset-bottom, 0px)); }
+  body:has(.mobile-nav) .event-savebar { bottom: calc(67px + env(safe-area-inset-bottom, 0px)); }
+}
+
+@media print {
+  .event-savebar { position: static; box-shadow: none; }
 }
 
 @media (max-width: 580px) {

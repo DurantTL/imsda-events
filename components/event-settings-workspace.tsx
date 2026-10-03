@@ -46,7 +46,7 @@ type EventSettingsWorkspaceProps = {
   canDeleteEvent?: boolean;
 };
 
-type PublishBlocker = { text: string; actionLabel: string; targetId?: string; href?: string };
+type PublishBlocker = { text: string; actionLabel?: string; targetId?: string; href?: string };
 
 type EventApiResult = {
   event?: EventSettingsRecord;
@@ -246,7 +246,10 @@ export function EventSettingsWorkspace({
   // item, each with the control that fixes it.
   const publishBlocker = useMemo<PublishBlocker | null>(() => {
     if (publishBlockedBySave) {
-      return { text: saving ? "Saving your changes…" : "You have unsaved changes. Save event settings first; Publish checks the saved settings.", actionLabel: "Go to Save event settings", targetId: "event-save-button" };
+      // While saving there is nothing to go to: the save bar already says "Saving…".
+      return saving
+        ? { text: "Saving your changes…" }
+        : { text: "You have unsaved changes. Save event settings first; Publish checks the saved settings.", actionLabel: "Go to Save event settings", targetId: "event-save-button" };
     }
     const missing = readiness.items.find((item) => !item.complete);
     if (!missing) return null;
@@ -816,9 +819,11 @@ export function EventSettingsWorkspace({
                   </small>
                 </span>
                 {!published && publishBlocker && (
-                  <p className="event-publish-blocker" role="status">
+                  <p className="event-publish-blocker" id="event-publish-blocker">
                     <AlertTriangle size={15} aria-hidden="true" /> {publishBlocker.text}{" "}
-                    {publishBlocker.href
+                    {!publishBlocker.actionLabel
+                      ? null
+                      : publishBlocker.href
                       ? <Link href={publishBlocker.href}>{publishBlocker.actionLabel}</Link>
                       : <button className="text-button" onClick={() => publishBlocker.targetId && goToControl(publishBlocker.targetId)} type="button">{publishBlocker.actionLabel}</button>}
                   </p>
@@ -828,7 +833,7 @@ export function EventSettingsWorkspace({
                     {unpublishing ? "Unpublishing…" : "Unpublish event"}
                   </button>
                 ) : (
-                  <button aria-disabled={Boolean(publishBlocker) || publishing} className="primary-button full-button event-publish-button" onClick={openPublishDialog} type="button">
+                  <button aria-describedby={publishBlocker ? "event-publish-blocker" : undefined} aria-disabled={Boolean(publishBlocker) || publishing} className="primary-button full-button event-publish-button" onClick={openPublishDialog} type="button">
                     {publishing ? "Publishing…" : "Publish event"}
                   </button>
                 )}
@@ -889,13 +894,13 @@ export function EventSettingsWorkspace({
 
         </aside>
         <div className="event-savebar" role="region" aria-label="Save event settings">
-          <p className="event-savebar-status" aria-live="polite">
+          <p className="event-savebar-status" aria-live={saveMessage?.kind === "error" ? "assertive" : "polite"}>
             {saveMessage
-              ? <span className={saveMessage.kind === "error" ? "event-savebar-error" : "event-savebar-ok"} role={saveMessage.kind === "error" ? "alert" : "status"}>{saveMessage.text}</span>
+              ? <span className={saveMessage.kind === "error" ? "event-savebar-error" : "event-savebar-ok"} >{saveMessage.text}</span>
               : saving
                 ? "Saving…"
                 : dirty
-                  ? <span className="unsaved-dot" role="status">Unsaved changes</span>
+                  ? <span className="unsaved-dot">Unsaved changes</span>
                   : mode === "create"
                     ? "Nothing is public when this draft is created."
                     : published ? "All changes saved. Saving never changes whether this event is published." : "All changes saved. Saving never publishes the event."}

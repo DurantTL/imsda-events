@@ -335,4 +335,12 @@ describe("Event settings save and publish clarity (#742)", () => {
     expect(markup).toContain("Every checklist item is complete");
     expect(markup).toContain('aria-disabled="false"');
   });
+
+  it("ties the blocker text to the Publish button and keeps one live region per area", () => {
+    const markup = render({ supportContact: null });
+    expect(markup).toContain('id="event-publish-blocker"');
+    expect(markup).toMatch(/<button[^>]*aria-describedby="event-publish-blocker"[^>]*>Publish event/);
+    expect(markup).not.toMatch(/class="event-publish-blocker"[^>]*role=/);
+    expect(markup).not.toMatch(/class="event-savebar-status"[\s\S]{0,300}role="(status|alert)"/);
+  });
 });

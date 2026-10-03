@@ -181,7 +181,8 @@ describe("club form templates are off until a system administrator turns them on
       [third.key]: { version: third.version },
     }).map((row) => (row.key === other.key ? { ...row, customizedAt: new Date("2026-10-01T00:00:00Z") } : row));
     mocks.templateFindMany.mockResolvedValue(rows);
-    const report = await runClubFormTemplateSync("admin-1");
+    mocks.queryRaw.mockResolvedValue([{ locked: true }]);
+    const report = (await runClubFormTemplateSync("admin-1")) as Exclude<Awaited<ReturnType<typeof runClubFormTemplateSync>>, { running: true }>;
     const status = (key: string) => report.results.find((item) => item.key === key)?.status;
     expect(status(slip.key)).toBe("REFUSED");
     expect(status(other.key)).toBe("SKIPPED");
@@ -193,8 +194,35 @@ describe("club form templates are off until a system administrator turns them on
     expect(written).not.toContain(other.key);
     const [entry] = mocks.writeAuditLog.mock.calls.at(-1)!;
     expect(entry).toMatchObject({ actorUserId: "admin-1", action: "CLUB_FORM_TEMPLATES_SYNCED" });
-    expect(entry.metadata).toEqual(report.counts);
-    expect(Object.values(entry.metadata).every((value) => typeof value === "number")).toBe(true);
+    expect(entry.metadata).toEqual({ ...report.counts, incomplete: false });
+    expect(Object.values(entry.metadata).every((value) => typeof value === "number" || typeof value === "boolean")).toBe(true);
+  });
+
+  it("does nothing and writes no audit entry when another sync holds the lock (#742)", async () => {
+    mocks.queryRaw.mockResolvedValue([{ locked: false }]);
+    expect(await runClubFormTemplateSync("admin-1")).toEqual({ running: true });
+    expect(mocks.templateFindMany).not.toHaveBeenCalled();
+    expect(mocks.templateUpdate).not.toHaveBeenCalled();
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("still writes a counts-only audit entry, marked incomplete, when a later template throws (#742)", async () => {
+    const rows = clubFormTemplateSeeds.map((seed, index) => ({
+      id: `id-${seed.key}`, key: seed.key, version: index === 0 ? seed.version : seed.version - 1,
+      sensitiveFieldKeys: seed.sensitiveFieldKeys, birthDateFieldKeys: seed.birthDateFieldKeys,
+    }));
+    mocks.templateFindMany.mockResolvedValue(rows);
+    mocks.queryRaw.mockResolvedValue([{ locked: true }]);
+    let calls = 0;
+    mocks.templateUpdate.mockImplementation(async () => {
+      calls += 1;
+      if (calls === 2) throw new Error("synthetic database failure");
+    });
+    await expect(runClubFormTemplateSync("admin-1")).rejects.toThrow("synthetic database failure");
+    const [entry] = mocks.writeAuditLog.mock.calls.at(-1)!;
+    expect(entry).toMatchObject({ actorUserId: "admin-1", action: "CLUB_FORM_TEMPLATES_SYNCED" });
+    expect(entry.metadata).toMatchObject({ incomplete: true, updated: 1, unchanged: 1, refused: 0 });
+    expect(JSON.stringify(entry)).not.toContain("synthetic database failure");
   });
 
   it("refuses a version that would stop a birth-date field being one (ADR 0005 Addendum A)", async () => {

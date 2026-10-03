@@ -31,6 +31,7 @@ export default async function AreaHealthPage({ searchParams }: { searchParams: P
           </div>
         </section>
         <div className="account-page-body club-roster-stack">
+          <BackLink href="/account/clubs">Back to clubs</BackLink>
           <p className="inline-notice" role="status">Dietary notes as entered, the medical-need flag, and emergency contacts for club events. Each event is available until 30 days after it ends. Every time you open or print one it is recorded.</p>
           {events.length === 0 ? <p className="quiet-copy">No club event is open for health information right now.</p> : (
             <ul className="account-overview-list">

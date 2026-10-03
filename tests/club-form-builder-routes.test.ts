@@ -69,6 +69,18 @@ beforeEach(() => {
   mocks.runClubFormTemplateSync.mockResolvedValue({ results: [], counts: { updated: 0, created: 0, skipped: 0, unchanged: 0, refused: 0, staleDrafts: 0 } });
 });
 
+describe("Sync templates is single-flight (#742)", () => {
+  it("answers 409 SYNC_RUNNING, with a reload hint, when another sync holds the lock", async () => {
+    mocks.runClubFormTemplateSync.mockResolvedValue({ running: true });
+    const response = await SYNC(json({}));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "SYNC_RUNNING",
+      message: "A sync is already running. Reload in a minute to see each form's status.",
+    });
+  });
+});
+
 describe("club form builder routes are for system administrators only (#712)", () => {
   for (const route of routes) {
     it(`${route.name}: refuses a signed-in user who is not a system administrator, before doing anything`, async () => {

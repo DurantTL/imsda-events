@@ -30,17 +30,25 @@ export function ClubFormSync({ pendingCount }: { pendingCount: number }) {
   async function run() {
     setRunning(true);
     setError("");
+    const maybeStillRunning = "The sync may still be running. Reload in a minute to see each form's status.";
     try {
       const response = await fetch("/api/admin/club-forms/sync", { method: "POST" });
-      const result = await response.json().catch(() => ({})) as Partial<SyncReport> & { message?: string };
+      // A proxy timeout (502/504/524) or an HTML error page: the server may well have carried on.
+      const timedOut = [502, 504, 524].includes(response.status);
+      const result = await response.json().catch(() => null) as (Partial<SyncReport> & { message?: string }) | null;
+      if (timedOut || !result) {
+        setError(maybeStillRunning);
+        return;
+      }
       if (!response.ok || !result.results || !result.counts) {
-        setError(result.message ?? "Templates could not be synced. Nothing was lost; try again.");
+        // Includes 409 SYNC_RUNNING: the server's own message says what to do.
+        setError(result.message ?? "Templates could not be synced. Try again.");
         return;
       }
       setReport(result as SyncReport);
       router.refresh();
     } catch {
-      setError("Templates could not be synced. Check your connection and try again.");
+      setError(`Templates could not be synced. ${maybeStillRunning} If it does not change, check your connection and try again.`);
     } finally {
       setRunning(false);
     }

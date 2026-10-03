@@ -14,9 +14,16 @@ async function postHandler(request: Request) {
   if (originError) return originError;
   try {
     const admin = await requireSystemAdministrator();
-    return Response.json(await runClubFormTemplateSync(admin.id), {
-      headers: { "Cache-Control": "private, no-store, max-age=0" },
-    });
+    const headers = { "Cache-Control": "private, no-store, max-age=0" };
+    const result = await runClubFormTemplateSync(admin.id);
+    // Another sync holds the lock: say so, and change nothing.
+    if ("running" in result) {
+      return Response.json(
+        { code: "SYNC_RUNNING", error: "SYNC_RUNNING", message: "A sync is already running. Reload in a minute to see each form's status." },
+        { status: 409, headers },
+      );
+    }
+    return Response.json(result, { headers });
   } catch (error) {
     return clubFormApiError(error, "Syncing club form templates");
   }

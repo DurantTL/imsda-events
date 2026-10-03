@@ -29,7 +29,13 @@ describe("portal labels (#742)", () => {
     expect(read("components/club-profile-form.tsx")).toContain(">Club settings</p>");
   });
 
-  it("has no tab-level Back link on the Area Coordinator health list", () => {
-    expect(read(`${portal}/area/health/page.tsx`)).not.toContain("Back to your account");
+  it("sends the Area Coordinator health list back to the Clubs page, not the account", () => {
+    const source = read(`${portal}/area/health/page.tsx`);
+    expect(source).not.toContain("Back to your account");
+    expect(source).toContain('<BackLink href="/account/clubs">Back to clubs</BackLink>');
+  });
+
+  it("drops the second Your registrations eyebrow", () => {
+    expect(read(`${portal}/registrations/page.tsx`)).not.toContain("Your registrations</p>");
   });
 });

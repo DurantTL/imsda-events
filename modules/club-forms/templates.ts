@@ -12,7 +12,7 @@ import {
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { resealClubFormSubmissions } from "@/modules/club-forms/reseal";
 import { recordClubFormTemplateVersion } from "@/modules/club-forms/versions";
-import { logInfo } from "@/lib/logger";
+import { logError, logInfo } from "@/lib/logger";
 import { lockClubFormTemplateForReseal } from "@/modules/club-forms/template-lock";
 import { registrationFormDefinitionSchema, type RegistrationFormDefinition } from "@/modules/forms/definition";
 import { hasDirectoryOptionSource, withDirectoryOptions } from "@/modules/organizations/directory-form-options";
@@ -42,6 +42,18 @@ const templateSelect = {
   customizedAt: true,
 } satisfies Prisma.ClubFormTemplateSelect;
 
+export type ClubFormSyncCollected = {
+  refused: Array<{ key: string; message: string }>;
+  skipped: Array<{ key: string; reason: string }>;
+  staleDrafts: Array<{ key: string }>;
+  updated: Array<{ key: string; created: boolean }>;
+  unchanged: Array<{ key: string }>;
+};
+
+function emptyCollected(): ClubFormSyncCollected {
+  return { refused: [], skipped: [], staleDrafts: [], updated: [], unchanged: [] };
+}
+
 /**
  * Makes sure every seeded template exists and is current. New ones are
  * created disabled; a changed definition (higher `version`) is written over
@@ -55,13 +67,11 @@ const templateSelect = {
  */
 export async function syncClubFormTemplates(
   client: Client = getPrisma(),
-  options: { continueOnRefusal?: boolean } = {},
+  options: { continueOnRefusal?: boolean; collect?: ClubFormSyncCollected } = {},
 ) {
-  const refused: Array<{ key: string; message: string }> = [];
-  const skipped: Array<{ key: string; reason: string }> = [];
-  const staleDrafts: Array<{ key: string }> = [];
-  const updated: Array<{ key: string; created: boolean }> = [];
-  const unchanged: Array<{ key: string }> = [];
+  // A caller may pass its own arrays (`collect`) to read what was done so far if a later template throws.
+  const collected = options.collect ?? emptyCollected();
+  const { refused, skipped, staleDrafts, updated, unchanged } = collected;
   const existing = await client.clubFormTemplate.findMany({ select: { id: true, key: true, version: true, sensitiveFieldKeys: true, birthDateFieldKeys: true, customizedAt: true, draftUpdatedAt: true } });
   const stored = new Map(existing.map((row) => [row.key, row]));
   for (const seed of clubFormTemplateSeeds) {
@@ -230,7 +240,7 @@ export type ClubFormTemplateSummary = {
   enabledAt: string | null;
   version: number;
   submissionCount: number;
-  /** Stored version is behind the code (or the form was never synced): run `npm run club-forms:sync`. */
+  /** Stored version is behind the code (or the form was never synced): use Sync templates on the admin page (or `npm run club-forms:sync`). */
   needsSync: boolean;
   /** Edited or created in the app (#712): the code's seed no longer applies. */
   customized: boolean;
@@ -245,7 +255,8 @@ export type ClubFormTemplateSummary = {
 /**
  * For the system administrator's page: every template, on or off. Read-only:
  * it never syncs or re-seals (that can touch thousands of rows and belongs to
- * the operator step `npm run club-forms:sync`, run after migrations). A
+ * the explicit sync step: Sync templates on the admin page, or
+ * `npm run club-forms:sync` after migrations). A
  * template whose stored version is behind the code, or that has never been
  * synced, is flagged `needsSync`.
  */
@@ -292,56 +303,87 @@ export async function listClubFormTemplatesForAdmin(): Promise<ClubFormTemplateS
 
 export type ClubFormSyncResultStatus = "UPDATED" | "CREATED" | "SKIPPED" | "UNCHANGED" | "REFUSED";
 export type ClubFormSyncResult = { key: string; name: string; status: ClubFormSyncResultStatus; detail: string };
-export type ClubFormSyncReport = {
-  results: ClubFormSyncResult[];
-  counts: { updated: number; created: number; skipped: number; unchanged: number; refused: number; staleDrafts: number };
-};
+export type ClubFormSyncCounts = { updated: number; created: number; skipped: number; unchanged: number; refused: number; staleDrafts: number };
+export type ClubFormSyncReport = { results: ClubFormSyncResult[]; counts: ClubFormSyncCounts };
+/** Returned instead of a report when another sync holds the lock. */
+export type ClubFormSyncBusy = { running: true };
 
-/**
- * The in-app "Sync templates" action (#742). It is the same `syncClubFormTemplates`
- * the `club-forms:sync` script runs, with the same safety rules (never loosen
- * a sensitive or birth-date flag, never overwrite a template edited in the
- * app), and it carries on past a refused form. The audit entry holds counts
- * only. The caller has already checked for a system administrator.
- */
-export async function runClubFormTemplateSync(actorUserId: string): Promise<ClubFormSyncReport> {
-  const prisma = getPrisma();
-  const { refused, skipped, staleDrafts, updated, unchanged } = await syncClubFormTemplates(prisma, { continueOnRefusal: true });
+/** One fixed key so two administrators (or two app instances) never sync at once. */
+export const CLUB_FORM_SYNC_LOCK_KEY = 7_420_001;
+
+function buildSyncReport(collected: ClubFormSyncCollected): ClubFormSyncReport {
   const names = new Map<string, string>(clubFormTemplateSeeds.map((seed) => [seed.key, seed.name]));
-  const stale = new Set(staleDrafts.map((item) => item.key));
+  const stale = new Set(collected.staleDrafts.map((item) => item.key));
   const results: ClubFormSyncResult[] = [];
   for (const seed of clubFormTemplateSeeds) {
     const name = names.get(seed.key) ?? seed.key;
-    const refusal = refused.find((item) => item.key === seed.key);
-    const skip = skipped.find((item) => item.key === seed.key);
-    const change = updated.find((item) => item.key === seed.key);
+    const refusal = collected.refused.find((item) => item.key === seed.key);
+    const skip = collected.skipped.find((item) => item.key === seed.key);
+    const change = collected.updated.find((item) => item.key === seed.key);
     if (refusal) {
       results.push({ key: seed.key, name, status: "REFUSED", detail: `${refusal.message} Nothing was changed for this form.` });
     } else if (skip) {
       results.push({ key: seed.key, name, status: "SKIPPED", detail: `Skipped: ${skip.reason}. The code's version is not applied.` });
     } else if (change) {
       results.push({ key: seed.key, name, status: change.created ? "CREATED" : "UPDATED", detail: `${change.created ? "Created (off)" : "Updated"} to version ${seed.version}${stale.has(seed.key) ? "; its unpublished draft is now stale and must be discarded" : ""}.` });
-    } else if (unchanged.some((item) => item.key === seed.key)) {
+    } else if (collected.unchanged.some((item) => item.key === seed.key)) {
       results.push({ key: seed.key, name, status: "UNCHANGED", detail: "Already up to date." });
     }
   }
   const count = (status: ClubFormSyncResultStatus) => results.filter((item) => item.status === status).length;
-  const counts = {
-    updated: count("UPDATED"),
-    created: count("CREATED"),
-    skipped: count("SKIPPED"),
-    unchanged: count("UNCHANGED"),
-    refused: count("REFUSED"),
-    staleDrafts: stale.size,
+  return {
+    results,
+    counts: {
+      updated: count("UPDATED"),
+      created: count("CREATED"),
+      skipped: count("SKIPPED"),
+      unchanged: count("UNCHANGED"),
+      refused: count("REFUSED"),
+      staleDrafts: stale.size,
+    },
   };
-  await writeAuditLog({
-    actorUserId,
-    action: "CLUB_FORM_TEMPLATES_SYNCED",
-    entityType: "ClubFormTemplate",
-    summary: "Synced club form templates from the code.",
-    metadata: counts,
-  });
-  return { results, counts };
+}
+
+/**
+ * The in-app "Sync templates" action (#742). It is the same `syncClubFormTemplates`
+ * the `club-forms:sync` script runs, with the same safety rules (never loosen
+ * a sensitive or birth-date flag, never overwrite a template edited in the
+ * app), and it carries on past a refused form.
+ *
+ * Only one sync runs at a time: a transaction-scoped Postgres advisory lock is
+ * held on a dedicated connection while the sync uses its own, and a second
+ * caller gets `{ running: true }` at once. The audit entry holds counts only,
+ * and is written even when a later template throws (`incomplete: true`, with
+ * the counts reached so far). The caller has already checked for a system
+ * administrator.
+ */
+export async function runClubFormTemplateSync(actorUserId: string): Promise<ClubFormSyncReport | ClubFormSyncBusy> {
+  const prisma = getPrisma();
+  return prisma.$transaction(async (lockTx) => {
+    const rows = await lockTx.$queryRaw<Array<{ locked: boolean }>>`SELECT pg_try_advisory_xact_lock(${CLUB_FORM_SYNC_LOCK_KEY}) AS locked`;
+    if (!rows[0]?.locked) return { running: true } as const;
+    const collected = emptyCollected();
+    let incomplete = true;
+    try {
+      await syncClubFormTemplates(prisma, { continueOnRefusal: true, collect: collected });
+      incomplete = false;
+    } finally {
+      const partial = buildSyncReport(collected);
+      try {
+        await writeAuditLog({
+          actorUserId,
+          action: "CLUB_FORM_TEMPLATES_SYNCED",
+          entityType: "ClubFormTemplate",
+          summary: incomplete ? "Synced club form templates from the code; the run did not finish." : "Synced club form templates from the code.",
+          metadata: { ...partial.counts, incomplete },
+        });
+      } catch (auditError) {
+        // Never mask the sync's own failure with the audit's.
+        logError("Club form sync could not write its audit entry.", auditError);
+      }
+    }
+    return buildSyncReport(collected);
+  }, RESEAL_TRANSACTION);
 }
 
 function needsSync() {

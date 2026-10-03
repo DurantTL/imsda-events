@@ -2,9 +2,13 @@
  * Operator step after migrations (#610): brings every club form template up
  * to the version in the code. A version that makes an answer newly sensitive
  * re-seals the existing submissions in the same transaction as the template
- * update, so this can take a while on a large table and must not run inside a
- * web request. `docker-entrypoint.sh` runs it after `prisma migrate deploy`
- * and before the app starts; until it has run, saves to a behind template are
+ * update, so this can take a while on a large table. It is the step for
+ * deploys: `docker-entrypoint.sh` runs it after `prisma migrate deploy`
+ * and before the app starts. A system administrator can also run the same
+ * sync from Sync templates on /admin/club-forms (#742); that action is
+ * single-flight and audited, but a proxy may time it out on a very large table.
+ *
+ * Until it has run, saves to a behind template are
  * refused and readers already treat the code's sensitive keys as restricted.
  *
  *   npm run club-forms:sync
