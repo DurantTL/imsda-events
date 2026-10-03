@@ -9096,6 +9096,10 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   html body .expandable-text-body.is-clamped { display: block; overflow: visible; -webkit-line-clamp: unset; line-clamp: unset; }
   html body .expandable-text-toggle { display: none; }
 }
+/* Issue 444: the subscribe buttons are no use on paper. Kept here, before the #743 blocks that assert they hold no print rule. */
+@media print {
+  .calendar-subscribe-panel { display: none; }
+}
 
 /* ==========================================================================
    #743 slice: Type scale, Buttons and Destructive actions.
@@ -9565,4 +9569,44 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
     font-size: 0;
   }
   html[data-sidebar="collapsed"] .primary-nav .nav-group-label:first-child { display: none; }
+}
+
+/* Calendar repeats, office closures and subscribe buttons (#444) */
+.calendar-chip.calendar-closure a, .calendar-chip.calendar-closure span:not(.sr-only) {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px dashed #8a4b1f; background: repeating-linear-gradient(135deg, #fff4e8, #fff4e8 6px, #fde4cc 6px, #fde4cc 12px); color: #6b3410;
+}
+.calendar-agenda-item.calendar-closure {
+  border-left-style: dashed; border-left-color: #8a4b1f;
+  background: repeating-linear-gradient(135deg, #fff 0, #fff 10px, #fff7ee 10px, #fff7ee 20px);
+}
+.calendar-closure .calendar-date-badge { background: #fde4cc; color: #6b3410; }
+.calendar-closure-label { display: inline-flex; align-items: center; gap: 4px; color: #6b3410; }
+.calendar-subscribe-panel { display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 16px; background: #fff; padding: 18px 20px; scroll-margin-top: 16px; }
+.calendar-subscribe-panel h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; color: var(--ink); font-size: 1.1rem; }
+.calendar-subscribe-panel p { margin: 0; color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.78rem); line-height: 1.5; }
+.calendar-subscribe-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.calendar-subscribe-buttons .secondary-button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.calendar-subscribe-status:empty { display: none; }
+.calendar-subscribe-status { overflow-wrap: anywhere; }
+.calendar-repeat-editor { display: grid; gap: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.calendar-repeat-editor legend { padding: 0 6px; font-weight: 800; }
+.calendar-weekday-picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.calendar-weekday-picks label { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; }
+.calendar-repeat-dates { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.calendar-repeat-dates li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.calendar-repeat-dates li.is-skipped span { text-decoration: line-through; color: var(--muted); }
+@media (max-width: 640px) {
+  .calendar-subscribe-buttons { display: grid; grid-template-columns: 1fr; }
+  .calendar-subscribe-buttons .secondary-button { width: 100%; justify-content: center; }
+}
+.calendar-chip.calendar-closure a, .calendar-chip.calendar-closure span:not(.sr-only) { min-width: 0; max-width: 100%; overflow: hidden; }
+.calendar-chip.calendar-closure svg { flex: none; }
+.calendar-repeat-hint { margin: 0; color: #6b3410; font-size: max(var(--type-body-floor, 0px), 0.76rem); }
+@media (max-width: 760px) {
+  /* Closures stay a distinct, solid, bordered dot when chips shrink to dots, with no icon to overflow. */
+  .calendar-chip.calendar-closure a, .calendar-chip.calendar-closure span:not(.sr-only) {
+    width: 10px; height: 10px; padding: 0; gap: 0; border: 2px solid #6b3410; border-radius: 999px; background: #8a4b1f; font-size: 0;
+  }
+  .calendar-chip.calendar-closure svg { display: none; }
 }

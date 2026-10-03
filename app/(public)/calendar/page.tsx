@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, List } from "lucide-react";
+import { CalendarDays, CalendarPlus, ChevronLeft, ChevronRight, DoorClosed, List } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { CalendarSubscribe } from "@/components/calendar-subscribe";
 import { AgendaItem, ItemLink } from "@/components/calendar-agenda-item";
 import {
   calendarCategories,
+  closureLabel,
   filterByCategory,
+  firstPerSeries,
   firstOfMonth,
   itemsOnDate,
   itemsOverlapping,
@@ -19,6 +22,7 @@ import {
   type CalendarItem,
 } from "@/modules/calendar/domain";
 import { conferenceToday, listPublicCalendarItems } from "@/modules/calendar/repository";
+import { buildSubscribeLinks, siteBaseUrl } from "@/modules/calendar/subscribe";
 
 export const dynamic = "force-dynamic";
 
@@ -78,7 +82,7 @@ export default async function PublicCalendarPage({ searchParams }: { searchParam
             <BrandMark />
             <span><strong>IMSDA</strong><small>Events</small></span>
           </Link>
-          <a className="text-button calendar-subscribe" href="/calendar/feed.ics" aria-label="Subscribe to the calendar">
+          <a className="text-button calendar-subscribe" href="#subscribe" aria-label="Subscribe to the calendar">
             <CalendarPlus size={16} aria-hidden="true" /> <span>Subscribe</span>
           </a>
         </div>
@@ -148,8 +152,12 @@ export default async function PublicCalendarPage({ searchParams }: { searchParam
                   {dayItems.length > 0 && (
                     <ul>
                       {dayItems.slice(0, 3).map((item) => (
-                        <li className={`calendar-chip calendar-kind-${item.kind.toLowerCase()} calendar-status-${item.status.toLowerCase()}`} key={item.key}>
-                          <ItemLink item={item}>{item.title}</ItemLink>
+                        <li className={`calendar-chip calendar-kind-${item.kind.toLowerCase()} calendar-status-${item.status.toLowerCase()}${item.isClosure ? " calendar-closure" : ""}`} key={item.key}>
+                          <ItemLink item={item}>
+                            {item.isClosure && <DoorClosed size={12} aria-hidden="true" />}
+                            {item.isClosure && <span className="sr-only">{closureLabel}: </span>}
+                            {item.title}
+                          </ItemLink>
                         </li>
                       ))}
                       {dayItems.length > 3 && <li className="calendar-more">+{dayItems.length - 3} more</li>}
@@ -174,7 +182,7 @@ export default async function PublicCalendarPage({ searchParams }: { searchParam
           ) : items.length === 0 ? (
             <p className="calendar-empty">Nothing is on the calendar yet{category ? ` in ${category}` : ""}. Check back soon.</p>
           ) : (
-            groupByMonth(items, today).map(([key, group]) => (
+            groupByMonth(firstPerSeries(items), today).map(([key, group]) => (
               <div className="calendar-agenda-group" key={key}>
                 <h3 className="calendar-agenda-month">{monthLabel(parseMonthParam(key, today))}</h3>
                 <ul className="calendar-agenda-list">{group.map((item) => <AgendaItem item={item} key={item.key} />)}</ul>
@@ -183,10 +191,7 @@ export default async function PublicCalendarPage({ searchParams }: { searchParam
           )}
         </section>
 
-        <p className="calendar-feed-note">
-          <CalendarPlus size={15} aria-hidden="true" /> Add every conference date to your phone or computer calendar:{" "}
-          <a href="/calendar/feed.ics">subscribe to the calendar feed</a>.
-        </p>
+        <CalendarSubscribe links={buildSubscribeLinks(siteBaseUrl())} />
       </div>
     </main>
   );

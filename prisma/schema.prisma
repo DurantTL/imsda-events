@@ -4663,6 +4663,13 @@ enum CalendarEntryStatus {
   CANCELLED
 }
 
+/// What a calendar entry is (#444). A closure ("Conference office closed")
+/// is shown with its own label and icon rather than as an ordinary date.
+enum CalendarEntryType {
+  STANDARD
+  CLOSURE
+}
+
 /// An informational item on the public conference calendar (#107) for
 /// something registered or managed elsewhere. Dates are calendar dates in the
 /// conference's time zone; `timeLabel` is shown as written ("7–9 pm").
@@ -4677,6 +4684,12 @@ model CalendarEntry {
   category        String              @default("")
   linkUrl         String?
   status          CalendarEntryStatus @default(SCHEDULED)
+  entryType       CalendarEntryType   @default(STANDARD)
+  /// RFC 5545 RRULE value (e.g. `FREQ=WEEKLY;BYDAY=MO,WE;COUNT=6`), or null
+  /// for a one-off. `startsOn`/`endsOn` describe the first occurrence.
+  repeatRule      String?
+  /// Skipped occurrences (EXDATEs): start dates, YYYY-MM-DD, that don't happen.
+  repeatExceptions String[]           @default([])
   isPublished     Boolean             @default(false)
   createdByUserId String
   updatedByUserId String

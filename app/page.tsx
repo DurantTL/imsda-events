@@ -5,7 +5,7 @@ import { BrandMark } from "@/components/brand-mark";
 import { AgendaItem } from "@/components/calendar-agenda-item";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
-import { addDays } from "@/modules/calendar/domain";
+import { addDays, firstPerSeries } from "@/modules/calendar/domain";
 import { conferenceToday, listPublicCalendarItems } from "@/modules/calendar/repository";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +30,7 @@ export default async function Home() {
     getCurrentSession(),
     getCurrentAttendee(),
   ]);
-  const upcoming = items.slice(0, upcomingLimit);
+  const upcoming = firstPerSeries(items).slice(0, upcomingLimit);
   const signedInName = attendee.account?.displayName || attendee.account?.verifiedEmail;
 
   return (

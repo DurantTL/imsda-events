@@ -48,7 +48,12 @@ describe("public calendar visibility", () => {
   it("asks only for published, calendar-visible events and published entries", async () => {
     await listPublicCalendarItems("2026-11-29", "2027-01-02", new Date("2026-09-23T12:00:00Z"));
     expect(mocks.eventFindMany.mock.calls[0][0].where).toMatchObject({ isPublished: true, showOnCalendar: true });
-    expect(mocks.entryFindMany.mock.calls[0][0].where).toMatchObject({ isPublished: true, startsOn: { lte: "2027-01-02" }, endsOn: { gte: "2026-11-29" } });
+    expect(mocks.entryFindMany.mock.calls[0][0].where).toMatchObject({
+      isPublished: true,
+      startsOn: { lte: "2027-01-02" },
+      // A repeating entry may have started long before the window.
+      OR: [{ endsOn: { gte: "2026-11-29" } }, { repeatRule: { not: null } }],
+    });
   });
 
   it("dates events in their own time zone and links them to their public page", async () => {
