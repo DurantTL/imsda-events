@@ -15,11 +15,13 @@ const mocks = vi.hoisted(() => ({
   moduleState: vi.fn(),
   listRecentAuditActivity: vi.fn(),
   getOperationalHealth: vi.fn(),
+  listModuleRequestsForEvent: vi.fn(),
 }));
 vi.mock("@/modules/events/selection", () => ({ resolveEventContext: mocks.resolveEventContext }));
 vi.mock("@/modules/club-rosters/event-oversight", () => ({ resolveClubOversight: mocks.resolveClubOversight }));
 vi.mock("@/modules/club-forms/access", () => ({ resolveStaffViewer: mocks.resolveStaffViewer }));
 vi.mock("@/modules/event-modules/service", () => ({ moduleState: mocks.moduleState }));
+vi.mock("@/modules/event-modules/requests", () => ({ listModuleRequestsForEvent: mocks.listModuleRequestsForEvent }));
 vi.mock("@/modules/audit/audit-service", () => ({ listRecentAuditActivity: mocks.listRecentAuditActivity }));
 vi.mock("@/modules/operations/repository", () => ({ getOperationalHealth: mocks.getOperationalHealth }));
 vi.mock("@/components/event-activity-panel", () => ({ EventActivityPanel: () => createElement("div", { "data-panel": "activity" }) }));
@@ -62,6 +64,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.listRecentAuditActivity.mockResolvedValue([]);
   mocks.getOperationalHealth.mockResolvedValue(noIssues);
+  mocks.listModuleRequestsForEvent.mockResolvedValue([]);
 });
 
 describe("/more as the Event modules page", () => {

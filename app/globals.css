@@ -9525,15 +9525,33 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
   .searchable-select.is-sheet-picker .searchable-select-options > button { min-height: 48px; font-size: max(16px, 1rem); }
 }
 
+/* Module requests (#741 slice 3) */
+.module-requests h2 { margin: 0 0 6px; }
+.module-request-form { display: grid; gap: 6px; margin-top: 12px; }
+.module-request-form textarea { width: 100%; border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; color: var(--ink); padding: 10px 11px; font: inherit; resize: vertical; line-height: 1.5; }
+.module-request-form small { color: var(--muted, #5b6b73); }
+.module-request-form .primary-button { justify-self: start; }
+.module-request-state { margin: 10px 0 0; font-size: 0.85rem; }
+.module-request-state[data-status="DECLINED"] { color: var(--coral); }
+.module-request-status { margin: 10px 0; padding-left: 18px; }
+.module-request-queue { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 12px; }
+.module-request-item { display: grid; gap: 10px; border: 1px solid #d9e4e9; border-radius: 12px; padding: 14px; }
+.module-request-item small { display: block; margin-top: 2px; color: var(--muted, #5b6b73); }
+.module-request-item p { margin: 8px 0 0; overflow-wrap: anywhere; }
+.module-request-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
 /* #741 slice 4: fixed staff navigation order.
    The sidebar now lists up to six groups and fifteen items, so the rhythm is
    tighter (the nav still scrolls inside the sidebar, #468) and the icons-only
    sidebar (#446) keeps a thin rule where each hidden group heading was.
    Self-contained block; nothing above this comment is changed by it.
    (plain comment, not a banner: the #743 block test counts banners) */
-.primary-nav { gap: 3px; }
-.primary-nav .nav-item { padding-block: 9px; }
-.primary-nav .nav-group-label { margin: 9px 0 0; }
+.primary-nav { gap: 1px; }
+.primary-nav .nav-item { padding-block: 6px; }
+.primary-nav .nav-group-label { margin: 7px 0 0; }
+.system-navigation { margin-bottom: 12px; }
+.event-workspace-label { margin-bottom: 4px; }
+.event-picker-wrap { margin-bottom: 8px; }
 .primary-nav .nav-group-label:first-child { margin-top: 2px; }
 @media (min-width: 801px) {
   html[data-sidebar="collapsed"] .primary-nav .nav-group-label {

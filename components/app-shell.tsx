@@ -59,7 +59,7 @@ type ShellEvent = {
   /** Club forms (#610) are open to system admins and Event Admins of a current event; computed server-side. */
   clubFormsAccess?: boolean;
 };
-type ShellUser = { displayName: string; email: string; globalRole?: "SYSTEM_ADMIN" | null };
+type ShellUser = { id?: string; displayName: string; email: string; globalRole?: "SYSTEM_ADMIN" | null };
 
 export function AppShell({
   attendeeAccountAvailable = false,
@@ -140,6 +140,8 @@ export function AppShell({
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
   );
   const isSystemAdmin = user.globalRole === "SYSTEM_ADMIN";
+  // Event Admins can ask for a module (#741 slice 3); system administrators turn modules on directly.
+  const canRequestFeature = !isSystemAdmin && selectedPermissions.has("CONFIGURE_EVENT");
   // The other workspaces this staff identity may switch into (#108): the
   // account popover's System management link and both attendee switch
   // buttons read this, so they always agree with each other.
@@ -291,7 +293,9 @@ export function AppShell({
                   isActive={isActive}
                   cards={launcherCards}
                   isSystemAdmin={isSystemAdmin}
+                  canRequestFeature={canRequestFeature}
                   eventQuery={eventQuery}
+                  userId={user.id ?? ""}
                   tipProps={tipProps(label)}
                 >
                   <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
@@ -391,7 +395,9 @@ export function AppShell({
                 isActive={isActive}
                 cards={launcherCards}
                 isSystemAdmin={isSystemAdmin}
+                canRequestFeature={canRequestFeature}
                 eventQuery={eventQuery}
+                userId={user.id ?? ""}
               >
                 <Icon aria-hidden="true" size={22} /><span>{mobileNavigationLabels[href] ?? label}</span>
               </MoreLauncher>

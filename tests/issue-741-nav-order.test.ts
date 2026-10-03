@@ -1,6 +1,8 @@
 import { createElement } from "react";
 import type { ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const route = vi.hoisted(() => ({ pathname: "/overview" }));
@@ -29,6 +31,7 @@ import {
   navigationGroupOrder,
 } from "@/components/staff-navigation";
 import { areaClubPortalNavItems, clubPortalNavItems, clubReporterNavItems } from "@/modules/club-rosters/portal-nav";
+import { operationalHealthEntryPermissions } from "@/modules/operations/access";
 import { eventPermissions, rolePermissions } from "@/modules/access/permissions";
 import type { EventPermission } from "@/modules/access/permissions";
 import { clubCapabilities } from "@/modules/organizations/director-grants-domain";
@@ -215,12 +218,66 @@ describe("phone tabs (#741 slice 4)", () => {
 
 describe("More directory position (#741 slice 4)", () => {
   beforeEach(() => forgetLauncherPosition());
+  const remember = (overrides: Partial<Parameters<typeof rememberLauncherPosition>[0]> = {}) =>
+    rememberLauncherPosition({ userId: "user_1", eventQuery: "?event=event_1", cardKey: "tags", href: "/more/tags?event=event_1", scrollTop: 120, ...overrides });
+  const recall = (overrides: Partial<Parameters<typeof recallLauncherPosition>[0]> = {}) =>
+    recallLauncherPosition({ userId: "user_1", eventQuery: "?event=event_1", pathname: "/more/tags", ...overrides });
 
-  it("returns the card last opened and the scroll for the same event only", () => {
-    expect(recallLauncherPosition("?event=event_1")).toBeNull();
-    rememberLauncherPosition({ eventQuery: "?event=event_1", cardKey: "tags", scrollTop: 120 });
-    expect(recallLauncherPosition("?event=event_1")).toEqual({ eventQuery: "?event=event_1", cardKey: "tags", scrollTop: 120 });
-    expect(recallLauncherPosition("?event=event_2")).toBeNull();
+  it("returns the card and scroll back on the page it opened, or a child of it", () => {
+    expect(recall()).toBeNull();
+    remember();
+    expect(recall()?.scrollTop).toBe(120);
+    expect(recall({ pathname: "/more/tags/abc" })?.cardKey).toBe("tags");
+  });
+
+  it("is not used on any other page, so focus starts at the first card", () => {
+    remember();
+    for (const pathname of ["/overview", "/more", "/more/tagsx", "/more/promo-codes"]) expect(recall({ pathname }), pathname).toBeNull();
+  });
+
+  it("is keyed by user and event, so a shared tab never leaks it", () => {
+    remember();
+    expect(recall({ userId: "user_2" })).toBeNull();
+    expect(recall({ eventQuery: "?event=event_2" })).toBeNull();
+  });
+
+  it("is cleared by forgetLauncherPosition, which Escape and sign-out call", () => {
+    remember();
+    forgetLauncherPosition();
+    expect(recall()).toBeNull();
+    const root = join(__dirname, "..");
+    const signOut = readFileSync(join(root, "components/sign-out-button.tsx"), "utf8");
+    expect(signOut).toContain("forgetLauncherPosition()");
+    expect(signOut.indexOf("forgetLauncherPosition()")).toBeLessThan(signOut.indexOf('fetch("/api/auth/logout"'));
+    const launcher = readFileSync(join(root, "components/more-launcher.tsx"), "utf8");
+    expect(launcher).toMatch(/reason === "escape"\) forgetLauncherPosition\(\)/);
+  });
+});
+
+describe("Operational health and desktop highlight (#741 slice 4)", () => {
+  it("is hidden when none of operationalHealthEntryPermissions is held", () => {
+    const withoutEntry = eventPermissions.filter((permission) => !(operationalHealthEntryPermissions as readonly string[]).includes(permission));
+    expect(withoutEntry).not.toContain("MANAGE_FINANCE");
+    const items = sidebar({ permissions: withoutEntry });
+    expect(items).not.toContain("Operational health");
+    // VIEW_REPORTS still shows Operational reports, so the group stays with that one item.
+    expect(items.slice(items.indexOf("# Reports"))).toEqual(["# Reports", "Operational reports", "More"]);
+    for (const permission of operationalHealthEntryPermissions) {
+      expect(sidebar({ permissions: [permission] }), permission).toContain("Operational health");
+    }
+  });
+
+  function activeItems(pathname: string) {
+    const markup = render({ ...eventAdmin, pathname });
+    const nav = markup.slice(markup.indexOf('id="primary-navigation"'), markup.indexOf('class="sidebar-foot"'));
+    return [...nav.matchAll(/<a [^>]*class="nav-item active"[^>]*>.*?<span>([^<]+)<\/span><\/a>/g)].map((match) => match[1]);
+  }
+
+  it("highlights Operational reports and Operational health on their own pages, not More", () => {
+    expect(activeItems("/more/reports")).toEqual(["Operational reports"]);
+    expect(activeItems("/more/reports/packets")).toEqual(["Operational reports"]);
+    expect(activeItems("/more/health")).toEqual(["Operational health"]);
+    expect(activeItems("/more")).toEqual(["More"]);
   });
 });
 

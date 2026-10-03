@@ -447,6 +447,11 @@ enum MessageTemplateKey {
   /// carries a sentinel; the link is minted when the email is delivered.
   CLUB_FORM_LINK
   HEALTH_RECORD_LINK
+  /// An event admin asked for an event module to be turned on (#741 slice 3):
+  /// sent to the conference office address.
+  MODULE_REQUEST_SUBMITTED
+  /// A system administrator approved or declined that request: sent to the requester.
+  MODULE_REQUEST_DECIDED
 }
 
 enum MessageTemplateStatus {
@@ -570,6 +575,8 @@ model User {
   announcements             Announcement[]
   pinnedAnnouncements       Announcement[]        @relation("AnnouncementPinnedBy")
   auditLogs                 AuditLog[]
+  moduleRequests            ModuleRequest[] @relation("ModuleRequestRequester")
+  moduleRequestsDecided     ModuleRequest[] @relation("ModuleRequestDecider")
   importRuns                ImportRun[]
   createdRegistrationForms  RegistrationForm[]        @relation("RegistrationFormCreatedBy")
   createdFormVersions       RegistrationFormVersion[] @relation("RegistrationFormVersionCreatedBy")
@@ -1334,6 +1341,7 @@ model Event {
   locations                           EventLocation[]
   locationWaitlistChanges             LocationWaitlistChange[]
   modules                             EventModule[]
+  moduleRequests                      ModuleRequest[]
 
   @@index([badgeBackgroundAssetId])
 }
@@ -1352,6 +1360,40 @@ model EventModule {
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@unique([eventId, moduleKey])
+}
+
+enum ModuleRequestStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+/// An event admin's request that a system administrator turn an event module on
+/// (#741 slice 3). Only a system administrator decides. The migration adds a
+/// partial unique index Prisma cannot express, `ModuleRequest_one_pending_per_module`
+/// on (eventId, moduleKey) WHERE status = 'PENDING', so concurrent submissions
+/// leave one pending request. A declined request stays as history and may be
+/// asked for again.
+model ModuleRequest {
+  id                String              @id @default(cuid())
+  eventId           String
+  moduleKey         String
+  requestedByUserId String?
+  /// Why the event needs it. Free text from the requester; kept out of audit metadata.
+  reason            String
+  status            ModuleRequestStatus @default(PENDING)
+  decidedByUserId   String?
+  decidedAt         DateTime?
+  /// Why a system administrator declined. Required to decline; kept out of audit metadata.
+  declineReason     String?
+  createdAt         DateTime            @default(now())
+
+  event       Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  requestedBy User?  @relation("ModuleRequestRequester", fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  decidedBy   User?  @relation("ModuleRequestDecider", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([eventId, createdAt])
+  @@index([status, createdAt])
 }
 
 /// One site of a multi-location event (#413), e.g. one Honors Weekend site or

@@ -26,11 +26,10 @@ export function launcherGroups(cards: readonly MoreDirectoryCard[]): LauncherGro
 }
 
 /**
- * Module requests are built in slice 3 (#741). Until they exist, no "Request a
- * feature" link is shown to anyone: this stays false, and the footer rule below
- * is ready for the day it is switched on.
+ * Module requests exist (#741 slice 3): Event Admins get a "Request a feature"
+ * link. The flag stays so a deployment-wide switch-off is one line.
  */
-export const moduleRequestsEnabled = false;
+export const moduleRequestsEnabled = true;
 
 export type LauncherFooterLink = { key: "manage-modules" | "event-modules" | "request-feature"; label: string; href: string };
 
@@ -38,7 +37,7 @@ export type LauncherFooterLink = { key: "manage-modules" | "event-modules" | "re
  * Everyone gets a link to the Event modules page, which also holds the audit
  * trail: system administrators as "Manage event modules", everyone else as "Event
  * modules and activity". Event staff also get "Request a feature" when requests
- * exist and the viewer may make one; with the flag off nobody does.
+ * exist and the viewer may make one; with the flag off nobody does. Only Event Admins (`CONFIGURE_EVENT`) who are not system administrators can.
  */
 export function launcherFooterLinks({
   isSystemAdmin,
@@ -108,13 +107,22 @@ export const phoneMaxWidthPx = 800;
 export const desktopBreakpointQuery = `(min-width: ${phoneMaxWidthPx + 1}px)`;
 
 /**
- * Where the directory was left (#741 slice 4): the card last opened and how far
- * the list was scrolled. Reopening the launcher after coming back from a child
- * page puts focus on that card and restores the scroll, instead of starting at
- * the top. Kept in memory for the life of the staff shell (which persists across
- * client navigations), and per event so another event starts fresh.
+ * Where the directory was left (#741 slice 4): the card last opened, the page it
+ * opened and how far the list was scrolled. It is used only when the person is
+ * back on that page or one of its children; anywhere else the launcher opens at
+ * the first card, scrolled to the top. Kept in memory for the life of the staff
+ * shell (which persists across client navigations), keyed by user and event so a
+ * shared tab never carries one person's position to another, and cleared on
+ * Escape and on sign-out.
  */
-export type LauncherPosition = { eventQuery: string; cardKey: string | null; scrollTop: number };
+export type LauncherPosition = {
+  userId: string;
+  eventQuery: string;
+  cardKey: string | null;
+  /** The opened card's href; its path decides whether the memory still applies. */
+  href: string;
+  scrollTop: number;
+};
 
 let rememberedPosition: LauncherPosition | null = null;
 
@@ -122,8 +130,13 @@ export function rememberLauncherPosition(position: LauncherPosition): void {
   rememberedPosition = position;
 }
 
-export function recallLauncherPosition(eventQuery: string): LauncherPosition | null {
-  return rememberedPosition && rememberedPosition.eventQuery === eventQuery ? rememberedPosition : null;
+const pathOf = (href: string) => href.split(/[?#]/)[0];
+
+export function recallLauncherPosition({ userId, eventQuery, pathname }: { userId: string; eventQuery: string; pathname: string }): LauncherPosition | null {
+  const remembered = rememberedPosition;
+  if (!remembered || remembered.userId !== userId || remembered.eventQuery !== eventQuery) return null;
+  const target = pathOf(remembered.href);
+  return pathname === target || pathname.startsWith(`${target}/`) ? remembered : null;
 }
 
 export function forgetLauncherPosition(): void {

@@ -119,11 +119,15 @@ describe("launcher footer", () => {
     ]);
   });
 
-  it("offers event staff Event modules and activity, a plain link to /more, and no Request a feature while requests do not exist", () => {
-    expect(moduleRequestsEnabled).toBe(false);
+  it("offers an Event Admin Event modules and activity plus Request a feature, now that requests exist (#741 slice 3)", () => {
+    expect(moduleRequestsEnabled).toBe(true);
     expect(launcherFooterLinks({ isSystemAdmin: false, canRequestFeature: true, eventQuery: "?event=event_1" })).toEqual([
       { key: "event-modules", label: "Event modules and activity", href: "/more?event=event_1" },
+      { key: "request-feature", label: "Request a feature", href: "/more?event=event_1#request-a-feature" },
     ]);
+    // Anyone who may not request gets no link, and a system administrator turns modules on directly.
+    expect(launcherFooterLinks({ isSystemAdmin: false, eventQuery: "?event=event_1" }).map((link) => link.key)).toEqual(["event-modules"]);
+    expect(launcherFooterLinks({ isSystemAdmin: true, canRequestFeature: true, eventQuery: "?event=event_1" }).map((link) => link.key)).toEqual(["manage-modules"]);
   });
 
   it("is ready to offer Request a feature, only where permitted, once the flag is on", () => {

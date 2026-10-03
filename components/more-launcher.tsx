@@ -11,6 +11,7 @@ import {
   launcherFooterLinks,
   launcherGroups,
   nextLauncherIndex,
+  forgetLauncherPosition,
   recallLauncherPosition,
   rememberLauncherPosition,
   returnsFocusToTrigger,
@@ -47,6 +48,7 @@ function setBackgroundInert(inert: boolean) {
 export function MoreLauncherPanel({
   cards,
   isSystemAdmin,
+  canRequestFeature = false,
   eventQuery,
   id,
   panelRef,
@@ -56,15 +58,17 @@ export function MoreLauncherPanel({
 }: {
   cards: readonly MoreDirectoryCard[];
   isSystemAdmin: boolean;
+  /** An Event Admin who is not a system administrator: shows "Request a feature" (#741). */
+  canRequestFeature?: boolean;
   eventQuery: string;
   id?: string;
   panelRef?: Ref<HTMLDivElement>;
-  onNavigate?: (cardKey?: string) => void;
+  onNavigate?: (card?: { key: string; href: string }) => void;
   variant: "sidebar" | "tab";
   style?: HTMLAttributes<HTMLDivElement>["style"];
 }) {
   const groups = launcherGroups(cards);
-  const footer = launcherFooterLinks({ isSystemAdmin, eventQuery });
+  const footer = launcherFooterLinks({ isSystemAdmin, canRequestFeature, eventQuery });
   return (
     <div
       className={`more-launcher more-launcher-${variant}`}
@@ -82,7 +86,7 @@ export function MoreLauncherPanel({
             <ul>
               {groupCards.map((card) => (
                 <li key={card.key}>
-                  <Link className="more-launcher-item" href={card.href} onClick={() => onNavigate?.(card.key)} data-card={card.key}>
+                  <Link className="more-launcher-item" href={card.href} onClick={() => onNavigate?.({ key: card.key, href: card.href })} data-card={card.key}>
                     <card.icon aria-hidden="true" size={18} strokeWidth={1.9} />
                     <span>{card.title}</span>
                   </Link>
@@ -112,7 +116,9 @@ export function MoreLauncher({
   isActive,
   cards,
   isSystemAdmin,
+  canRequestFeature = false,
   eventQuery,
+  userId = "",
   tipProps = {},
   children,
 }: {
@@ -123,7 +129,10 @@ export function MoreLauncher({
   isActive: boolean;
   cards: readonly MoreDirectoryCard[];
   isSystemAdmin: boolean;
+  canRequestFeature?: boolean;
   eventQuery: string;
+  /** The signed-in user, so a remembered position never carries to another person on a shared tab. */
+  userId?: string;
   tipProps?: HTMLAttributes<HTMLElement>;
   children: ReactNode;
 }) {
@@ -140,6 +149,8 @@ export function MoreLauncher({
   const close = useCallback((reason: LauncherCloseReason) => {
     setBackgroundInert(false);
     setOpen(false);
+    // Escape means "start over": the next open begins at the first card.
+    if (reason === "escape") forgetLauncherPosition();
     if (returnsFocusToTrigger(reason)) triggerRef.current?.focus();
   }, []);
 
@@ -149,10 +160,11 @@ export function MoreLauncher({
     if (variant === "tab") setBackgroundInert(true);
     // Coming back: focus the card last opened and restore the scroll (#741 slice 4); otherwise the first item.
     const panel = panelRef.current;
-    const remembered = recallLauncherPosition(eventQuery);
+    // The memory applies only back on the page it opened (or a child); otherwise first card, top.
+    const remembered = recallLauncherPosition({ userId, eventQuery, pathname });
     const rememberedCard = remembered?.cardKey ? panel?.querySelector<HTMLElement>(`a[data-card="${remembered.cardKey}"]`) : null;
-    (rememberedCard ?? panel?.querySelector<HTMLElement>("a[href]"))?.focus({ preventScroll: Boolean(remembered) });
-    if (panel && remembered) panel.scrollTop = remembered.scrollTop;
+    (rememberedCard ?? panel?.querySelector<HTMLElement>("a[href]"))?.focus({ preventScroll: Boolean(rememberedCard) });
+    if (panel) panel.scrollTop = rememberedCard && remembered ? remembered.scrollTop : 0;
     function onPointerDown(event: PointerEvent) {
       const target = event.target as Node | null;
       if (target && (panelRef.current?.contains(target) || triggerRef.current?.contains(target))) return;
@@ -176,7 +188,7 @@ export function MoreLauncher({
       desktop?.removeEventListener("change", onDesktop);
       setBackgroundInert(false);
     };
-  }, [open, close, variant, eventQuery]);
+  }, [open, close, variant, eventQuery, userId, pathname]);
 
   function openFromTrigger() {
     if (variant === "sidebar" && triggerRef.current) {
@@ -243,8 +255,9 @@ export function MoreLauncher({
               eventQuery={eventQuery}
               id={panelId}
               isSystemAdmin={isSystemAdmin}
-              onNavigate={(cardKey) => {
-                rememberLauncherPosition({ eventQuery, cardKey: cardKey ?? null, scrollTop: panelRef.current?.scrollTop ?? 0 });
+              canRequestFeature={canRequestFeature}
+              onNavigate={(card) => {
+                if (card) rememberLauncherPosition({ userId, eventQuery, cardKey: card.key, href: card.href, scrollTop: panelRef.current?.scrollTop ?? 0 });
                 close("navigate");
               }}
               panelRef={panelRef}

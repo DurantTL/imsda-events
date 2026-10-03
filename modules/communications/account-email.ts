@@ -192,7 +192,7 @@ export async function prepareAccountEmailBodyForDelivery(input: {
   bodyText: string;
   now: Date;
 }) {
-  if (!input.bodyText.includes(ACCOUNT_ACTION_LINK_SENTINEL)) {
+  if (input.templateKey.startsWith("MODULE_REQUEST_") || !input.bodyText.includes(ACCOUNT_ACTION_LINK_SENTINEL)) {
     return { bodyText: input.bodyText };
   }
   if (!input.accountUserId) {

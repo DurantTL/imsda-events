@@ -4,6 +4,8 @@ import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { AccessDeniedError, type AuthenticatedUser } from "@/modules/access/authorization";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { approvePendingRequestsForEnabledModule } from "@/modules/event-modules/request-approval";
+import { deliverRequestEmails } from "@/modules/event-modules/request-email";
 import {
   canEnableForEvent,
   dataForcedModuleKeys,
@@ -208,6 +210,45 @@ function requireKey(key: string): EventModuleKey {
   return key;
 }
 
+/**
+ * The enable step on its own, for a caller that already holds a transaction
+ * (approving a module request enables the module in the same transaction that
+ * records the decision). System administrators only; audited like `enableModule`.
+ */
+export async function enableModuleInTransaction(
+  tx: Prisma.TransactionClient,
+  actor: Pick<AuthenticatedUser, "id" | "globalRole"> | null | undefined,
+  eventId: string,
+  moduleKey: string,
+): Promise<{ changed: boolean; messageIds: string[] }> {
+  requireSystemAdmin(actor);
+  const key = requireKey(moduleKey);
+  if (eventModuleDefinition(key).alwaysOn) return { changed: false, messageIds: [] };
+  const event = await tx.event.findUnique({ where: { id: eventId }, select: { id: true, audience: true } });
+  if (!event) throw new EventModuleError("That event does not exist.", "EVENT_NOT_FOUND");
+  // Honors applies to a general event that has honors data: look only when that decides it.
+  const present = key === "honors" && !canEnableForEvent(key, event.audience)
+    ? (await dataPresentByEvent(tx, [eventId], ["honors"])).get(eventId)
+    : undefined;
+  if (!canEnableForEvent(key, event.audience, present)) {
+    throw new EventModuleError(`${eventModuleDefinition(key).title} applies to club events only.`, "NOT_APPLICABLE");
+  }
+  const created = await tx.eventModule.createMany({ data: [{ eventId, moduleKey: key }], skipDuplicates: true });
+  // A pending request for this module is answered by turning it on (#741 slice 3).
+  const messageIds = await approvePendingRequestsForEnabledModule(tx, actor!, eventId, key);
+  if (created.count === 0) return { changed: false, messageIds };
+  await writeAuditLog({
+    eventId,
+    actorUserId: actor!.id,
+    action: "EVENT_MODULE_ENABLED",
+    entityType: "EventModule",
+    entityId: key,
+    summary: `Turned on the ${eventModuleDefinition(key).title} module.`,
+    metadata: { eventId, moduleKey: key },
+  }, tx);
+  return { changed: true, messageIds };
+}
+
 /** Turns a module on. System administrators only. Audited with the event id and module key. */
 export async function enableModule(
   actor: Pick<AuthenticatedUser, "id" | "globalRole"> | null | undefined,
@@ -215,31 +256,10 @@ export async function enableModule(
   moduleKey: string,
 ): Promise<{ changed: boolean }> {
   requireSystemAdmin(actor);
-  const key = requireKey(moduleKey);
-  if (eventModuleDefinition(key).alwaysOn) return { changed: false };
-  return getPrisma().$transaction(async (tx) => {
-    const event = await tx.event.findUnique({ where: { id: eventId }, select: { id: true, audience: true } });
-    if (!event) throw new EventModuleError("That event does not exist.", "EVENT_NOT_FOUND");
-    // Honors applies to a general event that has honors data: look only when that decides it.
-    const present = key === "honors" && !canEnableForEvent(key, event.audience)
-      ? (await dataPresentByEvent(tx, [eventId], ["honors"])).get(eventId)
-      : undefined;
-    if (!canEnableForEvent(key, event.audience, present)) {
-      throw new EventModuleError(`${eventModuleDefinition(key).title} applies to club events only.`, "NOT_APPLICABLE");
-    }
-    const created = await tx.eventModule.createMany({ data: [{ eventId, moduleKey: key }], skipDuplicates: true });
-    if (created.count === 0) return { changed: false };
-    await writeAuditLog({
-      eventId,
-      actorUserId: actor!.id,
-      action: "EVENT_MODULE_ENABLED",
-      entityType: "EventModule",
-      entityId: key,
-      summary: `Turned on the ${eventModuleDefinition(key).title} module.`,
-      metadata: { eventId, moduleKey: key },
-    }, tx);
-    return { changed: true };
-  });
+  requireKey(moduleKey);
+  const result = await getPrisma().$transaction((tx) => enableModuleInTransaction(tx, actor, eventId, moduleKey));
+  await deliverRequestEmails(result.messageIds);
+  return { changed: result.changed };
 }
 
 /** Turns a module off. System administrators only. Removes the switch only, never the data behind it. */

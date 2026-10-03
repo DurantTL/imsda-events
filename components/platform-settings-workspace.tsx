@@ -111,7 +111,11 @@ export function PlatformSettingsWorkspace({
             <small>A link to an image already hosted somewhere you control. Leave blank for none.</small>
           </label>
           <label>Public website<input type="url" placeholder="https://imsda.org" {...field("publicWebsiteUrl")} /></label>
-          <label>Support contact<input type="email" placeholder="support@imsda.org" {...field("supportContact")} /></label>
+          <label>
+            Support contact
+            <input type="email" placeholder="support@imsda.org" {...field("supportContact")} />
+            <small>Also receives event feature requests.</small>
+          </label>
         </section>
 
         <section className="panel">
