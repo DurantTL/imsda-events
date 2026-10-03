@@ -29,7 +29,7 @@ function apiError(error: unknown) {
     return Response.json({ error: error.code, message: error.message }, { status });
   }
   if (error instanceof ModuleRequestError) {
-    return Response.json({ error: error.code, message: error.message }, { status: error.code === "INVALID_REASON" ? 400 : 409 });
+    return Response.json({ error: error.code, message: error.message }, { status: error.code === "INVALID_REASON" ? 400 : error.code === "SYSTEM_ADMIN_ENABLES_DIRECTLY" ? 403 : 409 });
   }
   logError("Module request failed", error);
   return Response.json({ error: "MODULE_REQUEST_FAILED", message: "The request could not be sent." }, { status: 500 });

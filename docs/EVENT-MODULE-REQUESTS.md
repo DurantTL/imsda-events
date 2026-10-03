@@ -6,10 +6,11 @@ decides. Code: `modules/event-modules/requests.ts`, rules in
 
 ## Who can do what
 
-- **Ask:** an active Event Admin of that event (the `CONFIGURE_EVENT`
-  permission, which only the Event Admin role carries). Finance, registration,
-  communications, check-in and read-only staff cannot. System administrators do
-  not ask: they turn modules on directly on `/more`.
+- **Ask:** anyone holding `CONFIGURE_EVENT` on the event (Event Admins by
+  default, or an explicit grant). Finance, registration, communications,
+  check-in and read-only staff cannot unless granted it. System administrators
+  do not ask (the service refuses them with
+  `SYSTEM_ADMIN_ENABLES_DIRECTLY`, 403 from the route): they turn modules on directly on `/more`.
 - **Decide:** system administrators only, from the "Feature requests" panel in
   System management (`/admin#module-requests`).
 
@@ -36,6 +37,9 @@ it on, and not an always-on module.
   changed), the request stays pending and the approval is refused.
 - Decline needs a reason (up to 500 characters), which the requester is emailed.
 - A request is decided once; a second decision is refused.
+- If a system administrator turns the module on directly while a request is
+  pending, that request is marked approved in the same transaction, audited,
+  and the requester gets the same approved email.
 
 ## Audit
 
@@ -53,6 +57,9 @@ change, then delivered best-effort after commit (the outbox sweep retries).
   setting "Support contact" (System management, Platform settings). If it is
   blank no email is queued; the request still appears in the queue.
 - **Requester:** when a decision is made, with the decline reason on a decline.
+
+Free text in these emails has `{{` and `}}` broken up, and delivery never
+replaces sentinels in `MODULE_REQUEST_*` messages.
 
 Without a Resend key nothing is delivered and the rows stay queued, which is
 what the tests read.

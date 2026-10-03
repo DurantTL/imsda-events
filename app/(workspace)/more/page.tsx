@@ -163,7 +163,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
 
       {canRequest && (
         <section className="panel module-requests" id="request-a-feature" aria-labelledby="request-a-feature-heading">
-          <h2 id="request-a-feature-heading">Request a feature</h2>
+          <h2 id="request-a-feature-heading" tabIndex={-1}>Request a feature</h2>
           <p className="quiet-copy">Ask the conference office to turn on a feature this event does not use yet. A system administrator reviews every request.</p>
           {approved.length > 0 && (
             <ul className="module-request-status" aria-label="Approved requests">

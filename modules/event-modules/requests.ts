@@ -38,7 +38,7 @@ import { findActiveMembership } from "@/modules/events/repository";
 export class ModuleRequestError extends Error {
   constructor(
     message: string,
-    public readonly code: "INVALID_REASON" | "ALREADY_ENABLED" | "ALREADY_PENDING" | "REQUEST_NOT_FOUND" | "ALREADY_DECIDED",
+    public readonly code: "INVALID_REASON" | "ALREADY_ENABLED" | "ALREADY_PENDING" | "REQUEST_NOT_FOUND" | "ALREADY_DECIDED" | "SYSTEM_ADMIN_ENABLES_DIRECTLY",
   ) {
     super(message);
     this.name = "ModuleRequestError";
@@ -69,6 +69,9 @@ export async function createModuleRequest(
   moduleKey: string,
   reasonInput: string,
 ): Promise<{ id: string }> {
+  if (actor?.globalRole === "SYSTEM_ADMIN") {
+    throw new ModuleRequestError("System administrators turn modules on directly; they do not request them.", "SYSTEM_ADMIN_ENABLES_DIRECTLY");
+  }
   const { user } = await requirePermission({ user: actor ?? null }, eventId, "CONFIGURE_EVENT", findActiveMembership);
   if (!isEventModuleKey(moduleKey)) throw new EventModuleError("That module does not exist.", "UNKNOWN_MODULE");
   const key: EventModuleKey = moduleKey;

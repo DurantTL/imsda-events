@@ -97,6 +97,13 @@ describe("POST /api/events/[eventId]/module-requests", () => {
     expect((await response.json()).error).toBe("ALREADY_PENDING");
   });
 
+  it("answers 403 when a system administrator tries to request", async () => {
+    mocks.createModuleRequest.mockRejectedValue(new ModuleRequestError("Turn it on directly.", "SYSTEM_ADMIN_ENABLES_DIRECTLY"));
+    const response = await requestPost(post({ moduleKey: "merchandise", reason: "Shirts." }), requestContext);
+    expect(response.status).toBe(403);
+    expect((await response.json()).error).toBe("SYSTEM_ADMIN_ENABLES_DIRECTLY");
+  });
+
   it("answers 429 with the rate limit headers once the limit is spent, without calling the service", async () => {
     mocks.checkModuleRequestRateLimit.mockResolvedValue({
       allowed: false,

@@ -127,6 +127,9 @@ jobs:
       # Real-database check of roster guardian contacts: slot constraints, replace-on-edit, prior-year writes refused, deletion on removal, reader scoping, and no guardian value in any audit row (#510).
       - run: npm run test:club-roster-guardians
 
+      # Real-database check of module requests: one pending per event and module under concurrent submits, approve enables in one transaction, decline needs a reason, audit holds ids only, and free text cannot become an email placeholder (#741).
+      - run: npm run test:module-requests
+
       # Real-database check of Honors Weekend sessions at sites: per-site names beside the
       # no-site rule, copying and cloning by site name with the no-match warning (#589).
       - run: npm run test:honor-sites

@@ -41,6 +41,7 @@ function fakePrisma(initial: Array<{ eventId: string; moduleKey: string }> = [],
     ...dataTables,
     $queryRaw: vi.fn(async () => []),
     event: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => (where.id === "event-1" ? { id: "event-1", audience: "GENERAL" } : where.id === "event-club" ? { id: "event-club", audience: "CLUB" } : null)) },
+    moduleRequest: { findMany: vi.fn(async () => []), updateMany: vi.fn() },
     eventModule: {
       createMany: vi.fn(async ({ data }: { data: Array<{ eventId: string; moduleKey: string }> }) => {
         let count = 0;

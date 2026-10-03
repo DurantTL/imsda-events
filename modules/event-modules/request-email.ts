@@ -31,6 +31,15 @@ import { getPlatformSettings } from "@/modules/system-admin/platform-settings";
 
 type Outbox = Pick<Prisma.TransactionClient, "messageOutbox">;
 
+/**
+ * Free text (a reason, an event name) goes into a body that delivery scans for
+ * `{{...}}` sentinels. Breaking up the braces means nothing a person types can
+ * ever look like one. Delivery also skips sentinel handling for these templates.
+ */
+export function neutralizePlaceholders(value: string): string {
+  return value.replaceAll("{{", "{ {").replaceAll("}}", "} }");
+}
+
 function link(path: string) {
   try {
     return new URL(path, getServerEnv().APP_BASE_URL).toString();
@@ -62,7 +71,14 @@ export async function conferenceOfficeAddress(): Promise<string | null> {
   return settings.supportContact?.trim() || null;
 }
 
-export async function queueRequestSubmittedEmail(client: Outbox, officeEmail: string | null, input: SubmittedEmailInput): Promise<string[]> {
+export async function queueRequestSubmittedEmail(client: Outbox, officeEmail: string | null, rawInput: SubmittedEmailInput): Promise<string[]> {
+  const input = {
+    ...rawInput,
+    moduleTitle: neutralizePlaceholders(rawInput.moduleTitle),
+    eventName: neutralizePlaceholders(rawInput.eventName),
+    requesterName: neutralizePlaceholders(rawInput.requesterName),
+    reason: neutralizePlaceholders(rawInput.reason),
+  };
   if (!officeEmail) {
     logInfo("A module request was made but no conference office address is set in platform settings.", { requestId: input.requestId });
     return [];
@@ -115,11 +131,17 @@ export type DecidedEmailInput = {
   declineReason?: string;
 };
 
-export async function queueRequestDecidedEmail(client: Outbox, input: DecidedEmailInput): Promise<string[]> {
+export async function queueRequestDecidedEmail(client: Outbox, rawInput: DecidedEmailInput): Promise<string[]> {
+  const input = {
+    ...rawInput,
+    moduleTitle: neutralizePlaceholders(rawInput.moduleTitle),
+    eventName: neutralizePlaceholders(rawInput.eventName),
+    declineReason: rawInput.declineReason === undefined ? undefined : neutralizePlaceholders(rawInput.declineReason),
+  };
   const from = await sender();
   if (!from) return [];
   const approved = input.decision === "APPROVED";
-  const name = input.requester.displayName.trim() || "there";
+  const name = neutralizePlaceholders(input.requester.displayName.trim()) || "there";
   const message = await client.messageOutbox.create({
     data: {
       eventId: null,
@@ -127,7 +149,7 @@ export async function queueRequestDecidedEmail(client: Outbox, input: DecidedEma
       templateKey: "MODULE_REQUEST_DECIDED",
       recipientKind: "ACCOUNT",
       recipientEmail: input.requester.email,
-      recipientName: input.requester.displayName.trim() || null,
+      recipientName: rawInput.requester.displayName.trim() || null,
       senderNameSnapshot: from.name,
       senderEmailSnapshot: from.address,
       replyToEmailSnapshot: from.replyTo,

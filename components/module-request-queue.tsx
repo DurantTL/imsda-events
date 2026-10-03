@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MODULE_REQUEST_DECLINE_REASON_MAX } from "@/modules/event-modules/request-domain";
 
 export type QueuedModuleRequest = {
@@ -25,6 +25,11 @@ export function ModuleRequestQueue({ requests }: { requests: readonly QueuedModu
   const [declining, setDeclining] = useState<string | null>(null);
   const [declineReason, setDeclineReason] = useState("");
   const [error, setError] = useState<{ id: string; message: string } | null>(null);
+  const declineRef = useRef<HTMLTextAreaElement>(null);
+  // Choosing Decline moves focus to its reason box.
+  useEffect(() => {
+    if (declining) declineRef.current?.focus();
+  }, [declining]);
 
   async function decide(id: string, body: object) {
     setBusyId(id);
@@ -42,6 +47,8 @@ export function ModuleRequestQueue({ requests }: { requests: readonly QueuedModu
       setDeclining(null);
       setDeclineReason("");
       router.refresh();
+      // The decided row leaves the list: keep focus on the panel heading.
+      document.getElementById("module-requests-heading")?.focus();
     } catch (caught) {
       setError({ id, message: caught instanceof Error ? caught.message : "The decision could not be saved." });
     } finally {
@@ -69,6 +76,7 @@ export function ModuleRequestQueue({ requests }: { requests: readonly QueuedModu
               <label htmlFor={`decline-${request.id}`}>Why is this declined? The requester is emailed this.</label>
               <textarea
                 id={`decline-${request.id}`}
+                ref={declineRef}
                 value={declineReason}
                 onChange={(event) => setDeclineReason(event.target.value)}
                 maxLength={MODULE_REQUEST_DECLINE_REASON_MAX}

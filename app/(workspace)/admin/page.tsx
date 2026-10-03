@@ -215,7 +215,7 @@ export default async function SystemAdminPage({
 
       <section className="panel module-requests" id="module-requests" aria-labelledby="module-requests-heading">
         <div className={styles.sectionHeading}>
-          <div><p className="eyebrow">Event modules</p><h2 id="module-requests-heading">Feature requests</h2><p>Event admins asking for a feature to be turned on. Approving turns it on for that event; declining needs a reason.</p></div>
+          <div><p className="eyebrow">Event modules</p><h2 id="module-requests-heading" tabIndex={-1}>Feature requests</h2><p>Event admins asking for a feature to be turned on. Approving turns it on for that event; declining needs a reason.</p></div>
           <span>{moduleRequests.length} waiting</span>
         </div>
         {moduleRequests.length === 0

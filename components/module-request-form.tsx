@@ -32,6 +32,8 @@ export function ModuleRequestForm({ eventId, moduleKey, title }: { eventId: stri
       }
       setReason("");
       router.refresh();
+      // The form may disappear (a pending request replaces it): keep focus on the panel.
+      document.getElementById("request-a-feature-heading")?.focus();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The request could not be sent.");
     } finally {

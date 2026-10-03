@@ -37,7 +37,8 @@ import {
   listPendingModuleRequests,
   ModuleRequestError,
 } from "@/modules/event-modules/requests";
-import { EventModuleError } from "@/modules/event-modules/service";
+import { neutralizePlaceholders } from "@/modules/event-modules/request-email";
+import { enableModule, EventModuleError } from "@/modules/event-modules/service";
 
 const systemAdmin: AuthenticatedUser = { id: "user-admin", email: "admin@imsda-events.test", displayName: "Alex Admin", globalRole: "SYSTEM_ADMIN" } as AuthenticatedUser;
 const eventAdmin: AuthenticatedUser = { id: "user-ea", email: "ea@imsda-events.test", displayName: "Eli EventAdmin", globalRole: null } as AuthenticatedUser;
@@ -72,6 +73,9 @@ function fakeDatabase(options: { products?: boolean } = {}) {
       }),
     },
     moduleRequest: {
+      findMany: vi.fn(async ({ where }: any) => requests
+        .filter((r) => r.eventId === where.eventId && r.moduleKey === where.moduleKey && r.status === where.status)
+        .map((r) => ({ id: r.id, event: { name: events.get(r.eventId)!.name }, requestedBy: users.get(r.requestedByUserId ?? "") ?? null }))),
       findFirst: vi.fn(async ({ where }: any) => requests.find((r) => r.eventId === where.eventId && r.moduleKey === where.moduleKey && r.status === where.status) ?? null),
       create: vi.fn(async ({ data }: any) => {
         const row: RequestRow = { id: `req-${++sequence}`, status: "PENDING", decidedByUserId: null, decidedAt: null, declineReason: null, createdAt: new Date(2026, 9, 3, 12, sequence), ...data };
@@ -343,5 +347,48 @@ describe("the System management queue", () => {
     await createModuleRequest(eventAdmin, "event-general", "merchandise", "Shirts.");
     const queue = await listPendingModuleRequests();
     expect(queue).toEqual([expect.objectContaining({ eventName: "Synthetic Congress", moduleTitle: "Merchandise", requesterName: "Eli EventAdmin", reason: "Shirts." })]);
+  });
+});
+
+describe("system administrators", () => {
+  it("cannot request: refused with a clear code (the route answers 403), nothing queued", async () => {
+    const db = fakeDatabase();
+    await expect(createModuleRequest(systemAdmin, "event-general", "merchandise", "Because.")).rejects.toMatchObject({ code: "SYSTEM_ADMIN_ENABLES_DIRECTLY" });
+    expect(db.requests).toHaveLength(0);
+    expect(db.outbox).toHaveLength(0);
+  });
+
+  it("answer a pending request by turning the module on directly: approved by them, audited, requester emailed", async () => {
+    const db = fakeDatabase();
+    const { id } = await createModuleRequest(eventAdmin, "event-general", "merchandise", "Shirts.");
+    mocks.writeAuditLog.mockClear();
+    await enableModule(systemAdmin, "event-general", "merchandise");
+    expect(db.modules).toEqual([{ eventId: "event-general", moduleKey: "merchandise" }]);
+    expect(db.requests[0]).toMatchObject({ id, status: "APPROVED", decidedByUserId: "user-admin", decidedAt: expect.any(Date) });
+    const audits = mocks.writeAuditLog.mock.calls.map(([entry]) => entry);
+    expect(audits.map((entry) => entry.action)).toEqual(["MODULE_REQUEST_APPROVED", "EVENT_MODULE_ENABLED"]);
+    expect(audits[0].metadata).toEqual({ eventId: "event-general", moduleKey: "merchandise", requestId: id });
+    expect(db.outbox.at(-1)).toMatchObject({ templateKey: "MODULE_REQUEST_DECIDED", recipientEmail: "ea@imsda-events.test" });
+    expect(db.outbox.at(-1)!.subjectSnapshot).toContain("Merchandise is now on");
+  });
+
+  it("enabling with no pending request changes no request and sends no email", async () => {
+    const db = fakeDatabase();
+    await enableModule(systemAdmin, "event-general", "merchandise");
+    expect(db.requests).toHaveLength(0);
+    expect(db.outbox).toHaveLength(0);
+  });
+});
+
+describe("free text in emails", () => {
+  it("breaks up {{ and }} in the reason, event name and decline reason", async () => {
+    expect(neutralizePlaceholders("a {{account_action_link}} b")).toBe("a { {account_action_link} } b");
+    const db = fakeDatabase();
+    const { id } = await createModuleRequest(eventAdmin, "event-general", "merchandise", "Click {{account_action_link}} now");
+    expect(db.outbox[0].bodyTextSnapshot).not.toContain("{{");
+    expect(db.outbox[0].bodyTextSnapshot).toContain("{ {account_action_link} }");
+    await decideModuleRequest(systemAdmin, id, { decision: "decline", declineReason: "No {{account_action_link}}" });
+    expect(db.outbox.at(-1)!.bodyTextSnapshot).not.toContain("{{");
+    expect(db.outbox.at(-1)!.bodyTextSnapshot).toContain("No { {account_action_link} }");
   });
 });

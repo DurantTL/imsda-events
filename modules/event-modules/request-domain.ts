@@ -4,10 +4,11 @@ import { z } from "zod";
  * Module requests (#741 slice 3). Pure and client-safe: the limits and the
  * re-request rule live here so the form, the routes and the service agree.
  *
- * Who may ask: an event admin of that event (the `CONFIGURE_EVENT` permission,
- * which only the Event Admin role carries). Other roles, including finance,
- * registration and communications staff, cannot. System administrators do not
- * ask: they turn modules on directly.
+ * Who may ask: anyone holding `CONFIGURE_EVENT` on the event (Event Admins by
+ * default, or a staff member given that permission explicitly). Other staff,
+ * including finance, registration and communications, cannot. System
+ * administrators do not ask (the service refuses them): they turn modules on
+ * directly.
  *
  * Re-request rules:
  * - A pending request blocks another for the same event and module (the

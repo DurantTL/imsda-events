@@ -34,6 +34,8 @@ function fakePrisma(initial: Array<{ eventId: string; moduleKey: string }> = [],
   const writes: string[] = [];
   const tx = {
     event: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => (where.id === "event-1" ? { id: "event-1", audience: "CLUB" } : where.id === "event-general" ? { id: "event-general", audience: "GENERAL" } : null)) },
+    // No pending module requests (#741 slice 3): enabling has none to answer.
+    moduleRequest: { findMany: vi.fn(async () => []), updateMany: vi.fn() },
     eventModule: {
       createMany: vi.fn(async ({ data }: { data: Array<{ eventId: string; moduleKey: string }> }) => {
         writes.push("eventModule.create");
