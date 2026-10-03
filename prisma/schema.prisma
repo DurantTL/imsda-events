@@ -812,6 +812,18 @@ model AttendeeAccount {
   shirtSize          String?
   dietaryNeeds       String?
   accessibilityNeeds String?
+  /// Optional mailing address and emergency contact the attendee keeps for
+  /// themselves (#742). Used only to prefill their own registration forms;
+  /// never listed or exported for staff. Components follow `AddressValue`.
+  mailingLine1                 String?
+  mailingLine2                 String?
+  mailingCity                  String?
+  mailingRegion                String?
+  mailingPostalCode            String?
+  mailingCountry               String?
+  emergencyContactName         String?
+  emergencyContactRelationship String?
+  emergencyContactPhone        String?
   status             AttendeeAccountStatus @default(PENDING_VERIFICATION)
   emailVerifiedAt    DateTime?
   /**
