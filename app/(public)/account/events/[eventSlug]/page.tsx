@@ -16,6 +16,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { AttendeeCommunityBoard } from "@/components/attendee-community-board";
+import { AttendeePassGrid } from "@/components/attendee-pass-grid";
 import { BrandMark } from "@/components/brand-mark";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
@@ -208,25 +209,11 @@ export default async function AttendeeEventHubPage({
                 </ul>
                 <details className="attendee-hub-pass-details">
                   <summary><QrCode size={16} aria-hidden="true" /> Show attendee QR passes</summary>
-                  <div className="public-attendee-pass-grid">
-                    {registration.attendees.map((attendee) => (
-                      <article className="public-attendee-pass" key={attendee.id}>
-                        <div className="public-attendee-pass-heading">
-                          <span><QrCode size={19} aria-hidden="true" /></span>
-                          <strong translate="no">{attendee.name}</strong>
-                        </div>
-                        {/* Private dynamic image; the response explicitly disables caching. */}
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          alt={`QR event pass for ${attendee.name}`}
-                          height={280}
-                          loading="lazy"
-                          src={`/api/attendee/registrations/${encodeURIComponent(registration.id)}/attendee-passes/${encodeURIComponent(attendee.id)}/qr`}
-                          width={280}
-                        />
-                      </article>
-                    ))}
-                  </div>
+                  <AttendeePassGrid
+                    attendees={registration.attendees}
+                    registrationId={registration.id}
+                    via={attendeeSession.via}
+                  />
                 </details>
               </article>
             ))}

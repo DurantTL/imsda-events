@@ -142,6 +142,7 @@ describe("attendee routes behind the second-step gate (#744)", () => {
   });
 
   it("refuses a QR pass to staff acting as an attendee", async () => {
+    mocks.pending.mockResolvedValue(true); // act-as is refused before the second-step gate
     mocks.getCurrentAttendee.mockResolvedValue({
       account: { id: "account-1", verifiedEmail: "guest@example.test", displayName: "Guest" },
       via: "staff",
@@ -149,7 +150,11 @@ describe("attendee routes behind the second-step gate (#744)", () => {
     });
     const response = await qr();
     expect(response.status).toBe(403);
-    expect(await response.json()).toMatchObject({ error: "ACT_AS_NOT_ALLOWED" });
+    expect(await response.json()).toMatchObject({
+      code: "ACT_AS_NOT_ALLOWED",
+      error: "ACT_AS_NOT_ALLOWED",
+      message: "Switch to your attendee account to show passes.",
+    });
     expect(response.headers.get("cache-control")).toContain("no-store");
     expect(mocks.createAccountAttendeePass).not.toHaveBeenCalled();
     expect(mocks.qrToString).not.toHaveBeenCalled();

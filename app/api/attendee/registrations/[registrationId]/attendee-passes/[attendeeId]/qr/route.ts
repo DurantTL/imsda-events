@@ -28,7 +28,7 @@ async function getHandler(_request: Request, context: Context) {
     }
     if (via !== "attendee") {
       return Response.json(
-        { error: "ACT_AS_NOT_ALLOWED", message: "Attendee passes cannot be shown while acting as an attendee." },
+        { code: "ACT_AS_NOT_ALLOWED", error: "ACT_AS_NOT_ALLOWED", message: "Switch to your attendee account to show passes." },
         { status: 403, headers: privateHeaders },
       );
     }
