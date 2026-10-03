@@ -84,7 +84,7 @@ describe("Club info page (#644)", () => {
     expect(mocks.getClubProfile).not.toHaveBeenCalled();
   });
 
-  it("tells a viewer with neither capability that only the director or deputy can change club info", async () => {
+  it("tells a viewer with neither capability that only the director or deputy can change club settings", async () => {
     mocks.getRosterAccessStateForPage.mockResolvedValue(open(false, false));
     const tree = await ClubInfoPage(params);
     const types = typesIn(tree);

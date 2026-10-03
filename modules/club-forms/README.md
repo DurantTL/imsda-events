@@ -90,8 +90,10 @@ the birth-date class needs no re-seal, since both classes are sealed.
 
 The re-seal runs in the **sync step**, `npm run club-forms:sync`, which
 `docker-entrypoint.sh` runs after `prisma migrate deploy` and before the app
-starts (run it by hand locally after `db:seed`). It is never run by the admin
-page or a request. It carries on past a form it refuses, reports every refusal
+starts (run it by hand locally after `db:seed`). A system administrator can also
+run the same `syncClubFormTemplates` from **Sync templates** on `/admin/club-forms`
+(`POST /api/admin/club-forms/sync`, #742): it shows UPDATED / SKIPPED / unchanged
+per form, and its audit entry (`CLUB_FORM_TEMPLATES_SYNCED`) holds counts only. It carries on past a form it refuses, reports every refusal
 and exits non-zero. Until it has run for a version bump, writers refuse the
 behind form ("temporarily unavailable"), the admin page shows "Needs sync", and
 readers and the CSV restrict the union of the stored and the code's sensitive

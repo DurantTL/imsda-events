@@ -25,7 +25,7 @@ import {
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Your registrations",
+  title: "My registrations",
   description: "Every IMSDA event registration made with your email address.",
   robots: { index: false, follow: false, nocache: true },
 };
@@ -157,8 +157,7 @@ export default async function AttendeeRegistrationsPage() {
     <>
       <section className="public-registration-hero public-manage-hero account-page-hero">
         <div>
-          <p className="public-registration-eyebrow">Your registrations</p>
-          <h1>Registrations</h1>
+          <h1>My registrations</h1>
           <p>
             Everything registered with <strong>{account.verifiedEmail}</strong>
           </p>

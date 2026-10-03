@@ -82,7 +82,7 @@ describe("club portal child routes keep their tab (#737)", () => {
 
   it("keeps existing active states", () => {
     expect(active(base)).toEqual(["Home"]);
-    expect(active(`${base}/events/e1/packet`)).toEqual(["Events"]);
+    expect(active(`${base}/events/e1/packet`)).toEqual(["Club events"]);
     expect(active(`${base}/exports/class-tracking`)).not.toContain("Honors");
   });
 
@@ -90,7 +90,7 @@ describe("club portal child routes keep their tab (#737)", () => {
     const reporter = clubReporterNavItems({ base, capabilities: clubCapabilities("DIRECTOR") });
     expect(active(`${base}/reports/year-end/2026`, reporter)).toEqual(["Monthly Records"]);
     expect(director.map((item) => item.label)).toEqual(
-      ["Home", "Roster", "Honors", "Class tracking", "Events", "Forms", "Health", "Monthly Records", "Orders", "Club info"],
+      ["Home", "Roster", "Honors", "Class tracking", "Club events", "Forms", "Health", "Monthly Records", "Orders", "Club settings"],
     );
   });
 

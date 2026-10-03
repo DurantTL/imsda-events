@@ -36,6 +36,7 @@ describe("area coordinator club menu (#722)", () => {
     expect(items.map((item) => item.label)).not.toContain("Background checks");
     expect(items.map((item) => item.label)).not.toContain("Class tracking");
     expect(items.map((item) => item.label)).not.toContain("Club info");
+    expect(items.map((item) => item.label)).not.toContain("Club settings");
   });
 
   it("uses the director portal's grouping and headings-off style", () => {

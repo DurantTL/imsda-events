@@ -6,11 +6,11 @@ import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { getClubProfile, listChurchOptions } from "@/modules/organizations/club-profile-repository";
 import { listClubTeam } from "@/modules/organizations/director-grants-repository";
 
-export const metadata: Metadata = { title: "Club info" };
+export const metadata: Metadata = { title: "Club settings" };
 export const dynamic = "force-dynamic";
 
 /**
- * Club info (#644): the club profile (#375) first, the club admins (#375, #425)
+ * Club settings, formerly Club info (#644): the club profile (#375) first, the club admins (#375, #425)
  * below. Each section keeps its own capability: `editProfile` and
  * `manageTeam`. The old `/profile` and `/team` addresses redirect to the anchors.
  */
@@ -22,7 +22,7 @@ export default async function ClubInfoPage({ params }: { params: Promise<{ organ
   if (!editProfile && !manageTeam) {
     return (
       <>
-        <p className="public-manage-empty">Only the club&apos;s director or deputy can change the club&apos;s info.</p>
+        <p className="public-manage-empty">Only the club&apos;s director or deputy can change the club&apos;s settings.</p>
       </>
     );
   }

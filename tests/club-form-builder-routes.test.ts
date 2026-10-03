@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   discardClubFormDraft: vi.fn(),
   publishClubFormDraft: vi.fn(),
   setClubFormTemplateEnabled: vi.fn(),
+  runClubFormTemplateSync: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -21,7 +22,7 @@ vi.mock("@/modules/club-forms/builder", () => ({
   discardClubFormDraft: mocks.discardClubFormDraft,
   publishClubFormDraft: mocks.publishClubFormDraft,
 }));
-vi.mock("@/modules/club-forms/templates", () => ({ setClubFormTemplateEnabled: mocks.setClubFormTemplateEnabled }));
+vi.mock("@/modules/club-forms/templates", () => ({ setClubFormTemplateEnabled: mocks.setClubFormTemplateEnabled, runClubFormTemplateSync: mocks.runClubFormTemplateSync }));
 vi.mock("@/modules/club-rosters/access", () => ({
   RosterAccessError: class RosterAccessError extends Error {
     constructor(public readonly code: string, public readonly status: number, message: string) {
@@ -38,6 +39,7 @@ import { PATCH as TOGGLE } from "@/app/api/admin/club-forms/[templateKey]/route"
 import { DELETE as DISCARD, PUT as SAVE } from "@/app/api/admin/club-forms/[templateKey]/draft/route";
 import { POST as PUBLISH } from "@/app/api/admin/club-forms/[templateKey]/publish/route";
 import { POST as CREATE } from "@/app/api/admin/club-forms/route";
+import { POST as SYNC } from "@/app/api/admin/club-forms/sync/route";
 import { ClubFormError } from "@/modules/club-forms/errors";
 
 const admin = { id: "admin-1", globalRole: "SYSTEM_ADMIN" };
@@ -51,6 +53,7 @@ const routes: Array<{ name: string; call: () => Promise<Response>; service: () =
   { name: "save draft", call: () => SAVE(json({ draft: {}, baseVersion: 1 }, "PUT"), key), service: () => mocks.saveClubFormDraft },
   { name: "discard draft", call: () => DISCARD(json({}, "DELETE"), key), service: () => mocks.discardClubFormDraft },
   { name: "publish", call: () => PUBLISH(json({ baseVersion: 1 }), key), service: () => mocks.publishClubFormDraft },
+  { name: "sync templates", call: () => SYNC(json({})), service: () => mocks.runClubFormTemplateSync },
   { name: "enable", call: () => TOGGLE(json({ enabled: true }, "PATCH"), key), service: () => mocks.setClubFormTemplateEnabled },
 ];
 
@@ -63,6 +66,19 @@ beforeEach(() => {
   mocks.discardClubFormDraft.mockResolvedValue({ key: "synthetic_form", version: 1 });
   mocks.publishClubFormDraft.mockResolvedValue({ key: "synthetic_form", version: 2 });
   mocks.setClubFormTemplateEnabled.mockResolvedValue({ key: "synthetic_form", enabled: true });
+  mocks.runClubFormTemplateSync.mockResolvedValue({ results: [], counts: { updated: 0, created: 0, skipped: 0, unchanged: 0, refused: 0, staleDrafts: 0 } });
+});
+
+describe("Sync templates is single-flight (#742)", () => {
+  it("answers 409 SYNC_RUNNING, with a reload hint, when another sync holds the lock", async () => {
+    mocks.runClubFormTemplateSync.mockResolvedValue({ running: true });
+    const response = await SYNC(json({}));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      code: "SYNC_RUNNING",
+      message: "A sync is already running. Reload in a minute to see each form's status.",
+    });
+  });
 });
 
 describe("club form builder routes are for system administrators only (#712)", () => {

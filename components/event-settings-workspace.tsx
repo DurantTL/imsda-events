@@ -46,6 +46,8 @@ type EventSettingsWorkspaceProps = {
   canDeleteEvent?: boolean;
 };
 
+type PublishBlocker = { text: string; actionLabel?: string; targetId?: string; href?: string };
+
 type EventApiResult = {
   event?: EventSettingsRecord;
   message?: string;
@@ -138,6 +140,8 @@ export function EventSettingsWorkspace({
   const [unpublishError, setUnpublishError] = useState("");
   const [slugWasEdited, setSlugWasEdited] = useState(mode === "edit");
   const [saving, setSaving] = useState(false);
+  // Save and Publish report separately: this is the Save result, shown in the sticky bar.
+  const [saveMessage, setSaveMessage] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [copiedFormSlug, setCopiedFormSlug] = useState("");
@@ -167,6 +171,7 @@ export function EventSettingsWorkspace({
     setDraft((current) => ({ ...current, [key]: value }));
     setError("");
     setNotice("");
+    setSaveMessage(null);
   }
 
   function updateName(name: string) {
@@ -177,11 +182,13 @@ export function EventSettingsWorkspace({
     }));
     setError("");
     setNotice("");
+    setSaveMessage(null);
   }
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
+    setSaveMessage(null);
     setError("");
     setNotice("");
     try {
@@ -226,15 +233,59 @@ export function EventSettingsWorkspace({
       setPublishedFormCount(result.event.publishedFormCount);
       setPublished(result.event.isPublished);
       setSetupWarnings(result.event.warnings ?? []);
-      setNotice("Event settings saved.");
+      setSaveMessage({ kind: "success", text: "Event settings saved." });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The event could not be saved.");
+      setSaveMessage({ kind: "error", text: caught instanceof Error ? caught.message : "The event could not be saved." });
     } finally {
       setSaving(false);
     }
   }
 
+  // The first thing standing between this event and Publish (#742): unsaved
+  // edits first (Publish checks what is saved), then the first unmet checklist
+  // item, each with the control that fixes it.
+  const publishBlocker = useMemo<PublishBlocker | null>(() => {
+    if (publishBlockedBySave) {
+      // While saving there is nothing to go to: the save bar already says "Saving…".
+      return saving
+        ? { text: "Saving your changes…" }
+        : { text: "You have unsaved changes. Save event settings first; Publish checks the saved settings.", actionLabel: "Go to Save event settings", targetId: "event-save-button" };
+    }
+    const missing = readiness.items.find((item) => !item.complete);
+    if (!missing) return null;
+    if (missing.id === "registration-form") {
+      return { text: "Can't publish yet: a published registration form is missing.", actionLabel: "Open registration form", href: `/registration-builder?event=${initialEvent?.id ?? ""}` };
+    }
+    if (missing.id === "basics") {
+      const first = ([
+        ["name", "event-field-name", "Event name"],
+        ["slug", "event-field-slug", "Short web address"],
+        ["startsOn", "event-field-starts-on", "Starts on"],
+        ["endsOn", "event-field-ends-on", "Ends on"],
+        ["timezone", "event-field-timezone", "Event timezone"],
+      ] as const).find(([key]) => !String(savedDraft[key] ?? "").trim());
+      const [, targetId, controlLabel] = first ?? ["name", "event-field-name", "Event name"];
+      return { text: `Can't publish yet: ${controlLabel} is missing.`, actionLabel: `Go to ${controlLabel}`, targetId };
+    }
+    if (missing.id === "location") return { text: "Can't publish yet: the event location is missing.", actionLabel: "Go to Location", targetId: "event-field-location" };
+    if (missing.id === "support") return { text: "Can't publish yet: the registration support contact is missing.", actionLabel: "Go to Registration support contact", targetId: "event-field-support-contact" };
+    return { text: "Can't publish yet: club registration needs church billing.", actionLabel: "Go to Billing mode", targetId: "event-field-billing-mode" };
+  }, [publishBlockedBySave, saving, readiness, savedDraft, initialEvent?.id]);
+
+  function goToControl(targetId: string) {
+    const target = document.getElementById(targetId);
+    if (!target) return;
+    const details = target.closest("details");
+    if (details && !details.open) details.open = true;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.focus({ preventScroll: true });
+  }
+
   function openPublishDialog() {
+    if (publishBlocker) {
+      if (publishBlocker.targetId) goToControl(publishBlocker.targetId);
+      return;
+    }
     if (!canPublish) return;
     setPublishError("");
     setPublishDialogOpen(true);
@@ -504,7 +555,8 @@ export function EventSettingsWorkspace({
       <div className="page-intro">
         <div>
           <p className="eyebrow">{mode === "create" ? "New event setup" : "Event setup"}</p>
-          <h2>{mode === "create" ? "Create an event draft" : "Event settings"}</h2>
+          {/* In edit mode the staff header already carries the page's one H1, "Event settings" (#742). */}
+          {mode === "create" && <h2>Create an event draft</h2>}
           <p>
             {mode === "create"
               ? "Start with the information attendees and staff need. The event stays private until its registration form and publish checklist are ready."
@@ -530,6 +582,7 @@ export function EventSettingsWorkspace({
             <label>
               Event name
               <input
+                id="event-field-name"
                 value={draft.name}
                 minLength={3}
                 maxLength={120}
@@ -542,6 +595,7 @@ export function EventSettingsWorkspace({
             <label>
               Short web address
               <span className="event-slug-input"><b>/register/</b><input
+                id="event-field-slug"
                 value={draft.slug}
                 minLength={3}
                 maxLength={80}
@@ -556,12 +610,12 @@ export function EventSettingsWorkspace({
               <small>Lowercase letters, numbers, and hyphens. Changing this later changes registration links.</small>
             </label>
             <div className="form-grid two-column">
-              <label>Starts on<input type="date" required value={draft.startsOn} onChange={(event) => update("startsOn", event.target.value)} /></label>
-              <label>Ends on<input type="date" required min={draft.startsOn || undefined} value={draft.endsOn} onChange={(event) => update("endsOn", event.target.value)} /></label>
+              <label>Starts on<input id="event-field-starts-on" type="date" required value={draft.startsOn} onChange={(event) => update("startsOn", event.target.value)} /></label>
+              <label>Ends on<input id="event-field-ends-on" type="date" required min={draft.startsOn || undefined} value={draft.endsOn} onChange={(event) => update("endsOn", event.target.value)} /></label>
             </div>
             <label>
               Event timezone
-              <select value={draft.timezone} onChange={(event) => update("timezone", event.target.value as EventSettingsInput["timezone"])}>
+              <select id="event-field-timezone" value={draft.timezone} onChange={(event) => update("timezone", event.target.value as EventSettingsInput["timezone"])}>
                 {eventTimeZones.map((zone) => <option value={zone} key={zone}>{timeZoneLabels[zone]} ({zone})</option>)}
               </select>
               <small>Registration opening, closing, and late-price dates use this timezone.</small>
@@ -569,11 +623,11 @@ export function EventSettingsWorkspace({
             <div className="form-grid two-column">
               <label>
                 Location
-                <span className="input-with-icon"><MapPin size={16} aria-hidden="true" /><input value={draft.location ?? ""} maxLength={200} placeholder="Camp Heritage, Clarksburg, MO" onChange={(event) => update("location", event.target.value || null)} /></span>
+                <span className="input-with-icon"><MapPin size={16} aria-hidden="true" /><input id="event-field-location" value={draft.location ?? ""} maxLength={200} placeholder="Camp Heritage, Clarksburg, MO" onChange={(event) => update("location", event.target.value || null)} /></span>
               </label>
               <label>
                 Overall attendee limit
-                <span className="input-with-icon"><UsersRound size={16} aria-hidden="true" /><input type="number" min={1} max={100000} value={draft.capacity ?? ""} placeholder="No overall limit" onChange={(event) => update("capacity", event.target.value ? Number(event.target.value) : null)} /></span>
+                <span className="input-with-icon"><UsersRound size={16} aria-hidden="true" /><input id="event-field-capacity" type="number" min={1} max={100000} value={draft.capacity ?? ""} placeholder="No overall limit" onChange={(event) => update("capacity", event.target.value ? Number(event.target.value) : null)} /></span>
               </label>
             </div>
           </section>
@@ -622,6 +676,7 @@ export function EventSettingsWorkspace({
             <label>
               Billing mode
               <select
+                id="event-field-billing-mode"
                 value={draft.billingMode}
                 onChange={(event) => update(
                   "billingMode",
@@ -668,7 +723,7 @@ export function EventSettingsWorkspace({
             </label>
             <label>
               Registration support contact
-              <input value={draft.supportContact ?? ""} maxLength={200} placeholder="registration@imsda.org or conference office phone" onChange={(event) => update("supportContact", event.target.value || null)} />
+              <input id="event-field-support-contact" value={draft.supportContact ?? ""} maxLength={200} placeholder="registration@imsda.org or conference office phone" onChange={(event) => update("supportContact", event.target.value || null)} />
               <small>Enter the email, phone number, or office name attendees should use for help.</small>
             </label>
             <label>
@@ -730,7 +785,7 @@ export function EventSettingsWorkspace({
             ))}
             {/* Never blocks publish (#593): dates and fees staff still need to set. */}
             {setupWarnings.map((warning) => (
-              <div className="inline-notice clone-warning" key={warning.id} role="status"><AlertTriangle size={17} aria-hidden="true" /> <span><strong>{warning.label}.</strong> {warning.detail}{warning.href ? <>{" "}<Link href={warning.href}>Open the registration form</Link></> : null}</span></div>
+              <div className="inline-notice clone-warning" key={warning.id} role="status"><AlertTriangle size={17} aria-hidden="true" /> <span><strong>{warning.label}.</strong> {warning.detail}{warning.href ? <>{" "}<Link href={warning.href}>{warning.href.includes("&field=") ? "Go to the fee field" : "Open the registration form"}</Link></> : null}</span></div>
             ))}
             {/* Never blocks publish (#467): shown for visibility only. */}
             <p className="event-readiness-optional-heading">Optional</p>
@@ -752,23 +807,33 @@ export function EventSettingsWorkspace({
               // its own request the instant it's clicked — never folded into
               // the settings save below, so unpublishing can't happen as a
               // side effect of an unrelated save.
-              <div className={`event-publish-toggle ${readiness.ready ? "ready" : ""}`}>
+              <div className={`event-publish-toggle ${readiness.ready && !publishBlocker ? "ready" : ""}`}>
                 <span>
                   <strong>{published ? "Public registration is on" : "Publish this event"}</strong>
                   <small>
                     {published
                       ? "Unpublish to close every public form immediately."
-                      : publishBlockedBySave
-                        ? "Save your changes first. Publishing checks the saved settings."
-                        : "Available after every checklist item is complete."}
+                      : publishBlocker
+                        ? "Publishing is separate from saving. It needs one thing first:"
+                        : "Every checklist item is complete. Publishing turns on public registration."}
                   </small>
                 </span>
+                {!published && publishBlocker && (
+                  <p className="event-publish-blocker" id="event-publish-blocker">
+                    <AlertTriangle size={15} aria-hidden="true" /> {publishBlocker.text}{" "}
+                    {!publishBlocker.actionLabel
+                      ? null
+                      : publishBlocker.href
+                      ? <Link href={publishBlocker.href}>{publishBlocker.actionLabel}</Link>
+                      : <button className="text-button" onClick={() => publishBlocker.targetId && goToControl(publishBlocker.targetId)} type="button">{publishBlocker.actionLabel}</button>}
+                  </p>
+                )}
                 {published ? (
                   <button className="secondary-button full-button" disabled={unpublishing} onClick={openUnpublishDialog} type="button">
-                    Unpublish event
+                    {unpublishing ? "Unpublishing…" : "Unpublish event"}
                   </button>
                 ) : (
-                  <button className="primary-button full-button" disabled={!canPublish} onClick={openPublishDialog} type="button">
+                  <button aria-describedby={publishBlocker ? "event-publish-blocker" : undefined} aria-disabled={Boolean(publishBlocker) || publishing} className="primary-button full-button event-publish-button" onClick={openPublishDialog} type="button">
                     {publishing ? "Publishing…" : "Publish event"}
                   </button>
                 )}
@@ -827,15 +892,24 @@ export function EventSettingsWorkspace({
             </section>
           )}
 
-          <section className="panel event-save-panel">
-            <p>{mode === "create" ? "Nothing is public when this draft is created." : "Saving never changes whether this event is published — use Publish or Unpublish above for that."}</p>
-            {dirty && <span className="unsaved-dot" role="status">Unsaved changes</span>}
-            <button className="primary-button full-button" type="submit" disabled={saving || !dirty}>
-              <Save size={16} aria-hidden="true" />
-              {saving ? "Saving…" : mode === "create" ? "Create event draft" : "Save event settings"}
-            </button>
-          </section>
         </aside>
+        <div className="event-savebar" role="region" aria-label="Save event settings">
+          <p className="event-savebar-status" aria-live={saveMessage?.kind === "error" ? "assertive" : "polite"}>
+            {saveMessage
+              ? <span className={saveMessage.kind === "error" ? "event-savebar-error" : "event-savebar-ok"} >{saveMessage.text}</span>
+              : saving
+                ? "Saving…"
+                : dirty
+                  ? <span className="unsaved-dot">Unsaved changes</span>
+                  : mode === "create"
+                    ? "Nothing is public when this draft is created."
+                    : published ? "All changes saved. Saving never changes whether this event is published." : "All changes saved. Saving never publishes the event."}
+          </p>
+          <button className="primary-button" disabled={saving || !dirty} id="event-save-button" type="submit">
+            <Save size={16} aria-hidden="true" />
+            {saving ? "Saving…" : mode === "create" ? "Create event draft" : "Save event settings"}
+          </button>
+        </div>
       </form>
       {mode === "edit" && initialEvent && (
         <EventLocationsPanel eventId={initialEvent.id} initialLocations={initialLocations ?? []} areaCoordinators={areaCoordinators ?? []} />

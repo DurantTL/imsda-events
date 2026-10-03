@@ -69,7 +69,7 @@ export default async function AttendeeAccountOverviewPage() {
 
       <div className="account-overview-grid">
         <section className="public-manage-card account-overview-card">
-          <p className="public-registration-eyebrow"><CalendarDays size={15} aria-hidden="true" /> Registrations</p>
+          <p className="public-registration-eyebrow"><CalendarDays size={15} aria-hidden="true" /> My registrations</p>
           {next ? (
             <>
               <h2>{next.event.name}</h2>
@@ -90,7 +90,7 @@ export default async function AttendeeAccountOverviewPage() {
             </p>
           )}
           <Link className="secondary-button account-overview-link" href="/account/registrations">
-            View registrations <ArrowRight size={14} aria-hidden="true" />
+            View my registrations <ArrowRight size={14} aria-hidden="true" />
           </Link>
         </section>
 
