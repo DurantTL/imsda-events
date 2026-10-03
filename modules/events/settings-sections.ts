@@ -125,47 +125,11 @@ export function resolveSectionPlacement(
   return appliesToContext(eventSettingsSections[id], context) || nonDefault.has(id) ? "primary" : "more";
 }
 
-/** "Settings & activity" directory cards (`buildMoreDirectoryCards` keys). */
-export const moreDirectoryCardApplicability: Record<string, AppliesTo> = {
-  "event-settings": "both",
-  "attendee-configuration": "both",
-  tags: "both",
-  // Honors is an event module (#741): the module row decides whether the card
-  // shows (system admins find it under "More settings" when it is off), so this
-  // audience entry stays "both". Seminar assignments, merchandise, and promo
-  // codes are not read by club registration (`modules/club-registrations`).
-  honors: "both",
-  "program-assignments": "general",
-  merchandise: "general",
-  "promo-codes": "both",
-  payments: "both",
-  "registration-builder": "both",
-  "event-content": "both",
-  community: "both",
-  staff: "both",
-  "clubs-and-churches": "club",
-  clubs: "club",
-  "club-assignments": "club",
-  "event-patches": "club",
-  "club-forms": "both",
-  "event-health": "club",
-  imports: "both",
-  reports: "both",
-  health: "both",
-};
-
-/** Unlisted cards stay visible: a new card is never hidden by accident. */
-export function moreCardApplies(key: string, kind: EventKind): boolean {
-  return appliesToKind(moreDirectoryCardApplicability[key] ?? "both", kind);
-}
-
 /** Panels on the "Settings & activity" page, most used first. */
 export const activityPagePanels = [
   { id: "tasks", appliesTo: "both", collapsed: false },
   { id: "recent-activity", appliesTo: "both", collapsed: false },
-  { id: "more-settings", appliesTo: "both", collapsed: true },
   { id: "sign-in-settings", appliesTo: "both", collapsed: true },
-  { id: "sessions", appliesTo: "both", collapsed: true },
 ] as const satisfies ReadonlyArray<{ id: string; appliesTo: AppliesTo; collapsed: boolean }>;
 
 /**

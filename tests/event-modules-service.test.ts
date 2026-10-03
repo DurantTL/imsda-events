@@ -23,7 +23,7 @@ function fakePrisma(initial: Array<{ eventId: string; moduleKey: string }> = [])
   const rows = [...initial];
   const writes: string[] = [];
   const tx = {
-    event: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => (where.id === "event-1" ? { id: "event-1" } : null)) },
+    event: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => (where.id === "event-1" ? { id: "event-1", audience: "CLUB" } : where.id === "event-general" ? { id: "event-general", audience: "GENERAL" } : null)) },
     eventModule: {
       createMany: vi.fn(async ({ data }: { data: Array<{ eventId: string; moduleKey: string }> }) => {
         writes.push("eventModule.create");

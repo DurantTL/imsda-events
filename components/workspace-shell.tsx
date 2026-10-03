@@ -5,7 +5,8 @@ import { listActiveEventPermissionsForUser, listActiveEventRolesForUser } from "
 import { eventPermissions } from "@/modules/access/permissions";
 import { findSwitchableAttendeeAccountForStaff } from "@/modules/attendee-accounts/current-attendee";
 import { disabledModuleCardKeys } from "@/modules/event-modules/catalog";
-import { enabledModulesByEvent } from "@/modules/event-modules/service";
+import { moduleStatesByEvent } from "@/modules/event-modules/service";
+import { staffClubFormsAccess } from "@/modules/club-forms/access";
 import { hasEventEnded } from "@/modules/events/lifecycle";
 import { loadWorkspaceEventContext } from "@/modules/events/selection";
 import { currentStaffActingContext } from "@/modules/organizations/staff-act-as";
@@ -29,17 +30,30 @@ export async function WorkspaceShell({ anyStaffWithoutEvents = false, children }
   // Audience, not billing mode, so an attendee-paid CLUB event still shows
   // club features, and a GENERAL event never does — even for a system admin.
   const rolesByEvent = isSystemAdmin ? new Map() : await listActiveEventRolesForUser(user.id, events.map((event) => event.id));
-  // Which More cards are off per event (#741), in one query, for the launcher.
-  const modulesByEvent = await enabledModulesByEvent(events.map((event) => event.id));
+  // Which More cards are off per event (#741): rows plus the data a module
+  // works on (a product, a ranked seminar field), in a fixed number of queries.
+  // Only for events that have not ended, and the default event; the shell cannot
+  // know which one the client will pick. For any other event `hiddenCardKeys` is
+  // left out and the launcher lists the universal tools only, with the link to
+  // the Event modules page for the rest.
+  const moduleEventIds = events.filter((event) => event.id === defaultEventId || !hasEventEnded(event)).map((event) => event.id);
+  const modulesByEvent = await moduleStatesByEvent(moduleEventIds);
+  // Club forms (#610): one answer per user, from the same helper `resolveStaffViewer`
+  // uses (system admin, or EVENT_ADMIN of any event that has not ended).
+  const clubFormsAccess = staffClubFormsAccess(
+    user,
+    events
+      .filter((event) => rolesByEvent.get(event.id) === "EVENT_ADMIN")
+      .map((event) => ({ role: "EVENT_ADMIN", event: { timezone: event.timezone, endsAt: event.endsAt } })),
+  ).isStaff;
   const shellEvents = events.map((event) => ({
     id: event.id,
     slug: event.slug,
     name: event.name,
     permissions: permissionsByEvent.get(event.id) ?? [],
     clubEvent: event.audience === "CLUB",
-    hiddenCardKeys: [...disabledModuleCardKeys(modulesByEvent.get(event.id) ?? new Set())],
-    // Club forms (#610): same rule as `resolveStaffViewer`. System admins, and Event Admins of an event that has not ended.
-    clubFormsAccess: isSystemAdmin || (rolesByEvent.get(event.id) === "EVENT_ADMIN" && !hasEventEnded(event)),
+    hiddenCardKeys: modulesByEvent.has(event.id) ? [...disabledModuleCardKeys(modulesByEvent.get(event.id)!.effective)] : undefined,
+    clubFormsAccess,
     clubOversight: event.audience === "CLUB"
       && (isSystemAdmin || rolesByEvent.get(event.id) === "EVENT_ADMIN"),
   }));

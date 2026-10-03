@@ -27,6 +27,16 @@ import type { MoreDirectoryCard } from "@/components/staff-navigation";
  * and route handler keeps its own authorization.
  */
 
+/**
+ * While the phone sheet is open the page behind it is inert (and the sheet is
+ * `aria-modal`), so a screen reader or Tab cannot wander into content the sheet
+ * covers. Must be lifted before focus returns to the trigger, which is inside it.
+ */
+function setBackgroundInert(inert: boolean) {
+  const shell = document.querySelector<HTMLElement>(".app-shell");
+  if (shell) shell.inert = inert;
+}
+
 export function MoreLauncherPanel({
   cards,
   isSystemAdmin,
@@ -54,6 +64,7 @@ export function MoreLauncherPanel({
       id={id}
       ref={panelRef}
       role="dialog"
+      aria-modal={variant === "tab" ? "true" : undefined}
       aria-label="More tools"
       style={style}
     >
@@ -116,6 +127,7 @@ export function MoreLauncher({
   const panelId = useId();
 
   const close = useCallback((reason: LauncherCloseReason) => {
+    setBackgroundInert(false);
     setOpen(false);
     if (returnsFocusToTrigger(reason)) triggerRef.current?.focus();
   }, []);
@@ -123,6 +135,7 @@ export function MoreLauncher({
   // Open: move focus to the first item. Outside press: close without taking focus.
   useEffect(() => {
     if (!open) return;
+    if (variant === "tab") setBackgroundInert(true);
     panelRef.current?.querySelector<HTMLElement>("a[href]")?.focus();
     function onPointerDown(event: PointerEvent) {
       const target = event.target as Node | null;
@@ -130,8 +143,11 @@ export function MoreLauncher({
       close("outside");
     }
     document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open, close]);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      setBackgroundInert(false);
+    };
+  }, [open, close, variant]);
 
   function openFromTrigger() {
     if (variant === "sidebar" && triggerRef.current) {

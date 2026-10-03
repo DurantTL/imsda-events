@@ -4,6 +4,8 @@ import {
   type MoreDirectoryGroup,
 } from "@/components/staff-navigation";
 import {
+  canEnableForAudience,
+  dataDrivenReasons,
   eventModuleCatalog,
   type EventModuleApplicability,
   type EventModuleDefinition,
@@ -23,12 +25,31 @@ import {
  *   them on this page as well as in the launcher.
  */
 
-export type EnabledModuleEntry = { definition: EventModuleDefinition; card: MoreDirectoryCard };
+export type EnabledModuleEntry = {
+  definition: EventModuleDefinition;
+  card: MoreDirectoryCard;
+  /** A system administrator may turn it off: it has a stored row and is not always on. */
+  canToggle: boolean;
+  /** Set when it is on because of the event's data, with nothing to turn off. */
+  dataReason?: string;
+};
+
+export type DisabledModuleEntry = {
+  definition: EventModuleDefinition;
+  /** False when the module does not apply to this event (a club module on a general event): no Enable. */
+  canEnable: boolean;
+};
 
 export type EventModulesView = {
   enabled: EnabledModuleEntry[];
   /** Modules that are off, for a system administrator only; always empty for anyone else. */
-  disabled: EventModuleDefinition[];
+  disabled: DisabledModuleEntry[];
+  /**
+   * Modules with a stored row that do not apply to this event any more (left over
+   * from a club to general audience change), for a system administrator only, so
+   * the row can always be turned off.
+   */
+  leftOver: EventModuleDefinition[];
   /** Allowed staff tools that belong to no module. */
   tools: MoreDirectoryCard[];
   canToggle: boolean;
@@ -36,24 +57,44 @@ export type EventModulesView = {
 
 export function buildEventModulesView({
   cards,
-  enabled,
+  stored,
+  effective,
   isSystemAdmin,
+  audience,
 }: {
   /** Every More card with its permission result, with no module hiding applied. */
   cards: readonly MoreDirectoryCard[];
-  enabled: ReadonlySet<EventModuleKey>;
+  /** Always-on modules plus stored rows. */
+  stored: ReadonlySet<EventModuleKey>;
+  /** `stored` plus the modules the event's data needs (`moduleState`). */
+  effective: ReadonlySet<EventModuleKey>;
   isSystemAdmin: boolean;
+  audience: "GENERAL" | "CLUB";
 }): EventModulesView {
   const moduleCardKeys = new Set(eventModuleCatalog.map((definition) => definition.cardKey));
   const enabledEntries: EnabledModuleEntry[] = [];
   for (const definition of eventModuleCatalog) {
-    if (!enabled.has(definition.key)) continue;
+    if (!effective.has(definition.key)) continue;
     const card = cards.find((candidate) => candidate.key === definition.cardKey && candidate.allowed);
-    if (card) enabledEntries.push({ definition, card });
+    if (!card) continue;
+    const hasRow = stored.has(definition.key);
+    enabledEntries.push({
+      definition,
+      card,
+      canToggle: isSystemAdmin && !definition.alwaysOn && hasRow,
+      dataReason: hasRow ? undefined : dataDrivenReasons[definition.key],
+    });
   }
   return {
     enabled: enabledEntries,
-    disabled: isSystemAdmin ? eventModuleCatalog.filter((definition) => !enabled.has(definition.key)) : [],
+    disabled: isSystemAdmin
+      ? eventModuleCatalog
+        .filter((definition) => !effective.has(definition.key))
+        .map((definition) => ({ definition, canEnable: canEnableForAudience(definition.key, audience) }))
+      : [],
+    leftOver: isSystemAdmin
+      ? eventModuleCatalog.filter((definition) => !definition.alwaysOn && stored.has(definition.key) && !canEnableForAudience(definition.key, audience))
+      : [],
     tools: cards.filter((card) => card.allowed && !moduleCardKeys.has(card.key)),
     canToggle: isSystemAdmin,
   };

@@ -32,12 +32,13 @@ export function launcherGroups(cards: readonly MoreDirectoryCard[]): LauncherGro
  */
 export const moduleRequestsEnabled = false;
 
-export type LauncherFooterLink = { key: "manage-modules" | "request-feature"; label: string; href: string };
+export type LauncherFooterLink = { key: "manage-modules" | "event-modules" | "request-feature"; label: string; href: string };
 
 /**
- * System administrators get "Manage event modules" (the Event modules page).
- * Event staff get "Request a feature" only when requests exist and the viewer
- * may make one; with the flag off nobody does.
+ * Everyone gets a link to the Event modules page, which also holds the audit
+ * trail: system administrators as "Manage event modules", everyone else as "Event
+ * modules and activity". Event staff also get "Request a feature" when requests
+ * exist and the viewer may make one; with the flag off nobody does.
  */
 export function launcherFooterLinks({
   isSystemAdmin,
@@ -51,10 +52,11 @@ export function launcherFooterLinks({
   eventQuery: string;
 }): LauncherFooterLink[] {
   if (isSystemAdmin) return [{ key: "manage-modules", label: "Manage event modules", href: `/more${eventQuery}` }];
+  const links: LauncherFooterLink[] = [{ key: "event-modules", label: "Event modules and activity", href: `/more${eventQuery}` }];
   if (requestsEnabled && canRequestFeature) {
-    return [{ key: "request-feature", label: "Request a feature", href: `/more${eventQuery}#request-a-feature` }];
+    links.push({ key: "request-feature", label: "Request a feature", href: `/more${eventQuery}#request-a-feature` });
   }
-  return [];
+  return links;
 }
 
 /**

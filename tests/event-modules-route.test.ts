@@ -30,7 +30,7 @@ function fakePrisma(initial: Array<{ eventId: string; moduleKey: string }> = [])
   };
   const tx = {
     ...dataTables,
-    event: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => (where.id === "event-1" ? { id: "event-1" } : null)) },
+    event: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => (where.id === "event-1" ? { id: "event-1", audience: "GENERAL" } : where.id === "event-club" ? { id: "event-club", audience: "CLUB" } : null)) },
     eventModule: {
       createMany: vi.fn(async ({ data }: { data: Array<{ eventId: string; moduleKey: string }> }) => {
         let count = 0;
@@ -147,10 +147,27 @@ describe("enable/disable route behavior", () => {
     expect(mocks.writeAuditLog).toHaveBeenCalledTimes(1);
   });
 
-  it("answers an unknown module or event with 404 and an always-on module's disable with 409", async () => {
+  it("refuses a club module on a general event with 409 NOT_APPLICABLE and leaves no row or audit entry", async () => {
+    const { rows } = fakePrisma();
+    const response = await PUT(request("PUT"), context("club-assignments"));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toBe("NOT_APPLICABLE");
+    expect(rows).toHaveLength(0);
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("allows a club module on a club event, and always lets a leftover club row be turned off on a general event", async () => {
+    const { rows } = fakePrisma([{ eventId: "event-1", moduleKey: "event-patches" }]);
+    expect((await PUT(request("PUT"), context("club-assignments", "event-club"))).status).toBe(200);
+    expect((await DELETE(request("DELETE"), context("event-patches", "event-1"))).status).toBe(200);
+    expect(rows).toEqual([{ eventId: "event-club", moduleKey: "club-assignments" }]);
+  });
+
+  it("answers an unknown module or event with 404, for DELETE as for PUT, and an always-on module's disable with 409", async () => {
     fakePrisma();
     expect((await PUT(request("PUT"), context("not-a-module"))).status).toBe(404);
     expect((await PUT(request("PUT"), context("merchandise", "missing-event"))).status).toBe(404);
+    expect((await DELETE(request("DELETE"), context("merchandise", "missing-event"))).status).toBe(404);
     expect((await DELETE(request("DELETE"), context("public-content"))).status).toBe(409);
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
   });

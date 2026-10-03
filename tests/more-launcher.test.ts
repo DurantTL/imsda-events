@@ -117,14 +117,16 @@ describe("launcher footer", () => {
     ]);
   });
 
-  it("offers event staff nothing while module requests do not exist", () => {
+  it("offers event staff Event modules and activity, a plain link to /more, and no Request a feature while requests do not exist", () => {
     expect(moduleRequestsEnabled).toBe(false);
-    expect(launcherFooterLinks({ isSystemAdmin: false, canRequestFeature: true, eventQuery: "?event=event_1" })).toEqual([]);
+    expect(launcherFooterLinks({ isSystemAdmin: false, canRequestFeature: true, eventQuery: "?event=event_1" })).toEqual([
+      { key: "event-modules", label: "Event modules and activity", href: "/more?event=event_1" },
+    ]);
   });
 
   it("is ready to offer Request a feature, only where permitted, once the flag is on", () => {
-    expect(launcherFooterLinks({ isSystemAdmin: false, canRequestFeature: true, requestsEnabled: true, eventQuery: "?event=event_1" }).map((link) => link.label)).toEqual(["Request a feature"]);
-    expect(launcherFooterLinks({ isSystemAdmin: false, canRequestFeature: false, requestsEnabled: true, eventQuery: "?event=event_1" })).toEqual([]);
+    expect(launcherFooterLinks({ isSystemAdmin: false, canRequestFeature: true, requestsEnabled: true, eventQuery: "?event=event_1" }).map((link) => link.label)).toEqual(["Event modules and activity", "Request a feature"]);
+    expect(launcherFooterLinks({ isSystemAdmin: false, canRequestFeature: false, requestsEnabled: true, eventQuery: "?event=event_1" }).map((link) => link.label)).toEqual(["Event modules and activity"]);
   });
 });
 
@@ -180,8 +182,15 @@ describe("launcher panel markup", () => {
     expect(render(true)).toContain('data-footer="manage-modules"');
     expect(render(true)).toContain(">Manage event modules<");
     expect(render(false)).not.toContain("Manage event modules");
+    expect(render(false)).toContain(">Event modules and activity<");
+    expect(render(false)).toContain('href="/more?event=event_1"');
     expect(render(false)).not.toContain("Request a feature");
     expect(render(true)).not.toContain("Request a feature");
+  });
+
+  it("makes the phone sheet modal and the desktop popover non-modal", () => {
+    expect(render(false, "tab")).toContain('aria-modal="true"');
+    expect(render(false, "sidebar")).not.toContain("aria-modal");
   });
 
   it("uses the sheet class on a phone and the popover class on desktop", () => {

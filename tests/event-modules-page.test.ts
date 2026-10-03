@@ -12,14 +12,14 @@ const mocks = vi.hoisted(() => ({
   resolveEventContext: vi.fn(),
   resolveClubOversight: vi.fn(),
   resolveStaffViewer: vi.fn(),
-  enabledModules: vi.fn(),
+  moduleState: vi.fn(),
   listRecentAuditActivity: vi.fn(),
   getOperationalHealth: vi.fn(),
 }));
 vi.mock("@/modules/events/selection", () => ({ resolveEventContext: mocks.resolveEventContext }));
 vi.mock("@/modules/club-rosters/event-oversight", () => ({ resolveClubOversight: mocks.resolveClubOversight }));
 vi.mock("@/modules/club-forms/access", () => ({ resolveStaffViewer: mocks.resolveStaffViewer }));
-vi.mock("@/modules/event-modules/service", () => ({ enabledModules: mocks.enabledModules }));
+vi.mock("@/modules/event-modules/service", () => ({ moduleState: mocks.moduleState }));
 vi.mock("@/modules/audit/audit-service", () => ({ listRecentAuditActivity: mocks.listRecentAuditActivity }));
 vi.mock("@/modules/operations/repository", () => ({ getOperationalHealth: mocks.getOperationalHealth }));
 vi.mock("@/components/event-activity-panel", () => ({ EventActivityPanel: () => createElement("div", { "data-panel": "activity" }) }));
@@ -36,7 +36,7 @@ import { eventModuleKeys, type EventModuleKey } from "@/modules/event-modules/ca
 const event = { id: "event_1", name: "Synthetic Camporee", slug: "synthetic-camporee" };
 const noIssues = { summary: { total: 0, urgent: 0, watch: 0 } };
 
-function signIn(input: { globalRole: "SYSTEM_ADMIN" | null; permissions: readonly EventPermission[]; enabled: readonly EventModuleKey[]; clubEvent?: boolean }) {
+function signIn(input: { globalRole: "SYSTEM_ADMIN" | null; permissions: readonly EventPermission[]; enabled: readonly EventModuleKey[]; dataNeeds?: readonly EventModuleKey[]; clubEvent?: boolean }) {
   mocks.resolveEventContext.mockResolvedValue({
     event,
     permissions: input.permissions,
@@ -44,7 +44,8 @@ function signIn(input: { globalRole: "SYSTEM_ADMIN" | null; permissions: readonl
   });
   mocks.resolveClubOversight.mockResolvedValue({ allowed: Boolean(input.clubEvent), clubEvent: Boolean(input.clubEvent) });
   mocks.resolveStaffViewer.mockResolvedValue(input.globalRole === "SYSTEM_ADMIN" ? { kind: "STAFF" } : null);
-  mocks.enabledModules.mockResolvedValue(new Set(["public-content", ...input.enabled]));
+  const stored = new Set<EventModuleKey>(["public-content", ...input.enabled]);
+  mocks.moduleState.mockResolvedValue({ stored, effective: new Set<EventModuleKey>([...stored, ...(input.dataNeeds ?? [])]) });
 }
 
 async function render() {
@@ -62,6 +63,8 @@ describe("/more as the Event modules page", () => {
     signIn({ globalRole: null, permissions: eventPermissions, enabled: [] });
     const markup = await render();
     expect(markup).toContain(">Customize this event<");
+    // Visible copy: not the hidden duplicate of the shell title.
+    expect(markup).not.toContain("duplicate-page-title");
     expect(markup).toContain("Turn features on or off for Synthetic Camporee");
   });
 
@@ -71,8 +74,9 @@ describe("/more as the Event modules page", () => {
     expect(markup).toContain('data-module="merchandise"');
     expect(markup).toContain('aria-label="Turn off Merchandise"');
     expect(markup).toContain("Not used by this event");
-    expect(markup).toContain('aria-label="Enable Honors classes"');
     expect(markup).toContain('aria-label="Enable Attendee community"');
+    // Honors is a club module: no Enable on a general event.
+    expect(markup).not.toContain('aria-label="Enable Honors classes"');
     // Collapsed by default: a <details> with no open attribute.
     expect(markup).toMatch(/<details class="panel activity-disclosure event-modules-off"(?! open)/);
     // Public content is on for every event and cannot be turned off.
@@ -116,6 +120,40 @@ describe("/more as the Event modules page", () => {
     const markup = await render();
     expect(markup).toContain('data-module="event-patches"');
     expect(markup).toContain('data-module="club-assignments"');
+  });
+
+  it("shows Merchandise and Seminar assignments from the event's data with no stored row, with no switch", async () => {
+    signIn({ globalRole: "SYSTEM_ADMIN", permissions: eventPermissions, enabled: [], dataNeeds: ["merchandise", "seminar-assignments"] });
+    const markup = await render();
+    expect(markup).toContain('data-module="merchandise"');
+    expect(markup).toContain('data-module="seminar-assignments"');
+    expect(markup).toContain("On because this event has products.");
+    expect(markup).toContain("On because this event has a ranked seminar choice.");
+    expect(markup).not.toContain('aria-label="Turn off Merchandise"');
+    expect(markup).not.toContain('aria-label="Enable Merchandise"');
+  });
+
+  it("shows the same data-driven modules to an event admin", async () => {
+    signIn({ globalRole: null, permissions: eventPermissions, enabled: [], dataNeeds: ["merchandise"] });
+    const markup = await render();
+    expect(markup).toContain('data-module="merchandise"');
+    expect(markup).not.toContain("Turn off");
+  });
+
+  it("offers a system admin no Enable for a club module on a general event, and lists a leftover row with Turn off", async () => {
+    signIn({ globalRole: "SYSTEM_ADMIN", permissions: eventPermissions, enabled: ["event-patches"], clubEvent: false });
+    const markup = await render();
+    expect(markup).not.toContain('aria-label="Enable Club assignments"');
+    expect(markup).toContain("Does not apply to this event.");
+    expect(markup).toContain("Left over from a change of event type");
+    expect(markup).toContain('aria-label="Turn off Event patches"');
+  });
+
+  it("offers Enable for club modules on a club event", async () => {
+    signIn({ globalRole: "SYSTEM_ADMIN", permissions: eventPermissions, enabled: [], clubEvent: true });
+    const markup = await render();
+    expect(markup).toContain('aria-label="Enable Club assignments"');
+    expect(markup).not.toContain("Left over from a change of event type");
   });
 
   it("no longer lists signed-in devices; they live on the Profile page", async () => {
@@ -175,19 +213,47 @@ describe("page view rules", () => {
     clubFormsAccess: false,
     eventQuery: "?event=event_1",
   });
+  const only = new Set<EventModuleKey>(["public-content"]);
 
   it("gives only a system administrator the disabled modules and the right to toggle", () => {
-    const enabled = new Set<EventModuleKey>(["public-content"]);
-    const admin = buildEventModulesView({ cards, enabled, isSystemAdmin: true });
-    const other = buildEventModulesView({ cards, enabled, isSystemAdmin: false });
+    const admin = buildEventModulesView({ cards, stored: only, effective: only, isSystemAdmin: true, audience: "GENERAL" });
+    const other = buildEventModulesView({ cards, stored: only, effective: only, isSystemAdmin: false, audience: "GENERAL" });
     expect(admin.canToggle).toBe(true);
-    expect(admin.disabled.map((entry) => entry.key)).toEqual(eventModuleKeys.filter((key) => key !== "public-content"));
+    expect(admin.disabled.map((entry) => entry.definition.key)).toEqual(eventModuleKeys.filter((key) => key !== "public-content"));
     expect(other.canToggle).toBe(false);
     expect(other.disabled).toEqual([]);
+    expect(other.leftOver).toEqual([]);
+  });
+
+  it("marks club modules as not enableable on a general event, and enableable on a club event", () => {
+    const general = buildEventModulesView({ cards, stored: only, effective: only, isSystemAdmin: true, audience: "GENERAL" });
+    const club = buildEventModulesView({ cards, stored: only, effective: only, isSystemAdmin: true, audience: "CLUB" });
+    const canEnable = (view: typeof general, key: string) => view.disabled.find((entry) => entry.definition.key === key)?.canEnable;
+    expect(canEnable(general, "club-assignments")).toBe(false);
+    expect(canEnable(general, "event-patches")).toBe(false);
+    expect(canEnable(general, "merchandise")).toBe(true);
+    expect(canEnable(club, "club-assignments")).toBe(true);
+  });
+
+  it("lists a stored club module on a general event as left over, only for a system admin", () => {
+    const stored = new Set<EventModuleKey>(["public-content", "club-assignments"]);
+    const admin = buildEventModulesView({ cards, stored, effective: stored, isSystemAdmin: true, audience: "GENERAL" });
+    expect(admin.leftOver.map((definition) => definition.key)).toEqual(["club-assignments"]);
+    expect(admin.disabled.map((entry) => entry.definition.key)).not.toContain("club-assignments");
+    expect(buildEventModulesView({ cards, stored, effective: stored, isSystemAdmin: false, audience: "GENERAL" }).leftOver).toEqual([]);
+  });
+
+  it("treats a data-driven module as on, with a reason and no switch", () => {
+    const effective = new Set<EventModuleKey>(["public-content", "merchandise"]);
+    const view = buildEventModulesView({ cards, stored: only, effective, isSystemAdmin: true, audience: "GENERAL" });
+    const merch = view.enabled.find((entry) => entry.definition.key === "merchandise");
+    expect(merch).toMatchObject({ canToggle: false, dataReason: "On because this event has products." });
+    expect(view.disabled.map((entry) => entry.definition.key)).not.toContain("merchandise");
   });
 
   it("keeps ordinary staff tools out of the module lists", () => {
-    const view = buildEventModulesView({ cards, enabled: new Set(eventModuleKeys), isSystemAdmin: false });
+    const all = new Set<EventModuleKey>(eventModuleKeys);
+    const view = buildEventModulesView({ cards, stored: all, effective: all, isSystemAdmin: false, audience: "GENERAL" });
     expect(view.tools.map((card) => card.key)).toContain("event-settings");
     expect(view.enabled.map((entry) => entry.card.key)).not.toContain("event-settings");
   });

@@ -194,3 +194,28 @@ export function disabledModuleCardKeys(enabled: ReadonlySet<EventModuleKey>): Se
 export function moduleForCard(cardKey: string): EventModuleDefinition | undefined {
   return eventModuleCatalog.find((definition) => definition.cardKey === cardKey);
 }
+
+/**
+ * Whether a system administrator may turn the module on for an event of this
+ * audience. Club-audience modules do not apply to a general event, and enabling
+ * one would only leave a row nothing reads. The seminar module is always
+ * enableable: an administrator may turn it on before the ranked field exists.
+ */
+export function canEnableForAudience(key: EventModuleKey, audience: "GENERAL" | "CLUB"): boolean {
+  return eventModuleDefinition(key).appliesTo !== "club-audience" || audience === "CLUB";
+}
+
+/**
+ * Merchandise and Seminar assignments also show when the event already has the
+ * data they work on, even with no stored row (#741 review): a first product or a
+ * ranked seminar field added later is never hidden. The other modules are
+ * row-gated.
+ */
+/** Why a data-driven module is on without a stored row, for the Event modules page. */
+export const dataDrivenReasons: Readonly<Partial<Record<EventModuleKey, string>>> = {
+  merchandise: "On because this event has products.",
+  "seminar-assignments": "On because this event has a ranked seminar choice.",
+};
+
+/** The modules that are on for every event with no stored row. */
+export const alwaysOnModuleKeys: readonly EventModuleKey[] = eventModuleCatalog.filter((definition) => definition.alwaysOn).map((definition) => definition.key);

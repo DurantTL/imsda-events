@@ -22,6 +22,7 @@ import {
   subscribeSidebarCollapsed,
 } from "@/components/sidebar-collapse";
 import { SidebarToggle } from "@/components/sidebar-toggle";
+import { alwaysOnModuleKeys, disabledModuleCardKeys } from "@/modules/event-modules/catalog";
 import { MoreLauncher } from "@/components/more-launcher";
 import { StaffAccountMenu } from "@/components/staff-account-menu";
 import type { EventPermission } from "@/modules/access/permissions";
@@ -152,6 +153,12 @@ export function AppShell({
   const moreNavItem = navigation.find((item) => item.href === "/more");
   // More shows when any of its destinations is permitted (#737), not only for
   // the broad permissions it used to require; each page still checks access.
+  // Module cards the launcher leaves out. An event the server did not load module
+  // state for (an ended event) lists the universal tools only; the Event modules
+  // page has the rest.
+  const selectedHiddenCardKeys: ReadonlySet<string> = selectedEvent?.hiddenCardKeys
+    ? new Set(selectedEvent.hiddenCardKeys)
+    : disabledModuleCardKeys(new Set(alwaysOnModuleKeys));
   const showMore = Boolean(moreNavItem) && canShowMoreLauncher({
     item: moreNavItem!,
     permissions: [...selectedPermissions],
@@ -159,7 +166,7 @@ export function AppShell({
     clubEvent: Boolean(selectedEvent?.clubEvent),
     isSystemAdmin: user.globalRole === "SYSTEM_ADMIN",
     clubFormsAccess: Boolean(selectedEvent?.clubFormsAccess),
-    hiddenCardKeys: new Set(selectedEvent?.hiddenCardKeys ?? []),
+    hiddenCardKeys: selectedHiddenCardKeys,
   });
   // The More launcher (#741): everything this staff member may open for the
   // selected event, the universal tools plus the enabled modules. Built here from
@@ -171,7 +178,7 @@ export function AppShell({
     isSystemAdmin,
     clubFormsAccess: Boolean(selectedEvent.clubFormsAccess),
     eventQuery,
-    hiddenCardKeys: new Set(selectedEvent.hiddenCardKeys ?? []),
+    hiddenCardKeys: selectedHiddenCardKeys,
   }) : [];
   const visibleStatic = navigation.filter((item) => item.href === "/more" ? showMore : matchesVisibility(item, selectedPermissions));
   const dashboardItem = visibleStatic.find((item) => !item.group && item.href !== "/more");

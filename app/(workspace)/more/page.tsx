@@ -13,7 +13,7 @@ import {
 import { buildMoreDirectoryCards, moreDirectoryGroupLabels, moreDirectoryGroupOrder, staffPageTitles } from "@/components/staff-navigation";
 import { resolveStaffViewer } from "@/modules/club-forms/access";
 import { listRecentAuditActivity } from "@/modules/audit/audit-service";
-import { enabledModules } from "@/modules/event-modules/service";
+import { moduleState } from "@/modules/event-modules/service";
 import { resolveEventContext } from "@/modules/events/selection";
 import { eventKindFromAudience, selectActivity } from "@/modules/events/settings-sections";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
@@ -54,7 +54,9 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
     clubFormsAccess: Boolean(await resolveStaffViewer()),
     eventQuery,
   });
-  const view = buildEventModulesView({ cards, enabled: await enabledModules(event.id), isSystemAdmin });
+  // Rows plus the data a module works on, the same state the launcher reads, so the two agree.
+  const state = await moduleState(event.id);
+  const view = buildEventModulesView({ cards, stored: state.stored, effective: state.effective, isSystemAdmin, audience: clubEvent ? "CLUB" : "GENERAL" });
 
   // The health strip reuses the Operational health data for staff who may open it; nobody else gets a strip.
   const health = canAccessOperationalHealth(permissions)
@@ -66,7 +68,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
       <div className="page-intro">
         <div>
           <p className="eyebrow">Event modules</p>
-          <h2 className="duplicate-page-title">Customize this event</h2>
+          <h2 className="event-modules-heading">Customize this event</h2>
           <p>Turn features on or off for {event.name}</p>
           {!view.canToggle && <p className="quiet-copy">A system administrator turns features on or off. These are the ones this event uses.</p>}
         </div>
@@ -85,7 +87,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
         <section aria-label={moreDirectoryGroupLabels[group]} className="foundation-group" key={group}>
           <h2 className="foundation-group-label">{moreDirectoryGroupLabels[group]}</h2>
           <div className="foundation-grid">
-            {entries.map(({ definition, card }) => (
+            {entries.map(({ definition, card, canToggle, dataReason }) => (
               <article className="panel foundation-card event-module-card" data-module={definition.key} key={definition.key}>
                 <Link className="event-module-card-link" href={card.href}>
                   <span><card.icon aria-hidden="true" size={21} /></span>
@@ -93,25 +95,44 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
                   <p>{card.description}</p>
                   <small>{card.cta}</small>
                 </Link>
-                {view.canToggle && !definition.alwaysOn && (
+                {canToggle && (
                   <EventModuleToggle enabled eventId={event.id} moduleKey={definition.key} title={definition.title} />
                 )}
+                {dataReason && <p className="quiet-copy event-module-reason">{dataReason}</p>}
               </article>
             ))}
           </div>
         </section>
       ))}
 
+      {view.leftOver.length > 0 && (
+        <section className="panel event-modules-leftover" aria-label="Left over from a change of event type">
+          <h2>Left over from a change of event type</h2>
+          <p className="quiet-copy">These were turned on when this was a club event and no longer apply. Turning them off keeps their data.</p>
+          <div className="foundation-grid">
+            {view.leftOver.map((definition) => (
+              <article className="panel foundation-card event-module-card" data-module={definition.key} key={definition.key}>
+                <h3>{definition.title}</h3>
+                <p>{definition.description}</p>
+                <EventModuleToggle enabled eventId={event.id} moduleKey={definition.key} title={definition.title} />
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
       {view.disabled.length > 0 && (
         <details className="panel activity-disclosure event-modules-off" id="not-used-by-this-event">
           <summary><h2>Not used by this event</h2><small>{view.disabled.length} off. Turning one on keeps nothing hidden; turning one off never deletes data.</small></summary>
           <div className="foundation-grid">
-            {view.disabled.map((definition) => (
+            {view.disabled.map(({ definition, canEnable }) => (
               <article className="panel foundation-card event-module-card" data-module={definition.key} key={definition.key}>
                 <h3>{definition.title}</h3>
                 <p>{definition.description}</p>
                 <small>{applicabilityLabels[definition.appliesTo]}</small>
-                <EventModuleToggle enabled={false} eventId={event.id} moduleKey={definition.key} title={definition.title} />
+                {canEnable
+                  ? <EventModuleToggle enabled={false} eventId={event.id} moduleKey={definition.key} title={definition.title} />
+                  : <p className="quiet-copy event-module-reason">Does not apply to this event.</p>}
               </article>
             ))}
           </div>
