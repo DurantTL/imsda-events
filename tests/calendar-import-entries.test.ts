@@ -102,8 +102,15 @@ describe("editing an imported item", () => {
     expect(mocks.entryUpdate.mock.calls[0][0].data.locallyEditedFields).toEqual(["repeatRule"]);
   });
 
+  it("records edits of a detached item too, so they survive a later re-link", async () => {
+    mocks.entryFindUnique.mockResolvedValue({ ...imported, sourceFeedId: null, sourceUid: "uid-1", locallyEditedFields: [] });
+    await updateCalendarEntry("entry-1", { title: "Edited while detached" }, "admin-1");
+    expect(mocks.entryUpdate.mock.calls[0][0].data).toMatchObject({ locallyEditedFields: ["title"] });
+    expect(mocks.executeRaw).not.toHaveBeenCalled(); // no feed, no lock
+  });
+
   it("leaves a staff-made entry exactly as before", async () => {
-    mocks.entryFindUnique.mockResolvedValue({ ...imported, sourceFeedId: null, locallyEditedFields: [] });
+    mocks.entryFindUnique.mockResolvedValue({ ...imported, sourceFeedId: null, sourceUid: null, locallyEditedFields: [] });
     await updateCalendarEntry("entry-1", { title: "Changed" }, "admin-1");
     expect(mocks.entryUpdate.mock.calls[0][0].data).not.toHaveProperty("locallyEditedFields");
   });

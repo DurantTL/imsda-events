@@ -319,6 +319,23 @@ describe("imported calendar feeds", () => {
     expect(state.entryWrites).toBe(0);
   });
 
+  it("only a feed with the same address hint can re-link a deleted feed's items", async () => {
+    const feedId = await addFeed();
+    await syncCalendarFeed(feedId, deps);
+    await deleteCalendarFeed(feedId, "admin-1");
+    const detached = state.entries.length;
+    expect(state.entries.every((entry) => entry.sourceUrlHint === "calendar.example.test….ics")).toBe(true);
+
+    // A different calendar with the same UIDs gets its own rows and leaves the detached ones alone.
+    await createCalendarFeed({ ...input, name: "Someone else", url: "https://other.example.test/ical/x/basic.ics" }, "admin-1");
+    const other = state.feeds[0].id;
+    const preview = await previewCalendarFeed(other, deps);
+    expect(preview.counts).toMatchObject({ relink: 0, create: detached });
+    await syncCalendarFeed(other, deps);
+    expect(state.entries).toHaveLength(detached * 2);
+    expect(state.entries.filter((entry) => entry.sourceFeedId === null)).toHaveLength(detached);
+  });
+
   it("an empty feed fails automatic and manual refreshes without touching entries, unless staff apply it from the preview", async () => {
     const feedId = await addFeed();
     await syncCalendarFeed(feedId, deps);

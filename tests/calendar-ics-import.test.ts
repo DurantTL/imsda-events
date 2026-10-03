@@ -173,6 +173,32 @@ describe("ICS import: hostile and edge input", () => {
     expect(dates).toEqual(["2026-10-04", "2026-10-06", "2026-10-11", "2026-10-13"]);
   });
 
+  it("reads a 2 MB EXDATE list in bounded time and keeps at most 200 dates", () => {
+    const dates = Array.from({ length: 120_000 }, (_unused, index) => `2026${String((index % 12) + 1).padStart(2, "0")}${String((index % 28) + 1).padStart(2, "0")}T180000`).join(",");
+    const feed = quick(wrap(`UID:ex\r\nDTSTART;TZID=America/Chicago:20261006T180000\r\nDTEND;TZID=America/Chicago:20261006T190000\r\nRRULE:FREQ=DAILY\r\nEXDATE;TZID=America/Chicago:${dates}\r\nSUMMARY:Many skips`));
+    expect(feed.entries[0].repeatExceptions.length).toBeLessThanOrEqual(200);
+    expect(feed.warnings.some((warning) => warning.includes("skipped dates"))).toBe(true);
+  });
+
+  it("treats a very long TZID as unrecognized instead of building a time zone from it", () => {
+    const feed = quick(wrap(`UID:z\r\nDTSTART;TZID=${"A".repeat(65)}:20261015T090000\r\nDTEND;TZID=${"A".repeat(65)}:20261015T100000\r\nSUMMARY:Z`));
+    expect(feed.entries[0].timeLabel).toBe("9:00 AM – 10:00 AM CDT");
+    expect(feed.warnings).toHaveLength(1);
+  });
+
+  it("warns when a monthly, yearly or every-other-week repeat shifts days between zones", () => {
+    const rule = (value: string) => parseIcsFeed(wrap(`UID:w\r\nDTSTART;TZID=America/New_York:20261005T003000\r\nDTEND;TZID=America/New_York:20261005T013000\r\nRRULE:${value}\r\nSUMMARY:Late NY`));
+    for (const value of ["FREQ=MONTHLY;COUNT=3", "FREQ=YEARLY;COUNT=3", "FREQ=WEEKLY;INTERVAL=2;COUNT=3"]) {
+      const feed = rule(value);
+      expect(feed.entries[0].repeatRule).not.toBeNull(); // imported as is
+      expect(feed.warnings.some((warning) => warning.includes("a day off"))).toBe(true);
+    }
+    // A plain weekly repeat is shifted safely: no warning. Same-day zones: no warning either.
+    expect(rule("FREQ=WEEKLY;BYDAY=MO;COUNT=3").warnings).toEqual([]);
+    const same = parseIcsFeed(wrap("UID:s\r\nDTSTART;TZID=America/New_York:20261005T100000\r\nDTEND;TZID=America/New_York:20261005T110000\r\nRRULE:FREQ=MONTHLY;COUNT=3\r\nSUMMARY:Daytime NY"));
+    expect(same.warnings).toEqual([]);
+  });
+
   it("leaves BYDAY alone when the two zones agree on the day", () => {
     const feed = parseIcsFeed(wrap("UID:ok\r\nDTSTART;TZID=America/New_York:20261005T100000\r\nDTEND;TZID=America/New_York:20261005T110000\r\nRRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=2\r\nSUMMARY:Morning NY"));
     expect(feed.entries[0].repeatRule).toBe("FREQ=WEEKLY;BYDAY=MO;WKST=MO;COUNT=2");

@@ -138,10 +138,21 @@ type Moment =
 const datePattern = /^(\d{4})(\d{2})(\d{2})$/;
 const dateTimePattern = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)$/i;
 
+const wallClockFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function wallClockFormatter(timeZone: string) {
+  let formatter = wallClockFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric",
+    });
+    wallClockFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 function offsetMinutes(instant: Date, timeZone: string) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric",
-  }).formatToParts(instant);
+  const parts = wallClockFormatter(timeZone).formatToParts(instant);
   const get = (type: string) => Number(parts.find((part) => part.type === type)?.value);
   const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
   return Math.round((asUtc - Math.floor(instant.getTime() / 1000) * 1000) / 60_000);
@@ -158,13 +169,22 @@ function zonedInstant(wall: number, timeZone: string) {
   return new Date(guess);
 }
 
+const zoneValidity = new Map<string, boolean>();
+
 function validZone(name: string) {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: name });
-    return true;
-  } catch {
-    return false;
+  if (name.length > 64) return false;
+  let valid = zoneValidity.get(name);
+  if (valid === undefined) {
+    try {
+      wallClockFormatter(name);
+      valid = true;
+    } catch {
+      valid = false;
+    }
+    if (zoneValidity.size > 500) zoneValidity.clear(); // names come from untrusted feeds
+    zoneValidity.set(name, valid);
   }
+  return valid;
 }
 
 function parseMoment(property: Property, warn: (message: string) => void): Moment | null {
@@ -197,8 +217,7 @@ function parseDuration(value: string) {
 }
 
 function isConferenceMidnight(instant: Date) {
-  const parts = new Intl.DateTimeFormat("en-US", { timeZone: CONFERENCE_TIME_ZONE, hourCycle: "h23", hour: "numeric", minute: "numeric", second: "numeric" })
-    .formatToParts(instant);
+  const parts = wallClockFormatter(CONFERENCE_TIME_ZONE).formatToParts(instant);
   return parts.every((part) => !["hour", "minute", "second"].includes(part.type) || Number(part.value) === 0);
 }
 
@@ -383,12 +402,24 @@ export function parseIcsFeed(text: string): ParsedIcsFeed {
         // When the two zones put the first occurrence on different days, move them by the same offset.
         const offset = start.kind === "time" ? dayOffset(calendarDateIn(start.instant, start.zone), startsOn) : 0;
         if (offset !== 0) {
+          if (parsed.frequency === "MONTHLY" || parsed.frequency === "YEARLY" || (parsed.frequency === "WEEKLY" && parsed.interval > 1)) {
+            warn(`${label} repeats in a different time zone than the calendar's, so some dates may be a day off; check them after importing.`);
+          }
           parsed.weekdays = parsed.weekdays.map((day) => (((day + offset) % 7) + 7) % 7).sort((a, b) => a - b);
           if (parsed.until && !/UNTIL=\d{8}T/i.test(rruleProperty.value)) parsed.until = addDays(parsed.until, offset);
         }
         repeatRule = serializeRepeatRule(parsed);
+        // A feed is untrusted: stop reading skipped dates well past the number that is kept.
+        const readLimit = maxExceptions * 2;
+        let read = 0;
         for (const exdate of all("EXDATE")) {
-          for (const piece of exdate.value.split(",")) {
+          if (read >= readLimit) break;
+          for (const piece of exdate.value.split(",", readLimit - read + 1)) {
+            if (read >= readLimit) {
+              warn(`${label} lists more than ${readLimit} skipped dates; the rest were ignored.`);
+              break;
+            }
+            read += 1;
             const moment = parseMoment({ ...exdate, value: piece }, warn);
             if (moment) exceptions.push(momentDate(moment));
             else warn(`${label} has a skipped date that could not be read.`);

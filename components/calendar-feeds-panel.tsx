@@ -28,6 +28,15 @@ function when(value: string | null) {
 }
 
 /**
+ * The body of the sync request for a preview being applied. An empty feed is only
+ * applied (which unpublishes everything it imported) when the preview staff just
+ * reviewed was itself empty, with its warning shown; otherwise the server's guard stays on.
+ */
+export function syncBodyForPreview(preview: { totalInFeed: number }) {
+  return preview.totalInFeed === 0 ? { allowEmpty: true } : undefined;
+}
+
+/**
  * Imported calendars (#444 part B): a Google Calendar (or any ICS) address
  * staff add, review with Preview, and Import. The address is write-only: once
  * saved, only its host and last four characters are ever shown.
@@ -100,9 +109,8 @@ export function CalendarFeedsPanel({
     if (result?.preview) setPreview({ feedId: feed.id, data: result.preview });
   }
 
-  async function runSync(feed: CalendarAdminFeed, allowEmpty = false) {
-    // allowEmpty is only sent from the preview, after its warning has been shown.
-    const result = await call(`/api/admin/calendar/feeds/${encodeURIComponent(feed.id)}/sync`, "POST", allowEmpty ? { allowEmpty: true } : undefined);
+  async function runSync(feed: CalendarAdminFeed, body?: { allowEmpty: boolean }) {
+    const result = await call(`/api/admin/calendar/feeds/${encodeURIComponent(feed.id)}/sync`, "POST", body);
     if (result?.summary) {
       const { create, update, revive, relink, remove, unchanged } = result.summary;
       setNotice(`Imported: ${create} new, ${update + revive} updated, ${relink} re-linked, ${remove} removed, ${unchanged} unchanged.`);
@@ -258,7 +266,7 @@ export function CalendarFeedsPanel({
                 {" "}New items arrive as {previewFeed.publishNewItems ? "published items" : "drafts"}.
               </p>
             </div>
-            <button className="primary-button" disabled={busy} onClick={() => void runSync(previewFeed, true)} type="button">
+            <button className="primary-button" disabled={busy} onClick={() => void runSync(previewFeed, syncBodyForPreview(preview.data))} type="button">
               <Download aria-hidden="true" size={15} /> {previewFeed.imported ? "Apply refresh" : "Import"}
             </button>
           </div>

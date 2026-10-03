@@ -262,7 +262,8 @@ export async function updateCalendarEntry(entryId: string, input: CalendarEntryU
     if (problem) throw new CalendarError("INVALID_REPEAT", problem);
     // An imported item remembers which of its imported fields staff changed, so a refresh leaves them alone.
     const edits: Record<string, unknown> = { ...fields, ...columns };
-    const locallyEdited = existing.sourceFeedId
+    // A detached item (sourceUid kept) records edits too, so they survive a later re-link.
+    const locallyEdited = existing.sourceFeedId || existing.sourceUid
       ? importedFieldNames.filter((name) => name in edits && JSON.stringify(existing[name]) !== JSON.stringify(edits[name]))
       : [];
     const locallyEditedFields = locallyEdited.length > 0

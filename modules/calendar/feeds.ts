@@ -125,8 +125,10 @@ export async function updateCalendarFeed(feedId: string, input: CalendarFeedUpda
  */
 export async function deleteCalendarFeed(feedId: string, actorUserId: string) {
   await getPrisma().$transaction(async (tx) => {
-    const existing = await tx.calendarFeed.findUnique({ where: { id: feedId }, select: { id: true, name: true } });
+    const existing = await tx.calendarFeed.findUnique({ where: { id: feedId }, select: { id: true, name: true, urlHint: true } });
     if (!existing) throw new CalendarError("FEED_NOT_FOUND", "That imported calendar could not be found.");
+    // Remember which calendar these came from, so only the same calendar can re-link them.
+    await tx.calendarEntry.updateMany({ where: { sourceFeedId: feedId }, data: { sourceUrlHint: existing.urlHint } });
     await tx.calendarEntry.updateMany({
       where: { sourceFeedId: feedId, OR: [{ isHiddenLocally: true }, { sourceRemovedAt: { not: null } }] },
       data: { isPublished: false, isHiddenLocally: false, sourceRemovedAt: null },
@@ -175,11 +177,12 @@ async function findFeed(feedId: string) {
 }
 
 /** Items left behind by a deleted feed that this feed's items would re-link to rather than duplicate. */
-async function loadDetached(client: { calendarEntry: Pick<ReturnType<typeof getPrisma>["calendarEntry"], "findMany"> }, parsed: ParsedIcsFeed) {
+async function loadDetached(client: { calendarEntry: Pick<ReturnType<typeof getPrisma>["calendarEntry"], "findMany"> }, parsed: ParsedIcsFeed, urlHint: string) {
   const uids = [...new Set(parsed.entries.map((entry) => entry.uid))];
   if (uids.length === 0) return [];
   const rows = await client.calendarEntry.findMany({
-    where: { sourceFeedId: null, sourceUid: { in: uids } },
+    // Only items that came from a feed with this same address hint, never another calendar's.
+    where: { sourceFeedId: null, sourceUrlHint: urlHint, sourceUid: { in: uids } },
     select: storedSelect,
     orderBy: { createdAt: "asc" },
   });
@@ -199,7 +202,7 @@ export async function previewCalendarFeed(feedId: string, deps: Deps = {}): Prom
   }
   const rows = await getPrisma().calendarEntry.findMany({ where: { sourceFeedId: feedId }, select: storedSelect });
   const existing = rows.map(toStored);
-  const detached = await loadDetached(getPrisma(), parsed);
+  const detached = await loadDetached(getPrisma(), parsed, feed.urlHint);
   const warnings = [...parsed.warnings];
   const active = existing.filter((row) => !row.sourceRemovedAt).length;
   if (parsed.entries.length === 0 && active > 0) {
@@ -249,7 +252,7 @@ export async function syncCalendarFeed(
       if (parsed.entries.length === 0 && !options.allowEmpty && stored.some((row) => !row.sourceRemovedAt)) {
         throw new FeedFetchError(emptyMessage);
       }
-      const detached = await loadDetached(tx, parsed);
+      const detached = await loadDetached(tx, parsed, feed.urlHint);
       const planned = planFeedSync(stored, parsed.entries, feed, detached);
       const actor = options.actorUserId ?? feed.updatedByUserId;
 

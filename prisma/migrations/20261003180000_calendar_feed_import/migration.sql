@@ -29,6 +29,7 @@ ALTER TABLE "CalendarEntry"
   ADD COLUMN "sourceUid" TEXT,
   ADD COLUMN "sourceRecurrenceId" TEXT,
   ADD COLUMN "sourceHash" TEXT,
+  ADD COLUMN "sourceUrlHint" TEXT,
   ADD COLUMN "sourceRemovedAt" TIMESTAMP(3),
   ADD COLUMN "sourceRemovedWasPublished" BOOLEAN NOT NULL DEFAULT false,
   ADD COLUMN "locallyEditedFields" TEXT[] DEFAULT ARRAY[]::TEXT[],

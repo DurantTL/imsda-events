@@ -4700,6 +4700,9 @@ model CalendarEntry {
   sourceRecurrenceId        String?
   /// Hash of the last imported mapped fields; an unchanged hash means no write.
   sourceHash                String?
+  /// The feed's host-and-tail hint, written when its feed is deleted. Only a feed
+  /// with the same hint may re-link this item.
+  sourceUrlHint             String?
   /// Set when the item is gone from the feed. It is unpublished, never deleted,
   /// so anything linked to it (#445) survives and relinks if it comes back.
   sourceRemovedAt           DateTime?

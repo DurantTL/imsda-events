@@ -65,8 +65,16 @@ export function isCalendarDate(value: string) {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+
 export function calendarDateIn(date: Date, timeZone = CONFERENCE_TIME_ZONE) {
-  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+  // Building a formatter is the slow part; one per zone serves every call.
+  let formatter = dateFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+    dateFormatters.set(timeZone, formatter);
+  }
+  return formatter.format(date);
 }
 
 function toDate(calendarDate: string) {
