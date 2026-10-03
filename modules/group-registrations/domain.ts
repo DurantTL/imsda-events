@@ -1,3 +1,4 @@
+import { isWholeAgeInRange } from "@/modules/attendee-types/age-limits";
 import { z } from "zod";
 import type { RegistrationFormDefinition, RegistrationFormField } from "@/modules/forms/definition";
 import { attendeeAgeKey, attendeeNameKeys, clubFormProblem, guestIsAdult } from "@/modules/club-registrations/domain";
@@ -163,7 +164,7 @@ export function groupPickingAttendee(
 /** Reads the age answer as a whole number of years from 0 to 120, or null. */
 export function parseGroupAge(value: unknown): number | null {
   const number = typeof value === "number" ? value : typeof value === "string" && /^\s*\d{1,3}\s*$/.test(value) ? Number(value) : NaN;
-  return Number.isInteger(number) && number >= 0 && number <= 120 ? number : null;
+  return isWholeAgeInRange(number) ? number : null;
 }
 
 export type GroupEstimate = {
