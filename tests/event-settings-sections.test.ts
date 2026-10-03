@@ -19,7 +19,6 @@ import {
   eventKindFromAudience,
   eventSettingsSections,
   filterActivityForKind,
-  moreCardApplies,
   resolveSectionPlacement,
   sectionsWithNonDefaultValues,
   selectActivity,
@@ -96,17 +95,6 @@ describe("event settings sections by event type (#624)", () => {
     }).size).toBe(0);
     expect(sectionsWithNonDefaultValues({ attendeeEditPolicy: "TIERED" }).has("attendee-edit-policy")).toBe(true);
     expect(sectionsWithNonDefaultValues({ hotelName: "Synthetic Inn" }).has("lodging")).toBe(true);
-  });
-
-  it("collapses directory cards that do not apply and keeps unknown cards visible", () => {
-    expect(moreCardApplies("honors", "club")).toBe(true);
-    expect(moreCardApplies("honors", "general")).toBe(true);
-    expect(moreCardApplies("promo-codes", "club")).toBe(true); // #711: one tap from More on club events too
-    expect(moreCardApplies("promo-codes", "general")).toBe(true);
-    expect(moreCardApplies("event-patches", "general")).toBe(false);
-    expect(moreCardApplies("event-patches", "club")).toBe(true);
-    expect(moreCardApplies("event-settings", "club")).toBe(true);
-    expect(moreCardApplies("brand-new-card", "club")).toBe(true);
   });
 
   it("filters only low-risk configuration noise from activity", () => {

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { LogOut, MonitorSmartphone } from "lucide-react";
+import { visibleSessionLimit, visibleSessions } from "@/components/session-list";
 
 type SignedInSession = {
   id: string;
@@ -23,6 +24,7 @@ export function SessionManager({
   idleTimeoutSeconds: number;
 }) {
   const [sessions, setSessions] = useState(initialSessions);
+  const [showAll, setShowAll] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -67,7 +69,7 @@ export function SessionManager({
         check-in tablet.
       </p>
       <div className="activity-list">
-        {sessions.map((session) => (
+        {visibleSessions(sessions, showAll).map((session) => (
           <article className="activity-row" key={session.id}>
             <span className="activity-icon">
               <MonitorSmartphone aria-hidden="true" size={16} />
@@ -82,6 +84,16 @@ export function SessionManager({
           </article>
         ))}
       </div>
+      {sessions.length > visibleSessionLimit && (
+        <button
+          className="secondary-button session-show-all"
+          type="button"
+          aria-expanded={showAll}
+          onClick={() => setShowAll((value) => !value)}
+        >
+          {showAll ? `Show fewer (${visibleSessionLimit})` : `Show all ${sessions.length}`}
+        </button>
+      )}
       {error && <p className="form-error" role="alert">{error}</p>}
       {message && <p className="quiet-copy" role="status">{message}</p>}
       <button

@@ -18,12 +18,22 @@ import {
 const admin = { id: "user-admin", globalRole: "SYSTEM_ADMIN" as const };
 const eventAdmin = { id: "user-event-admin", globalRole: null };
 
+type FakeData = { products?: string[]; honors?: string[]; runs?: string[]; ranked?: string[] };
+/** A table with the write methods that must never be called, and the grouped read the data check uses. */
+function dataTable(eventIds: string[] = []) {
+  return {
+    deleteMany: vi.fn(),
+    findMany: vi.fn(),
+    groupBy: vi.fn(async ({ where }: { where: { eventId: { in: string[] } } }) => eventIds.filter((id) => where.eventId.in.includes(id)).map((eventId) => ({ eventId }))),
+  };
+}
+
 /** A fake database that records which tables are written, to prove data is never touched. */
-function fakePrisma(initial: Array<{ eventId: string; moduleKey: string }> = []) {
+function fakePrisma(initial: Array<{ eventId: string; moduleKey: string }> = [], data: FakeData = {}) {
   const rows = [...initial];
   const writes: string[] = [];
   const tx = {
-    event: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => (where.id === "event-1" ? { id: "event-1" } : null)) },
+    event: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => (where.id === "event-1" ? { id: "event-1", audience: "CLUB" } : where.id === "event-general" ? { id: "event-general", audience: "GENERAL" } : null)) },
     eventModule: {
       createMany: vi.fn(async ({ data }: { data: Array<{ eventId: string; moduleKey: string }> }) => {
         writes.push("eventModule.create");
@@ -42,8 +52,12 @@ function fakePrisma(initial: Array<{ eventId: string; moduleKey: string }> = [])
         return { count: before - rows.length };
       }),
     },
-    honorSession: { deleteMany: vi.fn(), findMany: vi.fn() },
-    merchandiseProduct: { deleteMany: vi.fn(), findMany: vi.fn() },
+    honorSession: dataTable(data.honors),
+    honorOffering: dataTable([]),
+    honorEnrollment: dataTable([]),
+    merchandiseProduct: dataTable(data.products),
+    programAssignmentRun: dataTable(data.runs),
+    $queryRaw: vi.fn(async () => (data.ranked ?? []).map((eventId) => ({ eventId }))),
   };
   const prisma = {
     ...tx,
@@ -115,6 +129,37 @@ describe("enable and disable", () => {
     );
     expect(await disableModule(admin, "event-1", "honors")).toEqual({ changed: false });
     expect(mocks.writeAuditLog).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats Honors on a GENERAL event with honors data as applicable: one row can be turned off and back on", async () => {
+    const { rows } = fakePrisma([{ eventId: "event-general", moduleKey: "honors" }], { honors: ["event-general"] });
+    expect(await disableModule(admin, "event-general", "honors")).toEqual({ changed: true });
+    expect(rows).toEqual([]);
+    expect(await enableModule(admin, "event-general", "honors")).toEqual({ changed: true });
+    expect(rows).toEqual([{ eventId: "event-general", moduleKey: "honors" }]);
+  });
+
+  it("still refuses Honors on a GENERAL event with no honors data, and every club module there", async () => {
+    fakePrisma([], {});
+    await expect(enableModule(admin, "event-general", "honors")).rejects.toMatchObject({ code: "NOT_APPLICABLE" });
+    await expect(enableModule(admin, "event-general", "club-assignments")).rejects.toMatchObject({ code: "NOT_APPLICABLE" });
+    fakePrisma([], { honors: ["event-general"] });
+    await expect(enableModule(admin, "event-general", "club-assignments")).rejects.toMatchObject({ code: "NOT_APPLICABLE" });
+  });
+
+  it("refuses to turn off a module the event's data keeps on, with no row change and no audit entry", async () => {
+    const { rows, writes } = fakePrisma([{ eventId: "event-1", moduleKey: "merchandise" }, { eventId: "event-1", moduleKey: "seminar-assignments" }], { products: ["event-1"], ranked: ["event-1"] });
+    await expect(disableModule(admin, "event-1", "merchandise")).rejects.toMatchObject({ code: "DATA_KEEPS_ON" });
+    await expect(disableModule(admin, "event-1", "seminar-assignments")).rejects.toMatchObject({ code: "DATA_KEEPS_ON" });
+    expect(rows).toHaveLength(2);
+    expect(writes).toEqual([]);
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+
+  it("turns Merchandise off normally when the event has no products", async () => {
+    const { rows } = fakePrisma([{ eventId: "event-1", moduleKey: "merchandise" }], {});
+    expect(await disableModule(admin, "event-1", "merchandise")).toEqual({ changed: true });
+    expect(rows).toEqual([]);
   });
 
   it("refuses unknown modules, unknown events, and turning public content off", async () => {

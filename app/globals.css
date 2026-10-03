@@ -8964,3 +8964,103 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
   :root :is(.filter-field select, .report-download, .report-record-link, .roster-csv-actions > a, .roster-csv-actions > button,
     .club-event-action, .check-in-queue-actions button, .check-in-review-list article > button) { min-height: var(--target-touch); }
 }
+
+/* ==========================================================================
+   #741 slice 2: More launcher and the Event modules page (/more).
+   Self-contained block; nothing above this comment is changed by it.
+   ========================================================================== */
+.more-launcher-region { display: contents; }
+.more-launcher {
+  position: fixed;
+  z-index: 70;
+  width: 560px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: 0 18px 48px rgba(0, 43, 69, 0.28);
+  color: var(--ink);
+  padding: 16px 16px 10px;
+}
+.more-launcher-columns { columns: 2; column-gap: 22px; }
+.more-launcher-group { break-inside: avoid; margin-bottom: 14px; }
+.more-launcher-group-label { margin: 0 0 6px 10px; color: var(--muted); font-size: max(var(--type-floor, 0px), 0.68rem); font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase; }
+.more-launcher ul { margin: 0; padding: 0; list-style: none; }
+.more-launcher-item {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  border-radius: 10px;
+  color: var(--imsda-navy);
+  padding: 8px 10px;
+  font-size: max(var(--type-body-floor, 0px), 0.86rem);
+  font-weight: 600;
+  line-height: 1.25;
+  text-decoration: none;
+}
+.more-launcher-item svg { flex: none; color: var(--imsda-purple); }
+.more-launcher-item:hover { background: var(--imsda-navy-soft); }
+.more-launcher-item:focus-visible { background: var(--imsda-navy-soft); outline: 2px solid var(--imsda-purple); outline-offset: -2px; }
+.more-launcher-footer { margin-top: 4px; border-top: 1px solid var(--line); padding: 8px 0 4px; }
+.more-launcher-footer-link { color: var(--imsda-purple); font-weight: 700; }
+.more-launcher-scrim { position: fixed; z-index: 65; inset: 0 0 calc(67px + env(safe-area-inset-bottom, 0px)); background: rgba(0, 43, 69, 0.42); }
+@media (min-width: 801px) {
+  .more-launcher-tab, .more-launcher-scrim { display: none; }
+}
+@media (max-width: 800px) {
+  .more-launcher-sidebar { display: none; }
+  /* Phone: a bottom sheet above the tab bar. */
+  .more-launcher-tab {
+    inset: auto 0 calc(67px + env(safe-area-inset-bottom, 0px));
+    width: auto;
+    max-width: none;
+    max-height: min(72vh, calc(100vh - 120px));
+    border-radius: 18px 18px 0 0;
+    padding-bottom: 6px;
+  }
+  .more-launcher-tab .more-launcher-item { min-height: 44px; }
+}
+@media (max-width: 520px) {
+  .more-launcher-columns { columns: 1; }
+}
+@media (min-width: 801px) {
+  .more-page-tools { display: none; }
+}
+
+.event-modules-health {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  border: 1px solid var(--line);
+  border-left-width: 5px;
+  border-radius: 12px;
+  background: var(--card);
+  padding: 12px 16px;
+}
+.event-modules-health p { flex: 1 1 220px; margin: 0; font-weight: 600; }
+.event-modules-health[data-state="clear"] { border-left-color: var(--green); }
+.event-modules-health[data-state="clear"] svg { color: var(--green); }
+.event-modules-health[data-state="attention"] { border-left-color: var(--coral); }
+.event-modules-health[data-state="attention"] svg { color: var(--coral); }
+.event-module-card { display: flex; flex-direction: column; }
+.event-module-card-link { display: block; flex: 1 1 auto; color: inherit; text-decoration: none; }
+.event-module-card-link > span:first-child { display: grid; width: 39px; height: 39px; place-items: center; border-radius: 12px; background: var(--imsda-navy-soft); color: var(--imsda-navy); }
+.event-module-card-link h3 { margin: 17px 0 6px; font-size: 0.82rem; }
+.event-module-card-link p { min-height: 60px; margin: 0; color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.68rem); line-height: 1.6; }
+.event-module-card-link small { display: inline-flex; margin-top: 15px; color: var(--green); font-size: max(var(--type-floor, 0px), 0.62rem); font-weight: 700; }
+.event-module-toggle { margin-top: 12px; }
+.event-module-toggle .form-error { margin: 8px 0 0; }
+.event-modules-off .foundation-grid { margin-top: 14px; }
+.event-modules-off .foundation-card h3 { margin-top: 0; }
+.session-show-all { margin-top: 12px; }
+
+/* #741 slice 2 review: visible page heading, data-driven reason, left-over modules. */
+.event-modules-heading { margin: 0; color: var(--ink); font-size: var(--heading-section, 1.3rem); }
+.event-module-reason { margin: 10px 0 0; }
+.event-modules-leftover { border-left: 5px solid var(--imsda-gold); }
+.event-modules-leftover .foundation-grid { margin-top: 14px; }
+.event-modules-leftover .foundation-card h3 { margin-top: 0; }

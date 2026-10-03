@@ -8,7 +8,6 @@ import {
   ChevronDown,
   Eye,
   ShieldCheck,
-  UsersRound,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { EventAutoSelectNotice } from "@/components/event-auto-select-notice";
@@ -23,10 +22,13 @@ import {
   subscribeSidebarCollapsed,
 } from "@/components/sidebar-collapse";
 import { SidebarToggle } from "@/components/sidebar-toggle";
+import { alwaysOnModuleKeys, disabledModuleCardKeys } from "@/modules/event-modules/catalog";
+import { MoreLauncher } from "@/components/more-launcher";
 import { StaffAccountMenu } from "@/components/staff-account-menu";
 import type { EventPermission } from "@/modules/access/permissions";
 import { otherWorkspaceContextsForStaff } from "@/modules/access/workspace-contexts";
 import {
+  buildMoreDirectoryCards,
   canShowMoreLauncher,
   matchesVisibility,
   mobileActiveTabHref,
@@ -34,7 +36,6 @@ import {
   mobileNavigationOrder,
   navigation,
   navigationGroupLabels,
-  resolveClubsAndChurchesEntry,
   staffSubpageTitle,
   systemNavigation,
   withCurrentEvent,
@@ -50,6 +51,13 @@ type ShellEvent = {
   clubOversight?: boolean;
   /** Whether the event has a CLUB audience (#737), so the More launcher can admit club-only cards. */
   clubEvent?: boolean;
+  /**
+   * More cards hidden for this event because their module is off (#741),
+   * computed server-side. Relevance only: pages keep their own authorization.
+   */
+  hiddenCardKeys?: readonly string[];
+  /** Club forms (#610) are open to system admins and Event Admins of a current event; computed server-side. */
+  clubFormsAccess?: boolean;
 };
 type ShellUser = { displayName: string; email: string; globalRole?: "SYSTEM_ADMIN" | null };
 
@@ -145,34 +153,36 @@ export function AppShell({
   const moreNavItem = navigation.find((item) => item.href === "/more");
   // More shows when any of its destinations is permitted (#737), not only for
   // the broad permissions it used to require; each page still checks access.
+  // Module cards the launcher leaves out. An event the server did not load module
+  // state for (an ended event) lists the universal tools only; the Event modules
+  // page has the rest.
+  const selectedHiddenCardKeys: ReadonlySet<string> = selectedEvent?.hiddenCardKeys
+    ? new Set(selectedEvent.hiddenCardKeys)
+    : disabledModuleCardKeys(new Set(alwaysOnModuleKeys));
   const showMore = Boolean(moreNavItem) && canShowMoreLauncher({
     item: moreNavItem!,
     permissions: [...selectedPermissions],
     clubOversight: Boolean(selectedEvent?.clubOversight),
     clubEvent: Boolean(selectedEvent?.clubEvent),
     isSystemAdmin: user.globalRole === "SYSTEM_ADMIN",
-    // Only decides whether the More link shows. Club forms need a system admin or Event Admin, who already pass on permissions, and the page itself decides access.
-    clubFormsAccess: false,
+    clubFormsAccess: Boolean(selectedEvent?.clubFormsAccess),
+    hiddenCardKeys: selectedHiddenCardKeys,
   });
+  // The More launcher (#741): everything this staff member may open for the
+  // selected event, the universal tools plus the enabled modules. Built here from
+  // the same function the Event modules page and the parity test use.
+  const launcherCards = selectedEvent ? buildMoreDirectoryCards({
+    permissions: [...selectedPermissions],
+    clubOversight: Boolean(selectedEvent.clubOversight),
+    clubEvent: Boolean(selectedEvent.clubEvent),
+    isSystemAdmin,
+    clubFormsAccess: Boolean(selectedEvent.clubFormsAccess),
+    eventQuery,
+    hiddenCardKeys: selectedHiddenCardKeys,
+  }) : [];
   const visibleStatic = navigation.filter((item) => item.href === "/more" ? showMore : matchesVisibility(item, selectedPermissions));
   const dashboardItem = visibleStatic.find((item) => !item.group && item.href !== "/more");
   const moreItem = visibleStatic.find((item) => item.href === "/more");
-  // Audience, not billing mode, decides club features (#481): `clubOversight`
-  // (computed server-side in the layout) is true only for a CLUB-audience
-  // selected event, for a system admin or an EVENT_ADMIN, exactly as
-  // `more/page.tsx` gates it. A GENERAL event never shows this, even for a
-  // system admin (who still reaches the directory from System management).
-  const clubsAndChurches = resolveClubsAndChurchesEntry({
-    clubOversight: Boolean(selectedEvent?.clubOversight),
-    isSystemAdmin,
-  });
-  const clubsEntry: NavigationItem | null = clubsAndChurches.visible ? {
-    href: clubsAndChurches.href,
-    label: "Clubs and churches",
-    icon: UsersRound,
-    desktopOnly: true,
-    group: "clubs",
-  } : null;
   const systemEntry: NavigationItem | null = isSystemAdmin ? {
     href: systemNavigation.href,
     label: "System management",
@@ -183,7 +193,6 @@ export function AppShell({
   const visibleNavigation: NavigationItem[] = eventlessProfile ? [] : [
     ...(dashboardItem ? [dashboardItem] : []),
     ...visibleStatic.filter((item) => item.group === "events"),
-    ...(clubsEntry ? [clubsEntry] : []),
     ...visibleStatic.filter((item) => item.group === "people"),
     ...visibleStatic.filter((item) => item.group === "finance"),
     ...visibleStatic.filter((item) => item.group === "communications"),
@@ -289,6 +298,24 @@ export function AppShell({
             const isActive = isProfileRoute ? false : href.startsWith("/admin") ? pathname.startsWith(href) : current.href === href;
             const previousGroup = index > 0 ? visibleNavigation[index - 1].group : undefined;
             const startsGroup = group && group !== previousGroup;
+            if (href === "/more") {
+              return (
+                <MoreLauncher
+                  key={href}
+                  variant="sidebar"
+                  className={isActive ? "nav-item active" : "nav-item"}
+                  href={withCurrentEvent(href, selectedEventId)}
+                  isActive={isActive}
+                  cards={launcherCards}
+                  isSystemAdmin={isSystemAdmin}
+                  eventQuery={eventQuery}
+                  tipProps={tipProps(label)}
+                >
+                  <Icon aria-hidden="true" size={19} strokeWidth={1.9} />
+                  <span>{label}</span>
+                </MoreLauncher>
+              );
+            }
             return (
               <Fragment key={href}>
                 {startsGroup && <span className="nav-group-label">{navigationGroupLabels[group]}</span>}
@@ -371,6 +398,22 @@ export function AppShell({
       {mobileNavigation.length > 0 && <nav className="mobile-nav" aria-label="Mobile navigation">
         {mobileNavigation.map(({ href, icon: Icon, label }) => {
           const isActive = !isProfileRoute && !isSystemRoute && mobileActiveTabHref(current.href, pathname) === href;
+          if (href === "/more") {
+            return (
+              <MoreLauncher
+                key={href}
+                variant="tab"
+                className={isActive ? "active" : undefined}
+                href={`${href}${eventQuery}`}
+                isActive={isActive}
+                cards={launcherCards}
+                isSystemAdmin={isSystemAdmin}
+                eventQuery={eventQuery}
+              >
+                <Icon aria-hidden="true" size={22} /><span>{mobileNavigationLabels[href] ?? label}</span>
+              </MoreLauncher>
+            );
+          }
           return (
             <Link className={isActive ? "active" : undefined} href={`${href}${eventQuery}`} key={href} aria-current={isActive ? "page" : undefined}>
               <Icon aria-hidden="true" size={22} /><span>{mobileNavigationLabels[href] ?? label}</span>

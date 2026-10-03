@@ -14,6 +14,8 @@ vi.mock("@/components/sign-out-button", () => ({
 }));
 
 import { AppShell } from "@/components/app-shell";
+import { launcherGroups } from "@/components/more-launcher-model";
+import { buildMoreDirectoryCards } from "@/components/staff-navigation";
 
 const AppShellElement = AppShell as ComponentType<
   Omit<Parameters<typeof AppShell>[0], "children">
@@ -160,7 +162,7 @@ describe("application shell navigation", () => {
     expect(markup).not.toContain(groupHeading("System"));
   });
 
-  it("shows Clubs and churches, pointed at the directory, for a system admin on a CLUB-audience event, even one that is attendee-paid (#481)", () => {
+  it("moves Clubs and churches out of the sidebar into the More launcher: the directory for a system admin on a CLUB-audience event, even one that is attendee-paid (#481, #741)", () => {
     const clubAudienceEvents = [{
       id: "event_1",
       slug: "man-camp-2026",
@@ -188,10 +190,22 @@ describe("application shell navigation", () => {
       ),
     );
 
-    expect(markup).toContain(groupHeading("Clubs and churches"));
-    expect(markup).toContain('href="/admin/organizations?event=event_1"');
+    // No longer a pinned sidebar group (#741); it is a club-audience launcher card.
+    expect(markup).not.toContain(groupHeading("Clubs and churches"));
+    expect(markup).not.toContain('href="/admin/organizations?event=event_1"');
     expect(markup).toContain('href="/admin?event=event_1"');
     expect(markup).toContain(groupHeading("System"));
+    const cards = buildMoreDirectoryCards({
+      permissions: clubAudienceEvents[0].permissions,
+      clubOversight: true,
+      clubEvent: true,
+      isSystemAdmin: true,
+      clubFormsAccess: true,
+      eventQuery: "?event=event_1",
+    });
+    const launcher = launcherGroups(cards).flatMap((group) => group.cards);
+    expect(launcher.find((card) => card.key === "clubs-and-churches")?.href).toBe("/admin/organizations");
+    expect(launcher.find((card) => card.key === "clubs")?.title).toBe("This event's clubs");
   });
 
   it("does not show Clubs and churches for a system admin on a GENERAL event (#481)", () => {
@@ -224,7 +238,7 @@ describe("application shell navigation", () => {
     expect(markup).toContain(groupHeading("System"));
   });
 
-  it("shows Clubs and churches, pointed at club oversight, for an event manager with club oversight on the selected event", () => {
+  it("lists Clubs and churches in the More launcher, pointed at club oversight, for an event manager with club oversight on the selected event (#741)", () => {
     const clubOversightEvents = [{
       id: "event_1",
       slug: "pathfinder-camporee-2026",
@@ -246,10 +260,20 @@ describe("application shell navigation", () => {
       ),
     );
 
-    expect(markup).toContain(groupHeading("Clubs and churches"));
-    expect(markup).toContain('href="/more/clubs?event=event_1"');
+    expect(markup).not.toContain(groupHeading("Clubs and churches"));
     // Not a system admin: no System heading.
     expect(markup).not.toContain(groupHeading("System"));
+    const cards = buildMoreDirectoryCards({
+      permissions: clubOversightEvents[0].permissions,
+      clubOversight: true,
+      clubEvent: true,
+      isSystemAdmin: false,
+      clubFormsAccess: true,
+      eventQuery: "?event=event_1",
+    });
+    const launcher = launcherGroups(cards).flatMap((group) => group.cards);
+    expect(launcher.find((card) => card.key === "clubs")).toMatchObject({ href: "/more/clubs?event=event_1", title: "Clubs and churches" });
+    expect(launcher.some((card) => card.key === "clubs-and-churches")).toBe(false);
   });
 
   it("does not show Clubs and churches when the selected event has no club oversight and the viewer isn't a system admin", () => {
