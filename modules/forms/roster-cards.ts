@@ -153,7 +153,33 @@ export function attendeeToOpenForIssues(
   return null;
 }
 
-/** The one-line summary a collapsed card reads as: name, role if any, then the status words. */
-export function attendeeSummaryText(name: string, roleLabel: string | null, complete: boolean): string {
-  return [name, roleLabel, complete ? "Complete" : "Needs attention"].filter(Boolean).join(" · ");
+/**
+ * How one attendee card shows (#743).
+ * - A single attendee on a phone is always an inline card with no Edit/Done toggle.
+ * - The full-screen sheet is for a phone with two or more people and not in an embed
+ *   (an auto-height iframe cannot host a fixed full-screen layer); everywhere else the
+ *   active card opens inline.
+ */
+export function attendeeCardLayout({ canCollapse, isPhone, embedded, attendeeCount, isActive, sheetOpen }: {
+  canCollapse: boolean;
+  isPhone: boolean;
+  embedded: boolean;
+  attendeeCount: number;
+  isActive: boolean;
+  sheetOpen: boolean;
+}): { collapsed: boolean; inSheet: boolean; showToggle: boolean; useSheet: boolean } {
+  const soloOnPhone = isPhone && attendeeCount === 1;
+  const useSheet = isPhone && !embedded && attendeeCount >= 2;
+  const collapsed = canCollapse && !soloOnPhone && !(isActive && (!useSheet || sheetOpen));
+  return {
+    collapsed,
+    inSheet: canCollapse && useSheet && sheetOpen && isActive,
+    showToggle: canCollapse && !soloOnPhone,
+    useSheet,
+  };
+}
+
+/** A card reads "Complete" only with every required answer and no unresolved carried-over prompt. */
+export function cardStatusComplete(complete: boolean, unresolvedCarryovers: number): boolean {
+  return complete && unresolvedCarryovers === 0;
 }

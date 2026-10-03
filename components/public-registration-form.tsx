@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -76,7 +76,9 @@ import {
   attendeeRoleLabel,
   isAttendeeCardComplete,
   issueAttendeeIndex,
+  attendeeCardLayout,
   attendeeToOpenForIssues,
+  cardStatusComplete,
   namedIssueMessage,
   pickInitialActiveAttendee,
 } from "@/modules/forms/roster-cards";
@@ -495,21 +497,48 @@ export function PublicRegistrationForm({
     })));
   }
   const [activeAttendeeId, setActiveAttendeeId] = useState<string | null>(() => initialActiveAttendeeId(buildInitialAttendees()));
-  // On a phone the active card is a full-screen sheet, but only once someone
-  // opens it (a sheet never opens by itself on page load).
   const [sheetOpen, setSheetOpen] = useState(false);
-  const isPhone = usePhoneViewport();
-  const phoneSheetActive = isPhone && sheetOpen && activeAttendeeId !== null && rosterEnabled && roster.maxAttendees > 1;
-  // Focus trap, Escape and focus return are the shared dialog behaviour; Escape
-  // closes the sheet and the card's Edit button, which opened it, gets focus back.
-  const attendeeSheetRef = useAccessibleDialog<HTMLElement>(phoneSheetActive, () => setSheetOpen(false));
-  useInertBackground(phoneSheetActive ? activeAttendeeId : null, attendeeSheetRef);
   const [website, setWebsite] = useState("");
   const [issues, setIssues] = useState<FormIssue[]>([]);
   const [error, setError] = useState("");
   const [rosterAnnouncement, setRosterAnnouncement] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+  // On a phone the active card is a full-screen sheet, but only once someone
+  // opens it (a sheet never opens by itself on page load).
+  const isPhone = usePhoneViewport();
+  // The sheet is for a phone with two or more people, never in an embed (an
+  // auto-height iframe cannot host a fixed full-screen layer): there the active
+  // card is inline, like a single attendee on a phone.
+  const useSheet = isPhone && !embedded && attendees.length >= 2;
+  const phoneSheetActive = useSheet && sheetOpen && !confirmation
+    && rosterEnabled && roster.maxAttendees > 1
+    && attendees.some((attendee) => attendee.clientId === activeAttendeeId);
+  // Focus trap, Escape and focus return are the shared dialog behaviour.
+  const attendeeSheetRef = useAccessibleDialog<HTMLElement>(phoneSheetActive, () => setSheetOpen(false));
+  // The inert background is keyed on the sheet's own node, so it lifts when that node goes away.
+  const [sheetNode, setSheetNode] = useState<HTMLElement | null>(null);
+  const setSheetRef = useCallback((node: HTMLElement | null) => {
+    attendeeSheetRef.current = node;
+    setSheetNode(node);
+  }, [attendeeSheetRef]);
+  useInertBackground(sheetNode);
+  // After the sheet closes (and inert is lifted) focus goes back to the card's Edit button; a screen
+  // reader hears the new card's announcement from inside the sheet, since the page behind is inert.
+  const lastSheetIdRef = useRef<string | null>(null);
+  const [sheetNotice, setSheetNotice] = useState("");
+  useEffect(() => {
+    if (phoneSheetActive) {
+      lastSheetIdRef.current = activeAttendeeId;
+      const timer = window.setTimeout(() => setSheetNotice(rosterAnnouncement), 150);
+      return () => window.clearTimeout(timer);
+    }
+    const closedId = lastSheetIdRef.current;
+    lastSheetIdRef.current = null;
+    if (!closedId) return;
+    window.requestAnimationFrame(() => document.getElementById(`public_attendee_${safeId(closedId)}_toggle`)?.focus());
+    window.setTimeout(() => setSheetNotice(""), 0);
+  }, [phoneSheetActive, activeAttendeeId, rosterAnnouncement]);
   // Classes that could not be saved with a group registration (#650), said again on the confirmation.
   const [groupHonorsNote, setGroupHonorsNote] = useState<string | null>(null);
   const [pendingRemoveClientId, setPendingRemoveClientId] = useState<string | null>(null);
@@ -805,7 +834,10 @@ export function PublicRegistrationForm({
     const scopedIssues = targetStep
       ? nextIssues.filter((issue) => issueBelongsToStep(issue, targetStep))
       : [];
-    if (targetStep) setCurrentStepId(targetStep.id);
+    if (targetStep) {
+      if (targetStep.id !== currentStepId) setSheetOpen(false);
+      setCurrentStepId(targetStep.id);
+    }
     const shownIssues = scopedIssues.length > 0 ? scopedIssues : nextIssues;
     setIssues(shownIssues);
     expandAttendeeCardsFor(shownIssues);
@@ -817,6 +849,7 @@ export function PublicRegistrationForm({
   }
 
   function goToStep(step: PublicRegistrationStep) {
+    setSheetOpen(false);
     setCurrentStepId(step.id);
     setIssues([]);
     setError("");
@@ -1794,6 +1827,7 @@ export function PublicRegistrationForm({
           <label htmlFor={id}>{fieldLabel(field, context)}</label>
           <SearchableSelect
             id={id}
+            sheet
             value={typeof context.values[field.key] === "string" ? context.values[field.key] as string : ""}
             required={field.required && !excused}
             invalid={Boolean(issue)}
@@ -2001,8 +2035,14 @@ export function PublicRegistrationForm({
             const complete = isAttendeeCardComplete(definition, registrationResponses, attendee.responses);
             const isActive = attendee.clientId === activeAttendeeId;
             // Collapse hides the fields; it never unmounts them.
-            const collapsed = canCollapse && !(isActive && (!isPhone || sheetOpen));
-            const inSheet = canCollapse && phoneSheetActive && isActive;
+            const { collapsed, inSheet, showToggle } = attendeeCardLayout({
+              canCollapse,
+              isPhone,
+              embedded,
+              attendeeCount: attendees.length,
+              isActive,
+              sheetOpen: phoneSheetActive,
+            });
             const cardId = `public_attendee_${safeId(attendee.clientId)}`;
             const visibleAttendeeSections = attendeeSections.map((section) => ({
               ...section,
@@ -2011,12 +2051,16 @@ export function PublicRegistrationForm({
                 && isFieldVisible(field, context.visibilityResponses)
               )),
             })).filter((section) => section.fields.length > 0);
+            // An unresolved carried-over prompt (a value that did not match, or a blank role) is still "Needs attention".
+            const unresolvedCarryovers = attendeeSections.flatMap((section) => section.fields)
+              .filter((field) => allowedFieldKeys.has(field.key) && isFieldVisible(field, context.visibilityResponses) && carryoverMismatchNotice(field, context)).length;
+            const statusComplete = cardStatusComplete(complete, unresolvedCarryovers);
             return (
               <article
                 className={`public-registration-attendee${collapsed ? " is-collapsed" : " is-active"}${inSheet ? " is-sheet" : ""}`}
                 id={cardId}
                 key={attendee.clientId}
-                ref={inSheet ? attendeeSheetRef : undefined}
+                ref={inSheet ? setSheetRef : undefined}
                 tabIndex={-1}
                 role={inSheet ? "dialog" : undefined}
                 aria-modal={inSheet ? "true" : undefined}
@@ -2034,13 +2078,13 @@ export function PublicRegistrationForm({
                     </h3>
                     {collapsed && (
                       <small className="public-registration-attendee-summary">
-                        {complete ? <StatusComplete /> : <NeedsAttention />}
+                        {statusComplete ? <StatusComplete /> : <NeedsAttention />}
                       </small>
                     )}
                   </div>
                   {(canCollapse || manageRoster) && (
                     <div className="public-registration-attendee-actions">
-                      {canCollapse && (
+                      {showToggle && (
                         <button
                           id={`${cardId}_toggle`}
                           className="public-registration-attendee-toggle"
@@ -2095,6 +2139,7 @@ export function PublicRegistrationForm({
                 </header>
 
                 <div className="public-registration-attendee-body" id={`${cardId}_body`} hidden={collapsed}>
+                    {inSheet && <p className="sr-only" role="status" aria-live="polite">{sheetNotice}</p>}
                     {manageRoster && attendeeIndex === 0 && primaryAttendeeNameSync && (
                       <p className="public-registration-attendee-name-sync">
                         The first attendee starts with the primary contact’s name. You can edit it
@@ -2118,7 +2163,7 @@ export function PublicRegistrationForm({
                       </p>
                     )}
                     {(group ?? club)?.renderAttendeeExtras?.(attendee, attendeeIndex)}
-                    {canCollapse && (
+                    {inSheet && (
                       <div className="public-registration-attendee-sheet-footer">
                         <button type="button" onClick={closeAttendee}>Done with {displayName}</button>
                       </div>
@@ -2669,6 +2714,7 @@ export function PublicRegistrationForm({
         );
         return;
       }
+      setSheetOpen(false);
       setConfirmation(result.confirmation);
       if (!club) clearPublicDraft(getBrowserDraftStorage(), draftIdentity);
       club?.onSubmitted?.({ honors: result.honors });

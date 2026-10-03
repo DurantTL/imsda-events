@@ -4,9 +4,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ExpandableOptionDescription, ExpandableText, isLongText } from "@/components/expandable-text";
+import { makeBackgroundInert } from "@/components/use-attendee-sheet";
 import {
-  attendeeSummaryText,
+  attendeeCardLayout,
   attendeeToOpenForIssues,
+  cardStatusComplete,
   pickInitialActiveAttendee,
 } from "@/modules/forms/roster-cards";
 
@@ -29,11 +31,9 @@ describe("one active attendee at a time (#743)", () => {
   it("keeps a single active id and renders a one-line summary with Edit for the rest", () => {
     expect(form).toContain("const [activeAttendeeId, setActiveAttendeeId] = useState<string | null>");
     expect(form).not.toContain("collapsedAttendeeIds");
-    expect(form).toContain("const collapsed = canCollapse && !(isActive && (!isPhone || sheetOpen));");
+    expect(form).toContain("attendeeCardLayout({");
     expect(form).toContain('{collapsed ? "Edit" : "Done"}');
-    expect(form).toContain("{complete ? <StatusComplete /> : <NeedsAttention />}");
-    expect(attendeeSummaryText("Ada Example", "Guest", true)).toBe("Ada Example · Guest · Complete");
-    expect(attendeeSummaryText("Attendee 2", null, false)).toBe("Attendee 2 · Needs attention");
+    expect(form).toContain("{statusComplete ? <StatusComplete /> : <NeedsAttention />}");
   });
 
   it("adding an attendee makes the new card the active one", () => {
@@ -71,7 +71,10 @@ describe("attendee sheet accessibility (#743)", () => {
     expect(form).toContain('role={inSheet ? "dialog" : undefined}');
     expect(form).toContain('aria-modal={inSheet ? "true" : undefined}');
     expect(form).toContain("useAccessibleDialog<HTMLElement>(phoneSheetActive, () => setSheetOpen(false))");
-    expect(form).toContain("useInertBackground(phoneSheetActive ? activeAttendeeId : null, attendeeSheetRef)");
+    expect(form).toContain("useInertBackground(sheetNode)");
+    expect(form).toContain("ref={inSheet ? setSheetRef : undefined}");
+    expect(form).toMatch(/public_attendee_\$\{safeId\(closedId\)\}_toggle`\)\?\.focus\(\)/);
+    expect(form).toContain("{inSheet && <p className=\"sr-only\" role=\"status\" aria-live=\"polite\">{sheetNotice}</p>}");
     expect(form).toContain("clickEvent.currentTarget.focus();");
     const hook = read("components/use-attendee-sheet.ts");
     expect(hook).toContain("sibling.inert = true");
@@ -93,7 +96,8 @@ describe("attendee sheet accessibility (#743)", () => {
 describe("sticky registration CTA (#743)", () => {
   it("marks the step bar and sticks it with the safe-area inset, last in the column, phone only", () => {
     expect(form).toContain('className="public-registration-step-actions is-sticky-cta"');
-    expect(block).toMatch(/@media only screen and \(max-width: 768px\)/);
+    expect(block).toMatch(/@media screen and \(max-width: 768px\)/);
+    expect(block).toMatch(/\.is-sticky-cta \{[^}]*width: calc\(100% \+ 24px\);[^}]*max-width: none;/);
     expect(block).toMatch(/\.is-sticky-cta \{[^}]*position: sticky;[^}]*bottom: 0;[^}]*order: 99;/);
     expect(block).toContain("padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));");
     expect(block).toContain("scroll-margin-bottom: calc(96px + env(safe-area-inset-bottom, 0px))");
@@ -102,7 +106,10 @@ describe("sticky registration CTA (#743)", () => {
   it("is not sticky in print (the rules live in a screen-only query)", () => {
     expect(block).not.toContain("@media print");
     expect(block.match(/position: sticky/g)?.length).toBeGreaterThan(0);
-    expect(block.slice(0, block.indexOf("@media only screen"))).not.toContain("position: sticky");
+    expect(block.slice(0, block.indexOf("@media screen"))).not.toContain("position: sticky");
+    const printRule = css.slice(css.indexOf("Issue 743 (print)"), css.indexOf("#743 slice: Type scale"));
+    expect(printRule).toMatch(/@media print \{[^}]*\.expandable-text-body\.is-clamped \{[^}]*overflow: visible/);
+    expect(printRule).toContain(".expandable-text-toggle { display: none; }");
   });
 
   it("has a Submit in the bar on review and the stylesheet braces balance", () => {
@@ -153,5 +160,92 @@ describe("intro and description expanders (#743)", () => {
     }));
     expect(plain).not.toContain("Read more");
     expect(form).toContain("<ExpandableOptionDescription");
+  });
+});
+
+describe("review fixes (#743)", () => {
+  const base = { canCollapse: true, isPhone: true, embedded: false, attendeeCount: 2, isActive: true, sheetOpen: true };
+
+  it("never uses the sheet inside an embed: the active card is inline", () => {
+    expect(attendeeCardLayout({ ...base, embedded: true, sheetOpen: false })).toMatchObject({ collapsed: false, inSheet: false, useSheet: false, showToggle: true });
+    expect(attendeeCardLayout({ ...base, embedded: true, isActive: false })).toMatchObject({ collapsed: true, inSheet: false });
+    expect(form).toContain("const useSheet = isPhone && !embedded && attendees.length >= 2;");
+    expect(form).toMatch(/const phoneSheetActive = useSheet && sheetOpen/);
+  });
+
+  it("shows a single attendee on a phone inline with no Edit, and uses the sheet from two people", () => {
+    expect(attendeeCardLayout({ ...base, attendeeCount: 1, isActive: false, sheetOpen: false })).toEqual({ collapsed: false, inSheet: false, showToggle: false, useSheet: false });
+    expect(attendeeCardLayout({ ...base, attendeeCount: 2 })).toMatchObject({ collapsed: false, inSheet: true, showToggle: true });
+    expect(attendeeCardLayout({ ...base, attendeeCount: 2, isActive: false })).toMatchObject({ collapsed: true, inSheet: false });
+    // Desktop is unchanged: Edit/Done on every card, inline.
+    expect(attendeeCardLayout({ ...base, isPhone: false, attendeeCount: 1 })).toMatchObject({ showToggle: true, inSheet: false });
+    expect(attendeeCardLayout({ ...base, isPhone: false, isActive: false })).toMatchObject({ collapsed: true });
+  });
+
+  it("an unresolved carry-over prompt reads Needs attention, never Complete", () => {
+    expect(cardStatusComplete(true, 0)).toBe(true);
+    expect(cardStatusComplete(true, 1)).toBe(false);
+    expect(cardStatusComplete(false, 0)).toBe(false);
+    expect(form).toContain("cardStatusComplete(complete, unresolvedCarryovers)");
+    expect(form).toContain("{statusComplete ? <StatusComplete /> : <NeedsAttention />}");
+  });
+
+  it("resets the sheet on step change, submit success and confirmation", () => {
+    expect(form).toMatch(/function goToStep[\s\S]*?setSheetOpen\(false\)/);
+    expect(form).toMatch(/setSheetOpen\(false\);\s*setConfirmation\(result\.confirmation\)/);
+    expect(form).toContain("useSheet && sheetOpen && !confirmation");
+  });
+
+  it("lifts inert and the page-scroll class when the sheet goes away", () => {
+    class FakeElement {
+      inert = false;
+      children: FakeElement[] = [];
+      parentElement: FakeElement | null = null;
+      constructor(public tagName = "DIV") {}
+      add(child: FakeElement) { child.parentElement = this; this.children.push(child); return child; }
+    }
+    const classes = new Set<string>();
+    const body = new FakeElement("BODY");
+    const g = globalThis as Record<string, unknown>;
+    const saved = { HTMLElement: g.HTMLElement, document: g.document };
+    g.HTMLElement = FakeElement;
+    g.document = { body, documentElement: { classList: { add: (c: string) => classes.add(c), remove: (c: string) => classes.delete(c) } } };
+    try {
+      const app = body.add(new FakeElement());
+      const header = app.add(new FakeElement());
+      const main = app.add(new FakeElement());
+      const sheet = main.add(new FakeElement("ARTICLE"));
+      const other = main.add(new FakeElement());
+      const toast = body.add(new FakeElement());
+      const restore = makeBackgroundInert(sheet as unknown as HTMLElement);
+      expect([header.inert, other.inert, toast.inert, sheet.inert, app.inert]).toEqual([true, true, true, false, false]);
+      expect(classes.has("has-attendee-sheet")).toBe(true);
+      restore();
+      expect([header.inert, other.inert, toast.inert]).toEqual([false, false, false]);
+      expect(classes.has("has-attendee-sheet")).toBe(false);
+    } finally {
+      g.HTMLElement = saved.HTMLElement;
+      g.document = saved.document;
+    }
+  });
+
+  it("Escape in an open pick list does not also close the sheet; the sheet CSS is scoped to the registration form", () => {
+    const select = read("components/searchable-select.tsx");
+    expect(select).toMatch(/key === "Escape"[\s\S]*?if \(open\) event\.stopPropagation\(\)/);
+    expect(select).toContain("if (!sheet || !open || !viewport || !wrapper) return;");
+    expect(form).toMatch(/<SearchableSelect\s+id=\{id\}\s+sheet/);
+    expect(block).toContain(".searchable-select.is-sheet-picker .searchable-select-options {");
+    expect(block).not.toMatch(/\n  \.searchable-select-options \{/);
+  });
+
+  it("only offers Read more when the text overflows, falling back to the length rule before measuring", () => {
+    const source = read("components/expandable-text.tsx");
+    expect(source).toContain("element.scrollHeight > element.clientHeight + 1");
+    expect(source).toContain("(open || overflowing !== false)");
+  });
+
+  it("keeps reorder controls reachable in a collapsed row on a phone", () => {
+    expect(block).not.toMatch(/is-collapsed \.public-registration-attendee-actions button:not\(\.public-registration-attendee-toggle\):not\(\.is-danger\) \{ display: none/);
+    expect(block).toContain("flex: 0 0 44px");
   });
 });

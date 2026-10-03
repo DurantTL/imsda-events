@@ -18,6 +18,7 @@ export function SearchableSelect({
   placeholder = "Search choices…",
   describedBy,
   invalid = false,
+  sheet = false,
   onChange,
 }: {
   id: string;
@@ -27,6 +28,8 @@ export function SearchableSelect({
   placeholder?: string;
   describedBy?: string;
   invalid?: boolean;
+  /** On a phone, show the open list as a bottom sheet (public registration only). */
+  sheet?: boolean;
   onChange: (value: string) => void;
 }) {
   const [query, setQuery] = useState<string | null>(null);
@@ -47,7 +50,7 @@ export function SearchableSelect({
   useEffect(() => {
     const viewport = window.visualViewport;
     const wrapper = wrapperRef.current;
-    if (!open || !viewport || !wrapper) return;
+    if (!sheet || !open || !viewport || !wrapper) return;
     function update() {
       if (!viewport || !wrapper) return;
       const covered = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
@@ -61,7 +64,7 @@ export function SearchableSelect({
       viewport.removeEventListener("scroll", update);
       wrapper.style.removeProperty("--searchable-sheet-inset");
     };
-  }, [open]);
+  }, [open, sheet]);
 
   function choose(nextValue: string) {
     const option = options.find((candidate) => candidate.value === nextValue);
@@ -78,7 +81,7 @@ export function SearchableSelect({
 
   return (
     <div
-      className="searchable-select"
+      className={`searchable-select${sheet ? " is-sheet-picker" : ""}`}
       ref={wrapperRef}
       onBlur={(event) => {
         if (!wrapperRef.current?.contains(event.relatedTarget as Node | null)) {
@@ -112,7 +115,7 @@ export function SearchableSelect({
             setActiveIndex(-1);
             event.currentTarget.select();
             // On a phone the list is a bottom sheet over the lower part of the screen: lift the box clear of it.
-            if (typeof window.matchMedia === "function" && window.matchMedia("(max-width: 768px)").matches) {
+            if (sheet && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 768px)").matches) {
               event.currentTarget.scrollIntoView({ block: "start", behavior: "smooth" });
             }
           }}
@@ -140,6 +143,8 @@ export function SearchableSelect({
               if (option) choose(option.value);
             } else if (event.key === "Escape") {
               event.preventDefault();
+              // An open list takes the Escape; it must not also close an attendee sheet around it.
+              if (open) event.stopPropagation();
               close();
             }
           }}

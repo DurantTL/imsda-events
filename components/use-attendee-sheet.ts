@@ -20,8 +20,8 @@ export function usePhoneViewport(): boolean {
 /**
  * Makes everything outside `sheet` inert while it is a modal (the same approach
  * as the More launcher): every sibling of the sheet and of each of its
- * ancestors, up to <body>. Only elements this call changed are restored.
- * Returns the restore function.
+ * ancestors, up to <body>. Also marks <html> so the page behind does not scroll.
+ * Only what this call changed is restored. Returns the restore function.
  */
 export function makeBackgroundInert(sheet: HTMLElement): () => void {
   const changed: HTMLElement[] = [];
@@ -37,21 +37,20 @@ export function makeBackgroundInert(sheet: HTMLElement): () => void {
     }
     node = parent;
   }
+  document.documentElement.classList.add("has-attendee-sheet");
   return () => {
     for (const element of changed) element.inert = false;
+    document.documentElement.classList.remove("has-attendee-sheet");
   };
 }
 
-/** While `sheetKey` is set (the open sheet's id), the background is inert and the page behind it does not scroll. */
-export function useInertBackground(sheetKey: string | null, sheetRef: { current: HTMLElement | null }) {
+/**
+ * While a sheet element exists, the background is inert. Keyed on the node itself,
+ * so the sheet unmounting (for any reason) lifts it, as does the component unmounting.
+ */
+export function useInertBackground(sheet: HTMLElement | null) {
   useEffect(() => {
-    const sheet = sheetRef.current;
-    if (sheetKey === null || !sheet) return;
-    const restore = makeBackgroundInert(sheet);
-    document.documentElement.classList.add("has-attendee-sheet");
-    return () => {
-      restore();
-      document.documentElement.classList.remove("has-attendee-sheet");
-    };
-  }, [sheetKey, sheetRef]);
+    if (!sheet) return;
+    return makeBackgroundInert(sheet);
+  }, [sheet]);
 }

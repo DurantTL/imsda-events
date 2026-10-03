@@ -9091,6 +9091,12 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .event-modules-leftover .foundation-grid { margin-top: 14px; }
 .event-modules-leftover .foundation-card h3 { margin-top: 0; }
 
+/* Issue 743 (print): expandable descriptions print in full, with no Read more button. */
+@media print {
+  .expandable-text-body.is-clamped { display: block; overflow: visible; -webkit-line-clamp: unset; line-clamp: unset; }
+  .expandable-text-toggle { display: none; }
+}
+
 /* ==========================================================================
    #743 slice: Type scale, Buttons and Destructive actions.
    Self-contained. Screen rules sit in @media screen so print and the badge and
@@ -9347,7 +9353,7 @@ th[aria-sort="ascending"], th[aria-sort="descending"] { background: var(--paper,
 .public-registration-attendee-sheet-footer { display: none; }
 .public-registration-step-actions .is-sticky-submit { display: none; }
 
-@media only screen and (max-width: 768px) {
+@media screen and (max-width: 768px) {
   /* Fields: one column, 16px so iOS does not zoom, nothing wider than its box. */
   .public-registration-page :is(.public-registration-fields, .attendee-answer-grid, .attendee-answer-ranking, .form-grid.two-column) { grid-template-columns: minmax(0, 1fr); }
   .public-registration-page :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]):not([type="file"]) { max-width: 100%; font-size: max(16px, 1rem); }
@@ -9364,6 +9370,8 @@ th[aria-sort="ascending"], th[aria-sort="descending"] { background: var(--paper,
     bottom: 0;
     z-index: 30;
     order: 99;
+    width: calc(100% + 24px);
+    max-width: none;
     margin: 0 -12px;
     border-top: 1px solid #d9e3e7;
     background: rgba(255, 255, 255, 0.98);
@@ -9375,12 +9383,13 @@ th[aria-sort="ascending"], th[aria-sort="descending"] { background: var(--paper,
   .public-registration-submit-card > button { display: none; }
   .public-registration-step-actions.is-sticky-cta .is-continue { flex: 1; }
 
-  /* Attendee cards: a completed or inactive card is one row, name and status with an Edit button. */
-  .public-registration-attendee.is-collapsed .public-registration-attendee-heading { grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
-  .public-registration-attendee.is-collapsed .public-registration-attendee-actions { grid-column: auto; padding-left: 0; flex-wrap: nowrap; }
-  .public-registration-attendee.is-collapsed .public-registration-attendee-actions button:not(.public-registration-attendee-toggle):not(.is-danger) { display: none; }
-  .public-registration-attendee.is-collapsed .public-registration-attendee-actions button { flex: 0 0 auto; min-width: 44px; }
-  .public-registration-attendee.is-collapsed .public-registration-attendee-actions button.is-danger span { display: none; }
+  /* Attendee cards: a completed or inactive card is a short summary: number, name and status, then a row
+     with Edit and the icon-only Up, Down and Remove controls (44px each). */
+  .public-registration-attendee.is-collapsed .public-registration-attendee-actions { flex-wrap: nowrap; }
+  .public-registration-attendee.is-collapsed .public-registration-attendee-actions button { flex: 0 0 44px; min-width: 44px; padding-inline: 0; }
+  .public-registration-attendee.is-collapsed .public-registration-attendee-actions button span { display: none; }
+  .public-registration-attendee.is-collapsed .public-registration-attendee-actions button.public-registration-attendee-toggle { flex: 1 1 auto; padding-inline: 12px; }
+  .public-registration-attendee.is-collapsed .public-registration-attendee-actions button.public-registration-attendee-toggle span { display: inline; }
   .public-registration-attendee-toggle { min-width: 64px; }
 
   /* The full-screen sheet for one attendee's edit (role=dialog, aria-modal, background inert). */
@@ -9408,7 +9417,7 @@ th[aria-sort="ascending"], th[aria-sort="descending"] { background: var(--paper,
   .public-registration-attendee.is-sheet .public-registration-attendee-sheet-footer button { width: 100%; min-height: var(--target-cta, 48px); border: 1px solid var(--imsda-purple); border-radius: 12px; background: var(--imsda-purple); color: #fff; cursor: pointer; font: inherit; font-size: var(--type-button-cta, 1rem); font-weight: 800; }
 
   /* The existing searchable pick list is a bottom sheet above the keyboard. */
-  .searchable-select-options {
+  .searchable-select.is-sheet-picker .searchable-select-options {
     position: fixed;
     right: 0;
     bottom: var(--searchable-sheet-inset, 0px);
@@ -9420,5 +9429,5 @@ th[aria-sort="ascending"], th[aria-sort="descending"] { background: var(--paper,
     padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
     box-shadow: 0 -12px 30px rgba(0, 59, 92, 0.22), 0 0 0 100vmax rgba(0, 20, 36, 0.28);
   }
-  .searchable-select-options > button { min-height: 48px; font-size: max(16px, 1rem); }
+  .searchable-select.is-sheet-picker .searchable-select-options > button { min-height: 48px; font-size: max(16px, 1rem); }
 }
