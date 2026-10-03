@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import { authorizeAttendeeRegistration } from "@/modules/attendee-accounts/registrations-repository";
 import { paymentChoiceInputSchema } from "@/modules/payments/payment-choice-domain";
 import {
@@ -22,6 +23,14 @@ function json(body: unknown, init?: ResponseInit) {
   });
 }
 
+/** Same role-dependent second step the portal enforces (decision 2026-09-23, #744). */
+function secondStepRequired() {
+  return json(
+    { code: "SECOND_STEP_REQUIRED", message: "Finish two-step sign-in to manage payment." },
+    { status: 403 },
+  );
+}
+
 async function postHandler(request: Request, context: Context) {
   const originError = rejectCrossOriginRequest(request);
   if (originError) return originError;
@@ -29,6 +38,7 @@ async function postHandler(request: Request, context: Context) {
   if (!account || via !== "attendee") {
     return json({ message: "This registration is unavailable." }, { status: 404 });
   }
+  if (await attendeeSecondStepPending()) return secondStepRequired();
   const { registrationId } = await context.params;
   const access = await authorizeAttendeeRegistration(
     account.verifiedEmail,

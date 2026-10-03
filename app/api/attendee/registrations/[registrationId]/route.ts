@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import { updateAttendeeRegistrationContact } from "@/modules/attendee-accounts/registrations-repository";
 import { publicContactUpdateSchema } from "@/modules/public-access/domain";
 import { withRequestContext } from "@/lib/request-context";
@@ -19,6 +20,12 @@ async function patchHandler(request: Request, context: Context) {
     return Response.json(
       { error: "SIGN_IN_REQUIRED", message: "Sign in to edit a registration." },
       { status: 401 },
+    );
+  }
+  if (await attendeeSecondStepPending()) {
+    return Response.json(
+      { code: "SECOND_STEP_REQUIRED", message: "Finish two-step sign-in to edit a registration." },
+      { status: 403, headers: { "Cache-Control": "private, no-store, max-age=0", Pragma: "no-cache" } },
     );
   }
   try {
