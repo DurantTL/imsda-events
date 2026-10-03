@@ -679,7 +679,7 @@ export function CheckInWorkspace({
 
     <ConfirmDialog
       busy={false}
-      confirmLabel="Discard retry"
+      confirmLabel={discardTarget ? `Discard retry for ${discardTarget.attendeeLabel}` : "Discard retry"}
       destructive
       error=""
       onCancel={() => setDiscardTarget(null)}

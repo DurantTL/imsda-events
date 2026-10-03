@@ -28,7 +28,7 @@ export function UnpublishEventDialog({
     <ConfirmDialog
       busy={busy}
       busyLabel="Unpublishing…"
-      confirmLabel="Unpublish event"
+      confirmLabel={`Unpublish ${eventName}`}
       destructive
       error={error}
       onCancel={onCancel}

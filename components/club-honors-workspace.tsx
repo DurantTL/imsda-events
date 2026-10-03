@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Download, History, UsersRound } from "lucide-react";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import { bulkScopeSummary } from "@/lib/confirmation-copy";
 import { calendarDateIn } from "@/modules/calendar/domain";
 import { clubClassLevelLabels } from "@/modules/club-rosters/domain";
 import {
@@ -66,6 +68,8 @@ export function ClubHonorsWorkspace({
   const [bulkDate, setBulkDate] = useState("");
   const [bulkNote, setBulkNote] = useState("");
   const [saving, setSaving] = useState(false);
+  // The bulk record shows its count and scope first and applies only on confirm (#743).
+  const [confirmingBulk, setConfirmingBulk] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [historyFor, setHistoryFor] = useState<ClubHonorsRow | null>(null);
@@ -92,6 +96,8 @@ export function ClubHonorsWorkspace({
 
   const emptyState = clubHonorsEmptyState(rows, visible);
   const bulkState = bulkHonorButtonState(selected.size, Boolean(bulkHonorId));
+  const bulkHonorName = honorOptions.find((honor) => honor.id === bulkHonorId)?.name ?? "";
+  const selectedNames = rows.filter((row) => selected.has(row.memberId)).map((row) => `${row.firstName} ${row.lastName}`);
 
   function toggle(memberId: string) {
     setSelected((prev) => {
@@ -128,6 +134,7 @@ export function ClubHonorsWorkspace({
       setNotice(`Recorded for ${selected.size} ${selected.size === 1 ? "person" : "people"}.`);
       setSelected(new Set());
       setBulkNote("");
+      setConfirmingBulk(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Honors could not be recorded.");
     } finally {
@@ -372,7 +379,7 @@ export function ClubHonorsWorkspace({
                 aria-describedby={bulkState.disabledReason ? "honor-bulk-reason" : undefined}
                 className="primary-button"
                 disabled={saving || Boolean(bulkState.disabledReason)}
-                onClick={applyBulk}
+                onClick={() => { setError(""); setConfirmingBulk(true); }}
                 type="button"
               >
                 {bulkState.label}
@@ -382,6 +389,22 @@ export function ClubHonorsWorkspace({
           </div>
         )}
       </section>
+      <ConfirmDialog
+        busy={saving}
+        busyLabel="Recording…"
+        confirmLabel={`Record ${bulkHonorName || "honor"}`}
+        error={confirmingBulk ? error : ""}
+        onCancel={() => setConfirmingBulk(false)}
+        onConfirm={() => void applyBulk()}
+        open={confirmingBulk}
+        title={`Record ${bulkHonorName || "this honor"} for ${bulkScopeSummary({ count: selected.size, singular: "person", plural: "people" })}?`}
+      >
+        <p className="confirm-scope">
+          <strong>{bulkScopeSummary({ count: selected.size, singular: "person", plural: "people", scope: `the ${clubYear} roster` })}</strong>
+          {selectedNames.length > 0 && <>: {selectedNames.slice(0, 5).join(", ")}{selectedNames.length > 5 ? `, and ${selectedNames.length - 5} more` : ""}</>}.
+        </p>
+        <p>Each will be marked <strong>{memberHonorStatusLabels[bulkStatus]}</strong>{bulkStatus === "COMPLETED" && bulkDate ? ` on ${bulkDate}` : ""}. Nothing is recorded until you confirm; a wrong entry can be voided afterwards.</p>
+      </ConfirmDialog>
 
       {historyFor && (
         <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) closeHistory(); }} role="presentation">

@@ -48,7 +48,7 @@ describe("archive confirmation (#704)", () => {
     expect(markup).toContain("Archive Synthetic Retreat?");
     expect(markup).toContain("no longer appears in");
     expect(markup).toContain("can unarchive it later");
-    expect(markup).toContain("Archive template");
+    expect(markup).toContain(">Archive Synthetic Retreat</button>");
   });
 
   it("renders nothing while closed", () => {

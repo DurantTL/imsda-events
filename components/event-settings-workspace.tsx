@@ -32,7 +32,9 @@ import {
 import { buildRegistrationEmbedCode } from "@/modules/forms/embed";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { PublishEventDialog } from "@/components/publish-event-dialog";
+import { DangerZone, DangerZoneItem } from "@/components/danger-zone";
 import { DeleteEventDialog } from "@/components/delete-event-dialog";
+import { SubmitButton } from "@/components/submit-button";
 import { UnpublishEventDialog } from "@/components/unpublish-event-dialog";
 import { DraftCreatedGuideBanner } from "@/components/draft-created-guide-banner";
 
@@ -812,7 +814,7 @@ export function EventSettingsWorkspace({
                   <strong>{published ? "Public registration is on" : "Publish this event"}</strong>
                   <small>
                     {published
-                      ? "Unpublish to close every public form immediately."
+                      ? "To close every public form immediately, use Unpublish in the Danger zone below."
                       : publishBlocker
                         ? "Publishing is separate from saving. It needs one thing first:"
                         : "Every checklist item is complete. Publishing turns on public registration."}
@@ -828,12 +830,8 @@ export function EventSettingsWorkspace({
                       : <button className="text-button" onClick={() => publishBlocker.targetId && goToControl(publishBlocker.targetId)} type="button">{publishBlocker.actionLabel}</button>}
                   </p>
                 )}
-                {published ? (
-                  <button className="secondary-button full-button" disabled={unpublishing} onClick={openUnpublishDialog} type="button">
-                    {unpublishing ? "Unpublishing…" : "Unpublish event"}
-                  </button>
-                ) : (
-                  <button aria-describedby={publishBlocker ? "event-publish-blocker" : undefined} aria-disabled={Boolean(publishBlocker) || publishing} className="primary-button full-button event-publish-button" onClick={openPublishDialog} type="button">
+                {published ? null : (
+                  <button aria-describedby={publishBlocker ? "event-publish-blocker" : undefined} aria-disabled={Boolean(publishBlocker) || publishing} className="secondary-button outline-action full-button event-publish-button" onClick={openPublishDialog} type="button">
                     {publishing ? "Publishing…" : "Publish event"}
                   </button>
                 )}
@@ -881,15 +879,25 @@ export function EventSettingsWorkspace({
             </section>
           )}
 
-          {mode === "edit" && initialEvent && canDeleteEvent && (
-            <section className="panel event-delete-panel">
-              <p className="eyebrow">Danger zone</p>
-              <h2>Delete this event</h2>
-              <p>Only a system administrator can delete an event, and only one with no registrations, payments, imports, form submissions or other records attached. Otherwise the dialog explains why, and unpublishing is the way to retire it.</p>
-              <button className="secondary-button full-button lifecycle-danger-button" onClick={() => setDeleteDialogOpen(true)} type="button">
-                Delete event…
-              </button>
-            </section>
+          {mode === "edit" && initialEvent && (published || canDeleteEvent) && (
+            <DangerZone className="event-delete-panel" heading="Unpublish or delete this event">
+              {published && (
+                <DangerZoneItem title="Unpublish this event">
+                  <p>Closes every public registration form for {initialEvent.name} immediately. Registrations already taken are kept, and you can publish again later.</p>
+                  <button className="secondary-button danger-outline-button full-button" disabled={unpublishing} onClick={openUnpublishDialog} type="button">
+                    {unpublishing ? "Unpublishing…" : "Unpublish event…"}
+                  </button>
+                </DangerZoneItem>
+              )}
+              {canDeleteEvent && (
+                <DangerZoneItem title="Delete this event">
+                  <p>Only a system administrator can delete an event, and only one with no registrations, payments, imports, form submissions or other records attached. Otherwise the dialog explains why, and unpublishing is the way to retire it.</p>
+                  <button className="secondary-button danger-outline-button full-button" onClick={() => setDeleteDialogOpen(true)} type="button">
+                    Delete event…
+                  </button>
+                </DangerZoneItem>
+              )}
+            </DangerZone>
           )}
 
         </aside>
@@ -905,10 +913,15 @@ export function EventSettingsWorkspace({
                     ? "Nothing is public when this draft is created."
                     : published ? "All changes saved. Saving never changes whether this event is published." : "All changes saved. Saving never publishes the event."}
           </p>
-          <button className="primary-button" disabled={saving || !dirty} id="event-save-button" type="submit">
-            <Save size={16} aria-hidden="true" />
-            {saving ? "Saving…" : mode === "create" ? "Create event draft" : "Save event settings"}
-          </button>
+          <SubmitButton
+            disabled={!dirty}
+            icon={<Save size={16} aria-hidden="true" />}
+            iconSize={16}
+            id="event-save-button"
+            label={mode === "create" ? "Create event draft" : "Save event settings"}
+            submitting={saving}
+            submittingLabel="Saving…"
+          />
         </div>
       </form>
       {mode === "edit" && initialEvent && (

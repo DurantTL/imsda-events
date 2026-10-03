@@ -265,7 +265,7 @@ export function ClubTeamWorkspace({
 
       <ConfirmDialog
         busy={saving}
-        confirmLabel={confirmTarget?.kind === "remove-member" ? "Remove" : "Cancel invite"}
+        confirmLabel={confirmTarget?.kind === "remove-member" ? `Remove ${confirmTarget.member.displayName}` : confirmTarget ? `Cancel invite to ${confirmTarget.invite.email}` : "Remove"}
         destructive
         error={error}
         onCancel={() => setConfirmTarget(null)}
@@ -278,6 +278,7 @@ export function ClubTeamWorkspace({
           : ""}
       >
         {confirmTarget?.kind === "remove-member" && <p>They lose access to this club right away.</p>}
+        {confirmTarget?.kind !== "remove-member" && confirmTarget && <p>The invite link stops working. You can send a new invite later.</p>}
       </ConfirmDialog>
     </div>
   );

@@ -434,7 +434,7 @@ export function MerchandiseAdminWorkspace({ eventId }: { eventId: string }) {
       <ConfirmDialog
         busy={saving}
         busyLabel="Archiving…"
-        confirmLabel="Archive"
+        confirmLabel={archiveTarget ? `Archive ${archiveTarget.kind === "product" ? archiveTarget.product.name : archiveTarget.variant.label}` : "Archive"}
         destructive
         error={error}
         onCancel={() => setArchiveTarget(null)}

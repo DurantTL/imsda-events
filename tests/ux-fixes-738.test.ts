@@ -223,7 +223,8 @@ describe("spacing and touch targets (#738)", () => {
   it("sets screen-only 44px touch and 36px desktop targets on the named small controls", () => {
     const css = read("app/globals.css");
     const start = css.indexOf("/* Touch and click targets (#738)");
-    const block = css.slice(start);
+    // The block ends where the next numbered section (#741, then #743) starts.
+    const block = css.slice(start, css.indexOf("/* ====", start));
     expect(start).toBeGreaterThan(0);
     expect(block).toContain("--target-desktop: 36px");
     expect(block).toContain("--target-touch: 44px");

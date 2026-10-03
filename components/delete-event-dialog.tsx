@@ -130,7 +130,7 @@ export function DeleteEventDialogView({
       busy={busy}
       busyLabel="Deleting…"
       confirmDisabled={!allowed || !confirmed}
-      confirmLabel="Delete event permanently"
+      confirmLabel={preview ? `Delete ${eventName}` : "Delete event"}
       destructive
       error={error}
       onCancel={onCancel}

@@ -148,7 +148,8 @@ describe("UnpublishEventDialog (#471)", () => {
     expect(markup).toContain("Synthetic Retreat");
     expect(markup).toContain("closes");
     expect(markup).toContain("immediately");
-    expect(markup).toContain("Unpublish event");
+    // The confirm button names the event instead of saying "Unpublish event" (#743).
+    expect(markup).toContain(">Unpublish Synthetic Retreat</button>");
   });
 
   it("renders nothing while closed", () => {
@@ -190,7 +191,7 @@ describe("PublishEventDialog (#571 F-20)", () => {
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain("Publish Synthetic Retreat?");
     expect(markup).toContain("public registration links");
-    expect(markup).toContain("Publish event");
+    expect(markup).toContain(">Publish Synthetic Retreat</button>");
   });
 
   it("renders nothing while closed and shows an inline error", () => {

@@ -33,8 +33,8 @@ describe("mobile foundations (issue #684)", () => {
     expect(contrast(nav, "#ffffff")).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("defines the phone type floors as tokens that are zero outside the phone media query", () => {
-    expect(css).toMatch(/:root \{[^}]*--type-floor: 0px;[^}]*--type-body-floor: 0px;/);
+  it("defines the type floors as :root tokens (global since #743: 12px meta, 14px body) and repeats them on phones", () => {
+    expect(css).toMatch(/:root \{[^}]*--type-floor: 0\.75rem;[^}]*--type-body-floor: 0\.875rem;/);
     const phone = css.slice(css.lastIndexOf("@media screen and (max-width: 768px)"));
     expect(phone).toMatch(/--type-floor: 0\.75rem;/);
     expect(phone).toMatch(/--type-body-floor: 0\.875rem;/);

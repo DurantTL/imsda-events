@@ -93,7 +93,7 @@ export function TagConfigurationWorkspace({
     <ConfirmDialog
       busy={saving}
       busyLabel="Deactivating…"
-      confirmLabel="Deactivate tag"
+      confirmLabel={deactivateTarget ? `Deactivate "${deactivateTarget.name}"` : "Deactivate tag"}
       error={error}
       onCancel={() => setDeactivateTarget(null)}
       onConfirm={() => {

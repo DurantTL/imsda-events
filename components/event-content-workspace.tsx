@@ -673,7 +673,7 @@ export function EventContentWorkspace({
 
       <ConfirmDialog
         busy={false}
-        confirmLabel="Remove section"
+        confirmLabel={removeSectionIndex !== null ? `Remove "${sections[removeSectionIndex]?.title || "this section"}"` : "Remove section"}
         destructive
         error=""
         onCancel={() => setRemoveSectionIndex(null)}

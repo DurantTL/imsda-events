@@ -30,7 +30,7 @@ export function PublishEventDialog({
     <ConfirmDialog
       busy={busy}
       busyLabel="Publishing…"
-      confirmLabel="Publish event"
+      confirmLabel={`Publish ${eventName}`}
       error={error}
       onCancel={onCancel}
       onConfirm={onConfirm}

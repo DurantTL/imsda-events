@@ -337,7 +337,7 @@ export function CalendarAdminWorkspace({
 
       <ConfirmDialog
         busy={saving}
-        confirmLabel="Remove"
+        confirmLabel={removeTarget ? `Remove "${removeTarget.title}"` : "Remove entry"}
         destructive
         error={error}
         onCancel={() => setRemoveTarget(null)}
@@ -345,7 +345,7 @@ export function CalendarAdminWorkspace({
         open={removeTarget !== null}
         title={removeTarget ? `Remove "${removeTarget.title}" from the calendar?` : "Remove entry?"}
       >
-        <p>This can&apos;t be undone.</p>
+        <p>The entry disappears from the calendar for everyone right away. This can&apos;t be undone.</p>
       </ConfirmDialog>
     </section>
   );

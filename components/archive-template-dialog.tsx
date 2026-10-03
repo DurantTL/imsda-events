@@ -22,7 +22,7 @@ export function ArchiveTemplateDialog({
     <ConfirmDialog
       busy={busy}
       busyLabel="Archiving…"
-      confirmLabel="Archive template"
+      confirmLabel={name ? `Archive ${name}` : "Archive template"}
       destructive
       error={error}
       onCancel={onCancel}
