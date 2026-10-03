@@ -46,6 +46,9 @@ import {
   saveStatusLabel,
   settingsBlockDomId,
   settingsBlockIds,
+  effectiveBlockForField,
+  optionFieldSection,
+  takePendingFocus,
   settingsBlockJumpLabels,
   settingsBlockTitles,
   settingsFieldBlock,
@@ -208,7 +211,12 @@ export function EventSettingsWorkspace({
 
   const fieldAria = (key: string) => fieldErrorProps(settingsFieldErrorId(key), fieldErrors[key]);
   const fieldNote = (key: string) => <FieldError id={settingsFieldErrorId(key)}>{fieldErrors[key]}</FieldError>;
-  const blockHasError = (id: SettingsBlockId) => Object.keys(fieldErrors).some((key) => settingsFieldBlock[key] === id);
+  const blockHasError = (id: SettingsBlockId) => Object.keys(fieldErrors).some((key) => (
+    effectiveBlockForField(key, {
+      optionsInMore: (field) => placementOf(optionFieldSection[field as keyof typeof optionFieldSection]) === "more",
+      lodgingInMore: placementOf("lodging") === "more",
+    }) === id
+  ));
 
   function update<K extends keyof EventSettingsInput>(key: K, value: EventSettingsInput[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -360,19 +368,13 @@ export function EventSettingsWorkspace({
     block.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
   }
 
-  // After a failed save the first invalid field takes focus (its block was
-  // opened above); the summary at the top links to every problem.
+  // After a failed save the first invalid field takes focus, once. goToControl
+  // opens every closed <details> around it, "More settings" included. Later
+  // changes to the errors (one clearing as someone types) never move focus.
   useEffect(() => {
-    if (Object.keys(fieldErrors).length === 0) return;
-    const targetId = pendingFocusRef.current;
-    pendingFocusRef.current = null;
-    const target = targetId ? document.getElementById(targetId) : null;
-    if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
-      target.focus({ preventScroll: true });
-    } else {
-      errorSummaryRef.current?.focus();
-    }
+    const targetId = takePendingFocus(pendingFocusRef);
+    if (targetId) goToControl(targetId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldErrors]);
 
   function openPublishDialog() {
@@ -517,7 +519,7 @@ export function EventSettingsWorkspace({
         <small>Holders can update ranked seminar preferences through this date in the event timezone.</small>
       {fieldNote("seminarPreferenceClosesOn")}</label>
       <label className="event-setting-toggle">
-        <input
+        <input id={settingsFieldDomId("seminarPreferenceSelfServiceLocked")} {...fieldAria("seminarPreferenceSelfServiceLocked")}
           type="checkbox"
           checked={draft.seminarPreferenceSelfServiceLocked}
           onChange={(event) => update(
@@ -525,13 +527,13 @@ export function EventSettingsWorkspace({
             event.target.checked,
           )}
         />
-        <span><strong>Lock seminar preference self-service</strong><small>Current preferences remain visible; staff can still make a documented override.</small></span>
+        <span><strong>Lock seminar preference self-service</strong><small>Current preferences remain visible; staff can still make a documented override.</small>{fieldNote("seminarPreferenceSelfServiceLocked")}</span>
       </label>
     </div>
   );
   const shirtField = (
     <label className="event-setting-toggle">
-      <input
+      <input id={settingsFieldDomId("collectsShirtSizes")} {...fieldAria("collectsShirtSizes")}
         type="checkbox"
         checked={draft.collectsShirtSizes}
         onChange={(event) => update("collectsShirtSizes", event.target.checked)}
@@ -543,12 +545,12 @@ export function EventSettingsWorkspace({
           request to everyone still missing one. Turning this off hides the question and
           stops the request being sent.
         </small>
-      </span>
+      {fieldNote("collectsShirtSizes")}</span>
     </label>
   );
   const backgroundField = (
     <label className="event-setting-toggle">
-      <input
+      <input id={settingsFieldDomId("checksAdultBackgrounds")} {...fieldAria("checksAdultBackgrounds")}
         type="checkbox"
         checked={draft.checksAdultBackgrounds}
         onChange={(event) => update("checksAdultBackgrounds", event.target.checked)}
@@ -560,14 +562,14 @@ export function EventSettingsWorkspace({
           staff or not, is flagged until a current Sterling Volunteers check is on file.
           Registration and check-in are never blocked.
         </small>
-      </span>
+      {fieldNote("checksAdultBackgrounds")}</span>
     </label>
   );
   const lodgingPanel = (
     <SettingsBlock
       eyebrow="Optional"
-      hasError={blockHasError("lodging")}
-      id={settingsBlockDomId("lodging")}
+      hasError={Object.keys(fieldErrors).some((key) => settingsFieldBlock[key] === "lodging")}
+      blockId="lodging"
       onOpenChange={(open) => setBlockOpen("lodging", open)}
       open={openBlocks.lodging ?? false}
       summary={blockSummary("lodging", draft)}
@@ -706,7 +708,7 @@ export function EventSettingsWorkspace({
           <SettingsBlock
             eyebrow="Step 1"
             hasError={blockHasError("basics")}
-            id={settingsBlockDomId("basics")}
+            blockId="basics"
             onOpenChange={(open) => setBlockOpen("basics", open)}
             open={openBlocks["basics"] ?? false}
             summary={blockSummary("basics", draft)}
@@ -769,7 +771,7 @@ export function EventSettingsWorkspace({
           <SettingsBlock
             eyebrow="Step 2"
             hasError={blockHasError("timing")}
-            id={settingsBlockDomId("timing")}
+            blockId="timing"
             onOpenChange={(open) => setBlockOpen("timing", open)}
             open={openBlocks["timing"] ?? false}
             summary={blockSummary("timing", draft)}
@@ -781,7 +783,7 @@ export function EventSettingsWorkspace({
               <label>Registration closes<input id={settingsFieldDomId("registrationClosesOn")} {...fieldAria("registrationClosesOn")} type="date" min={draft.registrationOpensOn || undefined} value={draft.registrationClosesOn ?? ""} onChange={(event) => update("registrationClosesOn", event.target.value || null)} />{fieldNote("registrationClosesOn")}</label>
             </div>
             <label className="event-setting-toggle">
-              <input
+              <input id={settingsFieldDomId("waitlistEnabled")} {...fieldAria("waitlistEnabled")}
                 type="checkbox"
                 checked={draft.waitlistEnabled}
                 onChange={(event) => {
@@ -793,7 +795,7 @@ export function EventSettingsWorkspace({
                   }));
                 }}
               />
-              <span><strong>Offer a waitlist when the event is full</strong><small>People can submit without taking a confirmed event spot.</small></span>
+              <span><strong>Offer a waitlist when the event is full</strong><small>People can submit without taking a confirmed event spot.</small>{fieldNote("waitlistEnabled")}</span>
             </label>
             <label>
               Audience
@@ -833,20 +835,20 @@ export function EventSettingsWorkspace({
               </small>
             {fieldNote("billingMode")}</label>
             <label className="event-setting-toggle nested">
-              <input
+              <input id={settingsFieldDomId("autoPromoteWaitlist")} {...fieldAria("autoPromoteWaitlist")}
                 type="checkbox"
                 disabled={!draft.waitlistEnabled}
                 checked={draft.autoPromoteWaitlist}
                 onChange={(event) => update("autoPromoteWaitlist", event.target.checked)}
               />
-              <span><strong>Automatically promote the next eligible registration</strong><small>Use the saved queue order when capacity becomes available.</small></span>
+              <span><strong>Automatically promote the next eligible registration</strong><small>Use the saved queue order when capacity becomes available.</small>{fieldNote("autoPromoteWaitlist")}</span>
             </label>
           </SettingsBlock>
 
           {optionalFields.primary.length > 0 && <SettingsBlock
             eyebrow="Options"
             hasError={blockHasError("options")}
-            id={settingsBlockDomId("options")}
+            blockId="options"
             onOpenChange={(open) => setBlockOpen("options", open)}
             open={openBlocks.options ?? false}
             summary={blockSummary("options", draft, { count: optionalFields.primary.length })}
@@ -860,7 +862,7 @@ export function EventSettingsWorkspace({
           <SettingsBlock
             eyebrow="Step 3"
             hasError={blockHasError("public-info")}
-            id={settingsBlockDomId("public-info")}
+            blockId="public-info"
             onOpenChange={(open) => setBlockOpen("public-info", open)}
             open={openBlocks["public-info"] ?? false}
             summary={blockSummary("public-info", draft)}
@@ -905,8 +907,8 @@ export function EventSettingsWorkspace({
           {(optionalFields.more.length > 0 || lodgingInMore) && (
             <SettingsBlock
               className="panel event-more-settings"
-              hasError={blockHasError("more") || (lodgingInMore && blockHasError("lodging"))}
-              id={settingsBlockDomId("more")}
+              hasError={blockHasError("more")}
+              blockId="more"
               onOpenChange={(open) => setBlockOpen("more", open)}
               open={openBlocks.more ?? false}
               summary="Settings that do not apply to this kind of event. They are kept, not removed."

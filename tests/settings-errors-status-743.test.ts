@@ -31,8 +31,11 @@ import {
   blockSummary,
   fieldErrorsFromIssues,
   firstFieldWithError,
+  effectiveBlockForField,
   hotelSummary,
+  optionFieldSection,
   saveStatusLabel,
+  takePendingFocus,
   settingsBlockDomId,
   settingsFieldDomId,
 } from "@/modules/events/settings-layout";
@@ -198,6 +201,63 @@ describe("event settings: a field error or a Go to link opens its section (#743)
     expect(markup).toContain('id="x-error"');
     expect(markup).toContain("Enter a full web address.");
     expect(renderToStaticMarkup(createElement(FieldError, { id: "x-error" }, ""))).toBe("");
+  });
+});
+
+describe("event settings: focus and error placement (#743 review)", () => {
+  it("moves focus once: a pending target is consumed, so an error clearing while typing never refocuses", () => {
+    const ref = { current: "event-field-hotel-booking-url" as string | null };
+    expect(takePendingFocus(ref)).toBe("event-field-hotel-booking-url");
+    expect(ref.current).toBeNull();
+    // The next change to fieldErrors (typing clears one) finds nothing pending.
+    expect(takePendingFocus(ref)).toBeNull();
+    const source = read("components/event-settings-workspace.tsx");
+    expect(source).toContain("const targetId = takePendingFocus(pendingFocusRef);");
+    expect(source).toContain("if (targetId) goToControl(targetId);");
+    expect(source).not.toContain("errorSummaryRef.current?.focus()");
+  });
+
+  it("flags and opens More settings for a field the event type moved there", () => {
+    const moved = { optionsInMore: (key: string) => key === "seminarPreferenceClosesOn", lodgingInMore: true };
+    expect(effectiveBlockForField("seminarPreferenceClosesOn", moved)).toBe("more");
+    expect(effectiveBlockForField("attendeeEditPolicy", moved)).toBe("options");
+    expect(effectiveBlockForField("hotelRate", moved)).toBe("more");
+    expect(effectiveBlockForField("hotelRate", { ...moved, lodgingInMore: false })).toBe("lodging");
+    expect(effectiveBlockForField("name", moved)).toBe("basics");
+    expect(effectiveBlockForField("nope", moved)).toBeNull();
+    expect(optionFieldSection.seminarPreferenceClosesOn).toBe("seminar-preferences");
+    const source = read("components/event-settings-workspace.tsx");
+    expect(source).toContain("effectiveBlockForField(key, {");
+    expect(source).toContain('placementOf("lodging") === "more"');
+  });
+
+  it("puts the block id, not the DOM id, in data-settings-block, and gives every checkbox an id and an error slot", () => {
+    const markup = settings();
+    expect(markup).toContain('data-settings-block="lodging"');
+    expect(markup).not.toContain('data-settings-block="event-settings-block');
+    const source = read("components/event-settings-workspace.tsx");
+    for (const key of ["waitlistEnabled", "autoPromoteWaitlist", "collectsShirtSizes", "checksAdultBackgrounds", "seminarPreferenceSelfServiceLocked"]) {
+      expect(source, key).toContain(`id={settingsFieldDomId("${key}")}`);
+      expect(source, key).toContain(`{fieldNote("${key}")}`);
+    }
+  });
+
+  it("styles a settings error as an error in every block", () => {
+    expect(block).toMatch(/\.settings-block \.field-error-message[^{]*\{[^}]*font-weight: 700/);
+    expect(block).toContain(".empty-state:not(.panel)");
+  });
+
+  it("builds no per-call collator", () => {
+    expect(read("lib/list-sort.ts")).toContain('new Intl.Collator("en-US")');
+    expect(read("lib/list-sort.ts")).not.toContain("localeCompare");
+  });
+
+  it("defaults the create flags to false so a caller must pass the real permission", () => {
+    expect(read("components/tag-configuration-workspace.tsx")).toContain("canCreate = false");
+    expect(read("components/attendee-configuration-workspace.tsx")).toContain("canCreate = false");
+    expect(read("components/promo-code-workspace.tsx")).toContain("canCreate = false");
+    expect(read("components/staff-workspace.tsx")).toContain("canAddStaff = false");
+    expect(read("components/people-workspace.tsx")).toMatch(/actionClass="secondary-button"\s+canCreate=\{canEdit\}/);
   });
 });
 
@@ -447,7 +507,10 @@ describe("status clarity (#743)", () => {
   it("registrations and the check-in queue state their order", () => {
     expect(read("components/people-workspace.tsx")).toContain('sortOrderText("submitted date", "desc", "date")');
     const checkIn = read("components/check-in-workspace.tsx");
-    expect(checkIn).toContain("sortOrderText(nameSortLabel, nameDirection)");
+    // Arrivals keep the server order (newest registration first, parties together): no client re-sort.
+    expect(checkIn).toContain('sortOrderText("registration", "desc", "date")');
+    expect(checkIn).not.toContain("sortByName");
+    expect(checkIn).not.toContain("nameDirection");
     expect(checkIn).toContain('sortOrderText("time saved", "asc", "date")');
   });
 });

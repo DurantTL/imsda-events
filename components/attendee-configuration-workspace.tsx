@@ -26,7 +26,7 @@ export function AttendeeConfigurationWorkspace({
   eventName,
   initialTypes,
   initialClassifications,
-  canCreate = true,
+  canCreate = false,
 }: {
   eventId: string;
   eventName: string;

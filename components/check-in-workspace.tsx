@@ -1,12 +1,10 @@
 "use client";
 
 import { SortOrderNote } from "@/components/list-sort";
-import { flipDirection, nameSortLabel, sortByName, sortOrderText, type SortDirection } from "@/lib/list-sort";
+import { sortOrderText } from "@/lib/list-sort";
 import {
   AlertTriangle,
   CheckCircle2,
-  ArrowDown,
-  ArrowUp,
   ContactRound,
   Printer,
   RefreshCw,
@@ -172,12 +170,11 @@ export function CheckInWorkspace({
   const clubByConfirmationCode = useMemo(() => new Map(
     clubs.map((club) => [club.confirmationCode, club]),
   ), [clubs]);
-  const [nameDirection, setNameDirection] = useState<SortDirection>("asc");
-  const visible = useMemo(() => sortByName(arrivals.filter((arrival) => arrivalMatchesSearch(
+  const visible = useMemo(() => arrivals.filter((arrival) => arrivalMatchesSearch(
     arrival,
     query,
     clubByConfirmationCode.get(arrival.confirmationCode)?.organizationName,
-  )), nameDirection), [arrivals, query, clubByConfirmationCode, nameDirection]);
+  )), [arrivals, query, clubByConfirmationCode]);
   // The saved-on-this-device list, oldest first: the order the check-ins were taken.
   const orderedQueue = useMemo(
     () => [...queue].sort((left, right) => new Date(left.queuedAt).getTime() - new Date(right.queuedAt).getTime()),
@@ -600,18 +597,7 @@ export function CheckInWorkspace({
             <UsersRound aria-hidden="true" size={16} /> {visible.length} match
           </span>
         </div>
-        <div className="sort-order-row" role="group" aria-label="Arrival roster order">
-          <SortOrderNote>{sortOrderText(nameSortLabel, nameDirection)}</SortOrderNote>
-          <button
-            aria-label={`Sorted by ${nameSortLabel}, ${nameDirection === "asc" ? "A to Z" : "Z to A"}. Reverse the order.`}
-            className="secondary-button table-sort-button"
-            onClick={() => { setNameDirection(flipDirection(nameDirection)); setRosterPage(1); }}
-            type="button"
-          >
-            {nameDirection === "asc" ? <ArrowUp aria-hidden="true" size={14} /> : <ArrowDown aria-hidden="true" size={14} />}
-            {nameDirection === "asc" ? "A to Z" : "Z to A"}
-          </button>
-        </div>
+        <SortOrderNote>{sortOrderText("registration", "desc", "date")}</SortOrderNote>
         {rosterSlice.items.map((arrival) => {
           const savedItem = queueByAttendee.get(arrival.id);
           const processing = savedItem

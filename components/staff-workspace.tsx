@@ -28,7 +28,7 @@ type StaffMembership = {
   };
 };
 
-export function StaffWorkspace({ eventId, eventName, initialMemberships, currentUserId, currentUserIsSystemAdmin, canAddStaff = true }: { eventId: string; eventName: string; initialMemberships: StaffMembership[]; currentUserId: string; currentUserIsSystemAdmin: boolean; /** Whether the viewer may add staff: the button and the empty-state action show only then (#743). The server decides again. */ canAddStaff?: boolean }) {
+export function StaffWorkspace({ eventId, eventName, initialMemberships, currentUserId, currentUserIsSystemAdmin, canAddStaff = false }: { eventId: string; eventName: string; initialMemberships: StaffMembership[]; currentUserId: string; currentUserIsSystemAdmin: boolean; /** Whether the viewer may add staff: the button and the empty-state action show only then (#743). The server decides again. */ canAddStaff?: boolean }) {
   const [memberships, setMemberships] = useState(initialMemberships);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<StaffMembership | null>(null);

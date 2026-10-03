@@ -2,6 +2,7 @@
 
 import { ChevronDown } from "lucide-react";
 import type { ReactNode } from "react";
+import { settingsBlockDomId, type SettingsBlockId } from "@/modules/events/settings-layout";
 
 /**
  * A collapsible settings block (#743). It is a native `<details>`, so closing it
@@ -10,7 +11,7 @@ import type { ReactNode } from "react";
  * jump link or a field error can open it.
  */
 export function SettingsBlock({
-  id,
+  blockId,
   eyebrow,
   title,
   summary,
@@ -20,7 +21,8 @@ export function SettingsBlock({
   children,
   className = "panel event-settings-panel",
 }: {
-  id: string;
+  /** The block's id (see `settingsBlockIds`); the DOM id is derived from it. */
+  blockId: SettingsBlockId;
   eyebrow?: string;
   title: string;
   /** The one line shown while the block is collapsed. */
@@ -34,8 +36,8 @@ export function SettingsBlock({
   return (
     <details
       className={`settings-block ${className}${hasError ? " has-error" : ""}`}
-      data-settings-block={id}
-      id={id}
+      data-settings-block={blockId}
+      id={settingsBlockDomId(blockId)}
       onToggle={(event) => onOpenChange(event.currentTarget.open)}
       open={open}
     >

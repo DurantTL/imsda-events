@@ -81,7 +81,7 @@ export function PromoCodeWorkspace({
   initialPromoCodes,
   canSponsorByChurch = false,
   sponsorChurches = [],
-  canCreate = true,
+  canCreate = false,
 }: {
   eventId: string;
   initialPromoCodes: PromoCodeRecord[];

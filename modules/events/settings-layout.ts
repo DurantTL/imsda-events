@@ -184,3 +184,33 @@ export function saveStatusLabel(state: { saving: boolean; dirty: boolean }): "Sa
   if (state.saving) return "Saving…";
   return state.dirty ? "Changes not saved" : "No unsaved changes";
 }
+
+/**
+ * The block a field is actually shown in: a setting that does not apply to the
+ * event's type is placed under "More settings", so its error flag and its open
+ * state belong to that block, not the one it normally lives in.
+ */
+export function effectiveBlockForField(key: string, moved: { optionsInMore: (key: string) => boolean; lodgingInMore: boolean }): SettingsBlockId | null {
+  const base = settingsFieldBlock[key];
+  if (!base) return null;
+  if (base === "options" && moved.optionsInMore(key)) return "more";
+  if (base === "lodging" && moved.lodgingInMore) return "more";
+  return base;
+}
+
+/** Which settings section (see `settings-sections.ts`) owns each option field. */
+export const optionFieldSection = {
+  attendeeEditPolicy: "attendee-edit-policy",
+  approvedPaymentInstructions: "payment-instructions",
+  seminarPreferenceClosesOn: "seminar-preferences",
+  seminarPreferenceSelfServiceLocked: "seminar-preferences",
+  collectsShirtSizes: "shirt-sizes",
+  checksAdultBackgrounds: "adult-background-checks",
+} as const;
+
+/** Returns the id to focus once, and clears it: a later change to the errors never moves focus. */
+export function takePendingFocus(ref: { current: string | null }): string | null {
+  const id = ref.current;
+  ref.current = null;
+  return id;
+}

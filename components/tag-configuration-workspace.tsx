@@ -19,7 +19,7 @@ export function TagConfigurationWorkspace({
   eventId,
   eventName,
   initialTags,
-  canCreate = true,
+  canCreate = false,
 }: {
   eventId: string;
   eventName: string;

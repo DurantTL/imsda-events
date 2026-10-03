@@ -708,6 +708,7 @@ export function PeopleWorkspace({
       {visible.length === 0 && (registrations.length === 0
         ? <EmptyState
             action={{ label: "Start registration", href: `/events/${eventSlug}` }}
+            actionClass="secondary-button"
             canCreate={canEdit}
             className="empty-state panel"
             hint="Registrations appear here once someone submits the public form."
