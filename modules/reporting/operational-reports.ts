@@ -1,3 +1,4 @@
+import { isHealthTypeField } from "@/modules/forms/field-flags";
 import {
   registrationFormDefinitionSchema,
   type RegistrationFormDefinition,
@@ -125,6 +126,8 @@ export type OperationalReport = {
 type FieldMetadata = {
   field: RegistrationFormField;
   sectionTitle: string;
+  /** Flagged Sensitive in some other form version present in the report: excluded for every registration. */
+  sensitiveInAnyVersion?: boolean;
 };
 
 type MutableCountField = {
@@ -183,13 +186,20 @@ function fieldContextText(metadata: FieldMetadata) {
 }
 
 function isSensitiveField(metadata: FieldMetadata) {
-  return sensitiveSemanticPattern.test(fieldCoreText(metadata.field));
+  const { field } = metadata;
+  // The same decision the builder saves (#743): the explicit flag, else the health-type default.
+  // A key flagged Sensitive in any form version present is out for all of them. The report's own
+  // wording rules still apply on top, and an explicit false cannot override them.
+  return metadata.sensitiveInAnyVersion
+    || (field.sensitive ?? isHealthTypeField(field, metadata.sectionTitle))
+    || sensitiveSemanticPattern.test(fieldCoreText(field));
 }
 
-function definitionFields(definition: RegistrationFormDefinition): FieldMetadata[] {
+function definitionFields(definition: RegistrationFormDefinition, flaggedKeys: ReadonlySet<string> = new Set()): FieldMetadata[] {
   return definition.sections.flatMap((section) => section.fields.map((field) => ({
     field,
     sectionTitle: section.title,
+    sensitiveInAnyVersion: flaggedKeys.has(field.key),
   })));
 }
 
@@ -531,11 +541,24 @@ export function buildOperationalReport(
   const volunteerFields = new Map<string, MutableCountField>();
   const attendanceFields = new Map<string, MutableCountField>();
 
+  // Keys explicitly flagged Sensitive in any form version present (#743).
+  const flaggedKeys = new Set<string>();
+  const parsedDefinitions = new Map<unknown, RegistrationFormDefinition | null>();
+  for (const registration of activeRegistrations) {
+    const raw = registration.publicSubmission?.definition;
+    if (!raw || parsedDefinitions.has(raw)) continue;
+    const parsed = parseDefinition(raw);
+    parsedDefinitions.set(raw, parsed);
+    for (const field of parsed?.sections.flatMap((section) => section.fields) ?? []) {
+      if (field.sensitive === true) flaggedKeys.add(field.key);
+    }
+  }
+
   for (const registration of activeRegistrations) {
     const definition = registration.publicSubmission
-      ? parseDefinition(registration.publicSubmission.definition)
+      ? parsedDefinitions.get(registration.publicSubmission.definition) ?? null
       : null;
-    const fields = definition ? definitionFields(definition) : [];
+    const fields = definition ? definitionFields(definition, flaggedKeys) : [];
     const registrationResponses = registration.publicSubmission?.responses ?? {};
     const grouping = registrationGrouping(fields, registrationResponses);
     let group = rosterGroups.get(grouping.key);

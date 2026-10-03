@@ -29,12 +29,13 @@ export default async function PeoplePage({ searchParams }: { searchParams: Promi
   // Each location on its own, or all combined (#413).
   const { locations, locationId } = await resolveLocationFilter(event.id, requestedLocation);
   const [allRegistrations, flagged] = await Promise.all([listRegistrations(event.id, { locationId }), backgroundFlaggedAttendeeIds(event.id)]);
-  // Filter by a choice answer (#739), on the server: only structured, non-sensitive
-  // choice questions resolve here, whatever the URL says.
-  const choice = resolveChoiceFilter(allRegistrations, { question: answerQuestion, value: answerValue });
+  // Filter by a choice answer (#739), on the server: only choice questions flagged "Show as a filter" (#743)
+  // resolve here, whatever the URL says. This page already requires VIEW_SENSITIVE_DATA, so sensitive ones are offered.
+  const viewer = { canViewSensitive: permissions.includes("VIEW_SENSITIVE_DATA") };
+  const choice = resolveChoiceFilter(allRegistrations, { question: answerQuestion, value: answerValue }, viewer);
   const registrations = choice ? filterRegistrationsByChoice(allRegistrations, choice) : allRegistrations;
   const choiceView: ChoiceFilterView = {
-    questions: listChoiceQuestions(allRegistrations).map((question) => ({ id: question.id, label: question.label })),
+    questions: listChoiceQuestions(allRegistrations, viewer).map((question) => ({ id: question.id, label: question.label })),
     selected: choice ? {
       id: choice.question.id,
       label: choice.question.label,

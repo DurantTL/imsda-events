@@ -4,6 +4,7 @@ import {
 } from "@/modules/forms/definition";
 import { buildBadgeLabels } from "@/modules/checkin/badge-labels";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
+import { sectionTitleLookup } from "@/modules/forms/field-flags";
 import { isCheckInBookExtraField } from "@/modules/reporting/check-in-book";
 
 /**
@@ -33,14 +34,41 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function eligibleFields(definition: unknown): RegistrationFormField[] {
+function parseFields(definition: unknown) {
   const parsed = registrationFormDefinitionSchema.safeParse(definition);
-  if (!parsed.success) return [];
-  const all = parsed.data.sections.flatMap((section) => section.fields);
-  return all.filter((field) => isCheckInBookExtraField(field, all, {
+  if (!parsed.success) return null;
+  return {
+    all: parsed.data.sections.flatMap((section) => section.fields),
+    sectionTitleOf: sectionTitleLookup(parsed.data.sections),
+  };
+}
+
+function isEligible(field: RegistrationFormField, parsed: NonNullable<ReturnType<typeof parseFields>>) {
+  return isCheckInBookExtraField(field, parsed.all, {
     scopes: positionScopes,
     types: positionFieldTypes,
-  }));
+    sectionTitleOf: parsed.sectionTitleOf,
+  });
+}
+
+function eligibleFields(definition: unknown): RegistrationFormField[] {
+  const parsed = parseFields(definition);
+  return parsed ? parsed.all.filter((field) => isEligible(field, parsed)) : [];
+}
+
+/** Keys that are ineligible in ANY form version present (#743): a key stays out for all of them. */
+function bannedKeys(registrations: RegistrationRecord[]) {
+  const banned = new Set<string>();
+  const seen = new Set<unknown>();
+  for (const registration of registrations) {
+    const raw = registration.publicSubmission?.definition;
+    if (!raw || seen.has(raw)) continue;
+    seen.add(raw);
+    const parsed = parseFields(raw);
+    if (!parsed) continue;
+    for (const field of parsed.all) if (!isEligible(field, parsed)) banned.add(field.key);
+  }
+  return banned;
 }
 
 /** Fields staff may choose as Position, across the event's registration forms. */
@@ -48,9 +76,11 @@ export function badgePositionOptions(
   registrations: RegistrationRecord[],
 ): BadgePositionOption[] {
   const found = new Map<string, { label: string; forms: Set<string> }>();
+  const banned = bannedKeys(registrations);
   for (const registration of registrations) {
     const formName = registration.publicSubmission?.formName ?? "";
     for (const field of eligibleFields(registration.publicSubmission?.definition)) {
+      if (banned.has(field.key)) continue;
       const entry = found.get(field.key) ?? { label: field.label, forms: new Set<string>() };
       if (formName) entry.forms.add(formName);
       found.set(field.key, entry);
@@ -81,7 +111,7 @@ export function buildBadgeCsvRows(
   showAttendeeType = true,
 ): string[][] {
   const positionByAttendee = new Map<string, string>();
-  if (positionField) {
+  if (positionField && !bannedKeys(registrations).has(positionField)) {
     for (const registration of registrations) {
       // Eligibility is checked against this registration's own form version.
       const field = eligibleFields(registration.publicSubmission?.definition)

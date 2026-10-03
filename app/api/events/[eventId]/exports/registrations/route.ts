@@ -40,7 +40,7 @@ async function getHandler(
     const { locationId, locations } = await resolveLocationFilter(eventId, locationParam(request));
     const registrations = await listRegistrations(eventId, { locationId });
     if (choiceQuestion) {
-      const choice = resolveChoiceFilter(registrations, { question: choiceQuestion, value: searchParams.get(CHOICE_FILTER_VALUE_PARAM) });
+      const choice = resolveChoiceFilter(registrations, { question: choiceQuestion, value: searchParams.get(CHOICE_FILTER_VALUE_PARAM) }, { canViewSensitive: actorPermissions.has("VIEW_SENSITIVE_DATA") });
       if (!choice || !choice.value) {
         return Response.json({ error: "CHOICE_FILTER_UNAVAILABLE", message: "That question cannot be used to filter an export." }, { status: 400 });
       }
