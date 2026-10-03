@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { AlertCircle, CheckCircle2, Save } from "lucide-react";
 import type { AttendeeProfileInput } from "@/modules/attendee-accounts/profile-service";
@@ -14,6 +15,7 @@ export function AttendeeProfileForm({
   const [profile, setProfile] = useState(initialProfile);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [message, setMessage] = useState("");
+  const [needsSecondStep, setNeedsSecondStep] = useState(false);
 
   function field(name: keyof AttendeeProfileInput, value: string) {
     setProfile((current) => ({ ...current, [name]: value }));
@@ -25,6 +27,7 @@ export function AttendeeProfileForm({
     event.preventDefault();
     setState("saving");
     setMessage("Saving profile…");
+    setNeedsSecondStep(false);
     try {
       const response = await fetch("/api/attendee/profile", {
         method: "PATCH",
@@ -35,7 +38,9 @@ export function AttendeeProfileForm({
       const payload = await response.json().catch(() => null) as {
         profile?: AttendeeProfileInput;
         message?: string;
+        code?: string;
       } | null;
+      if (payload?.code === "SECOND_STEP_REQUIRED") setNeedsSecondStep(true);
       if (!response.ok || !payload?.profile) {
         throw new Error(payload?.message ?? "Your profile could not be saved.");
       }
@@ -97,6 +102,12 @@ export function AttendeeProfileForm({
           {state === "error" && <AlertCircle size={16} aria-hidden="true" />}
           {state === "saved" && <CheckCircle2 size={16} aria-hidden="true" />}
           {message}
+          {state === "error" && needsSecondStep && (
+            <>
+              {" "}
+              <Link href="/account/two-step">Finish two-step sign-in</Link>
+            </>
+          )}
         </p>
       </div>
     </form>

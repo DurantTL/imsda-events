@@ -1779,7 +1779,8 @@ select:focus-visible {
 .lifecycle-confirmation { border: 1px solid #d8e3e7; border-radius: 15px; background: #f8fafb; padding: 16px; }
 .lifecycle-confirmation h3 { margin: 3px 0 6px; color: var(--ink); font-size: 1rem; }
 .lifecycle-confirmation > div > p:last-child { margin: 0; color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.68rem); line-height: 1.55; }
-.lifecycle-danger-button { background: var(--coral); }
+/* White on #8f3a30 is 7.46:1 (the old navy-on-coral secondary button was 2.29:1; #738). */
+.lifecycle-danger-button { border-color: #8f3a30; background: #8f3a30; color: #fff; }
 
 .auth-page {
   display: grid;
@@ -7259,6 +7260,14 @@ select:focus-visible {
 .accounts-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .accounts-search label { flex: 1; min-width: 220px; }
 .accounts-search input { width: 100%; }
+.accounts-search .accounts-sort-field { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 8px; min-width: 0; }
+.accounts-search .accounts-sort-field select { min-height: 44px; }
+.accounts-search .accounts-sort-direction { min-height: 44px; }
+/* Sortable column header (#738): a real button, so keyboard and touch work. */
+.table-sort-button { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; padding: 0; text-align: left; }
+.table-sort-button:hover { text-decoration: underline; }
+th[aria-sort="ascending"] .table-sort-button,
+th[aria-sort="descending"] .table-sort-button { color: var(--imsda-navy); font-weight: 800; }
 .honor-csv-actions { display: flex; flex-wrap: wrap; gap: 4px 14px; }
 .roster-csv-actions { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; }
 .roster-csv-dialog { width: min(760px, 100%); }
@@ -8779,4 +8788,20 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .choice-filter-list a .choice-chip { grid-column: 2; grid-row: 1 / span 2; }
 @media (min-width: 900px) {
   .choice-filter-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Touch and click targets (#738). Screen only, and only the small controls
+   the issue names: the filter select, export and download controls, check-in
+   queue and review actions, and club event actions. Buttons in general are left
+   alone so dense admin tables keep their compact rows. Touch (phones, tablets,
+   any coarse pointer) gets 44px. Desktop gets 36px through :where(), which has
+   no specificity, so a local compact rule still wins. */
+@media screen {
+  :root { --target-desktop: 36px; --target-touch: 44px; }
+  :where(.filter-field select, .report-download, .report-record-link, .roster-csv-actions > a, .roster-csv-actions > button,
+    .club-event-action, .check-in-queue-actions button, .check-in-review-list article > button) { min-height: var(--target-desktop); }
+}
+@media screen and ((max-width: 768px) or (pointer: coarse)) {
+  :root :is(.filter-field select, .report-download, .report-record-link, .roster-csv-actions > a, .roster-csv-actions > button,
+    .club-event-action, .check-in-queue-actions button, .check-in-review-list article > button) { min-height: var(--target-touch); }
 }
