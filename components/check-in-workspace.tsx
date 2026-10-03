@@ -57,6 +57,7 @@ export function CheckInWorkspace({
   canCheckIn,
   backgroundFlaggedAttendeeIds = [],
   clubs = [],
+  locationName,
 }: {
   eventName: string;
   eventId: string;
@@ -67,6 +68,8 @@ export function CheckInWorkspace({
   backgroundFlaggedAttendeeIds?: string[];
   /** Active club registrations for this event (#412): who to check in as a group, and what their church owes. */
   clubs?: ClubCheckInInfo[];
+  /** The location the desk is filtered to (#413), named in the roster heading so staff can see the list is filtered. */
+  locationName?: string;
 }) {
   const [arrivals, setArrivals] = useState<Arrival[]>(initialArrivals);
   const paymentDueByConfirmationCode = useMemo(() => Object.fromEntries(
@@ -564,7 +567,7 @@ export function CheckInWorkspace({
       <section className="panel">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Arrival roster</p>
+            <p className="eyebrow">{locationName ? `Arrivals \u00b7 ${locationName}` : "Arrival roster"}</p>
             <h2 ref={rosterHeadingRef}>Expected attendees</h2>
             {owingCount > 0 && (
               <small className="checkin-balance-note">

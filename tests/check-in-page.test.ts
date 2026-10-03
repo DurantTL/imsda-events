@@ -47,6 +47,7 @@ vi.mock("@/modules/club-registrations/repository", () => ({
 }));
 
 import CheckInPage from "@/app/(workspace)/check-in/page";
+import { resolveLocationFilter } from "@/modules/event-locations/filter";
 
 function event(id: string, endsAt = new Date("2099-01-01T00:00:00Z")) {
   return { id, name: `Event ${id}`, endsAt };
@@ -217,5 +218,19 @@ describe("check-in page payload (#757)", () => {
     const element = await CheckInPage({ searchParams: Promise.resolve({ event: "event_a" }) });
     const props = (element as { props: { children: Array<{ props: { initialArrivals: Array<{ balanceCents: number }> } }> } }).props.children[1].props;
     expect(props.initialArrivals.map((arrival) => arrival.balanceCents)).toEqual([0, 0]);
+  });
+});
+
+describe("check-in desk location (#413)", () => {
+  it("uses the compact select, passes the chosen location to the roster, and names an inactive one as such", async () => {
+    const locations = [{ id: "loc_a", name: "Sunnydale Academy", isActive: true }, { id: "loc_b", name: "Old Campus", isActive: false }];
+    dependencies.listEventsForUser.mockResolvedValue([event("event_a")]);
+    dependencies.findActiveMembership.mockResolvedValue({ eventId: "event_a", userId: "user_one", role: "CHECK_IN_STAFF", status: "ACTIVE", permissions: ["MANAGE_CHECK_IN"] });
+    vi.mocked(resolveLocationFilter).mockResolvedValueOnce({ locations, locationId: "loc_b", selected: locations[1] });
+    const element = await CheckInPage({ searchParams: Promise.resolve({ event: "event_a", location: "loc_b" }) });
+    const [filter, workspace] = (element as { props: { children: Array<{ type: { name: string }; props: Record<string, unknown> }> } }).props.children;
+    expect(filter.type.name).toBe("DeskLocationSelect");
+    expect(filter.props.selectedId).toBe("loc_b");
+    expect(workspace.props.locationName).toBe("Old Campus (inactive)");
   });
 });

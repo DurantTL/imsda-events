@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { AccessRestricted } from "@/components/access-restricted";
 import { CheckInWorkspace } from "@/components/check-in-workspace";
-import { LocationFilter } from "@/components/location-filter";
+import { DeskLocationSelect, deskLocationLabel } from "@/components/desk-location-select";
 import { resolveLocationFilter } from "@/modules/event-locations/filter";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { findDefaultCheckInEventId } from "@/modules/checkin/default-event";
@@ -44,7 +44,7 @@ export default async function CheckInPage({ searchParams }: { searchParams: Prom
     return <AccessRestricted title="Staff access required" detail="Check-in is for event administrators and check-in staff. Your account doesn't have check-in access for this event. If you're helping at arrival, ask the event administrator to add check-in access to your account." />;
   }
   // A check-in desk can work one location, or all of them at once (#413).
-  const { locations, locationId } = await resolveLocationFilter(event.id, requestedLocation);
+  const { locations, locationId, selected } = await resolveLocationFilter(event.id, requestedLocation);
   const [registrations, flagged, clubs] = await Promise.all([
     listRegistrations(event.id, { statuses: activeRegistrationStatuses, locationId }),
     backgroundFlaggedAttendeeIds(event.id),
@@ -54,7 +54,7 @@ export default async function CheckInPage({ searchParams }: { searchParams: Prom
   // registration records (which carry every form answer).
   const arrivals = projectCheckInArrivals(registrations, { showBalances: event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE" });
   return <>
-    <LocationFilter basePath="/check-in" locations={locations} params={{ event: event.id }} selectedId={locationId} />
-    <CheckInWorkspace key={event.id} eventName={event.name} eventId={event.id} initialArrivals={arrivals} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} backgroundFlaggedAttendeeIds={[...flagged]} clubs={clubs} />
+    <DeskLocationSelect basePath="/check-in" locations={locations} params={{ event: event.id }} selectedId={locationId} />
+    <CheckInWorkspace key={event.id} locationName={selected ? deskLocationLabel(selected) : undefined} eventName={event.name} eventId={event.id} initialArrivals={arrivals} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} backgroundFlaggedAttendeeIds={[...flagged]} clubs={clubs} />
   </>;
 }
