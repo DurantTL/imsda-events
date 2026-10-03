@@ -1,8 +1,10 @@
 import "server-only";
 
+import { cookies } from "next/headers";
 import { getMfaStatus } from "@/modules/access/mfa-service";
 import { getPasskeySettings } from "@/modules/access/passkeys";
 import { getCurrentSession } from "@/modules/access/current-session";
+import { listUserSessions, SESSION_COOKIE_NAME, SESSION_IDLE_TIMEOUT_SECONDS } from "@/modules/access/session-store";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { getPasskeySettings as getAttendeePasskeySettings } from "@/modules/attendee-accounts/passkeys";
@@ -72,11 +74,13 @@ export async function loadProfileData(sessions: ProfileSessions, twoStep: string
     ]);
     showTwoStepOn = authenticator.status === "ACTIVE" || passkeys.passkeys.length > 0;
   }
+  // The staff member's own signed-in devices (#741), moved here from the More page.
+  const staffSessions = staff ? await listUserSessions(staff.id, (await cookies()).get(SESSION_COOKIE_NAME)?.value) : [];
   const clubs = attendeeAccount && !secondStepPending ? await listDirectedClubs(attendeeAccount.id) : [];
   const bannerAnnouncements = attendeeAccount && !secondStepPending
     ? await listAccountBannerAnnouncements(attendeeAccount, clubs)
     : [];
-  return { staff, attendeeAccount, sessionId, secondStepPending, mfaStatus, passkeySettings, showTwoStepOn, clubs, bannerAnnouncements };
+  return { staff, attendeeAccount, sessionId, staffSessions, sessionIdleTimeoutSeconds: SESSION_IDLE_TIMEOUT_SECONDS, secondStepPending, mfaStatus, passkeySettings, showTwoStepOn, clubs, bannerAnnouncements };
 }
 
 export type ProfileData = Awaited<ReturnType<typeof loadProfileData>>;

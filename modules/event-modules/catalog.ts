@@ -179,3 +179,18 @@ export function defaultModuleKeys(audience: "GENERAL" | "CLUB"): EventModuleKey[
 export function hiddenModuleCardKeys(enabled: ReadonlySet<EventModuleKey>, gated: readonly EventModuleKey[]): Set<string> {
   return new Set(gated.filter((key) => !enabled.has(key)).map((key) => eventModuleDefinition(key).cardKey));
 }
+
+/**
+ * The More card keys of every module that is off for the event (#741 slice 2).
+ * The launcher and the Event modules page both read this, so a card is hidden
+ * the same way in both. A module that applies to the event but has no row is
+ * off: only a system administrator turns it on.
+ */
+export function disabledModuleCardKeys(enabled: ReadonlySet<EventModuleKey>): Set<string> {
+  return hiddenModuleCardKeys(enabled, eventModuleKeys);
+}
+
+/** The module a More card belongs to, or `undefined` for an ordinary staff tool. */
+export function moduleForCard(cardKey: string): EventModuleDefinition | undefined {
+  return eventModuleCatalog.find((definition) => definition.cardKey === cardKey);
+}

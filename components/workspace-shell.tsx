@@ -4,6 +4,9 @@ import { AppShell } from "@/components/app-shell";
 import { listActiveEventPermissionsForUser, listActiveEventRolesForUser } from "@/modules/access/membership-repository";
 import { eventPermissions } from "@/modules/access/permissions";
 import { findSwitchableAttendeeAccountForStaff } from "@/modules/attendee-accounts/current-attendee";
+import { disabledModuleCardKeys } from "@/modules/event-modules/catalog";
+import { enabledModulesByEvent } from "@/modules/event-modules/service";
+import { hasEventEnded } from "@/modules/events/lifecycle";
 import { loadWorkspaceEventContext } from "@/modules/events/selection";
 import { currentStaffActingContext } from "@/modules/organizations/staff-act-as";
 
@@ -26,12 +29,17 @@ export async function WorkspaceShell({ anyStaffWithoutEvents = false, children }
   // Audience, not billing mode, so an attendee-paid CLUB event still shows
   // club features, and a GENERAL event never does — even for a system admin.
   const rolesByEvent = isSystemAdmin ? new Map() : await listActiveEventRolesForUser(user.id, events.map((event) => event.id));
+  // Which More cards are off per event (#741), in one query, for the launcher.
+  const modulesByEvent = await enabledModulesByEvent(events.map((event) => event.id));
   const shellEvents = events.map((event) => ({
     id: event.id,
     slug: event.slug,
     name: event.name,
     permissions: permissionsByEvent.get(event.id) ?? [],
     clubEvent: event.audience === "CLUB",
+    hiddenCardKeys: [...disabledModuleCardKeys(modulesByEvent.get(event.id) ?? new Set())],
+    // Club forms (#610): same rule as `resolveStaffViewer`. System admins, and Event Admins of an event that has not ended.
+    clubFormsAccess: isSystemAdmin || (rolesByEvent.get(event.id) === "EVENT_ADMIN" && !hasEventEnded(event)),
     clubOversight: event.audience === "CLUB"
       && (isSystemAdmin || rolesByEvent.get(event.id) === "EVENT_ADMIN"),
   }));

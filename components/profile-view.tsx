@@ -3,6 +3,7 @@ import { AccountAnnouncementBanner } from "@/components/account-announcement-ban
 import { AttendeeAccountSettings } from "@/components/attendee-account-settings";
 import { AttendeeSignOutButton } from "@/components/attendee-sign-out-button";
 import { MfaManager } from "@/components/mfa-manager";
+import { SessionManager } from "@/components/session-manager";
 import { SignOutButton } from "@/components/sign-out-button";
 import { StaffPasskeyManager } from "@/components/staff-passkey-manager";
 import type { ProfileData } from "@/modules/account-profile/load-profile";
@@ -47,6 +48,7 @@ export function ProfileView({ data, variant }: { data: ProfileData; variant: "sh
           initialPasskeys={passkeySettings.passkeys}
           verification={passkeySettings.verification}
         />
+        <SessionManager initialSessions={data.staffSessions} idleTimeoutSeconds={data.sessionIdleTimeoutSeconds} />
       </>
     )
     : null;
@@ -79,7 +81,7 @@ export function ProfileView({ data, variant }: { data: ProfileData; variant: "sh
           <div>
             <p className="eyebrow">Your account</p>
             <h2>Edit profile</h2>
-            <p>Your details, two-step verification and passkeys.</p>
+            <p>Your details, two-step verification, passkeys and signed-in devices.</p>
           </div>
         </div>
         {staffSections}
@@ -117,7 +119,7 @@ export function ProfileView({ data, variant }: { data: ProfileData; variant: "sh
         <div>
           <p className="public-registration-eyebrow">Your account</p>
           <h1>Edit profile</h1>
-          <p>Your details, two-step verification and passkeys.</p>
+          <p>Your details, two-step verification, passkeys and signed-in devices.</p>
         </div>
       </section>
 

@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   currentStaffActingContext: vi.fn(),
   listAccountBannerAnnouncements: vi.fn(),
   headers: vi.fn(),
+  listUserSessions: vi.fn(),
   redirect: vi.fn((path: string) => {
     throw new Error(`REDIRECT ${path}`);
   }),
@@ -25,7 +26,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
-vi.mock("next/headers", () => ({ headers: mocks.headers }));
+vi.mock("next/headers", () => ({
+  headers: mocks.headers,
+  cookies: async () => ({ get: (name: string) => (name === "imsda_session" ? { value: "token-1" } : undefined) }),
+}));
+vi.mock("@/modules/access/session-store", () => ({
+  SESSION_COOKIE_NAME: "imsda_session",
+  SESSION_IDLE_TIMEOUT_SECONDS: 3600,
+  listUserSessions: mocks.listUserSessions,
+}));
 vi.mock("@/modules/access/current-session", () => ({ getCurrentSession: mocks.getCurrentSession }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
 vi.mock("@/modules/attendee-accounts/portal-second-step", () => ({
@@ -95,6 +104,7 @@ beforeEach(() => {
   mocks.attendeeSecondStepPending.mockResolvedValue(false);
   mocks.requireAttendeeSecondStep.mockResolvedValue(undefined);
   mocks.listDirectedClubs.mockResolvedValue([]);
+  mocks.listUserSessions.mockResolvedValue([]);
   mocks.currentStaffActingContext.mockResolvedValue(null);
   mocks.listAccountBannerAnnouncements.mockResolvedValue([]);
   mocks.getMfaStatus.mockResolvedValue({ status: "NONE", required: false });
@@ -346,5 +356,41 @@ describe("old attendee URLs", () => {
       mocks.redirect("/account/two-step");
     });
     await expect(AttendeeSecurityRedirect()).rejects.toThrow("REDIRECT /account/two-step");
+  });
+});
+
+describe("signed-in devices on /profile (#741)", () => {
+  const device = (index: number, isCurrent = false) => ({
+    id: `session-${index}`,
+    isCurrent,
+    startedAt: "2026-10-01T10:00:00.000Z",
+    lastSeenAt: `2026-10-01T1${index}:00:00.000Z`,
+    expiresAt: "2026-10-01T18:00:00.000Z",
+  });
+
+  it("lists the staff member's own devices, read with their own session cookie", async () => {
+    signedIn({ staff });
+    mocks.listUserSessions.mockResolvedValue([device(1, true), device(2)]);
+    const markup = await render();
+    expect(mocks.listUserSessions).toHaveBeenCalledWith("staff-1", "token-1");
+    expect(markup).toContain("Signed-in devices");
+    expect(markup).toContain("This device");
+    expect(markup.match(/class="activity-row"/g)).toHaveLength(2);
+    expect(markup).not.toContain("Show all");
+  });
+
+  it("shows five devices, then a Show all control, with this device always among the five", async () => {
+    signedIn({ staff });
+    mocks.listUserSessions.mockResolvedValue([1, 2, 3, 4, 5, 6, 7].map((index) => device(index, index === 7)));
+    const markup = await render();
+    expect(markup.match(/class="activity-row"/g)).toHaveLength(5);
+    expect(markup).toContain("Show all 7");
+    expect(markup).toContain("This device");
+  });
+
+  it("does not read or show devices when there is no staff session", async () => {
+    signedIn({ staff: null, attendee: true });
+    await renderPortal();
+    expect(mocks.listUserSessions).not.toHaveBeenCalled();
   });
 });

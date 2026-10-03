@@ -31,6 +31,21 @@ export async function enabledModules(eventId: string): Promise<ReadonlySet<Event
   return enabled;
 }
 
+/**
+ * The modules that are on for each of several events, in one query (the staff
+ * shell needs every event's launcher). Always-on modules are included.
+ */
+export async function enabledModulesByEvent(eventIds: readonly string[]): Promise<Map<string, ReadonlySet<EventModuleKey>>> {
+  const result = new Map<string, Set<EventModuleKey>>(eventIds.map((id) => [id, new Set<EventModuleKey>(alwaysOnKeys)]));
+  if (eventIds.length === 0) return result;
+  const rows = await getPrisma().eventModule.findMany({
+    where: { eventId: { in: [...eventIds] } },
+    select: { eventId: true, moduleKey: true },
+  });
+  for (const row of rows) if (isEventModuleKey(row.moduleKey)) result.get(row.eventId)?.add(row.moduleKey);
+  return result;
+}
+
 export async function isModuleEnabled(eventId: string, key: EventModuleKey): Promise<boolean> {
   if (eventModuleDefinition(key).alwaysOn) return true;
   const row = await getPrisma().eventModule.findUnique({
