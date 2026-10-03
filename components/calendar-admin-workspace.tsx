@@ -3,7 +3,8 @@
 import { useRef, useState } from "react";
 import { CalendarDays, Eye, EyeOff, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { calendarStatusLabels, formatDateRange } from "@/modules/calendar/domain";
+import { calendarStatusLabels, closureLabel, formatDateRange } from "@/modules/calendar/domain";
+import { describeRepeat, previewOccurrences, weekdayLabels, type RepeatRule } from "@/modules/calendar/recurrence";
 import type { CalendarAdminEntry, CalendarAdminEvent } from "@/modules/calendar/repository";
 
 type ApiResponse = {
@@ -12,6 +13,42 @@ type ApiResponse = {
   message?: string;
   issues?: Array<{ message?: string }>;
 };
+
+/** The "Repeats" control's state: what the staff member has picked, before it becomes a rule. */
+export type RepeatDraft = {
+  frequency: "NEVER" | RepeatRule["frequency"];
+  interval: number;
+  weekdays: number[];
+  endMode: "never" | "until" | "count";
+  until: string;
+  count: number;
+};
+
+export const noRepeat: RepeatDraft = { frequency: "NEVER", interval: 1, weekdays: [], endMode: "never", until: "", count: 10 };
+
+export function repeatToDraft(repeat: RepeatRule | null): RepeatDraft {
+  if (!repeat) return noRepeat;
+  return {
+    frequency: repeat.frequency,
+    interval: repeat.interval,
+    weekdays: repeat.weekdays,
+    endMode: repeat.until ? "until" : repeat.count ? "count" : "never",
+    until: repeat.until ?? "",
+    count: repeat.count ?? 10,
+  };
+}
+
+/** The rule sent to the API, or null for "never". A weekly repeat with no weekday follows the start date's. */
+export function draftToRepeat(draft: RepeatDraft): RepeatRule | null {
+  if (draft.frequency === "NEVER") return null;
+  return {
+    frequency: draft.frequency,
+    interval: Math.max(1, Math.floor(draft.interval) || 1),
+    weekdays: draft.frequency === "WEEKLY" ? draft.weekdays : [],
+    until: draft.endMode === "until" && draft.until ? draft.until : null,
+    count: draft.endMode === "count" ? Math.max(1, Math.floor(draft.count) || 1) : null,
+  };
+}
 
 /**
  * What the public calendar shows (#107): which published events appear, and
@@ -35,6 +72,10 @@ export function CalendarAdminWorkspace({
   // confirm dialog replaces `window.confirm()`.
   const [removeTarget, setRemoveTarget] = useState<CalendarAdminEntry | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  // The repeat control and its start date are controlled so the skip list can preview occurrences.
+  const [startsOn, setStartsOn] = useState("");
+  const [repeat, setRepeat] = useState<RepeatDraft>(noRepeat);
+  const [skipped, setSkipped] = useState<string[]>([]);
 
   async function call(url: string, method: string, body: unknown, success: string) {
     setSaving(true);
@@ -62,6 +103,9 @@ export function CalendarAdminWorkspace({
 
   function beginEdit(entry: CalendarAdminEntry) {
     setEditing(entry);
+    setStartsOn(entry.startsOn);
+    setRepeat(repeatToDraft(entry.repeat));
+    setSkipped(entry.repeatExceptions);
     setNotice("");
     setError("");
     window.requestAnimationFrame(() => {
@@ -86,12 +130,18 @@ export function CalendarAdminWorkspace({
       linkUrl: String(form.get("linkUrl") ?? ""),
       status: String(form.get("status") ?? "SCHEDULED"),
       isPublished: form.get("isPublished") === "on",
+      entryType: form.get("entryType") === "CLOSURE" ? "CLOSURE" : "STANDARD",
+      repeat: draftToRepeat(repeat),
+      repeatExceptions: repeat.frequency === "NEVER" ? [] : skipped,
     };
     const ok = editing
       ? await call(`/api/admin/calendar/entries/${encodeURIComponent(editing.id)}`, "PATCH", body, "Saved.")
       : await call("/api/admin/calendar/entries", "POST", body, body.isPublished ? "Added to the public calendar." : "Saved as a draft.");
     if (ok) {
       setEditing(null);
+      setStartsOn("");
+      setRepeat(noRepeat);
+      setSkipped([]);
       formElement.reset();
     }
   }
@@ -158,7 +208,7 @@ export function CalendarAdminWorkspace({
                 <h2>{editing ? editing.title : "Add a date to the calendar"}</h2>
               </div>
               {editing && (
-                <button className="secondary-button" onClick={() => setEditing(null)} type="button">
+                <button className="secondary-button" onClick={() => { setEditing(null); setStartsOn(""); setRepeat(noRepeat); setSkipped([]); }} type="button">
                   <X aria-hidden="true" size={14} /> Cancel
                 </button>
               )}
@@ -170,7 +220,7 @@ export function CalendarAdminWorkspace({
             <div className="form-grid two-column">
               <label>
                 Starts
-                <input defaultValue={editing?.startsOn ?? ""} name="startsOn" required type="date" />
+                <input name="startsOn" onChange={(event) => setStartsOn(event.target.value)} required type="date" value={startsOn} />
               </label>
               <label>
                 Ends (blank for one day)
@@ -189,12 +239,20 @@ export function CalendarAdminWorkspace({
                 <input defaultValue={editing?.category ?? ""} list="calendar-categories" maxLength={40} name="category" placeholder="e.g. Youth" />
               </label>
               <label>
+                Type
+                <select defaultValue={editing?.entryType ?? "STANDARD"} name="entryType">
+                  <option value="STANDARD">Conference date</option>
+                  <option value="CLOSURE">{closureLabel} (e.g. conference office closed)</option>
+                </select>
+              </label>
+              <label>
                 Status
                 <select defaultValue={editing?.status ?? "SCHEDULED"} name="status">
                   {Object.entries(calendarStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                 </select>
               </label>
             </div>
+            <RepeatEditor draft={repeat} onChange={setRepeat} onSkippedChange={setSkipped} skipped={skipped} startsOn={startsOn} />
             <label>
               Link for more information (optional)
               <input defaultValue={editing?.linkUrl ?? ""} maxLength={500} name="linkUrl" placeholder="https://" type="url" />
@@ -237,10 +295,12 @@ export function CalendarAdminWorkspace({
                         {formatDateRange(entry.startsOn, entry.endsOn)}
                         {entry.category ? ` · ${entry.category}` : ""}
                         {entry.location ? ` · ${entry.location}` : ""}
+                        {entry.repeat ? ` · ${describeRepeat(entry.repeat)}` : ""}
                       </small>
                       <span className="calendar-admin-chips">
                         <span className={`status-chip ${entry.isPublished ? "green" : "gold"}`}>{entry.isPublished ? "On calendar" : "Draft"}</span>
                         {entry.status !== "SCHEDULED" && <span className="status-chip coral">{calendarStatusLabels[entry.status]}</span>}
+                        {entry.entryType === "CLOSURE" && <span className="status-chip gold">{closureLabel}</span>}
                       </span>
                     </div>
                     <div className="calendar-admin-actions">
@@ -348,5 +408,132 @@ export function CalendarAdminWorkspace({
         <p>The entry disappears from the calendar for everyone right away. This can&apos;t be undone.</p>
       </ConfirmDialog>
     </section>
+  );
+}
+
+/** "Repeats": never, daily, weekly (on chosen weekdays), monthly or yearly, with an end and skipped dates. */
+function RepeatEditor({
+  draft,
+  onChange,
+  skipped,
+  onSkippedChange,
+  startsOn,
+}: {
+  draft: RepeatDraft;
+  onChange: (draft: RepeatDraft) => void;
+  skipped: string[];
+  onSkippedChange: (skipped: string[]) => void;
+  startsOn: string;
+}) {
+  const update = (patch: Partial<RepeatDraft>) => onChange({ ...draft, ...patch });
+  const rule = draftToRepeat(draft);
+  const preview = rule && startsOn ? previewOccurrences({ startsOn }, rule, skipped, 12) : [];
+  const unit = { DAILY: "day(s)", WEEKLY: "week(s)", MONTHLY: "month(s)", YEARLY: "year(s)" };
+
+  function toggleSkip(date: string) {
+    onSkippedChange(skipped.includes(date) ? skipped.filter((value) => value !== date) : [...skipped, date].sort());
+  }
+
+  return (
+    <fieldset className="calendar-repeat-editor">
+      <legend>Repeats</legend>
+      <div className="form-grid two-column">
+        <label>
+          Repeat
+          <select name="repeatFrequency" onChange={(event) => update({ frequency: event.target.value as RepeatDraft["frequency"] })} value={draft.frequency}>
+            <option value="NEVER">Never</option>
+            <option value="DAILY">Daily</option>
+            <option value="WEEKLY">Weekly</option>
+            <option value="MONTHLY">Monthly (same day of the month)</option>
+            <option value="YEARLY">Yearly</option>
+          </select>
+        </label>
+        {draft.frequency !== "NEVER" && (
+          <label>
+            Every
+            <span className="calendar-admin-actions">
+              <input
+                aria-label="Repeat interval"
+                max={99}
+                min={1}
+                name="repeatInterval"
+                onChange={(event) => update({ interval: Number(event.target.value) })}
+                type="number"
+                value={draft.interval}
+              />
+              <span>{unit[draft.frequency]}</span>
+            </span>
+          </label>
+        )}
+      </div>
+
+      {draft.frequency === "WEEKLY" && (
+        <div role="group" aria-label="Repeat on these weekdays">
+          <div className="calendar-weekday-picks">
+            {weekdayLabels.map((label, day) => (
+              <label key={label}>
+                <input
+                  checked={draft.weekdays.includes(day)}
+                  onChange={(event) => update({
+                    weekdays: event.target.checked ? [...draft.weekdays, day].sort() : draft.weekdays.filter((value) => value !== day),
+                  })}
+                  type="checkbox"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <small>No weekday picked repeats on the start date&apos;s weekday.</small>
+        </div>
+      )}
+
+      {draft.frequency !== "NEVER" && (
+        <>
+          <div className="form-grid two-column">
+            <label>
+              Ends
+              <select name="repeatEnd" onChange={(event) => update({ endMode: event.target.value as RepeatDraft["endMode"] })} value={draft.endMode}>
+                <option value="never">Never</option>
+                <option value="until">On a date</option>
+                <option value="count">After a number of times</option>
+              </select>
+            </label>
+            {draft.endMode === "until" && (
+              <label>
+                Last date
+                <input name="repeatUntil" onChange={(event) => update({ until: event.target.value })} required type="date" value={draft.until} />
+              </label>
+            )}
+            {draft.endMode === "count" && (
+              <label>
+                Number of times
+                <input max={500} min={1} name="repeatCount" onChange={(event) => update({ count: Number(event.target.value) })} type="number" value={draft.count} />
+              </label>
+            )}
+          </div>
+
+          {preview.length > 0 && (
+            <div>
+              <p><strong>Upcoming dates</strong> <small>Skip a date to leave that one off the calendar.</small></p>
+              <ul className="calendar-repeat-dates">
+                {preview.map(({ startsOn: date, skipped: isSkipped }) => (
+                  <li className={isSkipped ? "is-skipped" : ""} key={date}>
+                    <span>{formatDateRange(date, date)}{isSkipped ? " (skipped)" : ""}</span>
+                    <button
+                      aria-label={`${isSkipped ? "Restore" : "Skip"} ${formatDateRange(date, date)}`}
+                      className="secondary-button"
+                      onClick={() => toggleSkip(date)}
+                      type="button"
+                    >
+                      {isSkipped ? "Restore" : "Skip"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+    </fieldset>
   );
 }

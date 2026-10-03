@@ -14,7 +14,7 @@ export function calendarApiError(error: unknown, action: string) {
     return Response.json({ error: error.code, message: error.message }, { status: error.status });
   }
   if (error instanceof CalendarError) {
-    return Response.json({ error: error.code, message: error.message }, { status: 404 });
+    return Response.json({ error: error.code, message: error.message }, { status: error.code === "INVALID_REPEAT" ? 400 : 404 });
   }
   logError(`${action} failed`, error);
   return Response.json(

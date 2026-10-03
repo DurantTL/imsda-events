@@ -25,7 +25,18 @@ export type CalendarItem = {
   status: CalendarItemStatus;
   /** Only for events: whether registration is open right now. */
   registrationOpen: boolean;
+  /** An office closure ("Conference office closed"), shown with its own label and icon. */
+  isClosure?: boolean;
+  /**
+   * The repeat rule of a repeating entry (#444). Set on the single master item
+   * the ICS feed emits as RRULE/EXDATE; expanded occurrences on the page leave it null.
+   */
+  recurrence?: { rule: string; exceptions: string[] } | null;
 };
+
+/** The label and the feed category that mark an office closure. */
+export const closureLabel = "Office closed";
+export const closureCategory = "Office closure";
 
 export type CalendarMonth = { year: number; month: number };
 
@@ -218,7 +229,13 @@ export function buildCalendarIcs(items: CalendarItem[], options: { baseUrl: stri
     );
     if (item.location) lines.push(`LOCATION:${escapeIcsText(item.location)}`);
     if (details) lines.push(`DESCRIPTION:${escapeIcsText(details)}`);
-    if (item.category) lines.push(`CATEGORIES:${escapeIcsText(item.category)}`);
+    const categories = [item.isClosure ? closureCategory : "", item.category].filter(Boolean);
+    if (categories.length > 0) lines.push(`CATEGORIES:${categories.map(escapeIcsText).join(",")}`);
+    if (item.recurrence) {
+      lines.push(`RRULE:${item.recurrence.rule}`);
+      const exceptions = [...item.recurrence.exceptions].sort().map((date) => date.replace(/-/g, ""));
+      if (exceptions.length > 0) lines.push(`EXDATE;VALUE=DATE:${exceptions.join(",")}`);
+    }
     if (url) lines.push(`URL:${url}`);
     lines.push("END:VEVENT");
   }

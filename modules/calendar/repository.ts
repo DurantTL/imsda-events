@@ -9,11 +9,12 @@ import {
   sortCalendarItems,
   type CalendarItem,
 } from "@/modules/calendar/domain";
-import type { CalendarEntryInput, CalendarEntryUpdate, CalendarEventSettings } from "@/modules/calendar/schemas";
+import { expandOccurrences, parseRepeatRule, serializeRepeatRule } from "@/modules/calendar/recurrence";
+import type { CalendarEntryInput, CalendarEntryUpdate, CalendarEventSettings, CalendarRepeatInput } from "@/modules/calendar/schemas";
 import { evaluateEventRegistrationPhase } from "@/modules/events/lifecycle";
 
 export class CalendarError extends Error {
-  constructor(public readonly code: "ENTRY_NOT_FOUND" | "EVENT_NOT_FOUND", message: string) {
+  constructor(public readonly code: "ENTRY_NOT_FOUND" | "EVENT_NOT_FOUND" | "INVALID_REPEAT", message: string) {
     super(message);
     this.name = "CalendarError";
   }
@@ -39,7 +40,13 @@ const publicEventSelect = {
  * published entries. Nothing else is ever read here, so nothing else can leak
  * into the page, the feed, or search engines.
  */
-export async function listPublicCalendarItems(from: string, to: string, now = new Date()): Promise<CalendarItem[]> {
+export async function listPublicCalendarItems(
+  from: string,
+  to: string,
+  now = new Date(),
+  options: { expandRepeats?: boolean } = {},
+): Promise<CalendarItem[]> {
+  const expandRepeats = options.expandRepeats ?? true;
   const prisma = getPrisma();
   // Widen by a day each side so an event's own time zone can't push it out of range.
   const [events, entries] = await Promise.all([
@@ -53,7 +60,13 @@ export async function listPublicCalendarItems(from: string, to: string, now = ne
       select: publicEventSelect,
     }),
     prisma.calendarEntry.findMany({
-      where: { isPublished: true, startsOn: { lte: to }, endsOn: { gte: from } },
+      // A repeating entry can reach into the window from long before it, so
+      // only its first date is bounded here; its occurrences are cut below.
+      where: {
+        isPublished: true,
+        startsOn: { lte: to },
+        OR: [{ endsOn: { gte: from } }, { repeatRule: { not: null } }],
+      },
     }),
   ]);
 
@@ -72,22 +85,62 @@ export async function listPublicCalendarItems(from: string, to: string, now = ne
       status: "SCHEDULED" as const,
       registrationOpen: evaluateEventRegistrationPhase(event, now) === "OPEN",
     })),
-    ...entries.map((entry) => ({
+    ...entries.flatMap((entry) => entryItems(entry, from, to, expandRepeats)),
+  ];
+  return sortCalendarItems(items.filter((item) => item.recurrence || (item.startsOn <= to && item.endsOn >= from)));
+}
+
+type PublicEntryRow = {
+  id: string;
+  title: string;
+  description: string;
+  startsOn: string;
+  endsOn: string;
+  timeLabel: string;
+  location: string;
+  category: string;
+  linkUrl: string | null;
+  status: CalendarItem["status"];
+  entryType: "STANDARD" | "CLOSURE";
+  repeatRule: string | null;
+  repeatExceptions: string[];
+};
+
+/**
+ * One entry as calendar items. A repeating entry becomes one item per
+ * occurrence in the window (the page), or a single master carrying its
+ * RRULE/EXDATEs (the feed, which lets the subscriber's app do the repeating).
+ */
+function entryItems(entry: PublicEntryRow, from: string, to: string, expandRepeats: boolean): CalendarItem[] {
+  const rule = parseRepeatRule(entry.repeatRule);
+  const base = {
+    kind: "ENTRY" as const,
+    title: entry.title,
+    description: entry.description,
+    timeLabel: entry.timeLabel,
+    location: entry.location,
+    category: entry.category,
+    href: entry.linkUrl,
+    status: entry.status,
+    registrationOpen: false,
+    isClosure: entry.entryType === "CLOSURE",
+  };
+  if (rule && !expandRepeats) {
+    return [{
+      ...base,
       key: `entry-${entry.id}`,
-      kind: "ENTRY" as const,
-      title: entry.title,
-      description: entry.description,
       startsOn: entry.startsOn,
       endsOn: entry.endsOn,
-      timeLabel: entry.timeLabel,
-      location: entry.location,
-      category: entry.category,
-      href: entry.linkUrl,
-      status: entry.status,
-      registrationOpen: false,
-    })),
-  ];
-  return sortCalendarItems(items.filter((item) => item.startsOn <= to && item.endsOn >= from));
+      recurrence: { rule: serializeRepeatRule(rule), exceptions: entry.repeatExceptions ?? [] },
+    }];
+  }
+  return expandOccurrences(entry, rule, entry.repeatExceptions ?? [], from, to).map((occurrence) => ({
+    ...base,
+    key: rule ? `entry-${entry.id}:${occurrence.startsOn}` : `entry-${entry.id}`,
+    startsOn: occurrence.startsOn,
+    endsOn: occurrence.endsOn,
+    recurrence: null,
+  }));
 }
 
 export type CalendarAdminEntry = Awaited<ReturnType<typeof listCalendarEntries>>[number];
@@ -105,6 +158,9 @@ export async function listCalendarEntries() {
     category: entry.category,
     linkUrl: entry.linkUrl,
     status: entry.status,
+    entryType: entry.entryType,
+    repeat: parseRepeatRule(entry.repeatRule),
+    repeatExceptions: entry.repeatExceptions,
     isPublished: entry.isPublished,
     updatedAt: entry.updatedAt.toISOString(),
   }));
@@ -130,11 +186,24 @@ export async function listCalendarEvents(now = new Date()) {
   }));
 }
 
+/** The editor's structured repeat as stored columns; `undefined` leaves the column alone. */
+function repeatColumns(input: { repeat?: CalendarRepeatInput | null }) {
+  if (input.repeat === undefined) return {};
+  return { repeatRule: input.repeat ? serializeRepeatRule(input.repeat) : null };
+}
+
+function withoutRepeat<T extends { repeat?: unknown }>(input: T): Omit<T, "repeat"> {
+  const fields = { ...input };
+  delete fields.repeat;
+  return fields;
+}
+
 export async function createCalendarEntry(input: CalendarEntryInput, actorUserId: string) {
   const prisma = getPrisma();
   await prisma.$transaction(async (tx) => {
+    const fields = withoutRepeat(input);
     const entry = await tx.calendarEntry.create({
-      data: { ...input, createdByUserId: actorUserId, updatedByUserId: actorUserId },
+      data: { ...fields, ...repeatColumns(input), createdByUserId: actorUserId, updatedByUserId: actorUserId },
     });
     await writeAuditLog({
       actorUserId,
@@ -153,8 +222,16 @@ export async function updateCalendarEntry(entryId: string, input: CalendarEntryU
   await prisma.$transaction(async (tx) => {
     const existing = await tx.calendarEntry.findUnique({ where: { id: entryId } });
     if (!existing) throw new CalendarError("ENTRY_NOT_FOUND", "That calendar entry could not be found.");
-    const entry = await tx.calendarEntry.update({ where: { id: entryId }, data: { ...input, updatedByUserId: actorUserId } });
-    const changed = Object.keys(input).filter((key) => existing[key as keyof typeof existing] !== entry[key as keyof typeof entry]);
+    const fields = withoutRepeat(input);
+    const columns = repeatColumns(input);
+    // The end-of-repeat check needs the start date, which a PATCH may not carry.
+    const until = input.repeat?.until ?? null;
+    if (until && until < (input.startsOn ?? existing.startsOn)) {
+      throw new CalendarError("INVALID_REPEAT", "A repeat can't end before the first date.");
+    }
+    const entry = await tx.calendarEntry.update({ where: { id: entryId }, data: { ...fields, ...columns, updatedByUserId: actorUserId } });
+    const changed = Object.keys({ ...fields, ...columns }).filter((key) =>
+      JSON.stringify(existing[key as keyof typeof existing]) !== JSON.stringify(entry[key as keyof typeof entry]));
     await writeAuditLog({
       actorUserId,
       action: existing.isPublished !== entry.isPublished

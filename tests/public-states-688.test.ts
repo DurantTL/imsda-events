@@ -63,7 +63,7 @@ describe("group registration not-available state", () => {
 describe("calendar subscribe link", () => {
   it("has an accessible name even when its text is hidden on phones", async () => {
     const markup = renderToStaticMarkup(await PublicCalendarPage({ searchParams: Promise.resolve({}) }));
-    const link = markup.match(/<a[^>]*href="\/calendar\/feed\.ics"[^>]*>/)?.[0] ?? "";
+    const link = markup.match(/<a[^>]*href="#subscribe"[^>]*>/)?.[0] ?? "";
     expect(link).toContain('aria-label="Subscribe to the calendar"');
   });
 });
