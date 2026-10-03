@@ -816,3 +816,27 @@ export async function checkClubFormLinkCreateRateLimit(
     },
   ], configuration);
 }
+
+/**
+ * Feature requests (#741): each one emails the conference office, so an event
+ * admin may not send many. A few an hour per account is plenty for a real need.
+ */
+export async function checkModuleRequestRateLimit(request: Request, userId: string) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const account = hashRateLimitIdentifier("staff-module-request", userId, configuration);
+  return evaluate([
+    {
+      policy: "staff.module-request.client",
+      limit: 20,
+      windowSeconds: oneHour,
+      identifierHashes: [client],
+    },
+    {
+      policy: "staff.module-request.account",
+      limit: 10,
+      windowSeconds: oneHour,
+      identifierHashes: [account],
+    },
+  ], configuration);
+}

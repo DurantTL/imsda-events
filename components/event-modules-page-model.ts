@@ -11,6 +11,11 @@ import {
   type EventModuleDefinition,
   type EventModuleKey,
 } from "@/modules/event-modules/catalog";
+import {
+  canRequestAgain,
+  latestRequestPerModule,
+  type ModuleRequestStatusView,
+} from "@/modules/event-modules/request-domain";
 
 /**
  * What the Event modules page (`/more`, #741 slice 2) shows each kind of viewer.
@@ -172,4 +177,43 @@ export function filterTasks({ cards, query }: { cards: readonly TaskFilterCard[]
   const allGroupIds = new Set(cards.flatMap((card) => card.groupIds));
   const shownGroupIds = new Set(blank ? allGroupIds : shownCards.flatMap((card) => card.groupIds));
   return { shownCardIds, shownGroupIds, count: shownCards.filter((card) => card.drawn).length };
+}
+
+export type RequestableModuleEntry = {
+  definition: EventModuleDefinition;
+  /** The newest request for the module, if any: pending, or declined (a declined one may be asked for again). */
+  latest?: ModuleRequestStatusView;
+  /** False while a request is pending: the form is replaced by its status. */
+  canRequest: boolean;
+};
+
+/**
+ * What the "Request a feature" panel shows an event admin (#741 slice 3): every
+ * module that is off and applies to this event, each with its one-line
+ * description and its newest request. Approved requests are not listed: the
+ * module is on, so it shows as an ordinary enabled card. Not shown to a system
+ * administrator, who turns modules on directly.
+ */
+export function buildRequestPanel({
+  effective,
+  dataPresent,
+  audience,
+  requests,
+  canRequest,
+}: {
+  effective: ReadonlySet<EventModuleKey>;
+  dataPresent: ReadonlySet<EventModuleKey>;
+  audience: "GENERAL" | "CLUB";
+  requests: readonly ModuleRequestStatusView[];
+  /** The viewer is an Event Admin of the event and not a system administrator. */
+  canRequest: boolean;
+}): RequestableModuleEntry[] {
+  if (!canRequest) return [];
+  const latest = latestRequestPerModule(requests);
+  return eventModuleCatalog
+    .filter((definition) => !effective.has(definition.key) && canEnableForEvent(definition.key, audience, dataPresent))
+    .map((definition) => {
+      const newest = latest.get(definition.key);
+      return { definition, latest: newest, canRequest: canRequestAgain(newest) };
+    });
 }

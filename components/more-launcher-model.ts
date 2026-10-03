@@ -26,11 +26,10 @@ export function launcherGroups(cards: readonly MoreDirectoryCard[]): LauncherGro
 }
 
 /**
- * Module requests are built in slice 3 (#741). Until they exist, no "Request a
- * feature" link is shown to anyone: this stays false, and the footer rule below
- * is ready for the day it is switched on.
+ * Module requests exist (#741 slice 3): Event Admins get a "Request a feature"
+ * link. The flag stays so a deployment-wide switch-off is one line.
  */
-export const moduleRequestsEnabled = false;
+export const moduleRequestsEnabled = true;
 
 export type LauncherFooterLink = { key: "manage-modules" | "event-modules" | "request-feature"; label: string; href: string };
 
@@ -38,7 +37,7 @@ export type LauncherFooterLink = { key: "manage-modules" | "event-modules" | "re
  * Everyone gets a link to the Event modules page, which also holds the audit
  * trail: system administrators as "Manage event modules", everyone else as "Event
  * modules and activity". Event staff also get "Request a feature" when requests
- * exist and the viewer may make one; with the flag off nobody does.
+ * exist and the viewer may make one; with the flag off nobody does. Only Event Admins (`CONFIGURE_EVENT`) who are not system administrators can.
  */
 export function launcherFooterLinks({
   isSystemAdmin,

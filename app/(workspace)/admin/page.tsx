@@ -28,6 +28,9 @@ import {
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getSystemAdminDashboard, getSystemHealth } from "@/modules/system-admin/repository";
 import type { SetupWarningKind } from "@/modules/system-admin/dashboard";
+import { ModuleRequestQueue } from "@/components/module-request-queue";
+import { formatRequestDate } from "@/modules/event-modules/request-domain";
+import { listPendingModuleRequests } from "@/modules/event-modules/requests";
 import { getReleaseIdentity } from "@/lib/release";
 import packageInfo from "@/package.json";
 import styles from "./system-admin.module.css";
@@ -119,9 +122,10 @@ export default async function SystemAdminPage({
   if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
 
-  const [dashboard, health] = await Promise.all([
+  const [dashboard, health, moduleRequests] = await Promise.all([
     getSystemAdminDashboard(),
     getSystemHealth(),
+    listPendingModuleRequests(),
   ]);
   const currentEvents = dashboard.events.filter((event) => event.timing !== "PAST");
   const pastEvents = dashboard.events.filter((event) => event.timing === "PAST");
@@ -207,6 +211,24 @@ export default async function SystemAdminPage({
         <article><span className={styles.metricIcon}><UsersRound aria-hidden="true" size={20} /></span><strong>{dashboard.summary.attendeeCount}</strong><p>Expected attendees</p><small>{dashboard.summary.registrationCount} active registrations</small></article>
         <article className={dashboard.summary.operationalIssueCount > 0 ? styles.needsAttention : undefined}><span className={styles.metricIcon}><CircleAlert aria-hidden="true" size={20} /></span><strong>{dashboard.summary.operationalIssueCount}</strong><p>Operational exceptions</p><small>{dashboard.summary.unresolvedAlertCount} open system alerts · failed imports and email</small></article>
         <article><span className={styles.metricIcon}><ShieldCheck aria-hidden="true" size={20} /></span><strong>{dashboard.summary.activeUserCount}</strong><p>Active staff accounts</p><small>{dashboard.summary.pendingUserCount} pending · {dashboard.summary.systemAdminCount} system admins</small></article>
+      </section>
+
+      <section className="panel module-requests" id="module-requests" aria-labelledby="module-requests-heading">
+        <div className={styles.sectionHeading}>
+          <div><p className="eyebrow">Event modules</p><h2 id="module-requests-heading">Feature requests</h2><p>Event admins asking for a feature to be turned on. Approving turns it on for that event; declining needs a reason.</p></div>
+          <span>{moduleRequests.length} waiting</span>
+        </div>
+        {moduleRequests.length === 0
+          ? <p className="quiet-copy">No requests are waiting.</p>
+          : <ModuleRequestQueue requests={moduleRequests.map((request) => ({
+              id: request.id,
+              eventId: request.eventId,
+              eventName: request.eventName,
+              moduleTitle: request.moduleTitle,
+              requesterName: request.requesterName,
+              reason: request.reason,
+              createdLabel: formatRequestDate(request.createdAt),
+            }))} />}
       </section>
 
       <div className={styles.dashboardGrid}>

@@ -45,6 +45,7 @@ function setBackgroundInert(inert: boolean) {
 export function MoreLauncherPanel({
   cards,
   isSystemAdmin,
+  canRequestFeature = false,
   eventQuery,
   id,
   panelRef,
@@ -54,6 +55,8 @@ export function MoreLauncherPanel({
 }: {
   cards: readonly MoreDirectoryCard[];
   isSystemAdmin: boolean;
+  /** An Event Admin who is not a system administrator: shows "Request a feature" (#741). */
+  canRequestFeature?: boolean;
   eventQuery: string;
   id?: string;
   panelRef?: Ref<HTMLDivElement>;
@@ -62,7 +65,7 @@ export function MoreLauncherPanel({
   style?: HTMLAttributes<HTMLDivElement>["style"];
 }) {
   const groups = launcherGroups(cards);
-  const footer = launcherFooterLinks({ isSystemAdmin, eventQuery });
+  const footer = launcherFooterLinks({ isSystemAdmin, canRequestFeature, eventQuery });
   return (
     <div
       className={`more-launcher more-launcher-${variant}`}
@@ -110,6 +113,7 @@ export function MoreLauncher({
   isActive,
   cards,
   isSystemAdmin,
+  canRequestFeature = false,
   eventQuery,
   tipProps = {},
   children,
@@ -121,6 +125,7 @@ export function MoreLauncher({
   isActive: boolean;
   cards: readonly MoreDirectoryCard[];
   isSystemAdmin: boolean;
+  canRequestFeature?: boolean;
   eventQuery: string;
   tipProps?: HTMLAttributes<HTMLElement>;
   children: ReactNode;
@@ -236,6 +241,7 @@ export function MoreLauncher({
               eventQuery={eventQuery}
               id={panelId}
               isSystemAdmin={isSystemAdmin}
+              canRequestFeature={canRequestFeature}
               onNavigate={() => close("navigate")}
               panelRef={panelRef}
               style={variant === "sidebar" && anchor ? { left: anchor.left, bottom: anchor.bottom } : undefined}
