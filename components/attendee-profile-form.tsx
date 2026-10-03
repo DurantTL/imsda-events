@@ -120,15 +120,15 @@ export function AttendeeProfileForm({
         <div className="public-manage-contact-grid">
         <label className="public-registration-field public-manage-contact-wide">
           <span className="public-registration-field-label">Name</span>
-          <input autoComplete="off" maxLength={200} value={profile.emergencyContactName} onChange={(event) => field("emergencyContactName", event.target.value)} />
+          <input autoComplete="section-emergency name" maxLength={120} value={profile.emergencyContactName} onChange={(event) => field("emergencyContactName", event.target.value)} />
         </label>
         <label className="public-registration-field public-manage-contact-wide">
           <span className="public-registration-field-label">Relationship</span>
-          <input autoComplete="off" maxLength={200} value={profile.emergencyContactRelationship} onChange={(event) => field("emergencyContactRelationship", event.target.value)} />
+          <input autoComplete="off" maxLength={80} value={profile.emergencyContactRelationship} onChange={(event) => field("emergencyContactRelationship", event.target.value)} />
         </label>
         <label className="public-registration-field public-manage-contact-wide">
           <span className="public-registration-field-label">Phone</span>
-          <input autoComplete="off" inputMode="tel" maxLength={40} value={profile.emergencyContactPhone} onChange={(event) => field("emergencyContactPhone", event.target.value)} />
+          <input autoComplete="section-emergency tel" inputMode="tel" maxLength={40} value={profile.emergencyContactPhone} onChange={(event) => field("emergencyContactPhone", event.target.value)} />
         </label>
         </div>
       </fieldset>

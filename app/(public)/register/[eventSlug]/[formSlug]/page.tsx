@@ -54,14 +54,17 @@ export default async function PublicRegistrationPage({
   ) {
     redirect(`/events/${encodeURIComponent(eventSlug)}`);
   }
-  const { account } = await getCurrentAttendee();
-  // The address and emergency contact are behind the second step, like the
-  // profile API (#745): a session that hasn't finished it gets no prefill of them.
+  const { account, via } = await getCurrentAttendee();
+  // The address and emergency contact follow the profile API (#745): only the
+  // attendee's own session, with any second step finished, gets them prefilled.
+  const mayPrefillPersonalDetails = account
+    ? via === "attendee" && !(await attendeeSecondStepPending())
+    : false;
   const profilePrefill = account
     ? attendeeProfilePrefill(
-        (await attendeeSecondStepPending())
-          ? withoutPersonalDetails(await getAttendeeProfile(account.id))
-          : await getAttendeeProfile(account.id),
+        mayPrefillPersonalDetails
+          ? await getAttendeeProfile(account.id)
+          : withoutPersonalDetails(await getAttendeeProfile(account.id)),
         account.verifiedEmail,
       )
     : {};

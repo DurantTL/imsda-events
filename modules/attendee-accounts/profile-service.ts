@@ -16,18 +16,21 @@ export const attendeeProfileSchema = z.strictObject({
   dietaryNeeds: optionalProfileValue(1_000),
   accessibilityNeeds: optionalProfileValue(1_000),
   // Optional; an empty string clears. Components follow the form ADDRESS field.
-  mailingLine1: addressValue.default(""),
-  mailingLine2: addressValue.default(""),
-  mailingCity: addressValue.default(""),
-  mailingRegion: addressValue.default(""),
-  mailingPostalCode: addressValue.default(""),
-  mailingCountry: addressValue.default(""),
-  emergencyContactName: optionalProfileValue(120).default(""),
-  emergencyContactRelationship: optionalProfileValue(80).default(""),
-  emergencyContactPhone: optionalProfileValue(40).default(""),
+  mailingLine1: addressValue.optional(),
+  mailingLine2: addressValue.optional(),
+  mailingCity: addressValue.optional(),
+  mailingRegion: addressValue.optional(),
+  mailingPostalCode: addressValue.optional(),
+  mailingCountry: addressValue.optional(),
+  emergencyContactName: optionalProfileValue(120).optional(),
+  emergencyContactRelationship: optionalProfileValue(80).optional(),
+  emergencyContactPhone: optionalProfileValue(40).optional(),
 });
 
-export type AttendeeProfileInput = z.infer<typeof attendeeProfileSchema>;
+/** What a PATCH may carry: an omitted address/emergency field means unchanged. */
+export type AttendeeProfilePatch = z.infer<typeof attendeeProfileSchema>;
+/** A full profile, as read back and shown in the form. */
+export type AttendeeProfileInput = Required<AttendeeProfilePatch>;
 type ProfileKey = keyof AttendeeProfileInput;
 
 /** Optional values: "" in the API, null in the database. */
@@ -98,12 +101,13 @@ export async function getAttendeeProfile(accountId: string) {
 
 export async function updateAttendeeProfile(
   accountId: string,
-  input: AttendeeProfileInput,
+  input: AttendeeProfilePatch,
 ) {
   const profile = attendeeProfileSchema.parse(input);
+  // Omitted means unchanged (undefined is skipped by Prisma); "" clears.
   const optional = Object.fromEntries(
-    optionalKeys.map((key) => [key, profile[key] || null]),
-  ) as Record<(typeof optionalKeys)[number], string | null>;
+    optionalKeys.map((key) => [key, profile[key] === undefined ? undefined : (profile[key] || null)]),
+  ) as Record<(typeof optionalKeys)[number], string | null | undefined>;
   return getPrisma().$transaction(async (tx) => {
     const before = serializeProfile(
       await tx.attendeeAccount.findUniqueOrThrow({ where: { id: accountId }, select: profileSelect }),
@@ -120,7 +124,9 @@ export async function updateAttendeeProfile(
     const after = serializeProfile(updated);
     // Field names only: the values (address, emergency contact, dietary and
     // accessibility needs) never go into the audit log.
-    const changedFields = (Object.keys(after) as ProfileKey[]).filter((key) => before[key] !== after[key]);
+    const changedFields = (Object.keys(after) as ProfileKey[]).filter(
+      (key) => profile[key] !== undefined && before[key] !== after[key],
+    );
     if (changedFields.length > 0) {
       await writeAuditLog({
         action: "ATTENDEE_PROFILE_UPDATED",
@@ -164,7 +170,6 @@ function personalPrefill(profile: AttendeeProfileInput) {
     zip,
     country,
     emergency_contact_name: profile.emergencyContactName,
-    emergency_contact_relationship: profile.emergencyContactRelationship,
     emergency_contact_phone: profile.emergencyContactPhone,
   };
 }

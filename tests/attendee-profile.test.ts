@@ -113,6 +113,19 @@ describe("attendee profile", () => {
     expect(saved.mailingLine1).toBe("");
   });
 
+  it("leaves stored address and emergency values alone when the keys are omitted", async () => {
+    attendeeAccount.findUniqueOrThrow.mockResolvedValue({ ...stored, ...withDetails, accessibilityNeeds: null });
+    attendeeAccount.update.mockResolvedValue({ ...stored, ...withDetails, accessibilityNeeds: null });
+    const { firstName, lastName, phone, shirtSize, dietaryNeeds, accessibilityNeeds } = input;
+    const saved = await updateAttendeeProfile("acct-1", { firstName, lastName, phone, shirtSize, dietaryNeeds, accessibilityNeeds });
+    const data = attendeeAccount.update.mock.calls[0]![0].data;
+    for (const key of ["mailingLine1", "mailingCity", "emergencyContactName", "emergencyContactPhone"]) {
+      expect(data[key]).toBeUndefined();
+    }
+    expect(saved).toMatchObject({ mailingLine1: "1 Example Way", emergencyContactName: "Casey Contact" });
+    expect(dependencies.writeAuditLog).not.toHaveBeenCalled();
+  });
+
   it("rejects over-long values before touching the database", async () => {
     await expect(updateAttendeeProfile("acct-1", { ...input, mailingLine1: "x".repeat(201) })).rejects.toThrow();
     expect(attendeeAccount.update).not.toHaveBeenCalled();
@@ -169,7 +182,6 @@ describe("registration prefill", () => {
     expect(attendeeProfilePrefill(withDetails)).toMatchObject({
       emergency_contact_name: "Casey Contact",
       emergency_contact_phone: "555-0101",
-      emergency_contact_relationship: "Sibling",
     });
   });
 

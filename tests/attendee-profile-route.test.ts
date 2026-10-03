@@ -150,11 +150,14 @@ describe("mailing address and emergency contact", () => {
     expect(mocks.updateAttendeeProfile).toHaveBeenCalledWith("acct-1", cleared);
   });
 
-  it("treats omitted new fields as empty so older clients keep working", async () => {
+  it("passes omitted fields to the service as undefined, meaning unchanged", async () => {
     const { firstName, lastName, phone, shirtSize, dietaryNeeds, accessibilityNeeds } = profile;
     const response = await callPatch(patchRequest({ firstName, lastName, phone, shirtSize, dietaryNeeds, accessibilityNeeds }));
     expect(response.status).toBe(200);
-    expect(mocks.updateAttendeeProfile).toHaveBeenCalledWith("acct-1", expect.objectContaining({ mailingLine1: "", emergencyContactPhone: "" }));
+    const sent = mocks.updateAttendeeProfile.mock.calls[0]![1];
+    expect(sent.mailingLine1).toBeUndefined();
+    expect(sent.emergencyContactPhone).toBeUndefined();
+    expect("mailingLine1" in sent).toBe(false);
   });
 
   it.each([
