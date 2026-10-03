@@ -8768,6 +8768,34 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 /* The roster link is part of the help sentence, so it stays inline with the full stop after it. */
 :root .club-going-list .club-roster-age .field-help a { display: inline; min-height: 0; padding-inline: 0; text-decoration: underline; }
 
+/* Filter by answer on People & registrations (#739) */
+.choice-filter { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.choice-filter-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.choice-filter-head h3 { display: inline-flex; align-items: center; gap: 7px; margin: 0; font-size: 0.95rem; }
+.choice-filter-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.choice-filter-form label { display: block; min-width: 0; flex: 1 1 14rem; }
+.choice-filter-form select { width: 100%; }
+.choice-filter-form select { min-width: 0; max-width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #f9fbfb; color: var(--imsda-navy); padding: 9px 10px; font-size: max(var(--type-body-floor, 0px), 0.72rem); font-weight: 700; }
+.choice-filter-note { margin: 0; color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.7rem); }
+.choice-filter-counts,
+.choice-filter-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.choice-chip { display: inline-flex; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 999px; background: #f9fbfb; color: var(--imsda-navy); padding: 7px 13px; font-size: max(var(--type-body-floor, 0px), 0.74rem); text-decoration: none; }
+.choice-chip strong { font-variant-numeric: tabular-nums; }
+.choice-chip.active { border-color: var(--imsda-navy); background: var(--imsda-navy); color: white; }
+.choice-chip.muted { color: var(--muted); }
+.choice-chip.static { padding: 3px 10px; }
+.choice-filter-results { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.choice-filter-results-head > strong { min-width: 0; overflow-wrap: anywhere; }
+.choice-filter-results-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.choice-filter-list { display: grid; gap: 6px; }
+.choice-filter-list a { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; border: 1px solid var(--line); border-radius: 12px; color: inherit; padding: 10px 12px; text-decoration: none; }
+.choice-filter-list a strong { overflow-wrap: anywhere; }
+.choice-filter-list a small { grid-column: 1; color: var(--muted); }
+.choice-filter-list a .choice-chip { grid-column: 2; grid-row: 1 / span 2; }
+@media (min-width: 900px) {
+  .choice-filter-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* Phone: the raw audit code drops below the readable summary instead of
    squeezing it, and may wrap rather than widen the page (#737). */
 @media (max-width: 600px) {

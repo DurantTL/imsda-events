@@ -5,6 +5,7 @@ import {
 import { attendeeAgeKey } from "@/modules/club-registrations/domain";
 import { withLocationColumn, type ClubEventRecord } from "@/modules/reporting/club-event-reports";
 import { isSensitiveField, sensitiveFieldPattern } from "@/modules/forms/sensitive-fields";
+import { isLinkedToBlockedField } from "@/modules/forms/field-dependency-walk";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -72,36 +73,7 @@ export function isCheckInBookExtraField(
   const scopes = options.scopes ?? ["ATTENDEE"];
   if (!scopes.includes(field.scope) || !(options.types ?? extraColumnFieldTypes).has(field.type)) return false;
   if (displayedKeys.has(field.key) || isBlockedByItself(field)) return false;
-
-  const byKey = new Map(allFields.map((candidate) => [candidate.key, candidate]));
-  const visited = new Set<string>([field.key]);
-  const pending = [field];
-  while (pending.length > 0) {
-    const current = pending.pop()!;
-    for (const controllerKey of [current.conditional?.fieldKey, current.optionalWhen?.fieldKey]) {
-      if (!controllerKey || visited.has(controllerKey)) continue;
-      visited.add(controllerKey);
-      const controller = byKey.get(controllerKey);
-      if (!controller) continue;
-      if (isBlockedByItself(controller)) return false;
-      pending.push(controller);
-    }
-  }
-
-  // Downward too: a "Yes/No" field that reveals "Medication details" gives the sensitive answer away.
-  const seenDown = new Set<string>([field.key]);
-  const queue = [field.key];
-  while (queue.length > 0) {
-    const key = queue.pop()!;
-    for (const dependent of allFields) {
-      if (seenDown.has(dependent.key)) continue;
-      if (dependent.conditional?.fieldKey !== key && dependent.optionalWhen?.fieldKey !== key) continue;
-      seenDown.add(dependent.key);
-      if (isBlockedByItself(dependent)) return false;
-      queue.push(dependent.key);
-    }
-  }
-  return true;
+  return !isLinkedToBlockedField(field, allFields, isBlockedByItself);
 }
 
 export type CheckInBookExtraOption = { key: string; label: string };
