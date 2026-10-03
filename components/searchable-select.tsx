@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search, X } from "lucide-react";
 import { filterSearchableChoices } from "@/modules/forms/searchable-choice";
 
@@ -18,6 +18,7 @@ export function SearchableSelect({
   placeholder = "Search choices…",
   describedBy,
   invalid = false,
+  sheet = false,
   onChange,
 }: {
   id: string;
@@ -27,6 +28,8 @@ export function SearchableSelect({
   placeholder?: string;
   describedBy?: string;
   invalid?: boolean;
+  /** On a phone, show the open list as a bottom sheet (public registration only). */
+  sheet?: boolean;
   onChange: (value: string) => void;
 }) {
   const [query, setQuery] = useState<string | null>(null);
@@ -40,6 +43,28 @@ export function SearchableSelect({
     () => filterSearchableChoices(options, query ?? ""),
     [options, query],
   );
+
+  // On a phone the open list is a bottom sheet (CSS, #743). It sits above the
+  // on-screen keyboard: --searchable-sheet-inset is how far the keyboard covers
+  // the layout viewport, so the search box and the choices stay visible together.
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const wrapper = wrapperRef.current;
+    if (!sheet || !open || !viewport || !wrapper) return;
+    function update() {
+      if (!viewport || !wrapper) return;
+      const covered = Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
+      wrapper.style.setProperty("--searchable-sheet-inset", `${Math.round(covered)}px`);
+    }
+    update();
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+      wrapper.style.removeProperty("--searchable-sheet-inset");
+    };
+  }, [open, sheet]);
 
   function choose(nextValue: string) {
     const option = options.find((candidate) => candidate.value === nextValue);
@@ -56,7 +81,7 @@ export function SearchableSelect({
 
   return (
     <div
-      className="searchable-select"
+      className={`searchable-select${sheet ? " is-sheet-picker" : ""}`}
       ref={wrapperRef}
       onBlur={(event) => {
         if (!wrapperRef.current?.contains(event.relatedTarget as Node | null)) {
@@ -89,6 +114,10 @@ export function SearchableSelect({
             setOpen(true);
             setActiveIndex(-1);
             event.currentTarget.select();
+            // On a phone the list is a bottom sheet over the lower part of the screen: lift the box clear of it.
+            if (sheet && typeof window.matchMedia === "function" && window.matchMedia("(max-width: 768px)").matches) {
+              event.currentTarget.scrollIntoView({ block: "start", behavior: "smooth" });
+            }
           }}
           onChange={(event) => {
             const nextQuery = event.target.value;
@@ -114,6 +143,8 @@ export function SearchableSelect({
               if (option) choose(option.value);
             } else if (event.key === "Escape") {
               event.preventDefault();
+              // An open list takes the Escape; it must not also close an attendee sheet around it.
+              if (open) event.stopPropagation();
               close();
             }
           }}

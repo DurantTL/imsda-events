@@ -120,3 +120,66 @@ export function namedIssueMessage(
   const who = shared ? `${name} (${positionLabel} ${attendeeIndex + 1})` : name;
   return `${who} — ${message}`;
 }
+
+/** Phone width (#743): an attendee card opens as a full-screen sheet at or below this. */
+export const PHONE_SHEET_QUERY = "(max-width: 768px)";
+
+/**
+ * One active attendee at a time (#743). The card that is open when the roster
+ * first renders: the first person who still needs something (an unanswered
+ * required field, or a carried-over value that did not match), else nobody, so
+ * a fully carried-over club roster starts as a list of one-line summaries.
+ */
+export function pickInitialActiveAttendee(
+  attendees: ReadonlyArray<{ clientId: string; complete: boolean; mismatchCount?: number }>,
+): string | null {
+  return attendees.find((attendee) => !attendee.complete || (attendee.mismatchCount ?? 0) > 0)?.clientId ?? null;
+}
+
+/**
+ * The attendee a validation issue list should open: the first issue that points
+ * into a card. A registration-level issue points at no card (null), so the open
+ * card stays as it is.
+ */
+export function attendeeToOpenForIssues(
+  issues: ReadonlyArray<{ path?: string; attendeeIndex?: number | null; scope?: RegistrationFormField["scope"] | null }>,
+  attendeeIds: readonly string[],
+): string | null {
+  for (const issue of issues) {
+    const index = issueAttendeeIndex(issue, issue.scope ?? null);
+    const clientId = index === null ? undefined : attendeeIds[index];
+    if (clientId) return clientId;
+  }
+  return null;
+}
+
+/**
+ * How one attendee card shows (#743).
+ * - A single attendee on a phone is always an inline card with no Edit/Done toggle.
+ * - The full-screen sheet is for a phone with two or more people and not in an embed
+ *   (an auto-height iframe cannot host a fixed full-screen layer); everywhere else the
+ *   active card opens inline.
+ */
+export function attendeeCardLayout({ canCollapse, isPhone, embedded, attendeeCount, isActive, sheetOpen }: {
+  canCollapse: boolean;
+  isPhone: boolean;
+  embedded: boolean;
+  attendeeCount: number;
+  isActive: boolean;
+  sheetOpen: boolean;
+}): { collapsed: boolean; inSheet: boolean; showToggle: boolean; useSheet: boolean } {
+  const soloOnPhone = isPhone && attendeeCount === 1;
+  const useSheet = isPhone && !embedded && attendeeCount >= 2;
+  const collapsed = canCollapse && !soloOnPhone && !(isActive && (!useSheet || sheetOpen));
+  return {
+    collapsed,
+    inSheet: canCollapse && useSheet && sheetOpen && isActive,
+    showToggle: canCollapse && !soloOnPhone,
+    useSheet,
+  };
+}
+
+/** A card reads "Complete" only with every required answer and no unresolved carried-over prompt. */
+export function cardStatusComplete(complete: boolean, unresolvedCarryovers: number): boolean {
+  return complete && unresolvedCarryovers === 0;
+}
