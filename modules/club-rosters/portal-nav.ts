@@ -21,18 +21,18 @@ export function clubPortalNavItems({
   const roster = capabilities.roster;
   return [
     { href: base, label: "Home" },
-    { href: `${base}/roster`, label: "Roster", group: "People", hideGroupLabel: true },
-    // The honors and class exports live on these two pages (#701); the old reports page redirects to Honors.
-    ...(roster ? [{ href: `${base}/honors`, label: "Honors", group: "People", hideGroupLabel: true }] : []),
-    ...(roster ? [{ href: `${base}/class-tracking`, label: "Class tracking", group: "People", hideGroupLabel: true }] : []),
+    { href: `${base}/roster`, label: "Roster", matchChildren: true, group: "People", hideGroupLabel: true },
+    // The honors and class exports live on these two pages (#701); the old reports page redirects to Honors. Their print/export child pages, the roster export and the year-end and month reports keep their parent tab lit (#737).
+    ...(roster ? [{ href: `${base}/honors`, label: "Honors", alsoMatchPrefix: `${base}/exports/honors`, group: "People", hideGroupLabel: true }] : []),
+    ...(roster ? [{ href: `${base}/class-tracking`, label: "Class tracking", alsoMatchPrefix: `${base}/exports/class-tracking`, group: "People", hideGroupLabel: true }] : []),
     { href: `${base}/events`, label: "Events", matchChildren: true, group: "Events", hideGroupLabel: true },
     // Club forms (#610) hold health and conduct answers: the club's director and deputy only.
     ...(isClubFormsRole(role) ? [{ href: `${base}/forms`, label: "Forms", matchChildren: true, group: "Events", hideGroupLabel: true }] : []),
     // Event health information (#658): the club's director and deputy, for their own club.
     ...(isClubFormsRole(role) ? [{ href: `${base}/health`, label: "Health", matchChildren: true, group: "Events", hideGroupLabel: true }] : []),
-    ...(capabilities.submitReports ? [{ href: `${base}/records`, label: "Monthly Records", matchChildren: true, group: "Records", hideGroupLabel: true }] : []),
+    ...(capabilities.submitReports ? [{ href: `${base}/records`, label: "Monthly Records", matchChildren: true, alsoMatchPrefix: `${base}/reports`, group: "Records", hideGroupLabel: true }] : []),
     // Supplies on hand live inside Orders (#654), so there is no separate Supplies entry.
-    ...(roster ? [{ href: `${base}/orders`, label: "Orders", group: "Orders", hideGroupLabel: true }] : []),
+    ...(roster ? [{ href: `${base}/orders`, label: "Orders", matchChildren: true, group: "Orders", hideGroupLabel: true }] : []),
     ...(capabilities.manageTeam || capabilities.editProfile
       ? [{ href: `${base}/club-info`, label: "Club info", group: "Club", hideGroupLabel: true }]
       : []),
@@ -43,7 +43,7 @@ export function clubPortalNavItems({
 export function clubReporterNavItems({ base, capabilities }: { base: string; capabilities: ClubCapabilities }): AccountNavItem[] {
   return [
     { href: base, label: "Home" },
-    ...(capabilities.submitReports ? [{ href: `${base}/records`, label: "Monthly Records", matchChildren: true, group: "Records", hideGroupLabel: true }] : []),
+    ...(capabilities.submitReports ? [{ href: `${base}/records`, label: "Monthly Records", matchChildren: true, alsoMatchPrefix: `${base}/reports`, group: "Records", hideGroupLabel: true }] : []),
   ];
 }
 
