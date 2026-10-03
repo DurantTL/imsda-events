@@ -1,6 +1,9 @@
 "use client";
 import { useCallback, useRef, useState } from "react";
 import { Award, Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
+import { EmptyState } from "@/components/empty-state";
+import { SortOrderNote, SortableHeader } from "@/components/list-sort";
+import { flipDirection, nameSortLabel, sortByName, sortOrderText, type SortDirection } from "@/lib/list-sort";
 import { BirthDateField } from "@/components/birth-date-field";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { RosterTypeDefinitions } from "@/components/roster-type-definitions";
@@ -193,6 +196,7 @@ export function ClubRosterWorkspace({
   const typeHint = formBirthDate
     ? attendeeTypeAgeHint(formType as keyof typeof clubRosterAttendeeTypeLabels, formBirthDate, calendarDateInEventTimeZone(new Date(), "America/Chicago"))
     : null;
+  const [nameDirection, setNameDirection] = useState<SortDirection>("asc");
   const active = members.filter((member) => member.status === "ACTIVE");
   const needBirthDates = active.filter((member) => member.birthDateNeeded).length;
   const notInCompliance = complianceStatuses
@@ -206,8 +210,8 @@ export function ClubRosterWorkspace({
     ? beforeComplianceFilter.filter((member) => complianceStatuses[member.id]?.state === complianceFilterState[complianceFilter])
     : beforeComplianceFilter;
   const sections = [
-    { key: "STAFF", title: "Staff", empty: "No staff on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "STAFF") },
-    { key: "MEMBERS", title: "Members", empty: "No Pathfinders on the roster yet.", people: visible.filter((member) => rosterSectionOf(member.attendeeType) === "MEMBERS") },
+    { key: "STAFF", title: "Staff", empty: "No staff on the roster yet.", people: sortByName(visible.filter((member) => rosterSectionOf(member.attendeeType) === "STAFF"), nameDirection) },
+    { key: "MEMBERS", title: "Members", empty: "No Pathfinders on the roster yet.", people: sortByName(visible.filter((member) => rosterSectionOf(member.attendeeType) === "MEMBERS"), nameDirection) },
   ] as const;
   /** Name, Age, Type, Current class, Role, Gender, Flags — plus every optional column, for the section-title row's colSpan. */
   const rosterColumnCount = 7 + (birthDates ? 1 : 0) + (complianceStatuses ? 1 : 0) + (honorSummaries ? 1 : 0) + (readOnly ? 0 : 1);
@@ -294,7 +298,7 @@ export function ClubRosterWorkspace({
         ...details,
         ...(birthDate ? { birthDate } : {}),
       }, "Saved.")
-      : await call(base, "POST", { ...details, birthDate }, "Added to the roster.");
+      : await call(base, "POST", { ...details, birthDate }, "Added to the roster. Next: they can be chosen when the club registers for an event.");
     if (result) {
       setBirthDates(null);
       formElement.reset();
@@ -398,13 +402,21 @@ export function ClubRosterWorkspace({
           )}
         </div>
         {visible.length === 0 ? (
-          <p className="public-manage-empty">
-            <UsersRound size={17} aria-hidden="true" /> {complianceFilter && complianceStatuses
-              ? "No one matches this filter."
+          <EmptyState
+            action={{ label: "Add to roster", onClick: () => openDialog(null) }}
+            actionClass="secondary-button"
+            canCreate={!readOnly && !(complianceFilter && complianceStatuses)}
+            className="empty-state public-manage-empty"
+            hint={readOnly ? "A club director adds people to the roster." : undefined}
+            icon={<UsersRound size={17} aria-hidden="true" />}
+            title={complianceFilter && complianceStatuses ? "No one matches this filter" : "No one is on the roster yet"}
+          >
+            {complianceFilter && complianceStatuses
+              ? "Choose a different background-check filter to see the rest of the roster."
               : readOnly
-                ? "No one is on this club's roster yet."
-                : "No one is on the roster yet. Add regular members using Add to roster above, or import a CSV. You can add event-only guests when registering."}
-          </p>
+                ? "This club's roster has no one on it yet."
+                : "Add regular members one at a time or import a CSV. You can add event-only guests when registering."}
+          </EmptyState>
         ) : (
           <div className="report-table-wrap">
             {/*
@@ -416,10 +428,11 @@ export function ClubRosterWorkspace({
               down, and the "Missing info" flag moves out of the Name cell
               (which was stretching that column unevenly) into its own column.
             */}
+            <SortOrderNote>{`${sortOrderText(nameSortLabel, nameDirection)} Staff and Members are listed separately.`}</SortOrderNote>
             <table aria-labelledby="club-roster-heading" className="report-table roster-card-table">
               <thead>
                 <tr>
-                  <th>Name</th>
+                  <SortableHeader active direction={nameDirection} label="Name" onSort={() => setNameDirection(flipDirection(nameDirection))} />
                   <th>Age</th>
                   {birthDates && <th>Birth date</th>}
                   <th>Type</th>

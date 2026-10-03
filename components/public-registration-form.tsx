@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowDown,
   ArrowRight,
@@ -73,6 +74,9 @@ import {
   namedIssueMessage,
   startsCollapsed,
 } from "@/modules/forms/roster-cards";
+import { NeedsAttention, StatusComplete } from "@/components/needs-attention";
+import { FieldError } from "@/components/field-error";
+import { errorSummaryHeading } from "@/components/form-error-summary";
 import { summarizeRosterAttendees } from "@/modules/forms/roster-summary";
 import {
   draftsAllowed,
@@ -1408,13 +1412,13 @@ export function PublicRegistrationForm({
       <>
         {field.helpText && <small id={`${id}_help`}>{field.helpText}</small>}
         {mismatch && (
-          <small className="public-registration-field-error" id={`${id}_mismatch`}>
+          <FieldError className="public-registration-field-error" id={`${id}_mismatch`}>
             {mismatch.value
               ? <>Couldn&apos;t match &lsquo;{mismatch.value}&rsquo; — pick one.</>
               : "The roster didn’t give a role — pick one."}
-          </small>
+          </FieldError>
         )}
-        {issue && <small className="public-registration-field-error" id={`${id}_error`}>{issue.message}</small>}
+        {issue && <FieldError className="public-registration-field-error" id={`${id}_error`}>{issue.message}</FieldError>}
       </>
     );
   }
@@ -1957,7 +1961,7 @@ export function PublicRegistrationForm({
                     </h3>
                     {collapsed && (
                       <small className="public-registration-attendee-summary">
-                        {complete ? "Complete" : "Needs attention"}
+                        {complete ? <StatusComplete /> : <NeedsAttention />}
                       </small>
                     )}
                   </div>
@@ -2851,7 +2855,8 @@ export function PublicRegistrationForm({
 
           {(error || issues.length > 0) && (
             <div className="public-registration-error-summary" ref={errorSummaryRef} role="alert" tabIndex={-1}>
-              <strong>{error || "Review the highlighted fields."}</strong>
+              <strong><AlertTriangle aria-hidden="true" size={16} /> {error || "Review the highlighted fields."}</strong>
+              {issues.length > 0 && <p className="public-registration-error-count">{errorSummaryHeading(issues.length)}</p>}
               {issues.length > 0 && (
                 <ul>{issues.map((issue, index) => {
                   const targetId = issueTargetId(issue);

@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@/components/empty-state";
 import { staffPageTitles } from "@/components/staff-navigation";
 import { useMemo, useState } from "react";
 import {
@@ -80,12 +81,15 @@ export function PromoCodeWorkspace({
   initialPromoCodes,
   canSponsorByChurch = false,
   sponsorChurches = [],
+  canCreate = true,
 }: {
   eventId: string;
   initialPromoCodes: PromoCodeRecord[];
   /** Only a GENERAL event's code may be sponsored by a church (#545). */
   canSponsorByChurch?: boolean;
   sponsorChurches?: Array<{ id: string; name: string }>;
+  /** Whether the viewer may create codes; the empty state offers the action only then (#743). The server decides again. */
+  canCreate?: boolean;
 }) {
   const [promoCodes, setPromoCodes] = useState(initialPromoCodes);
   const [editing, setEditing] = useState<PromoCodeRecord | "new" | null>(null);
@@ -211,8 +215,8 @@ export function PromoCodeWorkspace({
       setEditorDirty(false);
       setEditing(null);
       setNotice(current
-        ? `Promo code ${payload.code.trim().toUpperCase()} updated.`
-        : `Promo code ${payload.code.trim().toUpperCase()} created.`);
+        ? `Promo code ${payload.code.trim().toUpperCase()} updated. Registrations that already used it keep their discount.`
+        : `Promo code ${payload.code.trim().toUpperCase()} created. Next: share it with registrants, who apply it on the public registration form.`);
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -289,9 +293,11 @@ export function PromoCodeWorkspace({
             promised total.
           </p>
         </div>
-        <button className="primary-button" type="button" onClick={beginCreate}>
-          <Plus size={17} aria-hidden="true" /> Create promo code
-        </button>
+        {canCreate && (
+          <button className="primary-button" type="button" onClick={beginCreate}>
+            <Plus size={17} aria-hidden="true" /> Create promo code
+          </button>
+        )}
       </div>
 
       <section className="finance-summary" aria-label="Promo-code summary">
@@ -324,12 +330,15 @@ export function PromoCodeWorkspace({
           <span className="count-badge">{promoCodes.length} codes</span>
         </div>
         {promoCodes.length === 0 ? (
-          <div className="empty-state">
-            <TicketPercent aria-hidden="true" size={25} />
-            <h3>No promo codes yet</h3>
-            <p>Create the first code, then people can apply it on the public registration form.</p>
-            <button className="primary-button" type="button" onClick={beginCreate}>Create first code</button>
-          </div>
+          <EmptyState
+            action={{ label: "Create first code", onClick: beginCreate }}
+            canCreate={canCreate}
+            hint="Ask an event administrator with finance access to create one."
+            icon={<TicketPercent aria-hidden="true" size={25} />}
+            title="No promo codes yet"
+          >
+            Create the first code, then people can apply it on the public registration form.
+          </EmptyState>
         ) : (
           <div className="promo-code-grid">
             {promoCodes.map((promo) => (

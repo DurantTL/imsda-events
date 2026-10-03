@@ -4,6 +4,7 @@
  * limiting, and the workspace uses the same keys for its headers and URL.
  */
 
+import { sortOrderText } from "@/lib/list-sort";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
 
 export const accountSortKeys = ["name", "role", "twostep", "signin", "status"] as const;
@@ -30,6 +31,17 @@ export function parseAccountSort(key: string | null | undefined, direction: stri
 export function nextAccountSort(current: AccountSort, key: AccountSortKey): NonNullable<AccountSort> {
   if (current?.key === key) return { key, direction: current.direction === "asc" ? "desc" : "asc" };
   return { key, direction: "asc" };
+}
+
+/**
+ * The sentence the list shows about its order (#743). With no sort chosen the
+ * server returns the newest accounts first (`listAttendeeAccountsWithCap`).
+ */
+export function accountSortOrderText(sort: AccountSort): string {
+  if (!sort) return sortOrderText("date created", "desc", "date");
+  const kind = sort.key === "signin" ? "date" : sort.key === "twostep" ? "number" : "text";
+  const label = sort.key === "status" ? "status" : accountSortLabels[sort.key].toLocaleLowerCase("en-US");
+  return sortOrderText(label, sort.direction, kind);
 }
 
 export function ariaSortFor(current: AccountSort, key: AccountSortKey): "ascending" | "descending" | "none" {

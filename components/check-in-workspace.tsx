@@ -1,8 +1,12 @@
 "use client";
 
+import { SortOrderNote } from "@/components/list-sort";
+import { flipDirection, nameSortLabel, sortByName, sortOrderText, type SortDirection } from "@/lib/list-sort";
 import {
   AlertTriangle,
   CheckCircle2,
+  ArrowDown,
+  ArrowUp,
   ContactRound,
   Printer,
   RefreshCw,
@@ -168,11 +172,17 @@ export function CheckInWorkspace({
   const clubByConfirmationCode = useMemo(() => new Map(
     clubs.map((club) => [club.confirmationCode, club]),
   ), [clubs]);
-  const visible = useMemo(() => arrivals.filter((arrival) => arrivalMatchesSearch(
+  const [nameDirection, setNameDirection] = useState<SortDirection>("asc");
+  const visible = useMemo(() => sortByName(arrivals.filter((arrival) => arrivalMatchesSearch(
     arrival,
     query,
     clubByConfirmationCode.get(arrival.confirmationCode)?.organizationName,
-  )), [arrivals, query, clubByConfirmationCode]);
+  )), nameDirection), [arrivals, query, clubByConfirmationCode, nameDirection]);
+  // The saved-on-this-device list, oldest first: the order the check-ins were taken.
+  const orderedQueue = useMemo(
+    () => [...queue].sort((left, right) => new Date(left.queuedAt).getTime() - new Date(right.queuedAt).getTime()),
+    [queue],
+  );
   const rosterSlice = useMemo(
     () => paginate(visible, rosterPage, ARRIVALS_PAGE_SIZE),
     [visible, rosterPage],
@@ -435,8 +445,9 @@ export function CheckInWorkspace({
               {queued} queued{conflicts > 0 ? ` · ${conflicts} need review` : ""}
             </span>
           </div>
+          <SortOrderNote>{sortOrderText("time saved", "asc", "date")}</SortOrderNote>
           <div className="check-in-queue-list">
-            {queue.map((item) => {
+            {orderedQueue.map((item) => {
               const label = attendeeLabel(item.attendeeId);
               const processing = processingKeySet.has(item.idempotencyKey);
               return (
@@ -589,6 +600,18 @@ export function CheckInWorkspace({
             <UsersRound aria-hidden="true" size={16} /> {visible.length} match
           </span>
         </div>
+        <div className="sort-order-row" role="group" aria-label="Arrival roster order">
+          <SortOrderNote>{sortOrderText(nameSortLabel, nameDirection)}</SortOrderNote>
+          <button
+            aria-label={`Sorted by ${nameSortLabel}, ${nameDirection === "asc" ? "A to Z" : "Z to A"}. Reverse the order.`}
+            className="secondary-button table-sort-button"
+            onClick={() => { setNameDirection(flipDirection(nameDirection)); setRosterPage(1); }}
+            type="button"
+          >
+            {nameDirection === "asc" ? <ArrowUp aria-hidden="true" size={14} /> : <ArrowDown aria-hidden="true" size={14} />}
+            {nameDirection === "asc" ? "A to Z" : "Z to A"}
+          </button>
+        </div>
         {rosterSlice.items.map((arrival) => {
           const savedItem = queueByAttendee.get(arrival.id);
           const processing = savedItem
@@ -670,8 +693,10 @@ export function CheckInWorkspace({
         {visible.length === 0 && (
           <div className="empty-state">
             <Search aria-hidden="true" size={24} />
-            <h3>No arrivals found</h3>
-            <p>Check the name or confirmation code and try again.</p>
+            <h3>{arrivals.length === 0 ? "No expected attendees yet" : "No arrivals found"}</h3>
+            <p>{arrivals.length === 0
+              ? "Nobody is registered for this event, so there is no one to check in. Registrations appear here once people submit the public form."
+              : "Check the name or confirmation code and try again."}</p>
           </div>
         )}
       </section>

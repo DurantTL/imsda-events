@@ -1,5 +1,6 @@
 "use client";
 
+import { SortOrderNote } from "@/components/list-sort";
 import { useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, LogOut, Mail, MapPinned, Search, ShieldOff } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -8,6 +9,7 @@ import {
   accountColumnSortKeys,
   accountSortKeys,
   accountSortLabels,
+  accountSortOrderText,
   ariaSortFor,
   nextAccountSort,
   type AccountSort,
@@ -197,6 +199,7 @@ export function AttendeeAccountsWorkspace({
         )}
       </form>
       <section className="panel">
+        <SortOrderNote>{accountSortOrderText(sort)}</SortOrderNote>
         {capped && sort && <p className="inline-notice" role="status">Sorted the newest 5,000 matches — narrow your search.</p>}
         {accounts.length === 0 ? (
           <p className="report-empty">No accounts match.</p>

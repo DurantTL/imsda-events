@@ -1,5 +1,6 @@
 "use client";
 
+import { EmptyState } from "@/components/empty-state";
 import { staffPageTitles } from "@/components/staff-navigation";
 import { useState } from "react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -18,11 +19,15 @@ export function TagConfigurationWorkspace({
   eventId,
   eventName,
   initialTags,
+  canCreate = true,
 }: {
   eventId: string;
   eventName: string;
   initialTags: TagRow[];
+  /** Whether the viewer may add tags: the form and the empty-state action show only then (#743). */
+  canCreate?: boolean;
 }) {
+  const [notice, setNotice] = useState("");
   const [tags, setTags] = useState(initialTags);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -44,6 +49,7 @@ export function TagConfigurationWorkspace({
         }),
       }));
       setTags((current) => [...current, body.tag].sort((a, b) => a.name.localeCompare(b.name)));
+      setNotice(`Tag ${body.tag.name} added. Next: staff can apply it to registrations and attendees from the registrations list.`);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "The tag could not be saved."); }
     finally { setSaving(false); }
   }
@@ -74,20 +80,31 @@ export function TagConfigurationWorkspace({
     <p className="usage-note"><Info aria-hidden="true" size={16} /><span>Where this shows up: staff add or remove these tags from a registration&rsquo;s notes &amp; tags panel in <Link href={`/people?event=${eventId}`}>Registrations</Link>.</span></p>
     {/* While the deactivate dialog is open, its own alert shows the error; one announcement, not two. */}
     {error && !deactivateTarget && <p className="form-error" role="alert">{error}</p>}
+    {notice && <p className="inline-notice success" role="status">{notice}</p>}
     <section className="panel">
       <div className="section-heading"><div><h2>Configured tags</h2><p>Deactivating a tag hides it from new assignments; it stays visible on anything already tagged.</p></div></div>
-      <div className="table-wrap"><table className="editable-settings-table"><thead><tr><th>Color</th><th>Name</th><th>Description</th><th>Status</th><th>Actions</th></tr></thead><tbody>{tags.map((row) => <tr key={row.id}>
+      {tags.length === 0 ? (
+        <EmptyState
+          actionClass="secondary-button"
+          action={{ label: "Add the first tag", onClick: () => document.getElementById("tag-name-input")?.focus() }}
+          canCreate={canCreate}
+          hint="Ask an event administrator to add tags."
+          title="No tags yet"
+        >
+          Tags are labels staff apply to registrations and attendees, such as VIP or Needs ride. Add one below and it appears on the registrations list.
+        </EmptyState>
+      ) : <div className="table-wrap"><table className="editable-settings-table"><thead><tr><th>Color</th><th>Name</th><th>Description</th><th>Status</th><th>Actions</th></tr></thead><tbody>{tags.map((row) => <tr key={row.id}>
         <td data-label="Color"><input aria-label={`Color for ${row.name}`} type="color" value={row.color} onChange={(event) => setTags((current) => current.map((candidate) => candidate.id === row.id ? { ...candidate, color: event.target.value } : candidate))} /></td>
         <td data-label="Name"><input aria-label={`Name for ${row.name}`} value={row.name} onChange={(event) => setTags((current) => current.map((candidate) => candidate.id === row.id ? { ...candidate, name: event.target.value } : candidate))} /></td>
         <td data-label="Description"><input aria-label={`Description for ${row.name}`} value={row.description} onChange={(event) => setTags((current) => current.map((candidate) => candidate.id === row.id ? { ...candidate, description: event.target.value } : candidate))} /></td>
         <td data-label="Status">{row.isActive ? "Active" : "Inactive"}</td>
         <td data-label="Actions"><span className="form-actions"><button className="secondary-button" disabled={saving} type="button" onClick={() => updateTag(row, {})}>Save</button><button className="secondary-button" disabled={saving} type="button" onClick={() => row.isActive ? openDeactivate(row) : updateTag(row, { isActive: true })}>{row.isActive ? "Deactivate" : "Activate"}</button></span></td>
-      </tr>)}</tbody></table></div>
-      <form className="form-stack inset-form" action={addTag}>
-        <div className="form-grid two-column"><label>Name<input name="name" required placeholder="VIP" /></label><label>Color<input name="color" type="color" defaultValue="#4F46E5" /></label></div>
+      </tr>)}</tbody></table></div>}
+      {canCreate && <form className="form-stack inset-form" action={addTag}>
+        <div className="form-grid two-column"><label>Name<input id="tag-name-input" name="name" required placeholder="VIP" /></label><label>Color<input name="color" type="color" defaultValue="#4F46E5" /></label></div>
         <label>Description<input name="description" /></label>
         <button className="primary-button" disabled={saving} type="submit">Add tag</button>
-      </form>
+      </form>}
     </section>
 
     <ConfirmDialog

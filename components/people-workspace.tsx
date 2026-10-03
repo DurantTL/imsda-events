@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/components/empty-state";
+import { SortOrderNote } from "@/components/list-sort";
+import { sortOrderText } from "@/lib/list-sort";
 import { staffPageTitles } from "@/components/staff-navigation";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { useMemo, useState } from "react";
@@ -226,6 +229,9 @@ function statusLabel(record: RegistrationRecord) {
   if (attendeeBalanceCents(record) > 0) return "Balance due";
   return "Paid";
 }
+
+/** The server lists registrations by when they were submitted (modules/registrations/repository.ts), newest first. */
+const registrationListOrderText = sortOrderText("submitted date", "desc", "date");
 
 export function PeopleWorkspace({
   eventId,
@@ -664,6 +670,7 @@ export function PeopleWorkspace({
         <label className="filter-field"><Filter aria-hidden="true" size={17} /><span className="sr-only">Filter registrations</span><select value={filter} onChange={(event) => setFilter(event.target.value)}><option value="ALL">All records</option><option value="BALANCE">Balance due</option><option value="PAID">Paid</option><option value="DRAFT">Draft</option><option value="WAITLISTED">Waitlisted</option><option value="CANCELLED">Cancelled</option></select></label>
       </div>
       <p className="result-summary">Showing {visible.length} of {registrations.length} {matchingPersonFilter ? "registrations with a matching person" : "registrations"}</p>
+      <SortOrderNote>{registrationListOrderText}</SortOrderNote>
       {canEmail && selectedIds.size > 0 && (
         <div className="panel selection-bar">
           <span><strong>{selectedIds.size}</strong> selected{visibleSelectedCount !== selectedIds.size ? ` · ${visibleSelectedCount} in this view` : ""}</span>
@@ -698,7 +705,18 @@ export function PeopleWorkspace({
           </div>
         ))}
       </div>
-      {visible.length === 0 && <div className="empty-state panel"><Search aria-hidden="true" size={24} /><h3>No matching registrations</h3><p>Try a different search or filter.</p></div>}
+      {visible.length === 0 && (registrations.length === 0
+        ? <EmptyState
+            action={{ label: "Start registration", href: `/events/${eventSlug}` }}
+            canCreate={canEdit}
+            className="empty-state panel"
+            hint="Registrations appear here once someone submits the public form."
+            icon={<UsersRound aria-hidden="true" size={24} />}
+            title="No registrations yet"
+          >
+            Nobody has registered for this event. Registrations show up here as people submit the public form; staff can also register someone from the public page.
+          </EmptyState>
+        : <div className="empty-state panel"><Search aria-hidden="true" size={24} /><h3>No matching registrations</h3><p>Nothing matches this search or filter. Clear it to see all {registrations.length} registrations.</p><button className="secondary-button" onClick={() => { setQuery(""); setFilter("ALL"); }} type="button">Clear search and filter</button></div>)}
 
       {emailingSelection && (
         <SelectedAudienceDialog

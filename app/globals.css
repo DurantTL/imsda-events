@@ -9222,3 +9222,73 @@ button[aria-busy="true"] { cursor: progress; }
 /* Issue 743: the "Show as a filter" and "Sensitive" checkboxes in the form builder field settings. */
 .field-visibility-flags { display: grid; gap: 4px; }
 .field-visibility-flags small { color: var(--muted, inherit); }
+
+/* ==========================================================================
+   #743 slice: Settings, Errors and Status clarity.
+   Collapsible event-settings blocks and jump bar, field and summary errors with an
+   icon, empty states, sort-order notes, and the "Needs attention" status.
+   ========================================================================== */
+
+/* --- Event settings: collapsible blocks ------------------------------------ */
+.settings-block > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: var(--target-desktop, 36px);
+  padding: 0;
+  cursor: pointer;
+  list-style: none;
+}
+.settings-block > summary::-webkit-details-marker { display: none; }
+.settings-block > summary:focus-visible { outline: 3px solid var(--imsda-purple, #6b4c9a); outline-offset: 3px; border-radius: 6px; }
+.settings-block-heading { display: grid; gap: 2px; min-width: 0; }
+.settings-block > summary .settings-block-title { margin: 0; font-size: 1.1rem; }
+.settings-block > summary .settings-block-summary { display: block; margin: 0; color: var(--muted); font-size: max(var(--type-floor, 0px), 0.8rem); font-weight: 500; overflow-wrap: anywhere; }
+.settings-block[open] > summary .settings-block-summary { display: none; }
+.settings-block-chevron { flex: none; color: var(--muted); transition: transform 0.15s ease; }
+.settings-block[open] > summary .settings-block-chevron { transform: rotate(180deg); }
+.settings-block-body { margin-top: 14px; }
+.settings-block-intro { margin: 0; color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.85rem); line-height: 1.5; }
+.settings-block.has-error { border-left: 5px solid var(--danger, #8f3a30); }
+.settings-block.has-error > summary .settings-block-title::after { content: " (has a problem)"; color: var(--danger, #8f3a30); font-size: 0.85rem; font-weight: 800; }
+@media (prefers-reduced-motion: reduce) { .settings-block-chevron { transition: none; } }
+@media only screen and (max-width: 768px) { .settings-block > summary { min-height: var(--target-touch, 44px); } }
+
+/* Jump links and the persistent save status. */
+.settings-jump-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 4px; }
+.settings-jump-bar ul { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0; padding: 0; list-style: none; }
+.settings-jump-bar a { display: inline-flex; align-items: center; min-height: var(--target-desktop, 36px); color: var(--imsda-purple, #5b3f8a); font-size: max(var(--type-body-floor, 0px), 0.85rem); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.settings-save-status { display: inline-flex; align-items: center; gap: 6px; font-size: max(var(--type-body-floor, 0px), 0.85rem); }
+.settings-save-status.is-dirty { color: var(--danger, #8f3a30); }
+.settings-save-status.is-clean { color: var(--muted); }
+@media only screen and (max-width: 768px) { .settings-jump-bar a { min-height: var(--target-touch, 44px); } }
+
+/* --- Errors: an icon with the text, and the linked summary ------------------ */
+.field-error-message, .public-registration-field .public-registration-field-error { display: flex; align-items: flex-start; gap: 6px; color: var(--danger, #8f3a30); font-weight: 700; line-height: 1.4; }
+.field-error-message > svg, .public-registration-field-error > svg { flex: none; margin-top: 2px; }
+:is(input, select, textarea)[aria-invalid="true"] { border-color: var(--danger, #8f3a30); box-shadow: 0 0 0 1px var(--danger, #8f3a30); }
+.public-registration-error-summary strong { display: flex; align-items: center; gap: 8px; }
+.form-error-summary { display: block; margin-bottom: 12px; padding: 12px 14px; border: 1px solid var(--danger-line, #e3b8b1); border-left: 5px solid var(--danger, #8f3a30); border-radius: 10px; background: var(--danger-soft, #fdf4f2); color: var(--ink); }
+.form-error-summary:focus { outline: 3px solid rgba(143, 58, 48, 0.3); outline-offset: 3px; }
+.form-error-summary > strong { display: flex; align-items: center; gap: 8px; color: var(--danger, #8f3a30); }
+.form-error-summary ul { margin: 8px 0 0; padding-left: 20px; line-height: 1.7; }
+.form-error-summary a { color: var(--danger, #8f3a30); font-weight: 700; }
+.public-registration-error-count { margin: 6px 0 0; font-size: var(--text-helper-min, 0.875rem); }
+
+/* --- Empty states ------------------------------------------------------------ */
+.empty-state { gap: 6px; padding: 18px 16px; }
+.empty-state > p { max-width: 52ch; line-height: 1.5; }
+.empty-state > .primary-button, .empty-state > .secondary-button { margin-top: 10px; }
+.empty-state-hint { font-style: italic; }
+.empty-state.public-manage-empty { min-height: 0; }
+
+/* --- Status clarity ----------------------------------------------------------- */
+.needs-attention { display: inline-flex; align-items: center; gap: 5px; color: var(--danger, #8f3a30); font-weight: 800; }
+.needs-attention > svg { flex: none; }
+.status-complete { display: inline-flex; align-items: center; gap: 5px; color: #2f6b45; font-weight: 600; }
+.sort-order-note { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; color: var(--muted); font-size: max(var(--type-helper-min, 0px), 0.8rem); }
+.sort-order-note > svg { flex: none; }
+.sort-order-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.sort-order-row > .sort-order-note { margin: 0; }
+th[aria-sort="ascending"], th[aria-sort="descending"] { background: var(--paper, #f4f7f8); }
