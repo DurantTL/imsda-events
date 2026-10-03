@@ -98,3 +98,11 @@ export function returnsFocusToTrigger(reason: LauncherCloseReason): boolean {
 export function isPlainClick(event: { button: number; metaKey: boolean; ctrlKey: boolean; shiftKey: boolean; altKey: boolean }): boolean {
   return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
 }
+
+/**
+ * The width at which the phone tab bar and sheet give way to the sidebar and
+ * popover. Matches the stylesheet's `@media (max-width: 800px)` phone block: the
+ * sheet closes when this starts matching.
+ */
+export const phoneMaxWidthPx = 800;
+export const desktopBreakpointQuery = `(min-width: ${phoneMaxWidthPx + 1}px)`;

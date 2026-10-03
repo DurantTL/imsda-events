@@ -6,6 +6,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { HTMLAttributes, ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
 import {
+  desktopBreakpointQuery,
   isPlainClick,
   launcherFooterLinks,
   launcherGroups,
@@ -156,9 +157,16 @@ export function MoreLauncher({
     }
     document.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("popstate", onPopState);
+    // A rotation or resize past the phone breakpoint hides the sheet and its tab bar, so close it and lift `inert`.
+    const desktop = variant === "tab" && typeof window.matchMedia === "function" ? window.matchMedia(desktopBreakpointQuery) : null;
+    function onDesktop(event: MediaQueryListEvent) {
+      if (event.matches) close("outside");
+    }
+    desktop?.addEventListener("change", onDesktop);
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("popstate", onPopState);
+      desktop?.removeEventListener("change", onDesktop);
       setBackgroundInert(false);
     };
   }, [open, close, variant]);

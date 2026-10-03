@@ -14,7 +14,9 @@ vi.mock("@/components/sign-out-button", () => ({
 
 import { AppShell } from "@/components/app-shell";
 import { MoreLauncherPanel } from "@/components/more-launcher";
+import { readFileSync } from "node:fs";
 import {
+  desktopBreakpointQuery,
   isPlainClick,
   launcherFooterLinks,
   launcherGroups,
@@ -233,5 +235,14 @@ describe("launcher in the shell", () => {
 
   it("no longer pins the club directory in the sidebar", () => {
     expect(shell()).not.toContain("nav-group-label\">Clubs and churches");
+  });
+});
+
+describe("phone sheet breakpoint", () => {
+  it("closes at the same width the stylesheet switches from the phone layout", () => {
+    expect(desktopBreakpointQuery).toBe("(min-width: 801px)");
+    const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+    expect(css).toContain("@media (max-width: 800px)\n{\n".replace("\n{\n", " {"));
+    expect(css).toContain("@media (min-width: 801px) {\n  .more-launcher-tab");
   });
 });
