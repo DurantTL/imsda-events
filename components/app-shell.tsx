@@ -140,6 +140,8 @@ export function AppShell({
     events.find((event) => event.id === selectedEventId)?.permissions ?? [],
   );
   const isSystemAdmin = user.globalRole === "SYSTEM_ADMIN";
+  // Event Admins can ask for a module (#741 slice 3); system administrators turn modules on directly.
+  const canRequestFeature = !isSystemAdmin && selectedPermissions.has("CONFIGURE_EVENT");
   // The other workspaces this staff identity may switch into (#108): the
   // account popover's System management link and both attendee switch
   // buttons read this, so they always agree with each other.
@@ -308,6 +310,7 @@ export function AppShell({
                   isActive={isActive}
                   cards={launcherCards}
                   isSystemAdmin={isSystemAdmin}
+                  canRequestFeature={canRequestFeature}
                   eventQuery={eventQuery}
                   tipProps={tipProps(label)}
                 >
@@ -408,6 +411,7 @@ export function AppShell({
                 isActive={isActive}
                 cards={launcherCards}
                 isSystemAdmin={isSystemAdmin}
+                canRequestFeature={canRequestFeature}
                 eventQuery={eventQuery}
               >
                 <Icon aria-hidden="true" size={22} /><span>{mobileNavigationLabels[href] ?? label}</span>

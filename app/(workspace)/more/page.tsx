@@ -8,13 +8,18 @@ import { MoreTaskSearch } from "@/components/more-task-search";
 import {
   applicabilityLabels,
   buildEventModulesView,
+  buildRequestPanel,
   groupEnabledModules,
   healthStripState,
 } from "@/components/event-modules-page-model";
 import { buildMoreDirectoryCards, moreDirectoryGroupLabels, moreDirectoryGroupOrder, staffPageTitles } from "@/components/staff-navigation";
 import { resolveStaffViewer } from "@/modules/club-forms/access";
 import { listRecentAuditActivity } from "@/modules/audit/audit-service";
+import { eventModuleDefinition, type EventModuleKey } from "@/modules/event-modules/catalog";
 import { moduleState } from "@/modules/event-modules/service";
+import { listModuleRequestsForEvent } from "@/modules/event-modules/requests";
+import { formatRequestDate, latestRequestPerModule } from "@/modules/event-modules/request-domain";
+import { ModuleRequestForm } from "@/components/module-request-form";
 import { resolveEventContext } from "@/modules/events/selection";
 import { eventKindFromAudience, selectActivity } from "@/modules/events/settings-sections";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
@@ -58,6 +63,18 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
   // Rows plus the data a module works on, the same state the launcher reads, so the two agree.
   const state = await moduleState(event.id);
   const view = buildEventModulesView({ cards, stored: state.stored, effective: state.effective, dataPresent: state.dataPresent, dataForced: state.dataForced, isSystemAdmin, audience: clubEvent ? "CLUB" : "GENERAL" });
+
+  // Event Admins (never system administrators, who turn modules on directly) can ask for a module that is off.
+  const canRequest = !isSystemAdmin && permissions.includes("CONFIGURE_EVENT");
+  const requests = canRequest ? await listModuleRequestsForEvent(event.id) : [];
+  const requestPanel = buildRequestPanel({
+    effective: state.effective,
+    dataPresent: state.dataPresent,
+    audience: clubEvent ? "CLUB" : "GENERAL",
+    requests,
+    canRequest,
+  });
+  const approved = [...latestRequestPerModule(requests).values()].filter((request) => request.status === "APPROVED" && state.effective.has(request.moduleKey as EventModuleKey));
 
   // The health strip reuses the Operational health data for staff who may open it; nobody else gets a strip.
   const health = canAccessOperationalHealth(permissions)
@@ -142,6 +159,38 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
             ))}
           </div>
         </details>
+      )}
+
+      {canRequest && (
+        <section className="panel module-requests" id="request-a-feature" aria-labelledby="request-a-feature-heading">
+          <h2 id="request-a-feature-heading" tabIndex={-1}>Request a feature</h2>
+          <p className="quiet-copy">Ask the conference office to turn on a feature this event does not use yet. A system administrator reviews every request.</p>
+          {approved.length > 0 && (
+            <ul className="module-request-status" aria-label="Approved requests">
+              {approved.map((request) => (
+                <li data-status="APPROVED" key={request.moduleKey}>
+                  {eventModuleDefinition(request.moduleKey as EventModuleKey).title}: approved{request.decidedAt ? ` ${formatRequestDate(request.decidedAt)}` : ""}. It is on now.
+                </li>
+              ))}
+            </ul>
+          )}
+          {requestPanel.length === 0 && <p className="quiet-copy">Every feature that applies to this event is already on.</p>}
+          <div className="foundation-grid">
+            {requestPanel.map(({ definition, latest, canRequest: mayAsk }) => (
+              <article className="panel foundation-card event-module-card" data-request-module={definition.key} key={definition.key}>
+                <h3>{definition.title}</h3>
+                <p>{definition.description}</p>
+                {latest?.status === "PENDING" && (
+                  <p className="module-request-state" data-status="PENDING" role="status">Requested {formatRequestDate(latest.createdAt)}. Waiting for a system administrator.</p>
+                )}
+                {latest?.status === "DECLINED" && (
+                  <p className="module-request-state" data-status="DECLINED">Declined{latest.decidedAt ? ` ${formatRequestDate(latest.decidedAt)}` : ""}: {latest.declineReason ?? "No reason was given."} You can ask again.</p>
+                )}
+                {mayAsk && <ModuleRequestForm eventId={event.id} moduleKey={definition.key} title={definition.title} />}
+              </article>
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Phone fallback (#741): the launcher is a bottom sheet there, but this page keeps every universal tool too, so nothing depends on scripts. Hidden on desktop by CSS. */}

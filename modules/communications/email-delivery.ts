@@ -672,6 +672,10 @@ async function prepareAccountEmailBody(
       now: input.now,
     });
   }
+  // Module request email (#741) carries free text and no sentinel: never replace anything in it.
+  if (input.templateKey?.startsWith("MODULE_REQUEST_")) {
+    return { bodyText: input.bodyText };
+  }
   if (input.templateKey?.startsWith("ATTENDEE_")) {
     return prepareAttendeeEmailBodyForDelivery({
       messageId: input.messageId,
