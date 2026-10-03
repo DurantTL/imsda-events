@@ -1714,6 +1714,7 @@ select:focus-visible {
 .activity-row small { display: block; }
 .activity-row strong { font-size: max(var(--type-floor, 0px), 0.72rem); }
 .activity-row small { margin-top: 3px; color: var(--muted); font-size: max(var(--type-floor, 0px), 0.62rem); }
+.activity-row > span:nth-child(2) { min-width: 0; overflow-wrap: anywhere; }
 .activity-row code { border-radius: 7px; background: var(--paper); color: var(--imsda-purple); padding: 5px 7px; font-size: max(var(--type-floor, 0px), 0.56rem); }
 
 .mobile-nav { display: none; }
@@ -8514,7 +8515,12 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 
   table.table-cards.table-cards,
   table.table-cards.table-cards > tbody,
-  table.table-cards.table-cards > caption { display: block; width: 100%; box-sizing: border-box; min-width: 0; }
+  table.table-cards.table-cards > caption:not(.sr-only) { display: block; width: 100%; box-sizing: border-box; min-width: 0; }
+
+  /* A visually hidden caption (.sr-only) is left out above: it stays absolutely
+     positioned and 1px wide. width: 100% on it was as wide as the page plus its
+     offset, which scrolled the document sideways (#737). It stays in the
+     accessibility tree, so the table is still named. */
 
   /* Visually hidden but still in the accessibility tree: the column headers
      stay announced, and can never clip. */
@@ -8761,6 +8767,13 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .club-age-summary { margin: 8px 0; }
 /* The roster link is part of the help sentence, so it stays inline with the full stop after it. */
 :root .club-going-list .club-roster-age .field-help a { display: inline; min-height: 0; padding-inline: 0; text-decoration: underline; }
+
+/* Phone: the raw audit code drops below the readable summary instead of
+   squeezing it, and may wrap rather than widen the page (#737). */
+@media (max-width: 600px) {
+  .activity-row { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
+  .activity-row code { grid-column: 2; justify-self: start; max-width: 100%; overflow-wrap: anywhere; white-space: normal; }
+}
 
 /* Touch and click targets (#738). Screen only, and only the small controls
    the issue names: the filter select, export and download controls, check-in
