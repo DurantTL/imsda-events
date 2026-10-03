@@ -24,9 +24,13 @@ import { AddressFieldGroup } from "@/components/address-field-group";
 import { BrandMark } from "@/components/brand-mark";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
+import { ChurchInvoiceNotice, ChurchInvoiceReviewFacts } from "@/components/church-invoice-notice";
+import { churchInvoiceTerms, invoiceRecipientName } from "@/modules/club-registrations/church-invoice-terms";
+import { parseTypedDate, TYPED_DATE_GUIDANCE } from "@/modules/forms/typed-date";
 import { RegistrationAccountPrompt } from "@/components/registration-account-prompt";
 import { SearchableSelect } from "@/components/searchable-select";
 import { SubmitButton } from "@/components/submit-button";
+import { usesRadioCards } from "@/modules/forms/choice-controls";
 import { TranslateHint } from "@/components/translate-hint";
 import { planAttendeeRemoval, withoutAttendee } from "@/modules/forms/attendee-removal";
 import { confirmationEmailHeadline } from "@/modules/forms/confirmation-email-status";
@@ -652,6 +656,13 @@ export function PublicRegistrationForm({
     attendeeCount: rosterEnabled ? attendees.length : undefined,
     attendeeNames: rosterEnabled ? attendees.map((attendee, index) => attendeeName(attendee, index, roster.attendeeLabel)) : undefined,
   });
+  // The lead wording and the invoice recipient come from the configured fee and the church answer (#743).
+  const invoiceTerms = deferredOrganizationBilling
+    ? churchInvoiceTerms(definition, { pricingDate, attendeeLabel: rosterEnabled ? roster.attendeeLabel : undefined })
+    : null;
+  const invoiceRecipient = deferredOrganizationBilling
+    ? invoiceRecipientName(definition, rosterEnabled ? registrationResponses : responses)
+    : null;
   const displayedPromoCode = activeQuote?.promoCode ?? null;
   const visibleFieldKeys = useMemo(() => {
     const visible = new Set<string>();
@@ -1596,9 +1607,14 @@ export function PublicRegistrationForm({
       );
     }
 
-    if (field.type === "RADIO") {
+    // A short dropdown (4 or fewer choices) shows as radio cards (#743); the saved value and answer key are the same.
+    const selectAsRadioCards = field.type === "SELECT"
+      && usesRadioCards(field.options.length)
+      && !(context.attendeeIndex === null && lockedRegistrationFieldKeys.has(field.key));
+    if (field.type === "RADIO" || selectAsRadioCards) {
+      const currentValue = context.values[field.key];
       return (
-        <fieldset className={wrapperClass} key={field.id} aria-invalid={Boolean(issue)} aria-required={field.required && !excused} aria-describedby={description}>
+        <fieldset className={`${wrapperClass}${selectAsRadioCards ? " public-registration-radio-cards" : ""}`} key={field.id} aria-invalid={Boolean(issue)} aria-required={field.required && !excused} aria-describedby={description}>
           <legend>{fieldLabel(field, context)}</legend>
           <div className="public-registration-choice-list">
             {field.options.map((option, index) => {
@@ -1624,6 +1640,9 @@ export function PublicRegistrationForm({
               );
             })}
           </div>
+          {selectAsRadioCards && !field.required && typeof currentValue === "string" && currentValue !== "" && (
+            <button className="public-registration-clear-choice" type="button" onClick={() => context.setValue(field.key, "")}>Clear selection</button>
+          )}
           {fieldSupport(field, context)}
         </fieldset>
       );
@@ -1828,8 +1847,16 @@ export function PublicRegistrationForm({
             aria-invalid={Boolean(issue)}
             aria-describedby={description}
             onChange={(inputEvent) => context.setValue(field.key, inputEvent.target.value)}
+            onPaste={field.type === "DATE" ? (pasteEvent) => {
+              // A pasted M/D/YYYY is read into the stored YYYY-MM-DD value (#743).
+              const typed = parseTypedDate(pasteEvent.clipboardData.getData("text"));
+              if (!typed) return;
+              pasteEvent.preventDefault();
+              context.setValue(field.key, typed);
+            } : undefined}
           />
         )}
+        {field.type === "DATE" && <small className="field-help public-registration-date-guidance">{TYPED_DATE_GUIDANCE}</small>}
         {fieldSupport(field, context)}
       </label>
     );
@@ -2295,14 +2322,14 @@ export function PublicRegistrationForm({
 
         <section className="public-registration-review-card public-registration-review-order">
           <p className="public-registration-eyebrow">
-            {joiningWaitlist ? "Estimated cost" : deferredOrganizationBilling ? "Price" : group ? "Estimated price" : "Price & fees"}
+            {joiningWaitlist ? "Estimated cost" : deferredOrganizationBilling ? "Rate and invoice" : group ? "Estimated price" : "Price & fees"}
           </p>
           <h3>
-            {joiningWaitlist ? "If space becomes available" : deferredOrganizationBilling ? "Price per person" : group ? "Estimated total" : "Registration total"}
+            {joiningWaitlist ? "If space becomes available" : deferredOrganizationBilling ? "Rate per person" : group ? "Estimated total" : "Registration total"}
           </h3>
           {deferredOrganizationBilling ? (
             <>
-              <PerPersonPriceNotice price={perPerson} className="public-registration-review-lines" />
+              <ChurchInvoiceNotice terms={invoiceTerms} price={perPerson} className="public-registration-review-lines" />
               {displayedPromoCode && <p>Promo code {displayedPromoCode} applied.</p>}
             </>
           ) : calculation.lineItems.length > 0 ? (
@@ -2357,9 +2384,7 @@ export function PublicRegistrationForm({
             </p>
           )}
           {!joiningWaitlist && deferredOrganizationBilling && (
-            <p className="public-registration-review-waitlist">
-              No payment is due online.
-            </p>
+            <ChurchInvoiceReviewFacts recipient={invoiceRecipient} />
           )}
           {!joiningWaitlist && group && (
             <p className="public-registration-review-waitlist">
@@ -2943,7 +2968,7 @@ export function PublicRegistrationForm({
           )}
           {group?.waitlistNote && <p className="public-registration-summary-empty">{group.waitlistNote}</p>}
           {rosterEnabled && <p className="public-registration-summary-roster"><UsersRound size={15} aria-hidden="true" /> {attendees.length} {attendees.length === 1 ? roster.attendeeLabel.toLowerCase() : `${roster.attendeeLabel.toLowerCase()}s`}</p>}
-          {deferredOrganizationBilling ? <PerPersonPriceNotice price={perPerson} className="public-registration-summary-lines" /> : calculation.lineItems.length === 0 ? <p className="public-registration-summary-empty">Select any priced options to see your total.</p> : (
+          {deferredOrganizationBilling ? <ChurchInvoiceNotice terms={invoiceTerms} price={perPerson} className="public-registration-summary-lines" /> : calculation.lineItems.length === 0 ? <p className="public-registration-summary-empty">Select any priced options to see your total.</p> : (
             <div className="public-registration-summary-lines">
               {calculation.lineItems.map((item) => (
                 <div key={item.key}><span>{item.label}{item.pricingLabel && <small>{item.pricingLabel}</small>}</span><strong translate="no">{money(item.amountCents)}</strong></div>

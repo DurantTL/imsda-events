@@ -3,6 +3,8 @@
  * safe on the client and the server.
  */
 
+import { isWholeAgeInRange } from "@/modules/attendee-types/age-limits";
+
 type AgeState = {
   rosterAges: Record<string, number>;
   attendeeResponses: Record<string, Record<string, unknown>>;
@@ -12,7 +14,7 @@ type AgeState = {
 export function parseTypedAge(raw: string): number | undefined {
   if (raw.trim() === "") return undefined;
   const age = Number(raw);
-  return Number.isInteger(age) && age >= 0 && age <= 120 ? age : undefined;
+  return isWholeAgeInRange(age) ? age : undefined;
 }
 
 /**

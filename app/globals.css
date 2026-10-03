@@ -9222,3 +9222,29 @@ button[aria-busy="true"] { cursor: progress; }
 /* Issue 743: the "Show as a filter" and "Sensitive" checkboxes in the form builder field settings. */
 .field-visibility-flags { display: grid; gap: 4px; }
 .field-visibility-flags small { color: var(--muted, inherit); }
+
+/* Issue 743: radio cards for short choice lists, church-invoice wording, and the date helper line.
+   Radio cards are real radio inputs in a fieldset (arrow keys, native focus), 44px tall. */
+.radio-card-group { display: grid; gap: 8px; min-width: 0; margin: 0; border: 0; padding: 0; }
+.radio-card-group > legend { padding: 0; margin-bottom: 6px; font-weight: 700; }
+.radio-card-group-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 8px; }
+.radio-card { display: flex; min-height: 44px; align-items: flex-start; gap: 10px; border: 1px solid var(--line, #d2dfe4); border-radius: 10px; background: #fff; cursor: pointer; padding: 10px 12px; font-weight: 400; }
+.radio-card:hover { border-color: #9fb9c4; }
+.radio-card:has(input:checked) { border-color: var(--imsda-purple, #582c83); background: var(--imsda-purple-soft, #f3edf8); box-shadow: inset 0 0 0 1px var(--imsda-purple, #582c83); }
+.radio-card:has(input:focus-visible), .public-registration-radio-cards .public-registration-option:has(input:focus-visible) { outline: 3px solid var(--imsda-navy, #003b5c); outline-offset: 2px; }
+.radio-card input { flex: none; width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--imsda-purple, #582c83); }
+.radio-card > span { display: grid; gap: 2px; min-width: 0; }
+.radio-card small { color: var(--muted); font-weight: 400; }
+.radio-card-group > small { color: var(--muted); }
+.public-registration-radio-cards .public-registration-option { min-height: 44px; }
+.public-registration-clear-choice { justify-self: start; min-height: 44px; border: 0; background: transparent; color: var(--imsda-navy, #003b5c); font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; padding: 0 4px; }
+.church-invoice-notice { display: grid; gap: 6px; }
+.church-invoice-notice p { margin: 0; }
+.church-invoice-rate { font-size: 1.05rem; line-height: 1.4; }
+.church-invoice-terms { color: var(--muted); line-height: 1.5; }
+.church-invoice-facts { display: grid; gap: 8px; margin: 12px 0 0; border-top: 1px solid var(--line, #d2dfe4); padding-top: 10px; }
+.church-invoice-facts > div { display: grid; grid-template-columns: minmax(8rem, 11rem) minmax(0, 1fr); gap: 4px 12px; }
+.church-invoice-facts dt { color: var(--muted); font-weight: 700; }
+.church-invoice-facts dd { margin: 0; font-weight: 700; }
+@media (max-width: 480px) { .church-invoice-facts > div { grid-template-columns: 1fr; } }
+.public-registration-date-guidance, .club-form-date-guidance { display: block; margin: 0; }

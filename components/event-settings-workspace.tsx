@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   UsersRound,
 } from "lucide-react";
+import { RadioCardGroup } from "@/components/radio-card-group";
 import { EventLocationsPanel } from "@/components/event-locations-panel";
 import type { ActiveAreaCoordinator, EventLocationRecord } from "@/modules/event-locations/repository";
 import type { EventSettingsRecord } from "@/modules/events/repository";
@@ -376,23 +377,20 @@ export function EventSettingsWorkspace({
   }
 
   const attendeeEditField = (
-    <label>
-      Attendee edit verification
-      <select
-        value={draft.attendeeEditPolicy}
-        onChange={(event) => update(
-          "attendeeEditPolicy",
-          event.target.value as EventSettingsInput["attendeeEditPolicy"],
-        )}
-      >
-        <option value="VERIFY_EVERY_EDIT">Email a code for every edit</option>
-        <option value="TIERED">Allow low-risk answers without a code</option>
-      </select>
-      <small>
+    <RadioCardGroup
+      legend="Attendee edit verification"
+      name="attendeeEditPolicy"
+      value={draft.attendeeEditPolicy}
+      onChange={(value) => update("attendeeEditPolicy", value as EventSettingsInput["attendeeEditPolicy"])}
+      options={[
+        { value: "VERIFY_EVERY_EDIT", label: "Email a code for every edit" },
+        { value: "TIERED", label: "Allow low-risk answers without a code" },
+      ]}
+      help={<small>
         Contact changes, cancellations, and transfers always require a fresh emailed
         code. Medical and club data always require an authenticator.
-      </small>
-    </label>
+      </small>}
+    />
   );
   const paymentInstructionsField = (
     <label>
@@ -657,43 +655,37 @@ export function EventSettingsWorkspace({
               />
               <span><strong>Offer a waitlist when the event is full</strong><small>People can submit without taking a confirmed event spot.</small></span>
             </label>
-            <label>
-              Audience
-              <select
-                value={draft.audience}
-                onChange={(event) => update(
-                  "audience",
-                  event.target.value as EventSettingsInput["audience"],
-                )}
-              >
-                <option value="GENERAL">General event</option>
-                <option value="CLUB">Club or church event</option>
-              </select>
-              <small>
+            <RadioCardGroup
+              legend="Audience"
+              name="audience"
+              value={draft.audience ?? "GENERAL"}
+              onChange={(value) => update("audience", value as EventSettingsInput["audience"])}
+              options={[
+                { value: "GENERAL", label: "General event" },
+                { value: "CLUB", label: "Club or church event" },
+              ]}
+              help={<small>
                 Controls Clubs and churches navigation, club oversight, and club reports —
                 Club registration uses church billing. For an event where individuals pay
                 (for example Man Camp), choose General.
-              </small>
-            </label>
-            <label>
-              Billing mode
-              <select
-                id="event-field-billing-mode"
-                value={draft.billingMode}
-                onChange={(event) => update(
-                  "billingMode",
-                  event.target.value as EventSettingsInput["billingMode"],
-                )}
-              >
-                <option value="ATTENDEE_PAY">Attendees pay online</option>
-                <option value="DEFERRED_ORGANIZATION_INVOICE">Bill the responsible organization later</option>
-              </select>
-              <small>
+              </small>}
+            />
+            <RadioCardGroup
+              id="event-field-billing-mode"
+              legend="Billing mode"
+              name="billingMode"
+              value={draft.billingMode}
+              onChange={(value) => update("billingMode", value as EventSettingsInput["billingMode"])}
+              options={[
+                { value: "ATTENDEE_PAY", label: "Attendees pay online" },
+                { value: "DEFERRED_ORGANIZATION_INVOICE", label: "Bill the responsible organization later" },
+              ]}
+              help={<small>
                 Club/church group events such as Spring Camporee: registration shows informational
                 rates only, no attendee balance or online payment is created, and the responsible
                 organization is billed later based on final attendance.
-              </small>
-            </label>
+              </small>}
+            />
             <label className="event-setting-toggle nested">
               <input
                 type="checkbox"

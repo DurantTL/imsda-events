@@ -1,5 +1,6 @@
 "use client";
 
+import { ageInputAttributes } from "@/modules/attendee-types/age-limits";
 import Link from "next/link";
 import { useState, type MouseEvent } from "react";
 import { ageFieldId } from "@/modules/club-registrations/roster-ages";
@@ -57,9 +58,7 @@ export function ClubRosterAgeField({
           aria-invalid={shownError !== null}
           className="club-roster-age-input"
           id={inputId}
-          inputMode="numeric"
-          max={120}
-          min={0}
+          {...ageInputAttributes}
           onBlur={() => setTouched(true)}
           onChange={(event) => onAge(event.target.value)}
           required
