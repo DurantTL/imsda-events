@@ -105,3 +105,40 @@ export function isPlainClick(event: { button: number; metaKey: boolean; ctrlKey:
  */
 export const phoneMaxWidthPx = 800;
 export const desktopBreakpointQuery = `(min-width: ${phoneMaxWidthPx + 1}px)`;
+
+/**
+ * Where the directory was left (#741 slice 4): the card last opened, the page it
+ * opened and how far the list was scrolled. It is used only when the person is
+ * back on that page or one of its children; anywhere else the launcher opens at
+ * the first card, scrolled to the top. Kept in memory for the life of the staff
+ * shell (which persists across client navigations), keyed by user and event so a
+ * shared tab never carries one person's position to another, and cleared on
+ * Escape and on sign-out.
+ */
+export type LauncherPosition = {
+  userId: string;
+  eventQuery: string;
+  cardKey: string | null;
+  /** The opened card's href; its path decides whether the memory still applies. */
+  href: string;
+  scrollTop: number;
+};
+
+let rememberedPosition: LauncherPosition | null = null;
+
+export function rememberLauncherPosition(position: LauncherPosition): void {
+  rememberedPosition = position;
+}
+
+const pathOf = (href: string) => href.split(/[?#]/)[0];
+
+export function recallLauncherPosition({ userId, eventQuery, pathname }: { userId: string; eventQuery: string; pathname: string }): LauncherPosition | null {
+  const remembered = rememberedPosition;
+  if (!remembered || remembered.userId !== userId || remembered.eventQuery !== eventQuery) return null;
+  const target = pathOf(remembered.href);
+  return pathname === target || pathname.startsWith(`${target}/`) ? remembered : null;
+}
+
+export function forgetLauncherPosition(): void {
+  rememberedPosition = null;
+}
