@@ -1625,7 +1625,7 @@ export function PublicRegistrationForm({
               const details = choiceDetails(field, option);
               const checked = context.values[field.key] === option;
               // The error link focuses the base id, so it goes on the first option that can be picked.
-              const firstEnabled = field.options.findIndex((candidate) => context.values[field.key] === candidate || !choiceState(field, candidate).full);
+              const firstEnabled = Math.max(field.options.findIndex((candidate) => context.values[field.key] === candidate || !choiceState(field, candidate).full), 0);
               return (
                 <label className={`public-registration-option${full ? " is-full" : ""}`} key={option}>
                   <input

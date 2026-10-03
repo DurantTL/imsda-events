@@ -331,3 +331,18 @@ describe("dropdowns that stay dropdowns (#743)", () => {
     expect(markup).toMatch(/name="gender"/);
   });
 });
+
+describe("the error link target on a full choice list (#743)", () => {
+  it("still puts the base id on the first radio when every option is full and none is chosen", () => {
+    const def = definition(null, [field("cabin", {
+      type: "RADIO", label: "Cabin", options: ["A", "B"], availabilityMode: "CAPACITY", choiceLimits: { A: 1, B: 1 },
+    })]);
+    const usage = { cabin: { A: { total: 1, first: 0, second: 0 }, B: { total: 1, first: 0, second: 0 } } };
+    const markup = renderToStaticMarkup(createElement(PublicRegistrationForm, {
+      event, form: { slug: "synthetic", versionId: "v1", versionNumber: 1, definition: def },
+      choiceUsage: usage, pricingDate: "2026-03-01", lifecycle, disableDrafts: true,
+    }));
+    expect(markup).toMatch(/<input id="public_registration_f_cabin"[^>]*type="radio"/);
+    expect(markup).toContain("public_registration_f_cabin_option_1");
+  });
+});
