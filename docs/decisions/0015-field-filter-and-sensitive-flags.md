@@ -36,9 +36,12 @@ new filter needs an explicit tick.**
 - `filterable`: true ONLY for a field #739 would have offered: a choice field
   with options, not health-type, not the payment-method field, not
   directory-sourced, and not linked (either direction) to a sensitive field or
-  to the payment-method field. The link check runs in the answer filter, which
-  has the whole form. Everything else (gender, minor, housing, childcare,
-  awards and so on) is not filterable until staff tick the box.
+  to the payment-method field. Fields #739 offered stay offered by default,
+  which includes gender, childcare and good-conduct award questions;
+  minor-status and housing questions that are linked to a sensitive question
+  are not offered. A NEW filter needs an explicit tick. One helper,
+  `resolveFieldOffer`, makes this decision for both the answer filter and the
+  builder's "Show as a filter" box, so they cannot disagree.
 - The vegetarian / vegan / gluten carve-out is kept inside this legacy default
   only: choice text such as "Vegetarian" does not make a menu field
   health-type, so the live Women's Retreat meal field keeps working without
@@ -55,12 +58,19 @@ a later rename cannot clear it.
 Changed: check-in book extra column and badge-CSV Position (a sensitive field
 or a field linked to one is never offered; section titles are honoured; a key
 that is ineligible in any form version is out for all); operational reports (a
-field is excluded when explicitly flagged sensitive in any form version
-present, or by the report's existing wording rules; the builder's health
-default is deliberately not applied there, because its shared stems, such as
-"accommod", would drop the report's own housing field and the Leadership
-Weekend "Meals" field, whose help text says "All meals are vegetarian");
+field is excluded when its flag says sensitive, or, with no flag, when the same
+health-type default the builder saves says so; a key flagged sensitive in any
+form version present is excluded for all registrations; the report's existing
+wording rules still apply on top, and an explicit false cannot override them);
 the answer filter and its export.
+
+The health-type default (`isHealthTypeField`) is the one decision shared by the
+builder's saved flag and the reports, so a report does not change after an
+unrelated save. Help text and choice text skip the vegetarian / vegan / gluten
+stems ("All meals are vegetarian." does not make Leadership Weekend "Meals"
+health-type), and "accommodation" alone is not health-type when the key, label
+or section reads as housing (lodging, housing, room, cabin, dorm, campsite,
+tent, RV, overnight) and does not ask about needs, disability or access.
 
 Left alone: People page registration detail and the answers editor, the
 registration list/detail API (all already require VIEW_SENSITIVE_DATA, so staff

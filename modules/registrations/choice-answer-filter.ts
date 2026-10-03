@@ -2,8 +2,7 @@ import {
   registrationFormDefinitionSchema,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
-import { isLinkedToBlockedField } from "@/modules/forms/field-dependency-walk";
-import { hasOfferedChoices, resolveFieldFlags, sectionTitleLookup } from "@/modules/forms/field-flags";
+import { resolveFieldOffer, sectionTitleLookup } from "@/modules/forms/field-flags";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 
 /**
@@ -69,25 +68,9 @@ function offeredQuestion(
     paymentMethodFieldKey: string | null;
   },
 ): { sensitive: boolean } | null {
-  const flagsOf = (candidate: RegistrationFormField) => resolveFieldFlags(candidate, {
-    sectionTitle: context.sectionTitleOf(candidate),
-    paymentMethodFieldKey: context.paymentMethodFieldKey,
-  });
-  const isPayment = (candidate: RegistrationFormField) => Boolean(context.paymentMethodFieldKey) && candidate.key === context.paymentMethodFieldKey;
-  // The payment-method answer is never a filter, whatever its flags say.
-  if (!hasOfferedChoices(field) || isPayment(field)) return null;
-  const flags = flagsOf(field);
-  const linkedToSensitive = isLinkedToBlockedField(field, context.allFields, (other) => flagsOf(other).sensitive);
-  if (field.filterable === undefined) {
-    // Legacy default (#739 parity): offered only when it would have been offered before
-    // the flags existed, so also not linked, in either direction, to a sensitive or payment field.
-    if (!flags.filterable || linkedToSensitive) return null;
-    if (isLinkedToBlockedField(field, context.allFields, isPayment)) return null;
-  } else if (!field.filterable) {
-    return null;
-  }
-  // An explicit tick on a sensitive or linked field is offered, to VIEW_SENSITIVE_DATA holders only.
-  return { sensitive: flags.sensitive || linkedToSensitive };
+  // The same helper the form builder uses for its "Show as a filter" box.
+  const offer = resolveFieldOffer(field, context);
+  return offer.filterable ? { sensitive: offer.sensitive } : null;
 }
 
 const definitionCache = new WeakMap<object, Map<string, ChoiceQuestion>>();

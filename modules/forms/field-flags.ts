@@ -1,4 +1,5 @@
 import type { RegistrationFormField } from "@/modules/forms/definition";
+import { isLinkedToBlockedField } from "@/modules/forms/field-dependency-walk";
 import { SENSITIVE_FIELD_STEMS } from "@/modules/forms/sensitive-fields";
 
 /**
@@ -22,10 +23,13 @@ import { SENSITIVE_FIELD_STEMS } from "@/modules/forms/sensitive-fields";
  *   is not health-type, not the payment-method field, not directory-sourced,
  *   and not linked (by `conditional` / `optionalWhen`, in either direction) to
  *   a sensitive field or to the payment-method field. The link check needs the
- *   whole form, so `resolveFieldFlags` here gives the field's own default and
- *   `offeredQuestion` in `modules/registrations/choice-answer-filter.ts`
- *   adds the link check. Every other field (gender, minor, housing,
- *   childcare, awards and so on) is NOT filterable until staff tick the box.
+ *   whole form, so `resolveFieldFlags` gives the field's own default and
+ *   `resolveFieldOffer` adds the link check; the answer filter and the form
+ *   builder both use `resolveFieldOffer`, so they cannot disagree. Fields #739
+ *   offered stay offered by default, which includes gender, childcare and
+ *   good-conduct award questions. Minor-status and housing questions that are
+ *   linked to a sensitive question are not offered. A NEW filter needs an
+ *   explicit tick.
  *
  * The vegetarian / vegan / gluten carve-out below is part of that legacy
  * default only: choice text such as "Vegetarian" does not make a menu field
@@ -37,8 +41,19 @@ import { SENSITIVE_FIELD_STEMS } from "@/modules/forms/sensitive-fields";
  */
 const MEAL_MENU_STEMS: ReadonlySet<string> = new Set(["vegetarian", "vegan", "gluten"]);
 
-const WORDING_PATTERN = new RegExp(`\\b(?:${SENSITIVE_FIELD_STEMS.join("|")})`, "i");
-const CHOICE_TEXT_PATTERN = new RegExp(`\\b(?:${SENSITIVE_FIELD_STEMS.filter((stem) => !MEAL_MENU_STEMS.has(stem)).join("|")})`, "i");
+function stemsPattern(skip: (stem: string) => boolean) {
+  return new RegExp(`\\b(?:${SENSITIVE_FIELD_STEMS.filter((stem) => !skip(stem)).join("|")})`, "i");
+}
+
+// Wording of a key, label or section title.
+const WORDING_PATTERN = stemsPattern((stem) => stem === "accommod");
+// Choice text and help text: also skips the menu stems ("All meals are vegetarian.", "Vegan").
+const CHOICE_TEXT_PATTERN = stemsPattern((stem) => MEAL_MENU_STEMS.has(stem) || stem === "accommod");
+const ACCOMMODATION_PATTERN = /\baccommod/i;
+// "Accommodation" on its own is a housing word, not a health word, in a housing context ...
+const HOUSING_CONTEXT_PATTERN = /\b(?:lodg|hous|rooms?\b|cabin|dorm|campsite|tents?\b|rv\b|overnight)/i;
+// ... unless the same wording also asks about needs.
+const NEEDS_PATTERN = /\b(?:needs?\b|disab|access|special)/i;
 
 const FILTERABLE_TYPES: ReadonlySet<string> = new Set(["SELECT", "RADIO", "MULTISELECT"]);
 
@@ -53,10 +68,22 @@ function words(text: string) {
   return text.replaceAll("_", " ");
 }
 
-/** True when a field's wording reads as health-type (the default for an unflagged field). */
+/**
+ * True when a field's wording reads as health-type (the default for an
+ * unflagged field). The single decision used by the builder's saved flag, the
+ * answer filter and operational reports.
+ */
 export function isHealthTypeField(field: FlagField, sectionTitle = "") {
-  if ([words(field.key), field.label, field.helpText ?? "", sectionTitle].some((text) => WORDING_PATTERN.test(text))) return true;
-  return [...(field.options ?? []), ...Object.values(field.optionLabels ?? {})].some((text) => CHOICE_TEXT_PATTERN.test(words(text)));
+  const wording = [words(field.key), field.label, sectionTitle];
+  if (wording.some((text) => WORDING_PATTERN.test(text))) return true;
+  // Help text and choice text skip the vegetarian / vegan / gluten stems.
+  const secondary = [field.helpText ?? "", ...(field.options ?? []), ...Object.values(field.optionLabels ?? {})].map(words);
+  if (secondary.some((text) => CHOICE_TEXT_PATTERN.test(text))) return true;
+  // "Accommodation" alone is health-type unless the field reads as housing and asks nothing about needs.
+  const accommodation = [...wording, ...secondary].some((text) => ACCOMMODATION_PATTERN.test(text));
+  if (!accommodation) return false;
+  const context = wording.join(" ");
+  return !HOUSING_CONTEXT_PATTERN.test(context) || NEEDS_PATTERN.test(context);
 }
 
 /** Whether a field is a choice field that offers a short list of choices. */
@@ -77,6 +104,40 @@ export function resolveFieldFlags(field: FlagField, context: FieldFlagContext = 
     sensitive: field.sensitive ?? healthType,
     filterable: field.filterable ?? (hasOfferedChoices(field) && !healthType && !isPaymentMethod),
   };
+}
+
+/**
+ * Whether a field is offered as a filter, and whether it is sensitive, with
+ * the whole form in hand. The one place both are decided: the answer filter
+ * and the builder's "Show as a filter" box use it.
+ *
+ * With no `filterable` flag, the field is offered only if it would have been
+ * before the flags existed (#739): not linked, in either direction, to a
+ * sensitive field or to the payment-method field. An explicit flag wins.
+ */
+export function resolveFieldOffer(
+  field: RegistrationFormField,
+  context: {
+    allFields: readonly RegistrationFormField[];
+    sectionTitleOf: (field: RegistrationFormField) => string;
+    paymentMethodFieldKey: string | null | undefined;
+  },
+) {
+  const flagsOf = (candidate: RegistrationFormField) => resolveFieldFlags(candidate, {
+    sectionTitle: context.sectionTitleOf(candidate),
+    paymentMethodFieldKey: context.paymentMethodFieldKey,
+  });
+  const isPayment = (candidate: RegistrationFormField) => Boolean(context.paymentMethodFieldKey) && candidate.key === context.paymentMethodFieldKey;
+  const flags = flagsOf(field);
+  const linkedToSensitive = isLinkedToBlockedField(field, context.allFields, (other) => flagsOf(other).sensitive);
+  // The payment-method answer is never a filter, whatever its flags say.
+  let filterable = hasOfferedChoices(field) && !isPayment(field);
+  if (filterable) {
+    filterable = field.filterable !== undefined
+      ? field.filterable
+      : flags.filterable && !linkedToSensitive && !isLinkedToBlockedField(field, context.allFields, isPayment);
+  }
+  return { filterable, sensitive: flags.sensitive || linkedToSensitive, linkedToSensitive };
 }
 
 export function isFieldSensitive(field: FlagField, context: FieldFlagContext = {}) {

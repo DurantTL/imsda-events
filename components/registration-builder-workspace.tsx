@@ -42,8 +42,7 @@ import {
   planModuleInsert,
   type BuilderModuleDefinition,
 } from "@/modules/forms/builder-modules";
-import { hasOfferedChoices, resolveFieldFlags, withExplicitSensitiveFlags } from "@/modules/forms/field-flags";
-import { isLinkedToBlockedField } from "@/modules/forms/field-dependency-walk";
+import { hasOfferedChoices, resolveFieldFlags, resolveFieldOffer, sectionTitleLookup, withExplicitSensitiveFlags } from "@/modules/forms/field-flags";
 import { defaultTypeForNewChoiceField, singleChoiceTypeHint } from "@/modules/forms/choice-defaults";
 import { creditPatchForKindChange, creditSummary, hasCredit, removeCreditPatch } from "@/modules/forms/credit-fields";
 import { getPublicRegistrationStepPlan, isPublicReviewSection, type PublicRegistrationStepId } from "@/modules/forms/public-registration-steps";
@@ -1020,13 +1019,14 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
                 <div className="field-full field-visibility-flags" data-testid={`field-flags-${field.key}`}>
                   {(() => {
                     const paymentKey = definition.payment?.paymentMethodFieldKey;
-                    const flags = resolveFieldFlags(field, { sectionTitle: section.title, paymentMethodFieldKey: paymentKey });
-                    const linkedToSensitive = !flags.sensitive && isLinkedToBlockedField(field, allFields, (other) => resolveFieldFlags(other, { sectionTitle: definition.sections.find((candidate) => candidate.fields.includes(other))?.title ?? "", paymentMethodFieldKey: paymentKey }).sensitive);
+                    // The same helper the answer filter uses, so the box shows what the filter will do.
+                    const offer = resolveFieldOffer(field, { allFields, sectionTitleOf: sectionTitleLookup(definition.sections), paymentMethodFieldKey: paymentKey });
+                    const linkedToSensitive = offer.linkedToSensitive && !resolveFieldFlags(field, { sectionTitle: section.title, paymentMethodFieldKey: paymentKey }).sensitive;
                     const canFilter = hasOfferedChoices(field) && field.key !== paymentKey;
                     return <>
-                      {canFilter && <label className="required-toggle"><input disabled={!canEdit} type="checkbox" checked={flags.filterable} onChange={(event) => updateField(sectionIndex, fieldIndex, { filterable: event.target.checked })} /> Show as a filter</label>}
+                      {canFilter && <label className="required-toggle"><input disabled={!canEdit} type="checkbox" checked={offer.filterable} onChange={(event) => updateField(sectionIndex, fieldIndex, { filterable: event.target.checked })} /> Show as a filter</label>}
                       {canFilter && <small>Staff can find people by this answer on People &amp; registrations.</small>}
-                      <label className="required-toggle"><input disabled={!canEdit || linkedToSensitive} type="checkbox" checked={flags.sensitive || linkedToSensitive} onChange={(event) => updateField(sectionIndex, fieldIndex, { sensitive: event.target.checked })} /> Sensitive</label>
+                      <label className="required-toggle"><input disabled={!canEdit || linkedToSensitive} type="checkbox" checked={offer.sensitive} onChange={(event) => updateField(sectionIndex, fieldIndex, { sensitive: event.target.checked })} /> Sensitive</label>
                       <small>{linkedToSensitive ? "Treated as sensitive because it is shown by, or controls, a sensitive question." : "Hidden from the check-in book, badges and reports; only staff with sensitive-data access can filter on it. Health, allergy and insurance questions start checked."}</small>
                     </>;
                   })()}

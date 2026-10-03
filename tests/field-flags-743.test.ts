@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { formTemplates, registrationFormDefinitionSchema, type RegistrationFormField } from "@/modules/forms/definition";
-import { isHealthTypeField, resolveFieldFlags, withExplicitSensitiveFlags } from "@/modules/forms/field-flags";
+import { isHealthTypeField, resolveFieldFlags, resolveFieldOffer, sectionTitleLookup, withExplicitSensitiveFlags } from "@/modules/forms/field-flags";
 import { choiceAnswerCounts, choiceExportRows, listChoiceQuestions, matchesForChoice, resolveChoiceFilter } from "@/modules/registrations/choice-answer-filter";
 import { badgePositionOptions, buildBadgeCsvRows } from "@/modules/checkin/badge-csv";
 import { isCheckInBookExtraField } from "@/modules/reporting/check-in-book";
@@ -217,8 +217,8 @@ describe("field flags: the form builder", () => {
     expect(builder).toContain("Show as a filter</label>");
     expect(builder).toContain("Sensitive</label>");
     expect(builder).toContain("resolveFieldFlags(field, { sectionTitle: section.title");
-    expect(builder).toContain("checked={flags.filterable}");
-    expect(builder).toContain("checked={flags.sensitive || linkedToSensitive}");
+    expect(builder).toContain("checked={offer.filterable}");
+    expect(builder).toContain("checked={offer.sensitive}");
     expect(builder).toContain("updateField(sectionIndex, fieldIndex, { filterable: event.target.checked })");
     expect(builder).toContain("updateField(sectionIndex, fieldIndex, { sensitive: event.target.checked })");
     expect(builder).toContain("only staff with sensitive-data access can filter on it");
@@ -367,5 +367,77 @@ describe("field flags: the builder writes explicit defaults", () => {
     expect(builder).toContain("field.key !== paymentKey");
     expect(builder).toContain("Treated as sensitive because it is shown by, or controls, a sensitive question.");
     expect(builder).toContain("withExplicitSensitiveFlags(definition)");
+  });
+});
+
+describe("field flags: one health-type decision for the builder and the reports (SF1)", () => {
+  const reportFor = (definition: Record<string, unknown>, responses: Record<string, unknown>): string => JSON.stringify(buildOperationalReport([{
+    id: "sf1",
+    confirmationCode: "SYN-SF1",
+    status: "SUBMITTED",
+    accountHolder: { firstName: "Ana", lastName: "Synthetic" },
+    attendees: [{ id: "a", firstName: "Ana", lastName: "Synthetic", attendeeType: "Adult", position: 0, responses: {} }],
+    publicSubmission: { definition, responses: {}, attendeeResponses: [responses] },
+  }]));
+  const saved = (definition: Record<string, unknown>) => withExplicitSensitiveFlags(registrationFormDefinitionSchema.parse(definition)) as unknown as Record<string, unknown>;
+
+  it("keeps Leadership Weekend meals in the meal report before and after an unrelated save", () => {
+    const definition = template("leadership_weekend");
+    expect(reportFor(definition, { meals: ["Friday Supper"] })).toContain("Friday Supper");
+    expect(reportFor(saved(definition), { meals: ["Friday Supper"] })).toContain("Friday Supper");
+  });
+
+  it("excludes Dietary needs (radio and multi-select) before and after a save", () => {
+    for (const type of ["RADIO", "MULTISELECT"]) {
+      const definition = form([{ key: "dietary_needs", label: "Dietary needs", type, options: ["Vegan", "Standard"] }], {}, "Food service");
+      const answer = { dietary_needs: type === "RADIO" ? "Vegan" : ["Vegan"] };
+      expect(reportFor(definition, answer)).not.toContain("Dietary needs");
+      expect(reportFor(saved(definition), answer)).not.toContain("Dietary needs");
+    }
+  });
+
+  it("keeps an Accommodation type housing radio in the housing report and excludes Accommodation needs", () => {
+    const housing = form([{ key: "housing_type", label: "Accommodation type", type: "RADIO", options: ["Cabin", "Tent"] }], {}, "Lodging");
+    expect(isHealthTypeField(field({ key: "housing_type", label: "Accommodation type" }), "Lodging")).toBe(false);
+    expect(reportFor(housing, { housing_type: "Cabin" })).toContain("Accommodation type");
+    expect(reportFor(saved(housing), { housing_type: "Cabin" })).toContain("Accommodation type");
+    const needs = form([{ key: "housing_need", label: "Accommodation needs", type: "RADIO", options: ["None", "Ground floor"] }], {}, "Lodging");
+    expect(isHealthTypeField(field({ key: "housing_need", label: "Accommodation needs" }), "Lodging")).toBe(true);
+    expect(reportFor(needs, { housing_need: "Ground floor" })).not.toContain("Accommodation needs");
+    // Outside a housing context, "accommodation" alone still reads as health-type.
+    expect(isHealthTypeField(field({ key: "x", label: "Special accommodation" }), "Details")).toBe(true);
+  });
+
+  it("an explicit false cannot override the report's own wording rules", () => {
+    const definition = form([{ key: "medical_note", label: "Medical and special needs", type: "RADIO", options: ["No", "Yes"], sensitive: false }], {}, "Details");
+    expect(reportFor(definition, { medical_note: "Yes" })).not.toContain("Medical and special needs");
+  });
+});
+
+describe("field flags: the builder box and the filter share one helper (SF2)", () => {
+  const offerFor = (templateKey: string, fieldKey: string) => {
+    const parsed = registrationFormDefinitionSchema.parse(template(templateKey));
+    const allFields = parsed.sections.flatMap((section) => section.fields);
+    const found = allFields.find((candidate) => candidate.key === fieldKey)!;
+    return resolveFieldOffer(found, { allFields, sectionTitleOf: sectionTitleLookup(parsed.sections), paymentMethodFieldKey: parsed.payment?.paymentMethodFieldKey });
+  };
+
+  it("shows is_minor and housing_selection unchecked, and the meal field checked, when no flag is set", () => {
+    expect(offerFor("man_camp_export", "is_minor").filterable).toBe(false);
+    expect(offerFor("camp_meeting_export", "housing_selection").filterable).toBe(false);
+    expect(offerFor("womens_retreat_export", "meal_preference").filterable).toBe(true);
+  });
+
+  it("agrees with the answer filter for every field of every template", () => {
+    for (const candidate of formTemplates) {
+      const definition = candidate.definition as unknown as Record<string, unknown>;
+      const offered = new Set(offeredKeys(definition, staff));
+      const parsed = registrationFormDefinitionSchema.parse(definition);
+      const allFields = parsed.sections.flatMap((section) => section.fields);
+      for (const entry of allFields) {
+        const offer = resolveFieldOffer(entry, { allFields, sectionTitleOf: sectionTitleLookup(parsed.sections), paymentMethodFieldKey: parsed.payment?.paymentMethodFieldKey });
+        expect(offer.filterable, `${candidate.key}.${entry.key}`).toBe(offered.has(entry.key));
+      }
+    }
   });
 });
