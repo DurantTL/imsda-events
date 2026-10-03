@@ -35,6 +35,15 @@ const profile = {
   shirtSize: "M",
   dietaryNeeds: "",
   accessibilityNeeds: "",
+  mailingLine1: "1 Example Way",
+  mailingLine2: "",
+  mailingCity: "Sampletown",
+  mailingRegion: "MI",
+  mailingPostalCode: "49000",
+  mailingCountry: "United States",
+  emergencyContactName: "Casey Contact",
+  emergencyContactRelationship: "Sibling",
+  emergencyContactPhone: "555-0101",
 };
 
 function patchRequest(body: unknown = profile) {
@@ -116,6 +125,56 @@ describe("accounts that may use the profile", () => {
     const response = await callPatch(patchRequest({ firstName: 1 }));
     expect(response.status).toBe(400);
     expect(mocks.updateAttendeeProfile).not.toHaveBeenCalled();
+  });
+});
+
+describe("mailing address and emergency contact", () => {
+  it("trims values and passes them through on PATCH", async () => {
+    const response = await callPatch(patchRequest({
+      ...profile,
+      mailingCity: "  Sampletown  ",
+      emergencyContactName: "  Casey Contact ",
+    }));
+    expect(response.status).toBe(200);
+    expect(mocks.updateAttendeeProfile).toHaveBeenCalledWith("acct-1", profile);
+  });
+
+  it("accepts empty strings, which clear the values", async () => {
+    const cleared = {
+      ...profile,
+      mailingLine1: "", mailingCity: "", mailingRegion: "", mailingPostalCode: "", mailingCountry: "",
+      emergencyContactName: "", emergencyContactRelationship: "", emergencyContactPhone: "",
+    };
+    const response = await callPatch(patchRequest(cleared));
+    expect(response.status).toBe(200);
+    expect(mocks.updateAttendeeProfile).toHaveBeenCalledWith("acct-1", cleared);
+  });
+
+  it("passes omitted fields to the service as undefined, meaning unchanged", async () => {
+    const { firstName, lastName, phone, shirtSize, dietaryNeeds, accessibilityNeeds } = profile;
+    const response = await callPatch(patchRequest({ firstName, lastName, phone, shirtSize, dietaryNeeds, accessibilityNeeds }));
+    expect(response.status).toBe(200);
+    const sent = mocks.updateAttendeeProfile.mock.calls[0]![1];
+    expect(sent.mailingLine1).toBeUndefined();
+    expect(sent.emergencyContactPhone).toBeUndefined();
+    expect("mailingLine1" in sent).toBe(false);
+  });
+
+  it.each([
+    ["an over-long address line", { mailingLine1: "x".repeat(201) }],
+    ["an over-long emergency name", { emergencyContactName: "x".repeat(121) }],
+    ["an over-long emergency phone", { emergencyContactPhone: "5".repeat(41) }],
+    ["a non-text value", { mailingCity: 5 }],
+    ["an unknown field", { mailingPlanet: "Mars" }],
+  ])("rejects %s with 400 and saves nothing", async (_label, patch) => {
+    const response = await callPatch(patchRequest({ ...profile, ...patch }));
+    expect(response.status).toBe(400);
+    expect(mocks.updateAttendeeProfile).not.toHaveBeenCalled();
+  });
+
+  it("returns the stored values on GET", async () => {
+    const response = await callGet();
+    expect((await response.json()).profile).toMatchObject({ mailingCity: "Sampletown", emergencyContactName: "Casey Contact" });
   });
 });
 

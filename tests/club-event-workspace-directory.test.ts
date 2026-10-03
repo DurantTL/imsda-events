@@ -109,6 +109,8 @@ describe("club event workspace directory prefill (#482)", () => {
   it("prefills the director's name from their profile", () => {
     expect(attendeeProfilePrefill({
       firstName: "Avery", lastName: "Director", phone: "555-0100", shirtSize: "", dietaryNeeds: "", accessibilityNeeds: "",
+      mailingLine1: "", mailingLine2: "", mailingCity: "", mailingRegion: "", mailingPostalCode: "", mailingCountry: "",
+      emergencyContactName: "", emergencyContactRelationship: "", emergencyContactPhone: "",
     }, "director@example.test")).toMatchObject({ director_name: "Avery Director", email: "director@example.test", phone: "555-0100" });
   });
 });

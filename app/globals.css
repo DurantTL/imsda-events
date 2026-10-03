@@ -8266,6 +8266,10 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .profile-readonly-field input[readonly] { background: color-mix(in srgb, var(--muted) 10%, transparent); color: var(--muted); cursor: default; }
 .profile-details-form { display: grid; gap: 16px; }
 .profile-details-form input, .profile-details-form textarea { max-width: 100%; }
+.profile-form-group { display: grid; gap: 10px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.profile-form-group > legend { padding: 0; font-weight: 700; color: var(--ink); }
+.profile-form-group > legend em { color: var(--muted); font-style: normal; font-weight: 400; }
+.profile-form-group > .field-help { margin: 0; }
 @media (max-width: 640px) {
   .profile-details-form .public-manage-contact-grid { grid-template-columns: 1fr; }
   .profile-details-form .public-manage-contact-actions button { width: 100%; justify-content: center; min-height: 44px; }

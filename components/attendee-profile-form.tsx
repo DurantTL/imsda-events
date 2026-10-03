@@ -67,7 +67,9 @@ export function AttendeeProfileForm({
           <small className="field-help" id="profile-email-note">This is the verified email you sign in with. It cannot be changed here.</small>
         </label>
       )}
-      <div className="public-manage-contact-grid">
+      <fieldset className="profile-form-group">
+        <legend>Contact</legend>
+        <div className="public-manage-contact-grid">
         <label className="public-registration-field">
           <span className="public-registration-field-label">First name</span>
           <input autoComplete="given-name" maxLength={80} value={profile.firstName} onChange={(event) => field("firstName", event.target.value)} />
@@ -80,6 +82,59 @@ export function AttendeeProfileForm({
           <span className="public-registration-field-label">Phone</span>
           <input autoComplete="tel" inputMode="tel" maxLength={40} value={profile.phone} onChange={(event) => field("phone", event.target.value)} />
         </label>
+        </div>
+      </fieldset>
+      <fieldset className="profile-form-group">
+        <legend>Mailing address <em>(optional)</em></legend>
+        <p className="field-help">Only used to prefill address questions on your own registrations. Staff see an address only if you submit it on a registration. Clear every box to remove it.</p>
+        <div className="public-manage-contact-grid">
+        <label className="public-registration-field public-manage-contact-wide">
+          <span className="public-registration-field-label">Address line 1</span>
+          <input autoComplete="address-line1" maxLength={200} value={profile.mailingLine1} onChange={(event) => field("mailingLine1", event.target.value)} />
+        </label>
+        <label className="public-registration-field public-manage-contact-wide">
+          <span className="public-registration-field-label">Address line 2</span>
+          <input autoComplete="address-line2" maxLength={200} value={profile.mailingLine2} onChange={(event) => field("mailingLine2", event.target.value)} />
+        </label>
+        <label className="public-registration-field">
+          <span className="public-registration-field-label">City</span>
+          <input autoComplete="address-level2" maxLength={200} value={profile.mailingCity} onChange={(event) => field("mailingCity", event.target.value)} />
+        </label>
+        <label className="public-registration-field">
+          <span className="public-registration-field-label">State / province / region</span>
+          <input autoComplete="address-level1" maxLength={200} value={profile.mailingRegion} onChange={(event) => field("mailingRegion", event.target.value)} />
+        </label>
+        <label className="public-registration-field">
+          <span className="public-registration-field-label">ZIP / postal code</span>
+          <input autoComplete="postal-code" maxLength={200} value={profile.mailingPostalCode} onChange={(event) => field("mailingPostalCode", event.target.value)} />
+        </label>
+        <label className="public-registration-field">
+          <span className="public-registration-field-label">Country</span>
+          <input autoComplete="country-name" maxLength={200} value={profile.mailingCountry} onChange={(event) => field("mailingCountry", event.target.value)} />
+        </label>
+        </div>
+      </fieldset>
+      <fieldset className="profile-form-group">
+        <legend>Emergency contact <em>(optional)</em></legend>
+        <p className="field-help">Someone we can reach if you need help at an event. Used only to prefill your registrations; you can change it on each form.</p>
+        <div className="public-manage-contact-grid">
+        <label className="public-registration-field public-manage-contact-wide">
+          <span className="public-registration-field-label">Name</span>
+          <input autoComplete="section-emergency name" maxLength={120} value={profile.emergencyContactName} onChange={(event) => field("emergencyContactName", event.target.value)} />
+        </label>
+        <label className="public-registration-field public-manage-contact-wide">
+          <span className="public-registration-field-label">Relationship</span>
+          <input autoComplete="off" maxLength={80} value={profile.emergencyContactRelationship} onChange={(event) => field("emergencyContactRelationship", event.target.value)} />
+        </label>
+        <label className="public-registration-field public-manage-contact-wide">
+          <span className="public-registration-field-label">Phone</span>
+          <input autoComplete="section-emergency tel" inputMode="tel" maxLength={40} value={profile.emergencyContactPhone} onChange={(event) => field("emergencyContactPhone", event.target.value)} />
+        </label>
+        </div>
+      </fieldset>
+      <fieldset className="profile-form-group">
+        <legend>Event preferences</legend>
+        <div className="public-manage-contact-grid">
         <label className="public-registration-field public-manage-contact-wide">
           <span className="public-registration-field-label">Shirt size</span>
           <input maxLength={80} value={profile.shirtSize} onChange={(event) => field("shirtSize", event.target.value)} />
@@ -92,7 +147,8 @@ export function AttendeeProfileForm({
           <span className="public-registration-field-label">Accessibility needs</span>
           <textarea maxLength={1000} rows={3} value={profile.accessibilityNeeds} onChange={(event) => field("accessibilityNeeds", event.target.value)} />
         </label>
-      </div>
+        </div>
+      </fieldset>
       <div className="public-manage-contact-actions">
         <button disabled={state === "saving"} type="submit">
           <Save size={17} aria-hidden="true" />

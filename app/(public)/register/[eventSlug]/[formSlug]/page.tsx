@@ -8,7 +8,9 @@ import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee
 import {
   attendeeProfilePrefill,
   getAttendeeProfile,
+  withoutPersonalDetails,
 } from "@/modules/attendee-accounts/profile-service";
+import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import { getAutoEventInfoCards } from "@/modules/event-info-cards/repository";
 import { getPublicRegistrationExperience } from "@/modules/forms/public-repository";
 
@@ -52,10 +54,17 @@ export default async function PublicRegistrationPage({
   ) {
     redirect(`/events/${encodeURIComponent(eventSlug)}`);
   }
-  const { account } = await getCurrentAttendee();
+  const { account, via } = await getCurrentAttendee();
+  // The address and emergency contact follow the profile API (#745): only the
+  // attendee's own session, with any second step finished, gets them prefilled.
+  const mayPrefillPersonalDetails = account
+    ? via === "attendee" && !(await attendeeSecondStepPending())
+    : false;
   const profilePrefill = account
     ? attendeeProfilePrefill(
-        await getAttendeeProfile(account.id),
+        mayPrefillPersonalDetails
+          ? await getAttendeeProfile(account.id)
+          : withoutPersonalDetails(await getAttendeeProfile(account.id)),
         account.verifiedEmail,
       )
     : {};
@@ -66,7 +75,14 @@ export default async function PublicRegistrationPage({
       .filter((field) => field.scope === scope && knownKeys.has(field.key))
       .flatMap((field) => {
         const value = profilePrefill[field.key as keyof typeof profilePrefill];
-        return typeof value === "string" && value ? [[field.key, value]] : [];
+        if (field.type === "ADDRESS") {
+          return value && typeof value === "object" ? [[field.key, value]] : [];
+        }
+        if (typeof value !== "string" || !value) return [];
+        // A choice field only takes one of its own options, so a profile
+        // country that isn't listed is left blank rather than breaking it.
+        if (field.type === "SELECT" && field.options.length > 0 && !field.options.includes(value)) return [];
+        return [[field.key, value]];
       }),
   );
 
