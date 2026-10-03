@@ -36,7 +36,7 @@ import { eventModuleKeys, type EventModuleKey } from "@/modules/event-modules/ca
 const event = { id: "event_1", name: "Synthetic Camporee", slug: "synthetic-camporee" };
 const noIssues = { summary: { total: 0, urgent: 0, watch: 0 } };
 
-function signIn(input: { globalRole: "SYSTEM_ADMIN" | null; permissions: readonly EventPermission[]; enabled: readonly EventModuleKey[]; dataNeeds?: readonly EventModuleKey[]; clubEvent?: boolean }) {
+function signIn(input: { globalRole: "SYSTEM_ADMIN" | null; permissions: readonly EventPermission[]; enabled: readonly EventModuleKey[]; dataNeeds?: readonly EventModuleKey[]; honorsData?: boolean; clubEvent?: boolean }) {
   mocks.resolveEventContext.mockResolvedValue({
     event,
     permissions: input.permissions,
@@ -45,7 +45,13 @@ function signIn(input: { globalRole: "SYSTEM_ADMIN" | null; permissions: readonl
   mocks.resolveClubOversight.mockResolvedValue({ allowed: Boolean(input.clubEvent), clubEvent: Boolean(input.clubEvent) });
   mocks.resolveStaffViewer.mockResolvedValue(input.globalRole === "SYSTEM_ADMIN" ? { kind: "STAFF" } : null);
   const stored = new Set<EventModuleKey>(["public-content", ...input.enabled]);
-  mocks.moduleState.mockResolvedValue({ stored, effective: new Set<EventModuleKey>([...stored, ...(input.dataNeeds ?? [])]) });
+  const dataForced = new Set<EventModuleKey>(input.dataNeeds ?? []);
+  mocks.moduleState.mockResolvedValue({
+    stored,
+    effective: new Set<EventModuleKey>([...stored, ...dataForced]),
+    dataPresent: new Set<EventModuleKey>([...dataForced, ...(input.honorsData ? ["honors" as const] : [])]),
+    dataForced,
+  });
 }
 
 async function render() {
@@ -140,6 +146,28 @@ describe("/more as the Event modules page", () => {
     expect(markup).not.toContain("Turn off");
   });
 
+  it("shows Honors once, with Turn off and no left-over entry, on a general event that has honors data", async () => {
+    signIn({ globalRole: "SYSTEM_ADMIN", permissions: eventPermissions, enabled: ["honors"], honorsData: true, clubEvent: false });
+    const markup = await render();
+    expect(markup.match(/data-module="honors"/g)).toHaveLength(1);
+    expect(markup).toContain('aria-label="Turn off Honors classes"');
+    expect(markup).not.toContain("Left over from a change of event type");
+  });
+
+  it("lets Honors be enabled again after Turn off on a general event with honors data", async () => {
+    signIn({ globalRole: "SYSTEM_ADMIN", permissions: eventPermissions, enabled: [], honorsData: true, clubEvent: false });
+    const markup = await render();
+    expect(markup).toContain('aria-label="Enable Honors classes"');
+  });
+
+  it("shows a stored module with data keeping it on without Turn off, and the reason", async () => {
+    signIn({ globalRole: "SYSTEM_ADMIN", permissions: eventPermissions, enabled: ["merchandise"], dataNeeds: ["merchandise"] });
+    const markup = await render();
+    expect(markup).toContain('data-module="merchandise"');
+    expect(markup).not.toContain('aria-label="Turn off Merchandise"');
+    expect(markup).toContain("On because this event has products.");
+  });
+
   it("offers a system admin no Enable for a club module on a general event, and lists a leftover row with Turn off", async () => {
     signIn({ globalRole: "SYSTEM_ADMIN", permissions: eventPermissions, enabled: ["event-patches"], clubEvent: false });
     const markup = await render();
@@ -214,10 +242,11 @@ describe("page view rules", () => {
     eventQuery: "?event=event_1",
   });
   const only = new Set<EventModuleKey>(["public-content"]);
+  const none = new Set<EventModuleKey>();
 
   it("gives only a system administrator the disabled modules and the right to toggle", () => {
-    const admin = buildEventModulesView({ cards, stored: only, effective: only, isSystemAdmin: true, audience: "GENERAL" });
-    const other = buildEventModulesView({ cards, stored: only, effective: only, isSystemAdmin: false, audience: "GENERAL" });
+    const admin = buildEventModulesView({ cards, stored: only, effective: only, dataPresent: none, dataForced: none, isSystemAdmin: true, audience: "GENERAL" });
+    const other = buildEventModulesView({ cards, stored: only, effective: only, dataPresent: none, dataForced: none, isSystemAdmin: false, audience: "GENERAL" });
     expect(admin.canToggle).toBe(true);
     expect(admin.disabled.map((entry) => entry.definition.key)).toEqual(eventModuleKeys.filter((key) => key !== "public-content"));
     expect(other.canToggle).toBe(false);
@@ -226,8 +255,8 @@ describe("page view rules", () => {
   });
 
   it("marks club modules as not enableable on a general event, and enableable on a club event", () => {
-    const general = buildEventModulesView({ cards, stored: only, effective: only, isSystemAdmin: true, audience: "GENERAL" });
-    const club = buildEventModulesView({ cards, stored: only, effective: only, isSystemAdmin: true, audience: "CLUB" });
+    const general = buildEventModulesView({ cards, stored: only, effective: only, dataPresent: none, dataForced: none, isSystemAdmin: true, audience: "GENERAL" });
+    const club = buildEventModulesView({ cards, stored: only, effective: only, dataPresent: none, dataForced: none, isSystemAdmin: true, audience: "CLUB" });
     const canEnable = (view: typeof general, key: string) => view.disabled.find((entry) => entry.definition.key === key)?.canEnable;
     expect(canEnable(general, "club-assignments")).toBe(false);
     expect(canEnable(general, "event-patches")).toBe(false);
@@ -237,15 +266,43 @@ describe("page view rules", () => {
 
   it("lists a stored club module on a general event as left over, only for a system admin", () => {
     const stored = new Set<EventModuleKey>(["public-content", "club-assignments"]);
-    const admin = buildEventModulesView({ cards, stored, effective: stored, isSystemAdmin: true, audience: "GENERAL" });
+    const admin = buildEventModulesView({ cards, stored, effective: stored, dataPresent: none, dataForced: none, isSystemAdmin: true, audience: "GENERAL" });
     expect(admin.leftOver.map((definition) => definition.key)).toEqual(["club-assignments"]);
     expect(admin.disabled.map((entry) => entry.definition.key)).not.toContain("club-assignments");
-    expect(buildEventModulesView({ cards, stored, effective: stored, isSystemAdmin: false, audience: "GENERAL" }).leftOver).toEqual([]);
+    expect(buildEventModulesView({ cards, stored, effective: stored, dataPresent: none, dataForced: none, isSystemAdmin: false, audience: "GENERAL" }).leftOver).toEqual([]);
+  });
+
+  it("lists Honors once, enabled, never also as left over, when a general event has honors data", () => {
+    const stored = new Set<EventModuleKey>(["public-content", "honors"]);
+    const view = buildEventModulesView({ cards, stored, effective: stored, dataPresent: new Set<EventModuleKey>(["honors"]), dataForced: none, isSystemAdmin: true, audience: "GENERAL" });
+    expect(view.enabled.filter((entry) => entry.definition.key === "honors")).toHaveLength(1);
+    expect(view.enabled.find((entry) => entry.definition.key === "honors")?.canToggle).toBe(true);
+    expect(view.leftOver).toEqual([]);
+  });
+
+  it("never lists a module as left over when it is also in the enabled list, even with no honors data", () => {
+    const stored = new Set<EventModuleKey>(["public-content", "honors"]);
+    const view = buildEventModulesView({ cards, stored, effective: stored, dataPresent: none, dataForced: none, isSystemAdmin: true, audience: "GENERAL" });
+    expect(view.enabled.map((entry) => entry.definition.key)).toContain("honors");
+    expect(view.leftOver.map((definition) => definition.key)).not.toContain("honors");
+  });
+
+  it("allows enabling Honors on a general event only when it has honors data", () => {
+    const withData = buildEventModulesView({ cards, stored: only, effective: only, dataPresent: new Set<EventModuleKey>(["honors"]), dataForced: none, isSystemAdmin: true, audience: "GENERAL" });
+    const without = buildEventModulesView({ cards, stored: only, effective: only, dataPresent: none, dataForced: none, isSystemAdmin: true, audience: "GENERAL" });
+    expect(withData.disabled.find((entry) => entry.definition.key === "honors")?.canEnable).toBe(true);
+    expect(without.disabled.find((entry) => entry.definition.key === "honors")?.canEnable).toBe(false);
+  });
+
+  it("gives a data-forced module no switch, even with a stored row", () => {
+    const stored = new Set<EventModuleKey>(["public-content", "merchandise"]);
+    const view = buildEventModulesView({ cards, stored, effective: stored, dataPresent: new Set<EventModuleKey>(["merchandise"]), dataForced: new Set<EventModuleKey>(["merchandise"]), isSystemAdmin: true, audience: "GENERAL" });
+    expect(view.enabled.find((entry) => entry.definition.key === "merchandise")).toMatchObject({ canToggle: false, dataReason: "On because this event has products." });
   });
 
   it("treats a data-driven module as on, with a reason and no switch", () => {
     const effective = new Set<EventModuleKey>(["public-content", "merchandise"]);
-    const view = buildEventModulesView({ cards, stored: only, effective, isSystemAdmin: true, audience: "GENERAL" });
+    const view = buildEventModulesView({ cards, stored: only, effective, dataPresent: none, dataForced: none, isSystemAdmin: true, audience: "GENERAL" });
     const merch = view.enabled.find((entry) => entry.definition.key === "merchandise");
     expect(merch).toMatchObject({ canToggle: false, dataReason: "On because this event has products." });
     expect(view.disabled.map((entry) => entry.definition.key)).not.toContain("merchandise");
@@ -253,7 +310,7 @@ describe("page view rules", () => {
 
   it("keeps ordinary staff tools out of the module lists", () => {
     const all = new Set<EventModuleKey>(eventModuleKeys);
-    const view = buildEventModulesView({ cards, stored: all, effective: all, isSystemAdmin: false, audience: "GENERAL" });
+    const view = buildEventModulesView({ cards, stored: all, effective: all, dataPresent: none, dataForced: none, isSystemAdmin: false, audience: "GENERAL" });
     expect(view.tools.map((card) => card.key)).toContain("event-settings");
     expect(view.enabled.map((entry) => entry.card.key)).not.toContain("event-settings");
   });

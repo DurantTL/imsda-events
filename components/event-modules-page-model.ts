@@ -4,7 +4,7 @@ import {
   type MoreDirectoryGroup,
 } from "@/components/staff-navigation";
 import {
-  canEnableForAudience,
+  canEnableForEvent,
   dataDrivenReasons,
   eventModuleCatalog,
   type EventModuleApplicability,
@@ -28,7 +28,7 @@ import {
 export type EnabledModuleEntry = {
   definition: EventModuleDefinition;
   card: MoreDirectoryCard;
-  /** A system administrator may turn it off: it has a stored row and is not always on. */
+  /** A system administrator may turn it off: it has a stored row, is not always on, and no data keeps it on. */
   canToggle: boolean;
   /** Set when it is on because of the event's data, with nothing to turn off. */
   dataReason?: string;
@@ -59,6 +59,8 @@ export function buildEventModulesView({
   cards,
   stored,
   effective,
+  dataPresent,
+  dataForced,
   isSystemAdmin,
   audience,
 }: {
@@ -68,6 +70,10 @@ export function buildEventModulesView({
   stored: ReadonlySet<EventModuleKey>;
   /** `stored` plus the modules the event's data needs (`moduleState`). */
   effective: ReadonlySet<EventModuleKey>;
+  /** Modules the event has data for (`moduleState`): Honors applies to any event that has honors data. */
+  dataPresent: ReadonlySet<EventModuleKey>;
+  /** Data-driven modules kept on by their data: no Turn off. */
+  dataForced: ReadonlySet<EventModuleKey>;
   isSystemAdmin: boolean;
   audience: "GENERAL" | "CLUB";
 }): EventModulesView {
@@ -81,8 +87,8 @@ export function buildEventModulesView({
     enabledEntries.push({
       definition,
       card,
-      canToggle: isSystemAdmin && !definition.alwaysOn && hasRow,
-      dataReason: hasRow ? undefined : dataDrivenReasons[definition.key],
+      canToggle: isSystemAdmin && !definition.alwaysOn && hasRow && !dataForced.has(definition.key),
+      dataReason: dataForced.has(definition.key) || !hasRow ? dataDrivenReasons[definition.key] : undefined,
     });
   }
   return {
@@ -90,10 +96,14 @@ export function buildEventModulesView({
     disabled: isSystemAdmin
       ? eventModuleCatalog
         .filter((definition) => !effective.has(definition.key))
-        .map((definition) => ({ definition, canEnable: canEnableForAudience(definition.key, audience) }))
+        .map((definition) => ({ definition, canEnable: canEnableForEvent(definition.key, audience, dataPresent) }))
       : [],
     leftOver: isSystemAdmin
-      ? eventModuleCatalog.filter((definition) => !definition.alwaysOn && stored.has(definition.key) && !canEnableForAudience(definition.key, audience))
+      ? eventModuleCatalog.filter((definition) => !definition.alwaysOn
+        && stored.has(definition.key)
+        && !canEnableForEvent(definition.key, audience, dataPresent)
+        // Never twice: a module already in the enabled list can be turned off from there.
+        && !enabledEntries.some((entry) => entry.definition.key === definition.key))
       : [],
     tools: cards.filter((card) => card.allowed && !moduleCardKeys.has(card.key)),
     canToggle: isSystemAdmin,

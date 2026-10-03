@@ -1,10 +1,12 @@
 import "server-only";
 
+import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { AccessDeniedError, type AuthenticatedUser } from "@/modules/access/authorization";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
-  canEnableForAudience,
+  canEnableForEvent,
+  dataForcedModuleKeys,
   eventModuleCatalog,
   eventModuleDefinition,
   isEventModuleKey,
@@ -15,7 +17,7 @@ import {
 export class EventModuleError extends Error {
   constructor(
     message: string,
-    public readonly code: "UNKNOWN_MODULE" | "ALWAYS_ON" | "EVENT_NOT_FOUND" | "NOT_APPLICABLE",
+    public readonly code: "UNKNOWN_MODULE" | "ALWAYS_ON" | "EVENT_NOT_FOUND" | "NOT_APPLICABLE" | "DATA_KEEPS_ON",
   ) {
     super(message);
     this.name = "EventModuleError";
@@ -53,49 +55,94 @@ export type EventModuleState = {
   stored: ReadonlySet<EventModuleKey>;
   /** `stored` plus modules the event's existing data needs. What the launcher and the page show. */
   effective: ReadonlySet<EventModuleKey>;
+  /** Modules the event has data for (products, a ranked seminar field or run, honors data). */
+  dataPresent: ReadonlySet<EventModuleKey>;
+  /** Data-driven modules kept on by that data: Turn off would change nothing, so it is refused. */
+  dataForced: ReadonlySet<EventModuleKey>;
 };
 
+type DataReader = Pick<
+  Prisma.TransactionClient,
+  "merchandiseProduct" | "programAssignmentRun" | "honorSession" | "honorOffering" | "honorEnrollment" | "$queryRaw"
+>;
+
+/** Event ids (from `ids`) with at least one row in a table keyed by `eventId`: one grouped query, no rows loaded. */
+function eventIdsWithRows(delegate: unknown, ids: string[]): Promise<Array<{ eventId: string }>> {
+  return (delegate as { groupBy: (args: object) => Promise<Array<{ eventId: string }>> }).groupBy({
+    by: ["eventId"],
+    where: { eventId: { in: ids } },
+    orderBy: { eventId: "asc" },
+  });
+}
+
 /**
- * Stored rows plus data-driven modules (#741 review), for several events in a
- * fixed number of queries. Merchandise is on for an event with any product (even
- * archived), Seminar assignments for an event that has run an assignment or has
- * a ranked seminar field on any form version. The cheaper checks run first, and
- * an event that already has the row is never checked.
+ * Which modules each event has data for, in a fixed number of queries however many
+ * events: Merchandise (any product, even archived), Seminar assignments (a run, or
+ * a ranked-interest field on any form version, checked in SQL with the same
+ * `jsonb_path_exists` expression the slice 1 migration uses, returning event ids
+ * only) and Honors (sessions, offerings or enrollments).
+ */
+export async function dataPresentByEvent(
+  client: DataReader,
+  eventIds: readonly string[],
+  keys: readonly EventModuleKey[] = ["merchandise", "seminar-assignments", "honors"],
+): Promise<Map<string, Set<EventModuleKey>>> {
+  const result = new Map<string, Set<EventModuleKey>>(eventIds.map((id) => [id, new Set<EventModuleKey>()]));
+  if (eventIds.length === 0) return result;
+  const ids = [...eventIds];
+  const mark = (rows: Array<{ eventId: string }>, key: EventModuleKey) => {
+    for (const row of rows) result.get(row.eventId)?.add(key);
+  };
+  if (keys.includes("merchandise")) {
+    mark(await eventIdsWithRows(client.merchandiseProduct, ids), "merchandise");
+  }
+  if (keys.includes("seminar-assignments")) {
+    mark(await eventIdsWithRows(client.programAssignmentRun, ids), "seminar-assignments");
+    const remaining = ids.filter((id) => !result.get(id)?.has("seminar-assignments"));
+    if (remaining.length > 0) {
+      const rows = await client.$queryRaw<Array<{ eventId: string }>>(Prisma.sql`
+        SELECT DISTINCT f."eventId" AS "eventId"
+        FROM "RegistrationForm" f
+        JOIN "RegistrationFormVersion" v ON v."formId" = f."id"
+        WHERE f."eventId" = ANY(${remaining}::text[])
+          AND jsonb_path_exists(
+            v."definition"::jsonb,
+            '$.sections[*].fields[*] ? (@.type == "RANKED_CHOICE" && (@.availabilityMode == "RANKED_INTEREST" || ((!exists(@.availabilityMode) || @.availabilityMode == null || @.availabilityMode == "") && exists(@.choiceLimits) && @.choiceLimits != null)))'
+          )`);
+      mark(rows, "seminar-assignments");
+    }
+  }
+  if (keys.includes("honors")) {
+    const [sessions, offerings, enrollments] = await Promise.all([
+      eventIdsWithRows(client.honorSession, ids),
+      eventIdsWithRows(client.honorOffering, ids),
+      eventIdsWithRows(client.honorEnrollment, ids),
+    ]);
+    mark(sessions, "honors");
+    mark(offerings, "honors");
+    mark(enrollments, "honors");
+  }
+  return result;
+}
+
+/**
+ * Stored rows plus data-driven modules, for several events in a fixed number of
+ * queries. The data is checked for every requested event, row or no row, so
+ * `dataForced` is accurate: a data-driven module with data cannot be turned off.
  */
 export async function moduleStatesByEvent(eventIds: readonly string[]): Promise<Map<string, EventModuleState>> {
   const stored = await enabledModulesByEvent(eventIds);
-  const effective = new Map<string, Set<EventModuleKey>>([...stored].map(([id, keys]) => [id, new Set(keys)]));
-  const prisma = getPrisma();
-  const lacking = (key: EventModuleKey) => eventIds.filter((id) => !stored.get(id)?.has(key));
-
-  const needsProducts = lacking("merchandise");
-  if (needsProducts.length > 0) {
-    const rows = await prisma.merchandiseProduct.groupBy({ by: ["eventId"], where: { eventId: { in: needsProducts } } });
-    for (const row of rows) effective.get(row.eventId)?.add("merchandise");
-  }
-
-  let needsSeminar = lacking("seminar-assignments");
-  if (needsSeminar.length > 0) {
-    const runs = await prisma.programAssignmentRun.groupBy({ by: ["eventId"], where: { eventId: { in: needsSeminar } } });
-    for (const row of runs) effective.get(row.eventId)?.add("seminar-assignments");
-    needsSeminar = needsSeminar.filter((id) => !effective.get(id)?.has("seminar-assignments"));
-  }
-  if (needsSeminar.length > 0) {
-    const versions = await prisma.registrationFormVersion.findMany({
-      where: { form: { eventId: { in: needsSeminar } } },
-      select: { definition: true, form: { select: { eventId: true } } },
-    });
-    for (const version of versions) {
-      if (definitionHasRankedSeminars(version.definition)) effective.get(version.form.eventId)?.add("seminar-assignments");
-    }
-  }
-  return new Map([...stored].map(([id]) => [id, { stored: stored.get(id)!, effective: effective.get(id)! }]));
+  const present = await dataPresentByEvent(getPrisma(), eventIds);
+  return new Map([...stored].map(([id, storedKeys]) => {
+    const dataPresent = present.get(id) ?? new Set<EventModuleKey>();
+    const dataForced = new Set(dataForcedModuleKeys.filter((key) => dataPresent.has(key)));
+    return [id, { stored: storedKeys, effective: new Set([...storedKeys, ...dataForced]), dataPresent, dataForced }];
+  }));
 }
 
 export async function moduleState(eventId: string): Promise<EventModuleState> {
   return (await moduleStatesByEvent([eventId])).get(eventId)!;
 }
-
 
 export async function isModuleEnabled(eventId: string, key: EventModuleKey): Promise<boolean> {
   if (eventModuleDefinition(key).alwaysOn) return true;
@@ -173,7 +220,11 @@ export async function enableModule(
   return getPrisma().$transaction(async (tx) => {
     const event = await tx.event.findUnique({ where: { id: eventId }, select: { id: true, audience: true } });
     if (!event) throw new EventModuleError("That event does not exist.", "EVENT_NOT_FOUND");
-    if (!canEnableForAudience(key, event.audience)) {
+    // Honors applies to a general event that has honors data: look only when that decides it.
+    const present = key === "honors" && !canEnableForEvent(key, event.audience)
+      ? (await dataPresentByEvent(tx, [eventId], ["honors"])).get(eventId)
+      : undefined;
+    if (!canEnableForEvent(key, event.audience, present)) {
       throw new EventModuleError(`${eventModuleDefinition(key).title} applies to club events only.`, "NOT_APPLICABLE");
     }
     const created = await tx.eventModule.createMany({ data: [{ eventId, moduleKey: key }], skipDuplicates: true });
@@ -205,6 +256,9 @@ export async function disableModule(
   return getPrisma().$transaction(async (tx) => {
     const event = await tx.event.findUnique({ where: { id: eventId }, select: { id: true } });
     if (!event) throw new EventModuleError("That event does not exist.", "EVENT_NOT_FOUND");
+    if (dataForcedModuleKeys.includes(key) && (await dataPresentByEvent(tx, [eventId], [key])).get(eventId)?.has(key)) {
+      throw new EventModuleError(`${eventModuleDefinition(key).title} stays on while this event has the data it works on.`, "DATA_KEEPS_ON");
+    }
     const removed = await tx.eventModule.deleteMany({ where: { eventId, moduleKey: key } });
     if (removed.count === 0) return { changed: false };
     await writeAuditLog({

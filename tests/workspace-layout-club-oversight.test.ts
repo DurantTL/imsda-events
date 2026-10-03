@@ -139,6 +139,27 @@ describe("WorkspaceShell club oversight (#481)", () => {
     expect(byId.evt_club_paid.hiddenCardKeys).toBeDefined();
   });
 
+  it("keeps module state for an event that ended within 60 days, and for an old event that is the default", async () => {
+    const recent = { id: "evt_recent", slug: "recent", name: "Recent", audience: "CLUB", timezone: "America/Chicago", endsAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000) };
+    const old = { id: "evt_old", slug: "old", name: "Old", audience: "CLUB", timezone: "America/Chicago", endsAt: new Date("2020-01-02T00:00:00Z") };
+    const older = { id: "evt_older", slug: "older", name: "Older", audience: "CLUB", timezone: "America/Chicago", endsAt: new Date("2019-01-02T00:00:00Z") };
+    for (const defaultEventId of [null, "evt_old"]) {
+      mocks.moduleStatesByEvent.mockClear();
+      mocks.loadWorkspaceEventContext.mockResolvedValue({
+        autoSelected: false, defaultEventId, events: [recent, old, older],
+        user: { id: "usr_staff", email: "staff@example.test", displayName: "Staff", globalRole: null },
+      });
+      mocks.listActiveEventPermissionsForUser.mockResolvedValue(new Map());
+      mocks.listActiveEventRolesForUser.mockResolvedValue(new Map());
+      const tree = await WorkspaceShell({ children: null });
+      expect(mocks.moduleStatesByEvent).toHaveBeenCalledWith(defaultEventId ? ["evt_recent", "evt_old"] : ["evt_recent"]);
+      const byId = Object.fromEntries((shellEvents(tree) as unknown as Array<{ id: string; hiddenCardKeys?: string[] }>).map((event) => [event.id, event]));
+      expect(byId.evt_recent.hiddenCardKeys).toBeDefined();
+      expect(byId.evt_old.hiddenCardKeys !== undefined).toBe(defaultEventId === "evt_old");
+      expect(byId.evt_older.hiddenCardKeys).toBeUndefined();
+    }
+  });
+
   it("passes the no-events allowance through to the event context (#623)", async () => {
     mocks.loadWorkspaceEventContext.mockResolvedValue({
       autoSelected: false, defaultEventId: null, events: [],

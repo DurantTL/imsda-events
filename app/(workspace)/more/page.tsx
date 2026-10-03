@@ -56,7 +56,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
   });
   // Rows plus the data a module works on, the same state the launcher reads, so the two agree.
   const state = await moduleState(event.id);
-  const view = buildEventModulesView({ cards, stored: state.stored, effective: state.effective, isSystemAdmin, audience: clubEvent ? "CLUB" : "GENERAL" });
+  const view = buildEventModulesView({ cards, stored: state.stored, effective: state.effective, dataPresent: state.dataPresent, dataForced: state.dataForced, isSystemAdmin, audience: clubEvent ? "CLUB" : "GENERAL" });
 
   // The health strip reuses the Operational health data for staff who may open it; nobody else gets a strip.
   const health = canAccessOperationalHealth(permissions)
@@ -108,7 +108,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
       {view.leftOver.length > 0 && (
         <section className="panel event-modules-leftover" aria-label="Left over from a change of event type">
           <h2>Left over from a change of event type</h2>
-          <p className="quiet-copy">These were turned on when this was a club event and no longer apply. Turning them off keeps their data.</p>
+          <p className="quiet-copy">These are turned on but do not apply to this kind of event. Turning them off keeps their data.</p>
           <div className="foundation-grid">
             {view.leftOver.map((definition) => (
               <article className="panel foundation-card event-module-card" data-module={definition.key} key={definition.key}>

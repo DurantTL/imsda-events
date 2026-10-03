@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { HTMLAttributes, ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
@@ -30,11 +31,14 @@ import type { MoreDirectoryCard } from "@/components/staff-navigation";
 /**
  * While the phone sheet is open the page behind it is inert (and the sheet is
  * `aria-modal`), so a screen reader or Tab cannot wander into content the sheet
- * covers. Must be lifted before focus returns to the trigger, which is inside it.
+ * covers. The tab bar is left out, so the trigger can take focus back and other
+ * tabs still work.
  */
 function setBackgroundInert(inert: boolean) {
-  const shell = document.querySelector<HTMLElement>(".app-shell");
-  if (shell) shell.inert = inert;
+  // The sidebar and the main content only: the phone tab bar stays live, so a tap on another tab navigates.
+  for (const element of document.querySelectorAll<HTMLElement>(".app-shell > .sidebar, .app-shell > .workspace")) {
+    element.inert = inert;
+  }
 }
 
 export function MoreLauncherPanel({
@@ -121,6 +125,10 @@ export function MoreLauncher({
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  // Close when the route changes (a followed link, or browser Back/Forward that lands on another page).
+  const [openedOn, setOpenedOn] = useState(pathname);
+  if (open && openedOn !== pathname) setOpen(false);
   const [anchor, setAnchor] = useState<{ left: number; bottom: number } | null>(null);
   const triggerRef = useRef<HTMLAnchorElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -142,9 +150,15 @@ export function MoreLauncher({
       if (target && (panelRef.current?.contains(target) || triggerRef.current?.contains(target))) return;
       close("outside");
     }
+    // Back/Forward within the same page (a hash or query change) does not change the pathname.
+    function onPopState() {
+      close("navigate");
+    }
     document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("popstate", onPopState);
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("popstate", onPopState);
       setBackgroundInert(false);
     };
   }, [open, close, variant]);
@@ -155,6 +169,7 @@ export function MoreLauncher({
       // Anchored beside the item, bottom edges aligned, kept inside the viewport.
       setAnchor({ left: Math.round(rect.right + 12), bottom: Math.max(12, Math.round(window.innerHeight - rect.bottom)) });
     }
+    setOpenedOn(pathname);
     setOpen(true);
   }
 

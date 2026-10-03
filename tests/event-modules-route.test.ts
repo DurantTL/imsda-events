@@ -20,16 +20,26 @@ import { DELETE, PUT } from "@/app/api/events/[eventId]/modules/[moduleKey]/rout
 const systemAdmin = { id: "user-admin", globalRole: "SYSTEM_ADMIN" as const };
 const eventAdmin = { id: "user-event-admin", globalRole: null };
 
-function fakePrisma(initial: Array<{ eventId: string; moduleKey: string }> = []) {
+function table(eventIds: string[] = []) {
+  return {
+    deleteMany: vi.fn(), delete: vi.fn(), updateMany: vi.fn(),
+    groupBy: vi.fn(async ({ where }: { where: { eventId: { in: string[] } } }) => eventIds.filter((id) => where.eventId.in.includes(id)).map((eventId) => ({ eventId }))),
+  };
+}
+
+function fakePrisma(initial: Array<{ eventId: string; moduleKey: string }> = [], data: { products?: string[] } = {}) {
   const rows = [...initial];
   const dataTables = {
-    honorSession: { deleteMany: vi.fn(), delete: vi.fn(), updateMany: vi.fn() },
-    merchandiseProduct: { deleteMany: vi.fn(), delete: vi.fn(), updateMany: vi.fn() },
-    communityPost: { deleteMany: vi.fn(), delete: vi.fn(), updateMany: vi.fn() },
-    programAssignmentRun: { deleteMany: vi.fn(), delete: vi.fn(), updateMany: vi.fn() },
+    honorSession: table(),
+    honorOffering: table(),
+    honorEnrollment: table(),
+    merchandiseProduct: table(data.products),
+    communityPost: table(),
+    programAssignmentRun: table(),
   };
   const tx = {
     ...dataTables,
+    $queryRaw: vi.fn(async () => []),
     event: { findUnique: vi.fn(async ({ where }: { where: { id: string } }) => (where.id === "event-1" ? { id: "event-1", audience: "GENERAL" } : where.id === "event-club" ? { id: "event-club", audience: "CLUB" } : null)) },
     eventModule: {
       createMany: vi.fn(async ({ data }: { data: Array<{ eventId: string; moduleKey: string }> }) => {
@@ -137,6 +147,15 @@ describe("enable/disable route behavior", () => {
       expect(table.delete).not.toHaveBeenCalled();
       expect(table.updateMany).not.toHaveBeenCalled();
     }
+  });
+
+  it("refuses Turn off for a module the event's data keeps on with 409 DATA_KEEPS_ON, changing nothing", async () => {
+    const { rows } = fakePrisma([{ eventId: "event-1", moduleKey: "merchandise" }], { products: ["event-1"] });
+    const response = await DELETE(request("DELETE"), context());
+    expect(response.status).toBe(409);
+    expect((await response.json()).error).toBe("DATA_KEEPS_ON");
+    expect(rows).toHaveLength(1);
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
   });
 
   it("is idempotent: enabling twice audits once", async () => {

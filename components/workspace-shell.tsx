@@ -7,7 +7,7 @@ import { findSwitchableAttendeeAccountForStaff } from "@/modules/attendee-accoun
 import { disabledModuleCardKeys } from "@/modules/event-modules/catalog";
 import { moduleStatesByEvent } from "@/modules/event-modules/service";
 import { staffClubFormsAccess } from "@/modules/club-forms/access";
-import { hasEventEnded } from "@/modules/events/lifecycle";
+import { eventsNeedingModuleState } from "@/modules/event-modules/shell-scope";
 import { loadWorkspaceEventContext } from "@/modules/events/selection";
 import { currentStaffActingContext } from "@/modules/organizations/staff-act-as";
 
@@ -30,14 +30,12 @@ export async function WorkspaceShell({ anyStaffWithoutEvents = false, children }
   // Audience, not billing mode, so an attendee-paid CLUB event still shows
   // club features, and a GENERAL event never does — even for a system admin.
   const rolesByEvent = isSystemAdmin ? new Map() : await listActiveEventRolesForUser(user.id, events.map((event) => event.id));
-  // Which More cards are off per event (#741): rows plus the data a module
-  // works on (a product, a ranked seminar field), in a fixed number of queries.
-  // Only for events that have not ended, and the default event; the shell cannot
-  // know which one the client will pick. For any other event `hiddenCardKeys` is
-  // left out and the launcher lists the universal tools only, with the link to
-  // the Event modules page for the rest.
-  const moduleEventIds = events.filter((event) => event.id === defaultEventId || !hasEventEnded(event)).map((event) => event.id);
-  const modulesByEvent = await moduleStatesByEvent(moduleEventIds);
+  // Which More cards are off per event (#741): rows plus the data a module works
+  // on, in a fixed number of queries, for events that have not ended, ended within
+  // 60 days, or are the default event (see `eventsNeedingModuleState`). For any
+  // other event `hiddenCardKeys` is left out and the launcher lists the universal
+  // tools only, with the link to the Event modules page for the rest.
+  const modulesByEvent = await moduleStatesByEvent(eventsNeedingModuleState(events, defaultEventId));
   // Club forms (#610): one answer per user, from the same helper `resolveStaffViewer`
   // uses (system admin, or EVENT_ADMIN of any event that has not ended).
   const clubFormsAccess = staffClubFormsAccess(

@@ -196,14 +196,25 @@ export function moduleForCard(cardKey: string): EventModuleDefinition | undefine
 }
 
 /**
- * Whether a system administrator may turn the module on for an event of this
- * audience. Club-audience modules do not apply to a general event, and enabling
- * one would only leave a row nothing reads. The seminar module is always
- * enableable: an administrator may turn it on before the ranked field exists.
+ * Whether a system administrator may turn the module on for an event. Club-audience
+ * modules do not apply to a general event, and enabling one would only leave a row
+ * nothing reads, except Honors, which applies to any event that has honors data
+ * (sessions, offerings or enrollments; the slice 1 backfill gave those events a
+ * row). `dataPresent` is the data the event has (`dataPresentByEvent`). The seminar
+ * module is always enableable: an administrator may turn it on before the ranked
+ * field exists.
  */
-export function canEnableForAudience(key: EventModuleKey, audience: "GENERAL" | "CLUB"): boolean {
-  return eventModuleDefinition(key).appliesTo !== "club-audience" || audience === "CLUB";
+export function canEnableForEvent(
+  key: EventModuleKey,
+  audience: "GENERAL" | "CLUB",
+  dataPresent: ReadonlySet<EventModuleKey> = new Set(),
+): boolean {
+  if (eventModuleDefinition(key).appliesTo !== "club-audience" || audience === "CLUB") return true;
+  return key === "honors" && dataPresent.has("honors");
 }
+
+/** Modules a data check can keep on: with the data present, turning one off would change nothing. */
+export const dataForcedModuleKeys: readonly EventModuleKey[] = ["merchandise", "seminar-assignments"];
 
 /**
  * Merchandise and Seminar assignments also show when the event already has the
