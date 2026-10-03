@@ -8,6 +8,8 @@ import { buildMoreDirectoryCards, moreDirectoryGroupLabels, moreDirectoryGroupOr
 import { listUserSessions, SESSION_COOKIE_NAME, SESSION_IDLE_TIMEOUT_SECONDS } from "@/modules/access/session-store";
 import { resolveStaffViewer } from "@/modules/club-forms/access";
 import { listRecentAuditActivity } from "@/modules/audit/audit-service";
+import { hiddenModuleCardKeys } from "@/modules/event-modules/catalog";
+import { enabledModules } from "@/modules/event-modules/service";
 import { resolveEventContext } from "@/modules/events/selection";
 import { eventKindFromAudience, moreCardApplies, selectActivity } from "@/modules/events/settings-sections";
 import { resolveClubOversight } from "@/modules/club-rosters/event-oversight";
@@ -34,7 +36,13 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
   // bottom tabs (#475): built from `buildMoreDirectoryCards`, the same
   // permission and navigation source `AppShell`'s sidebar reads, so the two
   // can't drift — see `tests/mobile-directory-parity.test.ts`.
+  // Event modules (#741): the Honors Weekend builder shows only where its module
+  // is on. Relevance only; the route keeps its own authorization. Club forms are
+  // not scoped to an event, so they are not gated here. The pinned Club
+  // directory / This event's clubs items move to the launcher in slice 2.
+  const moduleHidden = hiddenModuleCardKeys(await enabledModules(event.id), ["honors"]);
   const cards = buildMoreDirectoryCards({
+    hiddenCardKeys: isSystemAdmin ? undefined : moduleHidden,
     permissions,
     clubOversight,
     clubEvent,
@@ -47,8 +55,11 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
     .map((group) => ({ group, cards: list.filter((card) => card.group === group) }))
     .filter(({ cards: groupCards }) => groupCards.length > 0);
   // Cards that do not apply to this event type are collapsed, never removed (#624).
-  const visibleGroups = groupsFor(allowedCards.filter((card) => moreCardApplies(card.key, kind)));
-  const otherGroups = groupsFor(allowedCards.filter((card) => !moreCardApplies(card.key, kind)));
+  // A module that is off for this event is out of sight for everyone but system
+  // administrators, who find it under "More settings" until slice 2 adds Enable.
+  const offForEvent = (card: { key: string }) => moduleHidden.has(card.key);
+  const visibleGroups = groupsFor(allowedCards.filter((card) => moreCardApplies(card.key, kind) && !offForEvent(card)));
+  const otherGroups = groupsFor(allowedCards.filter((card) => !moreCardApplies(card.key, kind) || offForEvent(card)));
 
   const renderGroups = (groups: typeof visibleGroups) => groups.map(({ group, cards: groupCards }) => (
     <section aria-label={moreDirectoryGroupLabels[group]} className="foundation-group" key={group}>

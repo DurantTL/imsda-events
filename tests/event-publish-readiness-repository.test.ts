@@ -115,6 +115,7 @@ function mockPrisma(
       findFirst: vi.fn().mockResolvedValue(null),
     },
     promoCode: { count: vi.fn().mockResolvedValue(0) },
+    eventModule: { createMany: vi.fn().mockResolvedValue({ count: 0 }), deleteMany: vi.fn() },
     auditLog: { create: auditLogCreate },
   };
   const prisma = {
@@ -471,10 +472,12 @@ describe("createEvent audience (#481)", () => {
     const eventCreate = vi.fn(({ data }: { data: Record<string, unknown> }) =>
       Promise.resolve({ id: "event-new", name: data.name, slug: data.slug, audience: data.audience }));
     const auditLogCreate = vi.fn().mockResolvedValue({});
+    const moduleCreateMany = vi.fn().mockResolvedValue({ count: 0 });
     const tx = {
       platformSettings: { upsert: vi.fn().mockResolvedValue({ defaultAttendeeEditPolicy: "VERIFY_EVERY_EDIT" }) },
       event: { create: eventCreate },
       eventMembership: { create: vi.fn().mockResolvedValue({}) },
+      eventModule: { createMany: moduleCreateMany },
       eventPaymentInstructionVersion: { create: vi.fn().mockResolvedValue({}) },
       auditLog: { create: auditLogCreate },
     };
@@ -483,15 +486,18 @@ describe("createEvent audience (#481)", () => {
       $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
     };
     dependencies.getPrisma.mockReturnValue(createPrisma);
-    return { eventCreate, auditLogCreate };
+    return { eventCreate, auditLogCreate, moduleCreateMany };
   }
 
   it("creates a GENERAL event when no audience is given and records it in EVENT_CREATED", async () => {
-    const { eventCreate, auditLogCreate } = mockCreate();
+    const { eventCreate, auditLogCreate, moduleCreateMany } = mockCreate();
     const { audience: _omitted, ...withoutAudience } = baseInput;
     void _omitted;
 
     await createEvent(withoutAudience, "usr_1");
+
+    // A new event starts with public content only (#741).
+    expect(moduleCreateMany.mock.calls[0][0].data).toEqual([{ eventId: "event-new", moduleKey: "public-content" }]);
 
     expect(eventCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ audience: "GENERAL" }),
@@ -505,9 +511,13 @@ describe("createEvent audience (#481)", () => {
   });
 
   it("records an initial CLUB audience in EVENT_CREATED", async () => {
-    const { eventCreate, auditLogCreate } = mockCreate();
+    const { eventCreate, auditLogCreate, moduleCreateMany } = mockCreate();
 
     await createEvent({ ...baseInput, audience: "CLUB" }, "usr_1");
+
+    // A club event starts with the club modules (#741).
+    expect(moduleCreateMany.mock.calls[0][0].data.map((row: { moduleKey: string }) => row.moduleKey).sort())
+      .toEqual(["club-assignments", "event-patches", "honors", "public-content"]);
 
     expect(eventCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ audience: "CLUB" }),
@@ -518,5 +528,31 @@ describe("createEvent audience (#481)", () => {
         metadata: { slug: "synthetic-retreat", audience: "CLUB" },
       }),
     }));
+  });
+});
+
+describe("changing the audience writes the club modules (#741)", () => {
+  async function save(currentAudience: "GENERAL" | "CLUB", nextAudience: "GENERAL" | "CLUB") {
+    const { prisma, tx } = mockPrisma({ isPublished: false, audience: currentAudience }, 0);
+    dependencies.getPrisma.mockReturnValue(prisma);
+    await updateEventSettings("event-1", { ...baseInput, audience: nextAudience, billingMode: nextAudience === "CLUB" ? "DEFERRED_ORGANIZATION_INVOICE" : "ATTENDEE_PAY" } as never, "usr_1");
+    return tx;
+  }
+
+  it("adds the club defaults when a general event becomes a club event, in the same transaction", async () => {
+    const tx = await save("GENERAL", "CLUB");
+    expect(tx.eventModule.createMany).toHaveBeenCalledTimes(1);
+    const { data, skipDuplicates } = tx.eventModule.createMany.mock.calls[0]![0] as { data: Array<{ eventId: string; moduleKey: string }>; skipDuplicates: boolean };
+    expect(skipDuplicates).toBe(true);
+    expect(data.every((row) => row.eventId === "event-1")).toBe(true);
+    expect(data.map((row) => row.moduleKey).sort()).toEqual(["club-assignments", "event-patches", "honors", "public-content"]);
+  });
+
+  it("writes nothing when the event stays CLUB, stays general, or leaves CLUB, and removes nothing", async () => {
+    for (const [from, to] of [["CLUB", "CLUB"], ["GENERAL", "GENERAL"], ["CLUB", "GENERAL"]] as const) {
+      const tx = await save(from, to);
+      expect(tx.eventModule.createMany).not.toHaveBeenCalled();
+      expect(tx.eventModule.deleteMany).not.toHaveBeenCalled();
+    }
   });
 });

@@ -39,6 +39,7 @@ function mockApply(payload: unknown) {
     platformSettings: { upsert: vi.fn().mockResolvedValue({ defaultAttendeeEditPolicy: "VERIFY_EVERY_EDIT" }) },
     event: { create: vi.fn().mockResolvedValue(eventRow) },
     eventMembership: { create: vi.fn().mockResolvedValue({}) },
+    eventModule: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     eventAttendeeType: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     eventAttendeeClassification: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     eventLocation: { createMany: locationCreateMany },

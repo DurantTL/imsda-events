@@ -1321,8 +1321,25 @@ model Event {
   clonedInto                          EventCloneRecord[]           @relation("EventCloneSource")
   locations                           EventLocation[]
   locationWaitlistChanges             LocationWaitlistChange[]
+  modules                             EventModule[]
 
   @@index([badgeBackgroundAssetId])
+}
+
+/// A feature turned on for one event (#741). A row means "enabled"; the
+/// catalog of keys, their titles and applicability live in code
+/// (`modules/event-modules`), so there is no boolean column per module.
+/// Turning a module off removes only this row, never the data behind it.
+/// Only system administrators change rows.
+model EventModule {
+  id        String   @id @default(cuid())
+  eventId   String
+  moduleKey String
+  enabledAt DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, moduleKey])
 }
 
 /// One site of a multi-location event (#413), e.g. one Honors Weekend site or
