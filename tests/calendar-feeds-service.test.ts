@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   entryWrites: 0,
   audits: [] as Array<Record<string, unknown>>,
   nextId: 1,
+  missFingerprintOnce: false,
 }));
 
 vi.mock("server-only", () => ({}));
@@ -18,6 +19,7 @@ vi.mock("@/lib/secret-box", () => ({
   SecretBoxError: class SecretBoxError extends Error {},
   isSecretEncryptionConfigured: () => true,
   sealSecret: (value: string) => `v1.${Buffer.from(value).toString("base64url")}`,
+  fingerprintSecret: (value: string, purpose: string) => `fp.${purpose}.${Buffer.from(value).toString("base64url")}`,
   openSecret: (sealed: string) => Buffer.from(String(sealed).slice(3), "base64url").toString("utf8"),
 }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: async (entry: Record<string, unknown>) => { state.audits.push(entry); } }));
@@ -50,12 +52,22 @@ vi.mock("@/lib/prisma", () => {
     },
   };
   const feedApi = {
-    findMany: async (args: { where?: Record<string, unknown> } = {}) => state.feeds
-      .filter((row) => matches(row, args.where))
-      .sort((a, b) => (a.lastFetchedAt ? (a.lastFetchedAt as Date).getTime() : -1) - (b.lastFetchedAt ? (b.lastFetchedAt as Date).getTime() : -1))
-      .map((row) => ({ ...row, _count: { entries: state.entries.filter((entry) => entry.sourceFeedId === row.id).length } })),
+    findMany: async (args: { where?: Record<string, unknown> } = {}) => {
+      // Simulates two saves racing past the duplicate check: the first fingerprint lookup finds nothing.
+      if (state.missFingerprintOnce && args.where?.urlFingerprint) {
+        state.missFingerprintOnce = false;
+        return [];
+      }
+      return state.feeds
+        .filter((row) => matches(row, args.where))
+        .sort((a, b) => (a.lastFetchedAt ? (a.lastFetchedAt as Date).getTime() : -1) - (b.lastFetchedAt ? (b.lastFetchedAt as Date).getTime() : -1))
+        .map((row) => ({ ...row, _count: { entries: state.entries.filter((entry) => entry.sourceFeedId === row.id).length } }));
+    },
     findUnique: async ({ where }: { where: { id: string } }) => state.feeds.find((row) => row.id === where.id) ?? null,
     create: async ({ data }: { data: Record<string, unknown> }) => {
+      if (state.feeds.some((feed) => feed.urlFingerprint === data.urlFingerprint)) {
+        throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" });
+      }
       const row = { ...data, id: `feed-${state.nextId++}`, lastSucceededAt: null, lastFetchedAt: null, lastStatus: null, lastError: null, lastItemCount: null };
       state.feeds.push(row);
       return row;
@@ -74,6 +86,7 @@ vi.mock("@/lib/prisma", () => {
   return { getPrisma: () => client };
 });
 
+import { Prisma } from "@prisma/client";
 import { CalendarError } from "@/modules/calendar/repository";
 import { createCalendarFeed, deleteCalendarFeed, listCalendarFeeds, previewCalendarFeed, refreshDueCalendarFeeds, resetCalendarEntryToSource, setCalendarEntryHidden, syncCalendarFeed, updateCalendarFeed } from "@/modules/calendar/feeds";
 import type { FeedTransport } from "@/modules/calendar/feed-fetch";
@@ -219,7 +232,7 @@ describe("imported calendar feeds", () => {
     const now = new Date("2026-10-03T12:00:00Z");
     const minutesAgo = (minutes: number) => new Date(now.getTime() - minutes * 60_000);
     const make = (id: string, extra: Record<string, unknown>) => state.feeds.push({
-      id, name: id, sealedUrl: `v1.${Buffer.from(privateUrl).toString("base64url")}`, urlHint: "x", isEnabled: true, refreshMinutes: 60,
+      id, name: id, sealedUrl: `v1.${Buffer.from(privateUrl).toString("base64url")}`, urlHint: "x", urlFingerprint: `fp-${id}`, isEnabled: true, refreshMinutes: 60,
       lastSucceededAt: minutesAgo(500), lastFetchedAt: minutesAgo(500), defaultCategory: "", defaultEntryType: "STANDARD", publishNewItems: false, updatedByUserId: "admin-1", ...extra,
     });
     make("due-1", { lastFetchedAt: minutesAgo(400) });
@@ -289,6 +302,16 @@ describe("imported calendar feeds", () => {
     await expect(updateCalendarFeed(state.feeds[1].id, { url: privateUrl }, "admin-1")).rejects.toMatchObject({ code: "INVALID_FEED" });
   });
 
+  it("answers a save that loses the unique-constraint race with the same friendly message", async () => {
+    await addFeed();
+    state.missFingerprintOnce = true;
+    await expect(createCalendarFeed({ ...input, name: "Racing" }, "admin-1")).rejects.toMatchObject({
+      code: "INVALID_FEED",
+      message: "This calendar is already connected as Synthetic Google calendar.",
+    });
+    expect(state.feeds).toHaveLength(1);
+  });
+
   it("re-links a detached item (same id and edits, still not public) instead of duplicating it", async () => {
     const feedId = await addFeed();
     await syncCalendarFeed(feedId, deps);
@@ -299,7 +322,7 @@ describe("imported calendar feeds", () => {
     expect(camporee.sourceFeedId).toBeNull();
     const total = state.entries.length;
 
-    const second = await createCalendarFeed({ ...input, url: "https://calendar.example.test/ical/second/basic.ics" }, "admin-1").then(() => state.feeds[0].id);
+    const second = await createCalendarFeed({ ...input, url: privateUrl.replace("https://", "webcal://") }, "admin-1").then(() => state.feeds[0].id);
     const preview = await previewCalendarFeed(second, deps);
     expect(preview.counts.relink).toBe(total);
     expect(preview.counts.create).toBe(0);
@@ -324,7 +347,13 @@ describe("imported calendar feeds", () => {
     await syncCalendarFeed(feedId, deps);
     await deleteCalendarFeed(feedId, "admin-1");
     const detached = state.entries.length;
-    expect(state.entries.every((entry) => entry.sourceUrlHint === "calendar.example.test….ics")).toBe(true);
+    expect(state.entries.every((entry) => typeof entry.sourceUrlFingerprint === "string" && entry.sourceUrlFingerprint.startsWith("fp."))).toBe(true);
+
+    // Another Google-style address on the same host with the same suffix is a different calendar.
+    await createCalendarFeed({ ...input, name: "Look-alike", url: "https://calendar.example.test/ical/someone-else/basic.ics" }, "admin-1");
+    const lookAlike = state.feeds[0].id;
+    expect((await previewCalendarFeed(lookAlike, deps)).counts).toMatchObject({ relink: 0, create: detached });
+    state.feeds = state.feeds.filter((feed) => feed.id !== lookAlike);
 
     // A different calendar with the same UIDs gets its own rows and leaves the detached ones alone.
     await createCalendarFeed({ ...input, name: "Someone else", url: "https://other.example.test/ical/x/basic.ics" }, "admin-1");

@@ -56,12 +56,13 @@ most, and at most three redirects, each re-checked.
 - **Deleting a feed** keeps every imported item as an ordinary entry; hidden or
   removed ones become unpublished drafts, so deleting never makes anything appear.
 - **The same calendar can't be connected twice**: addresses are compared after
-  `webcal://` is rewritten to `https://` and the standard URL normalization; the error
-  names the existing feed, never the address.
+  `webcal://` is rewritten to `https://` and the standard URL normalization, by a keyed
+  fingerprint (HMAC of the address, derived from `SECRET_ENCRYPTION_KEY`) that is unique
+  in the database; the error names the existing feed, never the address.
 - **Re-linking:** if a feed is deleted and the same calendar is connected again, items
   with the same UID are re-linked to the new feed (same row, same id, edits kept)
-  instead of duplicated. Only a feed whose address hint (host and last four
-  characters) matches the deleted one may re-link its items. Preview shows these as "Re-linked".
+  instead of duplicated. Only a feed with the very same address (compared by a keyed
+  fingerprint, never the address itself) may re-link its items. Preview shows these as "Re-linked".
 - **An empty feed is treated as a fault.** If a refresh (automatic or Refresh now)
   comes back with no events while the feed has imported items, it is recorded as failed
   ("The calendar came back empty; nothing was changed.") and nothing is unpublished.

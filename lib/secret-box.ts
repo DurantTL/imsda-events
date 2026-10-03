@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, hkdfSync, randomBytes } from "node:crypto";
 import { getServerEnv } from "@/lib/env";
 
 /**
@@ -79,6 +79,17 @@ export function openSecret(sealed: string, purpose: string) {
       "The stored value could not be decrypted. The encryption key may have changed.",
     );
   }
+}
+
+/**
+ * A keyed, stable fingerprint of a value (HMAC-SHA256, base64url), for finding
+ * "the same secret" without storing or decrypting it. It is derived from
+ * `SECRET_ENCRYPTION_KEY` with its own purpose string, so it can't be computed
+ * (or guessed by brute force) without the key, and a fingerprint from one
+ * purpose says nothing about another.
+ */
+export function fingerprintSecret(value: string, purpose: string) {
+  return createHmac("sha256", derivedKey(`fingerprint:${purpose}`)).update(value, "utf8").digest("base64url");
 }
 
 export function isSecretEncryptionConfigured() {

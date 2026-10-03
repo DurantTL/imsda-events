@@ -7,6 +7,7 @@ vi.mock("@/lib/env", () => ({ getServerEnv: dependencies.getServerEnv }));
 import {
   SecretBoxError,
   isSecretEncryptionConfigured,
+  fingerprintSecret,
   openSecret,
   sealSecret,
 } from "@/lib/secret-box";
@@ -16,6 +17,23 @@ const key = "a-secret-encryption-key-of-adequate-length";
 beforeEach(() => {
   vi.clearAllMocks();
   dependencies.getServerEnv.mockReturnValue({ SECRET_ENCRYPTION_KEY: key });
+});
+
+describe("secret fingerprints", () => {
+  it("is stable, purpose-separated and depends on the key", () => {
+    const first = fingerprintSecret("https://example.test/a", "calendar-feed-url");
+    expect(fingerprintSecret("https://example.test/a", "calendar-feed-url")).toBe(first);
+    expect(fingerprintSecret("https://example.test/b", "calendar-feed-url")).not.toBe(first);
+    expect(fingerprintSecret("https://example.test/a", "another-purpose")).not.toBe(first);
+    expect(first).not.toContain("example");
+    dependencies.getServerEnv.mockReturnValue({ SECRET_ENCRYPTION_KEY: `${key}-rotated` });
+    expect(fingerprintSecret("https://example.test/a", "calendar-feed-url")).not.toBe(first);
+  });
+
+  it("needs the key", () => {
+    dependencies.getServerEnv.mockReturnValue({});
+    expect(() => fingerprintSecret("x", "p")).toThrow(SecretBoxError);
+  });
 });
 
 describe("sealed secrets", () => {

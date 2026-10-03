@@ -7,6 +7,7 @@ CREATE TABLE "CalendarFeed" (
   "name" TEXT NOT NULL,
   "sealedUrl" TEXT NOT NULL,
   "urlHint" TEXT NOT NULL,
+  "urlFingerprint" TEXT NOT NULL,
   "defaultCategory" TEXT NOT NULL DEFAULT '',
   "defaultEntryType" "CalendarEntryType" NOT NULL DEFAULT 'STANDARD',
   "publishNewItems" BOOLEAN NOT NULL DEFAULT false,
@@ -29,11 +30,13 @@ ALTER TABLE "CalendarEntry"
   ADD COLUMN "sourceUid" TEXT,
   ADD COLUMN "sourceRecurrenceId" TEXT,
   ADD COLUMN "sourceHash" TEXT,
-  ADD COLUMN "sourceUrlHint" TEXT,
+  ADD COLUMN "sourceUrlFingerprint" TEXT,
   ADD COLUMN "sourceRemovedAt" TIMESTAMP(3),
   ADD COLUMN "sourceRemovedWasPublished" BOOLEAN NOT NULL DEFAULT false,
   ADD COLUMN "locallyEditedFields" TEXT[] DEFAULT ARRAY[]::TEXT[],
   ADD COLUMN "isHiddenLocally" BOOLEAN NOT NULL DEFAULT false;
+
+CREATE UNIQUE INDEX "CalendarFeed_urlFingerprint_key" ON "CalendarFeed"("urlFingerprint");
 
 CREATE UNIQUE INDEX "CalendarEntry_sourceFeedId_sourceUid_sourceRecurrenceId_key"
   ON "CalendarEntry"("sourceFeedId", "sourceUid", "sourceRecurrenceId");
