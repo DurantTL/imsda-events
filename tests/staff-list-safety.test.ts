@@ -23,6 +23,7 @@ import {
   CheckInWorkspace,
 } from "@/components/check-in-workspace";
 import { DELIVERY_PAGE_SIZE, DELIVERY_SERVER_CAP } from "@/components/communications-workspace";
+import { projectCheckInArrivals } from "@/modules/checkin/arrival-view";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 
 /**
@@ -146,9 +147,8 @@ describe("the check-in roster (F-S4, F-S5)", () => {
   const render = () => renderToStaticMarkup(createElement(CheckInWorkspace, {
     eventName: "Synthetic Event",
     eventId: "event-1",
-    initialRegistrations: numbers(120).map(registration),
+    initialArrivals: projectCheckInArrivals(numbers(120).map(registration), { showBalances: false }),
     canCheckIn: true,
-    showBalances: false,
   }));
 
   it("labels the tally and the rows the same way", () => {
