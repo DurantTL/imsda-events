@@ -9711,3 +9711,15 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
   .finance-head.attendance-row > span:last-child { display: block; }
   .finance-head.attendance-row { display: none; }
 }
+
+/* Invoices (#167): one line per invoice group, with number, status, total and contact. */
+.invoice-line { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.9fr) minmax(90px, 0.6fr) minmax(0, 1.3fr); gap: 12px; align-items: start; padding: 11px 17px; }
+.invoice-line small { display: block; color: var(--muted, #5b6b73); }
+.invoice-status-draft { background: #fdf0d8; color: #7a4b00; }
+.invoice-status-finalized { background: #e6f4ea; color: #1b5e32; }
+.invoice-status-superseded, .invoice-status-discarded { background: #e8eaed; color: #3c4043; }
+.invoice-discarded { opacity: 0.65; }
+.invoice-confirm { display: grid; gap: 8px; max-width: 520px; margin-top: 8px; }
+.invoice-confirm label { display: flex; align-items: flex-start; gap: 8px; }
+.invoice-detail-lines ul { margin: 6px 0; padding-left: 18px; display: grid; gap: 6px; }
+@media (max-width: 720px) { .invoice-line { grid-template-columns: minmax(0, 1fr); } }

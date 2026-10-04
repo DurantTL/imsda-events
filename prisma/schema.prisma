@@ -48,6 +48,10 @@ enum EventPermission {
   /// club event attendees (#658, ADR 0005 Addendum C). Never part of a role:
   /// only a system administrator grants it, one membership at a time.
   VIEW_HEALTH_INFORMATION
+  /// Finalizing a deferred-organization invoice (#167, ADR 0008): assigns its number and commits the
+  /// conference to the amount. Never part of a role (Event Admin and MANAGE_FINANCE do not include
+  /// it): a system administrator has it everywhere and grants it to named people one membership at a time.
+  FINALIZE_INVOICES
 }
 
 enum MembershipStatus {
@@ -708,6 +712,8 @@ model User {
   preparedAttendanceVersions   AttendanceReconciliationVersion[]         @relation("AttendanceVersionPreparedBy")
   approvedAttendanceVersions   AttendanceReconciliationVersion[]         @relation("AttendanceVersionApprovedBy")
   attendanceReviewAcknowledgements AttendanceReviewAcknowledgement[]     @relation("AttendanceReviewAckActor")
+  createdInvoiceVersions       InvoiceVersion[]                          @relation("InvoiceVersionCreatedBy")
+  finalizedInvoiceVersions     InvoiceVersion[]                          @relation("InvoiceVersionFinalizedBy")
 
   @@index([accountStatus])
 }
@@ -1324,6 +1330,9 @@ model Event {
   billingMode          EventBillingMode   @default(ATTENDEE_PAY)
   /// Invoice grouping for a deferred-invoice event (#165); only MANAGE_FINANCE changes it, and every change is audited.
   invoiceGrouping                    InvoiceGrouping    @default(PER_CHURCH)
+  /// Explicit invoice-number prefix (#167), letters only; blank derives it from the name. Staff set it
+  /// before the first invoice is finalized; a trigger refuses a change after the event has a number series.
+  invoiceCode                        String?
   /// Explicit audience (#481), independent of `billingMode`: club and church
   /// navigation, club registration oversight, and club reports key off this
   /// field, not the billing mode.
@@ -1390,6 +1399,10 @@ model Event {
   attendanceCorrections               AttendanceCorrection[]
   attendanceReconciliationVersions    AttendanceReconciliationVersion[]
   attendanceReviewAcknowledgements    AttendanceReviewAcknowledgement[]
+  invoices                            Invoice[]
+  invoiceVersions                     InvoiceVersion[]
+  invoiceReceivables                  InvoiceReceivable[]
+  invoiceNumberCounters               InvoiceNumberCounter[]
   clubRegistrationDrafts              ClubRegistrationDraft[]
   clubAssignments                     ClubEventAssignment[]
   honorEnrollments                    HonorEnrollment[]
@@ -5478,6 +5491,7 @@ model AttendanceReconciliationVersion {
   event      Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
   preparedBy User? @relation("AttendanceVersionPreparedBy", fields: [preparedByUserId], references: [id], onDelete: SetNull)
   approvedBy User? @relation("AttendanceVersionApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  invoiceVersions InvoiceVersion[]
 
   @@unique([eventId, versionNumber])
   @@index([eventId, status])
@@ -5509,4 +5523,146 @@ model AttendanceReviewAcknowledgement {
   /// A migration-level partial unique index allows one active (not superseded) row per registration and review key.
   @@index([registrationId, reviewKey])
   @@index([eventId, createdAt])
+}
+
+enum InvoiceVersionStatus {
+  DRAFT
+  FINALIZED
+  SUPERSEDED
+  /// A draft staff threw away (never numbered); kept for the record, hidden from the screens.
+  DISCARDED
+}
+
+/// How a version was built: from the approved attendance reconciliation, or by copying the prior
+/// finalized version with only the billing contact refreshed (a contact-only revision).
+enum InvoiceVersionBasis {
+  RECONCILIATION
+  CONTACT_ONLY_COPY
+}
+
+/// What is owed on one finalized invoice version. OPEN until the version is superseded by a revision.
+/// Payment states arrive when the ledger links in (#117-#120); see docs/INVOICES.md.
+enum InvoiceReceivableStatus {
+  OPEN
+  SUPERSEDED
+}
+
+/// One invoice for one invoice group of a deferred-invoice event (#167). The number is assigned exactly
+/// once, when the first version is finalized; revisions are versions of this invoice (`-R1`, `-R2`).
+model Invoice {
+  id              String                 @id @default(cuid())
+  eventId         String
+  /// The #165 invoice group key (a church, a club under per-club grouping, or a billing person).
+  groupKey        String
+  invoiceGrouping InvoiceGrouping
+  partyKind       BillingResponsibleKind
+  partyId         String?
+  clubId          String?
+  /// "SC27-0001": null until the first finalization, then never changed.
+  baseNumber      String?                @unique
+  numberCode      String?
+  numberYear      Int?
+  numberSequence  Int?
+  createdAt       DateTime               @default(now())
+
+  event       Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  versions    InvoiceVersion[]
+  receivables InvoiceReceivable[]
+
+  @@unique([eventId, groupKey])
+  @@index([eventId])
+}
+
+/// An invoice version: a DRAFT is replaced only by regeneration; FINALIZED and SUPERSEDED versions are
+/// immutable snapshots (database trigger). `snapshot` holds the lines; the columns hold what the
+/// screen and the receivable read.
+model InvoiceVersion {
+  id                      String               @id @default(cuid())
+  invoiceId               String
+  eventId                 String
+  /// 0 for the original, 1 for -R1, and so on.
+  revision                Int
+  status                  InvoiceVersionStatus @default(DRAFT)
+  basis                   InvoiceVersionBasis
+  /// The finalized version this one revises.
+  supersedesVersionId     String?
+  reconciliationVersionId String
+  /// Full number such as "SC27-0001-R1", assigned at finalization only.
+  number                  String?              @unique
+  groupTitle              String
+  organizationName        String
+  contactName             String?
+  contactEmail            String?
+  contactRoleLabel        String?
+  contactVerified         Boolean              @default(false)
+  registeredCount         Int
+  billableCount           Int
+  amountDueCents          Int
+  /// Hash of every billable amount (lines, credits, promo, charges, total); a revision with the same
+  /// fingerprint as the finalized version it replaces changed no billable amount.
+  amountsFingerprint      String
+  snapshot                Json
+  revisionReason          String?
+  createdByUserId         String?
+  createdAt               DateTime             @default(now())
+  regenerationCount       Int                  @default(0)
+  regeneratedAt           DateTime?
+  finalizedAt             DateTime?
+  finalizedByUserId       String?
+  /// The approver's name as it was when they finalized.
+  finalizedByName         String?
+  finalizeIdempotencyKey  String?              @unique
+  supersededAt            DateTime?
+  supersededByVersionId   String?
+  discardedAt             DateTime?
+
+  event                 Event                           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  invoice               Invoice                         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  reconciliationVersion AttendanceReconciliationVersion @relation(fields: [reconciliationVersionId], references: [id], onDelete: NoAction)
+  createdBy             User?                           @relation("InvoiceVersionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  finalizedBy           User?                           @relation("InvoiceVersionFinalizedBy", fields: [finalizedByUserId], references: [id], onDelete: SetNull)
+  receivable            InvoiceReceivable?
+
+  /// A migration-level partial unique index allows one non-discarded version per invoice and revision.
+  @@index([invoiceId, revision])
+  @@index([eventId, status])
+  @@index([reconciliationVersionId])
+}
+
+/// The per-invoice receivable (#167): one row per finalized version, created in the finalization
+/// transaction. A later ledger links to `invoiceVersionId`.
+model InvoiceReceivable {
+  id                    String                  @id @default(cuid())
+  eventId               String
+  invoiceId             String
+  invoiceVersionId      String                  @unique
+  amountCents           Int
+  status                InvoiceReceivableStatus @default(OPEN)
+  createdAt             DateTime                @default(now())
+  supersededAt          DateTime?
+  supersededByVersionId String?
+
+  event          Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  invoice        Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceVersion InvoiceVersion @relation(fields: [invoiceVersionId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, status])
+  @@index([invoiceId])
+}
+
+/// The running invoice number for one event's code and year (#167). One row per (code, year), so a number
+/// can never be issued twice across events; allocated by an atomic increment inside the finalize transaction.
+model InvoiceNumberCounter {
+  id         String   @id @default(cuid())
+  eventId    String
+  code       String
+  year       Int
+  lastNumber Int
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([code, year])
+  @@index([eventId])
 }

@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { lockMembershipPermissions } from "@/modules/access/membership-lock";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 
 /**
@@ -40,10 +41,12 @@ export async function stripHealthAccess(
   actorUserId: string,
   reason: "DEACTIVATED" | "REACTIVATED" | "RE_ADDED" | "ROLE_CHANGED",
 ) {
-  if (!membership.permissions.includes("VIEW_HEALTH_INFORMATION")) return false;
+  // Lock the row and decide from its permissions now (never from a read made before the lock): a concurrent grant or strip of another permission must not be undone.
+  const current = await lockMembershipPermissions(tx, membership.id);
+  if (!current?.permissions.includes("VIEW_HEALTH_INFORMATION")) return false;
   await tx.eventMembership.update({
     where: { id: membership.id },
-    data: { permissions: membership.permissions.filter((permission) => permission !== "VIEW_HEALTH_INFORMATION") as never },
+    data: { permissions: current.permissions.filter((permission) => permission !== "VIEW_HEALTH_INFORMATION") as never },
   });
   await endUserSessions(tx, membership.userId);
   await writeAuditLog({
@@ -70,11 +73,15 @@ export async function setHealthAccess(eventId: string, membershipId: string, act
     if (membership.user.globalRole === "SYSTEM_ADMIN") {
       throw new HealthAccessGrantError("TARGET_IS_SYSTEM_ADMIN", "System administrators already have health information access.");
     }
-    const has = membership.permissions.includes("VIEW_HEALTH_INFORMATION");
+    // Lock the row and work from its permissions now, so a concurrent change to another permission is not undone.
+    const locked = await lockMembershipPermissions(tx, membership.id);
+    if (!locked) throw new HealthAccessGrantError("MEMBERSHIP_NOT_FOUND", "That staff assignment no longer exists.");
+    const held = locked.permissions;
+    const has = held.includes("VIEW_HEALTH_INFORMATION");
     if (has === granted) return { granted, changed: false };
-    const permissions = granted
-      ? [...membership.permissions, "VIEW_HEALTH_INFORMATION" as const]
-      : membership.permissions.filter((permission) => permission !== "VIEW_HEALTH_INFORMATION");
+    const permissions = (granted
+      ? [...held, "VIEW_HEALTH_INFORMATION"]
+      : held.filter((permission) => permission !== "VIEW_HEALTH_INFORMATION")) as never;
     await tx.eventMembership.update({ where: { id: membership.id }, data: { permissions } });
     await endUserSessions(tx, membership.userId);
     await writeAuditLog({

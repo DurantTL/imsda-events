@@ -455,11 +455,11 @@ export async function loadReconciliationFacts(client: Client, eventId: string) {
 }
 
 /** One lock per event for everything that changes or approves the reconciliation, so it is one thing at a time. */
-async function lockEvent(tx: Prisma.TransactionClient, eventId: string) {
+export async function lockEvent(tx: Prisma.TransactionClient, eventId: string) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`attendance-reconciliation:${eventId}`}))`;
 }
 
-const LONG_TRANSACTION = { timeout: 30_000, maxWait: 10_000 } as const;
+export const LONG_TRANSACTION = { timeout: 30_000, maxWait: 10_000 } as const;
 
 // ---------------------------------------------------------------------------------------------
 // Corrections
