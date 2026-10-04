@@ -154,4 +154,11 @@ describe("invoice PDF (#168)", () => {
     expect(text).toContain("AAAA");
     expect(Date.now() - started).toBeLessThan(15000);
   });
+
+  it("prints a promo discount without the (possibly private) promo code", async () => {
+    const withPromo = registration("pr", "Eagles", [person("a", true), person("b", true)], { promo: { code: "SECRETCODE25", type: "FIXED_CENTS", value: 500, maximumDiscountCents: null, recordedCents: 500 } });
+    const { text } = await pdfText(await renderInvoicePdf(baseInput({ snapshot: snapshotFor([withPromo]) })));
+    expect(text).toContain("Promo discount");
+    expect(text).not.toContain("SECRETCODE25");
+  });
 });

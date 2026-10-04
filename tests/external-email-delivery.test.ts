@@ -254,6 +254,26 @@ describe("external email queue", () => {
     expect(tampered.message.status).toBe("FAILED");
   });
 
+  it("cancels, audits and never sends an invoice email whose version is replaced before or during delivery (#168)", async () => {
+    const bytes = Buffer.from("%PDF-1.7 synthetic");
+    const attachment = { filename: "Invoice-SC27-0001.pdf", contentType: "application/pdf", sha256: createHash("sha256").update(bytes).digest("hex"), content: bytes };
+    // Replaced while the body was being prepared: the first check passes, the one right before the send does not.
+    const mid = fakeDeliveryStore({ templateKey: "INVOICE_DELIVERY", registrationId: null, attachment });
+    mid.prisma.invoiceDeliveryRecipient.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: "recipient-1" } as never);
+    const sendEmail = vi.fn();
+    const result = await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: mid.prisma as never, sendEmail: sendEmail as never } });
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(result.sentIds).toEqual([]);
+    expect(mid.message.status).toBe("CANCELLED");
+    expect(mid.prisma.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: "INVOICE_MESSAGE_CANCELLED", entityId: "message-1", metadata: { messageId: "message-1", reason: "Invoice version superseded" } }) });
+    // Replaced before it was claimed.
+    const early = fakeDeliveryStore({ templateKey: "INVOICE_DELIVERY", registrationId: null, attachment });
+    early.prisma.invoiceDeliveryRecipient.findFirst.mockResolvedValue({ id: "recipient-1" } as never);
+    await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: early.prisma as never, sendEmail: sendEmail as never } });
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(early.message.status).toBe("CANCELLED");
+  });
+
   it("sends a message with no attachment exactly as before", async () => {
     const store = fakeDeliveryStore();
     const sendEmail = vi.fn(async (input: { attachments?: unknown }) => {

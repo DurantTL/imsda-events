@@ -26,7 +26,7 @@ import { assertLocalDatabase } from "./support/local-only-guard";
 import { fillBlankSyntheticEnv } from "./support/synthetic-env";
 import { prepareReconciliation, approveReconciliation, recordAttendanceCorrection } from "@/modules/attendance-reconciliation/repository";
 import { resolveEventBillingResponsibility } from "@/modules/billing-responsibility/repository";
-import { ensureEventMessagingDefaults } from "@/modules/communications/messaging-repository";
+import { captureMessageIdsLocally, ensureEventMessagingDefaults } from "@/modules/communications/messaging-repository";
 import { processExternalEmailQueue } from "@/modules/communications/email-delivery";
 import { mapResendDeliveryEvent, providerTransitionUpdate } from "@/modules/communications/provider-events";
 import { DEFAULT_PAYMENT_INSTRUCTIONS, treasurerCsvRows } from "@/modules/invoices/delivery-domain";
@@ -413,6 +413,10 @@ async function main() {
   await processExternalEmailQueue(ids.eventA, { messageIds: [queuedRows[0]!.id], dependencies: { configuration: { apiKey: "synthetic-not-a-key", apiUrl: "http://127.0.0.1:9" }, sendEmail: async () => { workerSent += 1; return { provider: "RESEND", providerMessageId: `synthetic-${randomUUID()}` }; } } });
   assert(workerSent === 0 && (await prisma.messageOutbox.findUniqueOrThrow({ where: { id: queuedRows[0]!.id } })).status === "CANCELLED", "the delivery worker cancels, and never sends, an invoice email whose version was replaced");
   await prisma.eventMessageSettings.update({ where: { eventId: ids.eventA }, data: { deliveryMode: "LOCAL_CAPTURE" } });
+  assert((await prisma.auditLog.count({ where: { eventId: ids.eventA, action: "INVOICE_MESSAGE_CANCELLED", entityId: queuedRows[0]!.id } })) === 1, "the worker's cancellation is audited with ids only");
+  // The local capture path cancels instead of capturing.
+  await prisma.messageOutbox.update({ where: { id: queuedRows[0]!.id }, data: { status: "PENDING", lastError: null } });
+  assert((await captureMessageIdsLocally([queuedRows[0]!.id])).length === 0 && (await prisma.messageOutbox.findUniqueOrThrow({ where: { id: queuedRows[0]!.id } })).status === "CANCELLED", "local capture cancels, and never captures, an invoice email whose version was replaced");
   const oldPreview = await getInvoiceSendPreview(ids.eventA, v1);
   assert(!oldPreview.canSend && oldPreview.newerVersion?.id === rev.versionId && oldPreview.blockedReason?.includes("replaced"), "a superseded version shows a notice and the newer version");
   assert(code(await failure(sendInvoiceVersion({ ...baseSend, selectedKeys: [tinaKey], idempotencyKey: key("sup") }))) === "NOT_SENDABLE", "a superseded version cannot be sent");

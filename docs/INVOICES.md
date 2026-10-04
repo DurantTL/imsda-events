@@ -202,7 +202,7 @@ dependencies are small pure-JS helpers), from the **finalized version's immutabl
 the conference name (platform settings, plain text), invoice number (with `-R<n>`), issue date (the finalization time, in the event's time
 zone), event, billed-to church and the billing contact **as finalized**, one block per club registration with registered and billable counts and its
 amount, the credits, promo code, charges not tied to a person and staff adjustments under it, the total, "Supersedes SC27-0001" on a revision, and the
-payment instruction. Attendee names are not printed, and neither is a registration's confirmation code (with a contact email it opens that registration, and the PDF goes to every director on the invoice): each block carries a plain "Line N" reference instead. The layout version is recorded on each document (now 2).
+payment instruction. Attendee names are not printed, and neither is a registration's confirmation code (with a contact email it opens that registration, and the PDF goes to every director on the invoice): each block carries a plain "Line N" reference instead. The layout version is recorded on each document (now 3); a promo discount prints as "Promo discount" with no code, since a code may be private.
 
 The payment instruction is a finance setting, not a fixed fact: the event's `invoicePaymentInstructions` (editable by MANAGE_FINANCE, audited), defaulting to
 "Please remit by check to the Iowa-Missouri Conference." The text used is copied onto the stored document, so changing the setting later never changes a PDF
@@ -247,7 +247,7 @@ the event's sender settings, HTML and text bodies), and audits it. After the com
   The invoice page lists every send with its recipients and statuses. A resend is a **new delivery record for the same version** with the same document and hash.
 - A retry with the same key replays the first result and sends nothing more; the key cannot be reused for another version.
 - The Communications "Retry" refuses an invoice message ("Resend this invoice from Finance → Invoices."): a retry would carry no delivery record and could resend a replaced version. Invoice messages are not event templates, so they do not appear in the Communications delivery log, which is where the Retry button lives.
-- **A replaced version never goes out.** Finalizing a revision cancels the replaced version's still-queued invoice messages in the same transaction, and the delivery worker re-checks that the version is still FINALIZED before sending and cancels the message otherwise (shown as "Cancelled" in the history).
+- **A replaced version never goes out.** Finalizing a revision cancels the replaced version's still-queued invoice messages in the same transaction, and the delivery worker re-checks that the version is still FINALIZED before sending and cancels the message otherwise (shown as "Cancelled" in the history). The check runs when the message is claimed and again immediately before the provider call, and the local-capture path applies the same check; each worker cancellation is audited (ids and the reason "Invoice version superseded").
 - Director copies are recorded with outbox recipient kind `CLUB_DIRECTOR` (the billing contact is `BILLING_CONTACT`). An attachment over 10 MB is refused at send with a clear message.
 - Audit rows (`INVOICE_SENT`, `INVOICE_RESENT`) hold ids, counts, the document hash and the delivery mode: **never an email address or a name**.
 

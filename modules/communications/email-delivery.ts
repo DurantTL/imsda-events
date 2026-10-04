@@ -235,6 +235,39 @@ function resolveConfiguration(dependencies: ExternalEmailDeliveryDependencies) {
   }
 }
 
+const INVOICE_REPLACED_REASON = "Invoice version superseded";
+
+/** Cancels (and audits, ids only) an invoice message whose version is no longer FINALIZED. Returns true when it did. */
+async function cancelIfInvoiceReplaced(
+  prisma: DeliveryPrisma,
+  message: { id: string; eventId: string | null; templateKey: string; lockToken: string },
+) {
+  if (message.templateKey !== "INVOICE_DELIVERY") return false;
+  const replaced = await prisma.invoiceDeliveryRecipient.findFirst({
+    where: { messageOutboxId: message.id, delivery: { invoiceVersion: { status: { not: "FINALIZED" } } } },
+    select: { id: true },
+  });
+  if (!replaced) return false;
+  const updated = await prisma.messageOutbox.updateMany({
+    where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
+    data: { status: "CANCELLED", lockedAt: null, lockToken: null, lastError: "The invoice was replaced by a newer version before this was sent." },
+  });
+  if (updated.count === 1) {
+    await prisma.auditLog.create({
+      data: {
+        eventId: message.eventId,
+        action: "INVOICE_MESSAGE_CANCELLED",
+        entityType: "MessageOutbox",
+        entityId: message.id,
+        correlationId: randomUUID(),
+        summary: "Cancelled an invoice email because its invoice version was superseded.",
+        metadata: { messageId: message.id, reason: INVOICE_REPLACED_REASON },
+      },
+    });
+  }
+  return true;
+}
+
 async function recoverStaleClaims(
   prisma: DeliveryPrisma,
   scope: OutboxScope,
@@ -565,19 +598,7 @@ async function runDeliveryLoop(
     );
     if (!message) break;
     // An invoice email is sent only while its version is still FINALIZED (#168): one a revision replaced is cancelled, never sent.
-    if (message.templateKey === "INVOICE_DELIVERY") {
-      const replaced = await prisma.invoiceDeliveryRecipient.findFirst({
-        where: { messageOutboxId: message.id, delivery: { invoiceVersion: { status: { not: "FINALIZED" } } } },
-        select: { id: true },
-      });
-      if (replaced) {
-        await prisma.messageOutbox.updateMany({
-          where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
-          data: { status: "CANCELLED", lockedAt: null, lockToken: null, lastError: "The invoice was replaced by a newer version before this was sent." },
-        });
-        continue;
-      }
-    }
+    if (await cancelIfInvoiceReplaced(prisma, message)) continue;
     let preparedBody: PreparedEmailBody | null = null;
     try {
       const prepareBodyText = dependencies.prepareBodyText
@@ -598,6 +619,8 @@ async function runDeliveryLoop(
       if (message.attachment && createHash("sha256").update(message.attachment.content).digest("hex") !== message.attachment.sha256) {
         throw new Error("The attachment no longer matches its recorded hash, so the message was not sent.");
       }
+      // Checked again immediately before the provider call, so a revision that committed while the body was prepared cannot slip one out.
+      if (await cancelIfInvoiceReplaced(prisma, message)) continue;
       const delivery = await sendEmail({
         fromName: message.senderNameSnapshot,
         fromEmail: message.senderEmailSnapshot ?? "",

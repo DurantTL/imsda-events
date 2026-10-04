@@ -153,7 +153,8 @@ function lineExtras(line: InvoiceLine) {
   for (const credit of line.credits) {
     extras.push({ label: `Credit: ${credit.label}${credit.units !== null ? ` (${credit.units})` : ""}`, cents: credit.amountCents });
   }
-  if (line.promo) extras.push({ label: `Promo code ${line.promo.code}`, cents: line.promo.amountCents });
+  // The code itself is never printed: a promo code may be private.
+  if (line.promo) extras.push({ label: "Promo discount", cents: line.promo.amountCents });
   if (line.adjustmentCents !== 0) extras.push({ label: "Staff adjustments", cents: line.adjustmentCents });
   return extras;
 }
