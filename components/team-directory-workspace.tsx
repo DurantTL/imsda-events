@@ -12,11 +12,19 @@ import {
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { TeamDirectory } from "@/modules/system-admin/team-directory";
 import { cardCell } from "@/components/table-card-labels";
+import { TeamAccountMenu, teamMenuItems } from "@/components/team-account-menu";
 
 function friendly(value: string) {
   return value.split("_").map((part) => (
     part.charAt(0) + part.slice(1).toLowerCase()
   )).join(" ");
+}
+
+/** Email with break opportunities only after "@" and ".", never mid-token. */
+export function breakableEmail(email: string) {
+  return email.split(/(?<=[@.])/).map((part, index) => (
+    <span key={index}>{index > 0 && <wbr />}{part}</span>
+  ));
 }
 
 function whenever(value: string | null) {
@@ -183,15 +191,15 @@ export function TeamDirectoryWorkspace({
 
       <section className="panel">
         <div className="reminder-recipient-table-wrap">
-          <table role="table" className="reminder-recipient-table table-cards">
+          <table role="table" className="reminder-recipient-table table-cards team-directory-table">
             <caption>{directory.totalCount} account{directory.totalCount === 1 ? "" : "s"}</caption>
             <thead role="rowgroup">
               <tr role="row">
                 <th role="columnheader" scope="col">Name</th>
                 <th role="columnheader" scope="col">Email</th>
                 <th role="columnheader" scope="col">Sign-in</th>
-                <th role="columnheader" scope="col">Two-factor</th>
-                <th role="columnheader" scope="col">Last signed in</th>
+                <th role="columnheader" scope="col">Two-step</th>
+                <th role="columnheader" scope="col">Last sign-in</th>
                 <th role="columnheader" scope="col">Events</th>
                 <th role="columnheader" scope="col">Action</th>
               </tr>
@@ -205,22 +213,22 @@ export function TeamDirectoryWorkspace({
                     {member.jobTitle && <small>{member.jobTitle}</small>}
                   </td>
                   <td {...cardCell("Email")}>
-                    {member.email}
-                    {member.phone && <small>{member.phone}</small>}
+                    <span className="team-email">{breakableEmail(member.email)}</span>
+                    {member.phone && <small className="team-phone">{member.phone}</small>}
                   </td>
                   <td {...cardCell("Sign-in")}>
                     {member.signInDisabled
                       ? "Disabled"
                       : friendly(member.accountStatus)}
                   </td>
-                  <td {...cardCell("Two-factor")}>
+                  <td {...cardCell("Two-step")}>
                     {member.mfaStatus === "ACTIVE"
                       ? <><ShieldCheck aria-hidden="true" size={13} /> On</>
                       : member.mfaStatus === "PENDING"
                         ? <><ShieldAlert aria-hidden="true" size={13} /> Started</>
                         : <><ShieldAlert aria-hidden="true" size={13} /> Off</>}
                   </td>
-                  <td {...cardCell("Last signed in")}>{whenever(member.lastSignedInAt)}</td>
+                  <td {...cardCell("Last sign-in")}>{whenever(member.lastSignedInAt)}</td>
                   <td {...cardCell("Events")}>
                     {member.globalRole === "SYSTEM_ADMIN"
                       // A system administrator has every event; per-event rows would suggest limits that don't apply.
@@ -246,30 +254,21 @@ export function TeamDirectoryWorkspace({
                       >
                         <Pencil size={14} aria-hidden="true" /> Edit profile
                       </button>
-                      <button className="secondary-button" disabled={busyUserId === member.id} onClick={() => void accountAction(member, { action: "send-password-reset" })} type="button">
-                        Send password reset
-                      </button>
-                      <button className="secondary-button" disabled={busyUserId === member.id} onClick={() => changeEmail(member)} type="button">
-                        Change email
-                      </button>
-                      {member.id !== currentUserId && member.mfaStatus !== "NONE" && (
-                        <button className="secondary-button" disabled={busyUserId === member.id} onClick={() => resetTwoStep(member)} type="button">
-                          Reset two-step
-                        </button>
-                      )}
-                      {member.id === currentUserId ? (
+                      <TeamAccountMenu
+                        memberName={member.displayName}
+                        items={teamMenuItems(member, currentUserId)}
+                        disabled={busyUserId === member.id}
+                        onSelect={(key) => {
+                          if (key === "send-password-reset") void accountAction(member, { action: "send-password-reset" });
+                          else if (key === "change-email") changeEmail(member);
+                          else if (key === "reset-two-step") resetTwoStep(member);
+                          else void setDisabled(member.id, member.displayName, !member.signInDisabled);
+                        }}
+                      />
+                      {member.id === currentUserId && (
                         // The refusal is enforced server-side too; showing it
                         // here saves someone finding out by being refused.
-                        <small>This is you</small>
-                      ) : (
-                        <button
-                          className="secondary-button"
-                          type="button"
-                          disabled={busyUserId === member.id}
-                        onClick={() => setDisabled(member.id, member.displayName, !member.signInDisabled)}
-                      >
-                        {member.signInDisabled ? "Allow sign-in" : "Disable sign-in"}
-                      </button>
+                        <small className="team-you-label">This is you</small>
                       )}
                     </div>
                   </td>
