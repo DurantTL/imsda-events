@@ -53,7 +53,7 @@ const fakeDb = {
   organization: {
     findUnique: vi.fn(async ({ where }: { where: { id: string } }) => state.organizations.find((row) => row.id === where.id) ?? null),
     findMany: vi.fn(async () => []),
-    findFirst: vi.fn(async ({ where }: { where: { id: string } }) => state.organizations.find((row) => row.id === where.id && row.isActive) ?? null),
+    findFirst: vi.fn(async ({ where }: { where: { id: string; type?: { in: string[] } } }) => state.organizations.find((row) => row.id === where.id && row.isActive && (!where.type || where.type.in.includes(row.type as string))) ?? null),
   },
   registrationBillingResponsibility: {
     count: vi.fn(async ({ where }: { where: { eventId: string; organizationId: string } }) => state.responsibilities.filter((row) => row.eventId === where.eventId && row.organizationId === where.organizationId).length),
@@ -133,7 +133,12 @@ beforeEach(() => {
   state.changes = [];
   state.audits = [];
   state.contacts = [];
-  state.organizations = [{ id: "church-1", isActive: true }, { id: "church-2", isActive: true }, { id: "closed", isActive: false }];
+  state.organizations = [
+    { id: "church-1", isActive: true, type: "CHURCH" },
+    { id: "church-2", isActive: true, type: "CHURCH" },
+    { id: "closed", isActive: false, type: "CHURCH" },
+    { id: "company-1", isActive: true, type: "COMPANY" },
+  ];
 });
 
 describe("resolver and backfill (#165)", () => {
@@ -255,6 +260,13 @@ describe("billing contacts (#165): conference-wide, system administrators only",
     expect(audit.every((entry) => !("eventId" in entry) && entry.entityType === "Organization" && entry.entityId === "church-1")).toBe(true);
     expect(JSON.stringify(audit)).not.toContain("treasurer@example.test");
     expect(JSON.stringify(audit)).not.toContain("New Treasurer");
+  });
+
+  it("keeps contacts for active churches, schools, clubs and ministries only", async () => {
+    for (const organizationId of ["closed", "company-1", "missing"]) {
+      await expect(setOrganizationBillingContact({ organizationId, contact, actor: admin })).rejects.toMatchObject({ code: "ORGANIZATION_NOT_ELIGIBLE" });
+    }
+    expect(state.contacts).toHaveLength(0);
   });
 
   it("refuses a finance manager or anyone who is not a system administrator, for every contact action", async () => {

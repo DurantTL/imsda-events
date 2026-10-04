@@ -296,6 +296,7 @@ export function billingResponsibilityCsvRows(groups: readonly BillingGroup[], gr
     "Estimated (registered)",
     "Group estimated total (registered)",
     "How decided",
+    "Out of date",
     "Hint (free-text answer, not linked)",
   ]];
   for (const group of groups) {
@@ -316,6 +317,7 @@ export function billingResponsibilityCsvRows(groups: readonly BillingGroup[], gr
         money(line.owedCents),
         group.party.kind === "UNRESOLVED" ? "" : money(group.owedCents),
         sourceLabel(line.source),
+        line.outdated ? "Yes" : "",
         line.hint ?? "",
       ]);
     }

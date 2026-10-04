@@ -167,7 +167,11 @@ ALTER TABLE "RegistrationBillingResponsibility" ADD CONSTRAINT "RegistrationBill
 CREATE FUNCTION "RegistrationBillingResponsibilityChange_refuse_change"() RETURNS trigger AS $$
 BEGIN
   IF TG_OP = 'DELETE' THEN
-    IF pg_trigger_depth() > 1 THEN
+    -- Only a foreign-key cascade, and only once the event or the registration is really gone.
+    IF pg_trigger_depth() > 1 AND (
+      NOT EXISTS (SELECT 1 FROM "Event" WHERE "id" = OLD."eventId")
+      OR NOT EXISTS (SELECT 1 FROM "Registration" WHERE "id" = OLD."registrationId")
+    ) THEN
       RETURN OLD;
     END IF;
     RAISE EXCEPTION 'Billing responsibility history is append-only.' USING ERRCODE = '23001';
@@ -205,6 +209,11 @@ BEGIN
   END IF;
   IF (new_json - once_columns) <> (old_json - once_columns) THEN
     RAISE EXCEPTION 'An organization billing contact is not rewritten.' USING ERRCODE = '23001';
+  END IF;
+  -- Verification belongs to a contact that is still active: never on an ended row, nor in the update that ends it.
+  IF (NEW."verifiedAt" IS DISTINCT FROM OLD."verifiedAt" OR NEW."verifiedByUserId" IS DISTINCT FROM OLD."verifiedByUserId")
+     AND (OLD."effectiveTo" IS NOT NULL OR NEW."effectiveTo" IS NOT NULL) THEN
+    RAISE EXCEPTION 'An ended organization billing contact cannot be verified.' USING ERRCODE = '23001';
   END IF;
   FOREACH column_name IN ARRAY once_columns LOOP
     IF old_json -> column_name <> 'null'::jsonb AND new_json -> column_name IS DISTINCT FROM old_json -> column_name THEN

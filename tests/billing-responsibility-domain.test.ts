@@ -109,6 +109,7 @@ describe("groupBillingLines (#165)", () => {
     line({ registrationId: "r3", party: a, clubId: "club-3", clubName: "Alpha Waitlisted", status: "WAITLISTED" }),
     line({ registrationId: "r4", party: church("church-2", "Beta SDA Church"), clubId: "club-4", clubName: "Beta Pathfinders" }),
     line({ registrationId: "r5", party: { kind: "UNRESOLVED" }, source: "UNRESOLVED_NO_ORGANIZATION_LINKED", hint: "Gamma church" }),
+    line({ registrationId: "r7", party: church("church-2", "Beta SDA Church"), clubId: "club-7", clubName: "Beta Stale", outdated: true }),
     line({ registrationId: "r6", party: { kind: "PERSON", id: "p1", name: "Group Leader", email: "leader@example.test" }, source: "GROUP_BILLING_PERSON" }),
   ];
   const contacts = new Map([["church-1", contact("2026-10-02T00:00:00.000Z")]]);
@@ -155,5 +156,9 @@ describe("groupBillingLines (#165)", () => {
     expect(alphaRow[5]).toBe("Terry Treasurer");
     expect(alphaRow[7]).toBe("treasurer@example.test");
     expect(rows.flat().some((cell) => String(cell).includes("555"))).toBe(false);
+    const outdatedColumn = rows[0]!.indexOf("Out of date");
+    expect(outdatedColumn).toBeGreaterThan(-1);
+    expect(rows.find((row) => row[9] === "CONF-r7")![outdatedColumn]).toBe("Yes");
+    expect(rows.find((row) => row[9] === "CONF-r1")![outdatedColumn]).toBe("");
   });
 });

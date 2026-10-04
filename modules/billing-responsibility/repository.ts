@@ -592,8 +592,13 @@ function requireSystemAdministratorActor(actor: ContactActor) {
 }
 
 async function requireBillableOrganization(tx: Client, organizationId: string) {
-  const organization = await tx.organization.findUnique({ where: { id: organizationId }, select: { id: true } });
-  if (!organization) throw new BillingResponsibilityError("That organization does not exist.", "ORGANIZATION_NOT_ELIGIBLE");
+  const organization = await tx.organization.findFirst({
+    where: { id: organizationId, isActive: true, type: { in: [...RESPONSIBLE_ORGANIZATION_TYPES] } },
+    select: { id: true },
+  });
+  if (!organization) {
+    throw new BillingResponsibilityError("Billing contacts are kept for active churches, schools, clubs and ministries only.", "ORGANIZATION_NOT_ELIGIBLE");
+  }
 }
 
 /**

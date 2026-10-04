@@ -249,6 +249,9 @@ async function main() {
   assert(await rejects(prisma.organizationBillingContact.update({ where: { id: ended.id }, data: { effectiveTo: new Date() } })), "an ended contact's end date cannot change");
   assert(await rejects(prisma.organizationBillingContact.update({ where: { id: ended.id }, data: { effectiveTo: null } })), "an ended contact cannot be reopened");
   assert(await rejects(prisma.organizationBillingContact.update({ where: { id: ended.id }, data: { verifiedAt: null } })), "a verification cannot be erased");
+  assert(await rejects(prisma.organizationBillingContact.update({ where: { id: active.id }, data: { effectiveTo: new Date(), verifiedAt: new Date(), verifiedByUserId: ids.staff } })), "a contact cannot be verified in the update that ends it");
+  const unverifiedEnded = await prisma.organizationBillingContact.findFirstOrThrow({ where: { organizationId: ids.churchB, effectiveTo: { not: null }, verifiedAt: null } });
+  assert(await rejects(prisma.organizationBillingContact.update({ where: { id: unverifiedEnded.id }, data: { verifiedAt: new Date(), verifiedByUserId: ids.staff } })), "an ended contact cannot be verified afterwards");
   await prisma.organizationBillingContact.update({ where: { id: active.id }, data: { verifiedAt: new Date(), verifiedByUserId: ids.staff } });
   assert(await rejects(prisma.organizationBillingContact.update({ where: { id: active.id }, data: { verifiedAt: new Date(0) } })), "a verification cannot be rewritten");
 
