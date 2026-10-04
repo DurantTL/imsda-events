@@ -9653,3 +9653,20 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
   }
   .calendar-chip.calendar-closure svg { display: none; }
 }
+
+/* Billing responsibility (#165) */
+.billing-settings { display: grid; gap: 10px; padding: 14px 17px; }
+.billing-grouping { display: grid; gap: 6px; max-width: 460px; }
+.billing-grouping select, .billing-link-form input, .billing-link-form textarea, .billing-contact-form input { width: 100%; border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; color: var(--ink); padding: 9px 11px; font: inherit; }
+.billing-resolve, .billing-inline-action { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.billing-link-form, .billing-contact-form { display: grid; gap: 6px; max-width: 420px; margin-top: 8px; }
+.billing-options { list-style: none; margin: 0; padding: 0; border: 1px solid #cbdbe2; border-radius: 10px; background: #fff; }
+.billing-options button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 8px 11px; font: inherit; cursor: pointer; }
+.billing-options button:hover, .billing-options button:focus-visible { background: var(--imsda-navy-soft); }
+.billing-contact { padding: 4px 17px 12px; display: grid; gap: 8px; }
+.billing-line { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(90px, 0.5fr) minmax(0, 1.4fr); gap: 12px; align-items: start; padding: 11px 17px; }
+.billing-unresolved > p, .billing-unresolved .section-heading { padding: 0 17px; }
+.billing-readiness-ready { background: #e6f4ea; color: #1b5e32; }
+.billing-readiness-no_contact, .billing-readiness-not_verified { background: #fdf0d8; color: #7a4b00; }
+@media (max-width: 720px) { .billing-line { grid-template-columns: minmax(0, 1fr); } }
+.billing-estimate-note { margin: 0; color: var(--muted, #5b6b73); }
