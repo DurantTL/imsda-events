@@ -61,6 +61,8 @@ CREATE TABLE "AttendanceReviewAcknowledgement" (
     "reason" TEXT NOT NULL,
     "actorUserId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "supersededAt" TIMESTAMP(3),
+    "supersededById" TEXT,
 
     CONSTRAINT "AttendanceReviewAcknowledgement_pkey" PRIMARY KEY ("id")
 );
@@ -81,10 +83,10 @@ CREATE INDEX "AttendanceReconciliationVersion_eventId_status_idx" ON "Attendance
 CREATE UNIQUE INDEX "AttendanceReconciliationVersion_eventId_versionNumber_key" ON "AttendanceReconciliationVersion"("eventId", "versionNumber");
 
 -- CreateIndex
-CREATE INDEX "AttendanceReviewAcknowledgement_eventId_createdAt_idx" ON "AttendanceReviewAcknowledgement"("eventId", "createdAt");
+CREATE INDEX "AttendanceReviewAcknowledgement_registrationId_reviewKey_idx" ON "AttendanceReviewAcknowledgement"("registrationId", "reviewKey");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "AttendanceReviewAcknowledgement_registrationId_reviewKey_key" ON "AttendanceReviewAcknowledgement"("registrationId", "reviewKey");
+CREATE INDEX "AttendanceReviewAcknowledgement_eventId_createdAt_idx" ON "AttendanceReviewAcknowledgement"("eventId", "createdAt");
 
 -- AddForeignKey
 ALTER TABLE "AttendanceCorrection" ADD CONSTRAINT "AttendanceCorrection_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -230,11 +232,18 @@ END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER "AttendanceReconciliationVersion_guard" BEFORE INSERT OR UPDATE OR DELETE ON "AttendanceReconciliationVersion" FOR EACH ROW EXECUTE FUNCTION "AttendanceReconciliationVersion_guard"();
 
--- A roster-review acknowledgement carries its reason, is never edited or deleted (only the actor
--- clearing itself when that user is deleted, and the rows going with their event or registration,
--- both only from inside a foreign-key action).
+-- A roster-review acknowledgement carries its reason, and there is one active (not superseded) per
+-- registration and review key; acknowledging again with a different choice or reason supersedes the
+-- earlier one, which is kept. It is never edited or deleted: the only change allowed is setting the
+-- supersede columns once (together), plus, only from inside a foreign-key action
+-- (pg_trigger_depth() > 1), the actor clearing itself when that user is deleted and the rows going
+-- with their event or registration.
 ALTER TABLE "AttendanceReviewAcknowledgement" ADD CONSTRAINT "AttendanceReviewAcknowledgement_reason_present" CHECK (length(btrim("reason")) > 0);
+ALTER TABLE "AttendanceReviewAcknowledgement" ADD CONSTRAINT "AttendanceReviewAcknowledgement_superseded_pair" CHECK (("supersededAt" IS NULL) = ("supersededById" IS NULL));
+CREATE UNIQUE INDEX "AttendanceReviewAcknowledgement_one_active" ON "AttendanceReviewAcknowledgement"("registrationId", "reviewKey") WHERE "supersededAt" IS NULL;
 CREATE FUNCTION "AttendanceReviewAcknowledgement_guard"() RETURNS trigger AS $$
+DECLARE
+  superseding CONSTANT text[] := ARRAY['supersededAt', 'supersededById'];
 BEGIN
   IF TG_OP = 'DELETE' THEN
     IF pg_trigger_depth() > 1 AND (
@@ -243,12 +252,16 @@ BEGIN
     ) THEN
       RETURN OLD;
     END IF;
-    RAISE EXCEPTION 'A roster-review acknowledgement is never deleted.' USING ERRCODE = '23001';
+    RAISE EXCEPTION 'A roster-review acknowledgement is never deleted; supersede it with a new one.' USING ERRCODE = '23001';
   END IF;
   IF pg_trigger_depth() > 1 AND NEW."actorUserId" IS NULL AND (to_jsonb(NEW) - 'actorUserId') = (to_jsonb(OLD) - 'actorUserId') THEN
     RETURN NEW;
   END IF;
-  RAISE EXCEPTION 'A roster-review acknowledgement is not rewritten.' USING ERRCODE = '23001';
+  IF OLD."supersededAt" IS NULL AND NEW."supersededAt" IS NOT NULL AND NEW."supersededById" IS NOT NULL
+     AND (to_jsonb(NEW) - superseding) = (to_jsonb(OLD) - superseding) THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'A roster-review acknowledgement is not rewritten; supersede it with a new one.' USING ERRCODE = '23001';
 END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER "AttendanceReviewAcknowledgement_guard" BEFORE UPDATE OR DELETE ON "AttendanceReviewAcknowledgement" FOR EACH ROW EXECUTE FUNCTION "AttendanceReviewAcknowledgement_guard"();

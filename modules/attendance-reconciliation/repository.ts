@@ -8,8 +8,7 @@ import {
   IN_SCOPE_STATUSES,
   LATE_ADDITION_GRACE_MS,
   reviewPending,
-  reconstructPricedRoster,
-  type PricedRosterEntry,
+  pricedGaps,
   type PromoSource,
   type ReviewChoice,
   type RosterReviewReason,
@@ -136,6 +135,7 @@ const factsSelect = {
     orderBy: [{ position: "asc" }, { createdAt: "asc" }],
     select: {
       id: true,
+      position: true,
       createdAt: true,
       profileSnapshot: true,
       person: { select: { firstName: true, lastName: true } },
@@ -158,18 +158,35 @@ type FactsRow = Prisma.RegistrationGetPayload<{ select: typeof factsSelect }>;
 
 type LineRow = Record<string, unknown>;
 
-type Pricing = { snapshot: Record<string, unknown>; lines: LineRow[]; pricedAt: Date };
+type Pricing = {
+  snapshot: Record<string, unknown>;
+  lines: LineRow[];
+  pricedAt: Date;
+  /** The roster an amendment recorded when it priced the registration ({id, position}); null for the original submission. */
+  amended: Array<{ id: string; position: number }> | null;
+};
 
 /** The prices a registration carries now: the latest amendment's snapshot, else the submission's. */
 function pricingOf(row: FactsRow): Pricing {
-  const amended = record(record(row.operations[0]?.afterSnapshot).pricingSnapshot);
+  const after = record(row.operations[0]?.afterSnapshot);
+  const amended = record(after.pricingSnapshot);
   const snapshot = Object.keys(amended).length > 0 ? amended : record(row.publicFormSubmission?.pricingSnapshot);
   const lines = (Array.isArray(snapshot.lineItems) ? snapshot.lineItems.map(record) : []).filter((line) => typeof line.amountCents === "number");
-  return { snapshot, lines, pricedAt: row.operations[0]?.createdAt ?? row.publicFormSubmission?.createdAt ?? row.createdAt };
+  const recorded = Array.isArray(after.attendees)
+    ? after.attendees.flatMap((entry) => {
+        const item = record(entry);
+        return typeof item.id === "string" && typeof item.position === "number" ? [{ id: item.id, position: item.position }] : [];
+      })
+    : [];
+  return {
+    snapshot,
+    lines,
+    pricedAt: row.operations[0]?.createdAt ?? row.publicFormSubmission?.createdAt ?? row.createdAt,
+    amended: row.operations[0] ? recorded : null,
+  };
 }
 
 type MoveRow = { id: string; attendeeId: string | null; fromRegistrationId: string | null; toRegistrationId: string | null; decidedAt: Date | null };
-type MovedAttendee = { id: string; position: number; createdAt: Date; name: string };
 type AcknowledgementRef = { id: string; choice: ReviewChoice };
 
 /** What the reconciliation knows about the registrations beyond the registration rows themselves. */
@@ -177,83 +194,84 @@ type SourceContext = {
   substitutedAttendeeIds: ReadonlySet<string>;
   /** Approved member transfers touching the billed registrations. */
   moves: readonly MoveRow[];
-  movedAttendees: ReadonlyMap<string, MovedAttendee>;
-  /** Roster-review acknowledgements by registration, as review key to the acknowledgement. */
+  /** Active roster-review acknowledgements by registration, as review key to the acknowledgement. */
   acknowledgements: ReadonlyMap<string, ReadonlyMap<string, AcknowledgementRef>>;
   rows: ReadonlyMap<string, FactsRow>;
   pricing: ReadonlyMap<string, Pricing>;
 };
 
-type PricedRoster = { ok: true; indexOf: ReadonlyMap<string, number>; size: number; transfers: readonly MoveRow[] } | { ok: false; transfers: readonly MoveRow[] };
+type Places = {
+  /** Approved transfers decided after the registration was priced. */
+  transfers: MoveRow[];
+  arrivalIds: ReadonlySet<string>;
+  leavers: number;
+  /** Someone moved more than once: their place cannot be told. */
+  twice: boolean;
+  gaps: ReturnType<typeof pricedGaps>;
+};
 
 /**
- * How the price lines of one registration map to people. Prices are matched by place in the listing
- * (position, then creation time) as it was when the registration was priced. Without a transfer after
- * pricing that is the listing now. After one, the listing then is rebuilt (see
- * `reconstructPricedRoster`); when that cannot be done with certainty the result is not ok and the
- * registration goes to staff review.
+ * Where the people of one registration stood when it was priced. A person's stored place is their
+ * price-line index (the submission and amendments write it so, and staff cannot reorder). People who
+ * arrived by transfer after pricing hold the last place of the receiving registration and are left out;
+ * the places nobody holds are the lines of those who left.
  */
-function pricedRosterOf(row: FactsRow, context: SourceContext): PricedRoster {
+function placesOf(row: FactsRow, context: SourceContext): Places {
   const pricedAt = (context.pricing.get(row.id) as Pricing).pricedAt;
   const transfers = context.moves.filter((move) => (move.fromRegistrationId === row.id || move.toRegistrationId === row.id) && (move.decidedAt === null || move.decidedAt > pricedAt));
-  const natural = new Map(row.attendees.map((attendee, index) => [attendee.id, index]));
-  if (transfers.length === 0) return { ok: true, indexOf: natural, size: row.attendees.length, transfers };
-  const entry = (id: string): PricedRosterEntry | null => {
-    const moved = context.movedAttendees.get(id);
-    return moved ? { attendeeId: moved.id, position: moved.position, createdAtMs: moved.createdAt.getTime() } : null;
-  };
-  const twice = new Set<string>();
-  const seen = new Set<string>();
-  for (const move of context.moves) {
-    if (!move.attendeeId) continue;
-    if (seen.has(move.attendeeId)) twice.add(move.attendeeId);
-    seen.add(move.attendeeId);
-  }
-  const rebuilt = reconstructPricedRoster({
-    current: row.attendees.map((attendee, index) => ({ attendeeId: attendee.id, position: index, createdAtMs: attendee.createdAt.getTime() })),
-    movedInIds: new Set(transfers.filter((move) => move.toRegistrationId === row.id && move.attendeeId).map((move) => move.attendeeId as string)),
-    movedOut: transfers.filter((move) => move.fromRegistrationId === row.id).map((move) => (move.attendeeId ? entry(move.attendeeId) : null)),
-    movedTwiceIds: twice,
-  });
-  if (!rebuilt.ok) return { ok: false, transfers };
-  return { ok: true, indexOf: new Map(rebuilt.order.map((id, index) => [id, index])), size: rebuilt.order.length, transfers };
+  const arrivalIds = new Set(transfers.filter((move) => move.toRegistrationId === row.id && move.attendeeId).map((move) => move.attendeeId as string));
+  const leavers = transfers.filter((move) => move.fromRegistrationId === row.id).length;
+  const seen = new Map<string, number>();
+  for (const move of transfers) if (move.attendeeId) seen.set(move.attendeeId, (seen.get(move.attendeeId) ?? 0) + 1);
+  const twice = [...seen.values()].some((count) => count > 1);
+  const present = row.attendees.filter((attendee) => !arrivalIds.has(attendee.id)).map((attendee) => attendee.position);
+  return { transfers, arrivalIds, leavers, twice, gaps: pricedGaps({ present, leavers }) };
 }
 
-function linesAt(lines: readonly LineRow[], index: number | undefined) {
-  return index === undefined ? [] : lines.filter((line) => line.attendeeIndex === index);
+function linesAt(lines: readonly LineRow[], index: number | undefined | null) {
+  return index === undefined || index === null ? [] : lines.filter((line) => line.attendeeIndex === index);
 }
 
-function sourceFor(row: FactsRow, context: SourceContext, rosterOf: (registrationId: string) => PricedRoster | null): { source: RegistrationSource; reviewKey: string | null } {
+function sourceFor(row: FactsRow, context: SourceContext, placesFor: (registrationId: string) => Places | null): { source: RegistrationSource; reviewKey: string | null } {
   const substitutedAttendeeIds = context.substitutedAttendeeIds;
   const { snapshot, lines, pricedAt } = context.pricing.get(row.id) as Pricing;
   const definitionCredits = creditFields(row.publicFormSubmission?.formVersion.definition);
   const responses = storedRegistrationResponses(row);
   const submittedAt = (row.submittedAt ?? row.createdAt).getTime();
-  const roster = rosterOf(row.id) as PricedRoster;
-  let uncertain = !roster.ok;
+  const places = placesFor(row.id) as Places;
   const labelOf = (registrationId: string | null) => {
     const other = registrationId ? context.rows.get(registrationId) : null;
     return other ? other.clubRegistration?.organization.name ?? personName(other.accountHolderPerson) : null;
   };
 
-  const people: PersonSource[] = row.attendees.map((attendee, index) => {
-    // Someone transferred in after this registration was priced has no line here: their price is on the sending registration's lines.
-    const arrival = roster.transfers.find((move) => move.toRegistrationId === row.id && move.attendeeId === attendee.id) ?? null;
+  /**
+   * The price position of someone transferred in, on the sending registration. From the sender's amendment
+   * when its pricing came from one (it recorded every person's place); otherwise, only when exactly one
+   * person left the sender since its pricing, that person's gap. Never the arrival's current place.
+   */
+  const arrivalPosition = (move: MoveRow, attendeeId: string): number | null => {
+    const sender = move.fromRegistrationId ? context.rows.get(move.fromRegistrationId) : undefined;
+    const senderPricing = sender ? context.pricing.get(sender.id) : undefined;
+    if (!sender || !senderPricing || move.decidedAt === null || !(senderPricing.pricedAt < move.decidedAt)) return null;
+    if (senderPricing.amended) return senderPricing.amended.find((entry) => entry.id === attendeeId)?.position ?? null;
+    const senderPlaces = placesFor(sender.id);
+    return senderPlaces && senderPlaces.gaps.ok && senderPlaces.leavers === 1 && senderPlaces.gaps.gaps.length === 1 ? senderPlaces.gaps.gaps[0]! : null;
+  };
+
+  const unmatched: Array<{ id: string; name: string }> = [];
+  const people: PersonSource[] = row.attendees.map((attendee) => {
+    const arrival = places.transfers.find((move) => move.toRegistrationId === row.id && move.attendeeId === attendee.id) ?? null;
     let own: LineRow[];
     let transferredFrom: string | null = null;
-    if (arrival && roster.ok) {
-      const sender = arrival.fromRegistrationId ? context.rows.get(arrival.fromRegistrationId) : undefined;
-      const senderPricing = sender ? context.pricing.get(sender.id) : undefined;
-      const senderRoster = sender ? rosterOf(sender.id) : null;
-      if (sender && senderPricing && senderRoster?.ok && arrival.decidedAt !== null && senderPricing.pricedAt < arrival.decidedAt && senderRoster.indexOf.has(attendee.id)) {
-        own = linesAt(senderPricing.lines, senderRoster.indexOf.get(attendee.id));
-        transferredFrom = labelOf(sender.id);
-      } else {
-        uncertain = true;
-        own = linesAt(lines, index);
-      }
+    if (arrival) {
+      // An arrival takes no line of this registration. Its price is its line on the sender, or none (never a guess).
+      const position = arrivalPosition(arrival, attendee.id);
+      const senderPricing = arrival.fromRegistrationId ? context.pricing.get(arrival.fromRegistrationId) : undefined;
+      transferredFrom = labelOf(arrival.fromRegistrationId);
+      own = position !== null && senderPricing ? linesAt(senderPricing.lines, position) : [];
+      if (position === null) unmatched.push({ id: attendee.id, name: attendeeName(attendee) });
     } else {
-      own = linesAt(lines, roster.ok ? roster.indexOf.get(attendee.id) : index);
+      own = linesAt(lines, attendee.position);
     }
     const correction = attendee.attendanceCorrections[0] ?? null;
     return {
@@ -289,16 +307,22 @@ function sourceFor(row: FactsRow, context: SourceContext, rosterOf: (registratio
       };
     });
 
-  // A price line past the people priced is the one thing names cannot explain; a transfer whose
-  // effect cannot be reconstructed is the other. Anything else is matched with certainty.
-  const size = roster.ok ? roster.size : row.attendees.length;
-  const beyond = [...new Set(lines.flatMap((line) => (typeof line.attendeeIndex === "number" && line.attendeeIndex >= size ? [line.attendeeIndex] : [])))].sort((left, right) => left - right);
+  // Names never doubt a price. Review is for what the stored places cannot settle: places that do not fit the
+  // price lines, a price line past the people priced, someone moved twice, or an arrival with no price to bring.
+  const hasLines = lines.length > 0;
+  const beyond = [...new Set(lines.flatMap((line) => (typeof line.attendeeIndex === "number" && line.attendeeIndex >= places.gaps.size ? [line.attendeeIndex] : [])))].sort((left, right) => left - right);
   const reasons: RosterReviewReason[] = [];
-  if (beyond.length > 0) reasons.push("LINE_BEYOND_ROSTER");
-  if (uncertain) reasons.push("TRANSFER_AFTER_PRICING");
-  // The key names exactly what staff were shown, so a new transfer or a new stray line needs a new acknowledgement.
+  const notes: string[] = [];
+  if (hasLines && !places.gaps.ok) reasons.push(places.transfers.length > 0 ? "TRANSFER_AFTER_PRICING" : "ROSTER_POSITIONS");
+  if (hasLines && places.twice && !reasons.includes("TRANSFER_AFTER_PRICING")) reasons.push("TRANSFER_AFTER_PRICING");
+  if (hasLines && unmatched.length > 0) {
+    reasons.push("ARRIVAL_PRICE_UNMATCHED");
+    for (const entry of unmatched) notes.push(`Price for ${entry.name} couldn't be matched after the transfer.`);
+  }
+  if (hasLines && beyond.length > 0) reasons.push("LINE_BEYOND_ROSTER");
+  // The key names exactly what staff were shown, so a new transfer or stray line needs a new acknowledgement.
   const reviewKey = reasons.length > 0
-    ? `${reasons.join(",")}|${pricedAt.toISOString()}|moves:${roster.transfers.map((move) => move.id).sort().join(",")}|beyond:${beyond.join(",")}`
+    ? `${reasons.join(",")}|${pricedAt.toISOString()}|moves:${places.transfers.map((move) => move.id).sort().join(",")}|beyond:${beyond.join(",")}|unmatched:${unmatched.map((entry) => entry.id).sort().join(",")}`
     : null;
   const acknowledgement = reviewKey ? context.acknowledgements.get(row.id)?.get(reviewKey) ?? null : null;
 
@@ -330,12 +354,12 @@ function sourceFor(row: FactsRow, context: SourceContext, rosterOf: (registratio
       .map((line) => ({ label: typeof line.label === "string" ? line.label : "Charge", cents: line.amountCents as number })),
     credits,
     promo,
-    review: reasons.length > 0 ? { reasons, acknowledged: acknowledgement !== null, acknowledgementId: acknowledgement?.id ?? null, choice: acknowledgement?.choice ?? null } : null,
+    review: reasons.length > 0 ? { reasons, notes, acknowledged: acknowledgement !== null, acknowledgementId: acknowledgement?.id ?? null, choice: acknowledgement?.choice ?? null } : null,
     // Whole-registration adjustments only; a person's own are counted with that person, and only when they attended.
     registrationAdjustmentCents: row.adjustments
       .filter((adjustment) => adjustment.registrationAttendeeId === null)
       .reduce((total, adjustment) => total + adjustment.amountCents, 0),
-    hasPriceLines: lines.length > 0,
+    hasPriceLines: hasLines,
   };
   return { source, reviewKey };
 }
@@ -366,17 +390,8 @@ export async function loadReconciliationFacts(client: Client, eventId: string) {
     select: { id: true, registrationAttendeeId: true, fromRegistrationId: true, toRegistrationId: true, decidedAt: true },
   });
   const moves: MoveRow[] = moveRows.map((move) => ({ id: move.id, attendeeId: move.registrationAttendeeId, fromRegistrationId: move.fromRegistrationId, toRegistrationId: move.toRegistrationId, decidedAt: move.decidedAt }));
-  const movedIds = [...new Set(moves.flatMap((move) => (move.attendeeId ? [move.attendeeId] : [])))];
-  const movedAttendees = new Map<string, MovedAttendee>();
-  if (movedIds.length > 0) {
-    const movedRows = await client.registrationAttendee.findMany({
-      where: { id: { in: movedIds } },
-      select: { id: true, position: true, createdAt: true, profileSnapshot: true, person: { select: { firstName: true, lastName: true } } },
-    });
-    for (const moved of movedRows) movedAttendees.set(moved.id, { id: moved.id, position: moved.position, createdAt: moved.createdAt, name: attendeeName(moved) });
-  }
   const acknowledgementRows = await client.attendanceReviewAcknowledgement.findMany({
-    where: { eventId },
+    where: { eventId, supersededAt: null },
     select: { id: true, registrationId: true, reviewKey: true, choice: true },
   });
   const acknowledgements = new Map<string, Map<string, AcknowledgementRef>>();
@@ -384,18 +399,18 @@ export async function loadReconciliationFacts(client: Client, eventId: string) {
     acknowledgements.set(entry.registrationId, (acknowledgements.get(entry.registrationId) ?? new Map()).set(entry.reviewKey, { id: entry.id, choice: entry.choice }));
   }
   const rowsById = new Map(rows.map((row) => [row.id, row]));
-  const context: SourceContext = { substitutedAttendeeIds: substituted, moves, movedAttendees, acknowledgements, rows: rowsById, pricing: new Map(rows.map((row) => [row.id, pricingOf(row)])) };
-  const rosterCache = new Map<string, PricedRoster>();
-  const rosterOf = (registrationId: string) => {
+  const context: SourceContext = { substitutedAttendeeIds: substituted, moves, acknowledgements, rows: rowsById, pricing: new Map(rows.map((row) => [row.id, pricingOf(row)])) };
+  const placesCache = new Map<string, Places>();
+  const placesFor = (registrationId: string) => {
     const row = rowsById.get(registrationId);
     if (!row) return null;
-    const cached = rosterCache.get(registrationId);
+    const cached = placesCache.get(registrationId);
     if (cached) return cached;
-    const computed = pricedRosterOf(row, context);
-    rosterCache.set(registrationId, computed);
+    const computed = placesOf(row, context);
+    placesCache.set(registrationId, computed);
     return computed;
   };
-  const built = new Map(rows.map((row) => [row.id, sourceFor(row, context, rosterOf)]));
+  const built = new Map(rows.map((row) => [row.id, sourceFor(row, context, placesFor)]));
   const byId = new Map([...built].map(([id, entry]) => [id, entry.source]));
   const reviewKeys = new Map([...built].flatMap(([id, entry]) => (entry.reviewKey ? [[id, entry.reviewKey] as const] : [])));
 
@@ -538,7 +553,7 @@ export async function recordAttendanceCorrection(input: {
  */
 export async function acknowledgeRosterReview(input: { eventId: string; registrationId: string; choice: ReviewChoice; reason: string; actorUserId: string }) {
   const reason = input.reason.trim();
-  if (!reason) throw new AttendanceReconciliationError("Say why you accept the prorated figure for this registration.", "NO_CHANGE");
+  if (!reason) throw new AttendanceReconciliationError("Say why you chose this figure.", "NO_CHANGE");
   const prisma = getPrisma();
   try {
     return await prisma.$transaction(async (tx) => {
@@ -549,9 +564,23 @@ export async function acknowledgeRosterReview(input: { eventId: string; registra
       if (!registration) throw new AttendanceReconciliationError("That registration is not a billed registration of this event.", "REGISTRATION_NOT_FOUND");
       const reviewKey = facts.reviewKeys.get(input.registrationId);
       if (!registration.review || !reviewKey) throw new AttendanceReconciliationError("This registration does not need a roster review.", "NO_REVIEW_NEEDED");
-      if (registration.review.acknowledged) return { changed: false as const, acknowledgementId: registration.review.acknowledgementId };
+      const active = await tx.attendanceReviewAcknowledgement.findFirst({
+        where: { registrationId: input.registrationId, reviewKey, supersededAt: null },
+        select: { id: true, choice: true, reason: true },
+      });
+      // The same choice and reason again changes nothing.
+      if (active && active.choice === input.choice && active.reason === reason) return { changed: false as const, acknowledgementId: active.id };
+      const id = randomUUID();
+      if (active) {
+        // A different choice or reason supersedes the earlier acknowledgement, which is kept; the latest wins.
+        const superseded = await tx.attendanceReviewAcknowledgement.updateMany({
+          where: { id: active.id, supersededAt: null },
+          data: { supersededAt: new Date(), supersededById: id },
+        });
+        if (superseded.count === 0) throw concurrent();
+      }
       const created = await tx.attendanceReviewAcknowledgement.create({
-        data: { eventId: input.eventId, registrationId: input.registrationId, reviewKey, choice: input.choice, reason, actorUserId: input.actorUserId },
+        data: { id, eventId: input.eventId, registrationId: input.registrationId, reviewKey, choice: input.choice, reason, actorUserId: input.actorUserId },
         select: { id: true },
       });
       await writeAuditLog({
@@ -561,7 +590,7 @@ export async function acknowledgeRosterReview(input: { eventId: string; registra
         entityType: "AttendanceReviewAcknowledgement",
         entityId: created.id,
         summary: "Acknowledged that a registration's roster changed after pricing.",
-        metadata: { eventId: input.eventId, registrationId: input.registrationId, reasons: registration.review.reasons, choice: input.choice },
+        metadata: { eventId: input.eventId, registrationId: input.registrationId, reasons: registration.review.reasons, choice: input.choice, supersededAcknowledgementId: active?.id ?? null },
       }, tx);
       return { changed: true as const, acknowledgementId: created.id };
     }, LONG_TRANSACTION);

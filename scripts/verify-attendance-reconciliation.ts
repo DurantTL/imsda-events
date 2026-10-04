@@ -212,9 +212,19 @@ async function main() {
   const acks = await Promise.allSettled(Array.from({ length: 4 }, (_, index) => acknowledgeRosterReview({ eventId: ids.eventA, registrationId: r2.id, choice: "PRORATED", reason: `${REASON} ${index}`, actorUserId: ids.staff })));
   assert(acks.every((entry) => entry.status === "fulfilled"), "parallel acknowledgements all end acknowledged");
   const ackRows = await prisma.attendanceReviewAcknowledgement.findMany({ where: { registrationId: r2.id } });
-  assert(ackRows.length === 1 && ackRows[0]!.actorUserId === ids.staff, "one acknowledgement, with its actor");
-  assert(await rejects(prisma.attendanceReviewAcknowledgement.update({ where: { id: ackRows[0]!.id }, data: { reason: "rewritten" } })), "an acknowledgement cannot be rewritten");
-  assert(await rejects(prisma.attendanceReviewAcknowledgement.deleteMany({ where: { id: ackRows[0]!.id } })), "an acknowledgement cannot be deleted");
+  const activeAcks = ackRows.filter((row) => row.supersededAt === null);
+  assert(activeAcks.length === 1 && activeAcks[0]!.actorUserId === ids.staff, "exactly one active acknowledgement, with its actor, even after parallel writes");
+  assert(ackRows.filter((row) => row.supersededAt !== null).every((row) => row.supersededById !== null), "earlier ones are kept and point at what replaced them");
+  const activeAck = activeAcks[0]!;
+  assert(await rejects(prisma.attendanceReviewAcknowledgement.update({ where: { id: activeAck.id }, data: { reason: "rewritten" } })), "an acknowledgement cannot be rewritten");
+  assert(await rejects(prisma.attendanceReviewAcknowledgement.deleteMany({ where: { id: activeAck.id } })), "an acknowledgement cannot be deleted");
+  assert(await rejects(prisma.attendanceReviewAcknowledgement.create({ data: { eventId: ids.eventA, registrationId: r2.id, reviewKey: activeAck.reviewKey, choice: "PRORATED", reason: "second active", actorUserId: ids.staff } })), "the database allows one active acknowledgement per review");
+  // Changing the choice supersedes the active one; the latest wins.
+  await acknowledgeRosterReview({ eventId: ids.eventA, registrationId: r2.id, choice: "PER_PERSON", reason: `${REASON} changed`, actorUserId: ids.staff2 });
+  const afterChange = await prisma.attendanceReviewAcknowledgement.findMany({ where: { registrationId: r2.id, supersededAt: null } });
+  assert(afterChange.length === 1 && afterChange[0]!.choice === "PER_PERSON" && afterChange[0]!.id !== activeAck.id, "the latest choice is the active one");
+  assert((await prisma.attendanceReviewAcknowledgement.findUniqueOrThrow({ where: { id: activeAck.id } })).supersededById === afterChange[0]!.id, "the earlier acknowledgement is kept and superseded");
+  assert(await rejects(prisma.attendanceReviewAcknowledgement.update({ where: { id: activeAck.id }, data: { supersededAt: null, supersededById: null } })), "a superseded acknowledgement cannot be reopened");
   assert(await rejects(prisma.attendanceReviewAcknowledgement.create({ data: { eventId: ids.eventA, registrationId: r1.id, reviewKey: "x", choice: "PRORATED", reason: "  ", actorUserId: ids.staff } })), "the database refuses a blank acknowledgement reason");
   const staleReview = await approveReconciliation({ eventId: ids.eventA, versionId: reviewDraft.id, actorUserId: ids.staff }).catch((error: unknown) => error);
   assert(staleReview instanceof AttendanceReconciliationError && staleReview.code === "FACTS_CHANGED", "the acknowledgement is a fact: the earlier draft is stale");

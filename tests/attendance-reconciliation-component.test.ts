@@ -112,7 +112,7 @@ describe("AttendanceReconciliation screen", () => {
     const source = {
       registrationId: "r3", confirmationCode: "CAM-3", status: "CONFIRMED" as const, label: "Club Gamma", clubId: "c3", locationId: null, locationName: null,
       estimatedCents: 7500, people, registrationCharges: [], credits: [], promo: null,
-      review: { reasons: ["TRANSFER_AFTER_PRICING" as const], acknowledged: false, acknowledgementId: null, choice: null }, registrationAdjustmentCents: 0, hasPriceLines: true,
+      review: { reasons: ["TRANSFER_AFTER_PRICING" as const], notes: [], acknowledged: false, acknowledgementId: null, choice: null }, registrationAdjustmentCents: 0, hasPriceLines: true,
     };
     const reviewResult = reconcileEvent([{ key: "g", title: "Church One", partyKind: "ORGANIZATION", partyId: "o1", partyName: "Church One", clubId: null, registrations: [source] }], "PER_CHURCH");
     const draft = { ...approved, id: "v2", versionNumber: 2, status: "DRAFT" as const, approvedAt: null, approvedByName: null };
@@ -137,7 +137,7 @@ describe("AttendanceReconciliation screen", () => {
     const source = {
       registrationId: "r4", confirmationCode: "CAM-4", status: "CONFIRMED" as const, label: "Club Delta", clubId: "c4", locationId: null, locationName: null,
       estimatedCents: 7500, people: [...people, moved], registrationCharges: [], credits: [], promo: null,
-      review: { reasons: ["TRANSFER_AFTER_PRICING" as const], acknowledged: false, acknowledgementId: null, choice: null }, registrationAdjustmentCents: 0, hasPriceLines: true,
+      review: { reasons: ["TRANSFER_AFTER_PRICING" as const], notes: [], acknowledged: false, acknowledgementId: null, choice: null }, registrationAdjustmentCents: 0, hasPriceLines: true,
     };
     const flagged = reconcileEvent([{ key: "g", title: "Church One", partyKind: "ORGANIZATION", partyId: "o1", partyName: "Church One", clubId: null, registrations: [source] }], "PER_CHURCH");
     const markup = render(view({ result: flagged }));
@@ -146,6 +146,8 @@ describe("AttendanceReconciliation screen", () => {
     expect(markup).toContain("Transferred from Club Sender");
     const { PRORATE_NOTE } = await import("@/components/attendance-reconciliation-controls");
     expect(PRORATE_NOTE).toContain("including charges that are not tied to a person");
+    const { ARRIVAL_PRORATE_WARNING } = await import("@/components/attendance-reconciliation-controls");
+    expect(ARRIVAL_PRORATE_WARNING).toContain("Someone was transferred in");
   });
 
   it("says nothing is sent from here", () => {

@@ -5486,7 +5486,8 @@ model AttendanceReconciliationVersion {
 /// Staff acknowledgement that a registration's prices may not belong to the people now on its roster
 /// (a member was transferred after pricing, #166). The figure for that registration is prorated from
 /// its estimate, and approval waits for this record. `reviewKey` names exactly the mismatch seen, so a
-/// new transfer needs a new acknowledgement. Append-only; the reason is required and the actor recorded.
+/// new transfer needs a new acknowledgement. Append-only with supersede (like corrections); the reason is
+/// required and the actor recorded.
 model AttendanceReviewAcknowledgement {
   id             String   @id @default(cuid())
   eventId        String
@@ -5497,11 +5498,15 @@ model AttendanceReviewAcknowledgement {
   reason         String
   actorUserId    String?
   createdAt      DateTime @default(now())
+  /// Set when staff acknowledge the same review again with a different choice or reason: the latest wins.
+  supersededAt   DateTime?
+  supersededById String?
 
   event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   actor        User?        @relation("AttendanceReviewAckActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
-  @@unique([registrationId, reviewKey])
+  /// A migration-level partial unique index allows one active (not superseded) row per registration and review key.
+  @@index([registrationId, reviewKey])
   @@index([eventId, createdAt])
 }

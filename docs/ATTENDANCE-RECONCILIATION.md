@@ -117,37 +117,47 @@ approve again.
 correction's id and an acknowledgement's id (a correction counts by its kind and person, an
 acknowledgement by its existence and choice).
 
-## Roster changed after pricing (member transfers)
+## Prices follow stored places, and member transfers
 
-Prices are matched to people by their place in the roster listing (position, then creation time).
-That place is stable: amendments re-snapshot the prices, a substitution keeps the seat, and editing
-a name does not move anyone. So names are never used to doubt a price (a staff name edit, or a
-generic "Attendee 2" label, flags nothing). Only a **member transfer** moves people between
-registrations, and the transfer re-parents the attendee row (same id), gives them the last place on
-the receiving registration, and so loses the place they had on the sending one. The reconciliation
-rebuilds it:
+A person's price is the price line at their stored place (`RegistrationAttendee.position`), for
+every registration. Only three things write a place: the public submission and an amendment set it
+to the person's price-line index (amendments re-snapshot pricing and record `{id, position}` for
+everyone), and a member transfer gives the arriving person the last place on the receiving
+registration. Staff cannot reorder a roster, and a staff add only happens on registrations with no
+price lines. So the people who stayed still hold exactly their priced index, whatever order they are
+listed in or were created in. Names are never used to doubt a price (a name edit or a generic
+"Attendee 2" label flags nothing), and creation order is not used at all.
 
-- **Sender**: the roster as it was priced is the current people plus those transferred out after the
-  sending registration's pricing snapshot, ordered by creation time, and the snapshot's lines are
-  mapped by that original index. The person who left is not billed to the sender.
-- **Receiver**: a person transferred in after the receiving registration was priced has no line in
-  its snapshot, so they are billed (if they attended) from their line in the sender's snapshot,
-  attributed to the receiving registration and so to its church, and shown as "Transferred from
-  <club>".
-- **When it cannot be certain** the registration is marked "Needs review": the remaining people are
-  not in strictly increasing creation order, two people were created at the same moment, a move no
-  longer names the person who left, someone moved more than once, the sending registration is not
-  billed or was re-priced after the move, or a price line points past the roster. The screen then
-  shows both figures, "Per-person (best match)" and "Prorated", and approval waits until staff
-  acknowledge with a reason and **choose which to bill**. Until then the prorated figure is used.
-  Prorating scales the whole registration's estimate, including charges not tied to a person. The
-  acknowledgement is append-only, audited, and names exactly what was reviewed (the transfers and the
-  stray price-line indexes), so a new transfer or stray line needs a new one; the choice is part of
-  the fingerprint, so acknowledging means preparing again, then approving. A flagged registration
-  that bills nothing (nobody attended) does not block approval.
+After a **member transfer** (the attendee row is re-parented, keeping its id):
 
-Known limit: the rebuild assumes the roster order was creation order for the people who stayed (it
-checks this) and for the person who left (which it cannot check; the place they had was overwritten).
+- **Sender** (people moved out after its pricing): the people who stayed use their stored places. The
+  priced roster had `present + leavers` people, so every place must be distinct and inside that
+  range; the places nobody holds are the lines of those who left, and those lines are not billed to
+  the sender.
+- **Receiver** (people moved in after its pricing): an arrival takes no line of the receiver's, and
+  the receiver's own people keep their own stored places (an arrival's current place may even equal a
+  line of someone who left the receiver). The arrival is billed, if they attended, from their own line
+  on the sender, attributed to the receiving registration (so to its church) and shown as
+  "Transferred from <club>" (and in the CSV column "Transferred in from"). The line is found from the
+  sender's amendment when its pricing came from one (the recorded places are exact), otherwise only when
+  exactly one person left the sender since its pricing (that person's gap). Otherwise the arrival gets
+  **no price** ($0), never a guess from their current place, and the receiver is flagged with "Price for
+  <name> couldn't be matched after the transfer."
+- **Receiver billable can exceed its own estimate** when someone transfers in, because the arrival is
+  billed here at their sender line; the sender drops by the same amount, so the event total holds.
+
+**When it cannot be certain** the registration is marked "Needs review": places that are not distinct
+or fall outside the priced range, someone moved more than once, a price line past the people priced,
+or an unmatched arrival. The screen then shows both figures, "Per-person (best match)" and
+"Prorated", and approval waits until staff acknowledge with a reason and **choose which to bill**;
+until then the prorated figure is used. Prorating scales the whole registration's estimate, including
+charges not tied to a person, and bills an arrival on the receiving estimate (the form warns of this
+when someone was transferred in). The acknowledgement is audited and names exactly what was reviewed
+(the transfers, the stray price-line indexes and the unmatched arrivals), so a new issue needs a new
+one. Changing the choice or reason supersedes the earlier acknowledgement (kept, latest wins, one
+active per review, enforced by the database). The choice is part of the fingerprint, so acknowledging
+means preparing again, then approving. A flagged registration that bills nothing (nobody attended)
+does not block approval.
 
 ## Blocked until billing responsibility is ready (#165, #167)
 

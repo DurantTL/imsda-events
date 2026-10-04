@@ -5,8 +5,7 @@ import {
   reconcileRegistration,
   reconciliationCsvRows,
   reviewPending,
-  reconstructPricedRoster,
-  type PricedRosterEntry,
+  pricedGaps,
   type PersonSource,
   type PromoSource,
   type RegistrationSource,
@@ -134,39 +133,27 @@ describe("charges not tied to a person", () => {
   });
 });
 
-describe("reconstructing the roster as it was priced (member transfers)", () => {
-  const at = (attendeeId: string, ms: number): PricedRosterEntry => ({ attendeeId, position: ms, createdAtMs: ms });
-  const none = new Set<string>();
-
-  it("puts a person who moved out last back last: X had B, C, A; A moved to Y", () => {
-    const result = reconstructPricedRoster({ current: [at("B", 2), at("C", 3)], movedInIds: none, movedOut: [at("A", 4)], movedTwiceIds: none });
-    expect(result).toEqual({ ok: true, order: ["B", "C", "A"] });
+describe("the places of the people who were there when it was priced", () => {
+  it("finds the lines of the people who left as the places nobody holds", () => {
+    // Priced for three (places 0, 1, 2); the person at place 1 left.
+    expect(pricedGaps({ present: [0, 2], leavers: 1 })).toEqual({ ok: true, size: 3, gaps: [1] });
+    // Priced for four; the people at places 0 and 3 left.
+    expect(pricedGaps({ present: [1, 2], leavers: 2 })).toEqual({ ok: true, size: 4, gaps: [0, 3] });
+    // Nobody left: every place is held, listing order does not matter.
+    expect(pricedGaps({ present: [2, 0, 1], leavers: 0 })).toEqual({ ok: true, size: 3, gaps: [] });
   });
 
-  it("puts a person who moved out first or from the middle back where they were", () => {
-    expect(reconstructPricedRoster({ current: [at("B", 2), at("C", 3)], movedInIds: none, movedOut: [at("A", 1)], movedTwiceIds: none })).toEqual({ ok: true, order: ["A", "B", "C"] });
-    expect(reconstructPricedRoster({ current: [at("A", 1), at("C", 3)], movedInIds: none, movedOut: [at("B", 2)], movedTwiceIds: none })).toEqual({ ok: true, order: ["A", "B", "C"] });
-  });
-
-  it("takes people who moved in out of the roster that was priced", () => {
-    expect(reconstructPricedRoster({ current: [at("B", 2), at("C", 3), at("A", 1)], movedInIds: new Set(["A"]), movedOut: [], movedTwiceIds: none })).toEqual({ ok: true, order: ["B", "C"] });
-  });
-
-  it("refuses to guess when it cannot be certain", () => {
-    // Roster order and creation order disagree.
-    expect(reconstructPricedRoster({ current: [at("C", 3), at("B", 2)], movedInIds: none, movedOut: [at("A", 1)], movedTwiceIds: none }).ok).toBe(false);
-    // Two people created at the same moment.
-    expect(reconstructPricedRoster({ current: [at("B", 2), at("C", 3)], movedInIds: none, movedOut: [at("A", 2)], movedTwiceIds: none }).ok).toBe(false);
-    // The move no longer names the person.
-    expect(reconstructPricedRoster({ current: [at("B", 2)], movedInIds: none, movedOut: [null], movedTwiceIds: none }).ok).toBe(false);
-    // Someone moved twice.
-    expect(reconstructPricedRoster({ current: [at("B", 2)], movedInIds: none, movedOut: [at("A", 1)], movedTwiceIds: new Set(["A"]) }).ok).toBe(false);
+  it("refuses places that cannot be the priced indexes", () => {
+    expect(pricedGaps({ present: [0, 0], leavers: 1 }).ok).toBe(false);
+    expect(pricedGaps({ present: [0, 5], leavers: 1 }).ok).toBe(false);
+    expect(pricedGaps({ present: [-1, 1], leavers: 1 }).ok).toBe(false);
+    expect(pricedGaps({ present: [0, 1], leavers: 0 }).ok).toBe(true);
   });
 });
 
 describe("a registration whose prices cannot be matched with certainty", () => {
   const needs = (choice: "PER_PERSON" | "PRORATED" | null, acknowledged: boolean) => registration(2, 4, null, {
-    review: { reasons: ["TRANSFER_AFTER_PRICING"], acknowledged, acknowledgementId: acknowledged ? "ack-1" : null, choice },
+    review: { reasons: ["TRANSFER_AFTER_PRICING"], notes: [], acknowledged, acknowledgementId: acknowledged ? "ack-1" : null, choice },
     estimatedCents: 16000,
   });
   const group = (source: RegistrationSource) => ({ key: "g", title: "C", partyKind: "ORGANIZATION" as const, partyId: "o", partyName: "C", clubId: null, registrations: [source] });
@@ -198,10 +185,17 @@ describe("a registration whose prices cannot be matched with certainty", () => {
   });
 
   it("does not block approval when nobody attended: there is no figure to confirm", () => {
-    const nobody = registration(0, 4, null, { review: { reasons: ["LINE_BEYOND_ROSTER"], acknowledged: false, acknowledgementId: null, choice: null }, estimatedCents: 20000 });
+    const nobody = registration(0, 4, null, { review: { reasons: ["LINE_BEYOND_ROSTER"], notes: [], acknowledged: false, acknowledgementId: null, choice: null }, estimatedCents: 20000 });
     const result = reconcileEvent([group(nobody)], "PER_CHURCH");
     expect(result.groups[0]!.registrations[0]!.billableCents).toBe(0);
     expect(reviewPending(result)).toEqual([]);
+  });
+
+  it("lists who was transferred in, in the CSV too", () => {
+    const receiver = { ...registration(0, 0, null), people: [person(true), person(true, 5000, { transferredFrom: "Club Sender" })], estimatedCents: 5000 };
+    const rows = reconciliationCsvRows(reconcileEvent([group(receiver)], "PER_CHURCH"), { versionLabel: "v", factsChanged: null });
+    expect(rows[0]).toContain("Transferred in from");
+    expect(rows[1]).toContain("Club Sender");
   });
 
   it("a person transferred in is shown and billed on the receiving registration", () => {

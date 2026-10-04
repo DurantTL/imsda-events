@@ -94,11 +94,13 @@ export type PromoSource = {
   recordedCents: number;
 };
 
-export type RosterReviewReason = "LINE_BEYOND_ROSTER" | "TRANSFER_AFTER_PRICING";
+export type RosterReviewReason = "LINE_BEYOND_ROSTER" | "ROSTER_POSITIONS" | "TRANSFER_AFTER_PRICING" | "ARRIVAL_PRICE_UNMATCHED";
 
 export function rosterReviewReasonLabel(reason: RosterReviewReason) {
   if (reason === "LINE_BEYOND_ROSTER") return "A price line points past the people on the roster";
-  return "A member was transferred after the registration was priced and the prices cannot be matched to people with certainty";
+  if (reason === "ROSTER_POSITIONS") return "The places of the people on the roster do not match the price lines";
+  if (reason === "ARRIVAL_PRICE_UNMATCHED") return "Someone transferred in could not be matched to a price";
+  return "Members were transferred and the prices cannot be matched to people with certainty";
 }
 
 /** What staff chose to bill when the match is uncertain: the per-person best match, or the prorated estimate. */
@@ -106,6 +108,8 @@ export type ReviewChoice = "PER_PERSON" | "PRORATED";
 
 export type RosterReview = {
   reasons: RosterReviewReason[];
+  /** Plain-language notes for staff, such as who could not be matched to a price. */
+  notes: string[];
   /** Staff acknowledged exactly this mismatch (an audited, append-only record). */
   acknowledged: boolean;
   acknowledgementId: string | null;
@@ -496,7 +500,7 @@ export function fingerprintProjection(result: ReconciliationResult) {
       registrations: group.registrations.map((registration) => ({
         ...registration,
         review: registration.review
-          ? { reasons: registration.review.reasons, acknowledged: registration.review.acknowledged, choice: registration.review.choice }
+          ? { reasons: registration.review.reasons, notes: registration.review.notes, acknowledged: registration.review.acknowledged, choice: registration.review.choice }
           : null,
         people: registration.people.map((person) => ({
           ...person,
@@ -558,48 +562,24 @@ export function responsibilityBlockers(lines: readonly ResponsibilityLine[]): Re
 // Roster review: are the price lines still for the people on the roster?
 // ---------------------------------------------------------------------------------------------
 
-/** One person on a roster, with the two things the listing order is made of. */
-export type PricedRosterEntry = { attendeeId: string; position: number; createdAtMs: number };
-
 /**
- * The order the people of a registration were in when it was priced, after members were transferred
- * out or in. Prices are matched to people by their place in the listing (position, then creation
- * time). A transfer re-parents the attendee row and gives it the last place on the receiving
- * registration, which loses the place it had on the sending one; the creation time is what survives.
- *  - People transferred IN after pricing are not in that roster and are taken out.
- *  - People transferred OUT after pricing are put back in by creation time.
- * Only deterministic when that is unambiguous: the remaining people are in strictly increasing
- * creation order (so place and creation order agree), no creation time ties, every moved-out
- * person is still named by the move record, and nobody moved twice. Otherwise `ok` is false and the
- * caller sends the registration to staff review rather than guessing.
+ * Whether the stored places of the people who were on a registration when it was priced can be
+ * trusted to be their price-line indexes. Only the public submission, an amendment (both set the
+ * place to the line index) and a member transfer (which gives the arrival the last place on the
+ * receiving registration) write a place, and staff cannot reorder, so the people who stayed still
+ * hold their priced index. `present` are the places of the people who were there at pricing (not
+ * those who arrived later); `leavers` is how many left after pricing. The priced roster had
+ * `present + leavers` people, so every place must be distinct and inside that range; the places in the
+ * range nobody holds are the lines of the people who left (their `gaps`), which are not billed.
  */
-export function reconstructPricedRoster(input: {
-  /** The people on the registration now, in listing order. */
-  current: readonly PricedRosterEntry[];
-  movedInIds: ReadonlySet<string>;
-  /** People moved out after pricing; null where the move no longer names the person. */
-  movedOut: ReadonlyArray<PricedRosterEntry | null>;
-  /** People who moved more than once, anywhere: their place cannot be ordered. */
-  movedTwiceIds: ReadonlySet<string>;
-}): { ok: true; order: string[] } | { ok: false; reason: string } {
-  if (input.movedOut.some((entry) => entry === null)) return { ok: false, reason: "a move no longer names the person who left" };
-  const out = input.movedOut as PricedRosterEntry[];
-  const involved = [...out.map((entry) => entry.attendeeId), ...input.movedInIds];
-  if (involved.some((id) => input.movedTwiceIds.has(id))) return { ok: false, reason: "someone was moved more than once" };
-  if (out.some((entry) => input.movedInIds.has(entry.attendeeId))) return { ok: false, reason: "someone moved in and out" };
-  const base = input.current.filter((entry) => !input.movedInIds.has(entry.attendeeId));
-  for (let index = 1; index < base.length; index += 1) {
-    if (!(base[index]!.createdAtMs > base[index - 1]!.createdAtMs)) return { ok: false, reason: "the roster order and creation order do not agree" };
+export function pricedGaps(input: { present: readonly number[]; leavers: number }): { ok: true; size: number; gaps: number[] } | { ok: false; size: number } {
+  const size = input.present.length + input.leavers;
+  const seen = new Set<number>();
+  for (const place of input.present) {
+    if (!Number.isInteger(place) || place < 0 || place >= size || seen.has(place)) return { ok: false, size };
+    seen.add(place);
   }
-  const times = new Set(base.map((entry) => entry.createdAtMs));
-  const merged = [...base];
-  for (const leaver of [...out].sort((left, right) => left.createdAtMs - right.createdAtMs)) {
-    if (times.has(leaver.createdAtMs)) return { ok: false, reason: "two people were added at the same moment" };
-    times.add(leaver.createdAtMs);
-    const at = merged.findIndex((entry) => entry.createdAtMs > leaver.createdAtMs);
-    merged.splice(at === -1 ? merged.length : at, 0, leaver);
-  }
-  return { ok: true, order: merged.map((entry) => entry.attendeeId) };
+  return { ok: true, size, gaps: Array.from({ length: size }, (_, index) => index).filter((index) => !seen.has(index)) };
 }
 
 /** Registrations whose roster review staff have not acknowledged yet: they block approval. */
@@ -689,6 +669,7 @@ export function reconciliationCsvRows(
     "Version",
     "Facts changed since approval",
     "Roster review",
+    "Transferred in from",
   ]];
   for (const group of result.groups) {
     for (const registration of group.registrations) {
@@ -714,6 +695,7 @@ export function reconciliationCsvRows(
         meta.versionLabel,
         meta.factsChanged === null ? "" : meta.factsChanged ? "Yes" : "No",
         registration.review && registration.review.reasons.length > 0 ? (registration.review.acknowledged ? "Acknowledged" : "Needs review") : "",
+        [...new Set(registration.people.flatMap((person) => (person.transferredFrom ? [person.transferredFrom] : [])))].join("; "),
       ]);
     }
   }

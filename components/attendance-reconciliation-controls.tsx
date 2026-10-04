@@ -80,6 +80,8 @@ export function ApproveControl({ eventId, versionId, versionNumber, disabled }: 
   );
 }
 
+export const ARRIVAL_PRORATE_WARNING = "Someone was transferred in. Prorating bills them on this registration's own estimate, which does not include them.";
+
 export const PRORATE_NOTE = "Prorating scales the whole registration's estimate, including charges that are not tied to a person, by attended over registered.";
 
 export const REASON_HELP = "Don't include health or medical details. A short reason like 'did not attend' or 'missed at check-in' is enough.";
@@ -96,10 +98,16 @@ export function AcknowledgeForm({
   eventId,
   registrationId,
   alternatives,
+  hasArrival = false,
+  changing = false,
 }: {
   eventId: string;
   registrationId: string;
   alternatives: { perPersonCents: number; proratedCents: number } | null;
+  /** Someone was transferred in: prorating bills them on the receiving registration's own estimate. */
+  hasArrival?: boolean;
+  /** An acknowledgement already exists; a different choice or reason supersedes it. */
+  changing?: boolean;
 }) {
   const { busy, error, run } = useAction(eventId);
   const [open, setOpen] = useState(false);
@@ -107,7 +115,7 @@ export function AcknowledgeForm({
   const [choice, setChoice] = useState<"PER_PERSON" | "PRORATED">("PRORATED");
   const reasonId = useId();
   if (!open) {
-    return <button className="secondary-button" onClick={() => setOpen(true)} type="button">Acknowledge…</button>;
+    return <button className="secondary-button" onClick={() => setOpen(true)} type="button">{changing ? "Change choice…" : "Acknowledge…"}</button>;
   }
   return (
     <form
@@ -125,13 +133,14 @@ export function AcknowledgeForm({
           <label><input checked={choice === "PER_PERSON"} name={`choice-${registrationId}`} onChange={() => setChoice("PER_PERSON")} type="radio" /> Per-person (best match): {dollars(alternatives.perPersonCents)}</label>
           <label><input checked={choice === "PRORATED"} name={`choice-${registrationId}`} onChange={() => setChoice("PRORATED")} type="radio" /> Prorated: {dollars(alternatives.proratedCents)}</label>
           <small>{PRORATE_NOTE}</small>
+          {hasArrival && choice === "PRORATED" && <small role="alert">{ARRIVAL_PRORATE_WARNING}</small>}
         </fieldset>
       )}
-      <label htmlFor={reasonId}>Why do you choose this figure?</label>
+      <label htmlFor={reasonId}>{choice === "PER_PERSON" ? "Why did you choose the per-person figure?" : "Why did you choose the prorated figure?"}</label>
       <textarea aria-describedby={`${reasonId}-help`} id={reasonId} maxLength={500} onChange={(event) => setReason(event.target.value)} required rows={2} value={reason} />
       <small id={`${reasonId}-help`}>{REASON_HELP}</small>
       <span className="billing-inline-action">
-        <button className="primary-button" disabled={busy || reason.trim() === ""} type="submit">{busy ? "Saving…" : "Acknowledge"}</button>
+        <button className="primary-button" disabled={busy || reason.trim() === ""} type="submit">{busy ? "Saving…" : changing ? "Save choice" : "Acknowledge"}</button>
         <button className="secondary-button" onClick={() => setOpen(false)} type="button">Cancel</button>
       </span>
       {error && <small className="form-error" role="alert">{error}</small>}

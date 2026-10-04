@@ -235,7 +235,8 @@ function RegistrationRow({ eventId, registration, isLive, correctionDetails, ack
               <> Per-person (best match) {money(registration.alternatives.perPersonCents)}; prorated {money(registration.alternatives.proratedCents)}.</>
             )}
             {review.acknowledged && review.choice && <> Billing the {review.choice === "PER_PERSON" ? "per-person figure" : "prorated figure"}.</>}
-            {isLive && !review.acknowledged && <> <AcknowledgeForm alternatives={registration.alternatives} eventId={eventId} registrationId={registration.registrationId} /></>}
+            {review.notes.length > 0 && <> {review.notes.join(" ")}</>}
+            {isLive && <> <AcknowledgeForm alternatives={registration.alternatives} changing={review.acknowledged} eventId={eventId} hasArrival={registration.people.some((entry) => Boolean(entry.transferredFrom))} registrationId={registration.registrationId} /></>}
           </small>
         )}
         <details>
