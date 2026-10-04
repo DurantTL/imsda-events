@@ -38,6 +38,14 @@ describe("invoices migration (#167)", () => {
     expect(sql).toContain('BEFORE UPDATE OF "invoiceCode" ON "Event"');
   });
 
+  it("lets an un-numbered invoice follow the grouping, and a discarded draft free its revision number", () => {
+    expect(sql).toContain("'numberSequence', 'invoiceGrouping'");
+    expect(sql).toContain('IF OLD."baseNumber" IS NULL AND (to_jsonb(NEW) - numbering) = (to_jsonb(OLD) - numbering)');
+    expect(sql).toContain("'DRAFT', 'FINALIZED', 'SUPERSEDED', 'DISCARDED'");
+    expect(sql).toContain('ON "InvoiceVersion"("invoiceId", "revision") WHERE "status" <> \'DISCARDED\'');
+    expect(sql).toContain("Discarding a draft changes nothing else.");
+  });
+
   it("is additive: no drops, deletes, or changes to existing columns", () => {
     for (const statement of sql.split(/;\s*\n/).map((part) => part.trim()).filter(Boolean)) {
       expect(statement).not.toMatch(/^(DELETE|UPDATE|TRUNCATE|DROP)\b/i);

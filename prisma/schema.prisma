@@ -5529,6 +5529,8 @@ enum InvoiceVersionStatus {
   DRAFT
   FINALIZED
   SUPERSEDED
+  /// A draft staff threw away (never numbered); kept for the record, hidden from the screens.
+  DISCARDED
 }
 
 /// How a version was built: from the approved attendance reconciliation, or by copying the prior
@@ -5612,6 +5614,7 @@ model InvoiceVersion {
   finalizeIdempotencyKey  String?              @unique
   supersededAt            DateTime?
   supersededByVersionId   String?
+  discardedAt             DateTime?
 
   event                 Event                           @relation(fields: [eventId], references: [id], onDelete: Cascade)
   invoice               Invoice                         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
@@ -5620,7 +5623,8 @@ model InvoiceVersion {
   finalizedBy           User?                           @relation("InvoiceVersionFinalizedBy", fields: [finalizedByUserId], references: [id], onDelete: SetNull)
   receivable            InvoiceReceivable?
 
-  @@unique([invoiceId, revision])
+  /// A migration-level partial unique index allows one non-discarded version per invoice and revision.
+  @@index([invoiceId, revision])
   @@index([eventId, status])
   @@index([reconciliationVersionId])
 }

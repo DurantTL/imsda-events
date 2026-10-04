@@ -18,7 +18,7 @@ import {
   type RegistrationResult,
 } from "@/modules/attendance-reconciliation/domain";
 
-export type InvoiceVersionStatus = "DRAFT" | "FINALIZED" | "SUPERSEDED";
+export type InvoiceVersionStatus = "DRAFT" | "FINALIZED" | "SUPERSEDED" | "DISCARDED";
 export type InvoiceVersionBasis = "RECONCILIATION" | "CONTACT_ONLY_COPY";
 export type InvoiceReceivableStatus = "OPEN" | "SUPERSEDED";
 
@@ -27,6 +27,7 @@ export const INVOICE_SNAPSHOT_SCHEMA = 1;
 export function versionStatusLabel(status: InvoiceVersionStatus) {
   if (status === "DRAFT") return "Draft";
   if (status === "FINALIZED") return "Finalized";
+  if (status === "DISCARDED") return "Discarded";
   return "Superseded";
 }
 

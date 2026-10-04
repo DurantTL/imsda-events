@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "InvoiceVersionStatus" AS ENUM ('DRAFT', 'FINALIZED', 'SUPERSEDED');
+CREATE TYPE "InvoiceVersionStatus" AS ENUM ('DRAFT', 'FINALIZED', 'SUPERSEDED', 'DISCARDED');
 
 -- CreateEnum
 CREATE TYPE "InvoiceVersionBasis" AS ENUM ('RECONCILIATION', 'CONTACT_ONLY_COPY');
@@ -64,6 +64,7 @@ CREATE TABLE "InvoiceVersion" (
     "finalizeIdempotencyKey" TEXT,
     "supersededAt" TIMESTAMP(3),
     "supersededByVersionId" TEXT,
+    "discardedAt" TIMESTAMP(3),
 
     CONSTRAINT "InvoiceVersion_pkey" PRIMARY KEY ("id")
 );
@@ -118,7 +119,7 @@ CREATE INDEX "InvoiceVersion_eventId_status_idx" ON "InvoiceVersion"("eventId", 
 CREATE INDEX "InvoiceVersion_reconciliationVersionId_idx" ON "InvoiceVersion"("reconciliationVersionId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "InvoiceVersion_invoiceId_revision_key" ON "InvoiceVersion"("invoiceId", "revision");
+CREATE INDEX "InvoiceVersion_invoiceId_revision_idx" ON "InvoiceVersion"("invoiceId", "revision");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "InvoiceReceivable_invoiceVersionId_key" ON "InvoiceReceivable"("invoiceVersionId");
@@ -217,7 +218,7 @@ ALTER TABLE "Invoice" ADD CONSTRAINT "Invoice_number_together" CHECK (
 );
 CREATE FUNCTION "Invoice_guard"() RETURNS trigger AS $$
 DECLARE
-  numbering CONSTANT text[] := ARRAY['baseNumber', 'numberCode', 'numberYear', 'numberSequence'];
+  numbering CONSTANT text[] := ARRAY['baseNumber', 'numberCode', 'numberYear', 'numberSequence', 'invoiceGrouping'];
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW."baseNumber" IS NOT NULL THEN
@@ -231,7 +232,8 @@ BEGIN
     END IF;
     RAISE EXCEPTION 'An invoice is never deleted.' USING ERRCODE = '23001';
   END IF;
-  IF OLD."baseNumber" IS NULL AND NEW."baseNumber" IS NOT NULL AND (to_jsonb(NEW) - numbering) = (to_jsonb(OLD) - numbering) THEN
+  -- Until it has a number an invoice follows the event's current grouping; a numbered invoice is fixed.
+  IF OLD."baseNumber" IS NULL AND (to_jsonb(NEW) - numbering) = (to_jsonb(OLD) - numbering) THEN
     RETURN NEW;
   END IF;
   RAISE EXCEPTION 'An invoice number is assigned once and never changed.' USING ERRCODE = '23001';
@@ -247,14 +249,18 @@ ALTER TABLE "InvoiceVersion" ADD CONSTRAINT "InvoiceVersion_shape" CHECK (
   AND ("number" IS NULL OR "number" ~ '^[A-Z]{2,6}[0-9]{2}-[0-9]{4,}(-R[0-9]+)?$')
 );
 ALTER TABLE "InvoiceVersion" ADD CONSTRAINT "InvoiceVersion_status_fields" CHECK (
-  ("status" <> 'DRAFT' OR ("number" IS NULL AND "finalizedAt" IS NULL AND "finalizedByUserId" IS NULL AND "finalizedByName" IS NULL AND "finalizeIdempotencyKey" IS NULL AND "supersededAt" IS NULL AND "supersededByVersionId" IS NULL))
+  ("status" <> 'DRAFT' OR ("number" IS NULL AND "finalizedAt" IS NULL AND "finalizedByUserId" IS NULL AND "finalizedByName" IS NULL AND "finalizeIdempotencyKey" IS NULL AND "supersededAt" IS NULL AND "supersededByVersionId" IS NULL AND "discardedAt" IS NULL))
   AND ("status" <> 'FINALIZED' OR ("number" IS NOT NULL AND "finalizedAt" IS NOT NULL AND "finalizedByName" IS NOT NULL AND "finalizeIdempotencyKey" IS NOT NULL AND "supersededAt" IS NULL))
   AND ("status" <> 'SUPERSEDED' OR ("number" IS NOT NULL AND "finalizedAt" IS NOT NULL AND "supersededAt" IS NOT NULL))
+  AND ("status" <> 'DISCARDED' OR ("number" IS NULL AND "finalizedAt" IS NULL AND "supersededAt" IS NULL AND "discardedAt" IS NOT NULL))
 );
+-- A discarded draft frees its revision number: one non-discarded version per invoice and revision.
+CREATE UNIQUE INDEX "InvoiceVersion_one_live_per_revision" ON "InvoiceVersion"("invoiceId", "revision") WHERE "status" <> 'DISCARDED';
 -- One open draft and one live finalized version per invoice (parallel writers settle here).
 CREATE UNIQUE INDEX "InvoiceVersion_one_draft_per_invoice" ON "InvoiceVersion"("invoiceId") WHERE "status" = 'DRAFT';
 CREATE UNIQUE INDEX "InvoiceVersion_one_finalized_per_invoice" ON "InvoiceVersion"("invoiceId") WHERE "status" = 'FINALIZED';
 
+-- DRAFT -> DISCARDED throws a draft away (status and discardedAt only); it is never numbered and nothing reopens it.
 -- DRAFT -> DRAFT is a regeneration (counted, nothing about identity changes). DRAFT -> FINALIZED assigns
 -- the number (which must be the invoice's number, plus -R<revision> for a revision), the approver and the
 -- key, and changes nothing else. FINALIZED -> SUPERSEDED records the supersession and changes nothing else.
@@ -266,6 +272,7 @@ DECLARE
   regenerating CONSTANT text[] := ARRAY['groupTitle', 'organizationName', 'contactName', 'contactEmail', 'contactRoleLabel', 'contactVerified', 'registeredCount', 'billableCount', 'amountDueCents', 'amountsFingerprint', 'snapshot', 'revisionReason', 'regenerationCount', 'regeneratedAt', 'reconciliationVersionId'];
   finalizing CONSTANT text[] := ARRAY['status', 'number', 'finalizedAt', 'finalizedByUserId', 'finalizedByName', 'finalizeIdempotencyKey'];
   superseding CONSTANT text[] := ARRAY['status', 'supersededAt', 'supersededByVersionId'];
+  discarding CONSTANT text[] := ARRAY['status', 'discardedAt'];
   column_name text;
   old_json jsonb;
   new_json jsonb;
@@ -299,6 +306,12 @@ BEGIN
     END IF;
     IF NEW."regenerationCount" <> OLD."regenerationCount" + 1 THEN
       RAISE EXCEPTION 'A draft is regenerated one step at a time.' USING ERRCODE = '23001';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF OLD."status" = 'DRAFT' AND NEW."status" = 'DISCARDED' THEN
+    IF (new_json - discarding) <> (old_json - discarding) THEN
+      RAISE EXCEPTION 'Discarding a draft changes nothing else.' USING ERRCODE = '23001';
     END IF;
     RETURN NEW;
   END IF;

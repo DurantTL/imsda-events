@@ -84,6 +84,27 @@ export function RegenerateControl({ eventId, invoiceId }: { eventId: string; inv
   );
 }
 
+export function DiscardControl({ eventId, invoiceId, isRevision }: { eventId: string; invoiceId: string; isRevision: boolean }) {
+  const router = useRouter();
+  const { busy, error, run } = useAction(eventId);
+  return (
+    <span className="billing-inline-action">
+      <button
+        className="secondary-button"
+        disabled={busy}
+        onClick={() => {
+          if (!window.confirm(isRevision ? "Discard this revision draft? The finalized invoice stays as it is." : "Discard this draft? You can create a fresh one from the approved reconciliation.")) return;
+          void run({ action: "discard", invoiceId }).then((ok) => { if (ok && !isRevision) router.push(`/finance/invoices?event=${encodeURIComponent(eventId)}`); });
+        }}
+        type="button"
+      >
+        {busy ? "Discarding…" : "Discard draft"}
+      </button>
+      {error && <small className="form-error" role="alert">{error}</small>}
+    </span>
+  );
+}
+
 export function ReviseForm({
   eventId,
   invoiceId,

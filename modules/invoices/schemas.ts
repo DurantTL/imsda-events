@@ -7,6 +7,7 @@ const id = z.string().trim().min(1).max(64);
 export const invoiceActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("create-drafts") }),
   z.object({ action: z.literal("regenerate"), invoiceId: id }),
+  z.object({ action: z.literal("discard"), invoiceId: id }),
   z.object({
     action: z.literal("revise"),
     invoiceId: id,

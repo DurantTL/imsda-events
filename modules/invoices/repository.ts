@@ -323,8 +323,9 @@ export async function setEventInvoiceCode(input: { eventId: string; code: string
   }
   try {
     return await prisma.$transaction(async (tx) => {
-      const event = await requireDeferredEvent(tx, input.eventId);
+      // Lock first, then read: a finalization that just ran may have frozen the code.
       await lockReconciliationEvent(tx, input.eventId);
+      const event = await requireDeferredEvent(tx, input.eventId);
       if ((await tx.invoiceNumberCounter.count({ where: { eventId: input.eventId } })) > 0) {
         throw new InvoiceError("Invoice numbers were already issued for this event, so its code can no longer change.", "CODE_LOCKED");
       }
@@ -367,6 +368,7 @@ const invoiceWithVersionsSelect = {
   clubId: true,
   baseNumber: true,
   versions: {
+    where: { status: { not: "DISCARDED" } },
     orderBy: { revision: "desc" },
     select: { id: true, revision: true, status: true, basis: true, reconciliationVersionId: true, amountsFingerprint: true, contactName: true, contactEmail: true, supersedesVersionId: true },
   },
@@ -395,8 +397,8 @@ export async function createInvoiceDrafts(input: { eventId: string; actorUserId:
   const prisma = getPrisma();
   try {
     return await prisma.$transaction(async (tx) => {
-      await requireDeferredEvent(tx, input.eventId);
       await lockReconciliationEvent(tx, input.eventId);
+      await requireDeferredEvent(tx, input.eventId);
       const basis = await loadApprovedBasis(tx, input.eventId);
       const existing = await tx.invoice.findMany({ where: { eventId: input.eventId }, select: invoiceWithVersionsSelect });
       if (existing.some((invoice) => invoice.baseNumber !== null && invoice.invoiceGrouping !== basis.approved.invoiceGrouping)) {
@@ -426,14 +428,25 @@ export async function createInvoiceDrafts(input: { eventId: string; actorUserId:
           run.created += 1;
           continue;
         }
-        const latest = invoice.versions[0]!;
+        // An invoice with no number yet follows the event's current grouping (a numbered one was checked above).
+        const regrouped = invoice.baseNumber === null && invoice.invoiceGrouping !== basis.approved.invoiceGrouping;
+        if (regrouped) await tx.invoice.update({ where: { id: invoice.id }, data: { invoiceGrouping: basis.approved.invoiceGrouping } });
+        const latest = invoice.versions[0];
+        if (!latest) {
+          // Every earlier draft was discarded: start a fresh one.
+          await tx.invoiceVersion.create({
+            data: { invoiceId: invoice.id, eventId: input.eventId, revision: 0, basis: "RECONCILIATION", reconciliationVersionId: basis.approved.id, createdByUserId: input.actorUserId, ...figureColumns(figures, contact) },
+          });
+          run.created += 1;
+          continue;
+        }
         if (latest.status === "DRAFT") {
           if (latest.basis !== "RECONCILIATION") {
             // A contact-only copy is refreshed from its own button, never silently turned into a rebuild.
             run.unchanged += 1;
             continue;
           }
-          const same = latest.reconciliationVersionId === basis.approved.id && latest.amountsFingerprint === figures.amountsFingerprint && contactsMatch(latest, contact);
+          const same = !regrouped && latest.reconciliationVersionId === basis.approved.id && latest.amountsFingerprint === figures.amountsFingerprint && contactsMatch(latest, contact);
           if (same) {
             run.unchanged += 1;
             continue;
@@ -479,11 +492,16 @@ export async function regenerateInvoiceDraft(input: { eventId: string; invoiceId
   const prisma = getPrisma();
   try {
     return await prisma.$transaction(async (tx) => {
-      await requireDeferredEvent(tx, input.eventId);
       await lockReconciliationEvent(tx, input.eventId);
+      await requireDeferredEvent(tx, input.eventId);
       const invoice = await requireInvoice(tx, input.eventId, input.invoiceId);
-      const draft = invoice.versions[0]!;
-      if (draft.status !== "DRAFT") throw new InvoiceError("This invoice has no open draft to regenerate. Revise it to start a new version.", "NOT_A_DRAFT");
+      const draft = invoice.versions[0];
+      if (!draft || draft.status !== "DRAFT") throw new InvoiceError("This invoice has no open draft to regenerate. Revise it to start a new version.", "NOT_A_DRAFT");
+      // An un-numbered invoice follows the event's current grouping.
+      const approvedGrouping = (await tx.attendanceReconciliationVersion.findFirst({ where: { eventId: input.eventId, status: "APPROVED" }, select: { invoiceGrouping: true } }))?.invoiceGrouping;
+      if (invoice.baseNumber === null && approvedGrouping && invoice.invoiceGrouping !== approvedGrouping) {
+        await tx.invoice.update({ where: { id: invoice.id }, data: { invoiceGrouping: approvedGrouping } });
+      }
       if (draft.basis === "CONTACT_ONLY_COPY") {
         const prior = await tx.invoiceVersion.findFirst({ where: { id: draft.supersedesVersionId ?? "", invoiceId: invoice.id, status: "FINALIZED" }, select: { snapshot: true, groupTitle: true, organizationName: true, registeredCount: true, billableCount: true, amountDueCents: true, amountsFingerprint: true, reconciliationVersionId: true } });
         if (!prior) throw new InvoiceError("The finalized version this draft revises has changed. Reload and revise again.", "DRAFT_STALE");
@@ -538,6 +556,34 @@ export async function regenerateInvoiceDraft(input: { eventId: string; invoiceId
   }
 }
 
+/**
+ * Throws away an open draft (an original that was never numbered, or a revision not yet finalized): it becomes
+ * DISCARDED, stays on record, and disappears from the screens and the draft counts. Creating drafts afterwards
+ * makes a fresh one; a discarded revision frees its revision number. A finalized version cannot be discarded.
+ */
+export async function discardInvoiceDraft(input: { eventId: string; invoiceId: string; actorUserId: string }) {
+  const prisma = getPrisma();
+  return prisma.$transaction(async (tx) => {
+    await lockReconciliationEvent(tx, input.eventId);
+    await requireDeferredEvent(tx, input.eventId);
+    const invoice = await requireInvoice(tx, input.eventId, input.invoiceId);
+    const draft = invoice.versions[0];
+    if (!draft || draft.status !== "DRAFT") throw new InvoiceError("This invoice has no open draft to discard.", "NOT_A_DRAFT");
+    const discarded = await tx.invoiceVersion.updateMany({ where: { id: draft.id, status: "DRAFT" }, data: { status: "DISCARDED", discardedAt: new Date() } });
+    if (discarded.count === 0) throw concurrent();
+    await writeAuditLog({
+      eventId: input.eventId,
+      actorUserId: input.actorUserId,
+      action: "INVOICE_DRAFT_DISCARDED",
+      entityType: "InvoiceVersion",
+      entityId: draft.id,
+      summary: "Discarded an invoice draft.",
+      metadata: { eventId: input.eventId, invoiceId: invoice.id, versionId: draft.id, revision: draft.revision },
+    }, tx);
+    return { versionId: draft.id, invoiceId: invoice.id };
+  }, LONG_TRANSACTION);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Revisions
 // ---------------------------------------------------------------------------------------------
@@ -555,10 +601,11 @@ export async function reviseInvoice(input: { eventId: string; invoiceId: string;
   const reason = input.reason.trim();
   try {
     return await prisma.$transaction(async (tx) => {
-      await requireDeferredEvent(tx, input.eventId);
       await lockReconciliationEvent(tx, input.eventId);
+      await requireDeferredEvent(tx, input.eventId);
       const invoice = await requireInvoice(tx, input.eventId, input.invoiceId);
-      const latest = invoice.versions[0]!;
+      const latest = invoice.versions[0];
+      if (!latest) throw new InvoiceError("Only a finalized invoice can be revised.", "NOT_FINALIZED");
       if (latest.status === "DRAFT") throw new InvoiceError("This invoice already has an open draft. Finalize or regenerate it first.", "DRAFT_EXISTS");
       if (latest.status !== "FINALIZED") throw new InvoiceError("Only a finalized invoice can be revised.", "NOT_FINALIZED");
       const prior = await tx.invoiceVersion.findUniqueOrThrow({
@@ -699,14 +746,15 @@ export async function finalizeInvoiceVersion(input: {
   };
   try {
     return await prisma.$transaction(async (tx) => {
-      const event = await requireDeferredEvent(tx, input.eventId);
+      // Lock first, then read the event: its code may have been frozen by a finalization that just ran.
       await lockReconciliationEvent(tx, input.eventId);
+      const event = await requireDeferredEvent(tx, input.eventId);
       const version = await tx.invoiceVersion.findFirst({
         where: { id: input.versionId, eventId: input.eventId },
         select: {
           id: true, invoiceId: true, revision: true, status: true, basis: true, supersedesVersionId: true, reconciliationVersionId: true, amountsFingerprint: true, amountDueCents: true,
           contactName: true, contactEmail: true, snapshot: true, groupTitle: true, organizationName: true,
-          invoice: { select: { id: true, groupKey: true, partyKind: true, partyId: true, clubId: true, baseNumber: true } },
+          invoice: { select: { id: true, groupKey: true, partyKind: true, partyId: true, clubId: true, baseNumber: true, invoiceGrouping: true } },
         },
       });
       if (!version) throw new InvoiceError("That invoice version does not belong to this event.", "VERSION_NOT_FOUND");
@@ -739,6 +787,11 @@ export async function finalizeInvoiceVersion(input: {
       let billing: Awaited<ReturnType<typeof getBillingResponsibilityView>>;
       if (needsPermission) {
         const basis = await loadApprovedBasis(tx, input.eventId);
+        if (invoice.invoiceGrouping !== basis.approved.invoiceGrouping) {
+          throw invoice.baseNumber === null
+            ? new InvoiceError("The event's invoice grouping changed after this draft was made. Create the drafts again.", "DRAFT_STALE")
+            : new InvoiceError("This invoice was finalized under a different invoice grouping. Change the grouping back before finalizing a revision.", "GROUPING_CONFLICT");
+        }
         if (basis.approved.id !== version.reconciliationVersionId) {
           throw new InvoiceError("A newer reconciliation was approved after this draft was made. Regenerate the draft first.", "DRAFT_STALE");
         }
@@ -868,9 +921,11 @@ export async function getInvoicesView(eventId: string): Promise<InvoicesView> {
   const invoices = await prisma.invoice.findMany({
     where: { eventId },
     orderBy: { createdAt: "asc" },
-    select: { id: true, groupKey: true, baseNumber: true, versions: { orderBy: { revision: "desc" }, select: versionSelect } },
+    select: { id: true, groupKey: true, baseNumber: true, versions: { where: { status: { not: "DISCARDED" } }, orderBy: { revision: "desc" }, select: versionSelect } },
   });
-  const rows: InvoiceListRow[] = invoices.map((invoice) => {
+  // An invoice whose drafts were all discarded is hidden, and its group counts as not drafted.
+  const liveInvoices = invoices.filter((invoice) => invoice.versions.length > 0);
+  const rows: InvoiceListRow[] = liveInvoices.map((invoice) => {
     const versions = invoice.versions.map(toSummary);
     const latest = versions[0]!;
     const finalized = versions.find((version) => version.status === "FINALIZED") ?? null;
@@ -906,7 +961,7 @@ export async function getInvoicesView(eventId: string): Promise<InvoicesView> {
       currentContact,
     };
   });
-  const haveKeys = new Set(invoices.map((invoice) => invoice.groupKey));
+  const haveKeys = new Set(liveInvoices.map((invoice) => invoice.groupKey));
   const finalizerRows = await prisma.eventMembership.findMany({
     where: { eventId, status: "ACTIVE", permissions: { has: "FINALIZE_INVOICES" } },
     select: { user: { select: { displayName: true } } },
@@ -969,9 +1024,9 @@ export async function getInvoiceDetail(eventId: string, invoiceId: string, optio
   const prisma = getPrisma();
   const invoice = await prisma.invoice.findFirst({
     where: { id: invoiceId, eventId },
-    select: { id: true, groupKey: true, baseNumber: true, invoiceGrouping: true, partyKind: true, versions: { orderBy: { revision: "desc" }, select: { ...versionSelect, snapshot: true } } },
+    select: { id: true, groupKey: true, baseNumber: true, invoiceGrouping: true, partyKind: true, versions: { where: { status: { not: "DISCARDED" } }, orderBy: { revision: "desc" }, select: { ...versionSelect, snapshot: true } } },
   });
-  if (!invoice) return null;
+  if (!invoice || invoice.versions.length === 0) return null;
   const summaries = invoice.versions.map(toSummary);
   const latest = summaries[0]!;
   const liveFinalized = summaries.find((version) => version.status === "FINALIZED") ?? null;

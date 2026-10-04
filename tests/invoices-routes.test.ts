@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   listEventsForUser: vi.fn(),
   service: {
     createInvoiceDrafts: vi.fn(),
+    discardInvoiceDraft: vi.fn(),
     regenerateInvoiceDraft: vi.fn(),
     reviseInvoice: vi.fn(),
     finalizeInvoiceVersion: vi.fn(),
@@ -86,6 +87,7 @@ beforeEach(() => {
   mocks.findActiveMembership.mockImplementation(async (userId: string, eventId: string) => memberships(userId, eventId));
   mocks.service.createInvoiceDrafts.mockResolvedValue({ created: 2, regenerated: 0, unchanged: 0, finalized: 0, needRevision: 0, reconciliationVersionNumber: 1 });
   mocks.service.regenerateInvoiceDraft.mockResolvedValue({ versionId: "v1", invoiceId: "i1" });
+  mocks.service.discardInvoiceDraft.mockResolvedValue({ versionId: "v1", invoiceId: "i1" });
   mocks.service.reviseInvoice.mockResolvedValue({ versionId: "v2", invoiceId: "i1", revision: 1 });
   mocks.service.setEventInvoiceCode.mockResolvedValue({ changed: true, code: "SC" });
   mocks.service.finalizeInvoiceVersion.mockResolvedValue({ changed: true, versionId: "v1", invoiceId: "i1", number: "SC27-0001", revision: 0, amountDueCents: 5000 });
@@ -100,6 +102,8 @@ describe("POST /api/events/[eventId]/invoices", () => {
     expect(mocks.service.createInvoiceDrafts).toHaveBeenCalledWith({ eventId: "event-a", actorUserId: "user-finance" });
     expect((await POST(request({ action: "regenerate", invoiceId: "i1", actorUserId: "someone-else" }), context())).status).toBe(200);
     expect(mocks.service.regenerateInvoiceDraft).toHaveBeenCalledWith({ eventId: "event-a", invoiceId: "i1", actorUserId: "user-finance" });
+    expect((await POST(request({ action: "discard", invoiceId: "i1" }), context())).status).toBe(200);
+    expect(mocks.service.discardInvoiceDraft).toHaveBeenCalledWith({ eventId: "event-a", invoiceId: "i1", actorUserId: "user-finance" });
     expect((await POST(request({ action: "revise", invoiceId: "i1", mode: "CONTACT_ONLY", reason: "New treasurer" }), context())).status).toBe(200);
     expect(mocks.service.reviseInvoice).toHaveBeenCalledWith({ eventId: "event-a", invoiceId: "i1", mode: "CONTACT_ONLY", reason: "New treasurer", actorUserId: "user-finance" });
     expect((await POST(request({ action: "set-code", code: "SC" }), context())).status).toBe(200);
@@ -127,7 +131,7 @@ describe("POST /api/events/[eventId]/invoices", () => {
   });
 
   it("refuses a member without MANAGE_FINANCE and an event the user is not assigned to (403), before the service", async () => {
-    const bodies = [{ action: "create-drafts" }, { action: "regenerate", invoiceId: "i1" }, { action: "revise", invoiceId: "i1", mode: "CONTACT_ONLY", reason: "x" }, { action: "set-code", code: "SC" }, finalizeBody];
+    const bodies = [{ action: "create-drafts" }, { action: "regenerate", invoiceId: "i1" }, { action: "discard", invoiceId: "i1" }, { action: "revise", invoiceId: "i1", mode: "CONTACT_ONLY", reason: "x" }, { action: "set-code", code: "SC" }, finalizeBody];
     for (const body of bodies) {
       expect((await POST(request(body), context("event-c"))).status).toBe(403);
       expect((await POST(request(body), context("event-b"))).status).toBe(403);

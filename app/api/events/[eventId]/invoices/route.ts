@@ -6,6 +6,7 @@ import { findActiveMembership } from "@/modules/events/repository";
 import {
   InvoiceError,
   createInvoiceDrafts,
+  discardInvoiceDraft,
   finalizeInvoiceVersion,
   regenerateInvoiceDraft,
   reviseInvoice,
@@ -54,6 +55,8 @@ async function postHandler(request: Request, context: RouteContext) {
         return Response.json(await createInvoiceDrafts({ eventId, actorUserId }));
       case "regenerate":
         return Response.json(await regenerateInvoiceDraft({ eventId, invoiceId: body.invoiceId, actorUserId }));
+      case "discard":
+        return Response.json(await discardInvoiceDraft({ eventId, invoiceId: body.invoiceId, actorUserId }));
       case "revise":
         return Response.json(await reviseInvoice({ eventId, invoiceId: body.invoiceId, mode: body.mode, reason: body.reason, actorUserId }));
       case "set-code":

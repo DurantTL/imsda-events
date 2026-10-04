@@ -172,8 +172,9 @@ describe("what counts as a changed billable amount", () => {
 });
 
 describe("labels and the action schema", () => {
-  it("names the three version statuses", () => {
-    expect(["DRAFT", "FINALIZED", "SUPERSEDED"].map((status) => versionStatusLabel(status as "DRAFT"))).toEqual(["Draft", "Finalized", "Superseded"]);
+  it("names the version statuses", () => {
+    expect(["DRAFT", "FINALIZED", "SUPERSEDED", "DISCARDED"].map((status) => versionStatusLabel(status as "DRAFT"))).toEqual(["Draft", "Finalized", "Superseded", "Discarded"]);
+    expect(invoiceActionSchema.safeParse({ action: "discard", invoiceId: "i1" }).success).toBe(true);
   });
 
   it("finalizing needs an explicit confirmation and a request key; revising needs a reason; unknown actions (such as sending) do not exist", () => {

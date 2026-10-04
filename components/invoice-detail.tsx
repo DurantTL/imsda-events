@@ -1,4 +1,4 @@
-import { FinalizeControl, RegenerateControl, ReviseForm } from "@/components/invoice-controls";
+import { DiscardControl, FinalizeControl, RegenerateControl, ReviseForm } from "@/components/invoice-controls";
 import { StatusBadge, displayNumber, invoiceMoney, invoiceWhen } from "@/components/invoices";
 import { basisLabel } from "@/modules/attendance-reconciliation/domain";
 import type { InvoiceLine } from "@/modules/invoices/domain";
@@ -110,6 +110,7 @@ export function InvoiceDetailView({
         {isDraft && (
           <>
             <RegenerateControl eventId={eventId} invoiceId={detail.invoice.id} />
+            <DiscardControl eventId={eventId} invoiceId={detail.invoice.id} isRevision={shown.revision > 0} />
             {finalizeAllowed ? (
               !stale && (
                 <FinalizeControl

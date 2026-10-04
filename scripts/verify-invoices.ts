@@ -38,6 +38,7 @@ import { resolveEventBillingResponsibility } from "@/modules/billing-responsibil
 import {
   InvoiceError,
   createInvoiceDrafts,
+  discardInvoiceDraft,
   finalizeInvoiceVersion,
   getInvoiceDetail,
   getInvoicesView,
@@ -45,6 +46,8 @@ import {
   reviseInvoice,
   setEventInvoiceCode,
 } from "@/modules/invoices/repository";
+import { addStaffMembership, updateStaffMembership } from "@/modules/access/membership-repository";
+import { setHealthAccess } from "@/modules/coordinator-health/membership-grants";
 import { InvoiceAccessGrantError, setInvoiceFinalizationAccess, stripInvoiceFinalizationAccess } from "@/modules/invoices/finalize-access";
 
 loadEnvConfig(process.cwd());
@@ -66,6 +69,7 @@ const NAME_C = [...initialsC].map((letter, index) => `${letter}${["ov", "ar", "i
 const ids = {
   staff: `${P}_staff`,
   treasurer: `${P}_treasurer`,
+  staff2: `${P}_staff2`,
   admin: `${P}_admin`,
   doomed: `${P}_doomed`,
   holder: `${P}_holder`,
@@ -78,8 +82,9 @@ const ids = {
   eventB: `${P}_ev_b`,
   eventC: `${P}_ev_c`,
   eventD: `${P}_ev_d`,
+  eventF: `${P}_ev_f`,
 };
-const events = [ids.eventA, ids.eventB, ids.eventC, ids.eventD];
+const events = [ids.eventA, ids.eventB, ids.eventC, ids.eventD, ids.eventF];
 const people = ["Ann", "Bo", "Cy", "Di", "Ed", "Flo"].map((name) => ({ id: `${P}_person_${name}`, name }));
 const EMAIL = { first: `${P}.first@contact.test`, second: `${P}.second@contact.test`, third: `${P}.third@contact.test` };
 
@@ -100,7 +105,7 @@ function code(error: unknown) {
 }
 
 async function cleanup() {
-  await prisma.auditLog.deleteMany({ where: { OR: [{ eventId: { in: events } }, { actorUserId: { in: [ids.staff, ids.treasurer, ids.admin, ids.doomed] } }] } });
+  await prisma.auditLog.deleteMany({ where: { OR: [{ eventId: { in: events } }, { actorUserId: { in: [ids.staff, ids.treasurer, ids.staff2, ids.admin, ids.doomed] } }] } });
   await prisma.publicRegistrationSubmission.deleteMany({ where: { eventId: { in: events } } });
   await prisma.event.deleteMany({ where: { id: { in: events } } });
   // A contact is never deleted by the application; this local cleanup turns the guard off for one transaction.
@@ -112,11 +117,12 @@ async function cleanup() {
   await prisma.organization.deleteMany({ where: { id: { in: [ids.club1, ids.club2, ids.club3] } } });
   await prisma.organization.deleteMany({ where: { id: { in: [ids.church1, ids.church2] } } });
   await prisma.person.deleteMany({ where: { id: { in: [ids.holder, ...people.map((entry) => entry.id)] } } });
-  await prisma.user.deleteMany({ where: { id: { in: [ids.staff, ids.treasurer, ids.admin, ids.doomed] } } });
+  await prisma.user.deleteMany({ where: { id: { in: [ids.staff, ids.treasurer, ids.staff2, ids.admin, ids.doomed] } } });
 }
 
 let counter = 0;
-async function registration(eventId: string, formVersionId: string, club: string, names: string[]) {
+/** A club registration, or (club null) a group registration billed to a person. */
+async function registration(eventId: string, formVersionId: string, club: string | null, names: string[]) {
   counter += 1;
   const created = await prisma.registration.create({
     data: {
@@ -129,7 +135,8 @@ async function registration(eventId: string, formVersionId: string, club: string
     },
     select: { id: true },
   });
-  await prisma.clubEventRegistration.create({ data: { eventId, organizationId: club, registrationId: created.id } });
+  if (club) await prisma.clubEventRegistration.create({ data: { eventId, organizationId: club, registrationId: created.id } });
+  else await prisma.groupEventRegistration.create({ data: { eventId, registrationId: created.id, billingPersonId: ids.holder } });
   const attendees: Record<string, string> = {};
   for (const [position, name] of names.entries()) {
     const person = people.find((entry) => entry.name === name)!;
@@ -193,9 +200,10 @@ async function main() {
     { id: ids.treasurer, email: `${P}_treasurer@example.test`, displayName: "Tess Treasurer" },
     { id: ids.admin, email: `${P}_admin@example.test`, displayName: "Ada Admin", globalRole: "SYSTEM_ADMIN" },
     { id: ids.doomed, email: `${P}_doomed@example.test`, displayName: "Dee Departing" },
+    { id: ids.staff2, email: `${P}_staff2@example.test`, displayName: "Sue Staff" },
   ] });
   await prisma.person.createMany({ data: [
-    { id: ids.holder, firstName: "Pat", lastName: "Holder" },
+    { id: ids.holder, firstName: "Pat", lastName: "Holder", normalizedEmail: `${P}.holder@contact.test` },
     ...people.map((entry) => ({ id: entry.id, firstName: entry.name, lastName: "Verify" })),
   ] });
   await prisma.organization.createMany({ data: [
@@ -445,6 +453,79 @@ async function main() {
   assert(secondC.number === `${initialsC}28-0001`, "a renamed event keeps its code, and the counter starts again for the new year");
   assert((await prisma.invoiceNumberCounter.count({ where: { eventId: ids.eventC } })) === 2, "one counter per code and year");
 
+  // Grouping changed before the first finalization: a person-billed group has the same key under both groupings,
+  // so its un-numbered invoice is reused and follows the current grouping (it must not be stuck on the old one).
+  const formF = await newEvent(ids.eventF, "Verify Group F", "2029-03-01T12:00:00Z", "PER_CHURCH");
+  const CODE_F = letters(hex(24), 5);
+  await setEventInvoiceCode({ eventId: ids.eventF, code: CODE_F, actorUserId: ids.staff });
+  const f1 = await registration(ids.eventF, formF, null, ["Ann", "Bo"]);
+  for (const entry of [f1.attendees.Ann!, f1.attendees.Bo!]) await checkIn(ids.eventF, entry);
+  await approveReconciled(ids.eventF);
+  assert((await createInvoiceDrafts({ eventId: ids.eventF, actorUserId: ids.staff })).created === 1, "a group registration billed to a person gets a draft");
+  const invF = await prisma.invoice.findFirstOrThrow({ where: { eventId: ids.eventF }, include: { versions: true } });
+  assert(invF.groupKey === `person:${ids.holder}` && invF.invoiceGrouping === "PER_CHURCH" && invF.versions[0]!.contactEmail === `${P}.holder@contact.test`, "the person's group key is the same under either grouping");
+  // Discard: the draft leaves the screens and counts; drafting again makes a fresh one; discarded rows are never reopened.
+  const discarded = await discardInvoiceDraft({ eventId: ids.eventF, invoiceId: invF.id, actorUserId: ids.staff });
+  const hiddenView = await getInvoicesView(ids.eventF);
+  assert(hiddenView.isDeferred && hiddenView.invoices.length === 0 && hiddenView.totals.draftCount === 0 && hiddenView.groupsWithoutInvoice.length === 1, "a discarded draft is hidden and its group is not drafted");
+  assert((await getInvoiceDetail(ids.eventF, invF.id)) === null, "an invoice with only discarded drafts is not shown");
+  assert(code(await failure(discardInvoiceDraft({ eventId: ids.eventF, invoiceId: invF.id, actorUserId: ids.staff }))) === "NOT_A_DRAFT", "nothing left to discard");
+  assert(code(await failure(finalize(ids.eventF, discarded.versionId, key("disc")))) === "NOT_A_DRAFT", "a discarded draft cannot be finalized");
+  assert(code(await failure(discardInvoiceDraft({ eventId: ids.eventA, invoiceId: invF.id, actorUserId: ids.staff }))) === "INVOICE_NOT_FOUND", "another event's draft cannot be discarded");
+  assert(await rejects(prisma.invoiceVersion.update({ where: { id: discarded.versionId }, data: { status: "DRAFT", discardedAt: null } })), "a discarded draft cannot be reopened");
+  assert(await rejects(prisma.invoiceVersion.update({ where: { id: discarded.versionId }, data: { amountDueCents: 1 } })), "a discarded draft cannot be rewritten");
+  assert((await createInvoiceDrafts({ eventId: ids.eventF, actorUserId: ids.staff })).created === 1, "drafting again makes a fresh draft for the same invoice");
+  assert((await prisma.invoiceVersion.findMany({ where: { invoiceId: invF.id } })).map((row) => row.status).sort().join() === "DISCARDED,DRAFT", "the discarded draft stays on record beside the new one");
+  // The grouping setting changes and the reconciliation is approved again.
+  await prisma.event.update({ where: { id: ids.eventF }, data: { invoiceGrouping: "PER_CLUB" } });
+  await approveReconciled(ids.eventF);
+  const staleDraft = await prisma.invoiceVersion.findFirstOrThrow({ where: { invoiceId: invF.id, status: "DRAFT" } });
+  assert(code(await failure(finalize(ids.eventF, staleDraft.id, key("f-stale")))) === "DRAFT_STALE", "a draft made under the old grouping cannot be finalized");
+  const reGrouped = await createInvoiceDrafts({ eventId: ids.eventF, actorUserId: ids.staff });
+  assert(reGrouped.regenerated === 1 && reGrouped.created === 0, "drafting under the new grouping refreshes the draft instead of conflicting");
+  assert((await prisma.invoice.findUniqueOrThrow({ where: { id: invF.id } })).invoiceGrouping === "PER_CLUB", "the un-numbered invoice follows the current grouping");
+  const fNumber = await finalize(ids.eventF, staleDraft.id, key("f1"));
+  assert(fNumber.number === `${CODE_F}29-0001`, "the regrouped invoice finalizes");
+  assert((await createInvoiceDrafts({ eventId: ids.eventF, actorUserId: ids.staff })).finalized === 1, "creating drafts again after finalizing does not conflict");
+  // An adjustment after finalization is revised under the same grouping; a revision draft can be discarded and started again.
+  await recordAttendanceCorrection({ eventId: ids.eventF, attendeeId: f1.attendees.Bo!, kind: "MARK_NOT_ATTENDED", reason: "Went home sick", actorUserId: ids.staff });
+  await approveReconciled(ids.eventF);
+  const fRev = await reviseInvoice({ eventId: ids.eventF, invoiceId: invF.id, mode: "FROM_RECONCILIATION", reason: "Bo did not attend", actorUserId: ids.staff });
+  await discardInvoiceDraft({ eventId: ids.eventF, invoiceId: invF.id, actorUserId: ids.staff });
+  assert((await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: fNumber.versionId } })).status === "FINALIZED", "discarding a revision draft leaves the finalized invoice as it was");
+  const fRev2 = await reviseInvoice({ eventId: ids.eventF, invoiceId: invF.id, mode: "FROM_RECONCILIATION", reason: "Bo did not attend", actorUserId: ids.staff });
+  assert(fRev2.revision === fRev.revision && fRev2.versionId !== fRev.versionId, "a discarded revision frees its revision number");
+  const fRevDone = await finalize(ids.eventF, fRev2.versionId, key("f2"));
+  assert(fRevDone.number === `${fNumber.number}-R1` && fRevDone.amountDueCents === 2500, "the revision after the regrouping finalizes as -R1 for $25");
+  assert((await createInvoiceDrafts({ eventId: ids.eventF, actorUserId: ids.staff })).finalized === 1, "and drafting again still does not conflict");
+
+  // Permission grants: a role without finance access cannot be granted it; concurrent grants and strips of two
+  // permissions on one membership never resurrect what was removed; the full membership edit paths strip both.
+  const lowMembership = await prisma.eventMembership.create({ data: { eventId: ids.eventA, userId: ids.staff2, role: "READ_ONLY_STAFF", permissions: [] } });
+  const lacking = await failure(setInvoiceFinalizationAccess(ids.eventA, lowMembership.id, ids.admin, true));
+  assert(lacking instanceof InvoiceAccessGrantError && lacking.code === "ROLE_LACKS_FINANCE", "a role without finance access cannot be granted finalization");
+  await prisma.eventMembership.update({ where: { id: lowMembership.id }, data: { role: "FINANCE_MANAGER", permissions: ["VIEW_HEALTH_INFORMATION", "FINALIZE_INVOICES"] } });
+  for (let round = 0; round < 8; round += 1) {
+    await prisma.eventMembership.update({ where: { id: lowMembership.id }, data: { permissions: ["VIEW_HEALTH_INFORMATION", "FINALIZE_INVOICES"] } });
+    await Promise.all([
+      prisma.$transaction(async (tx) => {
+        const current = await tx.eventMembership.findUniqueOrThrow({ where: { id: lowMembership.id } });
+        await stripInvoiceFinalizationAccess(tx, current, ids.admin, "ROLE_CHANGED");
+      }),
+      setHealthAccess(ids.eventA, lowMembership.id, ids.admin, false),
+    ]);
+    assert((await prisma.eventMembership.findUniqueOrThrow({ where: { id: lowMembership.id } })).permissions.length === 0, "a health revoke and a finalization strip at once leave neither permission");
+  }
+  await prisma.eventMembership.update({ where: { id: lowMembership.id }, data: { permissions: ["VIEW_HEALTH_INFORMATION", "FINALIZE_INVOICES"] } });
+  await updateStaffMembership(ids.eventA, lowMembership.id, ids.admin, { role: "READ_ONLY_STAFF", status: "ACTIVE" });
+  assert((await prisma.eventMembership.findUniqueOrThrow({ where: { id: lowMembership.id } })).permissions.length === 0, "changing the role removes both permissions");
+  await prisma.eventMembership.update({ where: { id: lowMembership.id }, data: { role: "FINANCE_MANAGER", status: "INACTIVE", permissions: ["VIEW_HEALTH_INFORMATION", "FINALIZE_INVOICES"] } });
+  await addStaffMembership(ids.eventA, ids.admin, { email: `${P}_staff2@example.test`, displayName: "Sue Staff", role: "FINANCE_MANAGER" });
+  const readded = await prisma.eventMembership.findUniqueOrThrow({ where: { id: lowMembership.id } });
+  assert(readded.status === "ACTIVE" && readded.permissions.length === 0, "adding the person again removes both permissions");
+  const revokeAudits = await prisma.auditLog.findMany({ where: { eventId: ids.eventA, entityId: lowMembership.id, action: { in: ["INVOICE_FINALIZATION_ACCESS_REVOKED", "HEALTH_ACCESS_REVOKED"] } } });
+  assert(revokeAudits.some((entry) => entry.action === "INVOICE_FINALIZATION_ACCESS_REVOKED") && revokeAudits.some((entry) => entry.action === "HEALTH_ACCESS_REVOKED"), "both removals are audited");
+
   // The Finalize invoices permission: only granted to named, active people, audited; no role carries it.
   const treasurerMembership = await prisma.eventMembership.create({ data: { eventId: ids.eventA, userId: ids.treasurer, role: "FINANCE_MANAGER", permissions: ["VIEW_HEALTH_INFORMATION"] } });
   const adminMembership = await prisma.eventMembership.create({ data: { eventId: ids.eventA, userId: ids.admin, role: "EVENT_ADMIN" } });
@@ -460,7 +541,7 @@ async function main() {
   });
   const stripped = await prisma.eventMembership.findUniqueOrThrow({ where: { id: treasurerMembership.id } });
   assert(!stripped.permissions.includes("FINALIZE_INVOICES") && stripped.permissions.includes("VIEW_HEALTH_INFORMATION"), "stripping removes only that permission");
-  assert((await prisma.auditLog.count({ where: { eventId: ids.eventA, action: "INVOICE_FINALIZATION_ACCESS_REVOKED" } })) === 1, "the removal is audited");
+  assert((await prisma.auditLog.count({ where: { eventId: ids.eventA, entityId: treasurerMembership.id, action: "INVOICE_FINALIZATION_ACCESS_REVOKED" } })) === 1, "the removal is audited");
   assert(!(await setInvoiceFinalizationAccess(ids.eventA, treasurerMembership.id, ids.admin, false)).changed, "revoking what is not held changes nothing");
 
   // No audit row holds a contact's name or email.

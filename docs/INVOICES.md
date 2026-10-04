@@ -29,7 +29,10 @@ running the event does not include it. It is a grant on a staff assignment, set 
 on the staff page (Event access, "Give permission to finalize invoices"), the same model as the health
 information permission (#658). Each grant and removal is audited with who, whom and the event. It is
 removed automatically when the assignment is deactivated, re-added or its role changes, so only a system
-administrator grants it again.
+administrator grants it again. It can be granted only to an active assignment whose role includes
+finance access (Finance Manager or Event Admin), since finalizing needs both; otherwise the grant is
+refused with that explanation. Grants and removals lock the membership row while permissions are read
+and written, so a concurrent change to another permission (such as health access) is never undone.
 
 **Why per event, not conference-wide.** The platform has no conference-level grant table: every
 permission besides `globalRole` lives on an event membership, and the audit, the staff screen and the
@@ -54,7 +57,12 @@ It is refused with a plain reason when:
   moved since the approval: prepare and approve again);
 - billing responsibility has blockers (a billed registration is unrecorded, out of date or unresolved,
   #165; an unresolved registration can never be invoiced);
-- invoices for the event were finalized under a different invoice grouping (change it back, or revise).
+- invoices that already have a number were finalized under a different invoice grouping than the
+  approved reconciliation uses (change the setting back, or revise under the old one). Invoices that
+  have no number yet are not a problem: they follow the event's current grouping, and drafting under a
+  new grouping re-points them. Because a church's or person's group key is the same under both
+  groupings, such an invoice is reused; a draft made before the setting changed is refused at
+  finalization (`DRAFT_STALE`) until the drafts are created again from the re-approved reconciliation.
 
 The groups are the #165 groups for the event's setting: one invoice per church (its clubs are lines of
 that invoice) or one per club, each addressed to the church's billing contact. A group nobody attended is
@@ -72,7 +80,10 @@ because the invoice lists who was billed; it holds no phone number, health or pa
 **Regenerating** replaces a DRAFT only, never a finalized version. Creating drafts again with nothing
 changed writes nothing; if the approved reconciliation, an amount or the contact moved, the draft is
 rebuilt (the version records how many times). A draft's only edits are regeneration; a database trigger
-refuses any other change. A finalized invoice found no longer matching the approved reconciliation is not
+refuses any other change. **Discarding** (MANAGE_FINANCE, audited) throws away an open draft or an
+unfinalized revision: it becomes DISCARDED, stays on record, and is hidden from the list and the draft
+counts; creating drafts again makes a fresh one (a discarded revision frees its revision number). A
+finalized version cannot be discarded. A finalized invoice found no longer matching the approved reconciliation is not
 touched: the screen flags it and offers a revision.
 
 ## Finalizing
@@ -189,8 +200,7 @@ Database triggers (not only application code) enforce, and `npm run test:invoice
 ## Not built, and open items
 
 - **Sending, PDF and email** (#168), a printable view, and accounting export. Nothing is sent or scheduled.
-- **Void or discard.** A draft that is wrong is regenerated, not discarded. A $0 invoice is finalized,
-  not voided. A finalized invoice is corrected by a revision, including one that brings it to $0.
+- **Void.** A $0 invoice is finalized, not voided. (An open draft can be discarded: see Drafts.) A finalized invoice is corrected by a revision, including one that brings it to $0.
 - **A finalized invoice needs a billing contact**, so it has someone to be sent to. A group with none
   cannot be finalized until staff add one (Billing responsibility) and regenerate the draft. This is a
   stricter rule than the issue states; relax it if the conference wants contact-less invoices.
