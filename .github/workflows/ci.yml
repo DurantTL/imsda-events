@@ -127,6 +127,9 @@ jobs:
       # Real-database check of roster guardian contacts: slot constraints, replace-on-edit, prior-year writes refused, deletion on removal, reader scoping, and no guardian value in any audit row (#510).
       - run: npm run test:club-roster-guardians
 
+      # Real-database check of billing responsibility and organization billing contacts: the resolver is idempotent and race-safe, staff decisions survive re-resolution, one active contact per organization even under parallel replacement with history kept, the constraints and append-only history hold, and no audit row holds contact details (#165).
+      - run: npm run test:billing-responsibility
+
       # Real-database check of module requests: one pending per event and module under concurrent submits, approve enables in one transaction, decline needs a reason, audit holds ids only, and free text cannot become an email placeholder (#741).
       - run: npm run test:module-requests
 

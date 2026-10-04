@@ -439,6 +439,10 @@ export async function removeRosterMember(organizationId: string, memberId: strin
               // Other clubs' class completions keep the Person (#566): the
               // foreign key is `onDelete: Restrict`.
               memberClassCompletions: true,
+              // A group's billing person (#650) and a recorded billing responsibility (#165)
+              // both point at the Person with `onDelete: Restrict`.
+              groupBillingRegistrations: true,
+              billingResponsibilities: true,
             },
           },
         },

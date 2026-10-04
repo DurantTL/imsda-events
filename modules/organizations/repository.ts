@@ -485,6 +485,8 @@ export async function getOrganizationDeletionCheck(
           sponsoredPromoCodes: true,
           clubFormSubmissions: true,
           clubFormLinks: true,
+          billingContacts: true,
+          billingResponsibilities: true,
         },
       },
     },
@@ -509,6 +511,9 @@ export async function getOrganizationDeletionCheck(
   const clubForms = (counts.clubFormSubmissions ?? 0) + (counts.clubFormLinks ?? 0);
   if (clubForms > 0) {
     blockers.push(`This club has ${counts.clubFormSubmissions ?? 0} filled club form${(counts.clubFormSubmissions ?? 0) === 1 ? "" : "s"} and ${counts.clubFormLinks ?? 0} private link${(counts.clubFormLinks ?? 0) === 1 ? "" : "s"}. Those are the club's files and may hold health and contact details, so they are kept. Deactivate the club instead.`);
+  }
+  if ((counts.billingContacts ?? 0) > 0 || (counts.billingResponsibilities ?? 0) > 0) {
+    blockers.push(`This organization has ${counts.billingContacts ?? 0} billing contact${(counts.billingContacts ?? 0) === 1 ? "" : "s"} on record and is the responsible party for ${counts.billingResponsibilities ?? 0} registration${(counts.billingResponsibilities ?? 0) === 1 ? "" : "s"}. Billing records are kept, so deactivate it instead.`);
   }
   if (counts.honorEnrollments > 0) {
     blockers.push(`This club has ${counts.honorEnrollments} honor enrollment${counts.honorEnrollments === 1 ? "" : "s"}. Deactivate the club instead.`);

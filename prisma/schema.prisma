@@ -223,6 +223,46 @@ enum EventBillingMode {
   DEFERRED_ORGANIZATION_INVOICE
 }
 
+/// How a deferred-invoice event groups registrations on invoices (#165):
+/// PER_CHURCH puts every club of one sponsoring church on that church's
+/// invoice (each club its own line); PER_CLUB gives each club its own invoice.
+enum InvoiceGrouping {
+  PER_CHURCH
+  PER_CLUB
+}
+
+/// Where an organization billing contact came from (#165). Only office staff
+/// enter one for now; it is never inferred from an email domain, a form answer,
+/// the club director, or the submitter.
+enum BillingContactSource {
+  STAFF_ENTERED
+}
+
+enum BillingResponsibleKind {
+  ORGANIZATION
+  PERSON
+  UNRESOLVED
+}
+
+/// How a registration's responsible party was decided (#165). STAFF_* rows are
+/// human decisions and survive re-resolution; the rest are derived by rule.
+enum BillingResponsibilitySource {
+  CLUB_SPONSORING_CHURCH
+  GROUP_BILLING_PERSON
+  UNRESOLVED_CLUB_HAS_NO_CHURCH
+  UNRESOLVED_NO_ORGANIZATION_LINKED
+  STAFF_LINKED
+  STAFF_OVERRIDE
+}
+
+enum BillingResponsibilityChangeType {
+  RESOLVED
+  RE_RESOLVED
+  STAFF_LINKED
+  STAFF_OVERRIDE
+  OVERRIDE_CLEARED
+}
+
 enum SquareWebhookEventStatus {
   PROCESSED
   IGNORED
@@ -639,6 +679,11 @@ model User {
   enabledClubFormTemplates           ClubFormTemplate[]           @relation("ClubFormTemplateEnabledBy")
   createdClubFormLinks               ClubFormLink[]               @relation("ClubFormLinkCreatedByUser")
   enteredClubFormSubmissions         ClubFormSubmission[]         @relation("ClubFormSubmissionEnteredByUser")
+  verifiedBillingContacts      OrganizationBillingContact[]              @relation("BillingContactVerifiedBy")
+  createdBillingContacts       OrganizationBillingContact[]              @relation("BillingContactCreatedBy")
+  endedBillingContacts         OrganizationBillingContact[]              @relation("BillingContactEndedBy")
+  setBillingResponsibilities   RegistrationBillingResponsibility[]       @relation("BillingResponsibilitySetBy")
+  billingResponsibilityChanges RegistrationBillingResponsibilityChange[] @relation("BillingResponsibilityChangeActor")
 
   @@index([accountStatus])
 }
@@ -1253,6 +1298,8 @@ model Event {
   checksAdultBackgrounds Boolean          @default(false)
   attendeeEditPolicy   AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
   billingMode          EventBillingMode   @default(ATTENDEE_PAY)
+  /// Invoice grouping for a deferred-invoice event (#165); only MANAGE_FINANCE changes it, and every change is audited.
+  invoiceGrouping                    InvoiceGrouping    @default(PER_CHURCH)
   /// Explicit audience (#481), independent of `billingMode`: club and church
   /// navigation, club registration oversight, and club reports key off this
   /// field, not the billing mode.
@@ -1314,6 +1361,8 @@ model Event {
   honorOfferings                      HonorOffering[]
   clubRegistrations                   ClubEventRegistration[]
   groupRegistrations                  GroupEventRegistration[]
+  billingResponsibilities             RegistrationBillingResponsibility[]
+  billingResponsibilityChanges        RegistrationBillingResponsibilityChange[]
   clubRegistrationDrafts              ClubRegistrationDraft[]
   clubAssignments                     ClubEventAssignment[]
   honorEnrollments                    HonorEnrollment[]
@@ -1664,6 +1713,7 @@ model Person {
   householdMembers   HouseholdMember[]
   heldRegistrations  Registration[]
   groupBillingRegistrations GroupEventRegistration[]
+  billingResponsibilities   RegistrationBillingResponsibility[]
   groupContactOperations RegistrationOperation[] @relation("RegistrationOperationActorPerson")
   registrationEvents RegistrationAttendee[]
   externalIdentities ExternalIdentity[]
@@ -1923,6 +1973,8 @@ model Organization {
   memberClassCompletions MemberClassCompletion[]
   sponsoredPromoCodes PromoCode[] @relation("PromoCodeSponsor")
   clubFormSubmissions ClubFormSubmission[]
+  billingContacts         OrganizationBillingContact[]
+  billingResponsibilities RegistrationBillingResponsibility[]
   clubFormLinks       ClubFormLink[]
 
   @@index([type, isActive, name])
@@ -2364,6 +2416,8 @@ model Registration {
   tagAssignments          RegistrationTagAssignment[]
   clubRegistration        ClubEventRegistration?
   groupRegistration       GroupEventRegistration?
+  billingResponsibility        RegistrationBillingResponsibility?
+  billingResponsibilityChanges RegistrationBillingResponsibilityChange[]
   honorEnrollments        HonorEnrollment[]
   adjustments             RegistrationAdjustment[]
   memberTransferMovesFrom MemberTransferRegistrationMove[] @relation("MemberTransferMoveFrom")
@@ -5246,4 +5300,89 @@ model HealthRecordLink {
   @@index([organizationId, status])
   @@index([rosterMemberId])
   @@index([status, expiresAt])
+}
+
+/// An organization's billing contact (#165), usually the church treasurer. Entered by office
+/// staff once and reused for every event. Effective-dated: replacing it ends the previous row
+/// (`effectiveTo`) and starts a new, unverified one; a row is never edited in place or deleted
+/// (a trigger refuses DELETE). At most one row per organization is active (`effectiveTo` IS
+/// NULL), enforced by a partial unique index the migration adds. Distinct from the club
+/// director, the registration submitter, and any registration-facing contact.
+model OrganizationBillingContact {
+  id               String               @id @default(cuid())
+  organizationId   String
+  name             String
+  email            String
+  phone            String?
+  /// A label such as "Treasurer".
+  roleLabel        String
+  source           BillingContactSource @default(STAFF_ENTERED)
+  effectiveFrom    DateTime             @default(now())
+  effectiveTo      DateTime?
+  verifiedAt       DateTime?
+  verifiedByUserId String?
+  createdByUserId  String?
+  endedByUserId    String?
+  endReason        String?
+  createdAt        DateTime             @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  verifiedBy   User?        @relation("BillingContactVerifiedBy", fields: [verifiedByUserId], references: [id], onDelete: SetNull)
+  createdBy    User?        @relation("BillingContactCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  endedBy      User?        @relation("BillingContactEndedBy", fields: [endedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, effectiveFrom])
+}
+
+/// Who is financially responsible for one deferred-invoice registration (#165). One current row
+/// per registration; every change also appends a `RegistrationBillingResponsibilityChange`.
+/// STAFF_LINKED and STAFF_OVERRIDE rows are human decisions that re-resolution never replaces.
+model RegistrationBillingResponsibility {
+  id             String                      @id @default(cuid())
+  eventId        String
+  registrationId String                      @unique
+  kind           BillingResponsibleKind
+  organizationId String?
+  personId       String?
+  source         BillingResponsibilitySource
+  /// Why staff chose this (required for an override).
+  reason         String?
+  setByUserId    String?
+  createdAt      DateTime                    @default(now())
+  updatedAt      DateTime                    @updatedAt
+
+  event        Event         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration  @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  person       Person?       @relation(fields: [personId], references: [id], onDelete: Restrict)
+  setBy        User?         @relation("BillingResponsibilitySetBy", fields: [setByUserId], references: [id], onDelete: SetNull)
+
+  @@index([eventId, kind])
+  @@index([organizationId])
+}
+
+/// Append-only history of responsibility changes (#165): the before and after of each one.
+model RegistrationBillingResponsibilityChange {
+  id                 String                          @id @default(cuid())
+  eventId            String
+  registrationId     String
+  changeType         BillingResponsibilityChangeType
+  fromKind           BillingResponsibleKind?
+  fromOrganizationId String?
+  fromPersonId       String?
+  fromSource         BillingResponsibilitySource?
+  toKind             BillingResponsibleKind
+  toOrganizationId   String?
+  toPersonId         String?
+  toSource           BillingResponsibilitySource
+  reason             String?
+  actorUserId        String?
+  createdAt          DateTime                        @default(now())
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation("BillingResponsibilityChangeActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([registrationId, createdAt])
+  @@index([eventId, createdAt])
 }
