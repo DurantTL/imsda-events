@@ -9,10 +9,12 @@ FROM node:22-bookworm-slim AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NEXT_BUILD_TSCONFIG=tsconfig.build.json
-# Skip Next's build-time type check in the image. It needs more memory than a
-# 4 GB server has and repeats CI, which type-checks the whole project before a
-# commit reaches main. Local and CI builds still type-check.
-ENV NEXT_SKIP_BUILD_TYPECHECK=1
+# Skip Next's build-time type check in the image: it needs more memory than the
+# 4 GB production server has. CI type-checks the whole project, so deploy only
+# commits whose CI is green. A bigger host can restore the check with
+# `--build-arg NEXT_SKIP_BUILD_TYPECHECK=0`. Local and CI builds still type-check.
+ARG NEXT_SKIP_BUILD_TYPECHECK=1
+ENV NEXT_SKIP_BUILD_TYPECHECK=${NEXT_SKIP_BUILD_TYPECHECK}
 
 # These values affect build-time metadata and response headers. They contain no
 # credentials, and Compose supplies the same values again when the app runs.

@@ -17,8 +17,8 @@ const squareFontOrigins = [
   "https://d1g145x70srn7h.cloudfront.net",
 ].join(" ");
 const buildTsconfigPath = process.env.NEXT_BUILD_TSCONFIG?.trim() || "tsconfig.json";
-// Only the Docker image sets this: CI has already type-checked the commit, and
-// the check needs more memory than the production server has.
+// Only the Docker image sets this, because the check needs more memory than the
+// production server has. CI type-checks every commit; deploy only green ones.
 const skipBuildTypecheck = process.env.NEXT_SKIP_BUILD_TYPECHECK === "1";
 
 // OpenStreetMap's tile server, for the public club map (#437) and the

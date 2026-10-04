@@ -59,7 +59,8 @@ describe("portable Docker deployment contract", () => {
   });
 
   it("skips Next's build-time type check only in the image, where CI already ran it", async () => {
-    expect(dockerfile).toContain("ENV NEXT_SKIP_BUILD_TYPECHECK=1");
+    expect(dockerfile).toContain("ARG NEXT_SKIP_BUILD_TYPECHECK=1");
+    expect(dockerfile).toContain("ENV NEXT_SKIP_BUILD_TYPECHECK=${NEXT_SKIP_BUILD_TYPECHECK}");
     const previous = process.env.NEXT_SKIP_BUILD_TYPECHECK;
     try {
       delete process.env.NEXT_SKIP_BUILD_TYPECHECK;
