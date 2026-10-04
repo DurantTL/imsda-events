@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formTemplates } from "@/modules/forms/definition";
+import { formTemplates, registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import {
   CHOICE_FILTER_OTHER,
@@ -167,18 +167,38 @@ describe("choice answer filter", () => {
 
   it("registration-wide questions list registrations with no answer, equal to the count", () => {
     const multiDefinition = { ...definition, sections: [{ id: "workshops_section", title: "Workshops", fields: [
-      { id: "field_workshops", key: "workshops", label: "Workshops", helpText: "", type: "MULTISELECT", scope: "REGISTRATION", required: false, options: ["Art", "__other"] },
+      { id: "field_workshops", key: "workshops", label: "Workshops", helpText: "", type: "MULTISELECT", scope: "REGISTRATION", required: false, options: ["Art", "Music"] },
     ] }], payment: undefined, attendeeRoster: undefined } as Record<string, unknown>;
     const make = (id: string, responses: Record<string, unknown>) => ({ ...registration(id, "CONFIRMED", [], responses), publicSubmission: { definition: multiDefinition, responses, attendeeResponses: [] } }) as unknown as RegistrationRecord;
     const rows = [make("R1", {}), make("R2", { workshops: ["Art"] }), make("R3", { workshops: ["__other"] })];
     const question = listChoiceQuestions(rows, staff)[0];
-    // A choice whose value is a reserved one is not offered, so it cannot collide: it is an "other" answer.
-    expect(question.choices.map((choice) => choice.value)).toEqual(["Art"]);
+    // A stored value equal to a reserved one is just an unoffered value: it counts as "other".
+    expect(question.choices.map((choice) => choice.value)).toEqual(["Art", "Music"]);
     const counts = choiceAnswerCounts(rows, question);
     expect(counts.unanswered).toBe(1);
     expect(matchesForChoice(rows, question, CHOICE_FILTER_UNANSWERED).map((match) => match.registrationId)).toEqual(["R1"]);
     expect(counts.other).toBe(1);
     expect(matchesForChoice(rows, question, CHOICE_FILTER_OTHER).map((match) => match.registrationId)).toEqual(["R3"]);
+  });
+
+  it("rejects choice values starting with two underscores in the form definition", () => {
+    const bad = withFields(definition, (fields) => fields.map((field) => (field as { key: string }).key === "meal_preference"
+      ? { ...field, options: ["Standard", "__other"] }
+      : field));
+    const result = registrationFormDefinitionSchema.safeParse(bad);
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain("Choice values can't start with two underscores.");
+  });
+
+  it("never resolves a reserved value for a sensitive question without VIEW_SENSITIVE_DATA", () => {
+    const sensitiveDefinition = withFields(definition, (fields) => fields.map((field) => (field as { key: string }).key === "meal_preference"
+      ? { ...field, sensitive: true, filterable: true }
+      : field));
+    const rows = [{ ...registration("S1", "CONFIRMED", [attendee("s1", "Sam", "Synthetic", {})]), publicSubmission: { definition: sensitiveDefinition, responses: {}, attendeeResponses: [] } }] as unknown as RegistrationRecord[];
+    for (const value of [CHOICE_FILTER_OTHER, CHOICE_FILTER_UNANSWERED]) {
+      expect(resolveChoiceFilter(rows, { question: "ATTENDEE:meal_preference", value }, { canViewSensitive: false })).toBeNull();
+      expect(resolveChoiceFilter(rows, { question: "ATTENDEE:meal_preference", value }, staff)!.value).toBe(value);
+    }
   });
 
   it("decides each registration from its own form version", () => {

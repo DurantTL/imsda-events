@@ -97,7 +97,7 @@ export const formFieldSchema = z.object({
   type: z.enum(formFieldTypes),
   scope: z.enum(formFieldScopes),
   required: z.boolean(),
-  options: z.array(z.string().trim().min(1).max(120)).max(200).default([]),
+  options: z.array(z.string().trim().min(1).max(120).refine((value) => !value.startsWith("__"), "Choice values can't start with two underscores.")).max(200).default([]),
   optionSource: z.enum(["ATTENDEE_TYPES", "CLUBS_DIRECTORY", "CHURCHES_DIRECTORY", "SCHOOLS_DIRECTORY"]).optional(),
   optionLabels: z.record(z.string(), z.string().trim().min(1).max(120)).optional(),
   optionDescriptions: z.record(

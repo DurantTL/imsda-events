@@ -65,6 +65,24 @@ describe("registrations export with a choice-answer filter", () => {
     expect(response.status).toBe(400);
   });
 
+  it("exports the other bucket without ever writing the stored text", async () => {
+    dependencies.listRegistrations.mockResolvedValue([registration("X1", "synthetic secret text"), registration("X2", "Vegan")]);
+    const response = await call("?answerQuestion=ATTENDEE:meal_preference&answerValue=__other");
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text.trim().split("\r\n")).toHaveLength(2);
+    expect(text).toContain('"WR26-X1"');
+    expect(text).toContain("Other / no longer offered");
+    expect(text).not.toContain("synthetic secret text");
+  });
+
+  it("refuses the other bucket without VIEW_SENSITIVE_DATA", async () => {
+    dependencies.requirePermission.mockResolvedValue({ user: { globalRole: null }, membership: { role: "READ_ONLY_STAFF", permissions: ["VIEW_REPORTS"] } });
+    const response = await call("?answerQuestion=ATTENDEE:meal_preference&answerValue=__other");
+    expect(response.status).toBe(403);
+    expect(dependencies.listRegistrations).not.toHaveBeenCalled();
+  });
+
   it("without a filter still returns the general export", async () => {
     const response = await call("");
     expect((await response.text()).split("\r\n")[0]).toContain("Account holder");
