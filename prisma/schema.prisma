@@ -535,6 +535,9 @@ enum MessageTemplateKey {
   MODULE_REQUEST_SUBMITTED
   /// A system administrator approved or declined that request: sent to the requester.
   MODULE_REQUEST_DECIDED
+  /// A finalized invoice sent to its billing contact and club directors by conference staff (#168).
+  /// One message per recipient, with the invoice PDF attached. Not an event template: staff write it per send.
+  INVOICE_DELIVERY
 }
 
 enum MessageTemplateStatus {
@@ -554,6 +557,10 @@ enum MessageRecipientKind {
   INTERNAL
   TEST
   ACCOUNT
+  /// A church billing contact receiving an invoice (#168).
+  BILLING_CONTACT
+  /// A club director copied on an invoice (#168).
+  CLUB_DIRECTOR
 }
 
 enum MessageOutboxStatus {
@@ -737,6 +744,9 @@ model User {
 
   createdInvoiceVersions       InvoiceVersion[]                          @relation("InvoiceVersionCreatedBy")
   finalizedInvoiceVersions     InvoiceVersion[]                          @relation("InvoiceVersionFinalizedBy")
+  sentInvoiceDeliveries        InvoiceDelivery[]                         @relation("InvoiceDeliverySentBy")
+  recordedInvoiceArPostings    InvoiceArPosting[]                        @relation("InvoiceArPostingRecordedBy")
+  recordedInvoicePayments      InvoicePayment[]                          @relation("InvoicePaymentRecordedBy")
 
   @@index([accountStatus])
 }
@@ -1358,6 +1368,9 @@ model Event {
   /// Explicit invoice-number prefix (#167), letters only; blank derives it from the name. Staff set it
   /// before the first invoice is finalized; a trigger refuses a change after the event has a number series.
   invoiceCode                        String?
+  /// The payment instruction printed on every invoice PDF (#168), editable by finance staff; blank uses the built-in
+  /// default. Copied onto each invoice's document when its PDF is first made, so later edits never change an earlier PDF.
+  invoicePaymentInstructions         String?
   /// Explicit audience (#481), independent of `billingMode`: club and church
   /// navigation, club registration oversight, and club reports key off this
   /// field, not the billing mode.
@@ -1431,6 +1444,11 @@ model Event {
   invoiceVersions                     InvoiceVersion[]
   invoiceReceivables                  InvoiceReceivable[]
   invoiceNumberCounters               InvoiceNumberCounter[]
+  invoiceDocuments                    InvoiceVersionDocument[]
+  invoiceDeliveries                   InvoiceDelivery[]
+  invoiceArPostings                   InvoiceArPosting[]
+  invoicePayments                     InvoicePayment[]
+  messageAttachments                  MessageAttachment[]
   clubRegistrationDrafts              ClubRegistrationDraft[]
   clubAssignments                     ClubEventAssignment[]
   honorEnrollments                    HonorEnrollment[]
@@ -3603,9 +3621,13 @@ model MessageOutbox {
   failedAt               DateTime?
   lastError              String?
   retryOfMessageId       String?
+  /// One file sent with the message (#168: an invoice PDF), stored once in `MessageAttachment` and shared by every
+  /// message that carries it, so a resend attaches the very same bytes.
+  attachmentId           String?
   createdAt              DateTime                       @default(now())
   updatedAt              DateTime                       @updatedAt
 
+  attachment      MessageAttachment?       @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
   event           Event?                   @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registration    Registration?            @relation(fields: [registrationId], references: [id], onDelete: SetNull)
   accountUser     User?                    @relation("AccountMessageRecipient", fields: [accountUserId], references: [id], onDelete: Cascade)
@@ -3615,6 +3637,7 @@ model MessageOutbox {
   retries         MessageOutbox[]          @relation("MessageRetry")
   attempts        MessageDeliveryAttempt[]
   providerEvents  MessageProviderEvent[]
+  invoiceRecipients InvoiceDeliveryRecipient[]
 
   @@index([status, availableAt, createdAt])
   @@index([eventId, createdAt])
@@ -3622,7 +3645,28 @@ model MessageOutbox {
   @@index([accountUserId, createdAt])
   @@index([accountAttendeeId, createdAt])
   @@index([retryOfMessageId])
+  @@index([attachmentId])
   @@index([provider, providerDeliveryStatus, providerStatusAt])
+}
+
+/// A file attached to outbox messages (#168), stored once and immutable (database trigger); `sha256` is the hash of
+/// `content` (a check constraint keeps them equal). Never publicly addressable: it is read only by the delivery
+/// worker and by staff routes that check the event permission.
+model MessageAttachment {
+  id          String   @id @default(cuid())
+  eventId     String?
+  filename    String
+  contentType String
+  sizeBytes   Int
+  sha256      String
+  content     Bytes
+  createdAt   DateTime @default(now())
+
+  event           Event?                  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  messages        MessageOutbox[]
+  invoiceDocument InvoiceVersionDocument?
+
+  @@index([eventId])
 }
 
 model MessageDeliveryAttempt {
@@ -5674,6 +5718,9 @@ model Invoice {
   event       Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
   versions    InvoiceVersion[]
   receivables InvoiceReceivable[]
+  deliveries  InvoiceDelivery[]
+  arPostings  InvoiceArPosting[]
+  payments    InvoicePayment[]
 
   @@unique([eventId, groupKey])
   @@index([eventId])
@@ -5728,6 +5775,10 @@ model InvoiceVersion {
   createdBy             User?                           @relation("InvoiceVersionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   finalizedBy           User?                           @relation("InvoiceVersionFinalizedBy", fields: [finalizedByUserId], references: [id], onDelete: SetNull)
   receivable            InvoiceReceivable?
+  document              InvoiceVersionDocument?
+  deliveries            InvoiceDelivery[]
+  arPostings            InvoiceArPosting[]
+  payments              InvoicePayment[]
 
   /// A migration-level partial unique index allows one non-discarded version per invoice and revision.
   @@index([invoiceId, revision])
@@ -5751,6 +5802,7 @@ model InvoiceReceivable {
   event          Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
   invoice        Invoice        @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   invoiceVersion InvoiceVersion @relation(fields: [invoiceVersionId], references: [id], onDelete: Cascade)
+  payments       InvoicePayment[]
 
   @@index([eventId, status])
   @@index([invoiceId])
@@ -5770,5 +5822,148 @@ model InvoiceNumberCounter {
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@unique([code, year])
+  @@index([eventId])
+}
+
+/// Whether a payment entry records money received or reverses an earlier entry (#168).
+enum InvoicePaymentEntryKind {
+  PAYMENT
+  REVERSAL
+}
+
+/// Who an invoice email went to (#168): the church's billing contact, or the director of a club on the invoice.
+enum InvoiceRecipientKind {
+  BILLING_CONTACT
+  CLUB_DIRECTOR
+}
+
+/// The PDF of one finalized invoice version (#168), made once from the immutable snapshot at the first send or
+/// download and never regenerated: a resend attaches these very bytes. `sha256` is the hash of the stored file.
+model InvoiceVersionDocument {
+  id                  String   @id @default(cuid())
+  eventId             String
+  invoiceId           String
+  invoiceVersionId    String   @unique
+  attachmentId        String   @unique
+  sha256              String
+  /// The layout version of the generator, so a later layout change is visible on old documents.
+  generatorVersion    Int
+  /// The finance setting and organization name as they were when the PDF was made.
+  paymentInstructions String
+  headerName          String
+  createdAt           DateTime @default(now())
+
+  event          Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  invoiceVersion InvoiceVersion    @relation(fields: [invoiceVersionId], references: [id], onDelete: Cascade)
+  attachment     MessageAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  deliveries     InvoiceDelivery[]
+
+  @@index([eventId])
+}
+
+/// One staff send (or resend) of a finalized invoice version (#168). Append-only. Each recipient is one outbox
+/// message, whose status, bounce and suppression the outbox and provider events keep up to date.
+model InvoiceDelivery {
+  id                              String   @id @default(cuid())
+  eventId                         String
+  invoiceId                       String
+  invoiceVersionId                String
+  documentId                      String
+  /// 1 for the first send of the version, 2 for the first resend, and so on.
+  sequence                        Int
+  sentByUserId                    String?
+  sentByName                      String
+  subject                         String
+  /// The current billing contact was not the contact the invoice was finalized with (staff saw the flag first).
+  contactChangedSinceFinalization Boolean  @default(false)
+  idempotencyKey                  String   @unique
+  createdAt                       DateTime @default(now())
+
+  event          Event                      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  invoice        Invoice                    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceVersion InvoiceVersion             @relation(fields: [invoiceVersionId], references: [id], onDelete: Cascade)
+  document       InvoiceVersionDocument     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  sentBy         User?                      @relation("InvoiceDeliverySentBy", fields: [sentByUserId], references: [id], onDelete: SetNull)
+  recipients     InvoiceDeliveryRecipient[]
+
+  @@unique([invoiceVersionId, sequence])
+  @@index([eventId, createdAt])
+}
+
+model InvoiceDeliveryRecipient {
+  id                String               @id @default(cuid())
+  deliveryId        String
+  kind              InvoiceRecipientKind
+  /// The director's attendee account, or null for the billing contact.
+  attendeeAccountId String?
+  /// The club a director leads on this invoice, or null for the billing contact.
+  clubId            String?
+  messageOutboxId   String               @unique
+  createdAt         DateTime             @default(now())
+
+  delivery InvoiceDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  message  MessageOutbox   @relation(fields: [messageOutboxId], references: [id], onDelete: Cascade)
+
+  @@index([deliveryId])
+}
+
+/// Staff marked a finalized version "Posted to AR" in the conference's own accounting (#168). One root row per
+/// version; a correction is a new row that corrects the latest one (append-only, never edited).
+model InvoiceArPosting {
+  id                String            @id @default(cuid())
+  eventId           String
+  invoiceId         String
+  invoiceVersionId  String
+  postedOn          DateTime          @db.Date
+  reference         String?
+  correctsPostingId String?           @unique
+  reason            String?
+  recordedByUserId  String?
+  recordedByName    String
+  createdAt         DateTime          @default(now())
+
+  event          Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  invoice        Invoice           @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceVersion InvoiceVersion    @relation(fields: [invoiceVersionId], references: [id], onDelete: Cascade)
+  corrects       InvoiceArPosting? @relation("InvoiceArPostingCorrection", fields: [correctsPostingId], references: [id], onDelete: NoAction)
+  correctedBy    InvoiceArPosting? @relation("InvoiceArPostingCorrection")
+  recordedBy     User?             @relation("InvoiceArPostingRecordedBy", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+
+  /// A migration-level partial unique index allows one root (uncorrecting) posting per version.
+  @@index([invoiceId, createdAt])
+  @@index([eventId])
+}
+
+/// A check received against an invoice, recorded by hand (#168). Append-only: a mistake is voided by a REVERSAL
+/// entry that names the payment and gives a reason. Outstanding is computed across every entry on the invoice.
+model InvoicePayment {
+  id                String                  @id @default(cuid())
+  eventId           String
+  invoiceId         String
+  /// The finalized version the entry was recorded against, and that version's receivable.
+  invoiceVersionId  String
+  receivableId      String
+  kind              InvoicePaymentEntryKind
+  amountCents       Int
+  checkNumber       String?
+  receivedOn        DateTime                @db.Date
+  note              String?
+  reversesPaymentId String?                 @unique
+  reason            String?
+  /// Minted by the page and reused on a retry, so a double click records one entry.
+  requestKey        String?                 @unique
+  recordedByUserId  String?
+  recordedByName    String
+  createdAt         DateTime                @default(now())
+
+  event          Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  invoice        Invoice           @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceVersion InvoiceVersion    @relation(fields: [invoiceVersionId], references: [id], onDelete: Cascade)
+  receivable     InvoiceReceivable @relation(fields: [receivableId], references: [id], onDelete: Cascade)
+  reverses       InvoicePayment?   @relation("InvoicePaymentReversal", fields: [reversesPaymentId], references: [id], onDelete: NoAction)
+  reversedBy     InvoicePayment?   @relation("InvoicePaymentReversal")
+  recordedBy     User?             @relation("InvoicePaymentRecordedBy", fields: [recordedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId, createdAt])
   @@index([eventId])
 }

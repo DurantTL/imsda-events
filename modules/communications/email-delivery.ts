@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import {
   EmailProviderConfigurationError,
@@ -51,7 +51,7 @@ const EMAIL_RETRY_MAX_MS = 60 * 60 * 1000;
 
 type DeliveryPrisma = Pick<
   PrismaClient,
-  "$transaction" | "eventMessageSettings" | "messageOutbox" | "auditLog"
+  "$transaction" | "eventMessageSettings" | "messageOutbox" | "auditLog" | "invoiceDeliveryRecipient"
 >;
 
 export type ExternalEmailDeliveryDependencies = {
@@ -91,6 +91,8 @@ type ClaimedMessage = {
   subjectSnapshot: string;
   bodyTextSnapshot: string;
   bodyHtmlSnapshot: string | null;
+  /** The one file sent with the message, when it has one (#168: an invoice PDF), read from the shared attachment row. */
+  attachment?: { filename: string; contentType: string; sha256: string; content: Uint8Array } | null;
   attemptCount: number;
   lockToken: string;
   startedAt: Date;
@@ -233,6 +235,39 @@ function resolveConfiguration(dependencies: ExternalEmailDeliveryDependencies) {
   }
 }
 
+const INVOICE_REPLACED_REASON = "Invoice version superseded";
+
+/** Cancels (and audits, ids only) an invoice message whose version is no longer FINALIZED. Returns true when it did. */
+async function cancelIfInvoiceReplaced(
+  prisma: DeliveryPrisma,
+  message: { id: string; eventId: string | null; templateKey: string; lockToken: string },
+) {
+  if (message.templateKey !== "INVOICE_DELIVERY") return false;
+  const replaced = await prisma.invoiceDeliveryRecipient.findFirst({
+    where: { messageOutboxId: message.id, delivery: { invoiceVersion: { status: { not: "FINALIZED" } } } },
+    select: { id: true },
+  });
+  if (!replaced) return false;
+  const updated = await prisma.messageOutbox.updateMany({
+    where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
+    data: { status: "CANCELLED", lockedAt: null, lockToken: null, lastError: "The invoice was replaced by a newer version before this was sent." },
+  });
+  if (updated.count === 1) {
+    await prisma.auditLog.create({
+      data: {
+        eventId: message.eventId,
+        action: "INVOICE_MESSAGE_CANCELLED",
+        entityType: "MessageOutbox",
+        entityId: message.id,
+        correlationId: randomUUID(),
+        summary: "Cancelled an invoice email because its invoice version was superseded.",
+        metadata: { messageId: message.id, reason: INVOICE_REPLACED_REASON },
+      },
+    });
+  }
+  return true;
+}
+
 async function recoverStaleClaims(
   prisma: DeliveryPrisma,
   scope: OutboxScope,
@@ -354,6 +389,7 @@ async function claimNextMessage(
           subjectSnapshot: true,
           bodyTextSnapshot: true,
           bodyHtmlSnapshot: true,
+          attachment: { select: { filename: true, contentType: true, sha256: true, content: true } },
           attemptCount: true,
         },
       });
@@ -561,6 +597,8 @@ async function runDeliveryLoop(
       now()
     );
     if (!message) break;
+    // An invoice email is sent only while its version is still FINALIZED (#168): one a revision replaced is cancelled, never sent.
+    if (await cancelIfInvoiceReplaced(prisma, message)) continue;
     let preparedBody: PreparedEmailBody | null = null;
     try {
       const prepareBodyText = dependencies.prepareBodyText
@@ -577,6 +615,12 @@ async function runDeliveryLoop(
         bodyHtml: message.bodyHtmlSnapshot,
         now: message.startedAt,
       });
+      // A stored attachment must still be the file that was recorded; a mismatch is a definitive failure, never a send.
+      if (message.attachment && createHash("sha256").update(message.attachment.content).digest("hex") !== message.attachment.sha256) {
+        throw new Error("The attachment no longer matches its recorded hash, so the message was not sent.");
+      }
+      // Checked again immediately before the provider call, so a revision that committed while the body was prepared cannot slip one out.
+      if (await cancelIfInvoiceReplaced(prisma, message)) continue;
       const delivery = await sendEmail({
         fromName: message.senderNameSnapshot,
         fromEmail: message.senderEmailSnapshot ?? "",
@@ -596,6 +640,9 @@ async function runDeliveryLoop(
             footer: message.senderNameSnapshot,
           })
           : null,
+        attachments: message.attachment
+          ? [{ filename: message.attachment.filename, contentType: message.attachment.contentType, content: message.attachment.content }]
+          : undefined,
         idempotencyKey: `outbox:${message.id}`,
         messageId: message.id,
       }, configuration);

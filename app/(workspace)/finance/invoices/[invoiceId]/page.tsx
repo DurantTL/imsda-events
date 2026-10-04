@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { AccessRestricted } from "@/components/access-restricted";
 import { InvoiceDetailView } from "@/components/invoice-detail";
 import { resolveEventContext } from "@/modules/events/selection";
+import { getInvoiceDeliveryHistory } from "@/modules/invoices/delivery-repository";
+import { loadEventLedger } from "@/modules/invoices/ledger-repository";
 import { getInvoiceDetail } from "@/modules/invoices/repository";
 
 export const metadata: Metadata = { title: "Invoice" };
@@ -17,5 +19,8 @@ export default async function InvoicePage({ params, searchParams }: { params: Pr
   // An invoice of another event is not found, never shown.
   const detail = await getInvoiceDetail(event.id, invoiceId, { versionId: version ?? null });
   if (!detail) notFound();
-  return <InvoiceDetailView canFinalize={permissions.includes("FINALIZE_INVOICES")} detail={detail} eventId={event.id} viewerName={user.displayName} />;
+  // Delivery, AR and payments (#168), scoped to this event like everything above.
+  const [ledger] = await loadEventLedger(event.id, { invoiceId });
+  const deliveries = ledger ? await getInvoiceDeliveryHistory(event.id, invoiceId) : [];
+  return <InvoiceDetailView canFinalize={permissions.includes("FINALIZE_INVOICES")} deliveries={deliveries} detail={detail} eventId={event.id} ledger={ledger ?? null} viewerName={user.displayName} />;
 }

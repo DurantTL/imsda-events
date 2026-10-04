@@ -993,12 +993,35 @@ async function captureOneMessageLocally(messageId: string, eventId?: string) {
         id: true,
         eventId: true,
         status: true,
+        templateKey: true,
         attemptCount: true,
         event: { select: { messageSettings: { select: { deliveryMode: true } } } },
       },
     });
     if (!message || message.status !== "PENDING") return false;
     if (message.event?.messageSettings?.deliveryMode === "DISABLED") return false;
+    // An invoice email whose version was replaced is cancelled, never captured (#168).
+    if (message.templateKey === "INVOICE_DELIVERY") {
+      const replaced = await tx.invoiceDeliveryRecipient.findFirst({
+        where: { messageOutboxId: message.id, delivery: { invoiceVersion: { status: { not: "FINALIZED" } } } },
+        select: { id: true },
+      });
+      if (replaced) {
+        await tx.messageOutbox.update({ where: { id: message.id }, data: { status: "CANCELLED", lastError: "The invoice was replaced by a newer version before this was sent." } });
+        await tx.auditLog.create({
+          data: {
+            eventId: message.eventId,
+            action: "INVOICE_MESSAGE_CANCELLED",
+            entityType: "MessageOutbox",
+            entityId: message.id,
+            correlationId: randomUUID(),
+            summary: "Cancelled an invoice email because its invoice version was superseded.",
+            metadata: { messageId: message.id, reason: "Invoice version superseded" },
+          },
+        });
+        return false;
+      }
+    }
 
     const lockToken = randomUUID();
     const claimed = await tx.messageOutbox.updateMany({
@@ -2776,6 +2799,13 @@ export async function retryMessage(
           "That message is no longer available.",
         );
       }
+      // An invoice email is resent only from Finance, which records the delivery against a FINALIZED version (#168).
+      if (source.templateKey === "INVOICE_DELIVERY") {
+        throw new MessagingError(
+          "MESSAGE_NOT_RETRYABLE",
+          "Resend this invoice from Finance → Invoices.",
+        );
+      }
       const expectedFingerprint = messageRetryRequestFingerprint({
         eventId,
         sourceMessageId: source.id,
@@ -2876,6 +2906,8 @@ export async function retryMessage(
             : source.replyToEmailSnapshot,
           subjectSnapshot: source.subjectSnapshot,
           bodyTextSnapshot: source.bodyTextSnapshot,
+          // A retry carries the same stored file as its source (an invoice PDF, #168), never a copy without it.
+          attachmentId: source.attachmentId,
           metadata: {
             trigger: "STAFF_MESSAGE_RETRY",
             sourceMessageId: source.id,

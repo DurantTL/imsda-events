@@ -467,4 +467,20 @@ describe("generic message retry repository", () => {
     expect(fixture.tx.messageOutbox.create).not.toHaveBeenCalled();
     expect(mocks.processExternalEmailQueue).not.toHaveBeenCalled();
   });
+
+  it("refuses to retry an invoice email: it is resent from Finance, with a delivery record (#168)", async () => {
+    const fixture = retryFixture();
+    fixture.sources.set("message-invoice", sourceMessage("message-invoice", { templateKey: "INVOICE_DELIVERY", recipientKind: "BILLING_CONTACT", registrationId: null, templateVersionId: null }) as never);
+    mocks.getPrisma.mockReturnValue(fixture.prisma);
+    const source = fixture.sources.get("message-invoice") as ReturnType<typeof sourceMessage>;
+    await expect(retryMessage(
+      "event-1",
+      "message-invoice",
+      { clientRequestId, requestFingerprint: fingerprintFor(source) },
+      "user-1",
+      deliveryDependencies,
+    )).rejects.toMatchObject({ code: "MESSAGE_NOT_RETRYABLE", message: "Resend this invoice from Finance → Invoices." });
+    expect(fixture.tx.messageOutbox.create).not.toHaveBeenCalled();
+    expect(mocks.processExternalEmailQueue).not.toHaveBeenCalled();
+  });
 });

@@ -1,24 +1,32 @@
 import { DiscardControl, FinalizeControl, RegenerateControl, ReviseForm } from "@/components/invoice-controls";
+import { InvoiceDeliveryPanel, InvoiceLedgerPanel } from "@/components/invoice-ledger";
 import { StatusBadge, displayNumber, invoiceMoney, invoiceWhen } from "@/components/invoices";
 import { basisLabel } from "@/modules/attendance-reconciliation/domain";
 import type { InvoiceLine } from "@/modules/invoices/domain";
+import type { DeliveryHistoryEntry } from "@/modules/invoices/delivery-repository";
+import type { LedgerInvoice } from "@/modules/invoices/ledger-repository";
 import type { InvoiceDetail, InvoiceVersionSummary } from "@/modules/invoices/repository";
 
 /**
  * One invoice (#167): the shown version's snapshot (contact, lines, people, charges, credits, promo, total),
  * the version history, the receivable, and the actions that fit its state. Finalizing needs the Finalize
- * invoices permission unless the version only changes the contact; the server checks again. Nothing is sent.
+ * invoices permission unless the version only changes the contact; the server checks again. Sending, accounts receivable and payments (#168) are separate sections below, shown for a finalized version.
  */
 export function InvoiceDetailView({
   eventId,
   detail,
   canFinalize,
   viewerName,
+  ledger = null,
+  deliveries = [],
 }: {
   eventId: string;
   detail: InvoiceDetail;
   canFinalize: boolean;
   viewerName: string;
+  /** Delivery, AR and payments (#168): present once the invoice has a finalized version. */
+  ledger?: LedgerInvoice | null;
+  deliveries?: DeliveryHistoryEntry[];
 }) {
   const { shown, snapshot, versions, change } = detail;
   const isDraft = shown.status === "DRAFT";
@@ -133,6 +141,17 @@ export function InvoiceDetailView({
         )}
         {!isDraft && detail.hasOpenDraft && <p><small>A newer version is open as a draft. <a href={`/finance/invoices/${detail.invoice.id}?event=${eventId}`}>Open it</a>.</small></p>}
       </section>
+
+      {!isDraft && shown.number && (shown.status === "FINALIZED" || shown.status === "SUPERSEDED") && (
+        <InvoiceDeliveryPanel
+          eventId={eventId}
+          history={deliveries}
+          invoiceId={detail.invoice.id}
+          liveVersion={detail.liveFinalized?.number ? { id: detail.liveFinalized.id, number: detail.liveFinalized.number } : null}
+          shown={{ id: shown.id, number: shown.number, status: shown.status }}
+        />
+      )}
+      {!isDraft && ledger && <InvoiceLedgerPanel eventId={eventId} ledger={ledger} shownVersionId={shown.id} />}
 
       <section className="panel finance-list" aria-label="Version history">
         <div className="section-heading"><h3>Version history</h3></div>

@@ -65,7 +65,20 @@ export type InvoiceErrorCode =
   | "CODE_INVALID"
   | "CODE_LOCKED"
   | "CODE_IN_USE"
-  | "CONCURRENT_CHANGE";
+  | "CONCURRENT_CHANGE"
+  // Delivery, AR and payments (#168)
+  | "NOT_SENDABLE"
+  | "NO_RECIPIENTS"
+  | "UNKNOWN_RECIPIENT"
+  | "PREVIEW_CHANGED"
+  | "DOCUMENT_CORRUPT"
+  | "EXTERNAL_EMAIL_NOT_CONFIGURED"
+  | "ALREADY_POSTED"
+  | "NOT_POSTED"
+  | "PAYMENT_NOT_FOUND"
+  | "ALREADY_VOIDED"
+  | "INVALID_INPUT"
+  | "PARTY_NOT_FOUND";
 
 export class InvoiceError extends Error {
   constructor(
@@ -833,6 +846,12 @@ export async function finalizeInvoiceVersion(input: {
         const superseded = await tx.invoiceVersion.updateMany({ where: { id: prior.id, status: "FINALIZED" }, data: { status: "SUPERSEDED", supersededAt: now, supersededByVersionId: version.id } });
         if (superseded.count === 0) throw concurrent();
         await tx.invoiceReceivable.updateMany({ where: { invoiceVersionId: prior.id, status: "OPEN" }, data: { status: "SUPERSEDED", supersededAt: now, supersededByVersionId: version.id } });
+        // An invoice email for the replaced version that has not gone out yet must never go out: cancel it in this transaction.
+        // (Messages already being processed are caught by the delivery worker, which checks the version is still FINALIZED.)
+        await tx.messageOutbox.updateMany({
+          where: { eventId: input.eventId, templateKey: "INVOICE_DELIVERY", status: "PENDING", invoiceRecipients: { some: { delivery: { invoiceVersionId: prior.id } } } },
+          data: { status: "CANCELLED", lastError: "The invoice was replaced by a newer version before this was sent." },
+        });
       }
       const finalized = await tx.invoiceVersion.updateMany({
         where: { id: version.id, status: "DRAFT" },

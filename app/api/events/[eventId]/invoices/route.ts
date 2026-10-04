@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AccessDeniedError, effectivePermissions, requirePermission } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
+import { ensureInvoiceDocument } from "@/modules/invoices/delivery-repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import {
   InvoiceError,
@@ -61,15 +62,24 @@ async function postHandler(request: Request, context: RouteContext) {
         return Response.json(await reviseInvoice({ eventId, invoiceId: body.invoiceId, mode: body.mode, reason: body.reason, actorUserId }));
       case "set-code":
         return Response.json(await setEventInvoiceCode({ eventId, code: body.code, actorUserId }));
-      case "finalize":
-        return Response.json(await finalizeInvoiceVersion({
+      case "finalize": {
+        const finalized = await finalizeInvoiceVersion({
           eventId,
           versionId: body.versionId,
           actorUserId,
           idempotencyKey: body.idempotencyKey,
           confirm: body.confirm,
           canFinalizeInvoices: effectivePermissions(user, membership).includes("FINALIZE_INVOICES"),
-        }));
+        });
+        // Make and store the PDF right after the finalization commits (#168). Best effort: finalization has already
+        // succeeded, and a failure here only means the PDF is made on first view or send, as before. Nothing is sent.
+        try {
+          await ensureInvoiceDocument(eventId, finalized.versionId);
+        } catch (pdfError) {
+          logError("The invoice PDF could not be made at finalization; it will be made on first use.", pdfError);
+        }
+        return Response.json(finalized);
+      }
     }
   } catch (error) {
     if (error instanceof z.ZodError) {

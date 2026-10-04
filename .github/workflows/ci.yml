@@ -139,6 +139,9 @@ jobs:
       # Real-database check of deferred-organization invoices: drafts only from a current approved reconciliation, numbers assigned exactly once under parallel and retried finalization (per event, code and year), immutable finalized versions with one receivable each, contact-only and amount revisions with the Finalize invoices rule, and no audit row holding a contact name or email (#167).
       - run: npm run test:invoices
 
+      # Real-database check of invoice delivery (#168): one stored, hash-checked PDF per finalized version, sends with the exact recipients and the same attachment on every resend, superseded versions refused, bounce and suppression recorded, append-only AR postings and payments (partial, void, overpaid, carried across a revision), statements scoped to the event, a formula-safe treasurer CSV, and no audit row holding an address or a contact name.
+      - run: npm run test:invoice-delivery
+
       # Real-database check of module requests: one pending per event and module under concurrent submits, approve enables in one transaction, decline needs a reason, audit holds ids only, and free text cannot become an email placeholder (#741).
       - run: npm run test:module-requests
 
