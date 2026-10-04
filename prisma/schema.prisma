@@ -263,6 +263,26 @@ enum BillingResponsibilityChangeType {
   OVERRIDE_CLEARED
 }
 
+/// A staff correction of who actually attended (#166). CLEAR withdraws an earlier correction so the
+/// check-in record decides again.
+enum AttendanceCorrectionKind {
+  MARK_ATTENDED
+  MARK_NOT_ATTENDED
+  CLEAR
+}
+
+/// What staff chose to bill for a registration whose prices cannot be matched to people with certainty (#166).
+enum AttendanceReviewChoice {
+  PER_PERSON
+  PRORATED
+}
+
+enum AttendanceReconciliationStatus {
+  DRAFT
+  APPROVED
+  SUPERSEDED
+}
+
 enum SquareWebhookEventStatus {
   PROCESSED
   IGNORED
@@ -684,6 +704,10 @@ model User {
   endedBillingContacts         OrganizationBillingContact[]              @relation("BillingContactEndedBy")
   setBillingResponsibilities   RegistrationBillingResponsibility[]       @relation("BillingResponsibilitySetBy")
   billingResponsibilityChanges RegistrationBillingResponsibilityChange[] @relation("BillingResponsibilityChangeActor")
+  attendanceCorrections        AttendanceCorrection[]                    @relation("AttendanceCorrectionActor")
+  preparedAttendanceVersions   AttendanceReconciliationVersion[]         @relation("AttendanceVersionPreparedBy")
+  approvedAttendanceVersions   AttendanceReconciliationVersion[]         @relation("AttendanceVersionApprovedBy")
+  attendanceReviewAcknowledgements AttendanceReviewAcknowledgement[]     @relation("AttendanceReviewAckActor")
 
   @@index([accountStatus])
 }
@@ -1363,6 +1387,9 @@ model Event {
   groupRegistrations                  GroupEventRegistration[]
   billingResponsibilities             RegistrationBillingResponsibility[]
   billingResponsibilityChanges        RegistrationBillingResponsibilityChange[]
+  attendanceCorrections               AttendanceCorrection[]
+  attendanceReconciliationVersions    AttendanceReconciliationVersion[]
+  attendanceReviewAcknowledgements    AttendanceReviewAcknowledgement[]
   clubRegistrationDrafts              ClubRegistrationDraft[]
   clubAssignments                     ClubEventAssignment[]
   honorEnrollments                    HonorEnrollment[]
@@ -2418,6 +2445,8 @@ model Registration {
   groupRegistration       GroupEventRegistration?
   billingResponsibility        RegistrationBillingResponsibility?
   billingResponsibilityChanges RegistrationBillingResponsibilityChange[]
+  attendanceCorrections        AttendanceCorrection[]
+  attendanceReviewAcknowledgements AttendanceReviewAcknowledgement[]
   honorEnrollments        HonorEnrollment[]
   adjustments             RegistrationAdjustment[]
   memberTransferMovesFrom MemberTransferRegistrationMove[] @relation("MemberTransferMoveFrom")
@@ -2571,6 +2600,7 @@ model RegistrationAttendee {
   attendeeTypeDefinition EventAttendeeType?                @relation(fields: [attendeeTypeDefinitionId], references: [id], onDelete: Restrict)
   classifications        RegistrationAttendeeClassification[]
   checkIns               CheckIn[]
+  attendanceCorrections  AttendanceCorrection[]
   capacityReservations   RegistrationCapacityReservation[]
   substitutionOperations RegistrationOperation[]
   notes                  StaffNote[]
@@ -5384,5 +5414,99 @@ model RegistrationBillingResponsibilityChange {
   actor        User?        @relation("BillingResponsibilityChangeActor", fields: [actorUserId], references: [id], onDelete: SetNull)
 
   @@index([registrationId, createdAt])
+  @@index([eventId, createdAt])
+}
+
+/// A staff correction of one registered person's attendance on a deferred-invoice event (#166):
+/// "came but was missed at check-in" (MARK_ATTENDED), "checked in by mistake" (MARK_NOT_ATTENDED),
+/// or CLEAR (go back to the check-in record). Append-only: a correction is never edited; a later one
+/// for the same person supersedes it (`supersededAt`), and the database keeps one active row per
+/// person. The reason is required and the actor is recorded.
+model AttendanceCorrection {
+  id                       String                   @id @default(cuid())
+  eventId                  String
+  registrationId           String
+  registrationAttendeeId   String
+  kind                     AttendanceCorrectionKind
+  reason                   String
+  actorUserId              String?
+  createdAt                DateTime                 @default(now())
+  supersededAt             DateTime?
+  supersededByCorrectionId String?
+
+  event        Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration         @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  attendee     RegistrationAttendee @relation(fields: [registrationAttendeeId], references: [id], onDelete: Cascade)
+  actor        User?                @relation("AttendanceCorrectionActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([eventId, createdAt])
+  @@index([registrationId])
+  @@index([registrationAttendeeId, createdAt])
+}
+
+/// One reconciliation of attended people into billable units for a deferred-invoice event (#166).
+/// DRAFT -> APPROVED -> SUPERSEDED. Everything but the status fields is an immutable snapshot of the
+/// inputs, the rule version and the per-registration and per-group counts, enforced by triggers.
+/// `fingerprint` hashes those facts: preparing again with nothing changed returns the existing
+/// version (a partial unique index lets only one non-superseded version carry a fingerprint), and at
+/// most one version per event is APPROVED.
+model AttendanceReconciliationVersion {
+  id                    String                         @id @default(cuid())
+  eventId               String
+  versionNumber         Int
+  status                AttendanceReconciliationStatus @default(DRAFT)
+  fingerprint           String
+  ruleVersion           String
+  invoiceGrouping       InvoiceGrouping
+  registeredCount       Int
+  checkedInCount        Int
+  noShowCount           Int
+  addedByStaffCount     Int
+  removedByStaffCount   Int
+  billableCount         Int
+  /// What the registered roster would cost (the #409 estimate), for comparison.
+  estimatedCents        Int
+  billableCents         Int
+  snapshot              Json
+  preparedByUserId      String?
+  createdAt             DateTime                       @default(now())
+  approvedByUserId      String?
+  approvedAt            DateTime?
+  supersededAt          DateTime?
+  supersededByVersionId String?
+
+  event      Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  preparedBy User? @relation("AttendanceVersionPreparedBy", fields: [preparedByUserId], references: [id], onDelete: SetNull)
+  approvedBy User? @relation("AttendanceVersionApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([eventId, versionNumber])
+  @@index([eventId, status])
+}
+
+/// Staff acknowledgement that a registration's prices may not belong to the people now on its roster
+/// (a member was transferred after pricing, #166). The figure for that registration is prorated from
+/// its estimate, and approval waits for this record. `reviewKey` names exactly the mismatch seen, so a
+/// new transfer needs a new acknowledgement. Append-only with supersede (like corrections); the reason is
+/// required and the actor recorded.
+model AttendanceReviewAcknowledgement {
+  id             String   @id @default(cuid())
+  eventId        String
+  registrationId String
+  reviewKey      String
+  /// The basis staff chose to bill: the per-person best match, or the prorated estimate.
+  choice         AttendanceReviewChoice
+  reason         String
+  actorUserId    String?
+  createdAt      DateTime @default(now())
+  /// Set when staff acknowledge the same review again with a different choice or reason: the latest wins.
+  supersededAt   DateTime?
+  supersededById String?
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation("AttendanceReviewAckActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  /// A migration-level partial unique index allows one active (not superseded) row per registration and review key.
+  @@index([registrationId, reviewKey])
   @@index([eventId, createdAt])
 }

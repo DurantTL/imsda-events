@@ -2,8 +2,8 @@
 
 For events billed to organizations after the event (`DEFERRED_ORGANIZATION_INVOICE`, such as
 Spring Camporee). It answers one question: who is financially responsible for each registration,
-and do we have a verified person to send the invoice to. It does not calculate or finalize an
-invoice (#166, #167, ADR 0008) and does not reconcile attendance (#166). Invoices will use the
+and do we have a verified person to send the invoice to. It does not finalize an
+invoice (#167, ADR 0008); attendance is reconciled separately (see `docs/ATTENDANCE-RECONCILIATION.md`, #166). Invoices will use the
 people checked in at the event, so the amounts on this screen are labelled "Estimated
 (registered)".
 

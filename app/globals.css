@@ -9698,3 +9698,16 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 .billing-readiness-no_contact, .billing-readiness-not_verified { background: #fdf0d8; color: #7a4b00; }
 @media (max-width: 720px) { .billing-line { grid-template-columns: minmax(0, 1fr); } }
 .billing-estimate-note { margin: 0; color: var(--muted, #5b6b73); }
+
+/* Attendance reconciliation (#166): counts side by side, one wide label column. */
+.finance-row.attendance-row { grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(56px, 0.5fr)) repeat(2, minmax(86px, 0.8fr)); }
+.attendance-row details ul { margin: 6px 0; padding-left: 18px; display: grid; gap: 8px; }
+@media (max-width: 720px) {
+  .finance-row.attendance-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .finance-row.attendance-row > span:first-child { grid-column: 1 / -1; }
+  .finance-row.attendance-row > span:nth-child(3),
+  .finance-row.attendance-row > span:last-child,
+  .finance-head.attendance-row > span:nth-child(3),
+  .finance-head.attendance-row > span:last-child { display: block; }
+  .finance-head.attendance-row { display: none; }
+}
