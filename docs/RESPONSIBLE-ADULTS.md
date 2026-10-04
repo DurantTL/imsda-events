@@ -62,7 +62,7 @@ link): same checks, and it supersedes their earlier choice. It is recorded with 
 (`MANAGE_LINK`) and the access grant it came through, in the record and the audit row. It follows
 the event's edit policy like the other private-link edits: when the event verifies every edit
 (`VERIFY_EVERY_EDIT`), the page shows the choice read-only and the change goes through the event
-team or a signed-in attendee account. A minor whose record staff set or
+team. A minor whose record staff set or
 revoked, or that another registration holds, is shown as locked and is not changed from there.
 
 Club and group registrations are not asked. Their rosters come from the club or the group contact,

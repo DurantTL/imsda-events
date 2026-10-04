@@ -151,6 +151,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM "RegistrationAttendee" WHERE "registrationId" = NEW."registrationId" AND "personId" = NEW."minorPersonId") THEN
       RAISE EXCEPTION 'The minor is not on that registration.' USING ERRCODE = '23001';
     END IF;
+    IF NEW."source" = 'MANAGE_LINK' AND NOT EXISTS (SELECT 1 FROM "RegistrationAccessToken" WHERE "id" = NEW."accessTokenId" AND "registrationId" = NEW."registrationId") THEN
+      RAISE EXCEPTION 'The access grant is not for that registration.' USING ERRCODE = '23001';
+    END IF;
     IF NEW."adultPersonId" IS NOT NULL THEN
       IF NEW."source" IN ('REGISTRATION_FORM', 'MANAGE_LINK') AND NOT EXISTS (SELECT 1 FROM "RegistrationAttendee" WHERE "registrationId" = NEW."registrationId" AND "personId" = NEW."adultPersonId") THEN
         RAISE EXCEPTION 'The adult is not on that registration.' USING ERRCODE = '23001';

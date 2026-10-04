@@ -1268,7 +1268,7 @@ export async function updatePublicResponsibleAdults(
     // Same rule as the other private-link edits: when the event verifies every edit, only the seminar preferences
     // are open to the link, so changing who is responsible for a minor needs the verified route.
     if (access.registration.event.attendeeEditPolicy === "VERIFY_EVERY_EDIT") {
-      throw new PublicResponsibleAdultError("EDIT_POLICY_REQUIRES_VERIFICATION", "This event requires verification before this change. Contact the event team, or sign in to your attendee account.");
+      throw new PublicResponsibleAdultError("EDIT_POLICY_REQUIRES_VERIFICATION", "This event requires verification before this change. To change this, contact the event team.");
     }
     try {
       const outcome = await declareResponsibleAdultsForRegistration(tx, { registrationId: access.registration.id, choices, accessTokenId: access.id });

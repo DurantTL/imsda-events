@@ -706,6 +706,29 @@ describe("a cancelled registration or a removed attendee is not a current declar
     expect(review.minors[0]!.conflicts).toEqual([]);
   });
 
+  it("claim, cancel, reclaim on a new registration: the stale claim is closed and the review shows the new one", async () => {
+    seed({ registrationId: "reg-1", code: "REG-1", holder: "p-dad", people: [dad, son] });
+    seed({ registrationId: "reg-2", code: "REG-2", holder: "p-mum", people: [mum, son] });
+    await declareFor("reg-1", "p-dad", "p-dad");
+    await declareFor("reg-2", "p-mum", "p-mum");
+    expect(state.conflicts).toHaveLength(1);
+    seeds()[1]!.status = "CANCELLED";
+    seed({ registrationId: "reg-3", code: "REG-3", holder: "p-mum", people: [mum, son] });
+    expect(await declareFor("reg-3", "p-mum", "p-mum")).toMatchObject({ conflicts: 1 });
+    expect(state.conflicts.map((row) => [row.registrationId, row.state, row.resolvedByUserId, row.resolutionReason])).toEqual([
+      ["reg-2", "RESOLVED", null, "Claiming registration no longer active"],
+      ["reg-3", "OPEN", null, null],
+    ]);
+    expect(state.conflicts[0]!.resolvedAt).toBeInstanceOf(Date);
+    const review = await getGuardianReview("event-1");
+    const item = review.items.find((entry) => entry.confirmationCode === "REG-3");
+    expect(item?.kinds).toContain("CONFLICT");
+    expect(item?.conflicts).toEqual([expect.objectContaining({ id: state.conflicts[1]!.id, claimingConfirmationCode: "REG-3" })]);
+    // A live claim is left alone and not duplicated.
+    await declareFor("reg-3", "p-mum", "p-mum");
+    expect(state.conflicts).toHaveLength(2);
+  });
+
   it("staff cannot revoke a record that is no longer current, and setting an adult replaces the stale row", async () => {
     seed({ registrationId: "reg-1", code: "REG-1", holder: "p-dad", people: [dad, son] });
     await declareFor("reg-1", "p-dad", "p-dad");

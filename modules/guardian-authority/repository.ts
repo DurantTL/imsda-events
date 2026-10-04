@@ -283,10 +283,25 @@ export async function recordRegistrationDeclarations(
     }
     if (plan.kind === "CONFLICT") {
       if (!current || declaration.adultPersonId === null) continue;
-      const existing = await tx.guardianAuthorityConflict.findFirst({
-        where: { eventId: input.eventId, minorPersonId: declaration.minorPersonId, claimedAdultPersonId: declaration.adultPersonId, state: "OPEN" },
-        select: { id: true },
+      // An open claim from a registration that is no longer active (or whose minor or adult left it) is closed here, so
+      // the same claim from a current registration is a new review item and the stale one never shows to staff.
+      const openClaims = await tx.guardianAuthorityConflict.findMany({
+        where: { eventId: input.eventId, minorPersonId: declaration.minorPersonId, state: "OPEN" },
+        select: { id: true, registrationId: true, claimedAdultPersonId: true },
       });
+      let existing: { id: string } | null = null;
+      for (const claim of openClaims) {
+        const live = await isLiveRecord(tx, { registrationId: claim.registrationId, minorPersonId: declaration.minorPersonId })
+          && await isLiveRecord(tx, { registrationId: claim.registrationId, minorPersonId: claim.claimedAdultPersonId });
+        if (live) {
+          if (claim.claimedAdultPersonId === declaration.adultPersonId) existing = claim;
+          continue;
+        }
+        await tx.guardianAuthorityConflict.updateMany({
+          where: { id: claim.id, state: "OPEN" },
+          data: { state: "RESOLVED", resolvedAt: new Date(), resolvedByUserId: null, resolutionReason: "Claiming registration no longer active" },
+        });
+      }
       if (!existing) {
         const conflict = await tx.guardianAuthorityConflict.create({
           data: {

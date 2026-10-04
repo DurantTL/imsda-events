@@ -71,7 +71,7 @@ export function PublicResponsibleAdult({ token, view: initialView, readOnly = fa
             name: minor.name,
             locked: minor.lockedByStaff || readOnly,
             lockNote: readOnly && !minor.lockedByStaff
-              ? "This event verifies every change. Contact the event team, or sign in to your attendee account, to change it."
+              ? "This event verifies every change. To change this, contact the event team."
               : minor.lockReason === "OTHER_REGISTRATION"
                 ? "Recorded on another registration. Contact the event team to change it."
                 : "Set by the event team. Contact them to change it.",

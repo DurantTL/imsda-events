@@ -92,6 +92,8 @@ describe("which forms ask for an age", () => {
     expect(formCollectsAge(form("ATTENDEE", "guest_age"))).toBe(true);
     expect(formCollectsAge(form("REGISTRATION", "attendee_age"))).toBe(false);
     expect(formCollectsAge(form("ATTENDEE", "shirt_size"))).toBe(false);
+    // A field with no explicit scope is a registration-level one (the definition's existing default), so it asks nobody.
+    expect(formCollectsAge({ sections: [{ fields: [{ key: "attendee_age" }] }] })).toBe(false);
     expect(formCollectsAge(null)).toBe(false);
     expect(formCollectsAge({ sections: "nope" })).toBe(false);
   });
