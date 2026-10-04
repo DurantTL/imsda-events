@@ -252,10 +252,18 @@ function sourceFor(row: FactsRow, context: SourceContext, placesFor: (registrati
   const arrivalPosition = (move: MoveRow, attendeeId: string): number | null => {
     const sender = move.fromRegistrationId ? context.rows.get(move.fromRegistrationId) : undefined;
     const senderPricing = sender ? context.pricing.get(sender.id) : undefined;
+    // Nothing to match against when either side has no price lines.
     if (!sender || !senderPricing || move.decidedAt === null || !(senderPricing.pricedAt < move.decidedAt)) return null;
-    if (senderPricing.amended) return senderPricing.amended.find((entry) => entry.id === attendeeId)?.position ?? null;
+    if (lines.length === 0 || senderPricing.lines.length === 0) return null;
     const senderPlaces = placesFor(sender.id);
-    return senderPlaces && senderPlaces.gaps.ok && senderPlaces.leavers === 1 && senderPlaces.gaps.gaps.length === 1 ? senderPlaces.gaps.gaps[0]! : null;
+    if (!senderPlaces || senderPlaces.twice) return null;
+    // The person themself joined the sender after its pricing (a chain of transfers): the sender never priced them.
+    if (context.moves.some((other) => other.toRegistrationId === sender.id && other.attendeeId === attendeeId && (other.decidedAt === null || other.decidedAt > senderPricing.pricedAt))) return null;
+    if (senderPricing.amended) return senderPricing.amended.find((entry) => entry.id === attendeeId)?.position ?? null;
+    if (!(senderPlaces.gaps.ok && senderPlaces.leavers === 1 && senderPlaces.gaps.gaps.length === 1)) return null;
+    // A gap past the sender's last price line is a person with no line: nothing to carry over with certainty.
+    const lineCount = senderPricing.lines.reduce((most, line) => (typeof line.attendeeIndex === "number" ? Math.max(most, line.attendeeIndex + 1) : most), 0);
+    return senderPlaces.gaps.gaps[0]! < lineCount ? senderPlaces.gaps.gaps[0]! : null;
   };
 
   const unmatched: Array<{ id: string; name: string }> = [];
@@ -315,7 +323,7 @@ function sourceFor(row: FactsRow, context: SourceContext, placesFor: (registrati
   const notes: string[] = [];
   if (hasLines && !places.gaps.ok) reasons.push(places.transfers.length > 0 ? "TRANSFER_AFTER_PRICING" : "ROSTER_POSITIONS");
   if (hasLines && places.twice && !reasons.includes("TRANSFER_AFTER_PRICING")) reasons.push("TRANSFER_AFTER_PRICING");
-  if (hasLines && unmatched.length > 0) {
+  if (unmatched.length > 0) {
     reasons.push("ARRIVAL_PRICE_UNMATCHED");
     for (const entry of unmatched) notes.push(`Price for ${entry.name} couldn't be matched after the transfer.`);
   }
@@ -579,6 +587,11 @@ export async function acknowledgeRosterReview(input: { eventId: string; registra
         });
         if (superseded.count === 0) throw concurrent();
       }
+      // Acknowledgements of this registration under older review keys are out of date now: supersede them too.
+      await tx.attendanceReviewAcknowledgement.updateMany({
+        where: { registrationId: input.registrationId, supersededAt: null, reviewKey: { not: reviewKey } },
+        data: { supersededAt: new Date(), supersededById: id },
+      });
       const created = await tx.attendanceReviewAcknowledgement.create({
         data: { id, eventId: input.eventId, registrationId: input.registrationId, reviewKey, choice: input.choice, reason, actorUserId: input.actorUserId },
         select: { id: true },

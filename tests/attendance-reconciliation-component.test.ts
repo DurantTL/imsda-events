@@ -146,6 +146,8 @@ describe("AttendanceReconciliation screen", () => {
     expect(markup).toContain("Transferred from Club Sender");
     const { PRORATE_NOTE } = await import("@/components/attendance-reconciliation-controls");
     expect(PRORATE_NOTE).toContain("including charges that are not tied to a person");
+    const { POSITIONS_WARNING } = await import("@/components/attendance-reconciliation-controls");
+    expect(POSITIONS_WARNING).toBe("The per-person figure may be wrong because the roster places don't line up.");
     const { ARRIVAL_PRORATE_WARNING } = await import("@/components/attendance-reconciliation-controls");
     expect(ARRIVAL_PRORATE_WARNING).toContain("Someone was transferred in");
   });

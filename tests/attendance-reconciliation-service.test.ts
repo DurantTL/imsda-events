@@ -626,6 +626,50 @@ describe("member transfers after pricing: prices follow the stored places, never
     expect(byCode("CAM-1")).toMatchObject({ billableCents: 1000, review: null });
   });
 
+  it("a chain of transfers with no repricing (X to Y to Z): the last receiver is flagged and the arrival is not silently $0", async () => {
+    state.registrations = [
+      build("reg-1", "CAM-1", "Alpha", { people: [place("bea", "Bea", 0)], prices: [1000, 2000] }),
+      build("reg-2", "CAM-2", "Beta", { people: [place("yan", "Yan", 0)], prices: [7000] }),
+      build("reg-3", "CAM-3", "Gamma", { people: [place("zed", "Zed", 0), place("ann", "Ann", 1)], prices: [5000] }),
+    ];
+    // Ann was Alpha's second person; she moved to Beta and then on to Gamma.
+    state.moves = [move("move-1", "ann", "reg-1", "reg-2", "2026-09-20T10:00:00Z"), move("move-2", "ann", "reg-2", "reg-3", "2026-09-25T10:00:00Z")];
+    state.checkIns = [];
+    ["bea", "yan", "zed", "ann"].forEach(checkIn);
+    await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
+    expect(byCode("CAM-3").review?.reasons).toContain("ARRIVAL_PRICE_UNMATCHED");
+    expect(byCode("CAM-3").review?.notes).toEqual(["Price for Ann Synthetic couldn't be matched after the transfer."]);
+    expect(byCode("CAM-3").alternatives).not.toBeNull();
+  });
+
+  it("a gap past the sender's last price line is not carried over: the receiver is flagged", async () => {
+    // The sender priced one line ($10) and had a free second person (no line) who left.
+    state.registrations = [
+      build("reg-1", "CAM-1", "Alpha", { people: [place("bea", "Bea", 0)], prices: [1000] }),
+      build("reg-2", "CAM-2", "Beta", { people: [place("zed", "Zed", 0), place("fay", "Fay", 1)], prices: [7000] }),
+    ];
+    state.moves = [move("move-1", "fay", "reg-1", "reg-2")];
+    state.checkIns = [];
+    ["bea", "zed", "fay"].forEach(checkIn);
+    await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
+    expect(byCode("CAM-2").review?.reasons).toContain("ARRIVAL_PRICE_UNMATCHED");
+  });
+
+  it("an arrival is flagged when the sender has no price lines, and when the receiver has none", async () => {
+    for (const [senderPrices, receiverPrices] of [[[], [7000]], [[1000, 2000], []]] as number[][][]) {
+      state.versions = [];
+      state.registrations = [
+        build("reg-1", "CAM-1", "Alpha", { people: [place("bea", "Bea", 0)], prices: senderPrices, total: 3000 }),
+        build("reg-2", "CAM-2", "Beta", { people: [place("zed", "Zed", 0), place("ann", "Ann", 1)], prices: receiverPrices, total: 7000 }),
+      ];
+      state.moves = [move("move-1", "ann", "reg-1", "reg-2")];
+      state.checkIns = [];
+      ["bea", "zed", "ann"].forEach(checkIn);
+      await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
+      expect(byCode("CAM-2").review?.reasons).toContain("ARRIVAL_PRICE_UNMATCHED");
+    }
+  });
+
   it("a person who did not attend after being transferred is not billed to either registration", async () => {
     trio(true, "baker");
     state.checkIns = [];
@@ -701,6 +745,22 @@ describe("roster review: acknowledgements", () => {
     const receiver = view.isDeferred ? view.result.groups.flatMap((group) => group.registrations).find((entry) => entry.registrationId === "reg-2") : undefined;
     expect(receiver?.review).toMatchObject({ acknowledged: true, choice: "PER_PERSON" });
     expect(receiver?.basis).toBe("PER_PERSON_LINES");
+  });
+
+  it("acknowledging under the current key supersedes acknowledgements under older keys", async () => {
+    state.registrations = [{
+      id: "reg-1", code: "CAM-1", club: "Alpha", people: [person("a1", "Ann"), person("a2", "Bo")],
+      lines: [0, 1, 5].map((index) => ({ key: `attendees.${index}.fee`, label: "Fee", amountCents: 100, attendeeIndex: index })), totalCents: 300,
+    }];
+    state.checkIns = [];
+    checkIn("a1");
+    await acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", choice: "PRORATED", reason: "first", actorUserId: actor });
+    (sources()[0] as SourceRegistration).lines = [...(sources()[0] as SourceRegistration).lines!, { key: "attendees.6.fee", label: "Fee", amountCents: 100, attendeeIndex: 6 }];
+    await acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", choice: "PRORATED", reason: "second", actorUserId: actor });
+    expect(state.acknowledgements).toHaveLength(2);
+    expect(state.acknowledgements[0]).toMatchObject({ supersededById: state.acknowledgements[1]!.id });
+    expect(state.acknowledgements[0]!.supersededAt).not.toBeNull();
+    expect(state.acknowledgements.filter((entry) => entry.supersededAt === null)).toHaveLength(1);
   });
 
   it("a new stray price line needs a new acknowledgement: the key names exactly what was reviewed", async () => {

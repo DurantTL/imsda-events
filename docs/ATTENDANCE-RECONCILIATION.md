@@ -140,7 +140,10 @@ After a **member transfer** (the attendee row is re-parented, keeping its id):
   on the sender, attributed to the receiving registration (so to its church) and shown as
   "Transferred from <club>" (and in the CSV column "Transferred in from"). The line is found from the
   sender's amendment when its pricing came from one (the recorded places are exact), otherwise only when
-  exactly one person left the sender since its pricing (that person's gap). Otherwise the arrival gets
+  exactly one person left the sender since its pricing (that person's gap, which must be at or below the
+  sender's last price line). It is not carried over when the sender or the receiver has no price lines,
+  when the person moved more than once or joined the sender after its pricing (a chain of transfers with
+  no repricing), or when the sender cannot place them. Otherwise the arrival gets
   **no price** ($0), never a guess from their current place, and the receiver is flagged with "Price for
   <name> couldn't be matched after the transfer."
 - **Receiver billable can exceed its own estimate** when someone transfers in, because the arrival is
@@ -156,7 +159,9 @@ when someone was transferred in). The acknowledgement is audited and names exact
 (the transfers, the stray price-line indexes and the unmatched arrivals), so a new issue needs a new
 one. Changing the choice or reason supersedes the earlier acknowledgement (kept, latest wins, one
 active per review, enforced by the database). The choice is part of the fingerprint, so acknowledging
-means preparing again, then approving. A flagged registration that bills nothing (nobody attended)
+means preparing again, then approving. Acknowledging under the current review also supersedes the
+registration's acknowledgements under older review keys, in the same transaction. When the places do not
+line up the form warns that the per-person figure may be wrong. A flagged registration that bills nothing (nobody attended)
 does not block approval.
 
 ## Blocked until billing responsibility is ready (#165, #167)

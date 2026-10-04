@@ -82,6 +82,8 @@ export function ApproveControl({ eventId, versionId, versionNumber, disabled }: 
 
 export const ARRIVAL_PRORATE_WARNING = "Someone was transferred in. Prorating bills them on this registration's own estimate, which does not include them.";
 
+export const POSITIONS_WARNING = "The per-person figure may be wrong because the roster places don't line up.";
+
 export const PRORATE_NOTE = "Prorating scales the whole registration's estimate, including charges that are not tied to a person, by attended over registered.";
 
 export const REASON_HELP = "Don't include health or medical details. A short reason like 'did not attend' or 'missed at check-in' is enough.";
@@ -99,6 +101,7 @@ export function AcknowledgeForm({
   registrationId,
   alternatives,
   hasArrival = false,
+  positionsUnreliable = false,
   changing = false,
 }: {
   eventId: string;
@@ -106,6 +109,8 @@ export function AcknowledgeForm({
   alternatives: { perPersonCents: number; proratedCents: number } | null;
   /** Someone was transferred in: prorating bills them on the receiving registration's own estimate. */
   hasArrival?: boolean;
+  /** The roster places do not line up with the price lines, so the per-person figure may be wrong. */
+  positionsUnreliable?: boolean;
   /** An acknowledgement already exists; a different choice or reason supersedes it. */
   changing?: boolean;
 }) {
@@ -132,6 +137,7 @@ export function AcknowledgeForm({
           <legend>Which figure should be billed?</legend>
           <label><input checked={choice === "PER_PERSON"} name={`choice-${registrationId}`} onChange={() => setChoice("PER_PERSON")} type="radio" /> Per-person (best match): {dollars(alternatives.perPersonCents)}</label>
           <label><input checked={choice === "PRORATED"} name={`choice-${registrationId}`} onChange={() => setChoice("PRORATED")} type="radio" /> Prorated: {dollars(alternatives.proratedCents)}</label>
+          {positionsUnreliable && <small>{POSITIONS_WARNING}</small>}
           <small>{PRORATE_NOTE}</small>
           {hasArrival && choice === "PRORATED" && <small role="alert">{ARRIVAL_PRORATE_WARNING}</small>}
         </fieldset>
