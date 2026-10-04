@@ -5392,6 +5392,34 @@ select:focus-visible {
 .reminder-recipient-table td small { display: block; margin-top: 3px; color: var(--muted); font-size: max(var(--type-floor, 0px), 0.52rem); font-weight: 600; white-space: normal; }
 .team-account-actions { display: flex; align-items: center; gap: 6px; }
 .team-account-actions .secondary-button { width: auto; min-width: max-content; padding: 6px 8px; font-size: max(var(--type-body-floor, 0px), 0.54rem); }
+.team-directory-table .team-account-actions { flex-wrap: wrap; }
+.team-directory-table .team-account-actions .secondary-button { white-space: nowrap; }
+.team-you-label { white-space: nowrap; }
+/* Team table: words never break mid-word. Names wrap at spaces, emails only at
+   the <wbr> after "@" and ".", short cells stay on one line. */
+.team-directory-table th,
+.team-directory-table td { padding: 9px 8px; overflow-wrap: normal; word-break: normal; vertical-align: top; }
+.team-directory-table th { white-space: nowrap; }
+.team-directory-table th:first-child,
+.team-directory-table td:first-child { padding-left: 18px; min-width: 9rem; }
+.team-directory-table th:last-child,
+.team-directory-table td:last-child { padding-right: 18px; white-space: normal; color: inherit; font-weight: inherit; }
+.team-directory-table td:nth-child(2) { min-width: 10rem; }
+.team-directory-table td:nth-child(3),
+.team-directory-table td:nth-child(4),
+.team-directory-table td:nth-child(5),
+.team-directory-table .team-phone { white-space: nowrap; }
+.team-directory-table td:nth-child(6) { min-width: 8rem; }
+.team-directory-table td:nth-child(4) svg { vertical-align: -2px; }
+.team-more-menu { position: relative; display: inline-flex; }
+.team-more-menu-list { position: fixed; z-index: 60; display: grid; min-width: 11.5rem; margin: 0; padding: 4px; list-style: none; border: 1px solid var(--line); border-radius: 10px; background: #fff; box-shadow: 0 10px 28px rgba(16, 42, 67, 0.18); }
+.team-more-menu-list li { display: block; }
+.team-more-menu-list button { display: block; width: 100%; padding: 8px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--imsda-navy); font: inherit; font-size: max(var(--type-body-floor, 0px), 0.6rem); font-weight: 700; text-align: left; white-space: nowrap; cursor: pointer; }
+.team-more-menu-list button:hover,
+.team-more-menu-list button:focus-visible { background: #eef4f6; }
+.team-more-menu-list button.danger { color: #8f3a30; }
+.team-more-menu-list button.danger:hover,
+.team-more-menu-list button.danger:focus-visible { background: #fbeceb; }
 .reminder-confirm-panel { position: sticky; top: 15px; display: grid; gap: 13px; border-top: 4px solid var(--imsda-purple); }
 .reminder-confirm-panel h2 { margin: 4px 0 7px; font-size: 1rem; }
 .reminder-confirm-panel > div:first-child > p:not(.eyebrow) { margin: 0; color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.61rem); line-height: 1.6; }
