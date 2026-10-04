@@ -12,7 +12,7 @@ import {
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { TeamDirectory } from "@/modules/system-admin/team-directory";
 import { cardCell } from "@/components/table-card-labels";
-import { TeamAccountMenu, teamMenuItems } from "@/components/team-account-menu";
+import { TeamAccountMenu, dispatchTeamMenuAction, teamMenuItems } from "@/components/team-account-menu";
 
 function friendly(value: string) {
   return value.split("_").map((part) => (
@@ -22,7 +22,10 @@ function friendly(value: string) {
 
 /** Email with break opportunities only after "@" and ".", never mid-token. */
 export function breakableEmail(email: string) {
-  return email.split(/(?<=[@.])/).map((part, index) => (
+  const tokens = email.split(/([@.])/);
+  const parts: string[] = [];
+  for (let i = 0; i < tokens.length; i += 2) parts.push(tokens[i] + (tokens[i + 1] ?? ""));
+  return parts.filter(Boolean).map((part, index) => (
     <span key={index}>{index > 0 && <wbr />}{part}</span>
   ));
 }
@@ -258,12 +261,12 @@ export function TeamDirectoryWorkspace({
                         memberName={member.displayName}
                         items={teamMenuItems(member, currentUserId)}
                         disabled={busyUserId === member.id}
-                        onSelect={(key) => {
-                          if (key === "send-password-reset") void accountAction(member, { action: "send-password-reset" });
-                          else if (key === "change-email") changeEmail(member);
-                          else if (key === "reset-two-step") resetTwoStep(member);
-                          else void setDisabled(member.id, member.displayName, !member.signInDisabled);
-                        }}
+                        onSelect={(key) => dispatchTeamMenuAction(key, {
+                          sendPasswordReset: () => void accountAction(member, { action: "send-password-reset" }),
+                          changeEmail: () => changeEmail(member),
+                          resetTwoStep: () => resetTwoStep(member),
+                          toggleSignIn: () => void setDisabled(member.id, member.displayName, !member.signInDisabled),
+                        })}
                       />
                       {member.id === currentUserId && (
                         // The refusal is enforced server-side too; showing it

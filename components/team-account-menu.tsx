@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 
 export type TeamMenuItemKey =
@@ -53,6 +53,38 @@ export function nextMenuIndex(key: string, current: number, count: number): numb
   return null;
 }
 
+export type TeamMenuHandlers = Record<
+  "sendPasswordReset" | "changeEmail" | "resetTwoStep" | "toggleSignIn",
+  () => void
+>;
+
+/** Routes a menu item to the row's existing handler. */
+export function dispatchTeamMenuAction(key: TeamMenuItemKey, handlers: TeamMenuHandlers) {
+  if (key === "send-password-reset") handlers.sendPasswordReset();
+  else if (key === "change-email") handlers.changeEmail();
+  else if (key === "reset-two-step") handlers.resetTwoStep();
+  else handlers.toggleSignIn();
+}
+
+export type MenuPlacement = { top?: number; bottom?: number; right: number };
+
+/**
+ * Anchor below the trigger, or above it when the menu would run off the bottom
+ * of the viewport and there is more room above.
+ */
+export function menuPlacement(
+  rect: { top: number; bottom: number; right: number },
+  menuHeight: number,
+  viewport: { width: number; height: number },
+): MenuPlacement {
+  const right = Math.max(8, viewport.width - rect.right);
+  const below = viewport.height - rect.bottom - 4;
+  if (menuHeight > below && rect.top > below) {
+    return { bottom: viewport.height - rect.top + 4, right };
+  }
+  return { top: rect.bottom + 4, right };
+}
+
 export function TeamAccountMenu({
   memberName,
   items,
@@ -65,7 +97,7 @@ export function TeamAccountMenu({
   onSelect: (key: TeamMenuItemKey) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<{ top: number; right: number } | null>(null);
+  const [position, setPosition] = useState<MenuPlacement | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLUListElement>(null);
   const menuId = useId();
@@ -74,11 +106,22 @@ export function TeamAccountMenu({
     return Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? []);
   }
 
-  function openMenu(focus: "first" | "last") {
+  function place() {
     const rect = triggerRef.current?.getBoundingClientRect();
-    if (rect) {
-      setPosition({ top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) });
+    if (!rect) return;
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      setOpen(false);
+      return;
     }
+    setPosition(menuPlacement(
+      rect,
+      menuRef.current?.offsetHeight ?? 0,
+      { width: window.innerWidth, height: window.innerHeight },
+    ));
+  }
+
+  function openMenu(focus: "first" | "last") {
+    place();
     setOpen(true);
     requestAnimationFrame(() => {
       const buttons = itemButtons();
@@ -91,6 +134,11 @@ export function TeamAccountMenu({
     if (returnFocus) triggerRef.current?.focus();
   }
 
+  // Measure once the list exists so it can flip above the trigger.
+  useLayoutEffect(() => {
+    if (open) place();
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     function onPointer(event: MouseEvent) {
@@ -98,18 +146,13 @@ export function TeamAccountMenu({
       if (menuRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
       setOpen(false);
     }
-    // The menu is fixed-positioned from the trigger's rect, so it would drift
-    // if the page moved under it; closing is simpler than tracking.
-    function dismiss() {
-      setOpen(false);
-    }
     document.addEventListener("mousedown", onPointer);
-    window.addEventListener("resize", dismiss);
-    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
     return () => {
       document.removeEventListener("mousedown", onPointer);
-      window.removeEventListener("resize", dismiss);
-      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
     };
   }, [open]);
 
@@ -120,7 +163,8 @@ export function TeamAccountMenu({
       return;
     }
     if (event.key === "Tab") {
-      setOpen(false);
+      event.preventDefault();
+      closeMenu(true);
       return;
     }
     const buttons = itemButtons();
@@ -163,7 +207,7 @@ export function TeamAccountMenu({
           className="team-more-menu-list"
           role="menu"
           aria-label={`More actions for ${memberName}`}
-          style={position ? { top: position.top, right: position.right } : undefined}
+          style={position ?? undefined}
           onKeyDown={onMenuKeyDown}
         >
           {items.map((item) => (

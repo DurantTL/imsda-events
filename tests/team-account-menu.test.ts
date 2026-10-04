@@ -6,6 +6,8 @@ vi.mock("server-only", () => ({}));
 
 import {
   TeamAccountMenu,
+  dispatchTeamMenuAction,
+  menuPlacement,
   nextMenuIndex,
   teamMenuItems,
 } from "@/components/team-account-menu";
@@ -72,6 +74,38 @@ describe("team account menu rendering and keyboard", () => {
     expect(nextMenuIndex("Home", 2, 4)).toBe(0);
     expect(nextMenuIndex("End", 0, 4)).toBe(3);
     expect(nextMenuIndex("a", 0, 4)).toBeNull();
+  });
+});
+
+describe("team account menu dispatch and placement", () => {
+  it("maps each menu key to its own handler", () => {
+    const handlers = {
+      sendPasswordReset: vi.fn(),
+      changeEmail: vi.fn(),
+      resetTwoStep: vi.fn(),
+      toggleSignIn: vi.fn(),
+    };
+    const expected = {
+      "send-password-reset": "sendPasswordReset",
+      "change-email": "changeEmail",
+      "reset-two-step": "resetTwoStep",
+      "toggle-sign-in": "toggleSignIn",
+    } as const;
+    for (const [key, name] of Object.entries(expected)) {
+      Object.values(handlers).forEach((handler) => handler.mockClear());
+      dispatchTeamMenuAction(key as keyof typeof expected, handlers);
+      for (const [handlerName, handler] of Object.entries(handlers)) {
+        expect(handler).toHaveBeenCalledTimes(handlerName === name ? 1 : 0);
+      }
+    }
+  });
+
+  it("opens below when there is room and flips above near the bottom", () => {
+    const viewport = { width: 1280, height: 800 };
+    expect(menuPlacement({ top: 100, bottom: 130, right: 1200 }, 160, viewport))
+      .toEqual({ top: 134, right: 80 });
+    expect(menuPlacement({ top: 700, bottom: 730, right: 1200 }, 160, viewport))
+      .toEqual({ bottom: 104, right: 80 });
   });
 });
 

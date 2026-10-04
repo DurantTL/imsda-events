@@ -5390,8 +5390,10 @@ select:focus-visible {
 /* Names of attendees still missing a size sit under the count in the last
    cell, so they have to opt out of that cell's nowrap emphasis and wrap. */
 .reminder-recipient-table td small { display: block; margin-top: 3px; color: var(--muted); font-size: max(var(--type-floor, 0px), 0.52rem); font-weight: 600; white-space: normal; }
-.team-account-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.team-account-actions .secondary-button { width: auto; min-width: max-content; padding: 6px 8px; font-size: max(var(--type-body-floor, 0px), 0.54rem); white-space: nowrap; }
+.team-account-actions { display: flex; align-items: center; gap: 6px; }
+.team-account-actions .secondary-button { width: auto; min-width: max-content; padding: 6px 8px; font-size: max(var(--type-body-floor, 0px), 0.54rem); }
+.team-directory-table .team-account-actions { flex-wrap: wrap; }
+.team-directory-table .team-account-actions .secondary-button { white-space: nowrap; }
 .team-you-label { white-space: nowrap; }
 /* Team table: words never break mid-word. Names wrap at spaces, emails only at
    the <wbr> after "@" and ".", short cells stay on one line. */
