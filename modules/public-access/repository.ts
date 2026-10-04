@@ -962,6 +962,7 @@ export async function authorizeRegistrationAccessToken(
     registrationId: access.registration.id,
     eventId: access.registration.eventId,
     registrationStatus: access.registration.status,
+    attendeeEditPolicy: access.registration.event.attendeeEditPolicy,
   };
 }
 
@@ -1239,7 +1240,7 @@ export async function revokeRegistrationAccessTokensForRegistration(
 
 export class PublicResponsibleAdultError extends Error {
   constructor(
-    public readonly code: "REGISTRATION_NOT_ACTIVE" | "CHOICES_INVALID" | "NOT_AVAILABLE",
+    public readonly code: "REGISTRATION_NOT_ACTIVE" | "CHOICES_INVALID" | "NOT_AVAILABLE" | "CONCURRENT_CHANGE" | "EDIT_POLICY_REQUIRES_VERIFICATION",
     message: string,
   ) {
     super(message);
@@ -1264,13 +1265,21 @@ export async function updatePublicResponsibleAdults(
     if (status !== "SUBMITTED" && status !== "CONFIRMED" && status !== "WAITLISTED") {
       throw new PublicResponsibleAdultError("REGISTRATION_NOT_ACTIVE", "The responsible adult can be changed only on an active registration.");
     }
+    // Same rule as the other private-link edits: when the event verifies every edit, only the seminar preferences
+    // are open to the link, so changing who is responsible for a minor needs the verified route.
+    if (access.registration.event.attendeeEditPolicy === "VERIFY_EVERY_EDIT") {
+      throw new PublicResponsibleAdultError("EDIT_POLICY_REQUIRES_VERIFICATION", "This event requires verification before this change. Contact the event team, or sign in to your attendee account.");
+    }
     try {
-      const outcome = await declareResponsibleAdultsForRegistration(tx, { registrationId: access.registration.id, choices });
+      const outcome = await declareResponsibleAdultsForRegistration(tx, { registrationId: access.registration.id, choices, accessTokenId: access.id });
       const view = await getRegistrationResponsibleAdultView(access.registration.id, tx);
       return { outcome: { changed: outcome.created + outcome.superseded, sentToReview: outcome.conflicts }, view };
     } catch (error) {
       if (error instanceof GuardianAuthorityError) {
-        throw new PublicResponsibleAdultError(error.code === "ATTENDEE_NOT_FOUND" ? "NOT_AVAILABLE" : "CHOICES_INVALID", error.message);
+        throw new PublicResponsibleAdultError(
+          error.code === "ATTENDEE_NOT_FOUND" ? "NOT_AVAILABLE" : error.code === "CONCURRENT_CHANGE" ? "CONCURRENT_CHANGE" : "CHOICES_INVALID",
+          error.message,
+        );
       }
       throw error;
     }

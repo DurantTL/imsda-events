@@ -526,11 +526,11 @@ export function PublicRegistrationForm({
     const ageOfMajority = event.ageOfMajority ?? DEFAULT_AGE_OF_MAJORITY;
     return attendees.map((attendee, index) => {
       const name = attendeeName(attendee, index, roster.attendeeLabel);
-      const answers = { ...registrationResponses, ...attendee.responses };
       return {
         key: attendee.clientId,
         name,
-        status: minorStatusAt(personAgeFromAnswers(answers), startDate, ageOfMajority).status,
+        // The attendee's own answers only, as the server reads them.
+        status: minorStatusAt(personAgeFromAnswers(attendee.responses), startDate, ageOfMajority).status,
         // Only picks the preselected adult. It never creates authority.
         isAccountHolder: sameFullName(name, registrationResponses),
       };

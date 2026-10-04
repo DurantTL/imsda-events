@@ -58,7 +58,8 @@ async function putHandler(request: Request, context: Context) {
       }, { status: 400 }, rateLimit);
     }
     if (error instanceof PublicResponsibleAdultError) {
-      return json({ error: error.code, message: error.message }, { status: error.code === "CHOICES_INVALID" ? 422 : 409 }, rateLimit);
+      const status = error.code === "CHOICES_INVALID" ? 422 : error.code === "EDIT_POLICY_REQUIRES_VERIFICATION" ? 403 : 409;
+      return json({ error: error.code, message: error.message }, { status }, rateLimit);
     }
     logError("Private responsible-adult update failed.", error);
     return json({ error: "RESPONSIBLE_ADULT_UPDATE_FAILED", message: "The responsible adult could not be saved. Try again in a moment." }, { status: 500 }, rateLimit);

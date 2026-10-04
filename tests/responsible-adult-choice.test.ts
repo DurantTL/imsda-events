@@ -75,7 +75,7 @@ describe("ResponsibleAdultChoice", () => {
 describe("PublicResponsibleAdult (the private registration page)", () => {
   const view = {
     adults: [{ attendeeId: "att-dad", name: "Dan Sample", isAccountHolder: true }],
-    minors: [{ attendeeId: "att-son", name: "Sam Sample", choice: null, lockedByStaff: false }],
+    minors: [{ attendeeId: "att-son", name: "Sam Sample", choice: null, lockedByStaff: false, lockReason: null as null | "STAFF" | "OTHER_REGISTRATION" }],
   };
 
   it("preselects the only adult when nothing is recorded, and offers to save it", () => {
@@ -85,11 +85,26 @@ describe("PublicResponsibleAdult (the private registration page)", () => {
     expect(markup).toContain("Save responsible adult");
   });
 
+  it("says a minor with no record is not recorded yet, and who locked one that is locked", () => {
+    const fresh = renderToStaticMarkup(createElement(PublicResponsibleAdult, { token: "t", view }));
+    expect(fresh).toContain("Not recorded yet — choose and save.");
+    const staff = renderToStaticMarkup(createElement(PublicResponsibleAdult, { token: "t", view: { ...view, minors: [{ ...view.minors[0]!, choice: "att-dad", lockedByStaff: true, lockReason: "STAFF" as const }] } }));
+    expect(staff).toContain("Set by the event team");
+    const other = renderToStaticMarkup(createElement(PublicResponsibleAdult, { token: "t", view: { ...view, minors: [{ ...view.minors[0]!, choice: null, lockedByStaff: true, lockReason: "OTHER_REGISTRATION" as const }] } }));
+    expect(other).toContain("Recorded on another registration");
+  });
+
+  it("is read-only, with the verification wording and no save button, when the event verifies every edit", () => {
+    const markup = renderToStaticMarkup(createElement(PublicResponsibleAdult, { token: "t", view, readOnly: true }));
+    expect(markup).not.toContain("Save responsible adult");
+    expect(markup).toContain("This event verifies every change");
+  });
+
   it("shows the recorded choice, and no save button when staff decided every minor", () => {
     const recorded = renderToStaticMarkup(createElement(PublicResponsibleAdult, { token: "t", view: { ...view, minors: [{ ...view.minors[0]!, choice: "NONE" }] } }));
     expect(recorded).toMatch(/value="NONE"[^>]*checked=""|checked=""[^>]*value="NONE"/);
     const locked = renderToStaticMarkup(createElement(PublicResponsibleAdult, { token: "t", view: { ...view, minors: [{ ...view.minors[0]!, choice: "att-dad", lockedByStaff: true }] } }));
     expect(locked).not.toContain("Save responsible adult");
-    expect(locked).toContain("The event team set this");
+    expect(locked).toContain("Set by the event team");
   });
 });

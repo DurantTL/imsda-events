@@ -12,6 +12,7 @@ import {
   RESPONSIBLE_ADULT_NONE,
   defaultResponsibleAdultKey,
   eventStartDate,
+  formCollectsAge,
   minorStatusAt,
   personAgeFromAnswers,
   planPublicResponsibleAdults,
@@ -80,6 +81,19 @@ describe("minor status is decided from age at the event's start date", () => {
     // 03:00 UTC on the 6th is still the evening of the 5th in Chicago.
     expect(eventStartDate("2027-03-06T03:00:00.000Z", "America/Chicago")).toBe("2027-03-05");
     expect(eventStartDate(new Date("2027-03-06T03:00:00.000Z"), "UTC")).toBe("2027-03-06");
+  });
+});
+
+describe("which forms ask for an age", () => {
+  it("is true only for an attendee-scope birth date or age field", () => {
+    const form = (scope: string, key: string) => ({ sections: [{ fields: [{ scope, key }] }] });
+    expect(formCollectsAge(form("ATTENDEE", "attendee_age"))).toBe(true);
+    expect(formCollectsAge(form("ATTENDEE", "date_of_birth"))).toBe(true);
+    expect(formCollectsAge(form("ATTENDEE", "guest_age"))).toBe(true);
+    expect(formCollectsAge(form("REGISTRATION", "attendee_age"))).toBe(false);
+    expect(formCollectsAge(form("ATTENDEE", "shirt_size"))).toBe(false);
+    expect(formCollectsAge(null)).toBe(false);
+    expect(formCollectsAge({ sections: "nope" })).toBe(false);
   });
 });
 
@@ -163,6 +177,7 @@ describe("the server decides who is a minor from the submitted answers", () => {
   it("requires a choice for a minor even when the browser sent none", () => {
     const plan = planPublicResponsibleAdults({ ...common, attendees: [dad, son], choices: undefined });
     expect(plan.minorKeys).toEqual(["a2"]);
+    expect(plan.issues[0]!.message).toContain("Please reload this page and try again.");
     expect(plan.issues).toEqual([{ code: "RESPONSIBLE_ADULT_REQUIRED", message: expect.stringContaining("Sam Sample"), attendeeIndex: 1, path: "attendees.1.responsibleAdult", key: "responsible_adult" }]);
     expect(plan.declarations).toEqual([]);
   });

@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "GuardianAuthoritySource" AS ENUM ('REGISTRATION_FORM', 'STAFF');
+CREATE TYPE "GuardianAuthoritySource" AS ENUM ('REGISTRATION_FORM', 'MANAGE_LINK', 'STAFF');
 
 -- CreateEnum
 CREATE TYPE "GuardianAuthorityState" AS ENUM ('ACTIVE', 'REVOKED', 'SUPERSEDED');
@@ -21,6 +21,7 @@ CREATE TABLE "GuardianAuthority" (
     "state" "GuardianAuthorityState" NOT NULL DEFAULT 'ACTIVE',
     "declaredAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "declarationReason" TEXT,
+    "accessTokenId" TEXT,
     "actorUserId" TEXT,
     "actorPersonId" TEXT,
     "revokedAt" TIMESTAMP(3),
@@ -112,6 +113,7 @@ ALTER TABLE "Event" ADD CONSTRAINT "Event_ageOfMajority_range" CHECK ("ageOfMajo
 -- A declaration names a different adult than the minor. Only staff name an adult for sure: the registration
 -- form may also say "None of us" (no adult). ACTIVE rows carry no end state; REVOKED rows say when and why;
 -- SUPERSEDED rows say when and by which row.
+ALTER TABLE "GuardianAuthority" ADD CONSTRAINT "GuardianAuthority_manage_link_token" CHECK ("source" <> 'MANAGE_LINK' OR "accessTokenId" IS NOT NULL);
 ALTER TABLE "GuardianAuthority" ADD CONSTRAINT "GuardianAuthority_adult_not_minor" CHECK ("adultPersonId" IS NULL OR "adultPersonId" <> "minorPersonId");
 ALTER TABLE "GuardianAuthority" ADD CONSTRAINT "GuardianAuthority_staff_names_adult" CHECK ("source" <> 'STAFF' OR ("adultPersonId" IS NOT NULL AND "declarationReason" IS NOT NULL AND length(btrim("declarationReason")) > 0));
 ALTER TABLE "GuardianAuthority" ADD CONSTRAINT "GuardianAuthority_state_fields" CHECK (
@@ -150,7 +152,7 @@ BEGIN
       RAISE EXCEPTION 'The minor is not on that registration.' USING ERRCODE = '23001';
     END IF;
     IF NEW."adultPersonId" IS NOT NULL THEN
-      IF NEW."source" = 'REGISTRATION_FORM' AND NOT EXISTS (SELECT 1 FROM "RegistrationAttendee" WHERE "registrationId" = NEW."registrationId" AND "personId" = NEW."adultPersonId") THEN
+      IF NEW."source" IN ('REGISTRATION_FORM', 'MANAGE_LINK') AND NOT EXISTS (SELECT 1 FROM "RegistrationAttendee" WHERE "registrationId" = NEW."registrationId" AND "personId" = NEW."adultPersonId") THEN
         RAISE EXCEPTION 'The adult is not on that registration.' USING ERRCODE = '23001';
       END IF;
       IF NEW."source" = 'STAFF' AND NOT EXISTS (SELECT 1 FROM "RegistrationAttendee" WHERE "eventId" = NEW."eventId" AND "personId" = NEW."adultPersonId") THEN

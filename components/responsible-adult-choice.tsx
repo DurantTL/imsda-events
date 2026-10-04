@@ -6,8 +6,12 @@ import { NONE_OF_US_LABEL, RESPONSIBLE_ADULT_NONE } from "@/modules/guardian-aut
 export type ResponsibleAdultChoiceMinor = {
   key: string;
   name: string;
-  /** Staff decided: shown, but not changeable here. */
+  /** Shown, but not changeable here. */
   locked?: boolean;
+  /** Why it is locked (who decided); a default sentence names the event team. */
+  lockNote?: string;
+  /** A short note under the choice, such as "Not recorded yet". */
+  note?: string;
 };
 
 export type ResponsibleAdultChoiceProps = {
@@ -67,7 +71,8 @@ export function ResponsibleAdultChoice({ idPrefix, minors, adults, values, onCha
                 <span translate={option.value === RESPONSIBLE_ADULT_NONE ? undefined : "no"}>{option.label}</span>
               </label>
             ))}
-            {minor.locked && <small>The event team set this. Contact them to change it.</small>}
+            {minor.locked && <small>{minor.lockNote ?? "The event team set this. Contact them to change it."}</small>}
+            {!minor.locked && minor.note && <small>{minor.note}</small>}
             <FieldError id={`${groupId}_error`}>{error}</FieldError>
           </fieldset>
         );

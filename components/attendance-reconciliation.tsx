@@ -90,6 +90,7 @@ export function AttendanceReconciliation({
           </a>
           <a className="secondary-button" href={`/finance/billing-responsibility?event=${eventId}`}>Billing responsibility</a>
           <a className="secondary-button" href={`/finance/church-owed?event=${eventId}`}>Owed by churches</a>
+          <a className="secondary-button" href={`/finance/invoices?event=${eventId}`}>Invoices</a>
         </div>
       </div>
       <p className="billing-estimate-note">

@@ -28,6 +28,26 @@ export type MinorStatus = {
 
 const AGE_ANSWER_KEYS = ["attendee_age", "age", "guest_age"] as const;
 
+export type GuardianAuthoritySourceName = "REGISTRATION_FORM" | "MANAGE_LINK" | "STAFF";
+
+/**
+ * Whether a stored form definition asks each attendee for a birth date or an age (an ATTENDEE-scope field
+ * with one of the known keys). Only then is an unknown age worth a staff's attention: a form that never asks
+ * (Women's Retreat) says nothing about whether anyone is a minor.
+ */
+export function formCollectsAge(definition: unknown): boolean {
+  const sections = (definition as { sections?: unknown } | null)?.sections;
+  if (!Array.isArray(sections)) return false;
+  const keys = new Set<string>([...BIRTH_DATE_FIELD_KEYS, ...AGE_ANSWER_KEYS]);
+  return sections.some((section) => {
+    const fields = (section as { fields?: unknown } | null)?.fields;
+    return Array.isArray(fields) && fields.some((field) => {
+      const candidate = field as { scope?: unknown; key?: unknown } | null;
+      return candidate?.scope === "ATTENDEE" && typeof candidate.key === "string" && keys.has(candidate.key);
+    });
+  });
+}
+
 function wholeAge(value: unknown): number | null {
   if (typeof value === "number") return Number.isInteger(value) && value >= 0 && value <= 130 ? value : null;
   if (typeof value !== "string") return null;
@@ -39,8 +59,10 @@ function wholeAge(value: unknown): number | null {
 
 /**
  * What a registration says about someone's age: a birth date answered on the form (ISO date), or an age
- * already worked out for the event date (club and group snapshots), or a stated age answer. Nothing is guessed from
- * the attendee type or a label such as "child".
+ * already worked out for the event date (club and group snapshots), or a stated age answer. Pass the
+ * attendee's own (ATTENDEE-scope) answers and profile snapshot only, identically when a registration is
+ * submitted and when a stored record is read: a registration-level age field is about the contact, not a
+ * person on the roster. Nothing is guessed from the attendee type or a label such as "child".
  */
 export function personAgeFromAnswers(responses: Record<string, unknown>, snapshot: Record<string, unknown> = {}): PersonAge {
   let birthDate: string | null = null;
@@ -159,7 +181,7 @@ export function validateResponsibleAdultChoices(
   for (const minor of minorsOn(people)) {
     const choice = Object.hasOwn(choices, minor.key) ? choices[minor.key] : undefined;
     if (choice === undefined || choice === "") {
-      issues.push({ code: "RESPONSIBLE_ADULT_REQUIRED", minorKey: minor.key, message: `Choose a responsible adult for ${minor.name}, or “${NONE_OF_US_LABEL}”.` });
+      issues.push({ code: "RESPONSIBLE_ADULT_REQUIRED", minorKey: minor.key, message: `Choose a responsible adult for ${minor.name}, or “${NONE_OF_US_LABEL}”. Please reload this page and try again.` });
     } else if (choice === RESPONSIBLE_ADULT_NONE) {
       declarations.push({ minorKey: minor.key, adultKey: null });
     } else if (adultKeys.has(choice) && choice !== minor.key) {
@@ -195,7 +217,7 @@ export const reviewKindLabels: Record<ReviewKind, string> = {
 export type ReviewAuthority = {
   id: string;
   adultPersonId: string | null;
-  source: "REGISTRATION_FORM" | "STAFF";
+  source: GuardianAuthoritySourceName;
 };
 
 export type ReviewPerson = {
@@ -222,7 +244,7 @@ export function reviewKindsFor(person: ReviewPerson): ReviewKind[] {
   if (person.status === "MINOR") {
     const authority = person.authority;
     if (authority && authority.adultPersonId === null) kinds.push("NONE_OF_US");
-    if (authority?.adultPersonId && authority.source === "REGISTRATION_FORM" && !person.registrationPersonIds.includes(authority.adultPersonId)) {
+    if (authority?.adultPersonId && authority.source !== "STAFF" && !person.registrationPersonIds.includes(authority.adultPersonId)) {
       kinds.push("ADULT_LEFT_REGISTRATION");
     }
     // A staff-set adult elsewhere in the event answers the "no adult on this registration" question.
@@ -259,7 +281,7 @@ export type DeclarationPlan =
  *  - "None of us" against someone else's record claims nothing, so nothing changes.
  */
 export function planRegistrationDeclaration(
-  latest: { registrationId: string; adultPersonId: string | null; source: "REGISTRATION_FORM" | "STAFF"; state: "ACTIVE" | "REVOKED" } | null,
+  latest: { registrationId: string; adultPersonId: string | null; source: GuardianAuthoritySourceName; state: "ACTIVE" | "REVOKED" } | null,
   next: { registrationId: string; adultPersonId: string | null },
 ): DeclarationPlan {
   if (!latest) return { kind: "CREATE" };
@@ -267,7 +289,7 @@ export function planRegistrationDeclaration(
   if (latest.adultPersonId === next.adultPersonId && (latest.registrationId === next.registrationId || next.adultPersonId !== null)) {
     return { kind: "UNCHANGED" };
   }
-  if (latest.source === "REGISTRATION_FORM" && latest.registrationId === next.registrationId) return { kind: "SUPERSEDE" };
+  if (latest.source !== "STAFF" && latest.registrationId === next.registrationId) return { kind: "SUPERSEDE" };
   return next.adultPersonId === null ? { kind: "IGNORE" } : { kind: "CONFLICT" };
 }
 

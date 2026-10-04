@@ -833,7 +833,8 @@ async function createPublicRegistrationTransaction(
         attendees: prepared.attendees.map((attendee) => ({
           clientId: attendee.clientId,
           name: attendee.identity ? `${attendee.identity.firstName} ${attendee.identity.lastName}`.trim() : "",
-          responses: { ...prepared.registrationResponses, ...attendee.responses },
+          // The attendee's own answers only: the same inputs the stored record is classified from later.
+          responses: attendee.responses,
         })),
         choices: input.responsibleAdults,
       });

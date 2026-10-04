@@ -9,6 +9,7 @@ import { hashPassword } from "@/modules/access/passwords";
 import { createOpaqueToken } from "@/modules/access/tokens";
 import { rolePermissions } from "@/modules/access/permissions";
 import { stripHealthAccess } from "@/modules/coordinator-health/membership-grants";
+import { stripInvoiceFinalizationAccess } from "@/modules/invoices/finalize-access";
 
 export class MembershipOperationError extends Error {
   constructor(
@@ -150,6 +151,8 @@ export async function addStaffMembership(eventId: string, actorUserId: string, i
     const existing = await tx.eventMembership.findUnique({ where: { eventId_userId: { eventId, userId: user.id } } });
     // Health information access (#658) never survives a re-add: only a system administrator grants it again.
     if (existing) await stripHealthAccess(tx, existing, actorUserId, "RE_ADDED");
+    // Nor does permission to finalize invoices (#167).
+    if (existing) await stripInvoiceFinalizationAccess(tx, existing, actorUserId, "RE_ADDED");
     const membership = existing
       ? await tx.eventMembership.update({ where: { id: existing.id }, data: { role: input.role, status: "ACTIVE" } })
       : await tx.eventMembership.create({ data: { eventId, userId: user.id, role: input.role, status: "ACTIVE" } });
@@ -190,6 +193,8 @@ export async function updateStaffMembership(eventId: string, membershipId: strin
     if (input.status === "INACTIVE" || current.status !== "ACTIVE" || input.role !== current.role) {
       const reason = input.status === "INACTIVE" ? "DEACTIVATED" : current.status !== "ACTIVE" ? "REACTIVATED" : "ROLE_CHANGED";
       await stripHealthAccess(tx, current, actorUserId, reason);
+      // The same for permission to finalize invoices (#167): only a system administrator grants it again.
+      await stripInvoiceFinalizationAccess(tx, current, actorUserId, reason);
     }
     const updated = await tx.eventMembership.update({ where: { id: current.id }, data: input });
     await writeAuditLog({

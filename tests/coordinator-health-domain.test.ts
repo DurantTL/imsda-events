@@ -34,8 +34,8 @@ describe("the health permission (#658)", () => {
     for (const role of eventRoles) expect(rolePermissions[role]).not.toContain("VIEW_HEALTH_INFORMATION");
   });
 
-  it("keeps every other permission on Event Admin", () => {
-    expect(rolePermissions.EVENT_ADMIN).toEqual(eventPermissions.filter((permission) => permission !== "VIEW_HEALTH_INFORMATION"));
+  it("keeps every other permission on Event Admin (but not Finalize invoices, #167, which no role carries)", () => {
+    expect(rolePermissions.EVENT_ADMIN).toEqual(eventPermissions.filter((permission) => permission !== "VIEW_HEALTH_INFORMATION" && permission !== "FINALIZE_INVOICES"));
   });
 
   it("leaves VIEW_SENSITIVE_DATA holders without it", () => {

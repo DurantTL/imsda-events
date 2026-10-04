@@ -229,7 +229,7 @@ async function main() {
   assert(leo && leo.responsibleAdult === null && leo.kinds.length === 1 && leo.kinds[0] === "NOT_DECLARED", "the minor is listed for staff as having no responsible adult recorded");
   assert(!review.adults.some((adult) => adult.personId === legacyUncle.id), "a household member who is not registered is not an adult of the event");
   assert((await getRegistrationResponsibleAdultView(legacy.id))?.minors[0]?.choice === null, "the private page shows no choice recorded");
-  await expectCode(prisma.$transaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: legacy.id, choices: {} })), "CHOICES_INVALID", "the server does not fill in a missing choice");
+  await expectCode(prisma.$transaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: legacy.id, choices: {} })), "CHOICES_INVALID", "the server does not fill in a missing choice");
   assert(await prisma.guardianAuthority.count({ where: { minorPersonId: legacyKid.id } }) === 0, "a save with no choice still creates nothing");
 
   // ---- None of us goes to staff; a minor with no adult goes to staff ----
@@ -322,17 +322,37 @@ async function main() {
   assert(previous.state === "SUPERSEDED" && previous.supersededById === staffRow.id && previous.adultPersonId === before.adultPersonId, "the earlier declaration is kept as history");
 
   // The registrant cannot undo a staff decision from the private page.
-  await prisma.$transaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: parallel.registration.id, choices: {} }));
+  await prisma.$transaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: parallel.registration.id, choices: {} }));
   assert((await activeFor(ids.eventA, pip.personId))[0]!.id === staffRow.id, "a registrant's save leaves a staff decision alone");
   const viewAfterStaff = await getRegistrationResponsibleAdultView(parallel.registration.id);
   assert(viewAfterStaff?.minors.find((minor) => minor.attendeeId === parallel.byName("Pip").id)?.lockedByStaff === true, "the private page shows a staff decision as locked");
 
   // The registrant's own change supersedes their earlier choice (and keeps it).
   const own = await submit([{ clientId: "a-a", first: "Ora", age: 40 }, { clientId: "a-b", first: "Orb", age: 41 }, { clientId: "a-kid", first: "Ori", age: 6 }], { "a-kid": "a-a" });
-  await prisma.$transaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: own.registration.id, choices: { [own.byName("Ori").id]: own.byName("Orb").id } }));
+  await prisma.$transaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: own.registration.id, choices: { [own.byName("Ori").id]: own.byName("Orb").id } }));
   const ownRows = await prisma.guardianAuthority.findMany({ where: { minorPersonId: own.byName("Ori").personId }, orderBy: { declaredAt: "asc" } });
   assert(ownRows.length === 2 && ownRows[0]!.state === "SUPERSEDED" && ownRows[1]!.state === "ACTIVE" && ownRows[1]!.adultPersonId === own.byName("Orb").personId, "the registrant's change supersedes and keeps the earlier choice");
-  await expectCode(prisma.$transaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: own.registration.id, choices: { [own.byName("Ori").id]: parallel.byName("Pam").id } })), "CHOICES_INVALID", "an adult from another registration cannot be chosen");
+  await expectCode(prisma.$transaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: own.registration.id, choices: { [own.byName("Ori").id]: parallel.byName("Pam").id } })), "CHOICES_INVALID", "an adult from another registration cannot be chosen");
+
+  // The private page change is its own source and names the access grant; the database requires it.
+  assert(ownRows[1]!.source === "MANAGE_LINK" && ownRows[1]!.accessTokenId === "token-1", "a private-page declaration records its source and access grant");
+  const manageAudit = await prisma.auditLog.findFirst({ where: { eventId: ids.eventA, entityId: ownRows[1]!.id } });
+  assert((manageAudit?.metadata as Record<string, unknown>)?.accessTokenId === "token-1" && (manageAudit?.metadata as Record<string, unknown>)?.source === "MANAGE_LINK", "the audit row names the access grant");
+  assert(await rejects(prisma.guardianAuthority.create({ data: { eventId: ids.eventA, registrationId: own.registration.id, minorPersonId: own.byName("Ori").personId, adultPersonId: null, source: "MANAGE_LINK" } }), /manage_link_token|check|violat/i), "a private-page declaration without an access grant is refused");
+
+  // ---- Cancel, then re-register with the other parent ----
+  const cam = await submit([{ clientId: "a-a", first: "Cam", age: 40 }, { clientId: "a-kid", first: "Cub", age: 6 }], { "a-kid": "a-a" });
+  const cub = cam.byName("Cub");
+  await prisma.registration.update({ where: { id: cam.registration.id }, data: { status: "CANCELLED" } });
+  const cora = await submit([{ clientId: "a-a", first: "Cora", age: 39 }]);
+  await prisma.registrationAttendee.create({ data: { eventId: ids.eventA, registrationId: cora.registration.id, personId: cub.personId, attendeeType: "ATTENDEE", position: 1, profileSnapshot: { firstName: "Cub", lastName: surname }, formResponses: { attendee_age: "6" } } });
+  const cubReview = (await getGuardianReview(ids.eventA)).minors.find((minor) => minor.personId === cub.personId);
+  assert(cubReview && cubReview.confirmationCode !== cam.registration.id && cubReview.responsibleAdult === null && cubReview.kinds.join() === "NOT_DECLARED", "a cancelled registration's declaration is not shown");
+  const respouse = await prisma.$transaction((tx) => recordRegistrationDeclarations(tx, { eventId: ids.eventA, registrationId: cora.registration.id, actorPersonId: cora.registration.accountHolderPersonId, declarations: [{ minorPersonId: cub.personId, adultPersonId: cora.byName("Cora").personId }] }));
+  assert(respouse.conflicts === 0 && respouse.superseded === 1, "the new registration's declaration is not a conflict and supersedes the stale row");
+  const cubRows = await prisma.guardianAuthority.findMany({ where: { minorPersonId: cub.personId }, orderBy: { declaredAt: "asc" } });
+  assert(cubRows.length === 2 && cubRows[0]!.state === "SUPERSEDED" && cubRows[1]!.state === "ACTIVE" && cubRows[1]!.adultPersonId === cora.byName("Cora").personId, "one ACTIVE row for the new registration, the old kept");
+  assert(await prisma.guardianAuthorityConflict.count({ where: { minorPersonId: cub.personId } }) === 0, "no conflict against a cancelled registration");
 
   // ---- Revocation: immediate, history kept ----
   const revokeTarget = (await prisma.registrationAttendee.findFirstOrThrow({ where: { registrationId: first.registration.id, personId: sam.personId } })).id;

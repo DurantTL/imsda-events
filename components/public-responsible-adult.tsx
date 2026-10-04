@@ -9,6 +9,8 @@ import type { RegistrationResponsibleAdultView } from "@/modules/guardian-author
 type PublicResponsibleAdultProps = {
   token: string;
   view: RegistrationResponsibleAdultView;
+  /** The event verifies every edit: shown, but changed through the verified route or the event team. */
+  readOnly?: boolean;
 };
 
 type SaveState =
@@ -18,14 +20,14 @@ type SaveState =
   | { kind: "error"; message: string };
 
 /** "Responsible adult" on the private registration page (#131): the registrant can change the choice made on the form. */
-export function PublicResponsibleAdult({ token, view: initialView }: PublicResponsibleAdultProps) {
+export function PublicResponsibleAdult({ token, view: initialView, readOnly = false }: PublicResponsibleAdultProps) {
   const [view, setView] = useState(initialView);
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [state, setState] = useState<SaveState>({ kind: "idle", message: "" });
   // Shown value: the registrant's change, else what is recorded, else the only adult (preselected, never blank).
   const preselected = view.adults.length === 1 ? view.adults[0]!.attendeeId : (view.adults.find((adult) => adult.isAccountHolder) ?? view.adults[0])?.attendeeId ?? RESPONSIBLE_ADULT_NONE;
   const values = Object.fromEntries(view.minors.map((minor) => [minor.attendeeId, picks[minor.attendeeId] ?? minor.choice ?? preselected]));
-  const editable = view.minors.some((minor) => !minor.lockedByStaff);
+  const editable = !readOnly && view.minors.some((minor) => !minor.lockedByStaff);
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -64,7 +66,17 @@ export function PublicResponsibleAdult({ token, view: initialView }: PublicRespo
       <form onSubmit={save}>
         <ResponsibleAdultChoice
           idPrefix="public_manage_responsible_adult"
-          minors={view.minors.map((minor) => ({ key: minor.attendeeId, name: minor.name, locked: minor.lockedByStaff }))}
+          minors={view.minors.map((minor) => ({
+            key: minor.attendeeId,
+            name: minor.name,
+            locked: minor.lockedByStaff || readOnly,
+            lockNote: readOnly && !minor.lockedByStaff
+              ? "This event verifies every change. Contact the event team, or sign in to your attendee account, to change it."
+              : minor.lockReason === "OTHER_REGISTRATION"
+                ? "Recorded on another registration. Contact the event team to change it."
+                : "Set by the event team. Contact them to change it.",
+            note: minor.choice === null ? "Not recorded yet — choose and save." : undefined,
+          }))}
           adults={view.adults.map((adult) => ({ key: adult.attendeeId, name: adult.name }))}
           values={values}
           onChange={(minorKey, value) => {

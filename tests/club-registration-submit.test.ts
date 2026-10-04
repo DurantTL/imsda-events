@@ -800,6 +800,19 @@ describe("responsible adult at an ordinary public submit (#131)", () => {
     }
   });
 
+  it("classifies from each attendee's own answers only: a registration-level birth date does not make anyone a minor", async () => {
+    const tx = fixture({ form: definition([], [field("r_dob", "date_of_birth", "Contact birth date", "DATE", "REGISTRATION")]), audience: "GENERAL", billingMode: "ATTENDEE_PAY" });
+    tx.person.create.mockImplementation(async ({ data }: { data: { firstName: string; lastName: string } }) => ({ id: `person-${data.firstName}`, ...data }));
+    tx.person.findUnique.mockResolvedValue(null);
+    await submitPublicRegistration("honors-weekend", "clubs", publicRegistrationInputSchema.parse({
+      ...baseInput,
+      responses: { ...baseInput.responses, date_of_birth: "2018-05-05" },
+      attendees: [dad, uncle].map((attendee) => ({ ...attendee })),
+    }), now);
+    expect(tx.registration.create).toHaveBeenCalledTimes(1);
+    expect(tx.guardianAuthority.create).not.toHaveBeenCalled();
+  });
+
   it("asks nothing, and records nothing, when nobody is a minor", async () => {
     const tx = await submitIndividual([dad, uncle]);
     expect(tx.guardianAuthority.create).not.toHaveBeenCalled();

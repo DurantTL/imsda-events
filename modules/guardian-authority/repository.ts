@@ -6,11 +6,13 @@ import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   eventStartDate,
+  formCollectsAge,
   minorStatusAt,
   personAgeFromAnswers,
   planRegistrationDeclaration,
   reviewKindsFor,
   validateResponsibleAdultChoices,
+  type GuardianAuthoritySourceName,
   type MinorStatus,
   type ResponsibleAdultIssue,
   type ReviewAuthority,
@@ -39,7 +41,6 @@ export type GuardianAuthorityErrorCode =
   | "CONFLICT_ALREADY_RESOLVED"
   | "REASON_REQUIRED"
   | "CHOICES_INVALID"
-  | "LOCKED_BY_STAFF"
   | "CONCURRENT_CHANGE";
 
 export class GuardianAuthorityError extends Error {
@@ -84,6 +85,8 @@ export type EventPerson = {
   name: string;
   status: MinorStatus["status"];
   age: number | null;
+  /** The registration's form asks each attendee for a birth date or an age (so an unknown one is worth a look). */
+  ageAsked: boolean;
 };
 
 type EventFacts = {
@@ -119,6 +122,20 @@ function personDisplayName(attendee: { profileSnapshot: unknown; person: { first
 }
 
 /**
+ * A record counts only while its registration is still an active one and the minor is still an attendee on it.
+ * A cancelled registration, or an attendee removed or substituted out, leaves a stale row behind: it is
+ * ignored when reading and when planning a new declaration (and superseded when a new one is written),
+ * so it can neither show as a responsible adult nor make a conflict.
+ */
+async function isLiveRecord(client: Client, row: { registrationId: string; minorPersonId: string }) {
+  const registration = await client.registration.findUnique({
+    where: { id: row.registrationId },
+    select: { status: true, attendees: { where: { personId: row.minorPersonId }, select: { id: true } } },
+  });
+  return Boolean(registration && (IN_SCOPE_STATUSES as readonly string[]).includes(registration.status) && registration.attendees.length > 0);
+}
+
+/**
  * Everyone on the event's individual registrations with their minor status at the event's start date, the
  * ACTIVE declarations and the open conflicts. Club and group registrations are left out: their rosters
  * come from the club or the group contact, with their own adults and youth, not from this form.
@@ -146,13 +163,21 @@ async function loadEventFacts(client: Client, eventId: string): Promise<EventFac
       profileSnapshot: true,
       formResponses: true,
       person: { select: { firstName: true, lastName: true } },
-      registration: { select: { confirmationCode: true, accountHolderPersonId: true } },
+      registration: { select: { confirmationCode: true, accountHolderPersonId: true, publicFormSubmission: { select: { formVersionId: true } } } },
     },
     orderBy: [{ registrationId: "asc" }, { position: "asc" }, { id: "asc" }],
   });
+  // Which form versions ask for an age at all, read once per version.
+  const versionIds = [...new Set(attendees.flatMap((attendee) => attendee.registration.publicFormSubmission?.formVersionId ?? []))];
+  const versions = versionIds.length > 0
+    ? await client.registrationFormVersion.findMany({ where: { id: { in: versionIds } }, select: { id: true, definition: true } })
+    : [];
+  const asksAge = new Map(versions.map((version) => [version.id, formCollectsAge(version.definition)]));
   const people: EventPerson[] = attendees.map((attendee) => {
     const status = minorStatusAt(personAgeFromAnswers(record(attendee.formResponses), record(attendee.profileSnapshot)), startDate, event.ageOfMajority);
+    const versionId = attendee.registration.publicFormSubmission?.formVersionId;
     return {
+      ageAsked: versionId ? asksAge.get(versionId) ?? false : false,
       attendeeId: attendee.id,
       personId: attendee.personId,
       registrationId: attendee.registrationId,
@@ -174,10 +199,16 @@ async function loadEventFacts(client: Client, eventId: string): Promise<EventFac
       orderBy: { declaredAt: "asc" },
     }),
   ]);
+  // Records of a cancelled registration, or of a minor no longer on it, are not current.
+  const attendeeKeys = new Set(people.map((person) => `${person.registrationId}:${person.personId}`));
+  const liveAuthorities = authorities.filter((row) => attendeeKeys.has(`${row.registrationId}:${row.minorPersonId}`));
+  const liveConflicts = conflicts.filter((row) => (
+    attendeeKeys.has(`${row.registrationId}:${row.claimedAdultPersonId}`) && attendeeKeys.has(`${row.registrationId}:${row.minorPersonId}`)
+  ));
   return {
     event: { id: event.id, name: event.name, ageOfMajority: event.ageOfMajority, startDate },
     people,
-    active: new Map(authorities.map((row) => [row.minorPersonId, {
+    active: new Map(liveAuthorities.map((row) => [row.minorPersonId, {
       id: row.id,
       adultPersonId: row.adultPersonId,
       source: row.source,
@@ -187,7 +218,7 @@ async function loadEventFacts(client: Client, eventId: string): Promise<EventFac
       actorPersonId: row.actorPersonId,
       declarationReason: row.declarationReason,
     }])),
-    openConflicts: conflicts,
+    openConflicts: liveConflicts,
   };
 }
 
@@ -213,8 +244,18 @@ export type DeclarationOutcome = {
  */
 export async function recordRegistrationDeclarations(
   tx: Prisma.TransactionClient,
-  input: { eventId: string; registrationId: string; actorPersonId: string | null; declarations: readonly DeclarationInput[] },
+  input: {
+    eventId: string;
+    registrationId: string;
+    actorPersonId: string | null;
+    declarations: readonly DeclarationInput[];
+    /** How it was declared; a manage-link declaration also names the access grant it was made through. */
+    source?: Exclude<GuardianAuthoritySourceName, "STAFF">;
+    accessTokenId?: string | null;
+  },
 ): Promise<DeclarationOutcome> {
+  const source = input.source ?? "REGISTRATION_FORM";
+  if (source === "MANAGE_LINK" && !input.accessTokenId) throw new Error("A manage-link declaration names the access grant it was made through.");
   const outcome: DeclarationOutcome = { created: 0, superseded: 0, unchanged: 0, conflicts: 0, ignored: 0 };
   for (const declaration of input.declarations) {
     await lockMinor(tx, input.eventId, declaration.minorPersonId);
@@ -223,9 +264,12 @@ export async function recordRegistrationDeclarations(
       orderBy: [{ declaredAt: "desc" }, { id: "desc" }],
       select: { id: true, registrationId: true, adultPersonId: true, source: true, state: true },
     });
+    // A record of a cancelled registration, or of a minor no longer on it, is not a declaration to defer to.
+    const stale = latest ? !(await isLiveRecord(tx, { registrationId: latest.registrationId, minorPersonId: declaration.minorPersonId })) : false;
+    const current = latest && !stale ? latest : null;
     const plan = planRegistrationDeclaration(
-      latest && (latest.state === "ACTIVE" || latest.state === "REVOKED")
-        ? { registrationId: latest.registrationId, adultPersonId: latest.adultPersonId, source: latest.source, state: latest.state }
+      current && (current.state === "ACTIVE" || current.state === "REVOKED")
+        ? { registrationId: current.registrationId, adultPersonId: current.adultPersonId, source: current.source, state: current.state }
         : null,
       { registrationId: input.registrationId, adultPersonId: declaration.adultPersonId },
     );
@@ -238,7 +282,7 @@ export async function recordRegistrationDeclarations(
       continue;
     }
     if (plan.kind === "CONFLICT") {
-      if (!latest || declaration.adultPersonId === null) continue;
+      if (!current || declaration.adultPersonId === null) continue;
       const existing = await tx.guardianAuthorityConflict.findFirst({
         where: { eventId: input.eventId, minorPersonId: declaration.minorPersonId, claimedAdultPersonId: declaration.adultPersonId, state: "OPEN" },
         select: { id: true },
@@ -250,7 +294,7 @@ export async function recordRegistrationDeclarations(
             registrationId: input.registrationId,
             minorPersonId: declaration.minorPersonId,
             claimedAdultPersonId: declaration.adultPersonId,
-            existingAuthorityId: latest.id,
+            existingAuthorityId: current.id,
           },
           select: { id: true },
         });
@@ -265,7 +309,9 @@ export async function recordRegistrationDeclarations(
             registrationId: input.registrationId,
             minorPersonId: declaration.minorPersonId,
             claimedAdultPersonId: declaration.adultPersonId,
-            existingAuthorityId: latest.id,
+            existingAuthorityId: current.id,
+            source,
+            accessTokenId: input.accessTokenId ?? null,
           },
         }, tx);
       }
@@ -274,7 +320,8 @@ export async function recordRegistrationDeclarations(
     }
     const id = randomUUID();
     let supersededId: string | null = null;
-    if (plan.kind === "SUPERSEDE" && latest) {
+    // A stale ACTIVE row still holds the one-ACTIVE-per-minor slot: end it as the new one begins.
+    if (latest && (plan.kind === "SUPERSEDE" || (stale && latest.state === "ACTIVE"))) {
       const ended = await tx.guardianAuthority.updateMany({
         where: { id: latest.id, state: "ACTIVE" },
         data: { state: "SUPERSEDED", supersededAt: new Date(), supersededById: id },
@@ -289,7 +336,8 @@ export async function recordRegistrationDeclarations(
         registrationId: input.registrationId,
         minorPersonId: declaration.minorPersonId,
         adultPersonId: declaration.adultPersonId,
-        source: "REGISTRATION_FORM",
+        source,
+        accessTokenId: source === "MANAGE_LINK" ? input.accessTokenId ?? null : null,
         actorPersonId: input.actorPersonId,
       },
     });
@@ -298,13 +346,16 @@ export async function recordRegistrationDeclarations(
       action: "GUARDIAN_AUTHORITY_DECLARED",
       entityType: "GuardianAuthority",
       entityId: id,
-      summary: declaration.adultPersonId ? "Recorded a responsible adult for a minor on the registration form." : "Recorded that a minor has no responsible adult on the registration (None of us).",
+      summary: declaration.adultPersonId
+        ? `Recorded a responsible adult for a minor ${source === "MANAGE_LINK" ? "from the private registration page" : "on the registration form"}.`
+        : `Recorded that a minor has no responsible adult on the registration (None of us), ${source === "MANAGE_LINK" ? "from the private registration page" : "on the form"}.`,
       metadata: {
         eventId: input.eventId,
         registrationId: input.registrationId,
         minorPersonId: declaration.minorPersonId,
         adultPersonId: declaration.adultPersonId,
-        source: "REGISTRATION_FORM",
+        source,
+        accessTokenId: source === "MANAGE_LINK" ? input.accessTokenId ?? null : null,
         supersededAuthorityId: supersededId,
       },
     }, tx);
@@ -323,8 +374,10 @@ export type RegistrationMinorView = {
   name: string;
   /** The attendee id of the chosen adult on this registration, "NONE" for "None of us", or null when nothing is recorded. */
   choice: string | null;
-  /** True when staff decided (set or revoked): the registrant sees it but cannot change it. */
+  /** True when the registrant cannot change it from here (see `lockReason`). */
   lockedByStaff: boolean;
+  /** Why: staff set or revoked it, or another registration holds the declaration. */
+  lockReason: "STAFF" | "OTHER_REGISTRATION" | null;
 };
 
 export type RegistrationResponsibleAdultView = {
@@ -364,9 +417,9 @@ async function loadRegistrationPeople(client: Client, registrationId: string) {
   return { registration, people };
 }
 
-type LatestRecord = { minorPersonId: string; adultPersonId: string | null; source: "REGISTRATION_FORM" | "STAFF"; state: "ACTIVE" | "REVOKED"; registrationId: string };
+type LatestRecord = { minorPersonId: string; adultPersonId: string | null; source: GuardianAuthoritySourceName; state: "ACTIVE" | "REVOKED"; registrationId: string };
 
-/** The most recent ACTIVE or REVOKED record for each person, if any. */
+/** The most recent ACTIVE or REVOKED record for each person that still counts (not of a cancelled registration or a removed attendee), if any. */
 async function latestRecordsByMinor(client: Client, eventId: string, personIds: readonly string[]) {
   const rows = await client.guardianAuthority.findMany({
     where: { eventId, minorPersonId: { in: [...personIds] }, state: { in: ["ACTIVE", "REVOKED"] } },
@@ -374,16 +427,22 @@ async function latestRecordsByMinor(client: Client, eventId: string, personIds: 
     select: { minorPersonId: true, adultPersonId: true, source: true, state: true, registrationId: true },
   });
   const latest = new Map<string, LatestRecord>();
+  const seen = new Set<string>();
   for (const row of rows) {
-    if (!latest.has(row.minorPersonId) && (row.state === "ACTIVE" || row.state === "REVOKED")) latest.set(row.minorPersonId, { ...row, state: row.state });
+    if (seen.has(row.minorPersonId)) continue;
+    seen.add(row.minorPersonId);
+    if ((row.state === "ACTIVE" || row.state === "REVOKED") && await isLiveRecord(client, row)) latest.set(row.minorPersonId, { ...row, state: row.state });
   }
   return latest;
 }
 
 /** Staff decided it (set or revoked), or another registration holds it: the registrant cannot change it from here. */
-function lockedForRegistrant(latest: LatestRecord | undefined, registrationId: string) {
-  return Boolean(latest && (latest.state === "REVOKED" || latest.source === "STAFF" || latest.registrationId !== registrationId));
+function lockReasonFor(latest: LatestRecord | undefined, registrationId: string): "STAFF" | "OTHER_REGISTRATION" | null {
+  if (!latest) return null;
+  if (latest.state === "REVOKED" || latest.source === "STAFF") return "STAFF";
+  return latest.registrationId !== registrationId ? "OTHER_REGISTRATION" : null;
 }
+const lockedForRegistrant = (latest: LatestRecord | undefined, registrationId: string) => lockReasonFor(latest, registrationId) !== null;
 
 /** What the registrant sees on their private page: the minors on the registration and their current choice. Null when there is nothing to choose. */
 export async function getRegistrationResponsibleAdultView(registrationId: string, client: Client = getPrisma()): Promise<RegistrationResponsibleAdultView | null> {
@@ -404,6 +463,7 @@ export async function getRegistrationResponsibleAdultView(registrationId: string
           ? latest.adultPersonId === null ? "NONE" : attendeeByPerson.get(latest.adultPersonId) ?? null
           : null,
         lockedByStaff: lockedForRegistrant(latest, loaded.registration.id),
+        lockReason: lockReasonFor(latest, loaded.registration.id),
       };
     }),
   };
@@ -416,7 +476,7 @@ export async function getRegistrationResponsibleAdultView(registrationId: string
  */
 export async function declareResponsibleAdultsForRegistration(
   tx: Prisma.TransactionClient,
-  input: { registrationId: string; choices: Readonly<Record<string, string>> },
+  input: { registrationId: string; choices: Readonly<Record<string, string>>; accessTokenId: string },
 ): Promise<DeclarationOutcome> {
   const loaded = await loadRegistrationPeople(tx, input.registrationId);
   if (!loaded || loaded.registration.clubRegistration || loaded.registration.groupRegistration) {
@@ -438,6 +498,8 @@ export async function declareResponsibleAdultsForRegistration(
     eventId: loaded.registration.eventId,
     registrationId: loaded.registration.id,
     actorPersonId: loaded.registration.accountHolderPersonId,
+    source: "MANAGE_LINK",
+    accessTokenId: input.accessTokenId,
     declarations: declarations.map((declaration) => ({
       minorPersonId: personByAttendee.get(declaration.minorKey)!,
       adultPersonId: declaration.adultKey ? personByAttendee.get(declaration.adultKey)! : null,
@@ -460,7 +522,7 @@ export type ReviewConflictView = {
 export type ResponsibleAdultView = {
   personId: string;
   name: string;
-  source: "REGISTRATION_FORM" | "STAFF";
+  source: GuardianAuthoritySourceName;
   declaredAt: string;
   confirmationCode: string | null;
 };
@@ -520,6 +582,9 @@ function buildReview(facts: EventFacts): GuardianReview {
   for (const person of facts.people) {
     if (person.status === "ADULT") continue;
     const siblings = byRegistration.get(person.registrationId) ?? [];
+    // An unknown age only matters when the form asked for one (and left it out) or the registration has a known minor:
+    // a form that never asks (Women's Retreat) says nothing about whether anyone is a minor.
+    if (person.status === "UNKNOWN" && !person.ageAsked && !siblings.some((sibling) => sibling.status === "MINOR")) continue;
     const authority = facts.active.get(person.personId) ?? null;
     const conflicts = conflictsByMinor.get(person.personId) ?? [];
     const kinds = reviewKindsFor({
@@ -662,7 +727,7 @@ export async function setResponsibleAdult(input: { eventId: string; attendeeId: 
         where: { eventId: input.eventId, minorPersonId: target.personId, state: "ACTIVE" },
         select: { id: true, adultPersonId: true },
       });
-      if (active && active.adultPersonId === adult.personId) {
+      if (facts.active.get(target.personId)?.adultPersonId === adult.personId) {
         throw new GuardianAuthorityError("That adult is already the responsible adult.", "NO_CHANGE");
       }
       const id = randomUUID();
@@ -720,10 +785,8 @@ export async function revokeResponsibleAdult(input: { eventId: string; attendeeI
     const facts = await loadEventFacts(tx, input.eventId);
     const target = requireMinorOnEvent(facts, input.attendeeId);
     await lockMinor(tx, input.eventId, target.personId);
-    const active = await tx.guardianAuthority.findFirst({
-      where: { eventId: input.eventId, minorPersonId: target.personId, state: "ACTIVE" },
-      select: { id: true },
-    });
+    // Only a current record can be revoked: one of a cancelled registration is not a responsible adult anyone sees.
+    const active = facts.active.get(target.personId);
     if (!active) throw new GuardianAuthorityError("There is no recorded responsible adult to revoke.", "NO_ACTIVE_AUTHORITY");
     const revoked = await tx.guardianAuthority.updateMany({
       where: { id: active.id, state: "ACTIVE" },

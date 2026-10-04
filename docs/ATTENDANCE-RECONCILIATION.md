@@ -109,8 +109,8 @@ details ("did not attend" or "missed at check-in" is enough), and audit rows nev
 lock (`pg_advisory_xact_lock`) and read everything, including the billing responsibility view, through
 the same transaction. Approve re-reads the facts inside its locked transaction and refuses if they
 differ from the draft. Other writers (check-ins, roster and price changes) do not take the lock: if
-the facts move after an approval the version is flagged FACTS_CHANGED, never altered. **#167 must
-refuse to finalize from an approval whose freshness is FACTS_CHANGED** and ask staff to prepare and
+the facts move after an approval the version is flagged FACTS_CHANGED, never altered. **Invoices (#167, `docs/INVOICES.md`)
+refuse to draft or finalize from an approval whose freshness is FACTS_CHANGED** and ask staff to prepare and
 approve again.
 
 **The fingerprint** is built from an explicit projection of the result: everything except a
@@ -186,7 +186,7 @@ Cells go through the shared formula-safe writer. `?version=` exports a saved ver
   substitution stays with the seat. Staff correct it when it matters.
 - If an attendee record is deleted, a staff adjustment that was for that person loses its link and
   is then counted as a whole-registration adjustment (the existing foreign-key behaviour).
-- Invoice numbering, finalization and delivery (#167, #168), and any exclusion or complimentary
+- Invoice numbering and finalization are in `docs/INVOICES.md` (#167); delivery (#168) and any exclusion or complimentary
   concept, are out of scope.
 
 ## Checks

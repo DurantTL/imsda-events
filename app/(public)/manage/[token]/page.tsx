@@ -274,7 +274,7 @@ export default async function PublicManagePage({
             />
           )}
 
-          {responsibleAdults && <PublicResponsibleAdult token={token} view={responsibleAdults} />}
+          {responsibleAdults && <PublicResponsibleAdult token={token} view={responsibleAdults} readOnly={responsibleAdultAccess?.attendeeEditPolicy === "VERIFY_EVERY_EDIT"} />}
 
           {view.answerEditing.fields.length > 0 && (
             <section className="public-manage-card">

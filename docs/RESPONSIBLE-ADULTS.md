@@ -32,7 +32,11 @@ below the event's age of majority (`Event.ageOfMajority`, default 18, 13 to 25).
 Age comes from a birth date answer (`date_of_birth`, `birth_date`, `birthdate`, `dob`), else the
 age already worked out for the event date, else an age answer (`attendee_age`, `age`,
 `guest_age`). **An unknown age is not an adult** and is flagged for staff; the form does not ask
-about them and they cannot be chosen as the responsible adult. An attendee type such as "Child" or a
+about them and they cannot be chosen as the responsible adult. Only the attendee's own answers and
+profile snapshot count (never a registration-level field), the same way when a registration is
+submitted and when a stored one is read. Staff are only told about an unknown age when the
+registration's form asks each attendee for a birth date or an age, or the registration has a known
+minor; a form that never asks (Women's Retreat) shows nothing. An attendee type such as "Child" or a
 label never decides it.
 
 Man Camp and the other public forms ask for an age, not a birth date, so on those events the stated
@@ -54,7 +58,11 @@ the same registration, another minor, a person of unknown age, or the minor them
 shown, asked or recorded when nobody is a minor, so events without minors are unchanged.
 
 The registrant can change the choice afterwards on their private registration page (the manage
-link): same checks, and it supersedes their earlier choice. A minor whose record staff set or
+link): same checks, and it supersedes their earlier choice. It is recorded with its own source
+(`MANAGE_LINK`) and the access grant it came through, in the record and the audit row. It follows
+the event's edit policy like the other private-link edits: when the event verifies every edit
+(`VERIFY_EVERY_EDIT`), the page shows the choice read-only and the change goes through the event
+team or a signed-in attendee account. A minor whose record staff set or
 revoked, or that another registration holds, is shown as locked and is not changed from there.
 
 Club and group registrations are not asked. Their rosters come from the club or the group contact,
@@ -74,6 +82,13 @@ user), and state `ACTIVE`, `REVOKED` or `SUPERSEDED`. In the database:
   is not on the registration (for staff: not registered for the event). Foreign-key actions still
   work: deleting a user clears only the actor, deleting the event removes the rows;
 - a staff declaration must name an adult and carry a reason.
+
+A declaration only counts while its registration is still submitted, confirmed or waitlisted and the
+minor is still an attendee on it. A cancelled registration or a removed attendee leaves a stale row
+that is ignored when reading, reviewing and exporting, and does not make a conflict for a new
+registration; the stale ACTIVE row is superseded when the new declaration is written. There is no
+cancel hook: ignoring it on read and superseding on the next write is enough, and cannot go out of
+step with the registration's own status.
 
 History is never lost: changing the adult supersedes the earlier row, and revoking keeps it with who
 and why. Revoking takes effect at once because only `ACTIVE` rows count as the current adult.

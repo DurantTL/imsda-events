@@ -17,6 +17,15 @@ const client = {
   eventMembership: { findFirst: mocks.findFirst, findUnique: mocks.findUnique, count: mocks.count, update: mocks.update, create: mocks.create, findMany: mocks.findMany },
   user: { findUnique: mocks.userFindUnique, update: mocks.userUpdate },
   userSession: { updateMany: mocks.sessionUpdateMany },
+  // The row lock (#167) returns the permissions of the membership the test loaded.
+  $queryRaw: async () => {
+    const loaded = [...mocks.findFirst.mock.results, ...mocks.findUnique.mock.results];
+    for (const result of loaded.reverse()) {
+      const row = await result.value;
+      if (row?.permissions) return [{ permissions: row.permissions }];
+    }
+    return [{ permissions: [] }];
+  },
   $transaction: (work: (tx: unknown) => unknown) => work(client),
 };
 

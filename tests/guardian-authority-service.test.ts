@@ -22,6 +22,8 @@ type Seed = {
   club?: boolean;
   group?: boolean;
   eventId?: string;
+  /** The stored form definition; absent for a registration staff made by hand. */
+  definition?: unknown;
 };
 
 const state = vi.hoisted(() => ({
@@ -55,6 +57,7 @@ function attendeeRows(seed: Seed) {
       status: seed.status ?? "SUBMITTED",
       clubRegistration: seed.club ? { id: "club" } : null,
       groupRegistration: seed.group ? { id: "group" } : null,
+      publicFormSubmission: seed.definition ? { formVersionId: `v-${seed.registrationId}` } : null,
     },
   }));
 }
@@ -93,10 +96,11 @@ const fakeDb = {
     findUnique: vi.fn(async ({ where }: { where: { id: string } }) => eventOf(where.id)),
   },
   registration: {
-    findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
+    findUnique: vi.fn(async ({ where, select }: { where: { id: string }; select?: { attendees?: { where?: { personId?: string } } } }) => {
       const seed = seeds().find((candidate) => candidate.registrationId === where.id);
       if (!seed) return null;
-      const attendees = attendeeRows(seed);
+      const onlyPerson = select?.attendees?.where?.personId;
+      const attendees = attendeeRows(seed).filter((row) => !onlyPerson || row.personId === onlyPerson);
       return {
         id: seed.registrationId,
         eventId: seed.eventId ?? "event-1",
@@ -108,6 +112,10 @@ const fakeDb = {
         attendees,
       };
     }),
+  },
+  registrationFormVersion: {
+    findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
+      seeds().filter((seed) => seed.definition && where.id.in.includes(`v-${seed.registrationId}`)).map((seed) => ({ id: `v-${seed.registrationId}`, definition: seed.definition }))),
   },
   registrationAttendee: {
     findMany: vi.fn(async ({ where }: { where: { eventId: string; registration: { status: { in: string[] } } } }) =>
@@ -166,7 +174,7 @@ const fakeDb = {
 };
 
 /** Reading a table outside the allowed list is recorded and fails the test that did it. */
-const allowedTables = new Set(["event", "registration", "registrationAttendee", "guardianAuthority", "guardianAuthorityConflict", "auditLog", "$executeRaw", "$transaction"]);
+const allowedTables = new Set(["event", "registration", "registrationAttendee", "registrationFormVersion", "guardianAuthority", "guardianAuthorityConflict", "auditLog", "$executeRaw", "$transaction"]);
 const guarded = new Proxy(fakeDb, {
   get(target, property: string) {
     if (!allowedTables.has(property) && !(property in target)) {
@@ -179,7 +187,10 @@ const guarded = new Proxy(fakeDb, {
 
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => guarded }));
 
+import { formTemplates } from "@/modules/forms/definition";
+import { formCollectsAge } from "@/modules/guardian-authority/domain";
 import {
+  getResponsibleAdultsByAttendee,
   GuardianAuthorityError,
   declareResponsibleAdultsForRegistration,
   dismissConflict,
@@ -191,6 +202,8 @@ import {
   setResponsibleAdult,
 } from "@/modules/guardian-authority/repository";
 
+/** A stored form that asks each attendee for an age; Women's Retreat asks for none. */
+const agedForm = { sections: [{ fields: [{ scope: "ATTENDEE", key: "attendee_age" }, { scope: "REGISTRATION", key: "email" }] }] };
 const dad = { personId: "p-dad", name: "Dan Sample", responses: { attendee_age: "44" } };
 const son = { personId: "p-son", name: "Sam Sample", responses: { attendee_age: "12" } };
 const att = (registrationId: string, personId: string) => `att-${registrationId}-${personId}`;
@@ -281,7 +294,7 @@ describe("authority comes only from a declaration: nothing is inferred", () => {
 
   it("the server never fills in a missing choice: a save with no choice is refused and writes nothing", async () => {
     seed({ registrationId: "reg-1", code: "REG-1", holder: "p-dad", people: [dad, son] });
-    await expect(inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: {} })))
+    await expect(inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: {} })))
       .rejects.toMatchObject({ code: "CHOICES_INVALID" });
     expect(fakeDb.guardianAuthority.create).not.toHaveBeenCalled();
     expect(state.authorities).toEqual([]);
@@ -310,8 +323,8 @@ describe("recording the registrant's declaration", () => {
     seed({ registrationId: "reg-1", code: "REG-1", holder: "p-dad", people: [dad, son] });
   });
 
-  it("records who, when, how and for which event and registration", async () => {
-    const outcome = await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [att("reg-1", "p-son")]: att("reg-1", "p-dad") } }));
+  it("records who, when, how and for which event and registration (the registration form)", async () => {
+    const outcome = await inTransaction((tx) => recordRegistrationDeclarations(tx, { eventId: "event-1", registrationId: "reg-1", actorPersonId: "p-dad", declarations: [{ minorPersonId: "p-son", adultPersonId: "p-dad" }] }));
     expect(outcome).toMatchObject({ created: 1, superseded: 0, conflicts: 0 });
     expect(activeFor("p-son")).toEqual([expect.objectContaining({
       eventId: "event-1",
@@ -319,19 +332,30 @@ describe("recording the registrant's declaration", () => {
       minorPersonId: "p-son",
       adultPersonId: "p-dad",
       source: "REGISTRATION_FORM",
+      accessTokenId: null,
       actorPersonId: "p-dad",
       declaredAt: expect.any(Date),
     })]);
-    expect(state.audits).toEqual([expect.objectContaining({ action: "GUARDIAN_AUTHORITY_DECLARED", metadata: expect.objectContaining({ minorPersonId: "p-son", adultPersonId: "p-dad", source: "REGISTRATION_FORM" }) })]);
+    expect(state.audits).toEqual([expect.objectContaining({ action: "GUARDIAN_AUTHORITY_DECLARED", metadata: expect.objectContaining({ minorPersonId: "p-son", adultPersonId: "p-dad", source: "REGISTRATION_FORM", accessTokenId: null }) })]);
     // The review no longer lists this minor.
     const review = await getGuardianReview("event-1");
     expect(review.items).toEqual([]);
     expect(review.minors[0]).toMatchObject({ name: "Sam Sample", responsibleAdult: expect.objectContaining({ name: "Dan Sample", source: "REGISTRATION_FORM" }) });
   });
 
+  it("a change from the private page is a distinct source and names the access grant, in the record and the audit", async () => {
+    const outcome = await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "access-9", registrationId: "reg-1", choices: { [att("reg-1", "p-son")]: att("reg-1", "p-dad") } }));
+    expect(outcome).toMatchObject({ created: 1 });
+    expect(activeFor("p-son")).toEqual([expect.objectContaining({ source: "MANAGE_LINK", accessTokenId: "access-9", actorPersonId: "p-dad", adultPersonId: "p-dad" })]);
+    expect(state.audits).toEqual([expect.objectContaining({ metadata: expect.objectContaining({ source: "MANAGE_LINK", accessTokenId: "access-9" }) })]);
+    await expect(inTransaction((tx) => recordRegistrationDeclarations(tx, { eventId: "event-1", registrationId: "reg-1", actorPersonId: "p-dad", source: "MANAGE_LINK", declarations: [] }))).rejects.toThrow(/access grant/);
+    const review = await getGuardianReview("event-1");
+    expect(review.minors[0]).toMatchObject({ responsibleAdult: expect.objectContaining({ source: "MANAGE_LINK" }) });
+  });
+
   it("records None of us explicitly and sends the minor to staff", async () => {
-    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [att("reg-1", "p-son")]: "NONE" } }));
-    expect(activeFor("p-son")).toEqual([expect.objectContaining({ adultPersonId: null, source: "REGISTRATION_FORM" })]);
+    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [att("reg-1", "p-son")]: "NONE" } }));
+    expect(activeFor("p-son")).toEqual([expect.objectContaining({ adultPersonId: null, source: "MANAGE_LINK" })]);
     const review = await getGuardianReview("event-1");
     expect(review.items.map((item) => [item.name, item.kinds])).toEqual([["Sam Sample", ["NONE_OF_US"]]]);
     expect(review.counts.NONE_OF_US).toBe(1);
@@ -340,14 +364,14 @@ describe("recording the registrant's declaration", () => {
   it("changing the choice supersedes the earlier record and keeps it as history", async () => {
     seeds()[0]!.people.push({ personId: "p-uncle", name: "Ulf Sample", responses: { attendee_age: "40" } });
     const sonAttendee = att("reg-1", "p-son");
-    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
-    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-uncle") } }));
+    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
+    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-uncle") } }));
     expect(activeFor("p-son").map((row) => row.adultPersonId)).toEqual(["p-uncle"]);
     const history = historyFor("p-son");
     expect(history.map((row) => [row.adultPersonId, row.state])).toEqual([["p-dad", "SUPERSEDED"], ["p-uncle", "ACTIVE"]]);
     expect(history[0]).toMatchObject({ supersededById: history[1]!.id, supersededAt: expect.any(Date) });
     // Saving the same choice again changes nothing.
-    const again = await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-uncle") } }));
+    const again = await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-uncle") } }));
     expect(again).toMatchObject({ created: 0, superseded: 0, unchanged: 1 });
     expect(historyFor("p-son")).toHaveLength(2);
   });
@@ -359,7 +383,7 @@ describe("recording the registrant's declaration", () => {
     const teenAttendee = att("reg-1", "p-teen");
     for (const bad of [att("reg-2", "p-other"), att("reg-1", "p-unknown"), teenAttendee, "att-made-up"]) {
       await expect(
-        inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [sonAttendee]: bad, [teenAttendee]: "NONE" } })),
+        inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [sonAttendee]: bad, [teenAttendee]: "NONE" } })),
         bad,
       ).rejects.toMatchObject({ code: "CHOICES_INVALID" });
     }
@@ -382,7 +406,7 @@ describe("recording the registrant's declaration", () => {
       .rejects.toThrow(/minor is not on that registration/);
     // And through the manage page: Olga's registration has no minors to choose for, and no way to name Sam.
     expect(await getRegistrationResponsibleAdultView("reg-x")).toBeNull();
-    await expect(inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-x", choices: { [att("reg-1", "p-son")]: "att-x" } }))).resolves.toMatchObject({ created: 0 });
+    await expect(inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-x", choices: { [att("reg-1", "p-son")]: "att-x" } }))).resolves.toMatchObject({ created: 0 });
     expect(state.authorities).toEqual([]);
     expect((await getGuardianReview("event-1")).minors[0]!.responsibleAdult).toBeNull();
   });
@@ -394,7 +418,7 @@ describe("recording the registrant's declaration", () => {
     expect(await getRegistrationResponsibleAdultView("reg-club")).toBeNull();
     expect(await getRegistrationResponsibleAdultView("reg-group")).toBeNull();
     expect((await getGuardianReview("event-1")).minors).toEqual([]);
-    await expect(inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-club", choices: {} }))).rejects.toBeInstanceOf(GuardianAuthorityError);
+    await expect(inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-club", choices: {} }))).rejects.toBeInstanceOf(GuardianAuthorityError);
   });
 });
 
@@ -423,8 +447,8 @@ describe("minor status at the event start", () => {
     expect((await getGuardianReview("event-1")).minors.map((minor) => minor.name)).toEqual(["Tia Teen"]);
   });
 
-  it("an unknown date of birth is not an adult and is flagged for staff", async () => {
-    seed({ registrationId: "reg-1", code: "REG-1", holder: "p-dad", people: [dad, { personId: "p-unknown", name: "Una Unknown" }] });
+  it("an unknown date of birth is not an adult and is flagged for staff, on a form that asks for an age", async () => {
+    seed({ registrationId: "reg-1", code: "REG-1", holder: "p-dad", definition: agedForm, people: [dad, { personId: "p-unknown", name: "Una Unknown" }] });
     const review = await getGuardianReview("event-1");
     expect(review.adults.map((adult) => adult.name)).toEqual(["Dan Sample"]);
     expect(review.items.map((item) => [item.name, item.kinds, item.status])).toEqual([["Una Unknown", ["UNKNOWN_AGE"], "UNKNOWN"]]);
@@ -450,7 +474,7 @@ describe("two adults claiming one minor", () => {
   });
 
   it("creates a review item and neither adult is silently replaced or blocked", async () => {
-    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
+    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
     const outcome = await submitFromSecondRegistration("p-mum");
     expect(outcome).toMatchObject({ created: 0, superseded: 0, conflicts: 1 });
     // The first declaration stands, untouched; the second is a review item.
@@ -466,7 +490,7 @@ describe("two adults claiming one minor", () => {
   });
 
   it("does not duplicate the review item when the same claim is submitted again", async () => {
-    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
+    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
     for (let attempt = 0; attempt < 3; attempt += 1) {
       await submitFromSecondRegistration("p-mum");
     }
@@ -474,7 +498,7 @@ describe("two adults claiming one minor", () => {
   });
 
   it("a later None of us from the other registration claims nothing", async () => {
-    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
+    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
     const outcome = await submitFromSecondRegistration(null);
     expect(outcome).toMatchObject({ ignored: 1, conflicts: 0 });
     expect(state.conflicts).toEqual([]);
@@ -482,7 +506,7 @@ describe("two adults claiming one minor", () => {
   });
 
   it("staff closing the claim keeps the current adult; staff naming an adult resolves it and supersedes", async () => {
-    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
+    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
     await submitFromSecondRegistration("p-mum");
     const conflictId = state.conflicts[0]!.id as string;
     await dismissConflict({ eventId: "event-1", conflictId, reason: "Mother confirmed the father is responsible", actorUserId: "staff-1" });
@@ -493,7 +517,7 @@ describe("two adults claiming one minor", () => {
   });
 
   it("staff choosing the other adult resolves the open claim", async () => {
-    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
+    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
     await submitFromSecondRegistration("p-mum");
     const result = await setResponsibleAdult({ eventId: "event-1", attendeeId: att("reg-2", "p-son"), adultPersonId: "p-mum", reason: "Court order on file with the registrar", actorUserId: "staff-1" });
     expect(result.resolvedConflictIds).toHaveLength(1);
@@ -555,7 +579,7 @@ describe("staff set, change and revoke", () => {
   });
 
   it("revocation takes effect at once, is not an edit, and keeps who, when and why", async () => {
-    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
+    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
     expect((await getGuardianReview("event-1")).minors[0]!.responsibleAdult?.name).toBe("Dan Sample");
     const revoked = await revokeResponsibleAdult({ eventId: "event-1", attendeeId: sonAttendee, reason: "Father withdrew", actorUserId: "staff-1" });
     // Immediately: nothing is ACTIVE, the next read has no responsible adult, the export shows no adult.
@@ -576,13 +600,121 @@ describe("staff set, change and revoke", () => {
     let view = await getRegistrationResponsibleAdultView("reg-1");
     expect(view?.minors[0]).toMatchObject({ choice: att("reg-1", "p-uncle"), lockedByStaff: true });
     // Saving from the page leaves a staff decision alone (the locked minor is neither asked for nor changed).
-    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: {} }));
+    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: {} }));
     expect(activeFor("p-son")[0]).toMatchObject({ adultPersonId: "p-uncle", source: "STAFF" });
     await revokeResponsibleAdult({ eventId: "event-1", attendeeId: sonAttendee, reason: "Revoked", actorUserId: "staff-1" });
     view = await getRegistrationResponsibleAdultView("reg-1");
     expect(view?.minors[0]).toMatchObject({ choice: null, lockedByStaff: true });
-    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
+    await inTransaction((tx) => declareResponsibleAdultsForRegistration(tx, { accessTokenId: "token-1", registrationId: "reg-1", choices: { [sonAttendee]: att("reg-1", "p-dad") } }));
     expect(activeFor("p-son")).toEqual([]);
     expect(state.conflicts).toEqual([]);
+  });
+});
+
+describe("an unknown age only matters when the form asked for one", () => {
+  const womensRetreat = formTemplates.find((template) => template.key === "womens_retreat_export")!.definition;
+  const unknownGuest = { personId: "p-guest", name: "Gia Guest" };
+
+  it("a Women's Retreat style form (no age field) shows nothing: no review item, no people line, no export row", async () => {
+    expect(formCollectsAge(womensRetreat)).toBe(false);
+    seed({ registrationId: "reg-1", code: "WR-1", holder: "p-guest", definition: womensRetreat, people: [unknownGuest, { personId: "p-friend", name: "Fay Friend" }] });
+    const review = await getGuardianReview("event-1");
+    expect(review.items).toEqual([]);
+    expect(review.minors).toEqual([]);
+    expect(review.counts.UNKNOWN_AGE).toBe(0);
+    expect(await getResponsibleAdultsByAttendee("event-1")).toEqual(new Map());
+    expect(await getResponsibleAdultExportRows("event-1")).toEqual([]);
+  });
+
+  it("a registration made by hand (no stored form) with no known minor shows nothing either", async () => {
+    seed({ registrationId: "reg-1", code: "REG-1", holder: "p-guest", people: [unknownGuest, dad] });
+    expect((await getGuardianReview("event-1")).minors).toEqual([]);
+  });
+
+  it("shows an unknown age beside a known minor, even on a form that never asks", async () => {
+    seed({ registrationId: "reg-1", code: "WR-1", holder: "p-dad", definition: womensRetreat, people: [dad, { ...son, responses: {}, snapshot: { ageOnEventDate: 12 } }, unknownGuest] });
+    const review = await getGuardianReview("event-1");
+    expect(review.items.map((item) => [item.name, item.kinds])).toEqual([["Gia Guest", ["UNKNOWN_AGE"]], ["Sam Sample", ["NOT_DECLARED"]]]);
+  });
+
+  it("shows an unknown age on a form that asks for a birth date or an age", async () => {
+    seed({ registrationId: "reg-1", code: "REG-1", holder: "p-guest", definition: { sections: [{ fields: [{ scope: "ATTENDEE", key: "date_of_birth" }] }] }, people: [unknownGuest] });
+    expect((await getGuardianReview("event-1")).items.map((item) => item.kinds)).toEqual([["UNKNOWN_AGE"]]);
+    // An age field on the registration (the contact) is not one for each attendee.
+    state.seeds = [];
+    seed({ registrationId: "reg-2", code: "REG-2", holder: "p-guest", definition: { sections: [{ fields: [{ scope: "REGISTRATION", key: "attendee_age" }] }] }, people: [unknownGuest] });
+    expect((await getGuardianReview("event-1")).minors).toEqual([]);
+  });
+});
+
+describe("a cancelled registration or a removed attendee is not a current declaration", () => {
+  const sonOn = (registrationId: string) => att(registrationId, "p-son");
+  const declareFor = (registrationId: string, adultPersonId: string | null, holder: string) => inTransaction((tx) => recordRegistrationDeclarations(tx, {
+    eventId: "event-1", registrationId, actorPersonId: holder, declarations: [{ minorPersonId: "p-son", adultPersonId }],
+  }));
+  const mum = { personId: "p-mum", name: "Mia Sample", responses: { attendee_age: "41" } };
+
+  it("cancel, then re-register with the other parent: the old declaration is not shown and makes no conflict", async () => {
+    seed({ registrationId: "reg-1", code: "REG-1", holder: "p-dad", people: [dad, son] });
+    await declareFor("reg-1", "p-dad", "p-dad");
+    expect(activeFor("p-son")).toHaveLength(1);
+    seeds()[0]!.status = "CANCELLED";
+    seed({ registrationId: "reg-2", code: "REG-2", holder: "p-mum", people: [mum, son] });
+    // Read side: the cancelled registration's declaration is ignored.
+    let review = await getGuardianReview("event-1");
+    expect(review.minors.map((minor) => [minor.confirmationCode, minor.responsibleAdult, minor.kinds])).toEqual([["REG-2", null, ["NOT_DECLARED"]]]);
+    expect(await getResponsibleAdultExportRows("event-1")).toEqual([expect.objectContaining({ confirmationCode: "REG-2", responsibleAdult: "", state: "Not recorded" })]);
+    // Write side: the spouse's declaration is the first current one, not a conflict, and the stale row is superseded.
+    const outcome = await declareFor("reg-2", "p-mum", "p-mum");
+    expect(outcome).toMatchObject({ created: 0, superseded: 1, conflicts: 0, ignored: 0 });
+    expect(state.conflicts).toEqual([]);
+    expect(historyFor("p-son").map((row) => [row.registrationId, row.adultPersonId, row.state])).toEqual([["reg-1", "p-dad", "SUPERSEDED"], ["reg-2", "p-mum", "ACTIVE"]]);
+    expect(historyFor("p-son")[0]).toMatchObject({ supersededById: historyFor("p-son")[1]!.id });
+    review = await getGuardianReview("event-1");
+    expect(review.items).toEqual([]);
+    expect(review.minors[0]!.responsibleAdult).toMatchObject({ name: "Mia Sample", confirmationCode: "REG-2" });
+  });
+
+  it("a stale None of us from a cancelled registration does not block a new claim either", async () => {
+    seed({ registrationId: "reg-1", code: "REG-1", holder: "p-dad", people: [dad, son] });
+    await declareFor("reg-1", null, "p-dad");
+    seeds()[0]!.status = "CANCELLED";
+    seed({ registrationId: "reg-2", code: "REG-2", holder: "p-mum", people: [mum, son] });
+    expect(await declareFor("reg-2", "p-mum", "p-mum")).toMatchObject({ superseded: 1, conflicts: 0 });
+    expect(activeFor("p-son")[0]).toMatchObject({ adultPersonId: "p-mum" });
+  });
+
+  it("a minor removed from the registration that declared for them is ignored, and a new declaration supersedes the old row", async () => {
+    seed({ registrationId: "reg-1", code: "REG-1", holder: "p-dad", people: [dad, son] });
+    await declareFor("reg-1", "p-dad", "p-dad");
+    seeds()[0]!.people = [dad];
+    seed({ registrationId: "reg-2", code: "REG-2", holder: "p-mum", people: [mum, son] });
+    expect((await getGuardianReview("event-1")).minors.map((minor) => minor.responsibleAdult)).toEqual([null]);
+    expect(await declareFor("reg-2", "p-mum", "p-mum")).toMatchObject({ superseded: 1, conflicts: 0 });
+    expect(activeFor("p-son").map((row) => row.registrationId)).toEqual(["reg-2"]);
+  });
+
+  it("an open claim made from a cancelled registration drops out of the review", async () => {
+    seed({ registrationId: "reg-1", code: "REG-1", holder: "p-dad", people: [dad, son] });
+    seed({ registrationId: "reg-2", code: "REG-2", holder: "p-mum", people: [mum, son] });
+    await declareFor("reg-1", "p-dad", "p-dad");
+    await declareFor("reg-2", "p-mum", "p-mum");
+    expect((await getGuardianReview("event-1")).items.some((item) => item.kinds.includes("CONFLICT"))).toBe(true);
+    seeds()[1]!.status = "CANCELLED";
+    const review = await getGuardianReview("event-1");
+    expect(review.items).toEqual([]);
+    expect(review.minors[0]!.conflicts).toEqual([]);
+  });
+
+  it("staff cannot revoke a record that is no longer current, and setting an adult replaces the stale row", async () => {
+    seed({ registrationId: "reg-1", code: "REG-1", holder: "p-dad", people: [dad, son] });
+    await declareFor("reg-1", "p-dad", "p-dad");
+    seeds()[0]!.status = "CANCELLED";
+    seed({ registrationId: "reg-2", code: "REG-2", holder: "p-mum", people: [mum, son] });
+    await expect(revokeResponsibleAdult({ eventId: "event-1", attendeeId: sonOn("reg-2"), reason: "Nothing current", actorUserId: "staff-1" })).rejects.toMatchObject({ code: "NO_ACTIVE_AUTHORITY" });
+    // Dan is only on the cancelled registration, so he is not an adult of the event now.
+    await expect(setResponsibleAdult({ eventId: "event-1", attendeeId: sonOn("reg-2"), adultPersonId: "p-dad", reason: "Father still attends", actorUserId: "staff-1" })).rejects.toMatchObject({ code: "ADULT_INVALID" });
+    await setResponsibleAdult({ eventId: "event-1", attendeeId: sonOn("reg-2"), adultPersonId: "p-mum", reason: "Mother attends", actorUserId: "staff-1" });
+    expect(historyFor("p-son").map((row) => [row.registrationId, row.state])).toEqual([["reg-1", "SUPERSEDED"], ["reg-2", "ACTIVE"]]);
   });
 });

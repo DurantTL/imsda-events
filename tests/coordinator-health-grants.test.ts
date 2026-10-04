@@ -13,6 +13,12 @@ const mocks = vi.hoisted(() => ({
 const client = {
   eventMembership: { findFirst: mocks.membershipFindFirst, update: mocks.membershipUpdate },
   userSession: { updateMany: mocks.sessionUpdateMany },
+  // The row lock (#167) returns the permissions of the membership the test loaded.
+  $queryRaw: async () => {
+    const last = mocks.membershipFindFirst.mock.results.at(-1);
+    const row = last ? await last.value : null;
+    return [{ permissions: row?.permissions ?? [] }];
+  },
   $transaction: (work: (tx: unknown) => unknown) => work(client),
 };
 

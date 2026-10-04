@@ -70,6 +70,13 @@ describe("private registration responsible-adult route", () => {
     expect(mocks.updatePublicResponsibleAdults).not.toHaveBeenCalled();
   });
 
+  it("maps a concurrent change to 409 and an event that verifies every edit to 403", async () => {
+    mocks.updatePublicResponsibleAdults.mockRejectedValueOnce(new PublicResponsibleAdultError("CONCURRENT_CHANGE", "Someone else just changed this."));
+    expect((await PUT(request({ choices: {} }), context)).status).toBe(409);
+    mocks.updatePublicResponsibleAdults.mockRejectedValueOnce(new PublicResponsibleAdultError("EDIT_POLICY_REQUIRES_VERIFICATION", "Verify first."));
+    expect((await PUT(request({ choices: {} }), context)).status).toBe(403);
+  });
+
   it("reports an invalid choice as 422 and an inactive registration as 409", async () => {
     mocks.updatePublicResponsibleAdults.mockRejectedValueOnce(new PublicResponsibleAdultError("CHOICES_INVALID", "Choose an adult on this registration."));
     expect((await PUT(request({ choices: { "att-son": "att-elsewhere" } }), context)).status).toBe(422);

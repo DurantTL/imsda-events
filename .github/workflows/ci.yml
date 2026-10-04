@@ -136,6 +136,9 @@ jobs:
       # Real-database check of declared guardian authority: the registrant's choice is the only source of a responsible adult (household, canManage, surname, email and account holder create none), one ACTIVE declaration per minor even under parallel writes, append-only rows with supersede and revoke, the trigger refusing an adult who is not on the registration, minor status at the event start date, two adults claiming one minor becoming a review item, staff changes scoped to the event, and no audit row holding a reason or name (#131).
       - run: npm run test:guardian-authority
 
+      # Real-database check of deferred-organization invoices: drafts only from a current approved reconciliation, numbers assigned exactly once under parallel and retried finalization (per event, code and year), immutable finalized versions with one receivable each, contact-only and amount revisions with the Finalize invoices rule, and no audit row holding a contact name or email (#167).
+      - run: npm run test:invoices
+
       # Real-database check of module requests: one pending per event and module under concurrent submits, approve enables in one transaction, decline needs a reason, audit holds ids only, and free text cannot become an email placeholder (#741).
       - run: npm run test:module-requests
 
