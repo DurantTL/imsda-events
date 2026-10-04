@@ -2,6 +2,10 @@ import Link from "next/link";
 import { Download, ListFilter, X } from "lucide-react";
 import {
   CHOICE_FILTER_QUESTION_PARAM,
+  CHOICE_FILTER_OTHER,
+  CHOICE_FILTER_OTHER_LABEL,
+  CHOICE_FILTER_UNANSWERED,
+  CHOICE_FILTER_UNANSWERED_LABEL,
   CHOICE_FILTER_VALUE_PARAM,
   type ChoiceCount,
   type ChoiceMatch,
@@ -52,6 +56,20 @@ export function ChoiceAnswerFilter({
     for (const [key, value] of Object.entries(extra)) if (value) params.set(key, value);
     return params;
   }
+  function bucketChip(value: string, label: string, count: number) {
+    if (!selected) return null;
+    return (
+      <li>
+        <Link
+          aria-current={selected.value === value ? "true" : undefined}
+          className={selected.value === value ? "choice-chip muted active" : "choice-chip muted"}
+          href={`/people?${query({ [CHOICE_FILTER_QUESTION_PARAM]: selected.id, [CHOICE_FILTER_VALUE_PARAM]: value }).toString()}`}
+        >
+          <span>{label}</span><strong>{count}</strong>
+        </Link>
+      </li>
+    );
+  }
   const clearHref = `/people?${query({}).toString()}`;
   const exportHref = canExport && selected?.value
     ? `/api/events/${encodeURIComponent(eventId)}/exports/registrations?${new URLSearchParams([
@@ -61,6 +79,16 @@ export function ChoiceAnswerFilter({
       ]).toString()}`
     : null;
   const unit = selected?.scope === "ATTENDEE" ? "people" : "registrations";
+  const selectedLabel = selected?.value === CHOICE_FILTER_UNANSWERED
+    ? CHOICE_FILTER_UNANSWERED_LABEL
+    : selected?.value === CHOICE_FILTER_OTHER
+      ? CHOICE_FILTER_OTHER_LABEL
+      : selected?.choices.find((choice) => choice.value === selected.value)?.label ?? selected?.value;
+  const emptyText = selected?.value === CHOICE_FILTER_UNANSWERED
+    ? "Nobody is missing an answer."
+    : selected?.value === CHOICE_FILTER_OTHER
+      ? "Nobody has an answer that is no longer offered."
+      : "Nobody has chosen this yet.";
   const single = selected?.matches.length === 1;
   const resultNoun = selected?.scope === "ATTENDEE" ? (single ? "person" : "people") : (single ? "registration" : "registrations");
 
@@ -99,16 +127,16 @@ export function ChoiceAnswerFilter({
                 </Link>
               </li>
             ))}
-            {selected.other > 0 && <li><span className="choice-chip muted"><span>Other / no longer offered</span><strong>{selected.other}</strong></span></li>}
-            {selected.unanswered > 0 && <li><span className="choice-chip muted"><span>No answer</span><strong>{selected.unanswered}</strong></span></li>}
+            {selected.other > 0 && bucketChip(CHOICE_FILTER_OTHER, CHOICE_FILTER_OTHER_LABEL, selected.other)}
+            {selected.unanswered > 0 && bucketChip(CHOICE_FILTER_UNANSWERED, CHOICE_FILTER_UNANSWERED_LABEL, selected.unanswered)}
           </ul>
           {selected.value && (
             <div className="choice-filter-results">
               <div className="choice-filter-results-head">
-                <strong>{selected.label}: {selected.choices.find((choice) => choice.value === selected.value)?.label ?? selected.value} · {selected.matches.length} {resultNoun}</strong>
+                <strong>{selected.label}: {selectedLabel} · {selected.matches.length} {resultNoun}</strong>
                 {exportHref && <a className="secondary-button" href={exportHref}><Download aria-hidden="true" size={16} /> Export this list (CSV)</a>}
               </div>
-              {selected.matches.length === 0 ? <p className="choice-filter-note">Nobody has chosen this yet.</p> : (
+              {selected.matches.length === 0 ? <p className="choice-filter-note">{emptyText}</p> : (
                 <ul className="choice-filter-list">
                   {selected.matches.map((match) => (
                     <li key={`${match.registrationId}:${match.attendeeId ?? "registration"}`}>

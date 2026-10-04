@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { formTemplates } from "@/modules/forms/definition";
+import { assertNoReservedChoiceValues, formTemplates, registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import {
+  CHOICE_FILTER_OTHER,
+  CHOICE_FILTER_UNANSWERED,
   choiceAnswerCounts,
   choiceExportRows,
   filterRegistrationsByChoice,
@@ -128,6 +130,89 @@ describe("choice answer filter", () => {
     expect(counts.unanswered).toBe(0);
     expect(counts.choices.find((choice) => choice.value === "Vegan")!.count).toBe(1);
     expect(matchesForChoice(odd, question, "synthetic secret text")).toEqual([]);
+  });
+
+  it("opens the no-answer and other buckets with counts equal to list lengths, never naming stored values", () => {
+    const odd = [
+      ...registrations,
+      registration("O1", "CONFIRMED", [attendee("o1", "Fay", "Synthetic", { meal_preference: "synthetic secret text" })]),
+    ];
+    const question = listChoiceQuestions(odd, staff).find((candidate) => candidate.key === "meal_preference")!;
+    const counts = choiceAnswerCounts(odd, question);
+    const unanswered = matchesForChoice(odd, question, CHOICE_FILTER_UNANSWERED);
+    const other = matchesForChoice(odd, question, CHOICE_FILTER_OTHER);
+    expect(counts.unanswered).toBe(1);
+    expect(unanswered).toHaveLength(counts.unanswered);
+    expect(unanswered[0]).toEqual(expect.objectContaining({ personName: "Eve Synthetic", value: "No answer" }));
+    expect(counts.other).toBe(1);
+    expect(other).toHaveLength(counts.other);
+    expect(other[0]).toEqual(expect.objectContaining({ personName: "Fay Synthetic", value: "Other / no longer offered" }));
+    expect(JSON.stringify([unanswered, other])).not.toContain("synthetic secret text");
+    for (const value of [CHOICE_FILTER_UNANSWERED, CHOICE_FILTER_OTHER]) {
+      const filter = resolveChoiceFilter(odd, { question: question.id, value }, staff)!;
+      expect(filter.value).toBe(value);
+      const listed = matchesForChoice(odd, question, value).map((match) => match.registrationId);
+      expect(filterRegistrationsByChoice(odd, filter).map((entry) => entry.id)).toEqual(listed);
+      const rows = choiceExportRows(odd, { ...filter, value });
+      expect(rows).toHaveLength(1 + listed.length);
+      expect(JSON.stringify(rows)).not.toContain("synthetic secret text");
+    }
+  });
+
+  it("accepts the reserved values only for a real allowed question", () => {
+    expect(resolveChoiceFilter(registrations, { question: "ATTENDEE:nope", value: CHOICE_FILTER_UNANSWERED }, staff)).toBeNull();
+    expect(resolveChoiceFilter(registrations, { question: "ATTENDEE:dietary_needs", value: CHOICE_FILTER_OTHER }, staff)).toBeNull();
+    expect(resolveChoiceFilter(registrations, { question: "ATTENDEE:meal_preference", value: "__bogus" }, staff)!.value).toBeNull();
+  });
+
+  it("registration-wide questions list registrations with no answer, equal to the count", () => {
+    const multiDefinition = { ...definition, sections: [{ id: "workshops_section", title: "Workshops", fields: [
+      { id: "field_workshops", key: "workshops", label: "Workshops", helpText: "", type: "MULTISELECT", scope: "REGISTRATION", required: false, options: ["Art", "Music"] },
+    ] }], payment: undefined, attendeeRoster: undefined } as Record<string, unknown>;
+    const make = (id: string, responses: Record<string, unknown>) => ({ ...registration(id, "CONFIRMED", [], responses), publicSubmission: { definition: multiDefinition, responses, attendeeResponses: [] } }) as unknown as RegistrationRecord;
+    const rows = [make("R1", {}), make("R2", { workshops: ["Art"] }), make("R3", { workshops: ["__other"] })];
+    const question = listChoiceQuestions(rows, staff)[0];
+    // A stored value equal to a reserved one is just an unoffered value: it counts as "other".
+    expect(question.choices.map((choice) => choice.value)).toEqual(["Art", "Music"]);
+    const counts = choiceAnswerCounts(rows, question);
+    expect(counts.unanswered).toBe(1);
+    expect(matchesForChoice(rows, question, CHOICE_FILTER_UNANSWERED).map((match) => match.registrationId)).toEqual(["R1"]);
+    expect(counts.other).toBe(1);
+    expect(matchesForChoice(rows, question, CHOICE_FILTER_OTHER).map((match) => match.registrationId)).toEqual(["R3"]);
+  });
+
+  it("still reads a stored definition with a __ option (treated as other), but refuses to save one", () => {
+    const stored = withFields(definition, (fields) => fields.map((field) => (field as { key: string }).key === "meal_preference"
+      ? { ...field, options: ["Standard", "__other", "__unanswered"] }
+      : field));
+    const parsed = registrationFormDefinitionSchema.safeParse(stored);
+    expect(parsed.success).toBe(true);
+    expect(() => assertNoReservedChoiceValues(parsed.data!)).toThrow("Choice values can't start with two underscores.");
+    expect(() => assertNoReservedChoiceValues(registrationFormDefinitionSchema.parse(definition))).not.toThrow();
+    const rows = [registration("Z1", "CONFIRMED", [attendee("z1", "Zed", "Synthetic", { meal_preference: "__other" })])];
+    const withStored = rows.map((row) => ({ ...row, publicSubmission: { definition: stored, responses: {}, attendeeResponses: [] } })) as unknown as RegistrationRecord[];
+    const question = listChoiceQuestions(withStored, staff).find((candidate) => candidate.key === "meal_preference")!;
+    expect(question.choices.map((choice) => choice.value)).toEqual(["Standard"]);
+    const counts = choiceAnswerCounts(withStored, question);
+    expect(counts.other).toBe(1);
+    expect(matchesForChoice(withStored, question, CHOICE_FILTER_OTHER)).toHaveLength(1);
+  });
+
+  it("no built-in form template offers a choice value starting with two underscores", () => {
+    for (const template of formTemplates) {
+      expect(() => assertNoReservedChoiceValues(registrationFormDefinitionSchema.parse(template.definition))).not.toThrow();
+    }
+  });
+
+  it("never resolves a reserved value for a sensitive question without VIEW_SENSITIVE_DATA", () => {
+    const sensitiveDefinition = withFields(definition, (fields) => fields.map((field) => (field as { key: string }).key === "meal_preference"
+      ? { ...field, sensitive: true, filterable: true }
+      : field));
+    const rows = [{ ...registration("S1", "CONFIRMED", [attendee("s1", "Sam", "Synthetic", {})]), publicSubmission: { definition: sensitiveDefinition, responses: {}, attendeeResponses: [] } }] as unknown as RegistrationRecord[];
+    for (const value of [CHOICE_FILTER_OTHER, CHOICE_FILTER_UNANSWERED]) {
+      expect(resolveChoiceFilter(rows, { question: "ATTENDEE:meal_preference", value }, { canViewSensitive: false })).toBeNull();
+      expect(resolveChoiceFilter(rows, { question: "ATTENDEE:meal_preference", value }, staff)!.value).toBe(value);
+    }
   });
 
   it("decides each registration from its own form version", () => {

@@ -34,6 +34,23 @@ import type { RegistrationRecord } from "@/modules/registrations/repository";
 export const CHOICE_FILTER_QUESTION_PARAM = "answerQuestion";
 export const CHOICE_FILTER_VALUE_PARAM = "answerValue";
 
+/**
+ * Reserved filter values for the two buckets that are not a real choice: people
+ * with no answer, and people whose stored value the question does not offer.
+ * They can never collide with a real choice: `questionsFromDefinition` drops
+ * any option whose value equals one of these from `choices`, so such a stored
+ * value counts as "other" like any value the question does not offer. They are
+ * only honoured by `resolveChoiceFilter` for a question the viewer may filter on.
+ */
+export const CHOICE_FILTER_UNANSWERED = "__unanswered";
+export const CHOICE_FILTER_OTHER = "__other";
+export const CHOICE_FILTER_UNANSWERED_LABEL = "No answer";
+export const CHOICE_FILTER_OTHER_LABEL = "Other / no longer offered";
+
+function isReservedChoiceValue(value: string | null | undefined): value is string {
+  return value === CHOICE_FILTER_UNANSWERED || value === CHOICE_FILTER_OTHER;
+}
+
 /** Active registrations only: the people actually expected at the event. */
 const COUNTED_STATUSES: ReadonlySet<string> = new Set(["SUBMITTED", "CONFIRMED"]);
 
@@ -95,7 +112,7 @@ function questionsFromDefinition(definition: Record<string, unknown>): Map<strin
         label: field.label,
         scope: field.scope === "ATTENDEE" ? "ATTENDEE" : "REGISTRATION",
         multi: field.type === "MULTISELECT",
-        choices: field.options.map((option) => ({ value: option, label: field.optionLabels?.[option] ?? option })),
+        choices: field.options.filter((option) => !isReservedChoiceValue(option)).map((option) => ({ value: option, label: field.optionLabels?.[option] ?? option })),
         sensitive: offered.sensitive,
       });
     }
@@ -147,6 +164,9 @@ export type ChoiceMatch = {
 };
 
 function labelFor(question: ChoiceQuestion, value: string) {
+  // Reserved buckets are labelled generically; a stored "other" value is never named.
+  if (value === CHOICE_FILTER_UNANSWERED) return CHOICE_FILTER_UNANSWERED_LABEL;
+  if (value === CHOICE_FILTER_OTHER) return CHOICE_FILTER_OTHER_LABEL;
   return question.choices.find((choice) => choice.value === value)?.label ?? value;
 }
 
@@ -214,12 +234,18 @@ export function choiceAnswerCounts(registrations: readonly RegistrationRecord[],
   return { choices, unanswered, other };
 }
 
-/** The people who chose `value`, one row each. */
+function answerMatches(answer: PersonAnswer, value: string) {
+  if (value === CHOICE_FILTER_UNANSWERED) return answer.known.length === 0 && !answer.hasOther;
+  if (value === CHOICE_FILTER_OTHER) return answer.hasOther;
+  return answer.known.includes(value);
+}
+
+/** The people who chose `value` (or the reserved no-answer / other bucket), one row each. */
 export function matchesForChoice(registrations: readonly RegistrationRecord[], question: ChoiceQuestion, value: string): ChoiceMatch[] {
   const matches: ChoiceMatch[] = [];
   for (const registration of countedRegistrations(registrations)) {
     for (const answer of answersOf(registration, question) ?? []) {
-      if (!answer.known.includes(value)) continue;
+      if (!answerMatches(answer, value)) continue;
       matches.push({
         registrationId: registration.id,
         confirmationCode: registration.confirmationCode,
@@ -244,8 +270,9 @@ export type ResolvedChoiceFilter = {
  * Turns the URL's question id and value into a filter, or null. A question
  * that is not in the set this viewer may filter on (not flagged, free text,
  * sensitive without VIEW_SENSITIVE_DATA, unknown) resolves
- * to null however the URL is edited. An unknown value for a real question
- * is treated as no value picked.
+ * to null however the URL is edited. The reserved no-answer / other values are accepted only here, for a
+ * real allowed question. An unknown value for a real question is treated as
+ * no value picked.
  */
 export function resolveChoiceFilter(
   registrations: readonly RegistrationRecord[],
@@ -255,7 +282,7 @@ export function resolveChoiceFilter(
   if (!request.question) return null;
   const question = listChoiceQuestions(registrations, viewer).find((candidate) => candidate.id === request.question);
   if (!question) return null;
-  const known = Boolean(request.value) && question.choices.some((choice) => choice.value === request.value);
+  const known = Boolean(request.value) && (isReservedChoiceValue(request.value) || question.choices.some((choice) => choice.value === request.value));
   return { question, value: known ? (request.value as string) : null };
 }
 
