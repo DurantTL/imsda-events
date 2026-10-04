@@ -51,6 +51,8 @@ const fakeDb = {
     }),
   },
   organization: {
+    findUnique: vi.fn(async ({ where }: { where: { id: string } }) => state.organizations.find((row) => row.id === where.id) ?? null),
+    findMany: vi.fn(async () => []),
     findFirst: vi.fn(async ({ where }: { where: { id: string } }) => state.organizations.find((row) => row.id === where.id && row.isActive) ?? null),
   },
   registrationBillingResponsibility: {
@@ -72,7 +74,7 @@ const fakeDb = {
       if (existing) Object.assign(existing, update); else state.responsibilities.push({ ...create });
     }),
   },
-  registrationBillingResponsibilityChange: { create: vi.fn(async ({ data }: { data: Row }) => { state.changes.push({ ...data }); }) },
+  registrationBillingResponsibilityChange: { create: vi.fn(async ({ data }: { data: Row }) => { state.changes.push({ ...data }); }), findMany: vi.fn(async () => []) },
   clubEventRegistration: {
     count: vi.fn(async ({ where }: { where: { eventId: string; organization: { parentOrganizationId: string } } }) =>
       state.registrations.filter((row) => row.eventId === where.eventId && (row.club as { organization?: { parentOrganizationId?: string } } | undefined)?.organization?.parentOrganizationId === where.organization.parentOrganizationId).length),
@@ -90,15 +92,21 @@ const fakeDb = {
       return { id: row.id };
     }),
     findFirst: vi.fn(async ({ where }: { where: Row }) => state.contacts.find((row) => row.id === where.id && row.organizationId === where.organizationId && row.effectiveTo === null) ?? null),
+    findMany: vi.fn(async ({ where }: { where: { organizationId: { in: string[] }; effectiveTo?: null } }) =>
+      state.contacts.filter((row) => where.organizationId.in.includes(row.organizationId as string) && (where.effectiveTo === undefined || row.effectiveTo === null))
+        .map((row) => ({ effectiveFrom: new Date("2026-10-01T00:00:00Z"), ...row }))),
   },
   auditLog: { create: vi.fn(async ({ data }: { data: Row }) => { state.audits.push({ ...data }); }) },
   $transaction: vi.fn(async (callback: (tx: unknown) => unknown) => callback(fakeDb)),
 };
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => fakeDb }));
 
+import { AccessDeniedError } from "@/modules/access/authorization";
 import {
   BillingResponsibilityError,
   clearResponsibilityOverride,
+  getBillingResponsibilityView,
+  getOrganizationBillingContactAdminView,
   endOrganizationBillingContact,
   linkRegistrationToOrganization,
   resolveEventBillingResponsibility,
@@ -227,46 +235,97 @@ describe("grouping setting (#165)", () => {
   });
 });
 
-describe("billing contacts (#165)", () => {
-  beforeEach(async () => {
-    await resolveEventBillingResponsibility("event-1", { apply: true });
-  });
+describe("billing contacts (#165): conference-wide, system administrators only", () => {
+  const admin = { id: "admin-1", globalRole: "SYSTEM_ADMIN" };
+  const admin2 = { id: "admin-2", globalRole: "SYSTEM_ADMIN" };
+  const financeManager = { id: "user-finance", globalRole: null };
 
   it("replacing a contact ends the previous one, keeps it in the history, and leaves one active, unverified", async () => {
-    await setOrganizationBillingContact({ eventId: "event-1", organizationId: "church-1", contact, actorUserId: "user-1" });
-    await verifyOrganizationBillingContact({ eventId: "event-1", organizationId: "church-1", contactId: "contact-1", actorUserId: "user-1" });
-    const replaced = await setOrganizationBillingContact({ eventId: "event-1", organizationId: "church-1", contact: { ...contact, name: "New Treasurer" }, actorUserId: "user-2" });
+    await setOrganizationBillingContact({ organizationId: "church-1", contact, actor: admin });
+    await verifyOrganizationBillingContact({ organizationId: "church-1", contactId: "contact-1", actor: admin });
+    const replaced = await setOrganizationBillingContact({ organizationId: "church-1", contact: { ...contact, name: "New Treasurer" }, actor: admin2 });
     expect(replaced.replaced).toBe(true);
     expect(state.contacts).toHaveLength(2);
     expect(state.contacts.filter((row) => row.effectiveTo === null)).toHaveLength(1);
-    expect(state.contacts[0]).toMatchObject({ endedByUserId: "user-2" });
-    expect(state.contacts[1]).toMatchObject({ name: "New Treasurer", source: "STAFF_ENTERED", createdByUserId: "user-2", verifiedAt: null });
+    expect(state.contacts[0]).toMatchObject({ endedByUserId: "admin-2" });
+    expect(state.contacts[1]).toMatchObject({ name: "New Treasurer", source: "STAFF_ENTERED", createdByUserId: "admin-2", verifiedAt: null });
     const audit = state.audits.filter((entry) => String(entry.action).startsWith("BILLING_CONTACT"));
     expect(audit.map((entry) => entry.action)).toEqual(["BILLING_CONTACT_ADDED", "BILLING_CONTACT_VERIFIED", "BILLING_CONTACT_REPLACED"]);
+    // Conference-wide: no event on the audit row, ids only.
+    expect(audit.every((entry) => !("eventId" in entry) && entry.entityType === "Organization" && entry.entityId === "church-1")).toBe(true);
     expect(JSON.stringify(audit)).not.toContain("treasurer@example.test");
     expect(JSON.stringify(audit)).not.toContain("New Treasurer");
   });
 
-  it("only touches the contact of an organization billed on this event", async () => {
-    await expect(setOrganizationBillingContact({ eventId: "event-1", organizationId: "church-2", contact, actorUserId: "user-1" })).rejects.toMatchObject({ code: "ORGANIZATION_NOT_RELEVANT" });
-    await expect(setOrganizationBillingContact({ eventId: "event-2", organizationId: "church-1", contact, actorUserId: "user-1" })).rejects.toBeInstanceOf(BillingResponsibilityError);
-    expect(state.contacts).toHaveLength(0);
+  it("refuses a finance manager or anyone who is not a system administrator, for every contact action", async () => {
+    await setOrganizationBillingContact({ organizationId: "church-1", contact, actor: admin });
+    for (const actor of [financeManager, { id: "nobody" }]) {
+      await expect(setOrganizationBillingContact({ organizationId: "church-1", contact, actor })).rejects.toBeInstanceOf(AccessDeniedError);
+      await expect(verifyOrganizationBillingContact({ organizationId: "church-1", contactId: "contact-1", actor })).rejects.toBeInstanceOf(AccessDeniedError);
+      await expect(endOrganizationBillingContact({ organizationId: "church-1", contactId: "contact-1", actor })).rejects.toBeInstanceOf(AccessDeniedError);
+      await expect(getOrganizationBillingContactAdminView("church-1", actor)).rejects.toBeInstanceOf(AccessDeniedError);
+    }
+    expect(state.contacts).toHaveLength(1);
+    expect(state.contacts[0]).toMatchObject({ effectiveTo: null, verifiedAt: null });
   });
 
   it("ends a contact without deleting it, and refuses to verify or end one that is no longer active", async () => {
-    await setOrganizationBillingContact({ eventId: "event-1", organizationId: "church-1", contact, actorUserId: "user-1" });
-    await endOrganizationBillingContact({ eventId: "event-1", organizationId: "church-1", contactId: "contact-1", reason: "Left the church.", actorUserId: "user-1" });
+    await setOrganizationBillingContact({ organizationId: "church-1", contact, actor: admin });
+    await endOrganizationBillingContact({ organizationId: "church-1", contactId: "contact-1", reason: "Left the church.", actor: admin });
     expect(state.contacts).toHaveLength(1);
     expect(state.contacts[0]).toMatchObject({ endReason: "Left the church." });
-    await expect(verifyOrganizationBillingContact({ eventId: "event-1", organizationId: "church-1", contactId: "contact-1", actorUserId: "user-1" })).rejects.toMatchObject({ code: "CONTACT_NOT_FOUND" });
+    await expect(verifyOrganizationBillingContact({ organizationId: "church-1", contactId: "contact-1", actor: admin })).rejects.toMatchObject({ code: "CONTACT_NOT_FOUND" });
   });
 
   it("reports a concurrent change when the database refuses a second active contact", async () => {
-    fakeDb.organizationBillingContact.create.mockRejectedValueOnce(Object.assign(new Error("unique"), { code: "P2002" }));
-    // The service recognises Prisma's known-request error class; a plain object is re-thrown, so use the real class.
     const { Prisma } = await import("@prisma/client");
     fakeDb.organizationBillingContact.create.mockRejectedValueOnce(new Prisma.PrismaClientKnownRequestError("unique", { code: "P2002", clientVersion: "test" }));
-    await expect(setOrganizationBillingContact({ eventId: "event-1", organizationId: "church-1", contact, actorUserId: "user-1" })).rejects.toThrow();
-    await expect(setOrganizationBillingContact({ eventId: "event-1", organizationId: "church-1", contact, actorUserId: "user-1" })).rejects.toMatchObject({ code: "CONCURRENT_CHANGE" });
+    await expect(setOrganizationBillingContact({ organizationId: "church-1", contact, actor: admin })).rejects.toMatchObject({ code: "CONCURRENT_CHANGE" });
+  });
+
+  it("event finance staff see only the active contact's name, role and email, never a phone or history", async () => {
+    await setOrganizationBillingContact({ organizationId: "church-1", contact: { ...contact, phone: "(515) 555-0100" }, actor: admin });
+    await setOrganizationBillingContact({ organizationId: "church-1", contact: { ...contact, name: "Current Treasurer", phone: "(515) 555-0101" }, actor: admin });
+    const view = await getBillingResponsibilityView("event-1");
+    const group = view.groups.find((entry) => entry.party.kind === "ORGANIZATION" && entry.party.id === "church-1")!;
+    expect(group.contact).toMatchObject({ name: "Current Treasurer", email: "treasurer@example.test", roleLabel: "Treasurer" });
+    expect(group.readiness).toBe("NOT_VERIFIED");
+    const serialized = JSON.stringify(view);
+    expect(serialized).not.toContain("555");
+    expect(serialized).not.toContain("Terry Treasurer");
+    expect(serialized).not.toContain("history");
+  });
+});
+
+describe("outdated recorded rows (#165)", () => {
+  it("shows the rule's current answer for a stale rule-derived row, counts it, and the resolver updates it", async () => {
+    await resolveEventBillingResponsibility("event-1", { apply: true });
+    state.registrations[0]!.club = club("club-1", "church-2");
+    const stale = await getBillingResponsibilityView("event-1");
+    expect(stale.outdatedCount).toBe(1);
+    const line = stale.groups.flatMap((group) => group.lines).find((entry) => entry.registrationId === "r-club-a")!;
+    expect(line).toMatchObject({ outdated: true, recorded: true, party: { kind: "ORGANIZATION", id: "church-2" } });
+    await resolveEventBillingResponsibility("event-1", { apply: true });
+    expect((await getBillingResponsibilityView("event-1")).outdatedCount).toBe(0);
+  });
+
+  it("never flags a staff decision as outdated", async () => {
+    await resolveEventBillingResponsibility("event-1", { apply: true });
+    await linkRegistrationToOrganization({ eventId: "event-1", registrationId: "r-club-a", organizationId: "church-2", reason: "Reason.", actorUserId: "user-1" });
+    state.registrations[0]!.club = club("club-1", "church-1-moved");
+    expect((await getBillingResponsibilityView("event-1")).outdatedCount).toBe(0);
+  });
+});
+
+describe("concurrent staff decisions (#165)", () => {
+  it("reports a concurrent change instead of overwriting when the row changed under a link or a clear", async () => {
+    await resolveEventBillingResponsibility("event-1", { apply: true });
+    fakeDb.registrationBillingResponsibility.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(linkRegistrationToOrganization({ eventId: "event-1", registrationId: "r-club-a", organizationId: "church-2", reason: "Reason.", actorUserId: "user-1" }))
+      .rejects.toMatchObject({ code: "CONCURRENT_CHANGE" });
+    await linkRegistrationToOrganization({ eventId: "event-1", registrationId: "r-club-a", organizationId: "church-2", reason: "Reason.", actorUserId: "user-1" });
+    fakeDb.registrationBillingResponsibility.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(clearResponsibilityOverride({ eventId: "event-1", registrationId: "r-club-a", actorUserId: "user-1" })).rejects.toMatchObject({ code: "CONCURRENT_CHANGE" });
+    expect(state.responsibilities.find((row) => row.registrationId === "r-club-a")).toMatchObject({ source: "STAFF_OVERRIDE", organizationId: "church-2" });
   });
 });

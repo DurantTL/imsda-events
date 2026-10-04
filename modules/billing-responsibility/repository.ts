@@ -2,12 +2,14 @@ import "server-only";
 
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { AccessDeniedError } from "@/modules/access/authorization";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   BILLING_RESPONSIBILITY_STATUSES,
   RESPONSIBLE_ORGANIZATION_TYPES,
   groupBillingLines,
   planResolution,
+  sameResolution,
   resolveByRule,
   staffSourceFor,
   summarizeBillingGroups,
@@ -37,7 +39,6 @@ export type BillingResponsibilityErrorCode =
   | "NOT_DEFERRED_EVENT"
   | "REGISTRATION_NOT_FOUND"
   | "ORGANIZATION_NOT_ELIGIBLE"
-  | "ORGANIZATION_NOT_RELEVANT"
   | "REASON_REQUIRED"
   | "NOT_AN_OVERRIDE"
   | "CONTACT_NOT_FOUND"
@@ -123,22 +124,33 @@ function loadRegistrations(client: Client, eventId: string, locationId?: string 
   });
 }
 
+function ruleParty(row: RegistrationRow, rule: Resolution): ResponsibleParty {
+  const club = row.clubRegistration?.organization ?? null;
+  if (rule.kind === "ORGANIZATION" && club?.parentOrganization) {
+    return { kind: "ORGANIZATION", id: club.parentOrganization.id, name: club.parentOrganization.name };
+  }
+  if (rule.kind === "PERSON" && row.groupRegistration) {
+    const person = row.groupRegistration.billingPerson;
+    return { kind: "PERSON", id: person.id, name: personName(person), email: person.normalizedEmail };
+  }
+  return { kind: "UNRESOLVED" };
+}
+
+function storedParty(stored: NonNullable<RegistrationRow["billingResponsibility"]>): ResponsibleParty {
+  if (stored.kind === "ORGANIZATION" && stored.organization) return { kind: "ORGANIZATION", id: stored.organization.id, name: stored.organization.name };
+  if (stored.kind === "PERSON" && stored.person) return { kind: "PERSON", id: stored.person.id, name: personName(stored.person), email: stored.person.normalizedEmail };
+  return { kind: "UNRESOLVED" };
+}
+
 function toLine(row: RegistrationRow): BillingLine {
   const rule = ruleFor(row);
   const stored = row.billingResponsibility;
   const club = row.clubRegistration?.organization ?? null;
-  let party: ResponsibleParty = { kind: "UNRESOLVED" };
-  let source: BillingResponsibilitySource = rule.source;
-  if (stored) {
-    source = stored.source;
-    if (stored.kind === "ORGANIZATION" && stored.organization) party = { kind: "ORGANIZATION", id: stored.organization.id, name: stored.organization.name };
-    else if (stored.kind === "PERSON" && stored.person) party = { kind: "PERSON", id: stored.person.id, name: personName(stored.person), email: stored.person.normalizedEmail };
-  } else if (rule.kind === "ORGANIZATION" && club?.parentOrganization) {
-    party = { kind: "ORGANIZATION", id: club.parentOrganization.id, name: club.parentOrganization.name };
-  } else if (rule.kind === "PERSON" && row.groupRegistration) {
-    const person = row.groupRegistration.billingPerson;
-    party = { kind: "PERSON", id: person.id, name: personName(person), email: person.normalizedEmail };
-  }
+  // A recorded rule-derived row that disagrees with today's rule is stale: show the rule's answer.
+  const outdated = Boolean(stored && !isStaffDecision(stored.source) && !sameResolution(stored, rule));
+  const useStored = stored && !outdated ? stored : null;
+  const party = useStored ? storedParty(useStored) : ruleParty(row, rule);
+  const source: BillingResponsibilitySource = useStored ? useStored.source : rule.source;
   const isUnlinkedRegistration = !club && !row.groupRegistration;
   const hint = isUnlinkedRegistration && party.kind === "UNRESOLVED"
     ? resolveResponsibleOrganization(storedRegistrationResponses(row))
@@ -155,70 +167,34 @@ function toLine(row: RegistrationRow): BillingLine {
     registrantName: personName(row.accountHolderPerson),
     party,
     source,
-    reason: stored?.reason ?? null,
+    reason: useStored?.reason ?? null,
     recorded: Boolean(stored),
+    outdated,
     hint,
   };
 }
 
-const contactSelect = {
-  id: true,
-  organizationId: true,
-  name: true,
-  email: true,
-  phone: true,
-  roleLabel: true,
-  effectiveFrom: true,
-  verifiedAt: true,
-} satisfies Prisma.OrganizationBillingContactSelect;
-
-function toContactView(row: Prisma.OrganizationBillingContactGetPayload<{ select: typeof contactSelect }>): BillingContactView {
-  return {
-    id: row.id,
-    name: row.name,
-    email: row.email,
-    phone: row.phone,
-    roleLabel: row.roleLabel,
-    effectiveFrom: row.effectiveFrom.toISOString(),
-    verifiedAt: row.verifiedAt?.toISOString() ?? null,
-  };
-}
-
-export type ContactHistoryEntry = BillingContactView & {
-  effectiveTo: string | null;
-  endReason: string | null;
-  createdByName: string | null;
-  verifiedByName: string | null;
-  endedByName: string | null;
-};
-
-/** Every billing contact the organizations ever had, newest first. Only called for organizations on this event's screen. */
-async function listContactHistory(client: Client, organizationIds: readonly string[]) {
-  if (organizationIds.length === 0) return {} as Record<string, ContactHistoryEntry[]>;
+/**
+ * The active billing contact of each organization, for event finance staff: name, role, email and
+ * verification only. Ended contacts, phone numbers and ids stay in the conference admin screen.
+ */
+async function listActiveContacts(client: Client, organizationIds: readonly string[]) {
+  const contacts = new Map<string, BillingContactView>();
+  if (organizationIds.length === 0) return contacts;
   const rows = await client.organizationBillingContact.findMany({
-    where: { organizationId: { in: [...organizationIds] } },
-    orderBy: [{ effectiveFrom: "desc" }, { createdAt: "desc" }],
-    select: {
-      ...contactSelect,
-      effectiveTo: true,
-      endReason: true,
-      createdBy: { select: { displayName: true } },
-      verifiedBy: { select: { displayName: true } },
-      endedBy: { select: { displayName: true } },
-    },
+    where: { organizationId: { in: [...organizationIds] }, effectiveTo: null },
+    select: { organizationId: true, name: true, email: true, roleLabel: true, effectiveFrom: true, verifiedAt: true },
   });
-  const history: Record<string, ContactHistoryEntry[]> = {};
   for (const row of rows) {
-    (history[row.organizationId] ??= []).push({
-      ...toContactView(row),
-      effectiveTo: row.effectiveTo?.toISOString() ?? null,
-      endReason: row.endReason,
-      createdByName: row.createdBy?.displayName ?? null,
-      verifiedByName: row.verifiedBy?.displayName ?? null,
-      endedByName: row.endedBy?.displayName ?? null,
+    contacts.set(row.organizationId, {
+      name: row.name,
+      email: row.email,
+      roleLabel: row.roleLabel,
+      effectiveFrom: row.effectiveFrom.toISOString(),
+      verifiedAt: row.verifiedAt?.toISOString() ?? null,
     });
   }
-  return history;
+  return contacts;
 }
 
 /**
@@ -234,14 +210,9 @@ export async function getBillingResponsibilityView(eventId: string, options: { l
   const rows = isDeferred ? await loadRegistrations(prisma, eventId, options.locationId) : [];
   const lines = rows.map(toLine);
   const organizationIds = [...new Set(lines.flatMap((line) => (line.party.kind === "ORGANIZATION" ? [line.party.id] : [])))];
-  const history = await listContactHistory(prisma, organizationIds);
+  const contacts = await listActiveContacts(prisma, organizationIds);
   const decidedIds = lines.filter((line) => isStaffDecision(line.source)).map((line) => line.registrationId);
   const lineHistory = await listResponsibilityHistory(prisma, eventId, decidedIds);
-  const contacts = new Map<string, BillingContactView>();
-  for (const [organizationId, entries] of Object.entries(history)) {
-    const active = entries.find((entry) => entry.effectiveTo === null);
-    if (active) contacts.set(organizationId, active);
-  }
   const grouping: InvoiceGroupingMode = event.invoiceGrouping;
   const groups = groupBillingLines(lines, grouping, contacts);
   return {
@@ -250,7 +221,7 @@ export async function getBillingResponsibilityView(eventId: string, options: { l
     groups,
     summary: summarizeBillingGroups(groups),
     unrecordedCount: lines.filter((line) => !line.recorded).length,
-    history,
+    outdatedCount: lines.filter((line) => line.outdated).length,
     lineHistory,
   };
 }
@@ -392,10 +363,13 @@ async function loadRegistrationInEvent(tx: Client, eventId: string, registration
   return row;
 }
 
+const concurrentChange = () => new BillingResponsibilityError("Someone else just changed this registration. Reload and try again.", "CONCURRENT_CHANGE");
+
 /**
  * Staff name the organization responsible for one registration. When the rules found no party
  * this is a link; when they did, it is an override and needs a reason. Either way it is audited,
- * recorded in the history, and outranks the rules from then on.
+ * recorded in the history, and outranks the rules from then on. The write is compare-and-set on
+ * the state that was read, so two staff members acting at once cannot overwrite each other.
  */
 export async function linkRegistrationToOrganization(input: {
   eventId: string;
@@ -405,68 +379,78 @@ export async function linkRegistrationToOrganization(input: {
   actorUserId: string;
 }) {
   const prisma = getPrisma();
-  return prisma.$transaction(async (tx) => {
-    await requireDeferredEvent(tx, input.eventId);
-    const row = await loadRegistrationInEvent(tx, input.eventId, input.registrationId);
-    const organization = await tx.organization.findFirst({
-      where: { id: input.organizationId, isActive: true, type: { in: [...RESPONSIBLE_ORGANIZATION_TYPES] } },
-      select: { id: true },
-    });
-    if (!organization) {
-      throw new BillingResponsibilityError("Choose an active church, school, club or ministry from the list.", "ORGANIZATION_NOT_ELIGIBLE");
-    }
-    const rule = ruleFor(row);
-    const source = staffSourceFor(rule);
-    const reason = input.reason?.trim() || null;
-    if (source === "STAFF_OVERRIDE" && !reason) {
-      throw new BillingResponsibilityError("Say why you are replacing the responsible party the system found.", "REASON_REQUIRED");
-    }
-    const existing = row.billingResponsibility;
-    // The effective "before" is the recorded row, or else the rule's proposal that was on screen.
-    const before: Resolution = existing ?? rule;
-    if (existing && existing.source === source && existing.kind === "ORGANIZATION" && existing.organizationId === organization.id) {
-      return { changed: false as const, source };
-    }
-    const data = { kind: "ORGANIZATION" as const, organizationId: organization.id, personId: null, source, reason, setByUserId: input.actorUserId };
-    await tx.registrationBillingResponsibility.upsert({
-      where: { registrationId: row.id },
-      create: { eventId: input.eventId, registrationId: row.id, ...data },
-      update: data,
-    });
-    await tx.registrationBillingResponsibilityChange.create({
-      data: {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await requireDeferredEvent(tx, input.eventId);
+      const row = await loadRegistrationInEvent(tx, input.eventId, input.registrationId);
+      const organization = await tx.organization.findFirst({
+        where: { id: input.organizationId, isActive: true, type: { in: [...RESPONSIBLE_ORGANIZATION_TYPES] } },
+        select: { id: true },
+      });
+      if (!organization) {
+        throw new BillingResponsibilityError("Choose an active church, school, club or ministry from the list.", "ORGANIZATION_NOT_ELIGIBLE");
+      }
+      const rule = ruleFor(row);
+      const source = staffSourceFor(rule);
+      const reason = input.reason?.trim() || null;
+      if (source === "STAFF_OVERRIDE" && !reason) {
+        throw new BillingResponsibilityError("Say why you are replacing the responsible party the system found.", "REASON_REQUIRED");
+      }
+      const existing = row.billingResponsibility;
+      // The effective "before" is the recorded row, or else the rule's proposal that was on screen.
+      const before: Resolution = existing ?? rule;
+      if (existing && existing.source === source && existing.kind === "ORGANIZATION" && existing.organizationId === organization.id) {
+        return { changed: false as const, source };
+      }
+      const data = { kind: "ORGANIZATION" as const, organizationId: organization.id, personId: null, source, reason, setByUserId: input.actorUserId };
+      if (existing) {
+        const result = await tx.registrationBillingResponsibility.updateMany({
+          where: { registrationId: row.id, kind: existing.kind, organizationId: existing.organizationId, personId: existing.personId, source: existing.source },
+          data,
+        });
+        if (result.count === 0) throw concurrentChange();
+      } else {
+        await tx.registrationBillingResponsibility.create({ data: { eventId: input.eventId, registrationId: row.id, ...data } });
+      }
+      await tx.registrationBillingResponsibilityChange.create({
+        data: {
+          eventId: input.eventId,
+          registrationId: row.id,
+          changeType: source,
+          fromKind: before.kind,
+          fromOrganizationId: before.organizationId,
+          fromPersonId: before.personId,
+          fromSource: before.source,
+          toKind: "ORGANIZATION",
+          toOrganizationId: organization.id,
+          toPersonId: null,
+          toSource: source,
+          reason,
+          actorUserId: input.actorUserId,
+        },
+      });
+      await writeAuditLog({
         eventId: input.eventId,
-        registrationId: row.id,
-        changeType: source,
-        fromKind: before.kind,
-        fromOrganizationId: before.organizationId,
-        fromPersonId: before.personId,
-        fromSource: before.source,
-        toKind: "ORGANIZATION",
-        toOrganizationId: organization.id,
-        toPersonId: null,
-        toSource: source,
-        reason,
         actorUserId: input.actorUserId,
-      },
+        action: source === "STAFF_OVERRIDE" ? "BILLING_RESPONSIBILITY_OVERRIDDEN" : "BILLING_RESPONSIBILITY_LINKED",
+        entityType: "Registration",
+        entityId: row.id,
+        summary: source === "STAFF_OVERRIDE" ? "Replaced the responsible party for a registration." : "Linked a registration to its responsible organization.",
+        metadata: {
+          eventId: input.eventId,
+          registrationId: row.id,
+          before: { kind: before.kind, organizationId: before.organizationId, personId: before.personId, source: before.source },
+          after: { kind: "ORGANIZATION", organizationId: organization.id, source },
+          hasReason: Boolean(reason),
+        },
+      }, tx);
+      return { changed: true as const, source };
     });
-    await writeAuditLog({
-      eventId: input.eventId,
-      actorUserId: input.actorUserId,
-      action: source === "STAFF_OVERRIDE" ? "BILLING_RESPONSIBILITY_OVERRIDDEN" : "BILLING_RESPONSIBILITY_LINKED",
-      entityType: "Registration",
-      entityId: row.id,
-      summary: source === "STAFF_OVERRIDE" ? "Replaced the responsible party for a registration." : "Linked a registration to its responsible organization.",
-      metadata: {
-        eventId: input.eventId,
-        registrationId: row.id,
-        before: { kind: before.kind, organizationId: before.organizationId, personId: before.personId, source: before.source },
-        after: { kind: "ORGANIZATION", organizationId: organization.id, source },
-        hasReason: Boolean(reason),
-      },
-    }, tx);
-    return { changed: true as const, source };
-  });
+  } catch (error) {
+    // A parallel first decision created the row first.
+    if (isUniqueViolation(error)) throw concurrentChange();
+    throw error;
+  }
 }
 
 /** Drops a staff decision so the rules decide again (the registration may go back to unresolved). */
@@ -481,10 +465,11 @@ export async function clearResponsibilityOverride(input: { eventId: string; regi
     }
     const rule = ruleFor(row);
     const reason = input.reason?.trim() || null;
-    await tx.registrationBillingResponsibility.update({
-      where: { registrationId: row.id },
+    const result = await tx.registrationBillingResponsibility.updateMany({
+      where: { registrationId: row.id, kind: existing.kind, organizationId: existing.organizationId, personId: existing.personId, source: existing.source },
       data: { kind: rule.kind, organizationId: rule.organizationId, personId: rule.personId, source: rule.source, reason: null, setByUserId: input.actorUserId },
     });
+    if (result.count === 0) throw concurrentChange();
     await tx.registrationBillingResponsibilityChange.create({
       data: {
         eventId: input.eventId,
@@ -587,46 +572,49 @@ export async function setInvoiceGrouping(input: { eventId: string; invoiceGroupi
 }
 
 // ---------------------------------------------------------------------------------------------
-// Organization billing contacts
+// Organization billing contacts (conference-wide; system administrators only)
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Staff may only touch the billing contact of an organization that matters to this event: one a
- * registration here is billed to (recorded), or the sponsoring church of a club registered here.
- * That keeps the screen from becoming a way to browse or edit unrelated organizations.
+ * A billing contact belongs to the organization and is reused by every event, so changing one is
+ * conference-level authority, not event finance authority: only a system administrator may add,
+ * replace, verify or end one. The check lives here as well as in the route, so no caller can skip
+ * it. Event finance staff only ever read the active contact's name, role, email and verification
+ * through the event screen. Audit rows for contact changes carry no eventId (they are
+ * conference-wide) and hold ids only, never a name, email or phone.
  */
-async function requireOrganizationOnEvent(tx: Client, eventId: string, organizationId: string) {
-  const [recorded, viaClub] = await Promise.all([
-    tx.registrationBillingResponsibility.count({ where: { eventId, organizationId } }),
-    tx.clubEventRegistration.count({
-      where: { eventId, organization: { parentOrganizationId: organizationId }, registration: { status: { in: [...BILLING_RESPONSIBILITY_STATUSES] } } },
-    }),
-  ]);
-  if (recorded + viaClub === 0) {
-    throw new BillingResponsibilityError("That organization is not billed for this event.", "ORGANIZATION_NOT_RELEVANT");
+type ContactActor = { id: string; globalRole?: string | null };
+
+function requireSystemAdministratorActor(actor: ContactActor) {
+  if (actor.globalRole !== "SYSTEM_ADMIN") {
+    throw new AccessDeniedError("Only a system administrator can manage an organization's billing contact.", 403, "PERMISSION_DENIED");
   }
+}
+
+async function requireBillableOrganization(tx: Client, organizationId: string) {
+  const organization = await tx.organization.findUnique({ where: { id: organizationId }, select: { id: true } });
+  if (!organization) throw new BillingResponsibilityError("That organization does not exist.", "ORGANIZATION_NOT_ELIGIBLE");
 }
 
 /**
  * Adds a billing contact, ending the organization's previous one in the same transaction, so
  * history is kept and exactly one is active. A new contact starts unverified. A database index
- * settles two staff members racing: one of them gets CONCURRENT_CHANGE.
+ * settles two administrators racing: one of them gets CONCURRENT_CHANGE.
  */
 export async function setOrganizationBillingContact(input: {
-  eventId: string;
   organizationId: string;
   contact: BillingContactInput;
-  actorUserId: string;
+  actor: ContactActor;
 }) {
+  requireSystemAdministratorActor(input.actor);
   const prisma = getPrisma();
   try {
     return await prisma.$transaction(async (tx) => {
-      await requireDeferredEvent(tx, input.eventId);
-      await requireOrganizationOnEvent(tx, input.eventId, input.organizationId);
+      await requireBillableOrganization(tx, input.organizationId);
       const now = new Date();
       const ended = await tx.organizationBillingContact.updateMany({
         where: { organizationId: input.organizationId, effectiveTo: null },
-        data: { effectiveTo: now, endedByUserId: input.actorUserId, endReason: "Replaced by a new billing contact" },
+        data: { effectiveTo: now, endedByUserId: input.actor.id, endReason: "Replaced by a new billing contact" },
       });
       const created = await tx.organizationBillingContact.create({
         data: {
@@ -637,18 +625,17 @@ export async function setOrganizationBillingContact(input: {
           roleLabel: input.contact.roleLabel,
           source: "STAFF_ENTERED",
           effectiveFrom: now,
-          createdByUserId: input.actorUserId,
+          createdByUserId: input.actor.id,
         },
         select: { id: true },
       });
       await writeAuditLog({
-        eventId: input.eventId,
-        actorUserId: input.actorUserId,
+        actorUserId: input.actor.id,
         action: ended.count > 0 ? "BILLING_CONTACT_REPLACED" : "BILLING_CONTACT_ADDED",
         entityType: "Organization",
         entityId: input.organizationId,
         summary: ended.count > 0 ? "Replaced an organization's billing contact." : "Added an organization's billing contact.",
-        metadata: { eventId: input.eventId, organizationId: input.organizationId, contactId: created.id, replacedPrevious: ended.count > 0 },
+        metadata: { organizationId: input.organizationId, contactId: created.id, replacedPrevious: ended.count > 0 },
       }, tx);
       return { id: created.id, replaced: ended.count > 0 };
     });
@@ -660,8 +647,7 @@ export async function setOrganizationBillingContact(input: {
   }
 }
 
-async function requireActiveContact(tx: Client, eventId: string, organizationId: string, contactId: string) {
-  await requireOrganizationOnEvent(tx, eventId, organizationId);
+async function requireActiveContact(tx: Client, organizationId: string, contactId: string) {
   const contact = await tx.organizationBillingContact.findFirst({
     where: { id: contactId, organizationId, effectiveTo: null },
     select: { id: true, verifiedAt: true },
@@ -670,53 +656,99 @@ async function requireActiveContact(tx: Client, eventId: string, organizationId:
   return contact;
 }
 
-/** Staff confirm the active contact is right (for example after calling the church). */
-export async function verifyOrganizationBillingContact(input: { eventId: string; organizationId: string; contactId: string; actorUserId: string }) {
+/** The administrator confirms the active contact is right (for example after calling the church). */
+export async function verifyOrganizationBillingContact(input: { organizationId: string; contactId: string; actor: ContactActor }) {
+  requireSystemAdministratorActor(input.actor);
   const prisma = getPrisma();
   return prisma.$transaction(async (tx) => {
-    await requireDeferredEvent(tx, input.eventId);
-    const contact = await requireActiveContact(tx, input.eventId, input.organizationId, input.contactId);
+    const contact = await requireActiveContact(tx, input.organizationId, input.contactId);
     if (contact.verifiedAt) return { changed: false as const };
     const result = await tx.organizationBillingContact.updateMany({
       where: { id: contact.id, effectiveTo: null, verifiedAt: null },
-      data: { verifiedAt: new Date(), verifiedByUserId: input.actorUserId },
+      data: { verifiedAt: new Date(), verifiedByUserId: input.actor.id },
     });
     if (result.count === 0) return { changed: false as const };
     await writeAuditLog({
-      eventId: input.eventId,
-      actorUserId: input.actorUserId,
+      actorUserId: input.actor.id,
       action: "BILLING_CONTACT_VERIFIED",
       entityType: "Organization",
       entityId: input.organizationId,
       summary: "Verified an organization's billing contact.",
-      metadata: { eventId: input.eventId, organizationId: input.organizationId, contactId: contact.id },
+      metadata: { organizationId: input.organizationId, contactId: contact.id },
     }, tx);
     return { changed: true as const };
   });
 }
 
 /** Ends the active contact without a replacement; the row stays in the history. */
-export async function endOrganizationBillingContact(input: { eventId: string; organizationId: string; contactId: string; reason?: string | null; actorUserId: string }) {
+export async function endOrganizationBillingContact(input: { organizationId: string; contactId: string; reason?: string | null; actor: ContactActor }) {
+  requireSystemAdministratorActor(input.actor);
   const prisma = getPrisma();
   return prisma.$transaction(async (tx) => {
-    await requireDeferredEvent(tx, input.eventId);
-    const contact = await requireActiveContact(tx, input.eventId, input.organizationId, input.contactId);
+    const contact = await requireActiveContact(tx, input.organizationId, input.contactId);
     const result = await tx.organizationBillingContact.updateMany({
       where: { id: contact.id, effectiveTo: null },
-      data: { effectiveTo: new Date(), endedByUserId: input.actorUserId, endReason: input.reason?.trim() || "Ended by staff" },
+      data: { effectiveTo: new Date(), endedByUserId: input.actor.id, endReason: input.reason?.trim() || "Ended by an administrator" },
     });
     if (result.count === 0) throw new BillingResponsibilityError("That billing contact is no longer active.", "CONTACT_NOT_FOUND");
     await writeAuditLog({
-      eventId: input.eventId,
-      actorUserId: input.actorUserId,
+      actorUserId: input.actor.id,
       action: "BILLING_CONTACT_ENDED",
       entityType: "Organization",
       entityId: input.organizationId,
       summary: "Ended an organization's billing contact.",
-      metadata: { eventId: input.eventId, organizationId: input.organizationId, contactId: contact.id },
+      metadata: { organizationId: input.organizationId, contactId: contact.id },
     }, tx);
     return { changed: true as const };
   });
+}
+
+export type BillingContactAdminEntry = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  roleLabel: string;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  verifiedAt: string | null;
+  endReason: string | null;
+  createdByName: string | null;
+  verifiedByName: string | null;
+  endedByName: string | null;
+};
+
+/** The conference admin's view of one organization's billing contacts, newest first, with the full history. */
+export async function getOrganizationBillingContactAdminView(organizationId: string, actor: ContactActor) {
+  requireSystemAdministratorActor(actor);
+  const prisma = getPrisma();
+  const organization = await prisma.organization.findUnique({ where: { id: organizationId }, select: { id: true, name: true, type: true } });
+  if (!organization) return null;
+  const rows = await prisma.organizationBillingContact.findMany({
+    where: { organizationId },
+    orderBy: [{ effectiveFrom: "desc" }, { createdAt: "desc" }],
+    select: {
+      id: true, name: true, email: true, phone: true, roleLabel: true, effectiveFrom: true, effectiveTo: true, verifiedAt: true, endReason: true,
+      createdBy: { select: { displayName: true } },
+      verifiedBy: { select: { displayName: true } },
+      endedBy: { select: { displayName: true } },
+    },
+  });
+  const entries: BillingContactAdminEntry[] = rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    phone: row.phone,
+    roleLabel: row.roleLabel,
+    effectiveFrom: row.effectiveFrom.toISOString(),
+    effectiveTo: row.effectiveTo?.toISOString() ?? null,
+    verifiedAt: row.verifiedAt?.toISOString() ?? null,
+    endReason: row.endReason,
+    createdByName: row.createdBy?.displayName ?? null,
+    verifiedByName: row.verifiedBy?.displayName ?? null,
+    endedByName: row.endedBy?.displayName ?? null,
+  }));
+  return { organization, active: entries.find((entry) => entry.effectiveTo === null) ?? null, history: entries };
 }
 
 // ---------------------------------------------------------------------------------------------

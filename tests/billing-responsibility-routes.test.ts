@@ -12,6 +12,7 @@ vi.mock("next/navigation", () => ({ redirect: vi.fn(() => { throw new Error("red
 const mocks = vi.hoisted(() => ({
   getCurrentSession: vi.fn(),
   findActiveMembership: vi.fn(),
+  requireSystemAdministrator: vi.fn(),
   listEventsForUser: vi.fn(),
   service: {
     resolveEventBillingResponsibility: vi.fn(),
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => ({
     getBillingResponsibilityView: vi.fn(),
   },
 }));
+vi.mock("@/modules/organizations/access", () => ({ requireSystemAdministrator: mocks.requireSystemAdministrator }));
 vi.mock("@/modules/access/current-session", () => ({ getCurrentSession: mocks.getCurrentSession }));
 vi.mock("@/modules/events/repository", () => ({ findActiveMembership: mocks.findActiveMembership, listEventsForUser: mocks.listEventsForUser }));
 vi.mock("@/lib/env", () => ({ getServerEnv: () => ({ APP_BASE_URL: "https://events.imsda.test" }), isServerEnvironmentError: () => false }));
@@ -41,9 +43,11 @@ vi.mock("@/modules/billing-responsibility/repository", async () => {
 });
 
 import { POST } from "@/app/api/events/[eventId]/billing-responsibility/route";
+import { POST as contactPost } from "@/app/api/admin/organizations/[organizationId]/billing-contact/route";
 import { GET as searchGet } from "@/app/api/events/[eventId]/billing-responsibility/organizations/route";
 import { GET as exportGet } from "@/app/api/events/[eventId]/exports/billing-responsibility/route";
 import BillingResponsibilityPage from "@/app/(workspace)/finance/billing-responsibility/page";
+import { AccessDeniedError } from "@/modules/access/authorization";
 import { BillingResponsibilityError } from "@/modules/billing-responsibility/repository";
 
 const finance = { id: "user-finance", globalRole: null, email: "finance@example.test", displayName: "Finance" };
@@ -97,16 +101,15 @@ describe("POST /api/events/[eventId]/billing-responsibility", () => {
   it("validates the body: unknown actions, bad groupings and malformed contacts are 400", async () => {
     expect((await POST(post({ action: "delete-everything" }), context())).status).toBe(400);
     expect((await POST(post({ action: "set-grouping", invoiceGrouping: "PER_PLANET" }), context())).status).toBe(400);
-    expect((await POST(post({ action: "set-contact", organizationId: "org-1", contact: { name: "T", email: "not-an-email", roleLabel: "Treasurer" } }), context())).status).toBe(400);
-    expect(mocks.service.setOrganizationBillingContact).not.toHaveBeenCalled();
   });
 
-  it("normalizes contact input and never reads the actor from the body", async () => {
-    await POST(post({ action: "set-contact", organizationId: "org-1", actorUserId: "someone-else", contact: { name: " Terry ", email: " T@Example.TEST ", roleLabel: "Treasurer", phone: "" } }), context());
-    expect(mocks.service.setOrganizationBillingContact).toHaveBeenCalledWith({
-      eventId: "event-a", organizationId: "org-1", actorUserId: "user-finance",
-      contact: { name: "Terry", email: "t@example.test", roleLabel: "Treasurer", phone: null },
-    });
+  it("has no billing contact actions: those are conference-wide, not event finance actions", async () => {
+    for (const action of ["set-contact", "verify-contact", "end-contact"]) {
+      expect((await POST(post({ action, organizationId: "org-1", contactId: "c-1", contact: { name: "T", email: "t@example.test", roleLabel: "Treasurer" } }), context())).status).toBe(400);
+    }
+    expect(mocks.service.setOrganizationBillingContact).not.toHaveBeenCalled();
+    expect(mocks.service.verifyOrganizationBillingContact).not.toHaveBeenCalled();
+    expect(mocks.service.endOrganizationBillingContact).not.toHaveBeenCalled();
   });
 
   it("maps service refusals to client errors", async () => {
@@ -138,5 +141,41 @@ describe("billing responsibility reads", () => {
     const markup = renderToStaticMarkup(await BillingResponsibilityPage({ searchParams: Promise.resolve({ event: "event-c" }) }));
     expect(markup).toContain("Finance is restricted");
     expect(mocks.service.getBillingResponsibilityView).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/admin/organizations/[organizationId]/billing-contact", () => {
+  const orgContext = { params: Promise.resolve({ organizationId: "org-1" }) };
+  const admin = { id: "admin-1", globalRole: "SYSTEM_ADMIN" };
+
+  it("lets a system administrator add a contact, normalizing it and acting as themselves", async () => {
+    mocks.requireSystemAdministrator.mockResolvedValue(admin);
+    const response = await contactPost(post({ action: "set", actor: "someone-else", contact: { name: " Terry ", email: " T@Example.TEST ", roleLabel: "Treasurer", phone: "" } }), orgContext);
+    expect(response.status).toBe(201);
+    expect(mocks.service.setOrganizationBillingContact).toHaveBeenCalledWith({
+      organizationId: "org-1", actor: admin,
+      contact: { name: "Terry", email: "t@example.test", roleLabel: "Treasurer", phone: null },
+    });
+  });
+
+  it("refuses everyone who is not a system administrator, including an event finance manager, before the service", async () => {
+    mocks.requireSystemAdministrator.mockRejectedValue(new AccessDeniedError("System administrator access is required.", 403, "PERMISSION_DENIED"));
+    for (const body of [
+      { action: "set", contact: { name: "T", email: "t@example.test", roleLabel: "Treasurer" } },
+      { action: "verify", contactId: "c-1" },
+      { action: "end", contactId: "c-1" },
+    ]) {
+      expect((await contactPost(post(body), orgContext)).status).toBe(403);
+    }
+    expect(mocks.service.setOrganizationBillingContact).not.toHaveBeenCalled();
+    expect(mocks.service.verifyOrganizationBillingContact).not.toHaveBeenCalled();
+    expect(mocks.service.endOrganizationBillingContact).not.toHaveBeenCalled();
+  });
+
+  it("validates the contact and rejects cross-origin posts", async () => {
+    mocks.requireSystemAdministrator.mockResolvedValue(admin);
+    expect((await contactPost(post({ action: "set", contact: { name: "T", email: "not-an-email", roleLabel: "Treasurer" } }), orgContext)).status).toBe(400);
+    expect((await contactPost(post({ action: "verify", contactId: "c-1" }, "https://evil.example.test"), orgContext)).status).toBe(403);
+    expect(mocks.service.setOrganizationBillingContact).not.toHaveBeenCalled();
   });
 });

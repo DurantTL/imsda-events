@@ -31,13 +31,14 @@ function line(overrides: Partial<BillingLine> & Pick<BillingLine, "registrationI
     source: "CLUB_SPONSORING_CHURCH",
     reason: null,
     recorded: true,
+    outdated: false,
     hint: null,
     ...overrides,
   };
 }
 
 const contact = (verifiedAt: string | null): BillingContactView => ({
-  id: "contact-1", name: "Terry Treasurer", email: "treasurer@example.test", phone: null, roleLabel: "Treasurer",
+  name: "Terry Treasurer", email: "treasurer@example.test", roleLabel: "Treasurer",
   effectiveFrom: "2026-10-01T00:00:00.000Z", verifiedAt,
 });
 

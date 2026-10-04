@@ -1,7 +1,6 @@
 import { Building2, Download } from "lucide-react";
 import {
   BillingActionButton,
-  BillingContactForm,
   GroupingControl,
   LinkOrganizationForm,
   ResolveControls,
@@ -34,14 +33,17 @@ function date(value: string) {
  */
 export function BillingResponsibility({
   eventId,
+  isSystemAdministrator = false,
   locationId,
   view,
 }: {
   eventId: string;
+  /** Only a system administrator may change a billing contact; everyone else sees it read-only. */
+  isSystemAdministrator?: boolean;
   locationId: string | null;
   view: BillingResponsibilityView;
 }) {
-  const { groups, summary, invoiceGrouping, history, lineHistory } = view;
+  const { groups, summary, invoiceGrouping, lineHistory } = view;
   const unresolved = groups.find((group) => group.party.kind === "UNRESOLVED");
   const resolved = groups.filter((group) => group.party.kind !== "UNRESOLVED");
   return (
@@ -88,6 +90,7 @@ export function BillingResponsibility({
             </p>
             <ResolveControls eventId={eventId} />
             {view.unrecordedCount > 0 && <p><small>{view.unrecordedCount} registrations are shown as the system&apos;s proposal and are not recorded yet.</small></p>}
+            {view.outdatedCount > 0 && <p><small>{view.outdatedCount} recorded {view.outdatedCount === 1 ? "registration is" : "registrations are"} out of date (a club&apos;s church changed). The current answer is shown; &ldquo;Record responsible parties&rdquo; updates {view.outdatedCount === 1 ? "it" : "them"}.</small></p>}
           </section>
           {unresolved && (
             <section className="panel finance-list billing-unresolved" aria-label="Unresolved registrations">
@@ -106,7 +109,7 @@ export function BillingResponsibility({
             </section>
           )}
           {resolved.map((group) => (
-            <GroupPanel eventId={eventId} group={group} history={history} key={group.key} lineHistory={lineHistory} />
+            <GroupPanel eventId={eventId} group={group} isSystemAdministrator={isSystemAdministrator} key={group.key} lineHistory={lineHistory} />
           ))}
           {groups.length === 0 && (
             <div className="panel empty-state">
@@ -124,16 +127,15 @@ export function BillingResponsibility({
 function GroupPanel({
   eventId,
   group,
-  history,
+  isSystemAdministrator,
   lineHistory,
 }: {
   eventId: string;
   group: BillingGroup;
-  history: BillingResponsibilityView["history"];
+  isSystemAdministrator: boolean;
   lineHistory: BillingResponsibilityView["lineHistory"];
 }) {
   const organizationId = group.party.kind === "ORGANIZATION" ? group.party.id : null;
-  const contactHistory = organizationId ? history[organizationId] ?? [] : [];
   return (
     <section className="panel finance-list billing-group" aria-label={`Invoice group ${group.title}`}>
       <div className="section-heading">
@@ -149,35 +151,14 @@ function GroupPanel({
           <>
             {group.contact ? (
               <p>
-                <strong>{group.contact.name}</strong> ({group.contact.roleLabel}) · {group.contact.email}{group.contact.phone ? ` · ${group.contact.phone}` : ""}
+                <strong>{group.contact.name}</strong> ({group.contact.roleLabel}) · {group.contact.email}
                 <br /><small>{group.contact.verifiedAt ? `Verified ${date(group.contact.verifiedAt)}` : "Not verified"} · since {date(group.contact.effectiveFrom)}</small>
               </p>
             ) : (
               <p>No billing contact on file.</p>
             )}
-            <span className="billing-inline-action">
-              {group.contact && !group.contact.verifiedAt && (
-                <BillingActionButton body={{ action: "verify-contact", organizationId, contactId: group.contact.id }} eventId={eventId} label="Mark verified" />
-              )}
-              <BillingContactForm eventId={eventId} hasContact={Boolean(group.contact)} organizationId={organizationId} />
-              {group.contact && (
-                <BillingActionButton body={{ action: "end-contact", organizationId, contactId: group.contact.id }} eventId={eventId} label="End contact" />
-              )}
-            </span>
-            {contactHistory.length > 0 && (
-              <details>
-                <summary>Contact history ({contactHistory.length})</summary>
-                <ul>
-                  {contactHistory.map((entry) => (
-                    <li key={entry.id}>
-                      {entry.name} ({entry.roleLabel}) · {date(entry.effectiveFrom)} to {entry.effectiveTo ? date(entry.effectiveTo) : "now"}
-                      {entry.verifiedAt ? ` · verified${entry.verifiedByName ? ` by ${entry.verifiedByName}` : ""}` : " · not verified"}
-                      {entry.createdByName ? ` · entered by ${entry.createdByName}` : ""}
-                      {entry.endReason ? ` · ${entry.endReason}` : ""}
-                    </li>
-                  ))}
-                </ul>
-              </details>
+            {isSystemAdministrator && organizationId && (
+              <a className="secondary-button" href={`/admin/organizations/${organizationId}/billing`}>Manage billing contact</a>
             )}
           </>
         )}
@@ -187,7 +168,7 @@ function GroupPanel({
         <div className="finance-row" key={line.registrationId}>
           <span>
             <strong>{lineLabel(line)}</strong>
-            <small>{line.status.toLowerCase()}{line.locationName ? ` · ${line.locationName}` : ""}{!line.recorded ? " · not recorded yet" : ""}</small>
+            <small>{line.status.toLowerCase()}{line.locationName ? ` · ${line.locationName}` : ""}{!line.recorded ? " · not recorded yet" : line.outdated ? " · recorded answer is out of date" : ""}</small>
             {line.reason && <small>Reason: {line.reason}</small>}
           </span>
           <span>{line.confirmationCode}</span>

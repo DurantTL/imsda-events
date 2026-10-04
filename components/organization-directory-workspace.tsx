@@ -392,6 +392,13 @@ export function OrganizationDirectoryWorkspace({
                   >
                     <Pencil aria-hidden="true" size={14} /> Edit
                   </button>
+                  <Link
+                    aria-label={`Billing contact for ${organization.name}`}
+                    className="secondary-button"
+                    href={`/admin/organizations/${organization.id}/billing`}
+                  >
+                    <IdCard aria-hidden="true" size={14} /> Billing contact
+                  </Link>
                   {organization.type === "CHURCH" && (
                     // A full page load, not a client-side <Link>: the location
                     // page's Content-Security-Policy is the only staff policy

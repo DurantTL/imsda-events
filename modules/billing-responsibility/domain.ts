@@ -82,7 +82,7 @@ export type ResolutionOutcome =
   | { action: "KEEP_STAFF_DECISION" }
   | { action: "UNCHANGED" };
 
-function sameResolution(left: Resolution, right: Resolution) {
+export function sameResolution(left: Resolution, right: Resolution) {
   return left.kind === right.kind
     && left.organizationId === right.organizationId
     && left.personId === right.personId
@@ -125,11 +125,13 @@ export function sourceLabel(source: BillingResponsibilitySource) {
 // Billing contact readiness
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * What event finance staff may see of an organization's active billing contact: name, role,
+ * email and verification only. Never a phone number, an id, or a past contact.
+ */
 export type BillingContactView = {
-  id: string;
   name: string;
   email: string;
-  phone: string | null;
   roleLabel: string;
   effectiveFrom: string;
   verifiedAt: string | null;
@@ -183,6 +185,8 @@ export type BillingLine = {
   reason: string | null;
   /** False while the resolver has not recorded this registration yet (it is shown as a proposal). */
   recorded: boolean;
+  /** A recorded rule-derived party that no longer matches the rule (the club's church changed); the rule's answer is shown. */
+  outdated: boolean;
   /** A free-text organization answer, shown as a hint for staff only; never linked automatically. */
   hint: string | null;
 };

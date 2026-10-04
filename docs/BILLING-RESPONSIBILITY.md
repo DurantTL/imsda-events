@@ -36,19 +36,25 @@ overrides, are audited, kept in the history, and are never replaced when the res
 
 ## Billing contacts
 
-An organization's billing contact (usually the treasurer) is entered once by office staff and is
-reused for every event. It is separate from the club director, the registration's operational
-contacts, and the form submitter; directors and attendees never see or set it.
+An organization's billing contact (usually the treasurer) is entered by conference staff and
+reused for every event. It is conference-wide, so only a system administrator can add, replace,
+verify or end one, on the organization's admin page (Clubs and churches, then "Billing contact",
+`/admin/organizations/[id]/billing`). It is separate from the club director, the registration's
+operational contacts, and the form submitter; directors and attendees never see or set it.
 
 - Effective-dated: replacing a contact ends the previous one and starts a new one, so the full
-  history is kept. The database allows only one active contact per organization, even if two staff
-  members replace it at once (the second sees "Someone else just changed this billing contact").
-- A new contact starts unverified. Staff mark it verified (who and when are recorded). Ending a
-  contact without a replacement keeps it in the history. A contact row is never deleted.
-- Readiness shown per invoice group: Ready (verified contact), Contact not verified, No billing
+  history is kept (administrators read it on that page). The database allows only one active
+  contact per organization, even if two administrators replace it at once. A contact row is never
+  deleted or rewritten: it can only be ended or verified.
+- A new contact starts unverified. An administrator marks it verified (who and when are recorded).
+- Event finance staff (MANAGE_FINANCE) see only the active contact's name, role, email and
+  readiness for organizations billed on their event, never a phone number, an ended contact, or the
+  history. They cannot change a contact; a system administrator sees a "Manage billing contact" link.
+- Readiness per invoice group: Ready (verified contact), Contact not verified, No billing
   contact. A group billed to a person is Ready when that person left an email.
-- Staff can only manage the contact of an organization that is billed on the event they are
-  working in. Audit entries hold ids only, never a contact's name, email, or phone.
+- Audit entries for contact changes carry no event (they are conference-wide) and hold ids only,
+  never a name, email or phone. An organization with billing contacts or billing responsibility
+  cannot be deleted; deactivate it instead.
 
 ## Grouping
 
@@ -68,8 +74,9 @@ would record, how many are unresolved and why, with the free-text hint if there 
 responsible parties" writes the rule-derived parties. Both are safe to repeat: a second run
 changes nothing, a staff decision is kept, parallel runs leave one row per registration, and an
 ambiguous registration is recorded as unresolved, never linked. Run it after a club changes its
-church or when new registrations arrive; the screen shows a proposal for registrations not yet
-recorded.
+church or when new registrations arrive. The screen shows a proposal for registrations not yet
+recorded, and shows the current rule's answer (flagged out of date) where a recorded rule-derived
+party no longer matches, for example after a club's church changed; recording updates those too.
 
 ## Checks
 

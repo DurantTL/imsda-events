@@ -41,6 +41,8 @@ function counts(overrides: Record<string, number> = {}) {
     sponsoredPromoCodes: 0,
     clubFormSubmissions: 0,
     clubFormLinks: 0,
+    billingContacts: 0,
+    billingResponsibilities: 0,
     ...overrides,
   };
 }
@@ -59,6 +61,14 @@ beforeEach(() => {
 });
 
 describe("deleting Clubs and churches (#386)", () => {
+  it("blocks deleting an organization with billing contacts or billing responsibility (#165) and says to deactivate", async () => {
+    mocks.orgFindUnique.mockResolvedValue({ id: "church-1", type: "CHURCH", name: "Test Church", _count: counts({ billingContacts: 1, billingResponsibilities: 3 }) });
+    const check = await getOrganizationDeletionCheck("church-1");
+    expect(check.blockers.join(" ")).toMatch(/1 billing contact.*3 registrations.*deactivate/);
+    await expect(deleteOrganization("church-1", "Test Church", "admin-1")).rejects.toMatchObject({ code: "ORGANIZATION_DELETE_BLOCKED" });
+    expect(mocks.orgDeleteMany).not.toHaveBeenCalled();
+  });
+
   it("reports what a club deletion removes", async () => {
     const check = await getOrganizationDeletionCheck("club-1");
     expect(check.blockers).toEqual([]);

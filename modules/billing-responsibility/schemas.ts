@@ -15,15 +15,19 @@ export const billingContactInputSchema = z.object({
 
 export type BillingContactInput = z.infer<typeof billingContactInputSchema>;
 
-/** One endpoint, one tagged body: every action is a MANAGE_FINANCE action on the event in the URL. */
+/** One endpoint, one tagged body: every action is a MANAGE_FINANCE action on the event in the URL. Billing contacts are not here: they are conference-wide. */
 export const billingResponsibilityActionSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("resolve"), apply: z.boolean().default(false), locationId: id.nullish() }),
+  z.object({ action: z.literal("resolve"), apply: z.boolean().default(false) }),
   z.object({ action: z.literal("set-grouping"), invoiceGrouping: z.enum(INVOICE_GROUPINGS as unknown as [string, ...string[]]) }),
   z.object({ action: z.literal("link"), registrationId: id, organizationId: id, reason: reasonText.optional() }),
   z.object({ action: z.literal("clear-override"), registrationId: id, reason: reasonText.optional() }),
-  z.object({ action: z.literal("set-contact"), organizationId: id, contact: billingContactInputSchema }),
-  z.object({ action: z.literal("verify-contact"), organizationId: id, contactId: id }),
-  z.object({ action: z.literal("end-contact"), organizationId: id, contactId: id, reason: reasonText.optional() }),
+]);
+
+/** Conference-level billing contact changes (system administrators only). */
+export const billingContactActionSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("set"), contact: billingContactInputSchema }),
+  z.object({ action: z.literal("verify"), contactId: id }),
+  z.object({ action: z.literal("end"), contactId: id, reason: reasonText.optional() }),
 ]);
 
 export type BillingResponsibilityAction = z.infer<typeof billingResponsibilityActionSchema>;

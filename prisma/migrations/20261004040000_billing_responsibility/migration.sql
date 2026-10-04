@@ -161,14 +161,57 @@ ALTER TABLE "RegistrationBillingResponsibility" ADD CONSTRAINT "RegistrationBill
   AND ("source" <> 'STAFF_OVERRIDE' OR length(btrim(coalesce("reason", ''))) > 0)
 );
 
--- The history is append-only.
+-- The history is append-only. Two things are allowed, both only from inside a foreign-key action
+-- (pg_trigger_depth() > 1, never from a direct statement): the actor column clearing itself when
+-- that user is deleted, and the rows going when their event or registration is deleted.
 CREATE FUNCTION "RegistrationBillingResponsibilityChange_refuse_change"() RETURNS trigger AS $$
 BEGIN
-  -- The only allowed change is the actor foreign key clearing itself when that user is deleted.
-  IF NEW."actorUserId" IS NULL AND (to_jsonb(NEW) - 'actorUserId') = (to_jsonb(OLD) - 'actorUserId') THEN
+  IF TG_OP = 'DELETE' THEN
+    IF pg_trigger_depth() > 1 THEN
+      RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'Billing responsibility history is append-only.' USING ERRCODE = '23001';
+  END IF;
+  IF pg_trigger_depth() > 1 AND NEW."actorUserId" IS NULL AND (to_jsonb(NEW) - 'actorUserId') = (to_jsonb(OLD) - 'actorUserId') THEN
     RETURN NEW;
   END IF;
   RAISE EXCEPTION 'Billing responsibility history is append-only.' USING ERRCODE = '23001';
 END;
 $$ LANGUAGE plpgsql;
-CREATE TRIGGER "RegistrationBillingResponsibilityChange_append_only" BEFORE UPDATE ON "RegistrationBillingResponsibilityChange" FOR EACH ROW EXECUTE FUNCTION "RegistrationBillingResponsibilityChange_refuse_change"();
+CREATE TRIGGER "RegistrationBillingResponsibilityChange_append_only" BEFORE UPDATE OR DELETE ON "RegistrationBillingResponsibilityChange" FOR EACH ROW EXECUTE FUNCTION "RegistrationBillingResponsibilityChange_refuse_change"();
+
+-- A contact row is only ever ended or verified, never rewritten: effectiveTo, endedByUserId,
+-- endReason, verifiedAt and verifiedByUserId may go from NULL to a value; nothing else changes.
+-- A user foreign key may clear itself (ON DELETE SET NULL, from inside a foreign-key action).
+CREATE FUNCTION "OrganizationBillingContact_guard_update"() RETURNS trigger AS $$
+DECLARE
+  user_columns CONSTANT text[] := ARRAY['verifiedByUserId', 'createdByUserId', 'endedByUserId'];
+  once_columns CONSTANT text[] := ARRAY['effectiveTo', 'endedByUserId', 'endReason', 'verifiedAt', 'verifiedByUserId'];
+  column_name text;
+  old_json jsonb := to_jsonb(OLD);
+  new_json jsonb := to_jsonb(NEW);
+BEGIN
+  IF pg_trigger_depth() > 1 THEN
+    -- Only the user columns may differ, and only by becoming NULL.
+    IF (new_json - user_columns) = (old_json - user_columns) THEN
+      FOREACH column_name IN ARRAY user_columns LOOP
+        IF new_json -> column_name IS DISTINCT FROM old_json -> column_name AND new_json -> column_name <> 'null'::jsonb THEN
+          RAISE EXCEPTION 'An organization billing contact is not rewritten.' USING ERRCODE = '23001';
+        END IF;
+      END LOOP;
+      RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'An organization billing contact is not rewritten.' USING ERRCODE = '23001';
+  END IF;
+  IF (new_json - once_columns) <> (old_json - once_columns) THEN
+    RAISE EXCEPTION 'An organization billing contact is not rewritten.' USING ERRCODE = '23001';
+  END IF;
+  FOREACH column_name IN ARRAY once_columns LOOP
+    IF old_json -> column_name <> 'null'::jsonb AND new_json -> column_name IS DISTINCT FROM old_json -> column_name THEN
+      RAISE EXCEPTION 'An organization billing contact is not rewritten.' USING ERRCODE = '23001';
+    END IF;
+  END LOOP;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER "OrganizationBillingContact_guard_update" BEFORE UPDATE ON "OrganizationBillingContact" FOR EACH ROW EXECUTE FUNCTION "OrganizationBillingContact_guard_update"();

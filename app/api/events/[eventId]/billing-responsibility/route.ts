@@ -5,12 +5,9 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import {
   BillingResponsibilityError,
   clearResponsibilityOverride,
-  endOrganizationBillingContact,
   linkRegistrationToOrganization,
   resolveEventBillingResponsibility,
   setInvoiceGrouping,
-  setOrganizationBillingContact,
-  verifyOrganizationBillingContact,
 } from "@/modules/billing-responsibility/repository";
 import { billingResponsibilityActionSchema } from "@/modules/billing-responsibility/schemas";
 import type { InvoiceGroupingMode } from "@/modules/billing-responsibility/domain";
@@ -20,8 +17,9 @@ import { withRequestContext } from "@/lib/request-context";
 
 /**
  * Billing responsibility actions for a deferred-invoice event (#165): record who is responsible
- * for each registration, link or override one, change the invoice grouping, and manage an
- * organization's billing contact. MANAGE_FINANCE on the event in the URL, checked here, and the
+ * for each registration, link or override one, and change the invoice grouping. Billing contacts
+ * are conference-wide and are managed only by system administrators on the organization's admin
+ * page, never here. MANAGE_FINANCE on the event in the URL, checked here, and the
  * service refuses anything that does not belong to that event. Same-origin only.
  */
 
@@ -32,7 +30,6 @@ function statusFor(error: BillingResponsibilityError) {
     case "EVENT_NOT_FOUND":
     case "REGISTRATION_NOT_FOUND":
     case "CONTACT_NOT_FOUND":
-    case "ORGANIZATION_NOT_RELEVANT":
       return 404;
     case "REASON_REQUIRED":
     case "ORGANIZATION_NOT_ELIGIBLE":
@@ -65,18 +62,6 @@ async function postHandler(request: Request, context: RouteContext) {
       }
       case "clear-override": {
         const result = await clearResponsibilityOverride({ eventId, registrationId: body.registrationId, reason: body.reason, actorUserId });
-        return Response.json(result);
-      }
-      case "set-contact": {
-        const result = await setOrganizationBillingContact({ eventId, organizationId: body.organizationId, contact: body.contact, actorUserId });
-        return Response.json(result, { status: 201 });
-      }
-      case "verify-contact": {
-        const result = await verifyOrganizationBillingContact({ eventId, organizationId: body.organizationId, contactId: body.contactId, actorUserId });
-        return Response.json(result);
-      }
-      case "end-contact": {
-        const result = await endOrganizationBillingContact({ eventId, organizationId: body.organizationId, contactId: body.contactId, reason: body.reason, actorUserId });
         return Response.json(result);
       }
     }

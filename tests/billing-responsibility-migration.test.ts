@@ -18,7 +18,8 @@ describe("billing responsibility migration (#165 slice 1)", () => {
 
   it("never deletes a contact and keeps the history append-only", () => {
     expect(sql).toContain('BEFORE DELETE ON "OrganizationBillingContact"');
-    expect(sql).toContain('BEFORE UPDATE ON "RegistrationBillingResponsibilityChange"');
+    expect(sql).toContain('BEFORE UPDATE OR DELETE ON "RegistrationBillingResponsibilityChange"');
+    expect(sql).toContain('OrganizationBillingContact_guard_update');
   });
 
   it("constrains the responsible party to its kind and an override to a reason", () => {

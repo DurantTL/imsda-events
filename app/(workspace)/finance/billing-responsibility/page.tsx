@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: "Billing responsibility" };
 
 export default async function BillingResponsibilityPage({ searchParams }: { searchParams: Promise<{ event?: string; location?: string }> }) {
   const { event: requested, location: requestedLocation } = await searchParams;
-  const { event, permissions } = await resolveEventContext(requested);
+  const { event, permissions, user } = await resolveEventContext(requested);
   if (!permissions.includes("MANAGE_FINANCE")) {
     return <AccessRestricted title="Finance is restricted" detail="Only event administrators and finance managers can view who each registration is billed to." />;
   }
@@ -19,7 +19,7 @@ export default async function BillingResponsibilityPage({ searchParams }: { sear
   return (
     <>
       <LocationFilter basePath="/finance/billing-responsibility" locations={locations} params={{ event: event.id }} selectedId={locationId} />
-      <BillingResponsibility eventId={event.id} locationId={locationId} view={view} />
+      <BillingResponsibility eventId={event.id} isSystemAdministrator={user.globalRole === "SYSTEM_ADMIN"} locationId={locationId} view={view} />
     </>
   );
 }
