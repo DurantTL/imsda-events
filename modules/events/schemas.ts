@@ -136,6 +136,9 @@ export const eventSettingsInputSchema = z.object({
   // Youth or children's event (#388): every adult registered is checked for a
   // current Sterling Volunteers background check, and flagged when missing.
   checksAdultBackgrounds: z.boolean().default(false),
+  // A person under this age on the event's first day is a minor (#131). Absent keeps the stored value (18 for a
+  // new event); the registration form asks for a responsible adult for each minor.
+  ageOfMajority: z.number().int().min(13).max(25).optional(),
   attendeeEditPolicy: z
     .enum(["TIERED", "VERIFY_EVERY_EDIT"])
     .default("VERIFY_EVERY_EDIT"),

@@ -3658,6 +3658,13 @@ select:focus-visible {
   font-size: 0.96rem;
 }
 .public-registration-roster-summary { grid-column: 1 / -1; }
+.responsible-adult-choice { display: grid; gap: 14px; margin-top: 12px; }
+.responsible-adult-choice fieldset { min-width: 0; margin: 0; border: 0; padding: 0; }
+.responsible-adult-option { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.responsible-adult-option input { width: 20px; height: 20px; flex: none; }
+.guardian-review-table { width: 100%; border-collapse: collapse; }
+.guardian-review-table th, .guardian-review-table td { padding: 8px 10px; border-bottom: 1px solid #d3e0e5; text-align: left; vertical-align: top; }
+.guardian-review-actions { display: grid; gap: 8px; min-width: 14rem; }
 .public-registration-roster-summary-totals {
   display: flex;
   flex-wrap: wrap;

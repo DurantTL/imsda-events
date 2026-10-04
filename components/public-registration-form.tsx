@@ -32,6 +32,19 @@ import { PUBLIC_DATE_GUIDANCE, parseTypedDate } from "@/modules/forms/typed-date
 import { RegistrationAccountPrompt } from "@/components/registration-account-prompt";
 import { SearchableSelect } from "@/components/searchable-select";
 import { SubmitButton } from "@/components/submit-button";
+import { ResponsibleAdultChoice } from "@/components/responsible-adult-choice";
+import {
+  DEFAULT_AGE_OF_MAJORITY,
+  RESPONSIBLE_ADULT_NONE,
+  defaultResponsibleAdultKey,
+  eventStartDate,
+  minorStatusAt,
+  minorsOn,
+  adultsOn,
+  personAgeFromAnswers,
+  sameFullName,
+  type RosterPerson,
+} from "@/modules/guardian-authority/domain";
 import { selectUsesRadioCards } from "@/modules/forms/choice-controls";
 import { TranslateHint } from "@/components/translate-hint";
 import { planAttendeeRemoval, withoutAttendee } from "@/modules/forms/attendee-removal";
@@ -144,6 +157,8 @@ type PublicEvent = {
   location: string | null;
   capacity: number | null;
   billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE";
+  /** A person under this age on the event's start date is a minor (#131). */
+  ageOfMajority?: number;
 };
 
 type PublicForm = {
@@ -500,6 +515,38 @@ export function PublicRegistrationForm({
   const [sheetOpen, setSheetOpen] = useState(false);
   const [website, setWebsite] = useState("");
   const [issues, setIssues] = useState<FormIssue[]>([]);
+  // "Responsible adult" (#131): only what the registrant changed; the rest is preselected below. Whatever is
+  // selected when the form is submitted is the declaration.
+  const [responsibleAdultPicks, setResponsibleAdultPicks] = useState<Record<string, string>>({});
+  // Who is a minor is worked out from the answers, at the event's start date, exactly as the server does. Only an
+  // individual registration asks: club and group rosters have their own adults and youth.
+  const responsibleAdultPeople = useMemo<RosterPerson[]>(() => {
+    if (!rosterEnabled || club || group) return [];
+    const startDate = eventStartDate(event.startsAt, event.timezone);
+    const ageOfMajority = event.ageOfMajority ?? DEFAULT_AGE_OF_MAJORITY;
+    return attendees.map((attendee, index) => {
+      const name = attendeeName(attendee, index, roster.attendeeLabel);
+      const answers = { ...registrationResponses, ...attendee.responses };
+      return {
+        key: attendee.clientId,
+        name,
+        status: minorStatusAt(personAgeFromAnswers(answers), startDate, ageOfMajority).status,
+        // Only picks the preselected adult. It never creates authority.
+        isAccountHolder: sameFullName(name, registrationResponses),
+      };
+    });
+  }, [attendees, club, event.ageOfMajority, event.startsAt, event.timezone, group, registrationResponses, roster.attendeeLabel, rosterEnabled]);
+  const responsibleAdultMinors = useMemo(() => minorsOn(responsibleAdultPeople), [responsibleAdultPeople]);
+  const responsibleAdultOptions = useMemo(() => adultsOn(responsibleAdultPeople), [responsibleAdultPeople]);
+  // The registrant's pick when it is still valid, otherwise the preselected default: never blank.
+  const responsibleAdultValues = useMemo(() => {
+    const preselected = defaultResponsibleAdultKey(responsibleAdultPeople);
+    const validKeys = new Set([RESPONSIBLE_ADULT_NONE, ...responsibleAdultOptions.map((adult) => adult.key)]);
+    return Object.fromEntries(responsibleAdultMinors.map((minor) => {
+      const picked = responsibleAdultPicks[minor.key];
+      return [minor.key, picked && validKeys.has(picked) ? picked : preselected];
+    }));
+  }, [responsibleAdultMinors, responsibleAdultOptions, responsibleAdultPeople, responsibleAdultPicks]);
   const [error, setError] = useState("");
   const [rosterAnnouncement, setRosterAnnouncement] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -1984,6 +2031,10 @@ export function PublicRegistrationForm({
   }
 
   function issueTargetId(issue: FormIssue) {
+    if (issue.key === "responsible_adult") {
+      const minor = attendees[issue.attendeeIndex ?? -1];
+      return minor ? `public_responsible_adult_${safeId(minor.clientId)}` : null;
+    }
     const field = allFields.find((candidate) => (
       candidate.id === issue.fieldId || candidate.key === issue.key
     ));
@@ -2424,6 +2475,31 @@ export function PublicRegistrationForm({
           </section>
         )}
 
+        {responsibleAdultMinors.length > 0 && (
+          <section className="public-registration-review-card" aria-labelledby="public_responsible_adult_title">
+            <p className="public-registration-eyebrow">Minors on this registration</p>
+            <h3 id="public_responsible_adult_title">Responsible adult</h3>
+            <p>
+              Choose the adult on this registration who is responsible for each minor. We preselect an adult; choosing
+              “None of us” sends it to the event team. Submitting this registration records your choice.
+            </p>
+            <ResponsibleAdultChoice
+              idPrefix="public_responsible_adult"
+              minors={responsibleAdultMinors.map((minor) => ({ key: minor.key, name: minor.name }))}
+              adults={responsibleAdultOptions.map((adult) => ({ key: adult.key, name: adult.name }))}
+              values={responsibleAdultValues}
+              errors={Object.fromEntries(
+                issues.filter((issue) => issue.key === "responsible_adult" && attendees[issue.attendeeIndex ?? -1])
+                  .map((issue) => [attendees[issue.attendeeIndex ?? -1]!.clientId, issue.message]),
+              )}
+              onChange={(minorKey, value) => {
+                setResponsibleAdultPicks((current) => ({ ...current, [minorKey]: value }));
+                setIssues((current) => current.filter((issue) => !(issue.key === "responsible_adult" && attendees[issue.attendeeIndex ?? -1]?.clientId === minorKey)));
+              }}
+            />
+          </section>
+        )}
+
         <section className="public-registration-review-card">
           <p className="public-registration-eyebrow">Selected answers</p>
           <h3>Registration details</h3>
@@ -2692,6 +2768,7 @@ export function PublicRegistrationForm({
               responses: attendee.responses,
             })),
           } : {}),
+          ...(responsibleAdultMinors.length > 0 ? { responsibleAdults: responsibleAdultValues } : {}),
           ...(club?.locationId ? { locationId: club.locationId } : {}),
           ...(club?.honorSelections && Object.keys(club.honorSelections).length > 0 ? { honorSelections: club.honorSelections } : {}),
           ...(group?.locationId ? { locationId: group.locationId } : {}),

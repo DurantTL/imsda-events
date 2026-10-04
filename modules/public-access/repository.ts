@@ -3,6 +3,7 @@ import "server-only";
 import { createHmac, randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { declareResponsibleAdultsForRegistration, getRegistrationResponsibleAdultView, GuardianAuthorityError } from "@/modules/guardian-authority/repository";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 import { attendeePassExpiry } from "@/modules/checkin/attendee-pass-token";
@@ -1233,5 +1234,45 @@ export async function revokeRegistrationAccessTokensForRegistration(
       revokedAt: null,
     },
     data: { revokedAt: now },
+  });
+}
+
+export class PublicResponsibleAdultError extends Error {
+  constructor(
+    public readonly code: "REGISTRATION_NOT_ACTIVE" | "CHOICES_INVALID" | "NOT_AVAILABLE",
+    message: string,
+  ) {
+    super(message);
+    this.name = "PublicResponsibleAdultError";
+  }
+}
+
+/**
+ * The registrant changes who is responsible for their minors from the private registration page (#131). Only
+ * this registration is touched, with the same checks as the registration form: one choice per minor, an adult
+ * on this same registration or "None of us".
+ */
+export async function updatePublicResponsibleAdults(
+  token: string,
+  choices: Record<string, string>,
+  now = new Date(),
+) {
+  return getPrisma().$transaction(async (tx) => {
+    const access = await loadActiveAccessRecord(tx, token, now);
+    if (!access) return null;
+    const status = access.registration.status;
+    if (status !== "SUBMITTED" && status !== "CONFIRMED" && status !== "WAITLISTED") {
+      throw new PublicResponsibleAdultError("REGISTRATION_NOT_ACTIVE", "The responsible adult can be changed only on an active registration.");
+    }
+    try {
+      const outcome = await declareResponsibleAdultsForRegistration(tx, { registrationId: access.registration.id, choices });
+      const view = await getRegistrationResponsibleAdultView(access.registration.id, tx);
+      return { outcome: { changed: outcome.created + outcome.superseded, sentToReview: outcome.conflicts }, view };
+    } catch (error) {
+      if (error instanceof GuardianAuthorityError) {
+        throw new PublicResponsibleAdultError(error.code === "ATTENDEE_NOT_FOUND" ? "NOT_AVAILABLE" : "CHOICES_INVALID", error.message);
+      }
+      throw error;
+    }
   });
 }

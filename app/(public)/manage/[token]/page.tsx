@@ -26,7 +26,9 @@ import { ClubClassPicker } from "@/components/club-class-picker";
 import { GroupRegistrationEditor } from "@/components/group-registration-editor";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { getGroupRegistrationWorkspace } from "@/modules/group-registrations/repository";
-import { resolveRegistrationAccessToken } from "@/modules/public-access/repository";
+import { authorizeRegistrationAccessToken, resolveRegistrationAccessToken } from "@/modules/public-access/repository";
+import { getRegistrationResponsibleAdultView } from "@/modules/guardian-authority/repository";
+import { PublicResponsibleAdult } from "@/components/public-responsible-adult";
 
 export const dynamic = "force-dynamic";
 
@@ -87,6 +89,13 @@ export default async function PublicManagePage({
   if (!view) notFound();
   // A "Group" registration (#650) can be reopened by its contact from this page.
   const group = view.isGroup ? await getGroupRegistrationWorkspace(token) : null;
+  // Minors on this registration and who is responsible for them (#131): the registrant can change it here.
+  const responsibleAdultAccess = !view.isGroup && (
+    view.registration.status === "SUBMITTED"
+    || view.registration.status === "CONFIRMED"
+    || view.registration.status === "WAITLISTED"
+  ) ? await authorizeRegistrationAccessToken(token) : null;
+  const responsibleAdults = responsibleAdultAccess ? await getRegistrationResponsibleAdultView(responsibleAdultAccess.registrationId) : null;
   const attendeePassesAvailable = (
     view.registration.status === "SUBMITTED"
     || view.registration.status === "CONFIRMED"
@@ -264,6 +273,8 @@ export default async function PublicManagePage({
               token={token}
             />
           )}
+
+          {responsibleAdults && <PublicResponsibleAdult token={token} view={responsibleAdults} />}
 
           {view.answerEditing.fields.length > 0 && (
             <section className="public-manage-card">
