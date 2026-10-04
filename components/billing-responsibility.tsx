@@ -63,6 +63,7 @@ export function BillingResponsibility({
             <Download aria-hidden="true" size={17} /> Export CSV
           </a>
           <a className="secondary-button" href={`/finance/church-owed?event=${eventId}`}>Owed by churches</a>
+          <a className="secondary-button" href={`/finance/attendance-reconciliation?event=${eventId}`}>Attendance reconciliation</a>
         </div>
       </div>
       {!view.isDeferred ? (
