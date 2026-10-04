@@ -267,6 +267,25 @@ enum BillingResponsibilityChangeType {
   OVERRIDE_CLEARED
 }
 
+/// How a guardian-authority declaration was made (#131). Authority is only ever declared, never inferred.
+enum GuardianAuthoritySource {
+  REGISTRATION_FORM
+  /// The registrant changed it from their private registration page (the manage link).
+  MANAGE_LINK
+  STAFF
+}
+
+enum GuardianAuthorityState {
+  ACTIVE
+  REVOKED
+  SUPERSEDED
+}
+
+enum GuardianAuthorityConflictState {
+  OPEN
+  RESOLVED
+}
+
 /// A staff correction of who actually attended (#166). CLEAR withdraws an earlier correction so the
 /// check-in record decides again.
 enum AttendanceCorrectionKind {
@@ -712,6 +731,10 @@ model User {
   preparedAttendanceVersions   AttendanceReconciliationVersion[]         @relation("AttendanceVersionPreparedBy")
   approvedAttendanceVersions   AttendanceReconciliationVersion[]         @relation("AttendanceVersionApprovedBy")
   attendanceReviewAcknowledgements AttendanceReviewAcknowledgement[]     @relation("AttendanceReviewAckActor")
+  guardianAuthoritiesDeclared  GuardianAuthority[]                       @relation("GuardianAuthorityActorUser")
+  guardianAuthoritiesRevoked   GuardianAuthority[]                       @relation("GuardianAuthorityRevokedBy")
+  guardianConflictsResolved    GuardianAuthorityConflict[]               @relation("GuardianConflictResolvedBy")
+
   createdInvoiceVersions       InvoiceVersion[]                          @relation("InvoiceVersionCreatedBy")
   finalizedInvoiceVersions     InvoiceVersion[]                          @relation("InvoiceVersionFinalizedBy")
 
@@ -1326,6 +1349,8 @@ model Event {
   /// Every adult registered is flagged until they have a current Sterling
   /// Volunteers background check on file. Flags only: nothing is blocked.
   checksAdultBackgrounds Boolean          @default(false)
+  /// A person is a minor at this event when their age on the event's start date is below this (#131).
+  ageOfMajority        Int                @default(18)
   attendeeEditPolicy   AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
   billingMode          EventBillingMode   @default(ATTENDEE_PAY)
   /// Invoice grouping for a deferred-invoice event (#165); only MANAGE_FINANCE changes it, and every change is audited.
@@ -1399,6 +1424,9 @@ model Event {
   attendanceCorrections               AttendanceCorrection[]
   attendanceReconciliationVersions    AttendanceReconciliationVersion[]
   attendanceReviewAcknowledgements    AttendanceReviewAcknowledgement[]
+  guardianAuthorities                 GuardianAuthority[]
+  guardianAuthorityConflicts          GuardianAuthorityConflict[]
+
   invoices                            Invoice[]
   invoiceVersions                     InvoiceVersion[]
   invoiceReceivables                  InvoiceReceivable[]
@@ -1772,6 +1800,11 @@ model Person {
   pendingMemberTransfer MemberTransfer?  @relation("MemberTransferPendingPerson")
   clubOrderNeeds        ClubOrderNeed[]
   memberClassCompletions MemberClassCompletion[]
+  guardianAuthoritiesAsMinor GuardianAuthority[] @relation("GuardianAuthorityMinor")
+  guardianAuthoritiesAsAdult GuardianAuthority[] @relation("GuardianAuthorityAdult")
+  guardianAuthoritiesDeclared GuardianAuthority[] @relation("GuardianAuthorityActorPerson")
+  guardianConflictsAsMinor   GuardianAuthorityConflict[] @relation("GuardianConflictMinor")
+  guardianConflictsAsAdult   GuardianAuthorityConflict[] @relation("GuardianConflictAdult")
 
   @@index([lastName, firstName])
 }
@@ -2460,6 +2493,8 @@ model Registration {
   billingResponsibilityChanges RegistrationBillingResponsibilityChange[]
   attendanceCorrections        AttendanceCorrection[]
   attendanceReviewAcknowledgements AttendanceReviewAcknowledgement[]
+  guardianAuthorities     GuardianAuthority[]
+  guardianAuthorityConflicts GuardianAuthorityConflict[]
   honorEnrollments        HonorEnrollment[]
   adjustments             RegistrationAdjustment[]
   memberTransferMovesFrom MemberTransferRegistrationMove[] @relation("MemberTransferMoveFrom")
@@ -5523,6 +5558,77 @@ model AttendanceReviewAcknowledgement {
   /// A migration-level partial unique index allows one active (not superseded) row per registration and review key.
   @@index([registrationId, reviewKey])
   @@index([eventId, createdAt])
+}
+
+/// A declaration of who is responsible for a minor at an event (#131), made on the registration form or by
+/// staff. Append-only. Authority exists only here: household, surname, email, canManage and being the
+/// account holder never create a row. `adultPersonId` is null when the registrant chose "None of us".
+/// One ACTIVE row per (event, minor) by a partial unique index; a change supersedes the old row, staff
+/// can revoke with a reason, and a trigger refuses every other edit and every delete. Grants no access
+/// to health, incident or other registration data.
+model GuardianAuthority {
+  id               String                  @id @default(cuid())
+  eventId          String
+  /// The registration the declaration was made on (for staff, the minor's registration they acted on).
+  registrationId   String
+  minorPersonId    String
+  adultPersonId    String?
+  source           GuardianAuthoritySource
+  state            GuardianAuthorityState  @default(ACTIVE)
+  declaredAt       DateTime                @default(now())
+  /// Why staff set this (required for a staff declaration; null for the registration form).
+  declarationReason String?
+  /// The private-link access grant a manage-link declaration was made through (plain id: grants are revoked and expire).
+  accessTokenId    String?
+  /// Who declared: staff (`actorUserId`) or the registrant (`actorPersonId`).
+  actorUserId      String?
+  actorPersonId    String?
+  revokedAt        DateTime?
+  revokedByUserId  String?
+  revocationReason String?
+  supersededAt     DateTime?
+  supersededById   String?
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  minor        Person       @relation("GuardianAuthorityMinor", fields: [minorPersonId], references: [id], onDelete: Restrict)
+  adult        Person?      @relation("GuardianAuthorityAdult", fields: [adultPersonId], references: [id], onDelete: Restrict)
+  actorUser    User?        @relation("GuardianAuthorityActorUser", fields: [actorUserId], references: [id], onDelete: SetNull)
+  actorPerson  Person?      @relation("GuardianAuthorityActorPerson", fields: [actorPersonId], references: [id], onDelete: Restrict)
+  revokedBy    User?        @relation("GuardianAuthorityRevokedBy", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+
+  /// A migration-level partial unique index allows one ACTIVE row per (event, minor).
+  @@index([eventId, minorPersonId, declaredAt])
+  @@index([registrationId])
+  @@index([adultPersonId])
+}
+
+/// A second adult claiming a minor who already has an ACTIVE declaration from a different registration
+/// (#131). Never resolved automatically: it waits for staff, and neither adult is silently blocked.
+/// Changes only from OPEN to RESOLVED, once.
+model GuardianAuthorityConflict {
+  id                   String                         @id @default(cuid())
+  eventId              String
+  registrationId       String
+  minorPersonId        String
+  claimedAdultPersonId String
+  /// The ACTIVE declaration that stood when the claim arrived (plain id: history rows are never deleted).
+  existingAuthorityId  String
+  declaredAt           DateTime                       @default(now())
+  state                GuardianAuthorityConflictState @default(OPEN)
+  resolvedAt           DateTime?
+  resolvedByUserId     String?
+  resolutionReason     String?
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  minor        Person       @relation("GuardianConflictMinor", fields: [minorPersonId], references: [id], onDelete: Restrict)
+  claimedAdult Person       @relation("GuardianConflictAdult", fields: [claimedAdultPersonId], references: [id], onDelete: Restrict)
+  resolvedBy   User?        @relation("GuardianConflictResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  /// A migration-level partial unique index allows one OPEN row per (event, minor, claiming adult).
+  @@index([eventId, state])
+  @@index([minorPersonId])
 }
 
 enum InvoiceVersionStatus {

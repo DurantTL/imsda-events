@@ -246,6 +246,7 @@ export function PeopleWorkspace({
   initialFilter = "ALL",
   initialRegistrationId,
   backgroundFlaggedAttendeeIds = [],
+  responsibleAdults = {},
   locationId = null,
   matchingPersonFilter = false,
 }: {
@@ -260,6 +261,8 @@ export function PeopleWorkspace({
   initialRegistrationId?: string;
   /** Adults at a youth or children's event without a current check (#388). */
   backgroundFlaggedAttendeeIds?: string[];
+  /** Minors by attendee id with who is responsible for them (#131): a name, "None of us", or not recorded. */
+  responsibleAdults?: Record<string, { adultName: string | null; noneOfUs: boolean; ageUnknown: boolean }>;
   /** The location filter (#413) the CSV export follows; null exports every location. */
   locationId?: string | null;
   /** The list was narrowed by a choice answer (#739): each row holds at least one matching person. */
@@ -670,6 +673,7 @@ export function PeopleWorkspace({
             <li><a href={`/people/duplicates?event=${encodeURIComponent(eventId)}`}><CopyCheck aria-hidden="true" size={16} /> Find duplicates</a></li>
             {/* Same permission the review page itself requires (MANAGE_REGISTRATION). */}
             {canEdit && <li><a href={`/people/directory-review?event=${encodeURIComponent(eventId)}`}><ClipboardCheck aria-hidden="true" size={16} /> Directory review</a></li>}
+            <li><a href={`/people/responsible-adults?event=${encodeURIComponent(eventId)}`}><ClipboardCheck aria-hidden="true" size={16} /> Responsible adults</a></li>
             <li><a href={`/api/events/${eventId}/exports/registrations${locationId ? `?location=${encodeURIComponent(locationId)}` : ""}`}><Download aria-hidden="true" size={16} /> Export CSV</a></li>
             {canEmail && <li><button disabled={selectedIds.size === 0} onClick={() => setEmailingSelection(true)} title={selectedIds.size === 0 ? "Tick registrations in the list first" : undefined} type="button"><MailPlus aria-hidden="true" size={16} /> Email selected{selectedIds.size > 0 ? ` (${selectedIds.size})` : ""}</button></li>}
           </ActionsMenu>
@@ -883,6 +887,17 @@ export function PeopleWorkspace({
                         {canEdit && !attendee.checkedIn && <button className="text-button" type="button" onClick={() => beginSubstitution(attendee.id)}><ArrowRightLeft aria-hidden="true" size={14} /> Substitute</button>}
                       </span>
                     </div>
+                    {responsibleAdults[attendee.id] && (
+                      <p className="quiet-copy" data-testid="responsible-adult">
+                        {responsibleAdults[attendee.id]!.ageUnknown
+                          ? "Age unknown: the event team will confirm whether a responsible adult is needed."
+                          : responsibleAdults[attendee.id]!.adultName
+                            ? <>Responsible adult: <strong translate="no">{responsibleAdults[attendee.id]!.adultName}</strong></>
+                            : responsibleAdults[attendee.id]!.noneOfUs
+                              ? "Responsible adult: none (the registrant chose “None of us”)."
+                              : "Responsible adult: not recorded."}
+                      </p>
+                    )}
                     {canEdit && attendee.checkedIn && <p className="quiet-copy">Undo this attendee’s active check-in before a substitution can be reviewed.</p>}
                     <details open={selected.attendeeCount <= 5}>
                       <summary>{attendee.source === "PUBLIC_REGISTRATION" ? "Submitted choices and contact" : "Attendee details"}</summary>

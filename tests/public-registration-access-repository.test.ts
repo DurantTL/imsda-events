@@ -5,9 +5,21 @@ const dependencies = vi.hoisted(() => ({
   getPrisma: vi.fn(),
   enqueueRegistrationAccessRecoveryMessage: vi.fn(),
   enqueueRegistrationContactUpdatedMessage: vi.fn(),
+  declareResponsibleAdultsForRegistration: vi.fn(),
+  getRegistrationResponsibleAdultView: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
+vi.mock("@/modules/guardian-authority/repository", () => {
+  class GuardianAuthorityError extends Error {
+    constructor(message: string, public readonly code: string) { super(message); }
+  }
+  return {
+    GuardianAuthorityError,
+    declareResponsibleAdultsForRegistration: dependencies.declareResponsibleAdultsForRegistration,
+    getRegistrationResponsibleAdultView: dependencies.getRegistrationResponsibleAdultView,
+  };
+});
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 vi.mock("@/modules/communications/transactional-messages", () => ({
   enqueueRegistrationAccessRecoveryMessage:
@@ -26,7 +38,9 @@ import {
   resolveRegistrationAccessToken,
   revokeRegistrationAccessToken,
   updatePublicRegistrationContact,
+  updatePublicResponsibleAdults,
 } from "@/modules/public-access/repository";
+import { GuardianAuthorityError } from "@/modules/guardian-authority/repository";
 
 function accessRecord(overrides: {
   expiresAt?: Date;
@@ -559,6 +573,7 @@ describe("private registration access repository", () => {
       registrationId: "registration-1",
       eventId: "event-1",
       registrationStatus: "SUBMITTED",
+      attendeeEditPolicy: "TIERED",
     });
   });
 
@@ -933,5 +948,41 @@ describe("private registration access repository", () => {
     expect(JSON.stringify(tx.registrationAccessToken.updateMany.mock.calls))
       .not.toContain(token);
     expect(JSON.stringify(tx.auditLog.create.mock.calls)).not.toContain(token);
+  });
+});
+
+describe("changing the responsible adult from the private link (#131)", () => {
+  function clientFor(options: { policy: "TIERED" | "VERIFY_EVERY_EDIT"; status?: "SUBMITTED" | "CANCELLED" }) {
+    const record = accessRecord({ status: options.status });
+    (record.registration.event as unknown as { attendeeEditPolicy: string }).attendeeEditPolicy = options.policy;
+    const client = { registrationAccessToken: { findUnique: vi.fn().mockResolvedValue(record) } };
+    dependencies.getPrisma.mockReturnValue({ $transaction: vi.fn(async (operation: (tx: unknown) => unknown) => operation(client)) });
+  }
+
+  beforeEach(() => {
+    dependencies.declareResponsibleAdultsForRegistration.mockReset().mockResolvedValue({ created: 1, superseded: 0, unchanged: 0, conflicts: 0, ignored: 0 });
+    dependencies.getRegistrationResponsibleAdultView.mockReset().mockResolvedValue(null);
+  });
+
+  it("records the change through the access grant when the event allows private-link edits", async () => {
+    clientFor({ policy: "TIERED" });
+    const result = await updatePublicResponsibleAdults(createOpaqueToken(), { "att-son": "att-dad" }, new Date("2026-08-01T12:00:00.000Z"));
+    expect(result).toEqual({ outcome: { changed: 1, sentToReview: 0 }, view: null });
+    expect(dependencies.declareResponsibleAdultsForRegistration).toHaveBeenCalledWith(expect.anything(), { registrationId: "registration-1", choices: { "att-son": "att-dad" }, accessTokenId: "access-1" });
+  });
+
+  it("an event that verifies every edit does not open this change to the private link", async () => {
+    clientFor({ policy: "VERIFY_EVERY_EDIT" });
+    await expect(updatePublicResponsibleAdults(createOpaqueToken(), { "att-son": "att-dad" }, new Date("2026-08-01T12:00:00.000Z")))
+      .rejects.toMatchObject({ code: "EDIT_POLICY_REQUIRES_VERIFICATION" });
+    expect(dependencies.declareResponsibleAdultsForRegistration).not.toHaveBeenCalled();
+  });
+
+  it("refuses a registration that is no longer active, and maps a concurrent change", async () => {
+    clientFor({ policy: "TIERED", status: "CANCELLED" });
+    await expect(updatePublicResponsibleAdults(createOpaqueToken(), {}, new Date("2026-08-01T12:00:00.000Z"))).rejects.toMatchObject({ code: "REGISTRATION_NOT_ACTIVE" });
+    clientFor({ policy: "TIERED" });
+    dependencies.declareResponsibleAdultsForRegistration.mockRejectedValueOnce(new GuardianAuthorityError("Someone else just changed this.", "CONCURRENT_CHANGE"));
+    await expect(updatePublicResponsibleAdults(createOpaqueToken(), {}, new Date("2026-08-01T12:00:00.000Z"))).rejects.toMatchObject({ code: "CONCURRENT_CHANGE" });
   });
 });

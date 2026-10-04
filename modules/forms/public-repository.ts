@@ -63,6 +63,8 @@ import {
 } from "@/modules/promo-codes/repository";
 import { attendeeTypeSelector } from "@/modules/attendee-types/form-options";
 import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
+import { recordRegistrationDeclarations } from "@/modules/guardian-authority/repository";
+import { eventStartDate, planPublicResponsibleAdults } from "@/modules/guardian-authority/domain";
 
 export type PublicRegistrationErrorCode =
   | "FORM_NOT_FOUND"
@@ -233,6 +235,8 @@ export type PublicRegistrationExperience = {
     registrationClosesOn: string | null;
     waitlistEnabled: boolean;
     billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE";
+    /** A person under this age on the event's start date is a minor (#131). */
+    ageOfMajority: number;
   };
   form: {
     slug: string;
@@ -265,6 +269,7 @@ const publicEventSelect = {
   waitlistEnabled: true,
   billingMode: true,
   audience: true,
+  ageOfMajority: true,
   attendeeTypes: {
     where: { isActive: true },
     orderBy: [{ sortOrder: "asc" as const }, { label: "asc" as const }],
@@ -350,6 +355,8 @@ function submissionHash(input: PublicRegistrationInput) {
         versionId: input.versionId,
         responses: input.responses,
         attendees: input.attendees.map((attendee) => attendee.responses),
+        // Only present when the form asked for it (#131), so a hash stored before it existed still matches.
+        ...(input.responsibleAdults && Object.keys(input.responsibleAdults).length > 0 ? { responsibleAdults: input.responsibleAdults } : {}),
       }
     : { versionId: input.versionId, responses: input.responses };
   return createHash("sha256").update(stableJson(semanticInput)).digest("hex");
@@ -549,6 +556,7 @@ export async function getPublicRegistrationExperience(eventSlug: string, formSlu
       registrationClosesOn: form.event.registrationClosesOn,
       waitlistEnabled: form.event.waitlistEnabled,
       billingMode: form.event.billingMode,
+      ageOfMajority: form.event.ageOfMajority,
     },
     form: { slug: form.slug, versionId: version.id, versionNumber: version.versionNumber, definition },
     choiceUsage: usageFromReservations(definition, reservations),
@@ -815,6 +823,37 @@ async function createPublicRegistrationTransaction(
     );
   }
 
+  // "Responsible adult" for each minor (#131): decided from the submitted ages, never from the browser. Club and
+  // group rosters have their own adults and youth, so only an individual registration asks.
+  const responsibleAdultPlan = bulk || !prepared.rosterEnabled
+    ? null
+    : planPublicResponsibleAdults({
+        startDate: eventStartDate(form.event.startsAt, form.event.timezone),
+        ageOfMajority: form.event.ageOfMajority,
+        attendees: prepared.attendees.map((attendee) => ({
+          clientId: attendee.clientId,
+          name: attendee.identity ? `${attendee.identity.firstName} ${attendee.identity.lastName}`.trim() : "",
+          // The attendee's own answers only: the same inputs the stored record is classified from later.
+          responses: attendee.responses,
+        })),
+        choices: input.responsibleAdults,
+      });
+  if (responsibleAdultPlan && responsibleAdultPlan.issues.length > 0) {
+    throw new PublicRegistrationError(
+      "INVALID_SUBMISSION",
+      "Choose a responsible adult for each minor and submit again.",
+      responsibleAdultPlan.issues.map((issue) => ({
+        kind: "validation" as const,
+        code: issue.code,
+        fieldId: null,
+        key: issue.key,
+        path: issue.path,
+        attendeeIndex: issue.attendeeIndex,
+        message: issue.message,
+      })),
+    );
+  }
+
   const configuredPromoField = promoCodeField(definition);
   const submittedPromoCode = configuredPromoField
     && typeof prepared.registrationResponses[configuredPromoField.key]
@@ -957,6 +996,8 @@ async function createPublicRegistrationTransaction(
   });
   const usedPersonIds = new Set<string>();
   const createdAttendees: Array<{
+    clientId: string;
+    personId: string;
     attendeeId: string;
     attendeeType: string;
     responses: Record<string, unknown>;
@@ -1033,10 +1074,25 @@ async function createPublicRegistrationTransaction(
       },
     });
     createdAttendees.push({
+      clientId: attendee.clientId,
+      personId: attendeePerson.id,
       attendeeId: created.id,
       attendeeType: type,
       responses: attendee.responses,
       identity: attendee.identity,
+    });
+  }
+  // The registrant's declarations (#131): recorded with who, when and how, for this event and registration.
+  if (responsibleAdultPlan && responsibleAdultPlan.declarations.length > 0) {
+    const personByClientId = new Map(createdAttendees.map((attendee) => [attendee.clientId, attendee.personId]));
+    await recordRegistrationDeclarations(tx, {
+      eventId: form.eventId,
+      registrationId: registration.id,
+      actorPersonId: accountHolder.id,
+      declarations: responsibleAdultPlan.declarations.map((declaration) => ({
+        minorPersonId: personByClientId.get(declaration.minorKey)!,
+        adultPersonId: declaration.adultKey ? personByClientId.get(declaration.adultKey)! : null,
+      })),
     });
   }
   const registrationAttendeeType = createdAttendees.length > 0

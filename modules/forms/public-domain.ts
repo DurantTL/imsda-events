@@ -24,6 +24,13 @@ export const publicRegistrationInputSchema = z.object({
   idempotencyKey: z.uuid(),
   responses: z.record(z.string(), z.unknown()),
   attendees: z.array(publicAttendeeInputSchema).max(50).optional(),
+  /**
+   * The "Responsible adult" choice for each minor (#131), by the minor's attendee client id: the client id of an
+   * adult on this registration, or "NONE" for "None of us". Submitting it is the declaration. Checked on the server
+   * against the ages in the answers, never against what the browser decided.
+   */
+  responsibleAdults: z.record(z.string().trim().min(1).max(80), z.string().trim().min(1).max(80)).optional()
+    .refine((value) => !value || Object.keys(value).length <= 50, "Too many responsible-adult choices."),
   website: z.literal("").optional(),
 }).strict().superRefine((input, context) => {
   const clientIds = new Set<string>();
@@ -51,6 +58,8 @@ export type PublicRegistrationIssue = {
     | "ATTENDEE_NAME_REQUIRED"
     | "ATTENDEE_COUNT_INVALID"
     | "ATTENDEE_TYPE_INVALID"
+    | "RESPONSIBLE_ADULT_REQUIRED"
+    | "RESPONSIBLE_ADULT_INVALID"
     | "PROMO_CODE_INVALID";
   fieldId: string | null;
   key: string;

@@ -133,6 +133,9 @@ jobs:
       # Real-database check of attendance reconciliation: only checked-in people are billed (no-shows counted, not billed) with the #409 credit applied to those who attended, idempotent and race-safe prepares and approvals, immutable approved versions that attendance changes after approval leave untouched, append-only corrections with one active per person, and no audit row holding a reason or name (#166).
       - run: npm run test:attendance-reconciliation
 
+      # Real-database check of declared guardian authority: the registrant's choice is the only source of a responsible adult (household, canManage, surname, email and account holder create none), one ACTIVE declaration per minor even under parallel writes, append-only rows with supersede and revoke, the trigger refusing an adult who is not on the registration, minor status at the event start date, two adults claiming one minor becoming a review item, staff changes scoped to the event, and no audit row holding a reason or name (#131).
+      - run: npm run test:guardian-authority
+
       # Real-database check of deferred-organization invoices: drafts only from a current approved reconciliation, numbers assigned exactly once under parallel and retried finalization (per event, code and year), immutable finalized versions with one receivable each, contact-only and amount revisions with the Finalize invoices rule, and no audit row holding a contact name or email (#167).
       - run: npm run test:invoices
 

@@ -33,7 +33,7 @@ const youth = {
 
 function fakeDatabase() {
   let sequence = 0;
-  const db = { guardians: [] as Row[], people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], blankedTransferWhere: [] as unknown[], classCompletions: [] as Row[], attendanceErased: [] as string[], calls: [] as string[], transferBlanks: [] as unknown[] };
+  const db = { guardians: [] as Row[], people: [] as Row[], members: [] as Row[], otherReferences: new Set<string>(), guardianReferences: new Set<string>(), honorEntries: [] as Row[], needs: [] as Row[], blankedTransferWhere: [] as unknown[], classCompletions: [] as Row[], attendanceErased: [] as string[], calls: [] as string[], transferBlanks: [] as unknown[] };
   const matches = (row: Row, where: Record<string, unknown> = {}) => Object.entries(where).every(([key, value]) => {
     if (value === undefined) return true;
     if (value && typeof value === "object" && "not" in value) return row[key] !== (value as { not: unknown }).not;
@@ -52,16 +52,25 @@ function fakeDatabase() {
       create: async ({ data }: { data: Row }) => { const row = { ...data, id: `person-${++sequence}` }; db.people.push(row); return row; },
       update: async ({ where, data }: { where: Row; data: Row }) => Object.assign(db.people.find((person) => person.id === where.id)!, data),
       delete: async ({ where }: { where: Row }) => { db.people = db.people.filter((person) => person.id !== where.id); },
-      findUnique: async ({ where }: { where: Row }) => {
+      findUnique: async ({ where, select }: { where: Row; select?: { _count?: { select?: Record<string, boolean> } } }) => {
         const person = db.people.find((row) => row.id === where.id);
         if (!person) return null;
         const referenced = db.otherReferences.has(person.id) ? 1 : 0;
+        // Declared guardian authority (#131) points at the Person with `onDelete: Restrict`; the count only exists if the
+        // removal asked for it, so a missing relation in the guard shows up as the person being deleted anyway.
+        const guardian = db.guardianReferences.has(person.id) ? 1 : 0;
+        const requested = select?._count?.select ?? {};
+        const guardianCounts = Object.fromEntries(
+          ["guardianAuthoritiesAsMinor", "guardianAuthoritiesAsAdult", "guardianAuthoritiesDeclared", "guardianConflictsAsMinor", "guardianConflictsAsAdult"]
+            .filter((key) => requested[key]).map((key) => [key, guardian]),
+        );
         return {
           _count: {
             householdMembers: 0, heldRegistrations: 0, registrationEvents: referenced, externalIdentities: 0,
             notes: 0, attendeeAccountLinks: 0, userLinks: 0,
             memberClassCompletions: db.classCompletions.filter((row) => row.personId === person.id).length,
             clubRosterMemberships: db.members.filter((member) => member.personId === person.id).length,
+            ...guardianCounts,
           },
         };
       },
@@ -396,6 +405,19 @@ describe("club roster storage", () => {
     expect(db.honorEntries).toHaveLength(1);
     const removal = mocks.writeAuditLog.mock.calls.map(([entry]) => entry).find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED");
     expect(removal.metadata).toMatchObject({ personDeleted: false, honorEntriesErased: 0 });
+  });
+
+  it("keeps the person when a responsible-adult declaration or review item refers to them (#131)", async () => {
+    const { memberId: id } = await addRosterMember("club-1", "2026-27", youth, actor, { now });
+    const personId = db.members[0].personId as string;
+    db.guardianReferences.add(personId);
+
+    await removeRosterMember("club-1", id, actor, now);
+
+    // The foreign keys are `onDelete: Restrict`, so deleting the person would fail; the guard keeps them instead.
+    expect(db.people.some((person) => person.id === personId)).toBe(true);
+    const removal = mocks.writeAuditLog.mock.calls.map(([entry]) => entry).find((entry) => entry.action === "CLUB_ROSTER_MEMBER_REMOVED");
+    expect(removal.metadata).toMatchObject({ personDeleted: false });
   });
 
   it("cancels an open order need, deletes the person, and audits the count (#566)", async () => {

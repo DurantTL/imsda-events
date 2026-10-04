@@ -128,6 +128,10 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
     locationWaitlistChange: { create: vi.fn().mockResolvedValue({ id: "change-1" }) },
     messageOutbox: { findMany: vi.fn().mockResolvedValue([]) },
     auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) },
+    // Responsible-adult declarations (#131): none exist yet, so each one is the first for its minor.
+    $executeRaw: vi.fn().mockResolvedValue(0),
+    guardianAuthority: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "guardian-1" }), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+    guardianAuthorityConflict: { findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "conflict-1" }) },
   };
   dependencies.getPrisma.mockReturnValue({
     // Directory reads during submit must go through the transaction (#482).
@@ -525,6 +529,8 @@ describe("club registration submit", () => {
       ...baseInput,
       responses: { ...baseInput.responses, club_name: "Not listed", club_name_other: "Test Trailblazers" },
       attendees: [{ clientId: "attendee-1", responses: { first_name: "Alex", last_name: "Sample", attendee_age: "12" } }],
+      // A 12-year-old is a minor (#131): the form always sends the responsible-adult choice, "None of us" when no adult is on the registration.
+      responsibleAdults: { "attendee-1": "NONE" },
     }), now);
     const submission = tx.publicRegistrationSubmission.create.mock.calls[0]![0].data;
     expect(submission.responses).toMatchObject({ club_name: "Not listed", club_name_other: "Test Trailblazers" });
@@ -732,5 +738,100 @@ describe("club registration submit at an event location (#413)", () => {
     await at("loc-1");
     const prisma = dependencies.getPrisma() as { $transaction: ReturnType<typeof vi.fn> };
     expect(prisma.$transaction.mock.calls[0]![1]).toMatchObject({ isolationLevel: "Serializable", timeout: 20_000 });
+  });
+});
+
+describe("responsible adult at an ordinary public submit (#131)", () => {
+  /** An individual (not club) registration, with people created the way the form does. */
+  function ordinary() {
+    const tx = fixture({ form: definition(), audience: "GENERAL", billingMode: "ATTENDEE_PAY" });
+    tx.person.create.mockImplementation(async ({ data }: { data: { firstName: string; lastName: string } }) => ({ id: `person-${data.firstName}`, ...data }));
+    tx.person.findUnique.mockResolvedValue(null);
+    return tx;
+  }
+  const submitIndividual = (attendees: Array<{ clientId: string; responses: Record<string, unknown> }>, responsibleAdults?: Record<string, string>, tx = ordinary()) => (
+    submitPublicRegistration("honors-weekend", "clubs", publicRegistrationInputSchema.parse({
+      ...baseInput,
+      attendees,
+      ...(responsibleAdults ? { responsibleAdults } : {}),
+    }), now).then(() => tx)
+  );
+  const dad = { clientId: "a-dad", responses: { first_name: "Dan", last_name: "Sample", attendee_age: "44" } };
+  const son = { clientId: "a-son", responses: { first_name: "Sam", last_name: "Sample", attendee_age: "12" } };
+  const uncle = { clientId: "a-uncle", responses: { first_name: "Ulf", last_name: "Sample", attendee_age: "40" } };
+
+  it("records the registrant's choice as the declaration, for this event and registration", async () => {
+    const tx = ordinary();
+    await submitIndividual([dad, son], { "a-son": "a-dad" }, tx);
+    expect(tx.guardianAuthority.create).toHaveBeenCalledTimes(1);
+    expect(tx.guardianAuthority.create.mock.calls[0]![0].data).toMatchObject({
+      eventId: "event-1",
+      registrationId: "registration-1",
+      minorPersonId: "person-Sam",
+      adultPersonId: "person-Dan",
+      source: "REGISTRATION_FORM",
+      actorPersonId: "person-director",
+    });
+    expect(tx.auditLog.create.mock.calls.map(([call]) => call.data.action)).toContain("GUARDIAN_AUTHORITY_DECLARED");
+  });
+
+  it("records None of us explicitly", async () => {
+    const tx = await submitIndividual([dad, son], { "a-son": "NONE" });
+    expect(tx.guardianAuthority.create.mock.calls[0]![0].data).toMatchObject({ minorPersonId: "person-Sam", adultPersonId: null, source: "REGISTRATION_FORM" });
+  });
+
+  it("refuses a minor with no choice, naming the attendee, and registers nothing", async () => {
+    const tx = ordinary();
+    const error = await submitIndividual([dad, son], undefined, tx).catch((caught: unknown) => caught) as { code: string; issues: Array<Record<string, unknown>> };
+    expect(error.code).toBe("INVALID_SUBMISSION");
+    expect(error.issues).toEqual([expect.objectContaining({ code: "RESPONSIBLE_ADULT_REQUIRED", key: "responsible_adult", path: "attendees.1.responsibleAdult", attendeeIndex: 1 })]);
+    expect(tx.registration.create).not.toHaveBeenCalled();
+    expect(tx.guardianAuthority.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an adult who is not on this registration, another minor, or the minor themself", async () => {
+    for (const choice of ["a-elsewhere", "a-teen", "a-son"]) {
+      const tx = ordinary();
+      const teen = { clientId: "a-teen", responses: { first_name: "Tia", last_name: "Sample", attendee_age: "15" } };
+      const error = await submitIndividual([dad, son, teen], { "a-son": choice, "a-teen": "a-dad" }, tx).catch((caught: unknown) => caught) as { code: string; issues: Array<Record<string, unknown>> };
+      expect(error.code, choice).toBe("INVALID_SUBMISSION");
+      expect(error.issues[0], choice).toMatchObject({ code: "RESPONSIBLE_ADULT_INVALID", path: "attendees.1.responsibleAdult" });
+      expect(tx.registration.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it("classifies from each attendee's own answers only: a registration-level birth date does not make anyone a minor", async () => {
+    const tx = fixture({ form: definition([], [field("r_dob", "date_of_birth", "Contact birth date", "DATE", "REGISTRATION")]), audience: "GENERAL", billingMode: "ATTENDEE_PAY" });
+    tx.person.create.mockImplementation(async ({ data }: { data: { firstName: string; lastName: string } }) => ({ id: `person-${data.firstName}`, ...data }));
+    tx.person.findUnique.mockResolvedValue(null);
+    await submitPublicRegistration("honors-weekend", "clubs", publicRegistrationInputSchema.parse({
+      ...baseInput,
+      responses: { ...baseInput.responses, date_of_birth: "2018-05-05" },
+      attendees: [dad, uncle].map((attendee) => ({ ...attendee })),
+    }), now);
+    expect(tx.registration.create).toHaveBeenCalledTimes(1);
+    expect(tx.guardianAuthority.create).not.toHaveBeenCalled();
+  });
+
+  it("asks nothing, and records nothing, when nobody is a minor", async () => {
+    const tx = await submitIndividual([dad, uncle]);
+    expect(tx.guardianAuthority.create).not.toHaveBeenCalled();
+    expect(tx.registration.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("a club registration through the club flow is not asked: its roster has its own adults and youth", async () => {
+    const tx = fixture();
+    await submit();
+    expect(tx.guardianAuthority.create).not.toHaveBeenCalled();
+    expect(tx.guardianAuthority.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("the same answers with different responsible-adult choices are different requests, so a replay cannot carry an old choice", async () => {
+    const tx = ordinary();
+    await submitIndividual([dad, son], { "a-son": "a-dad" }, tx);
+    const first = tx.publicRegistrationSubmission.create.mock.calls[0]![0].data.requestHash;
+    const second = ordinary();
+    await submitIndividual([dad, son], { "a-son": "NONE" }, second);
+    expect(second.publicRegistrationSubmission.create.mock.calls[0]![0].data.requestHash).not.toBe(first);
   });
 });

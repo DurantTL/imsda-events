@@ -443,6 +443,13 @@ export async function removeRosterMember(organizationId: string, memberId: strin
               // both point at the Person with `onDelete: Restrict`.
               groupBillingRegistrations: true,
               billingResponsibilities: true,
+              // Declared guardian authority (#131): minor, adult and declaring registrant, and
+              // the review items for either side, all `onDelete: Restrict`.
+              guardianAuthoritiesAsMinor: true,
+              guardianAuthoritiesAsAdult: true,
+              guardianAuthoritiesDeclared: true,
+              guardianConflictsAsMinor: true,
+              guardianConflictsAsAdult: true,
             },
           },
         },

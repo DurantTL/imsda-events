@@ -16,6 +16,7 @@ import {
 } from "@/modules/registrations/choice-answer-filter";
 import { ChoiceAnswerFilter, type ChoiceFilterView } from "@/components/choice-answer-filter";
 import { backgroundFlaggedAttendeeIds } from "@/modules/background-checks/repository";
+import { getResponsibleAdultsByAttendee } from "@/modules/guardian-authority/repository";
 import { staffPageTitles } from "@/components/staff-navigation";
 
 export const metadata: Metadata = { title: staffPageTitles.registrations };
@@ -28,7 +29,13 @@ export default async function PeoplePage({ searchParams }: { searchParams: Promi
   }
   // Each location on its own, or all combined (#413).
   const { locations, locationId } = await resolveLocationFilter(event.id, requestedLocation);
-  const [allRegistrations, flagged] = await Promise.all([listRegistrations(event.id, { locationId }), backgroundFlaggedAttendeeIds(event.id)]);
+  const [allRegistrations, flagged, responsibleByAttendee] = await Promise.all([listRegistrations(event.id, { locationId }), backgroundFlaggedAttendeeIds(event.id), getResponsibleAdultsByAttendee(event.id)]);
+  // Who is responsible for each minor (#131): names only, shown beside the minor.
+  const responsibleAdults = Object.fromEntries([...responsibleByAttendee].map(([attendeeId, minor]) => [attendeeId, {
+    adultName: minor.responsibleAdult?.name ?? null,
+    noneOfUs: minor.noneOfUs,
+    ageUnknown: minor.status === "UNKNOWN",
+  }]));
   // Filter by a choice answer (#739), on the server: only choice questions flagged "Show as a filter" (#743)
   // resolve here, whatever the URL says. This page already requires VIEW_SENSITIVE_DATA, so sensitive ones are offered.
   const viewer = { canViewSensitive: permissions.includes("VIEW_SENSITIVE_DATA") };
@@ -48,6 +55,6 @@ export default async function PeoplePage({ searchParams }: { searchParams: Promi
   return <>
     <LocationFilter basePath="/people" locations={locations} params={{ event: event.id, filter, [CHOICE_FILTER_QUESTION_PARAM]: choice?.question.id, [CHOICE_FILTER_VALUE_PARAM]: choice?.value ?? undefined }} selectedId={locationId} />
     <ChoiceAnswerFilter eventId={event.id} view={choiceView} carry={{ filter, location: locationId ?? undefined }} canExport={permissions.includes("VIEW_REPORTS") && permissions.includes("VIEW_SENSITIVE_DATA")} />
-    <PeopleWorkspace key={`${event.id}:${choice?.question.id ?? ""}:${choice?.value ?? ""}`} eventId={event.id} eventSlug={event.slug} eventTimezone={event.timezone} waitlistEnabled={event.waitlistEnabled} initialRegistrations={registrations} canEdit={permissions.includes("MANAGE_REGISTRATION")} canEmail={permissions.includes("MANAGE_COMMUNICATIONS")} initialFilter={filter} initialRegistrationId={registration} backgroundFlaggedAttendeeIds={[...flagged]} matchingPersonFilter={Boolean(choice?.value)} locationId={locationId} />
+    <PeopleWorkspace key={`${event.id}:${choice?.question.id ?? ""}:${choice?.value ?? ""}`} eventId={event.id} eventSlug={event.slug} eventTimezone={event.timezone} waitlistEnabled={event.waitlistEnabled} initialRegistrations={registrations} canEdit={permissions.includes("MANAGE_REGISTRATION")} canEmail={permissions.includes("MANAGE_COMMUNICATIONS")} initialFilter={filter} initialRegistrationId={registration} backgroundFlaggedAttendeeIds={[...flagged]} responsibleAdults={responsibleAdults} matchingPersonFilter={Boolean(choice?.value)} locationId={locationId} />
   </>;
 }

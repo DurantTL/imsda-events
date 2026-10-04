@@ -3,6 +3,7 @@ import "server-only";
 import { createHmac, randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { declareResponsibleAdultsForRegistration, getRegistrationResponsibleAdultView, GuardianAuthorityError } from "@/modules/guardian-authority/repository";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import { createOpaqueToken, hashOpaqueToken } from "@/modules/access/tokens";
 import { attendeePassExpiry } from "@/modules/checkin/attendee-pass-token";
@@ -961,6 +962,7 @@ export async function authorizeRegistrationAccessToken(
     registrationId: access.registration.id,
     eventId: access.registration.eventId,
     registrationStatus: access.registration.status,
+    attendeeEditPolicy: access.registration.event.attendeeEditPolicy,
   };
 }
 
@@ -1233,5 +1235,53 @@ export async function revokeRegistrationAccessTokensForRegistration(
       revokedAt: null,
     },
     data: { revokedAt: now },
+  });
+}
+
+export class PublicResponsibleAdultError extends Error {
+  constructor(
+    public readonly code: "REGISTRATION_NOT_ACTIVE" | "CHOICES_INVALID" | "NOT_AVAILABLE" | "CONCURRENT_CHANGE" | "EDIT_POLICY_REQUIRES_VERIFICATION",
+    message: string,
+  ) {
+    super(message);
+    this.name = "PublicResponsibleAdultError";
+  }
+}
+
+/**
+ * The registrant changes who is responsible for their minors from the private registration page (#131). Only
+ * this registration is touched, with the same checks as the registration form: one choice per minor, an adult
+ * on this same registration or "None of us".
+ */
+export async function updatePublicResponsibleAdults(
+  token: string,
+  choices: Record<string, string>,
+  now = new Date(),
+) {
+  return getPrisma().$transaction(async (tx) => {
+    const access = await loadActiveAccessRecord(tx, token, now);
+    if (!access) return null;
+    const status = access.registration.status;
+    if (status !== "SUBMITTED" && status !== "CONFIRMED" && status !== "WAITLISTED") {
+      throw new PublicResponsibleAdultError("REGISTRATION_NOT_ACTIVE", "The responsible adult can be changed only on an active registration.");
+    }
+    // Same rule as the other private-link edits: when the event verifies every edit, only the seminar preferences
+    // are open to the link, so changing who is responsible for a minor needs the verified route.
+    if (access.registration.event.attendeeEditPolicy === "VERIFY_EVERY_EDIT") {
+      throw new PublicResponsibleAdultError("EDIT_POLICY_REQUIRES_VERIFICATION", "This event requires verification before this change. To change this, contact the event team.");
+    }
+    try {
+      const outcome = await declareResponsibleAdultsForRegistration(tx, { registrationId: access.registration.id, choices, accessTokenId: access.id });
+      const view = await getRegistrationResponsibleAdultView(access.registration.id, tx);
+      return { outcome: { changed: outcome.created + outcome.superseded, sentToReview: outcome.conflicts }, view };
+    } catch (error) {
+      if (error instanceof GuardianAuthorityError) {
+        throw new PublicResponsibleAdultError(
+          error.code === "ATTENDEE_NOT_FOUND" ? "NOT_AVAILABLE" : error.code === "CONCURRENT_CHANGE" ? "CONCURRENT_CHANGE" : "CHOICES_INVALID",
+          error.message,
+        );
+      }
+      throw error;
+    }
   });
 }
