@@ -1,13 +1,13 @@
-# Invoices: drafts, finalization and revisions (#167, slice 3)
+# Invoices: drafts, finalization, revisions, delivery and statements (#167 slice 3, #168 slice 4)
 
 For events billed to organizations after the event (`DEFERRED_ORGANIZATION_INVOICE`, such as Spring
 Camporee). It turns the approved attendance reconciliation (#166) and the recorded billing
 responsibility (#165) into one invoice per church or club, reviewed by a person and then finalized by a
 named person with permission. Decisions: ADR 0008 and Caleb's Oct 4, 2026 answers on the issue.
 
-**Nothing is sent.** Finalizing assigns a number and freezes the invoice; it does not email, print or
-notify anyone, and the church and club director see nothing from this screen. Sending is #168 and is a
-separate staff action. There is no automatic finalization, no scheduled job and no reminder.
+**Nothing is sent by finalizing.** Finalizing assigns a number and freezes the invoice; it does not email, print or
+notify anyone, and the church and club director see nothing until conference staff send it (see "Delivery, AR,
+payments and statements" below, #168). There is no automatic finalization, no automatic send, no scheduled job and no reminder.
 
 The screens are Finance, then Invoices (`/finance/invoices`) and one invoice
 (`/finance/invoices/[invoiceId]`), linked from the Finance page and from Attendance reconciliation. Only
@@ -183,6 +183,105 @@ apply payments against the invoice's current OPEN entry. No invoice, version or 
 change shape: the ledger adds states (for example paid) and a link column, and a new migration, so the
 trigger that allows only OPEN to SUPERSEDED would be widened then.
 
+## Delivery, AR, payments and statements (#168, slice 4)
+
+Caleb's decisions, Oct 4, 2026: an invoice goes out as **an email with a PDF of the finalized version attached**, only when
+**conference staff send it** (never automatically, no reminders, no collection messages); the default recipients are the church's
+active billing contact plus a copy to the club director(s) of the clubs on the invoice, and staff see the exact list and can
+untick anyone; the church pays by check against its AR in the conference's own books, so staff mark an invoice "Posted to AR" and record
+payments by hand; the treasurer gets a formula-safe CSV. Refunds, an accounting-system integration and cross-event statements are out of scope.
+
+Everything below needs **MANAGE_FINANCE on the event in the URL** (checked again on the server for every action). It lives on the
+invoice page (`/finance/invoices/[invoiceId]`), the send page (`/finance/invoices/[invoiceId]/send?version=`), the statements
+(`/finance/invoices/statements`) and the report section at the foot of the Invoices list.
+
+### The PDF
+
+Made by `modules/invoices/invoice-pdf.ts` with **pdf-lib** (pure JavaScript, MIT, no native code and no headless browser; its only
+dependencies are small pure-JS helpers), from the **finalized version's immutable snapshot** and a few fixed facts, never from live data:
+the conference name (platform settings, plain text), invoice number (with `-R<n>`), issue date (the finalization time, in the event's time
+zone), event, billed-to church and the billing contact **as finalized**, one block per club registration with registered and billable counts and its
+amount, the credits, promo code, charges not tied to a person and staff adjustments under it, the total, "Supersedes SC27-0001" on a revision, and the
+payment instruction. Attendee names are not printed.
+
+The payment instruction is a finance setting, not a fixed fact: the event's `invoicePaymentInstructions` (editable by MANAGE_FINANCE, audited), defaulting to
+"Please remit by check to the Iowa-Missouri Conference." The text used is copied onto the stored document, so changing the setting later never changes a PDF
+that was already made.
+
+**Deterministic and stored once.** The renderer uses no clock and no random ids (creation and modification dates are the finalization time), so the same input gives
+the same bytes (tests render twice and compare hashes). The first send or download stores the bytes (`MessageAttachment`, with `sizeBytes` and `sha256`, which a
+database check ties to the content, and a trigger forbids rewriting) and one `InvoiceVersionDocument` per version (unique, only for a FINALIZED or SUPERSEDED
+version, recording the hash, the layout version, the header name and the instruction used). **Every send and download reads those stored bytes**, verifies they still hash
+to the recorded value, and never regenerates, so a resend cannot differ. The repository has no file store for generated files, so the bytes live in PostgreSQL
+(one small row per version, referenced by every message that carries it).
+
+### Who it goes to
+
+`getInvoiceSendPreview` and `sendInvoiceVersion` (`modules/invoices/delivery-repository.ts`):
+
+- **To:** the church's **current** active billing contact (#165), never the form submitter. A group billed to a person goes to that person.
+- **Copy:** the **active director** (role Director, an unrevoked grant inside its date window, account not disabled) of each club on the invoice. A deputy, registrar,
+  reporter or revoked director is not copied. An address appears once (a director who is also the billing contact is one recipient).
+- Each recipient is **one outbox message**, so each gets their own copy and their own delivery, bounce and suppression status. The screen says "To" and "Copy", but no message
+  shows the others on a header line.
+- **Changed contact.** The PDF always shows the contact the invoice was finalized with. The email goes to the contact **now**. When they differ the preview says so
+  ("The billing contact changed since this invoice was finalized"), names both, and the delivery record keeps `contactChangedSinceFinalization`. A page opened before the contact
+  changed cannot send (the recipient fingerprint no longer matches: reload). A contact-only revision brings the PDF up to date.
+- Staff untick anyone. **At least one recipient is required**. The page sends back only the **keys** that stay ticked (`billing`, `director:<account>`); the server recomputes
+  who they are, so an address can never be supplied by the caller, and an unknown key is refused.
+- The preview warns when the last invoice email to an address bounced, was suppressed, drew a complaint or failed; staff decide, nothing is blocked.
+
+### Sending, resending and the record
+
+A send is a staff action with a confirmation naming the sender and the recipient count, an editable subject and message (a default naming the invoice,
+amount and payment instruction), and an idempotency key. In one transaction under the event's lock it re-checks that the version is **FINALIZED** (a version a revision
+replaced cannot be sent: refused with the newer version named, and refused by a database trigger as well), recomputes the recipients, creates the append-only
+`InvoiceDelivery` (version, sequence 1, 2, 3, the sender and the name they sent under, subject, document, whether the contact had changed) with one `InvoiceDeliveryRecipient` per
+message, queues the messages in the **existing outbox** (template key `INVOICE_DELIVERY`, recipient kind `BILLING_CONTACT`, the stored attachment referenced by `attachmentId`,
+the event's sender settings, HTML and text bodies), and audits it. After the commit it processes the new rows through the normal pipeline.
+
+- **Delivery mode is respected.** `DISABLED` records each message as `SUPPRESSED` (nothing is emailed); `LOCAL_CAPTURE` captures it; `EXTERNAL_EMAIL` requires a verified
+  sender and sends through Resend with the PDF attached (the delivery worker reads the attachment, verifies its hash and passes it to the provider; a mismatch is a definitive
+  failure, never a send). A failed delivery leaves the rows queued for the normal retry and sweep; the delivery record stays.
+- **Status is read from the outbox**, not copied: queued, captured, sent, delivered, **bounced**, marked as spam, failed or suppressed, kept up to date by the existing provider webhook.
+  The invoice page lists every send with its recipients and statuses. A resend is a **new delivery record for the same version** with the same document and hash.
+- A retry with the same key replays the first result and sends nothing more; the key cannot be reused for another version.
+- The outbox's generic staff retry copies the attachment too. An invoice message is not an event template, so it does not appear in the Communications delivery log.
+- Audit rows (`INVOICE_SENT`, `INVOICE_RESENT`) hold ids, counts, the document hash and the delivery mode: **never an email address or a name**.
+
+### Posted to AR
+
+"Mark posted to AR" (a date and an optional reference) records an `InvoiceArPosting` for a FINALIZED version, **once per version** (a unique index). A mistake is corrected only
+by a **new posting that names the one it corrects and gives a reason**; nothing is edited or deleted (triggers). A revision is posted again, since the amount changed. Audited.
+
+### Payments
+
+"Record payment" (amount greater than zero, received date, optional check number and note) records an append-only `InvoicePayment` against the **OPEN receivable of the version
+that is finalized at that moment**. Partial payments are allowed. A mistake is **voided with a reversal entry** (a new row naming the payment, repeating its amount, with a reason); a
+payment is voided once, and nothing is edited or deleted. A client request key makes a double click record one entry.
+
+**Outstanding = the live version's total (its OPEN receivable) less every payment, net of voids, on the invoice**, never below zero. **Revisions carry what was paid forward** without
+moving any row: a $100 invoice paid $60 and revised to $90 leaves $30 outstanding; revised to $50 it shows $10 **overpaid**, flagged to staff (an overpayment is accepted and never hidden;
+refunds are out of scope). A payment keeps pointing at the version it was recorded against, and the statement shows which. Recording and voiding lock the invoice row, so they
+serialize with a revision being finalized, and the database refuses a payment against a superseded receivable.
+
+### Statements and reporting
+
+- **Statement** (`/finance/invoices/statements`, then one church): for the **event in the URL**, each church (or billing person) with a finalized invoice, then per invoice the live
+  version, superseded versions as history, AR status (date and reference), sends, every payment with voids struck through, and what is outstanding. Attendee payments are not mixed in.
+- **Cross-event visibility.** A statement is per event. The viewer must hold MANAGE_FINANCE on **that** event; the church comes from the URL but is only looked up among that event's invoices, so a
+  church with no invoice on the event is a 404 and one event's finance staff never see another event's invoices (even for the same church). A conference-wide or cross-event statement is out of scope
+  (it would need a rule for which events a person manages); each event's treasurer uses that event's statement.
+- **Finance report** (foot of the Invoices list): submitted headcount, billable units, invoiced amount, posted-to-AR count and amount, sent and not sent, paid, outstanding and overpaid, with
+  **deferred receivables kept apart from attendee payments** (shown separately, net of refunds).
+- **Treasurer CSV** (`/api/events/<event>/exports/invoices`, MANAGE_FINANCE): the live finalized version of each invoice: number, what it supersedes, church, event, total, posted-to-AR date and
+  reference, paid, outstanding, overpaid and the date last sent, through the shared CSV writer, so a cell that starts with `=`, `+`, `-` or `@` is neutralized. No accounting-system format.
+
+### Security
+
+The PDF and every attachment are served only through the staff route above (MANAGE_FINANCE on the event, `private, no-store`); there is no public or token URL for them, and a test scans `app/` to
+prove no other route reads the stored bytes. A version of another event is a 404. Statements and the CSV follow the same event check. Audit holds ids only.
+
 ## Immutability, checked in the database
 
 Database triggers (not only application code) enforce, and `npm run test:invoices` proves:
@@ -199,7 +298,8 @@ Database triggers (not only application code) enforce, and `npm run test:invoice
 
 ## Not built, and open items
 
-- **Sending, PDF and email** (#168), a printable view, and accounting export. Nothing is sent or scheduled.
+- **A printable web view** and any accounting-system export or API (the treasurer CSV below is the only export). Sending
+  is built (#168) and is only ever a staff action: nothing is sent or scheduled automatically.
 - **Void.** A $0 invoice is finalized, not voided. (An open draft can be discarded: see Drafts.) A finalized invoice is corrected by a revision, including one that brings it to $0.
 - **A finalized invoice needs a billing contact**, so it has someone to be sent to. A group with none
   cannot be finalized until staff add one (Billing responsibility) and regenerate the draft. This is a
@@ -222,3 +322,13 @@ after finalization revised by finance staff (`-R1`, prior superseded and readabl
 finalization re-approved and revised (needs the permission), cross-event refusals, the code lock and clash
 checks, the permission grant and its removal, and audit rows with no contact name or email. Unit tests:
 `tests/invoices-*.test.ts` (rules, service refusals, routes and permissions, screens, migration).
+
+`npm run test:invoice-delivery` (#168) runs against a local or CI Postgres and proves: the PDF is made once from the snapshot and stored with a database-checked hash (rebuilding it from the
+same snapshot gives the same bytes, parallel first requests make one document); a send queues one outbox message per ticked recipient with the stored attachment (billing contact now, club
+directors only, no deputy or revoked grant, never the submitter), refuses none ticked, an unknown recipient, a changed list, a missing confirmation and another event, replays a retried key and sends
+once under parallel requests; a resend is a new delivery record with the same document and hash; a bounce is recorded and warned about; event email off records suppressed messages; real delivery hands
+the provider the stored PDF byte for byte; a contact changed after finalization is flagged and mailed at its new address while the PDF stays as finalized; a superseded version cannot be sent (and the
+database refuses it); AR is once per version and corrected only by a new posting; payments are append-only with partial, voided and overpaid figures, a revision carries what was paid, and a payment
+cannot hit a superseded receivable; statements, the report and the CSV are scoped to the event and the CSV is formula-safe; no audit row holds an address or a name. Unit tests:
+`tests/invoice-delivery-domain.test.ts`, `tests/invoice-pdf.test.ts`, `tests/invoice-delivery-routes.test.ts` (permissions, unauthorized statement access, the PDF is never public) and
+`tests/invoice-delivery-migration.test.ts`.

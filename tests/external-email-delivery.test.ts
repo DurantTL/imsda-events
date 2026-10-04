@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -82,6 +83,7 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
             subjectSnapshot: message.subjectSnapshot,
             bodyTextSnapshot: message.bodyTextSnapshot,
             bodyHtmlSnapshot: message.bodyHtmlSnapshot,
+            attachment: message.attachment ?? null,
             attemptCount: message.attemptCount,
           }
         : null
@@ -224,6 +226,41 @@ describe("external email queue", () => {
     expect(payload!.bodyHtml).toContain("<strong>Avery</strong>");
     // Nothing new is written back: the row keeps only what it was captured with.
     expect(store.message.bodyTextSnapshot).toBe("# Registration confirmed\n\nHello **Avery**.");
+  });
+
+  /** An invoice PDF (#168) rides along as a stored attachment, byte for byte, and only when its hash still matches. */
+  it("hands the provider the stored attachment, and refuses one whose hash no longer matches", async () => {
+    const bytes = Buffer.from("%PDF-1.7 synthetic invoice bytes");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const good = fakeDeliveryStore({ templateKey: "INVOICE_DELIVERY", registrationId: null, attachment: { filename: "Invoice-SC27-0001.pdf", contentType: "application/pdf", sha256, content: bytes } });
+    let provided: Array<{ filename: string; contentType: string; content: Uint8Array }> | undefined;
+    const sendEmail = vi.fn(async (input: { attachments?: Array<{ filename: string; contentType: string; content: Uint8Array }> }) => {
+      provided = input.attachments;
+      return { provider: "RESEND" as const, providerMessageId: "email-provider-attachment" };
+    });
+    const result = await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: good.prisma as never, sendEmail: sendEmail as never } });
+    expect(result.sentIds).toEqual(["message-1"]);
+    expect(provided).toHaveLength(1);
+    expect(provided![0]).toMatchObject({ filename: "Invoice-SC27-0001.pdf", contentType: "application/pdf" });
+    expect(Buffer.from(provided![0]!.content).equals(bytes)).toBe(true);
+
+    const tampered = fakeDeliveryStore({ templateKey: "INVOICE_DELIVERY", registrationId: null, attachment: { filename: "Invoice-SC27-0001.pdf", contentType: "application/pdf", sha256, content: Buffer.from("%PDF-1.7 something else") } });
+    const refused = vi.fn();
+    const failed = await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: tampered.prisma as never, sendEmail: refused as never } });
+    expect(refused).not.toHaveBeenCalled();
+    expect(failed.sentIds).toEqual([]);
+    expect(failed.failedIds).toEqual(["message-1"]);
+    expect(tampered.message.status).toBe("FAILED");
+  });
+
+  it("sends a message with no attachment exactly as before", async () => {
+    const store = fakeDeliveryStore();
+    const sendEmail = vi.fn(async (input: { attachments?: unknown }) => {
+      expect(input.attachments).toBeUndefined();
+      return { provider: "RESEND" as const, providerMessageId: "email-provider-plain" };
+    });
+    await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail: sendEmail as never } });
+    expect(sendEmail).toHaveBeenCalledOnce();
   });
 
   /**

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import {
   EmailProviderConfigurationError,
@@ -91,6 +91,8 @@ type ClaimedMessage = {
   subjectSnapshot: string;
   bodyTextSnapshot: string;
   bodyHtmlSnapshot: string | null;
+  /** The one file sent with the message, when it has one (#168: an invoice PDF), read from the shared attachment row. */
+  attachment?: { filename: string; contentType: string; sha256: string; content: Uint8Array } | null;
   attemptCount: number;
   lockToken: string;
   startedAt: Date;
@@ -354,6 +356,7 @@ async function claimNextMessage(
           subjectSnapshot: true,
           bodyTextSnapshot: true,
           bodyHtmlSnapshot: true,
+          attachment: { select: { filename: true, contentType: true, sha256: true, content: true } },
           attemptCount: true,
         },
       });
@@ -577,6 +580,10 @@ async function runDeliveryLoop(
         bodyHtml: message.bodyHtmlSnapshot,
         now: message.startedAt,
       });
+      // A stored attachment must still be the file that was recorded; a mismatch is a definitive failure, never a send.
+      if (message.attachment && createHash("sha256").update(message.attachment.content).digest("hex") !== message.attachment.sha256) {
+        throw new Error("The attachment no longer matches its recorded hash, so the message was not sent.");
+      }
       const delivery = await sendEmail({
         fromName: message.senderNameSnapshot,
         fromEmail: message.senderEmailSnapshot ?? "",
@@ -596,6 +603,9 @@ async function runDeliveryLoop(
             footer: message.senderNameSnapshot,
           })
           : null,
+        attachments: message.attachment
+          ? [{ filename: message.attachment.filename, contentType: message.attachment.contentType, content: message.attachment.content }]
+          : undefined,
         idempotencyKey: `outbox:${message.id}`,
         messageId: message.id,
       }, configuration);

@@ -17,6 +17,11 @@ export type EmailDeliveryInput = {
    * plain-text part stays the fallback for a client that will not render HTML.
    */
   bodyHtml?: string | null;
+  /**
+   * Files sent with the message (#168: an invoice PDF). Sent inline, base64 encoded, to Resend's `attachments`.
+   * Small by design: the caller stores each file once and passes the same bytes on every send.
+   */
+  attachments?: Array<{ filename: string; contentType: string; content: Uint8Array }>;
   idempotencyKey: string;
   messageId: string;
 };
@@ -100,6 +105,15 @@ export async function sendEmailWithResend(
         ...(input.bodyHtml?.trim() ? { html: input.bodyHtml } : {}),
         ...(input.replyToEmail?.trim()
           ? { reply_to: input.replyToEmail.trim().toLowerCase() }
+          : {}),
+        ...(input.attachments && input.attachments.length > 0
+          ? {
+              attachments: input.attachments.map((attachment) => ({
+                filename: cleanHeaderText(attachment.filename),
+                content: Buffer.from(attachment.content).toString("base64"),
+                content_type: attachment.contentType,
+              })),
+            }
           : {}),
         tags: [{ name: "message_id", value: input.messageId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 256) }],
       }),

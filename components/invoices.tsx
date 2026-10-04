@@ -64,6 +64,7 @@ export function Invoices({ eventId, view, canFinalize }: { eventId: string; view
         <div className="page-intro-actions">
           <a className="secondary-button" href={`/finance/attendance-reconciliation?event=${eventId}`}>Attendance reconciliation</a>
           <a className="secondary-button" href={`/finance/billing-responsibility?event=${eventId}`}>Billing responsibility</a>
+          <a className="secondary-button" href={`/finance/invoices/statements?event=${eventId}`}>Statements</a>
         </div>
       </div>
 

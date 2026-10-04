@@ -2876,6 +2876,8 @@ export async function retryMessage(
             : source.replyToEmailSnapshot,
           subjectSnapshot: source.subjectSnapshot,
           bodyTextSnapshot: source.bodyTextSnapshot,
+          // A retry carries the same stored file as its source (an invoice PDF, #168), never a copy without it.
+          attachmentId: source.attachmentId,
           metadata: {
             trigger: "STAFF_MESSAGE_RETRY",
             sourceMessageId: source.id,

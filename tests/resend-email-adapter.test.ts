@@ -50,6 +50,22 @@ describe("Resend email adapter", () => {
     });
   });
 
+  it("sends an attachment base64 encoded to the provider, and none when there is none (#168)", async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify({ id: "email_provider_123" }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+    const configuration = { apiKey: "re_test_only", apiUrl: "https://api.resend.test" };
+    const bytes = Buffer.from("%PDF-1.7 synthetic");
+
+    await sendEmailWithResend({ ...input, attachments: [{ filename: "Invoice-SC27-0001.pdf", contentType: "application/pdf", content: bytes }] }, configuration, request);
+    const withFile = JSON.parse(String(request.mock.calls[0][1]?.body));
+    expect(withFile.attachments).toEqual([{ filename: "Invoice-SC27-0001.pdf", content: bytes.toString("base64"), content_type: "application/pdf" }]);
+
+    await sendEmailWithResend(input, configuration, request);
+    expect(JSON.parse(String(request.mock.calls[1][1]?.body))).not.toHaveProperty("attachments");
+  });
+
   it("sends an HTML part alongside the text fallback, and omits it when absent", async () => {
     const request = vi.fn<typeof fetch>(async () => new Response(
       JSON.stringify({ id: "email_provider_123" }),

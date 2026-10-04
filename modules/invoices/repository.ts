@@ -65,7 +65,20 @@ export type InvoiceErrorCode =
   | "CODE_INVALID"
   | "CODE_LOCKED"
   | "CODE_IN_USE"
-  | "CONCURRENT_CHANGE";
+  | "CONCURRENT_CHANGE"
+  // Delivery, AR and payments (#168)
+  | "NOT_SENDABLE"
+  | "NO_RECIPIENTS"
+  | "UNKNOWN_RECIPIENT"
+  | "PREVIEW_CHANGED"
+  | "DOCUMENT_CORRUPT"
+  | "EXTERNAL_EMAIL_NOT_CONFIGURED"
+  | "ALREADY_POSTED"
+  | "NOT_POSTED"
+  | "PAYMENT_NOT_FOUND"
+  | "ALREADY_VOIDED"
+  | "INVALID_INPUT"
+  | "PARTY_NOT_FOUND";
 
 export class InvoiceError extends Error {
   constructor(
