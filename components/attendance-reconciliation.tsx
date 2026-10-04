@@ -229,9 +229,13 @@ function RegistrationRow({ eventId, registration, isLive, correctionDetails, ack
         {review && (
           <small role="status">
             <strong>{review.acknowledged ? "Roster review acknowledged" : "Needs review: roster changed after pricing"}</strong>
-            {" "}({review.reasons.map(rosterReviewReasonLabel).join("; ")}). The amount is prorated from the estimate; approval waits for an acknowledgement.
+            {" "}({review.reasons.map(rosterReviewReasonLabel).join("; ")}). Until staff choose a figure the prorated amount is used, and approval waits.
             {acknowledgement && ` Acknowledged${acknowledgement.actorName ? ` by ${acknowledgement.actorName}` : ""} on ${when(acknowledgement.createdAt)}. Reason: ${acknowledgement.reason}`}
-            {isLive && !review.acknowledged && <> <AcknowledgeForm eventId={eventId} registrationId={registration.registrationId} /></>}
+            {registration.alternatives && (
+              <> Per-person (best match) {money(registration.alternatives.perPersonCents)}; prorated {money(registration.alternatives.proratedCents)}.</>
+            )}
+            {review.acknowledged && review.choice && <> Billing the {review.choice === "PER_PERSON" ? "per-person figure" : "prorated figure"}.</>}
+            {isLive && !review.acknowledged && <> <AcknowledgeForm alternatives={registration.alternatives} eventId={eventId} registrationId={registration.registrationId} /></>}
           </small>
         )}
         <details>
@@ -240,6 +244,7 @@ function RegistrationRow({ eventId, registration, isLive, correctionDetails, ack
             {registration.people.map((person) => (
               <li key={person.attendeeId}>
                 <strong>{person.name}</strong> · {personStateLabel(person.state)}
+                {person.transferredFrom ? ` · Transferred from ${person.transferredFrom}` : ""}
                 {person.billable ? ` · ${money(person.chargeCents)}${person.lateRate ? " (late price)" : ""}` : " · not billed"}
                 {person.addedAfterSubmission ? " · added after submission" : ""}
                 {person.substituted ? " · substituted" : ""}

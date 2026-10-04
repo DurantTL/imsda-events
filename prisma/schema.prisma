@@ -271,6 +271,12 @@ enum AttendanceCorrectionKind {
   CLEAR
 }
 
+/// What staff chose to bill for a registration whose prices cannot be matched to people with certainty (#166).
+enum AttendanceReviewChoice {
+  PER_PERSON
+  PRORATED
+}
+
 enum AttendanceReconciliationStatus {
   DRAFT
   APPROVED
@@ -5486,6 +5492,8 @@ model AttendanceReviewAcknowledgement {
   eventId        String
   registrationId String
   reviewKey      String
+  /// The basis staff chose to bill: the per-person best match, or the prorated estimate.
+  choice         AttendanceReviewChoice
   reason         String
   actorUserId    String?
   createdAt      DateTime @default(now())

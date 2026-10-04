@@ -49,7 +49,7 @@ async function postHandler(request: Request, context: RouteContext) {
       case "approve":
         return Response.json(await approveReconciliation({ eventId, versionId: body.versionId, actorUserId }));
       case "acknowledge":
-        return Response.json(await acknowledgeRosterReview({ eventId, registrationId: body.registrationId, reason: body.reason, actorUserId }));
+        return Response.json(await acknowledgeRosterReview({ eventId, registrationId: body.registrationId, choice: body.choice, reason: body.reason, actorUserId }));
       case "correct":
         return Response.json(await recordAttendanceCorrection({ eventId, attendeeId: body.attendeeId, kind: body.kind, reason: body.reason, actorUserId }));
     }

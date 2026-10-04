@@ -5,7 +5,8 @@ import {
   reconcileRegistration,
   reconciliationCsvRows,
   reviewPending,
-  rosterMismatchReasons,
+  reconstructPricedRoster,
+  type PricedRosterEntry,
   type PersonSource,
   type PromoSource,
   type RegistrationSource,
@@ -133,35 +134,82 @@ describe("charges not tied to a person", () => {
   });
 });
 
-describe("roster review after a member transfer", () => {
-  const lines = (labels: Array<string | null>) => labels.map((attendeeLabel, attendeeIndex) => ({ attendeeIndex, attendeeLabel }));
-  const roster = (...names: string[]) => names.map((name) => ({ name, substituted: false }));
+describe("reconstructing the roster as it was priced (member transfers)", () => {
+  const at = (attendeeId: string, ms: number): PricedRosterEntry => ({ attendeeId, position: ms, createdAtMs: ms });
+  const none = new Set<string>();
 
-  it("trusts prices whose names still line up", () => {
-    expect(rosterMismatchReasons({ priceLines: lines(["Ann Verify", "Verify, Bo"]), attendees: roster("Ann Verify", "Bo Verify"), transfersAfterPricing: 0 })).toEqual([]);
-    expect(rosterMismatchReasons({ priceLines: lines(["Person 1", null]), attendees: roster("Ann Verify", "Bo Verify"), transfersAfterPricing: 0 })).toEqual([]);
+  it("puts a person who moved out last back last: X had B, C, A; A moved to Y", () => {
+    const result = reconstructPricedRoster({ current: [at("B", 2), at("C", 3)], movedInIds: none, movedOut: [at("A", 4)], movedTwiceIds: none });
+    expect(result).toEqual({ ok: true, order: ["B", "C", "A"] });
   });
 
-  it("flags a price line past the roster, a name that is not at that place, and a transfer after pricing", () => {
-    expect(rosterMismatchReasons({ priceLines: lines(["A", "B", "C"]).map((line) => ({ ...line, attendeeLabel: null })), attendees: roster("A", "B"), transfersAfterPricing: 0 })).toEqual(["LINE_BEYOND_ROSTER"]);
-    expect(rosterMismatchReasons({ priceLines: lines(["Ann Verify", "Cy Verify"]), attendees: roster("Ann Verify", "Bo Verify"), transfersAfterPricing: 0 })).toEqual(["NAME_MISMATCH"]);
-    expect(rosterMismatchReasons({ priceLines: lines([null]), attendees: roster("Ann Verify"), transfersAfterPricing: 1 })).toEqual(["TRANSFER_AFTER_PRICING"]);
+  it("puts a person who moved out first or from the middle back where they were", () => {
+    expect(reconstructPricedRoster({ current: [at("B", 2), at("C", 3)], movedInIds: none, movedOut: [at("A", 1)], movedTwiceIds: none })).toEqual({ ok: true, order: ["A", "B", "C"] });
+    expect(reconstructPricedRoster({ current: [at("A", 1), at("C", 3)], movedInIds: none, movedOut: [at("B", 2)], movedTwiceIds: none })).toEqual({ ok: true, order: ["A", "B", "C"] });
   });
 
-  it("does not compare the name of a seat whose person was substituted, which keeps its price", () => {
-    expect(rosterMismatchReasons({ priceLines: lines(["Ann Verify"]), attendees: [{ name: "New Person", substituted: true }], transfersAfterPricing: 0 })).toEqual([]);
+  it("takes people who moved in out of the roster that was priced", () => {
+    expect(reconstructPricedRoster({ current: [at("B", 2), at("C", 3), at("A", 1)], movedInIds: new Set(["A"]), movedOut: [], movedTwiceIds: none })).toEqual({ ok: true, order: ["B", "C"] });
   });
 
-  it("bills a registration needing review on its prorated estimate and holds approval until acknowledged", () => {
-    const needs = registration(2, 4, null, { review: { reasons: ["TRANSFER_AFTER_PRICING"], acknowledged: false, acknowledgementId: null }, estimatedCents: 20000 });
-    const result = reconcileRegistration(needs);
+  it("refuses to guess when it cannot be certain", () => {
+    // Roster order and creation order disagree.
+    expect(reconstructPricedRoster({ current: [at("C", 3), at("B", 2)], movedInIds: none, movedOut: [at("A", 1)], movedTwiceIds: none }).ok).toBe(false);
+    // Two people created at the same moment.
+    expect(reconstructPricedRoster({ current: [at("B", 2), at("C", 3)], movedInIds: none, movedOut: [at("A", 2)], movedTwiceIds: none }).ok).toBe(false);
+    // The move no longer names the person.
+    expect(reconstructPricedRoster({ current: [at("B", 2)], movedInIds: none, movedOut: [null], movedTwiceIds: none }).ok).toBe(false);
+    // Someone moved twice.
+    expect(reconstructPricedRoster({ current: [at("B", 2)], movedInIds: none, movedOut: [at("A", 1)], movedTwiceIds: new Set(["A"]) }).ok).toBe(false);
+  });
+});
+
+describe("a registration whose prices cannot be matched with certainty", () => {
+  const needs = (choice: "PER_PERSON" | "PRORATED" | null, acknowledged: boolean) => registration(2, 4, null, {
+    review: { reasons: ["TRANSFER_AFTER_PRICING"], acknowledged, acknowledgementId: acknowledged ? "ack-1" : null, choice },
+    estimatedCents: 16000,
+  });
+  const group = (source: RegistrationSource) => ({ key: "g", title: "C", partyKind: "ORGANIZATION" as const, partyId: "o", partyName: "C", clubId: null, registrations: [source] });
+
+  it("shows both figures and bills the prorated one until staff choose", () => {
+    const result = reconcileRegistration(needs(null, false));
+    expect(result.alternatives).toEqual({ perPersonCents: 10000, proratedCents: 8000 });
     expect(result.basis).toBe("PRORATED_ESTIMATE");
+    expect(result.billableCents).toBe(8000);
+  });
+
+  it("bills what staff chose, and the choice is part of the fingerprint", () => {
+    const perPerson = reconcileRegistration(needs("PER_PERSON", true));
+    expect(perPerson.basis).toBe("PER_PERSON_LINES");
+    expect(perPerson.billableCents).toBe(10000);
+    const prorated = reconcileRegistration(needs("PRORATED", true));
+    expect(prorated.billableCents).toBe(8000);
+    const base = needs("PER_PERSON", true);
+    const choseProrated = { ...base, review: { ...base.review!, choice: "PRORATED" as const } };
+    expect(fingerprintInput(reconcileEvent([group(base)], "PER_CHURCH"))).not.toBe(fingerprintInput(reconcileEvent([group(choseProrated)], "PER_CHURCH")));
+    // The acknowledgement's own id is not a fact.
+    const other = { ...base, review: { ...base.review!, acknowledgementId: "ack-2" } };
+    expect(fingerprintInput(reconcileEvent([group(base)], "PER_CHURCH"))).toBe(fingerprintInput(reconcileEvent([group(other)], "PER_CHURCH")));
+  });
+
+  it("blocks approval until acknowledged", () => {
+    expect(reviewPending(reconcileEvent([group(needs(null, false))], "PER_CHURCH"))).toHaveLength(1);
+    expect(reviewPending(reconcileEvent([group(needs("PRORATED", true))], "PER_CHURCH"))).toEqual([]);
+  });
+
+  it("does not block approval when nobody attended: there is no figure to confirm", () => {
+    const nobody = registration(0, 4, null, { review: { reasons: ["LINE_BEYOND_ROSTER"], acknowledged: false, acknowledgementId: null, choice: null }, estimatedCents: 20000 });
+    const result = reconcileEvent([group(nobody)], "PER_CHURCH");
+    expect(result.groups[0]!.registrations[0]!.billableCents).toBe(0);
+    expect(reviewPending(result)).toEqual([]);
+  });
+
+  it("a person transferred in is shown and billed on the receiving registration", () => {
+    const moved = person(true, 5000, { transferredFrom: "Club Sender" });
+    const receiver = { ...registration(0, 0, null), people: [person(true), moved], estimatedCents: 5000 };
+    const result = reconcileRegistration(receiver);
     expect(result.billableCents).toBe(10000);
-    const event = reconcileEvent([{ key: "g", title: "C", partyKind: "ORGANIZATION", partyId: "o", partyName: "C", clubId: null, registrations: [needs] }], "PER_CHURCH");
-    expect(reviewPending(event)).toHaveLength(1);
-    const acknowledged = reconcileEvent([{ key: "g", title: "C", partyKind: "ORGANIZATION", partyId: "o", partyName: "C", clubId: null, registrations: [{ ...needs, review: { reasons: ["TRANSFER_AFTER_PRICING"], acknowledged: true, acknowledgementId: "ack-1" } }] }], "PER_CHURCH");
-    expect(reviewPending(acknowledged)).toEqual([]);
-    expect(fingerprintInput(acknowledged)).not.toBe(fingerprintInput(event));
+    expect(result.people.find((entry) => entry.attendeeId === moved.attendeeId)?.transferredFrom).toBe("Club Sender");
   });
 });
 

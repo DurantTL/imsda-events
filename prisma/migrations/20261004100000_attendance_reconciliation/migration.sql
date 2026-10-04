@@ -2,6 +2,9 @@
 CREATE TYPE "AttendanceCorrectionKind" AS ENUM ('MARK_ATTENDED', 'MARK_NOT_ATTENDED', 'CLEAR');
 
 -- CreateEnum
+CREATE TYPE "AttendanceReviewChoice" AS ENUM ('PER_PERSON', 'PRORATED');
+
+-- CreateEnum
 CREATE TYPE "AttendanceReconciliationStatus" AS ENUM ('DRAFT', 'APPROVED', 'SUPERSEDED');
 
 -- CreateTable
@@ -54,6 +57,7 @@ CREATE TABLE "AttendanceReviewAcknowledgement" (
     "eventId" TEXT NOT NULL,
     "registrationId" TEXT NOT NULL,
     "reviewKey" TEXT NOT NULL,
+    "choice" "AttendanceReviewChoice" NOT NULL,
     "reason" TEXT NOT NULL,
     "actorUserId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -114,7 +118,7 @@ ALTER TABLE "AttendanceReviewAcknowledgement" ADD CONSTRAINT "AttendanceReviewAc
 
 
 
--- #166: reviewed attendance and billable-unit reconciliation. Additive only (two enums, three new
+-- #166: reviewed attendance and billable-unit reconciliation. Additive only (three enums, three new
 -- tables). Corrections are append-only; a reconciliation version is an immutable snapshot whose
 -- only changes are its status transitions. All of it is enforced here, not only in the app.
 

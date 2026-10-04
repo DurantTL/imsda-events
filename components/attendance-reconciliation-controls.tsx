@@ -80,13 +80,31 @@ export function ApproveControl({ eventId, versionId, versionNumber, disabled }: 
   );
 }
 
+export const PRORATE_NOTE = "Prorating scales the whole registration's estimate, including charges that are not tied to a person, by attended over registered.";
+
 export const REASON_HELP = "Don't include health or medical details. A short reason like 'did not attend' or 'missed at check-in' is enough.";
 
-/** Staff accept the prorated figure for a registration whose roster changed after pricing. A reason is required. */
-export function AcknowledgeForm({ eventId, registrationId }: { eventId: string; registrationId: string }) {
+function dollars(cents: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+}
+
+/**
+ * Staff choose which figure to bill for a registration whose prices cannot be matched to people with
+ * certainty: the per-person best match or the prorated estimate. A reason is required.
+ */
+export function AcknowledgeForm({
+  eventId,
+  registrationId,
+  alternatives,
+}: {
+  eventId: string;
+  registrationId: string;
+  alternatives: { perPersonCents: number; proratedCents: number } | null;
+}) {
   const { busy, error, run } = useAction(eventId);
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
+  const [choice, setChoice] = useState<"PER_PERSON" | "PRORATED">("PRORATED");
   const reasonId = useId();
   if (!open) {
     return <button className="secondary-button" onClick={() => setOpen(true)} type="button">Acknowledge…</button>;
@@ -96,12 +114,20 @@ export function AcknowledgeForm({ eventId, registrationId }: { eventId: string; 
       className="billing-link-form"
       onSubmit={(event) => {
         event.preventDefault();
-        void run({ action: "acknowledge", registrationId, reason }).then((ok) => {
+        void run({ action: "acknowledge", registrationId, choice, reason }).then((ok) => {
           if (ok) setOpen(false);
         });
       }}
     >
-      <label htmlFor={reasonId}>Why do you accept the prorated figure for this registration?</label>
+      {alternatives && (
+        <fieldset>
+          <legend>Which figure should be billed?</legend>
+          <label><input checked={choice === "PER_PERSON"} name={`choice-${registrationId}`} onChange={() => setChoice("PER_PERSON")} type="radio" /> Per-person (best match): {dollars(alternatives.perPersonCents)}</label>
+          <label><input checked={choice === "PRORATED"} name={`choice-${registrationId}`} onChange={() => setChoice("PRORATED")} type="radio" /> Prorated: {dollars(alternatives.proratedCents)}</label>
+          <small>{PRORATE_NOTE}</small>
+        </fieldset>
+      )}
+      <label htmlFor={reasonId}>Why do you choose this figure?</label>
       <textarea aria-describedby={`${reasonId}-help`} id={reasonId} maxLength={500} onChange={(event) => setReason(event.target.value)} required rows={2} value={reason} />
       <small id={`${reasonId}-help`}>{REASON_HELP}</small>
       <span className="billing-inline-action">

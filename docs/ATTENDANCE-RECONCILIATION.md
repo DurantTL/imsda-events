@@ -64,7 +64,8 @@ Per registration, per invoice group and for the event:
   discount the estimate recorded, so a registration where everyone attends never bills more than
   its estimate, and nothing goes below $0. It is shown as its own line on the screen, in the
   snapshot and in the CSV. A code's minimum-subtotal condition is not re-checked against the
-  smaller attended subtotal (the church keeps the discount it was promised).
+  smaller attended subtotal (the church keeps the discount it was promised); this is a deliberate
+  choice, to be revisited if the conference wants the condition enforced.
 - **Meal-sponsorship credit**: units entered times the form's credit per unit, capped at the people
   who **attended** (the estimate caps it at the people registered), and never more than the
   charges. If the form's credit field cannot be found (an old form), the recorded credit is kept
@@ -105,20 +106,48 @@ kind) does not force a new approval. The reason field tells staff not to include
 details ("did not attend" or "missed at check-in" is enough), and audit rows never hold the reason.
 
 **One thing at a time.** Prepare, approve, correct and acknowledge all take one per-event database
-lock (`pg_advisory_xact_lock`). Approve re-reads the facts inside its locked transaction and
-refuses if they differ from the draft, so a correction cannot slip in between the check and the
-approval.
+lock (`pg_advisory_xact_lock`) and read everything, including the billing responsibility view, through
+the same transaction. Approve re-reads the facts inside its locked transaction and refuses if they
+differ from the draft. Other writers (check-ins, roster and price changes) do not take the lock: if
+the facts move after an approval the version is flagged FACTS_CHANGED, never altered. **#167 must
+refuse to finalize from an approval whose freshness is FACTS_CHANGED** and ask staff to prepare and
+approve again.
+
+**The fingerprint** is built from an explicit projection of the result: everything except a
+correction's id and an acknowledgement's id (a correction counts by its kind and person, an
+acknowledgement by its existence and choice).
 
 ## Roster changed after pricing (member transfers)
 
-Prices are matched to people by their place on the roster, and a member transfer shifts places. A
-registration is marked "Needs review: roster changed after pricing" when a price line points past
-the roster, a price line's person name is not the person at that place (a substituted seat keeps
-its price and is not compared), or an approved transfer touched the registration after its prices
-were recorded. It is billed on the prorated estimate, not the per-person lines, and approval is
-refused until staff acknowledge it with a reason (an append-only, audited record naming exactly
-that mismatch; a later transfer needs a new one). Acknowledging changes the facts, so prepare
-again, then approve.
+Prices are matched to people by their place in the roster listing (position, then creation time).
+That place is stable: amendments re-snapshot the prices, a substitution keeps the seat, and editing
+a name does not move anyone. So names are never used to doubt a price (a staff name edit, or a
+generic "Attendee 2" label, flags nothing). Only a **member transfer** moves people between
+registrations, and the transfer re-parents the attendee row (same id), gives them the last place on
+the receiving registration, and so loses the place they had on the sending one. The reconciliation
+rebuilds it:
+
+- **Sender**: the roster as it was priced is the current people plus those transferred out after the
+  sending registration's pricing snapshot, ordered by creation time, and the snapshot's lines are
+  mapped by that original index. The person who left is not billed to the sender.
+- **Receiver**: a person transferred in after the receiving registration was priced has no line in
+  its snapshot, so they are billed (if they attended) from their line in the sender's snapshot,
+  attributed to the receiving registration and so to its church, and shown as "Transferred from
+  <club>".
+- **When it cannot be certain** the registration is marked "Needs review": the remaining people are
+  not in strictly increasing creation order, two people were created at the same moment, a move no
+  longer names the person who left, someone moved more than once, the sending registration is not
+  billed or was re-priced after the move, or a price line points past the roster. The screen then
+  shows both figures, "Per-person (best match)" and "Prorated", and approval waits until staff
+  acknowledge with a reason and **choose which to bill**. Until then the prorated figure is used.
+  Prorating scales the whole registration's estimate, including charges not tied to a person. The
+  acknowledgement is append-only, audited, and names exactly what was reviewed (the transfers and the
+  stray price-line indexes), so a new transfer or stray line needs a new one; the choice is part of
+  the fingerprint, so acknowledging means preparing again, then approving. A flagged registration
+  that bills nothing (nobody attended) does not block approval.
+
+Known limit: the rebuild assumes the roster order was creation order for the people who stayed (it
+checks this) and for the person who left (which it cannot check; the place they had was overwritten).
 
 ## Blocked until billing responsibility is ready (#165, #167)
 

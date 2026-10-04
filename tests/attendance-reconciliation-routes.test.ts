@@ -101,11 +101,11 @@ describe("POST /api/events/[eventId]/attendance-reconciliation", () => {
 
   it("acknowledging a roster review needs a reason, MANAGE_FINANCE on the event, and acts as the signed-in user", async () => {
     mocks.service.acknowledgeRosterReview.mockResolvedValue({ changed: true, acknowledgementId: "ack-1" });
-    expect((await POST(post({ action: "acknowledge", registrationId: "r1", reason: "Accept the prorated figure" }), context())).status).toBe(200);
-    expect(mocks.service.acknowledgeRosterReview).toHaveBeenCalledWith({ eventId: "event-a", registrationId: "r1", reason: "Accept the prorated figure", actorUserId: "user-finance" });
-    expect((await POST(post({ action: "acknowledge", registrationId: "r1", reason: " " }), context())).status).toBe(400);
-    expect((await POST(post({ action: "acknowledge", registrationId: "r1", reason: "x" }), context("event-c"))).status).toBe(403);
-    expect((await POST(post({ action: "acknowledge", registrationId: "r1", reason: "x" }), context("event-b"))).status).toBe(403);
+    expect((await POST(post({ action: "acknowledge", registrationId: "r1", choice: "PRORATED", reason: "Accept the prorated figure" }), context())).status).toBe(200);
+    expect(mocks.service.acknowledgeRosterReview).toHaveBeenCalledWith({ eventId: "event-a", registrationId: "r1", choice: "PRORATED", reason: "Accept the prorated figure", actorUserId: "user-finance" });
+    expect((await POST(post({ action: "acknowledge", registrationId: "r1", choice: "PRORATED", reason: " " }), context())).status).toBe(400);
+    expect((await POST(post({ action: "acknowledge", registrationId: "r1", choice: "PRORATED", reason: "x" }), context("event-c"))).status).toBe(403);
+    expect((await POST(post({ action: "acknowledge", registrationId: "r1", choice: "PRORATED", reason: "x" }), context("event-b"))).status).toBe(403);
     expect(mocks.service.acknowledgeRosterReview).toHaveBeenCalledTimes(1);
   });
 

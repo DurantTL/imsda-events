@@ -112,7 +112,7 @@ describe("AttendanceReconciliation screen", () => {
     const source = {
       registrationId: "r3", confirmationCode: "CAM-3", status: "CONFIRMED" as const, label: "Club Gamma", clubId: "c3", locationId: null, locationName: null,
       estimatedCents: 7500, people, registrationCharges: [], credits: [], promo: null,
-      review: { reasons: ["TRANSFER_AFTER_PRICING" as const], acknowledged: false, acknowledgementId: null }, registrationAdjustmentCents: 0, hasPriceLines: true,
+      review: { reasons: ["TRANSFER_AFTER_PRICING" as const], acknowledged: false, acknowledgementId: null, choice: null }, registrationAdjustmentCents: 0, hasPriceLines: true,
     };
     const reviewResult = reconcileEvent([{ key: "g", title: "Church One", partyKind: "ORGANIZATION", partyId: "o1", partyName: "Church One", clubId: null, registrations: [source] }], "PER_CHURCH");
     const draft = { ...approved, id: "v2", versionNumber: 2, status: "DRAFT" as const, approvedAt: null, approvedByName: null };
@@ -130,6 +130,22 @@ describe("AttendanceReconciliation screen", () => {
   it("the correction form tells staff not to include health or medical details", async () => {
     const { REASON_HELP } = await import("@/components/attendance-reconciliation-controls");
     expect(REASON_HELP).toBe("Don't include health or medical details. A short reason like 'did not attend' or 'missed at check-in' is enough.");
+  });
+
+  it("shows both figures for a registration whose prices cannot be matched, and a transferred-in person", async () => {
+    const moved = { ...people[0]!, attendeeId: "a9", name: "Dee Synthetic", transferredFrom: "Club Sender" };
+    const source = {
+      registrationId: "r4", confirmationCode: "CAM-4", status: "CONFIRMED" as const, label: "Club Delta", clubId: "c4", locationId: null, locationName: null,
+      estimatedCents: 7500, people: [...people, moved], registrationCharges: [], credits: [], promo: null,
+      review: { reasons: ["TRANSFER_AFTER_PRICING" as const], acknowledged: false, acknowledgementId: null, choice: null }, registrationAdjustmentCents: 0, hasPriceLines: true,
+    };
+    const flagged = reconcileEvent([{ key: "g", title: "Church One", partyKind: "ORGANIZATION", partyId: "o1", partyName: "Church One", clubId: null, registrations: [source] }], "PER_CHURCH");
+    const markup = render(view({ result: flagged }));
+    expect(markup).toContain("Per-person (best match)");
+    expect(markup).toContain("prorated");
+    expect(markup).toContain("Transferred from Club Sender");
+    const { PRORATE_NOTE } = await import("@/components/attendance-reconciliation-controls");
+    expect(PRORATE_NOTE).toContain("including charges that are not tied to a person");
   });
 
   it("says nothing is sent from here", () => {

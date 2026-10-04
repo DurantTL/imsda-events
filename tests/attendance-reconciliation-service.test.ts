@@ -113,12 +113,20 @@ const fakeDb = {
     create: vi.fn(async ({ data }: { data: Row }) => {
       if (state.acknowledgements.some((entry) => entry.registrationId === data.registrationId && entry.reviewKey === data.reviewKey)) throw uniqueError();
       state.idCounter += 1;
-      const row = { id: `ack-${state.idCounter}`, ...data };
+      const row = { id: `ack-${state.idCounter}`, createdAt: new Date("2026-10-04T12:00:00Z"), actor: { displayName: "Finance Staff" }, ...data };
       state.acknowledgements.push(row);
       return row;
     }),
   },
   registrationAttendee: {
+    findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
+      sources().flatMap((source) => source.people.map((entry, position) => ({
+        id: entry.id,
+        position,
+        createdAt: entry.createdAt ?? new Date("2026-09-01T10:00:00Z"),
+        profileSnapshot: { firstName: entry.name, lastName: "Synthetic" },
+        person: { firstName: entry.name, lastName: "Synthetic" },
+      }))).filter((entry) => where.id.in.includes(entry.id))),
     findFirst: vi.fn(async ({ where }: { where: { id: string; eventId: string } }) => {
       if (where.eventId !== state.event.id) return null;
       const owner = sources().find((source) => (source.status ?? "CONFIRMED") !== "CANCELLED" && source.people.some((person) => person.id === where.id));
@@ -214,7 +222,8 @@ function billingView() {
 }
 
 const actor = "user-finance";
-const person = (id: string, name: string): SourcePerson => ({ id, name });
+const person = (id: string, name: string, createdAt?: Date): SourcePerson => ({ id, name, ...(createdAt ? { createdAt } : {}) });
+const sec = (seconds: number) => new Date(Date.parse("2026-09-01T10:00:00Z") + seconds * 1000);
 const checkIn = (attendeeId: string) => state.checkIns.push({ id: `ci-${attendeeId}`, registrationAttendeeId: attendeeId, undoneAt: null });
 const rateLines = (count: number, cents = 2500) => Array.from({ length: count }, (_, index) => ({ key: `attendees.${index}.fee`, label: "Fee", amountCents: cents, attendeeIndex: index }));
 
@@ -539,11 +548,11 @@ describe("roster changed after pricing (member transfer)", () => {
   it("an acknowledgement with a reason, audited, lets the next draft be approved", async () => {
     await transferred();
     await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
-    await expect(acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", reason: "  ", actorUserId: actor })).rejects.toBeInstanceOf(AttendanceReconciliationError);
-    await expect(acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-9", reason: "x", actorUserId: actor })).rejects.toMatchObject({ code: "REGISTRATION_NOT_FOUND" });
-    const first = await acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", reason: "Moved to another club; prorated is fine", actorUserId: actor });
+    await expect(acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", choice: "PRORATED", reason: "  ", actorUserId: actor })).rejects.toBeInstanceOf(AttendanceReconciliationError);
+    await expect(acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-9", choice: "PRORATED", reason: "x", actorUserId: actor })).rejects.toMatchObject({ code: "REGISTRATION_NOT_FOUND" });
+    const first = await acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", choice: "PRORATED", reason: "Moved to another club; prorated is fine", actorUserId: actor });
     expect(first.changed).toBe(true);
-    expect(await acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", reason: "again", actorUserId: actor })).toMatchObject({ changed: false });
+    expect(await acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", choice: "PRORATED", reason: "again", actorUserId: actor })).toMatchObject({ changed: false });
     expect(state.acknowledgements).toHaveLength(1);
     expect(state.audits.some((entry) => entry.action === "ATTENDANCE_ROSTER_REVIEW_ACKNOWLEDGED")).toBe(true);
     expect(JSON.stringify(state.audits)).not.toContain("prorated is fine");
@@ -554,11 +563,125 @@ describe("roster changed after pricing (member transfer)", () => {
   });
 
   it("a registration with no mismatch needs no acknowledgement", async () => {
-    await expect(acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", reason: "x", actorUserId: actor })).rejects.toMatchObject({ code: "NO_REVIEW_NEEDED" });
+    await expect(acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", choice: "PRORATED", reason: "x", actorUserId: actor })).rejects.toMatchObject({ code: "NO_REVIEW_NEEDED" });
+  });
+});
+
+describe("member transfers after pricing: the roster as it was priced is rebuilt", () => {
+  // Church One's two clubs. X is priced for three people, in creation order; one of them later moves to Y.
+  type Setup = { xOrder: string[]; moved: string; prices: Record<string, number> };
+  function setup({ xOrder, moved, prices }: Setup) {
+    const created = Object.fromEntries(xOrder.map((id, index) => [id, sec(index + 1)]));
+    const xLines = xOrder.map((id, index) => ({ key: `attendees.${index}.fee`, label: "Fee", amountCents: prices[id]!, attendeeIndex: index, attendeeLabel: `${id.toUpperCase()} Synthetic` }));
+    state.registrations = [
+      { id: "reg-1", code: "CAM-1", club: "Alpha", people: xOrder.filter((id) => id !== moved).map((id) => person(id, id.toUpperCase(), created[id])), lines: xLines, totalCents: 0 },
+      // Y was priced for one person, z; the moved person arrived later at the last place.
+      { id: "reg-2", code: "CAM-2", club: "Beta", people: [person("z", "Z", sec(0)), person(moved, moved.toUpperCase(), created[moved])], lines: [{ key: "attendees.0.fee", label: "Fee", amountCents: 7000, attendeeIndex: 0, attendeeLabel: "Z Synthetic" }], totalCents: 7000 },
+    ] satisfies SourceRegistration[];
+    state.moves = [{ id: "move-1", status: "APPROVED", registrationAttendeeId: moved, fromRegistrationId: "reg-1", toRegistrationId: "reg-2", decidedAt: new Date("2026-09-30T10:00:00Z") }];
+    state.checkIns = [];
+  }
+  const registrationsOf = () => (state.versions[0]!.snapshot as { groups: Array<{ registrations: Array<{ confirmationCode: string; billableCents: number; basis: string; review: unknown; people: Array<{ attendeeId: string; transferredFrom: string | null; chargeCents: number }> }> }> }).groups.flatMap((group) => group.registrations);
+
+  it("the moved person was last on the sending roster: the sender keeps its own prices, the receiver bills the arrival", async () => {
+    // X had B, C, A at $50. A moved to Y. B and C attend X, A attends Y.
+    setup({ xOrder: ["b", "c", "a"], moved: "a", prices: { b: 5000, c: 5000, a: 5000 } });
+    ["b", "c", "a"].forEach(checkIn);
+    await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
+    const [x, y] = registrationsOf();
+    expect(x).toMatchObject({ confirmationCode: "CAM-1", billableCents: 10000, review: null, basis: "PER_PERSON_LINES" });
+    expect(y).toMatchObject({ confirmationCode: "CAM-2", billableCents: 5000, review: null });
+    expect(y!.people.find((entry) => entry.attendeeId === "a")).toMatchObject({ transferredFrom: "Club Alpha", chargeCents: 5000 });
+  });
+
+  it("the moved person was first or in the middle: each is priced from their own line", async () => {
+    for (const order of [["a", "b", "c"], ["b", "a", "c"]]) {
+      state.versions = [];
+      setup({ xOrder: order, moved: "a", prices: { a: 1000, b: 2000, c: 3000 } });
+      ["b", "c", "a"].forEach(checkIn);
+      await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
+      const [x, y] = registrationsOf();
+      expect(x!.billableCents).toBe(5000);
+      expect(y!.billableCents).toBe(1000);
+      expect(y!.people.find((entry) => entry.attendeeId === "a")?.chargeCents).toBe(1000);
+    }
+  });
+
+  it("a person who did not attend after being transferred is not billed to either", async () => {
+    setup({ xOrder: ["b", "c", "a"], moved: "a", prices: { b: 5000, c: 5000, a: 5000 } });
+    ["b", "c"].forEach(checkIn);
+    await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
+    const [x, y] = registrationsOf();
+    expect(x!.billableCents).toBe(10000);
+    expect(y!.billableCents).toBe(0);
+  });
+
+  it("flags for review, with both figures, when the order cannot be rebuilt with certainty", async () => {
+    setup({ xOrder: ["b", "c", "a"], moved: "a", prices: { b: 5000, c: 5000, a: 5000 } });
+    // Everyone was created at the same moment: the old place of the person who left cannot be known.
+    (sources()[0] as SourceRegistration).people = [person("b", "B"), person("c", "C")];
+    (sources()[1] as SourceRegistration).people = [person("z", "Z"), person("a", "A")];
+    ["b", "c", "a"].forEach(checkIn);
+    const prepared = await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
+    const flagged = (state.versions[0]!.snapshot as { groups: Array<{ registrations: Array<{ confirmationCode: string; review: { reasons: string[] } | null; alternatives: { perPersonCents: number; proratedCents: number } | null }> }> }).groups[0]!.registrations;
+    expect(flagged.every((entry) => entry.review?.reasons.includes("TRANSFER_AFTER_PRICING"))).toBe(true);
+    expect(flagged.every((entry) => entry.alternatives !== null)).toBe(true);
+    await expect(approveReconciliation({ eventId: "event-1", versionId: prepared.versionId, actorUserId: actor })).rejects.toMatchObject({ code: "REVIEW_REQUIRED" });
+    // Staff choose per-person for one and prorated for the other; the choice is recorded and part of the facts.
+    await acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", choice: "PER_PERSON", reason: "Best match is right", actorUserId: actor });
+    await acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-2", choice: "PRORATED", reason: "Prorate it", actorUserId: actor });
+    expect(state.acknowledgements.map((entry) => entry.choice).sort()).toEqual(["PER_PERSON", "PRORATED"]);
+    const next = await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
+    expect(next.created).toBe(true);
+    expect(await approveReconciliation({ eventId: "event-1", versionId: next.versionId, actorUserId: actor })).toMatchObject({ changed: true });
+  });
+
+  it("a new transfer or stray line needs a new acknowledgement: the key names exactly what was reviewed", async () => {
+    setup({ xOrder: ["b", "c", "a"], moved: "a", prices: { b: 5000, c: 5000, a: 5000 } });
+    (sources()[0] as SourceRegistration).people = [person("b", "B"), person("c", "C")];
+    (sources()[0] as SourceRegistration).lines = [...(sources()[0] as SourceRegistration).lines!, { key: "attendees.5.fee", label: "Fee", amountCents: 100, attendeeIndex: 5 }];
+    checkIn("b");
+    await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
+    await acknowledgeRosterReview({ eventId: "event-1", registrationId: "reg-1", choice: "PRORATED", reason: "ok", actorUserId: actor });
+    let view = await getAttendanceReconciliationView("event-1");
+    expect(view.isDeferred && view.reviewPending.map((entry) => entry.registrationId)).not.toContain("reg-1");
+    // Another stray line appears: the earlier acknowledgement covered different facts.
+    (sources()[0] as SourceRegistration).lines = [...(sources()[0] as SourceRegistration).lines!, { key: "attendees.6.fee", label: "Fee", amountCents: 100, attendeeIndex: 6 }];
+    view = await getAttendanceReconciliationView("event-1");
+    expect(view.isDeferred && view.reviewPending.map((entry) => entry.registrationId)).toContain("reg-1");
+  });
+});
+
+describe("price lines are never doubted because of names", () => {
+  it("a staff name edit after pricing, and generic labels, do not flag or change anything", async () => {
+    state.registrations = [{
+      id: "reg-1", code: "CAM-1", club: "Alpha",
+      people: [person("a1", "Ann"), person("a2", "Bo"), person("a3", "Cy")],
+      lines: [
+        { key: "attendees.0.fee", label: "Fee", amountCents: 2500, attendeeIndex: 0, attendeeLabel: "Old Name Synthetic" },
+        { key: "attendees.1.fee", label: "Fee", amountCents: 2500, attendeeIndex: 1, attendeeLabel: "Attendee 2" },
+        { key: "attendees.2.fee", label: "Fee", amountCents: 2500, attendeeIndex: 2, attendeeLabel: "Camper 3" },
+      ],
+      totalCents: 7500,
+    } satisfies SourceRegistration];
+    state.checkIns = [];
+    checkIn("a1"); checkIn("a2"); checkIn("a3");
+    await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
+    const registration = (state.versions[0]!.snapshot as { groups: Array<{ registrations: Array<{ review: unknown; basis: string; billableCents: number }> }> }).groups[0]!.registrations[0]!;
+    expect(registration).toMatchObject({ review: null, basis: "PER_PERSON_LINES", billableCents: 7500 });
   });
 });
 
 describe("what is saved, and when facts are read", () => {
+  it("reads the billing view through the same transaction client as the locked work", async () => {
+    await prepareReconciliation({ eventId: "event-1", actorUserId: actor });
+    expect(billing.getBillingResponsibilityView).toHaveBeenCalledWith("event-1", {}, fakeDb);
+    const prepared = state.versions[0]!;
+    billing.getBillingResponsibilityView.mockClear();
+    await approveReconciliation({ eventId: "event-1", versionId: prepared.id as string, actorUserId: actor });
+    expect(billing.getBillingResponsibilityView).toHaveBeenCalledWith("event-1", {}, fakeDb);
+  });
+
   it("keeps no reason text in a saved version or its fingerprint; the view reads it live from the correction", async () => {
     await recordAttendanceCorrection({ eventId: "event-1", attendeeId: "a3", kind: "MARK_ATTENDED", reason: "Missed at check-in, saw them on site", actorUserId: actor });
     await prepareReconciliation({ eventId: "event-1", actorUserId: actor });

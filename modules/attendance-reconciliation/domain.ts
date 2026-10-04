@@ -66,6 +66,8 @@ export type PersonSource = {
   chargeCents: number;
   /** True when one of those lines is a late-registration price. Informational. */
   lateRate: boolean;
+  /** Set when the person was transferred in from another club's registration after this one was priced. */
+  transferredFrom?: string | null;
   /** Staff adjustments (scholarship, discount) recorded for this person alone. */
   adjustmentCents: number;
 };
@@ -92,19 +94,23 @@ export type PromoSource = {
   recordedCents: number;
 };
 
-export type RosterReviewReason = "LINE_BEYOND_ROSTER" | "NAME_MISMATCH" | "TRANSFER_AFTER_PRICING";
+export type RosterReviewReason = "LINE_BEYOND_ROSTER" | "TRANSFER_AFTER_PRICING";
 
 export function rosterReviewReasonLabel(reason: RosterReviewReason) {
-  if (reason === "LINE_BEYOND_ROSTER") return "A price line points past the people now on the roster";
-  if (reason === "NAME_MISMATCH") return "A price line names someone who is not at that place on the roster";
-  return "A member was transferred after the registration was priced";
+  if (reason === "LINE_BEYOND_ROSTER") return "A price line points past the people on the roster";
+  return "A member was transferred after the registration was priced and the prices cannot be matched to people with certainty";
 }
+
+/** What staff chose to bill when the match is uncertain: the per-person best match, or the prorated estimate. */
+export type ReviewChoice = "PER_PERSON" | "PRORATED";
 
 export type RosterReview = {
   reasons: RosterReviewReason[];
   /** Staff acknowledged exactly this mismatch (an audited, append-only record). */
   acknowledged: boolean;
   acknowledgementId: string | null;
+  /** The basis staff chose when they acknowledged; null until then (prorated is used meanwhile). */
+  choice: ReviewChoice | null;
 };
 
 export type RegistrationSource = {
@@ -167,6 +173,7 @@ export type PersonResult = {
   addedAfterSubmission: boolean;
   substituted: boolean;
   lateRate: boolean;
+  transferredFrom?: string | null;
 };
 
 export type Counts = {
@@ -207,6 +214,8 @@ export type RegistrationResult = {
   /** Charges and credits not tied to a person, kept whole (not shrunk by attendance). Listed so staff can see them. */
   unattached: Array<{ label: string; amountCents: number; kind: "CHARGE" | "CREDIT_AS_RECORDED" }>;
   review: RosterReview | null;
+  /** When the match is uncertain: both figures, so staff can choose which to bill. */
+  alternatives: { perPersonCents: number; proratedCents: number } | null;
   people: PersonResult[];
 };
 
@@ -289,6 +298,7 @@ export function reconcileRegistration(source: RegistrationSource): RegistrationR
       addedAfterSubmission: person.addedAfterSubmission,
       substituted: person.substituted,
       lateRate: person.lateRate,
+      transferredFrom: person.transferredFrom ?? null,
     };
   });
   const attendedSources = source.people.filter(isAttended);
@@ -301,28 +311,31 @@ export function reconcileRegistration(source: RegistrationSource): RegistrationR
     billable: attendedSources.length,
   };
 
-  let basis: AmountBasis;
+  let basis: AmountBasis = "NO_ONE_ATTENDED";
   let billableCents = 0;
-  const components = { personChargesCents: 0, registrationChargeCents: 0, creditCents: 0, promoCents: 0, adjustmentCents: 0 };
-  const credits: RegistrationResult["credits"] = [];
+  let components = { personChargesCents: 0, registrationChargeCents: 0, creditCents: 0, promoCents: 0, adjustmentCents: 0 };
+  let credits: RegistrationResult["credits"] = [];
   let promo: RegistrationResult["promo"] = null;
-  const unattached: RegistrationResult["unattached"] = [];
-  if (counts.billable === 0) {
-    basis = "NO_ONE_ATTENDED";
-  } else if (!source.hasPriceLines || (source.review && source.review.reasons.length > 0)) {
-    basis = "PRORATED_ESTIMATE";
-    billableCents = counts.registered === 0 ? 0 : Math.floor((Math.max(source.estimatedCents, 0) * counts.billable) / counts.registered);
-    components.personChargesCents = billableCents;
-  } else {
-    basis = "PER_PERSON_LINES";
-    components.personChargesCents = sum(attendedSources.map((person) => person.chargeCents));
+  let unattached: RegistrationResult["unattached"] = [];
+  let alternatives: RegistrationResult["alternatives"] = null;
+
+  const prorated = () => (counts.registered === 0 ? 0 : Math.floor((Math.max(source.estimatedCents, 0) * counts.billable) / counts.registered));
+  const perPerson = () => {
+    const out = {
+      components: { personChargesCents: 0, registrationChargeCents: 0, creditCents: 0, promoCents: 0, adjustmentCents: 0 },
+      credits: [] as RegistrationResult["credits"],
+      promo: null as RegistrationResult["promo"],
+      unattached: [] as RegistrationResult["unattached"],
+      billableCents: 0,
+    };
+    out.components.personChargesCents = sum(attendedSources.map((person) => person.chargeCents));
     for (const charge of source.registrationCharges) {
       if (charge.cents > 0) {
-        components.registrationChargeCents += charge.cents;
-        unattached.push({ label: charge.label, amountCents: charge.cents, kind: "CHARGE" });
+        out.components.registrationChargeCents += charge.cents;
+        out.unattached.push({ label: charge.label, amountCents: charge.cents, kind: "CHARGE" });
       }
     }
-    const gross = components.personChargesCents + components.registrationChargeCents;
+    const gross = out.components.personChargesCents + out.components.registrationChargeCents;
     let creditTotal = 0;
     for (const credit of source.credits) {
       const known = credit.centsPerUnit !== null && credit.rawUnits !== null;
@@ -331,25 +344,53 @@ export function reconcileRegistration(source: RegistrationSource): RegistrationR
         : null;
       const cents = known ? (units as number) * (credit.centsPerUnit as number) : Math.min(credit.recordedCents, 0);
       creditTotal += cents;
-      credits.push({ label: credit.label, units, appliedCents: cents });
-      if (!known) unattached.push({ label: credit.label, amountCents: cents, kind: "CREDIT_AS_RECORDED" });
+      out.credits.push({ label: credit.label, units, appliedCents: cents });
+      if (!known) out.unattached.push({ label: credit.label, amountCents: cents, kind: "CREDIT_AS_RECORDED" });
     }
     // A credit can bring the charges to $0, never below it.
-    components.creditCents = Math.max(creditTotal, -gross);
+    out.components.creditCents = Math.max(creditTotal, -gross);
     // The whole-registration promo code applies to what the attended people owe after credits, the way the
     // estimate applied it to the registered subtotal: a percentage code at the same percentage (and cap), a
     // fixed code in full, both limited to that subtotal and never above the discount the estimate recorded.
-    const eligible = Math.max(0, gross + components.creditCents);
+    const eligible = Math.max(0, gross + out.components.creditCents);
     if (source.promo && source.promo.recordedCents > 0) {
       const raw = source.promo.type === "PERCENT_BPS"
         ? Math.min(Math.floor((eligible * source.promo.value) / 10_000), source.promo.maximumDiscountCents ?? Number.MAX_SAFE_INTEGER)
         : source.promo.value;
       const discount = Math.max(0, Math.min(raw, eligible, source.promo.recordedCents));
-      components.promoCents = -discount;
-      promo = { code: source.promo.code, appliedCents: -discount };
+      out.components.promoCents = -discount;
+      out.promo = { code: source.promo.code, appliedCents: -discount };
     }
-    components.adjustmentCents = source.registrationAdjustmentCents + sum(attendedSources.map((person) => person.adjustmentCents));
-    billableCents = Math.max(0, eligible + components.promoCents + components.adjustmentCents);
+    out.components.adjustmentCents = source.registrationAdjustmentCents + sum(attendedSources.map((person) => person.adjustmentCents));
+    out.billableCents = Math.max(0, eligible + out.components.promoCents + out.components.adjustmentCents);
+    return out;
+  };
+  const proratedBasis = () => {
+    basis = "PRORATED_ESTIMATE";
+    billableCents = prorated();
+    components = { personChargesCents: billableCents, registrationChargeCents: 0, creditCents: 0, promoCents: 0, adjustmentCents: 0 };
+  };
+  const perPersonBasis = () => {
+    const figures = perPerson();
+    basis = "PER_PERSON_LINES";
+    billableCents = figures.billableCents;
+    components = figures.components;
+    credits = figures.credits;
+    promo = figures.promo;
+    unattached = figures.unattached;
+  };
+  const needsReview = Boolean(source.review && source.review.reasons.length > 0);
+  if (counts.billable === 0) {
+    basis = "NO_ONE_ATTENDED";
+  } else if (!source.hasPriceLines) {
+    proratedBasis();
+  } else if (needsReview) {
+    // The match of prices to people is uncertain. Both figures are kept; the prorated one is used until
+    // staff acknowledge and choose.
+    alternatives = { perPersonCents: perPerson().billableCents, proratedCents: prorated() };
+    if (source.review?.choice === "PER_PERSON") perPersonBasis(); else proratedBasis();
+  } else {
+    perPersonBasis();
   }
   return {
     registrationId: source.registrationId,
@@ -368,6 +409,7 @@ export function reconcileRegistration(source: RegistrationSource): RegistrationR
     promo,
     unattached,
     review: source.review,
+    alternatives,
     people,
   };
 }
@@ -428,14 +470,11 @@ export function filterResultByLocation(result: ReconciliationResult, locationId:
 // Fingerprint
 // ---------------------------------------------------------------------------------------------
 
-/** Keys that describe when or by whom, not what the facts are: left out of the fingerprint. */
-const FINGERPRINT_IGNORED_KEYS = new Set(["id", "acknowledgementId", "actorName", "createdAt"]);
-
 export function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
   if (value && typeof value === "object") {
     return `{${Object.entries(value as Record<string, unknown>)
-      .filter(([key, entry]) => !FINGERPRINT_IGNORED_KEYS.has(key) && entry !== undefined)
+      .filter(([, entry]) => entry !== undefined)
       .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
       .map(([key, entry]) => `${JSON.stringify(key)}:${stableStringify(entry)}`)
       .join(",")}}`;
@@ -443,9 +482,34 @@ export function stableStringify(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
+/**
+ * The facts a fingerprint covers, spelled out: the whole result except the ids of rows that carry no
+ * fact of their own. A correction counts by its kind (the person is already in the result), so
+ * re-entering an identical correction does not change it; an acknowledgement counts by whether it
+ * exists and what staff chose, not by its id.
+ */
+export function fingerprintProjection(result: ReconciliationResult) {
+  return {
+    ...result,
+    groups: result.groups.map((group) => ({
+      ...group,
+      registrations: group.registrations.map((registration) => ({
+        ...registration,
+        review: registration.review
+          ? { reasons: registration.review.reasons, acknowledged: registration.review.acknowledged, choice: registration.review.choice }
+          : null,
+        people: registration.people.map((person) => ({
+          ...person,
+          correction: person.correction ? { kind: person.correction.kind } : null,
+        })),
+      })),
+    })),
+  };
+}
+
 /** The text a fingerprint hashes: every source fact and the rule version, nothing about time or actors. */
 export function fingerprintInput(result: ReconciliationResult) {
-  return stableStringify(result);
+  return stableStringify(fingerprintProjection(result));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -494,40 +558,55 @@ export function responsibilityBlockers(lines: readonly ResponsibilityLine[]): Re
 // Roster review: are the price lines still for the people on the roster?
 // ---------------------------------------------------------------------------------------------
 
-function nameTokens(value: string) {
-  return value.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean).sort().join(" ");
-}
+/** One person on a roster, with the two things the listing order is made of. */
+export type PricedRosterEntry = { attendeeId: string; position: number; createdAtMs: number };
 
 /**
- * Prices are matched to people by their place on the roster. A member transfer moves people, so
- * after one the place no longer means the same person. Returns the reasons the match cannot be
- * trusted; none means it can. A seat whose person was substituted keeps its price, so its name is
- * not compared.
+ * The order the people of a registration were in when it was priced, after members were transferred
+ * out or in. Prices are matched to people by their place in the listing (position, then creation
+ * time). A transfer re-parents the attendee row and gives it the last place on the receiving
+ * registration, which loses the place it had on the sending one; the creation time is what survives.
+ *  - People transferred IN after pricing are not in that roster and are taken out.
+ *  - People transferred OUT after pricing are put back in by creation time.
+ * Only deterministic when that is unambiguous: the remaining people are in strictly increasing
+ * creation order (so place and creation order agree), no creation time ties, every moved-out
+ * person is still named by the move record, and nobody moved twice. Otherwise `ok` is false and the
+ * caller sends the registration to staff review rather than guessing.
  */
-export function rosterMismatchReasons(input: {
-  priceLines: ReadonlyArray<{ attendeeIndex: number; attendeeLabel: string | null }>;
-  attendees: ReadonlyArray<{ name: string; substituted: boolean }>;
-  /** Approved member transfers that touched this registration after its prices were recorded. */
-  transfersAfterPricing: number;
-}): RosterReviewReason[] {
-  const reasons: RosterReviewReason[] = [];
-  if (input.priceLines.some((line) => line.attendeeIndex >= input.attendees.length)) reasons.push("LINE_BEYOND_ROSTER");
-  const mismatched = input.priceLines.some((line) => {
-    const attendee = input.attendees[line.attendeeIndex];
-    if (!attendee || attendee.substituted || !line.attendeeLabel) return false;
-    // A generic "Person 3" label carries no name to compare.
-    if (/^person \d+$/i.test(line.attendeeLabel.trim())) return false;
-    return nameTokens(line.attendeeLabel) !== nameTokens(attendee.name);
-  });
-  if (mismatched) reasons.push("NAME_MISMATCH");
-  if (input.transfersAfterPricing > 0) reasons.push("TRANSFER_AFTER_PRICING");
-  return reasons;
+export function reconstructPricedRoster(input: {
+  /** The people on the registration now, in listing order. */
+  current: readonly PricedRosterEntry[];
+  movedInIds: ReadonlySet<string>;
+  /** People moved out after pricing; null where the move no longer names the person. */
+  movedOut: ReadonlyArray<PricedRosterEntry | null>;
+  /** People who moved more than once, anywhere: their place cannot be ordered. */
+  movedTwiceIds: ReadonlySet<string>;
+}): { ok: true; order: string[] } | { ok: false; reason: string } {
+  if (input.movedOut.some((entry) => entry === null)) return { ok: false, reason: "a move no longer names the person who left" };
+  const out = input.movedOut as PricedRosterEntry[];
+  const involved = [...out.map((entry) => entry.attendeeId), ...input.movedInIds];
+  if (involved.some((id) => input.movedTwiceIds.has(id))) return { ok: false, reason: "someone was moved more than once" };
+  if (out.some((entry) => input.movedInIds.has(entry.attendeeId))) return { ok: false, reason: "someone moved in and out" };
+  const base = input.current.filter((entry) => !input.movedInIds.has(entry.attendeeId));
+  for (let index = 1; index < base.length; index += 1) {
+    if (!(base[index]!.createdAtMs > base[index - 1]!.createdAtMs)) return { ok: false, reason: "the roster order and creation order do not agree" };
+  }
+  const times = new Set(base.map((entry) => entry.createdAtMs));
+  const merged = [...base];
+  for (const leaver of [...out].sort((left, right) => left.createdAtMs - right.createdAtMs)) {
+    if (times.has(leaver.createdAtMs)) return { ok: false, reason: "two people were added at the same moment" };
+    times.add(leaver.createdAtMs);
+    const at = merged.findIndex((entry) => entry.createdAtMs > leaver.createdAtMs);
+    merged.splice(at === -1 ? merged.length : at, 0, leaver);
+  }
+  return { ok: true, order: merged.map((entry) => entry.attendeeId) };
 }
 
 /** Registrations whose roster review staff have not acknowledged yet: they block approval. */
 export function reviewPending(result: ReconciliationResult) {
   return result.groups.flatMap((group) => group.registrations)
-    .filter((registration) => registration.review && registration.review.reasons.length > 0 && !registration.review.acknowledged)
+    // A flagged registration that bills nothing (nobody attended) has no figure to confirm, so it does not block.
+    .filter((registration) => registration.review && registration.review.reasons.length > 0 && !registration.review.acknowledged && registration.counts.billable > 0)
     .map((registration) => ({ registrationId: registration.registrationId, confirmationCode: registration.confirmationCode, label: registration.label }));
 }
 

@@ -202,8 +202,8 @@ async function listActiveContacts(client: Client, organizationIds: readonly stri
  * responsible party, active billing contact and readiness, plus the unresolved registrations.
  * Registrations the resolver has not recorded yet are shown as the rule's proposal and flagged.
  */
-export async function getBillingResponsibilityView(eventId: string, options: { locationId?: string | null } = {}) {
-  const prisma = getPrisma();
+export async function getBillingResponsibilityView(eventId: string, options: { locationId?: string | null } = {}, client: Client = getPrisma()) {
+  const prisma = client;
   const event = await prisma.event.findUnique({ where: { id: eventId }, select: { id: true, billingMode: true, invoiceGrouping: true } });
   if (!event) throw new BillingResponsibilityError("That event does not exist.", "EVENT_NOT_FOUND");
   const isDeferred = event.billingMode === "DEFERRED_ORGANIZATION_INVOICE";
