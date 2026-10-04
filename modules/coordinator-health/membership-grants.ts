@@ -41,13 +41,12 @@ export async function stripHealthAccess(
   actorUserId: string,
   reason: "DEACTIVATED" | "REACTIVATED" | "RE_ADDED" | "ROLE_CHANGED",
 ) {
-  if (!membership.permissions.includes("VIEW_HEALTH_INFORMATION")) return false;
-  // Lock the row and work from its permissions now: a concurrent grant or strip of another permission must not be undone.
+  // Lock the row and decide from its permissions now (never from a read made before the lock): a concurrent grant or strip of another permission must not be undone.
   const current = await lockMembershipPermissions(tx, membership.id);
-  if (!current?.includes("VIEW_HEALTH_INFORMATION")) return false;
+  if (!current?.permissions.includes("VIEW_HEALTH_INFORMATION")) return false;
   await tx.eventMembership.update({
     where: { id: membership.id },
-    data: { permissions: current.filter((permission) => permission !== "VIEW_HEALTH_INFORMATION") as never },
+    data: { permissions: current.permissions.filter((permission) => permission !== "VIEW_HEALTH_INFORMATION") as never },
   });
   await endUserSessions(tx, membership.userId);
   await writeAuditLog({
@@ -75,7 +74,9 @@ export async function setHealthAccess(eventId: string, membershipId: string, act
       throw new HealthAccessGrantError("TARGET_IS_SYSTEM_ADMIN", "System administrators already have health information access.");
     }
     // Lock the row and work from its permissions now, so a concurrent change to another permission is not undone.
-    const held = (await lockMembershipPermissions(tx, membership.id)) ?? membership.permissions;
+    const locked = await lockMembershipPermissions(tx, membership.id);
+    if (!locked) throw new HealthAccessGrantError("MEMBERSHIP_NOT_FOUND", "That staff assignment no longer exists.");
+    const held = locked.permissions;
     const has = held.includes("VIEW_HEALTH_INFORMATION");
     if (has === granted) return { granted, changed: false };
     const permissions = (granted

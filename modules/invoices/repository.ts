@@ -1004,6 +1004,8 @@ export type InvoiceDetail = {
     partyKind: "ORGANIZATION" | "PERSON" | "UNRESOLVED";
   };
   versions: InvoiceVersionSummary[];
+  /** Drafts staff threw away: shown in the history as muted rows, never in lists or counts. */
+  discarded: Array<{ id: string; revision: number; amountDueCents: number; discardedAt: string | null; discardedByName: string | null }>;
   shown: InvoiceVersionSummary;
   snapshot: InvoiceSnapshot;
   /** What the shown version changed compared with the version it revises (a revision only). */
@@ -1033,6 +1035,24 @@ export async function getInvoiceDetail(eventId: string, invoiceId: string, optio
   const requested = options.versionId ? summaries.find((version) => version.id === options.versionId) ?? null : null;
   const shown = requested ?? (latest.status === "DRAFT" ? latest : liveFinalized ?? latest);
   const shownRow = invoice.versions.find((version) => version.id === shown.id)!;
+  const discardedRows = await prisma.invoiceVersion.findMany({
+    where: { invoiceId, eventId, status: "DISCARDED" },
+    orderBy: { discardedAt: "desc" },
+    select: { id: true, revision: true, amountDueCents: true, discardedAt: true },
+  });
+  const discardAudits = discardedRows.length === 0
+    ? []
+    : await prisma.auditLog.findMany({
+        where: { eventId, action: "INVOICE_DRAFT_DISCARDED", entityId: { in: discardedRows.map((row) => row.id) } },
+        select: { entityId: true, actor: { select: { displayName: true } } },
+      });
+  const discarded = discardedRows.map((row) => ({
+    id: row.id,
+    revision: row.revision,
+    amountDueCents: row.amountDueCents,
+    discardedAt: row.discardedAt?.toISOString() ?? null,
+    discardedByName: discardAudits.find((audit) => audit.entityId === row.id)?.actor?.displayName ?? null,
+  }));
   const prior = shown.supersedesVersionId ? summaries.find((version) => version.id === shown.supersedesVersionId) ?? null : null;
   const event = await prisma.event.findUniqueOrThrow({ where: { id: eventId }, select: { id: true, name: true, billingMode: true } });
   let currentContact: InvoiceContact | null = null;
@@ -1067,6 +1087,7 @@ export async function getInvoiceDetail(eventId: string, invoiceId: string, optio
   return {
     invoice: { id: invoice.id, groupKey: invoice.groupKey, baseNumber: invoice.baseNumber, invoiceGrouping: invoice.invoiceGrouping, partyKind: invoice.partyKind },
     versions: summaries,
+    discarded,
     shown,
     snapshot: shownRow.snapshot as unknown as InvoiceSnapshot,
     change,

@@ -495,7 +495,9 @@ async function main() {
   assert((await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: fNumber.versionId } })).status === "FINALIZED", "discarding a revision draft leaves the finalized invoice as it was");
   const fRev2 = await reviseInvoice({ eventId: ids.eventF, invoiceId: invF.id, mode: "FROM_RECONCILIATION", reason: "Bo did not attend", actorUserId: ids.staff });
   assert(fRev2.revision === fRev.revision && fRev2.versionId !== fRev.versionId, "a discarded revision frees its revision number");
-  const fRevDone = await finalize(ids.eventF, fRev2.versionId, key("f2"));
+  const withDiscards = await getInvoiceDetail(ids.eventF, invF.id);
+  assert(withDiscards !== null && withDiscards.discarded.length === 2 && withDiscards.discarded.every((entry) => entry.discardedByName === "Fran Finance" && entry.discardedAt !== null) && withDiscards.versions.every((version) => version.status !== "DISCARDED"), "the detail lists discarded drafts with who and when, apart from the live versions");
+  const fRevDone =await finalize(ids.eventF, fRev2.versionId, key("f2"));
   assert(fRevDone.number === `${fNumber.number}-R1` && fRevDone.amountDueCents === 2500, "the revision after the regrouping finalizes as -R1 for $25");
   assert((await createInvoiceDrafts({ eventId: ids.eventF, actorUserId: ids.staff })).finalized === 1, "and drafting again still does not conflict");
 

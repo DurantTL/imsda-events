@@ -137,6 +137,17 @@ export function InvoiceDetailView({
       <section className="panel finance-list" aria-label="Version history">
         <div className="section-heading"><h3>Version history</h3></div>
         {versions.map((version) => <VersionRow detailInvoiceId={detail.invoice.id} eventId={eventId} key={version.id} shownId={shown.id} version={version} baseNumber={detail.invoice.baseNumber} />)}
+        {detail.discarded.map((entry) => (
+          <div className="invoice-line invoice-discarded" key={entry.id}>
+            <span>
+              <strong>{entry.revision === 0 ? "Original draft" : `Revision ${entry.revision} draft`}</strong>
+              <small>discarded{entry.discardedAt ? ` ${invoiceWhen(entry.discardedAt)}` : ""}{entry.discardedByName ? ` by ${entry.discardedByName}` : ""}</small>
+            </span>
+            <span><StatusBadge status="DISCARDED" /></span>
+            <span>{invoiceMoney(entry.amountDueCents)}</span>
+            <span />
+          </div>
+        ))}
       </section>
     </section>
   );

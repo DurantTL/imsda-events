@@ -116,7 +116,7 @@ function detail(overrides: Partial<InvoiceDetail> = {}): InvoiceDetail {
   const shown = overrides.shown ?? version({ amountDueCents: 4500 });
   return {
     invoice: { id: "i1", groupKey: "organization:church-1", baseNumber: "SC27-0001", invoiceGrouping: "PER_CHURCH", partyKind: "ORGANIZATION" },
-    versions: [shown], shown, snapshot, change: null, needsFinalizePermission: false, currentContact: contact, contactChanged: false, amountsOutOfDate: false,
+    versions: [shown], discarded: [], shown, snapshot, change: null, needsFinalizePermission: false, currentContact: contact, contactChanged: false, amountsOutOfDate: false,
     hasOpenDraft: shown.status === "DRAFT", liveFinalized: shown.status === "FINALIZED" ? shown : null, reconciliationFreshness: "CURRENT", approvedReconciliationVersionId: "recon-1",
     ...overrides,
   };
@@ -183,6 +183,15 @@ describe("Invoice detail", () => {
     expect(markup).toContain("Original");
     expect(markup).toContain("Revision 1");
     expect(markup).toContain("/finance/invoices/i1?event=event-1&amp;version=v1");
+  });
+
+  it("shows a discarded draft in the history as a muted row with who and when", () => {
+    const markup = renderDetail(detail({ discarded: [{ id: "d1", revision: 0, amountDueCents: 2500, discardedAt: "2026-10-04T13:00:00.000Z", discardedByName: "Fran Finance" }] }));
+    expect(markup).toContain("invoice-discarded");
+    expect(markup).toContain("Original draft");
+    expect(markup).toContain("Discarded");
+    expect(markup).toContain("by Fran Finance");
+    expect(renderDetail(detail())).not.toContain("invoice-discarded");
   });
 
   it("a $0 invoice can be finalized and says nothing is owed", () => {

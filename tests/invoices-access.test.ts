@@ -18,7 +18,9 @@ vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: mocks.writeAudi
 
 import { InvoiceAccessGrantError, setInvoiceFinalizationAccess } from "@/modules/invoices/finalize-access";
 
-const membership = (role: string, permissions: string[] = [], status = "ACTIVE") => ({ id: "m1", userId: "u1", role, status, permissions, user: { displayName: "Synthetic Staffer", globalRole: null } });
+/** The pre-lock read carries only who the person is; role, status and permissions come from the locked row. */
+const found = () => ({ id: "m1", userId: "u1", user: { displayName: "Synthetic Staffer", globalRole: null } });
+const locked = (role: string, permissions: string[] = [], status = "ACTIVE") => [{ role, status, permissions }];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -26,8 +28,8 @@ beforeEach(() => {
 
 describe("granting Finalize invoices", () => {
   it("is refused for a role without finance access, with a clear message, and writes nothing", async () => {
-    mocks.findFirst.mockResolvedValue(membership("READ_ONLY_STAFF"));
-    mocks.queryRaw.mockResolvedValue([{ permissions: [] }]);
+    mocks.findFirst.mockResolvedValue(found());
+    mocks.queryRaw.mockResolvedValue(locked("READ_ONLY_STAFF"));
     const error = await setInvoiceFinalizationAccess("e1", "m1", "admin", true).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(InvoiceAccessGrantError);
     expect((error as InvoiceAccessGrantError).code).toBe("ROLE_LACKS_FINANCE");
@@ -37,9 +39,9 @@ describe("granting Finalize invoices", () => {
   });
 
   it.each(["FINANCE_MANAGER", "EVENT_ADMIN"])("is allowed for %s, from the permissions read under the row lock", async (role) => {
-    mocks.findFirst.mockResolvedValue(membership(role, ["MANAGE_FORMS"]));
+    mocks.findFirst.mockResolvedValue(found());
     // The locked read is the truth: another permission was added meanwhile.
-    mocks.queryRaw.mockResolvedValue([{ permissions: ["MANAGE_FORMS", "VIEW_HEALTH_INFORMATION"] }]);
+    mocks.queryRaw.mockResolvedValue(locked(role, ["MANAGE_FORMS", "VIEW_HEALTH_INFORMATION"]));
     await expect(setInvoiceFinalizationAccess("e1", "m1", "admin", true)).resolves.toEqual({ granted: true, changed: true });
     expect(mocks.queryRaw).toHaveBeenCalledTimes(1);
     expect(mocks.update).toHaveBeenCalledWith({ where: { id: "m1" }, data: { permissions: ["MANAGE_FORMS", "VIEW_HEALTH_INFORMATION", "FINALIZE_INVOICES"] } });
@@ -47,15 +49,23 @@ describe("granting Finalize invoices", () => {
   });
 
   it("a revoke keeps the other permissions held now, and is allowed whatever the role", async () => {
-    mocks.findFirst.mockResolvedValue(membership("READ_ONLY_STAFF", ["FINALIZE_INVOICES"]));
-    mocks.queryRaw.mockResolvedValue([{ permissions: ["FINALIZE_INVOICES", "VIEW_HEALTH_INFORMATION"] }]);
+    mocks.findFirst.mockResolvedValue(found());
+    mocks.queryRaw.mockResolvedValue(locked("READ_ONLY_STAFF", ["FINALIZE_INVOICES", "VIEW_HEALTH_INFORMATION"]));
     await setInvoiceFinalizationAccess("e1", "m1", "admin", false);
     expect(mocks.update).toHaveBeenCalledWith({ where: { id: "m1" }, data: { permissions: ["VIEW_HEALTH_INFORMATION"] } });
   });
 
+  it("decides from the locked role and status, not from anything read before the lock", async () => {
+    // The role was changed to read-only between the first read and the lock.
+    mocks.findFirst.mockResolvedValue({ ...found(), role: "FINANCE_MANAGER", status: "ACTIVE" });
+    mocks.queryRaw.mockResolvedValue(locked("READ_ONLY_STAFF"));
+    expect(((await setInvoiceFinalizationAccess("e1", "m1", "admin", true).catch((caught: unknown) => caught)) as InvoiceAccessGrantError).code).toBe("ROLE_LACKS_FINANCE");
+    expect(mocks.update).not.toHaveBeenCalled();
+  });
+
   it("is refused for an inactive assignment", async () => {
-    mocks.findFirst.mockResolvedValue(membership("FINANCE_MANAGER", [], "INACTIVE"));
-    mocks.queryRaw.mockResolvedValue([{ permissions: [] }]);
+    mocks.findFirst.mockResolvedValue(found());
+    mocks.queryRaw.mockResolvedValue(locked("FINANCE_MANAGER", [], "INACTIVE"));
     const error = await setInvoiceFinalizationAccess("e1", "m1", "admin", true).catch((caught: unknown) => caught);
     expect((error as InvoiceAccessGrantError).code).toBe("MEMBERSHIP_INACTIVE");
   });
