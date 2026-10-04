@@ -55,7 +55,9 @@ const baseInput = (overrides: Partial<InvoicePdfInput> = {}): InvoicePdfInput =>
 async function pdfText(bytes: Uint8Array) {
   const doc = await PDFDocument.load(bytes, { updateMetadata: false });
   const texts: string[] = [];
+  const perPage: string[][] = [];
   for (const page of doc.getPages()) {
+    const before = texts.length;
     const contents = page.node.Contents();
     const streams = contents ? [contents] : [];
     const array = page.node.get(PDFName.of("Contents"));
@@ -68,8 +70,9 @@ async function pdfText(bytes: Uint8Array) {
         texts.push(match[1] ? Buffer.from(match[1], "hex").toString("latin1") : match[2]!);
       }
     }
+    perPage.push(texts.slice(before));
   }
-  return { texts, text: texts.join("\n"), pages: doc.getPageCount(), doc };
+  return { perPage, texts, text: texts.join("\n"), pages: doc.getPageCount(), doc };
 }
 
 describe("invoice PDF (#168)", () => {
@@ -91,7 +94,7 @@ describe("invoice PDF (#168)", () => {
     const { text } = await pdfText(await renderInvoicePdf(baseInput()));
     for (const expected of [
       "Iowa-Missouri Conference", "SC27-0001", "April 12, 2027", "Spring Camporee 2027", "Church One", "Tess Treasurer, Treasurer", "tess@church-one.test",
-      "Eagles", "Hawks", "Confirmation C-r1", "Total due", "Please remit by check to the Iowa-Missouri Conference.",
+      "Eagles", "Hawks", "Line 1", "Total due", "Please remit by check to the Iowa-Missouri Conference.",
     ]) {
       expect(text).toContain(expected);
     }
@@ -125,5 +128,30 @@ describe("invoice PDF (#168)", () => {
     expect(pages).toBeGreaterThan(1);
     expect(text).toContain(`Page 1 of ${pages}`);
     expect(text).toContain(`Page ${pages} of ${pages}`);
+  });
+
+  it("never prints a registration's confirmation code (it opens the registration with a contact email)", async () => {
+    const input = baseInput();
+    const { text } = await pdfText(await renderInvoicePdf(input));
+    for (const line of input.snapshot.lines) expect(text).not.toContain(line.confirmationCode);
+    expect(text).not.toMatch(/Confirmation/);
+    expect(text).toContain("Line 2");
+  });
+
+  it("keeps each extra line's label and amount on the same page when the extras run across a page break", async () => {
+    const credit = (index: number) => ({ key: `c${index}`, label: `Meal credit ${index}`, centsPerUnit: -100, rawUnits: 1, capAtHeadcount: false, recordedCents: -100 });
+    const many = Array.from({ length: 14 }, (_, index) => registration(`x${index}`, `Club ${index}`, [person(`q${index}`, true), person(`z${index}`, true)], { credits: [credit(1), credit(2), credit(3), credit(4)] }));
+    const { perPage } = await pdfText(await renderInvoicePdf(baseInput({ snapshot: snapshotFor(many) })));
+    expect(perPage.length).toBeGreaterThan(1);
+    for (const page of perPage) {
+      expect(page.filter((entry) => entry.startsWith("Credit:")).length).toBe(page.filter((entry) => /^-\$\d/.test(entry)).length);
+    }
+  });
+
+  it("breaks a very long unbroken word without stalling", async () => {
+    const started = Date.now();
+    const { text } = await pdfText(await renderInvoicePdf(baseInput({ organizationName: "A".repeat(20000), groupTitle: "A".repeat(20000) })));
+    expect(text).toContain("AAAA");
+    expect(Date.now() - started).toBeLessThan(15000);
   });
 });

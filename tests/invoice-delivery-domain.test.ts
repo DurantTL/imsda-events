@@ -192,6 +192,8 @@ describe("delivery status", () => {
     expect(recipientDeliveryStatus({ status: "CAPTURED", providerDeliveryStatus: null })).toBe("CAPTURED");
     expect(recipientDeliveryStatus({ status: "PENDING", providerDeliveryStatus: null })).toBe("QUEUED");
     expect(recipientDeliveryStatus({ status: "FAILED", providerDeliveryStatus: null })).toBe("FAILED");
+    expect(recipientDeliveryStatus({ status: "CANCELLED", providerDeliveryStatus: null })).toBe("CANCELLED");
+    expect(isDeliveryProblem("CANCELLED")).toBe(false);
   });
 
   it("marks only the statuses where the address did not get it as problems", () => {

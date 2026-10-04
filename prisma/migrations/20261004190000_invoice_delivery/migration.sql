@@ -11,6 +11,9 @@ CREATE TYPE "InvoiceRecipientKind" AS ENUM ('BILLING_CONTACT', 'CLUB_DIRECTOR');
 ALTER TYPE "MessageRecipientKind" ADD VALUE 'BILLING_CONTACT';
 
 -- AlterEnum
+ALTER TYPE "MessageRecipientKind" ADD VALUE 'CLUB_DIRECTOR';
+
+-- AlterEnum
 ALTER TYPE "MessageTemplateKey" ADD VALUE 'INVOICE_DELIVERY';
 
 -- AlterTable

@@ -202,14 +202,14 @@ dependencies are small pure-JS helpers), from the **finalized version's immutabl
 the conference name (platform settings, plain text), invoice number (with `-R<n>`), issue date (the finalization time, in the event's time
 zone), event, billed-to church and the billing contact **as finalized**, one block per club registration with registered and billable counts and its
 amount, the credits, promo code, charges not tied to a person and staff adjustments under it, the total, "Supersedes SC27-0001" on a revision, and the
-payment instruction. Attendee names are not printed.
+payment instruction. Attendee names are not printed, and neither is a registration's confirmation code (with a contact email it opens that registration, and the PDF goes to every director on the invoice): each block carries a plain "Line N" reference instead. The layout version is recorded on each document (now 2).
 
 The payment instruction is a finance setting, not a fixed fact: the event's `invoicePaymentInstructions` (editable by MANAGE_FINANCE, audited), defaulting to
 "Please remit by check to the Iowa-Missouri Conference." The text used is copied onto the stored document, so changing the setting later never changes a PDF
 that was already made.
 
 **Deterministic and stored once.** The renderer uses no clock and no random ids (creation and modification dates are the finalization time), so the same input gives
-the same bytes (tests render twice and compare hashes). The first send or download stores the bytes (`MessageAttachment`, with `sizeBytes` and `sha256`, which a
+the same bytes (tests render twice and compare hashes). The PDF is made and stored **right after finalization commits**, by the finalize route, on a best-effort basis: if generation fails, finalization has already succeeded, the failure is logged, and the PDF is made on first view, download or send exactly as before (so a version may have no stored document yet; nothing is ever sent by this). Otherwise the first send or download stores the bytes (`MessageAttachment`, with `sizeBytes` and `sha256`, which a
 database check ties to the content, and a trigger forbids rewriting) and one `InvoiceVersionDocument` per version (unique, only for a FINALIZED or SUPERSEDED
 version, recording the hash, the layout version, the header name and the instruction used). **Every send and download reads those stored bytes**, verifies they still hash
 to the recorded value, and never regenerates, so a resend cannot differ. The repository has no file store for generated files, so the bytes live in PostgreSQL
@@ -246,7 +246,9 @@ the event's sender settings, HTML and text bodies), and audits it. After the com
 - **Status is read from the outbox**, not copied: queued, captured, sent, delivered, **bounced**, marked as spam, failed or suppressed, kept up to date by the existing provider webhook.
   The invoice page lists every send with its recipients and statuses. A resend is a **new delivery record for the same version** with the same document and hash.
 - A retry with the same key replays the first result and sends nothing more; the key cannot be reused for another version.
-- The outbox's generic staff retry copies the attachment too. An invoice message is not an event template, so it does not appear in the Communications delivery log.
+- The Communications "Retry" refuses an invoice message ("Resend this invoice from Finance → Invoices."): a retry would carry no delivery record and could resend a replaced version. Invoice messages are not event templates, so they do not appear in the Communications delivery log, which is where the Retry button lives.
+- **A replaced version never goes out.** Finalizing a revision cancels the replaced version's still-queued invoice messages in the same transaction, and the delivery worker re-checks that the version is still FINALIZED before sending and cancels the message otherwise (shown as "Cancelled" in the history).
+- Director copies are recorded with outbox recipient kind `CLUB_DIRECTOR` (the billing contact is `BILLING_CONTACT`). An attachment over 10 MB is refused at send with a clear message.
 - Audit rows (`INVOICE_SENT`, `INVOICE_RESENT`) hold ids, counts, the document hash and the delivery mode: **never an email address or a name**.
 
 ### Posted to AR

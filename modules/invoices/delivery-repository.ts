@@ -14,6 +14,7 @@ import { getPlatformSettings } from "@/modules/system-admin/platform-settings";
 import { contactsMatch, type InvoiceContact, type InvoiceSnapshot } from "@/modules/invoices/domain";
 import {
   INVOICE_PDF_GENERATOR_VERSION,
+  MAX_ATTACHMENT_BYTES,
   buildRecipientCandidates,
   defaultInvoiceBody,
   defaultInvoiceSubject,
@@ -443,6 +444,9 @@ export async function sendInvoiceVersion(input: {
   // The PDF exists before the send transaction (it is created once, from the snapshot); the transaction checks the version again.
   const document = await ensureInvoiceDocument(input.eventId, input.versionId, prisma);
   await readInvoiceDocumentBytes(input.eventId, input.versionId, prisma);
+  if (document.sizeBytes > MAX_ATTACHMENT_BYTES) {
+    throw new InvoiceError(`The invoice PDF is ${(document.sizeBytes / 1024 / 1024).toFixed(1)} MB, over the ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB limit for an email attachment, so it was not sent.`, "INVALID_INPUT");
+  }
 
   const finish = async (deliveryId: string, replayed: boolean): Promise<SendInvoiceResult> => {
     const delivery = await prisma.invoiceDelivery.findUniqueOrThrow({
@@ -532,7 +536,7 @@ export async function sendInvoiceVersion(input: {
           data: {
             eventId: input.eventId,
             templateKey: "INVOICE_DELIVERY",
-            recipientKind: "BILLING_CONTACT",
+            recipientKind: recipient.kind === "CLUB_DIRECTOR" ? "CLUB_DIRECTOR" : "BILLING_CONTACT",
             recipientEmail: recipient.email,
             recipientName: recipient.name,
             senderNameSnapshot: settings.senderName,

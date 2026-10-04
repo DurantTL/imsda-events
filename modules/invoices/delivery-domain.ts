@@ -32,7 +32,7 @@ export function normalizePaymentInstructions(input: string | null | undefined) {
 }
 
 /** Bump when the PDF layout changes, so old documents say which layout made them. */
-export const INVOICE_PDF_GENERATOR_VERSION = 1;
+export const INVOICE_PDF_GENERATOR_VERSION = 2;
 
 export function invoicePdfFilename(number: string) {
   return `Invoice-${number.replace(/[^A-Za-z0-9-]/g, "_")}.pdf`;
@@ -48,6 +48,8 @@ export const PAYMENT_NOTE_MAX = 500;
 export const ENTRY_REASON_MAX = 300;
 export const SUBJECT_MAX = 200;
 export const BODY_MAX = 5000;
+/** The largest file an invoice email may carry (providers cap a message near 40 MB; a PDF of an invoice is a few KB). */
+export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 /** One check cannot plausibly exceed this; it catches a typed extra zero or a pasted number. */
 export const MAX_PAYMENT_CENTS = 100_000_000;
 
@@ -312,7 +314,7 @@ export const sendMessageSchema = z.object({
 // Delivery status in words
 // ---------------------------------------------------------------------------------------------
 
-export type RecipientDeliveryStatus = "SUPPRESSED" | "QUEUED" | "CAPTURED" | "SENT" | "DELIVERED" | "BOUNCED" | "COMPLAINED" | "FAILED";
+export type RecipientDeliveryStatus = "SUPPRESSED" | "CANCELLED" | "QUEUED" | "CAPTURED" | "SENT" | "DELIVERED" | "BOUNCED" | "COMPLAINED" | "FAILED";
 
 /** One word for staff from the outbox row and the provider's later report; a bounce or complaint wins over "sent". */
 export function recipientDeliveryStatus(message: { status: string; providerDeliveryStatus: string | null }): RecipientDeliveryStatus {
@@ -321,7 +323,8 @@ export function recipientDeliveryStatus(message: { status: string; providerDeliv
   if (provider === "COMPLAINED") return "COMPLAINED";
   if (provider === "SUPPRESSED" || message.status === "SUPPRESSED") return "SUPPRESSED";
   if (provider === "DELIVERED") return "DELIVERED";
-  if (provider === "FAILED" || message.status === "FAILED" || message.status === "CANCELLED") return "FAILED";
+  if (message.status === "CANCELLED") return "CANCELLED";
+  if (provider === "FAILED" || message.status === "FAILED") return "FAILED";
   if (message.status === "SENT") return "SENT";
   if (message.status === "CAPTURED") return "CAPTURED";
   return "QUEUED";
@@ -331,6 +334,8 @@ export function deliveryStatusLabel(status: RecipientDeliveryStatus) {
   switch (status) {
     case "SUPPRESSED":
       return "Not sent (suppressed)";
+    case "CANCELLED":
+      return "Cancelled (the invoice was replaced before it went out)";
     case "QUEUED":
       return "Queued";
     case "CAPTURED":

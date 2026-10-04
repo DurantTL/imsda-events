@@ -538,8 +538,10 @@ enum MessageRecipientKind {
   INTERNAL
   TEST
   ACCOUNT
-  /// A church billing contact or club director receiving an invoice (#168).
+  /// A church billing contact receiving an invoice (#168).
   BILLING_CONTACT
+  /// A club director copied on an invoice (#168).
+  CLUB_DIRECTOR
 }
 
 enum MessageOutboxStatus {

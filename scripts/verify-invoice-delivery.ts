@@ -309,7 +309,8 @@ async function main() {
   assert(first.sequence === 1 && first.recipientCount === 2 && !first.replayed && first.documentSha256 === doc.sha256 && first.number === numA1, "the first send: sequence 1, two recipients (one director unticked), the document's hash");
   assert(first.deliveryMode === "LOCAL_CAPTURE" && first.outcome.captured === 2, "local capture records the messages as captured, not emailed");
   const messages = await prisma.messageOutbox.findMany({ where: { eventId: ids.eventA, templateKey: "INVOICE_DELIVERY" }, orderBy: { recipientEmail: "asc" } });
-  assert(messages.length === 2 && messages.every((message) => message.attachmentId === doc.attachmentId && message.recipientKind === "BILLING_CONTACT" && message.status === "CAPTURED"), "two messages, each with the stored attachment");
+  assert(messages.length === 2 && messages.every((message) => message.attachmentId === doc.attachmentId && message.status === "CAPTURED"), "two messages, each with the stored attachment");
+  assert(messages.find((message) => message.recipientEmail === EMAIL.tina)?.recipientKind === "BILLING_CONTACT" && messages.find((message) => message.recipientEmail === EMAIL.dir1)?.recipientKind === "CLUB_DIRECTOR", "a director's copy is recorded as a club director, the contact as a billing contact");
   assert(messages.map((message) => message.recipientEmail).sort().join() === [EMAIL.tina, EMAIL.dir1].sort().join(), "the unticked director got nothing");
   assert(messages.every((message) => message.bodyTextSnapshot.includes("{ {manage_link} }") && !message.bodyTextSnapshot.includes("{{manage_link}}") && message.bodyHtmlSnapshot !== null && message.subjectSnapshot === preview.subject && message.senderNameSnapshot === "Verify Conference"), "the body is stored as sent (placeholders neutralized), with its HTML and the event's sender");
   const delivery1 = await prisma.invoiceDelivery.findUniqueOrThrow({ where: { idempotencyKey: firstKey }, include: { recipients: true } });
@@ -395,9 +396,23 @@ async function main() {
   // ---------------------------------------------------------------------------------------------
   // A revision supersedes: the old version cannot be sent
   // ---------------------------------------------------------------------------------------------
+  // An email still queued when a revision replaces its version must never go out (real email, no provider key here: it stays PENDING).
+  await prisma.eventMessageSettings.update({ where: { eventId: ids.eventA }, data: { deliveryMode: "EXTERNAL_EMAIL" } });
+  const stillQueued = await send(ids.eventA, v1, { selected: [dir2Key] });
+  const queuedRows = await prisma.messageOutbox.findMany({ where: { id: { in: (await prisma.invoiceDeliveryRecipient.findMany({ where: { deliveryId: stillQueued.deliveryId } })).map((row) => row.messageOutboxId) } } });
+  assert(queuedRows.length === 1 && queuedRows[0]!.status === "PENDING", "real email with no provider key stays queued");
+  await prisma.eventMessageSettings.update({ where: { eventId: ids.eventA }, data: { deliveryMode: "LOCAL_CAPTURE" } });
   const rev = await reviseInvoice({ eventId: ids.eventA, invoiceId: invA1.id, mode: "CONTACT_ONLY", reason: "New treasurer", actorUserId: ids.staff });
   assert(code(await failure(send(ids.eventA, rev.versionId))) === "VERSION_NOT_FOUND", "an unfinalized revision cannot be previewed or sent");
   await finalizeInvoiceVersion({ eventId: ids.eventA, versionId: rev.versionId, actorUserId: ids.staff, idempotencyKey: key("rev"), confirm: true, canFinalizeInvoices: false });
+  assert((await prisma.messageOutbox.findUniqueOrThrow({ where: { id: queuedRows[0]!.id } })).status === "CANCELLED", "finalizing the revision cancels the replaced version's queued invoice email");
+  // Belt and braces: even a message that is queued again is not sent by the delivery worker, because its version is no longer FINALIZED.
+  await prisma.messageOutbox.update({ where: { id: queuedRows[0]!.id }, data: { status: "PENDING", lastError: null } });
+  await prisma.eventMessageSettings.update({ where: { eventId: ids.eventA }, data: { deliveryMode: "EXTERNAL_EMAIL" } });
+  let workerSent = 0;
+  await processExternalEmailQueue(ids.eventA, { messageIds: [queuedRows[0]!.id], dependencies: { configuration: { apiKey: "synthetic-not-a-key", apiUrl: "http://127.0.0.1:9" }, sendEmail: async () => { workerSent += 1; return { provider: "RESEND", providerMessageId: `synthetic-${randomUUID()}` }; } } });
+  assert(workerSent === 0 && (await prisma.messageOutbox.findUniqueOrThrow({ where: { id: queuedRows[0]!.id } })).status === "CANCELLED", "the delivery worker cancels, and never sends, an invoice email whose version was replaced");
+  await prisma.eventMessageSettings.update({ where: { eventId: ids.eventA }, data: { deliveryMode: "LOCAL_CAPTURE" } });
   const oldPreview = await getInvoiceSendPreview(ids.eventA, v1);
   assert(!oldPreview.canSend && oldPreview.newerVersion?.id === rev.versionId && oldPreview.blockedReason?.includes("replaced"), "a superseded version shows a notice and the newer version");
   assert(code(await failure(sendInvoiceVersion({ ...baseSend, selectedKeys: [tinaKey], idempotencyKey: key("sup") }))) === "NOT_SENDABLE", "a superseded version cannot be sent");
@@ -411,7 +426,7 @@ async function main() {
   const revSend = await send(ids.eventA, v1r);
   const revDoc = await prisma.invoiceVersionDocument.findUniqueOrThrow({ where: { invoiceVersionId: v1r } });
   assert(revSend.sequence === 1 && revDoc.sha256 !== doc.sha256 && revSend.documentSha256 === revDoc.sha256, "the revision has its own document and its own first send");
-  assert((await getInvoiceDeliveryHistory(ids.eventA, invA1.id)).length === 7, "the invoice's history holds every send of every version");
+  assert((await getInvoiceDeliveryHistory(ids.eventA, invA1.id)).length === 8, "the invoice's history holds every send of every version");
 
   // ---------------------------------------------------------------------------------------------
   // Posted to AR

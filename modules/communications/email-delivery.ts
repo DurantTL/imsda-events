@@ -51,7 +51,7 @@ const EMAIL_RETRY_MAX_MS = 60 * 60 * 1000;
 
 type DeliveryPrisma = Pick<
   PrismaClient,
-  "$transaction" | "eventMessageSettings" | "messageOutbox" | "auditLog"
+  "$transaction" | "eventMessageSettings" | "messageOutbox" | "auditLog" | "invoiceDeliveryRecipient"
 >;
 
 export type ExternalEmailDeliveryDependencies = {
@@ -564,6 +564,20 @@ async function runDeliveryLoop(
       now()
     );
     if (!message) break;
+    // An invoice email is sent only while its version is still FINALIZED (#168): one a revision replaced is cancelled, never sent.
+    if (message.templateKey === "INVOICE_DELIVERY") {
+      const replaced = await prisma.invoiceDeliveryRecipient.findFirst({
+        where: { messageOutboxId: message.id, delivery: { invoiceVersion: { status: { not: "FINALIZED" } } } },
+        select: { id: true },
+      });
+      if (replaced) {
+        await prisma.messageOutbox.updateMany({
+          where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
+          data: { status: "CANCELLED", lockedAt: null, lockToken: null, lastError: "The invoice was replaced by a newer version before this was sent." },
+        });
+        continue;
+      }
+    }
     let preparedBody: PreparedEmailBody | null = null;
     try {
       const prepareBodyText = dependencies.prepareBodyText

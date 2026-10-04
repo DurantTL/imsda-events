@@ -129,6 +129,7 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
       })),
     },
     messageOutbox,
+    invoiceDeliveryRecipient: { findFirst: vi.fn(async () => null) },
     auditLog: { create: vi.fn() },
     $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
   };

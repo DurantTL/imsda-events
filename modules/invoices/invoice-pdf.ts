@@ -92,8 +92,15 @@ class Writer {
         // A single word wider than the line is broken by characters.
         let rest = word;
         while (font.widthOfTextAtSize(rest, size) > width && rest.length > 1) {
-          let cut = rest.length - 1;
-          while (cut > 1 && font.widthOfTextAtSize(rest.slice(0, cut), size) > width) cut -= 1;
+          // Binary search for the longest prefix that fits, so a very long unbroken word costs O(n log n), not O(n^2).
+          let low = 1;
+          let high = rest.length - 1;
+          while (low < high) {
+            const middle = Math.ceil((low + high) / 2);
+            if (font.widthOfTextAtSize(rest.slice(0, middle), size) <= width) low = middle;
+            else high = middle - 1;
+          }
+          const cut = low;
           lines.push(rest.slice(0, cut));
           rest = rest.slice(cut);
         }
@@ -214,7 +221,8 @@ export async function renderInvoicePdf(input: InvoicePdfInput): Promise<Uint8Arr
   };
   tableHeader();
   if (snapshot.lines.length === 0) w.text("No registrations are on this invoice.", { color: MUTED });
-  for (const line of snapshot.lines) {
+  for (const [lineIndex, line] of snapshot.lines.entries()) {
+    const lineNumber = lineIndex + 1;
     const labelLines = w.wrap(line.label, bold, 10, registeredEdge - 70 - MARGIN);
     w.ensure(labelLines.length * 14 + 16);
     const top = w.y;
@@ -225,10 +233,14 @@ export async function renderInvoicePdf(input: InvoicePdfInput): Promise<Uint8Arr
     w.right(String(line.counts.registered), { rightEdge: registeredEdge, y: top });
     w.right(String(line.counts.billable), { rightEdge: billableEdge, y: top });
     w.right(formatPdfMoney(line.amountCents), { rightEdge: amountEdge, y: top, font: bold });
-    w.text(`Confirmation ${line.confirmationCode}`, { size: 8, color: MUTED, x: MARGIN + 8, lead: 11 });
+    // A non-secret line reference. The registration's confirmation code is never printed: with a contact email it opens that registration.
+    w.text(`Line ${lineNumber}`, { size: 8, color: MUTED, x: MARGIN + 8, lead: 11 });
     for (const extra of lineExtras(line)) {
+      const extraWidth = billableEdge - MARGIN - 70;
+      // Keep the label and its amount on one page.
+      w.ensure(w.wrap(extra.label, w.regular, 9, extraWidth).length * 13);
       const extraTop = w.y;
-      w.text(extra.label, { size: 9, x: MARGIN + 8, width: billableEdge - MARGIN - 70, lead: 13 });
+      w.text(extra.label, { size: 9, x: MARGIN + 8, width: extraWidth, lead: 13 });
       w.right(formatPdfMoney(extra.cents), { size: 9, rightEdge: amountEdge, y: extraTop });
     }
     w.gap(4);

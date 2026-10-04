@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
     getInvoiceDetail: vi.fn(),
   },
   grant: vi.fn(),
+  ensureDocument: vi.fn(),
 }));
 vi.mock("@/modules/access/current-session", () => ({ getCurrentSession: mocks.getCurrentSession }));
 vi.mock("@/modules/events/repository", () => ({ findActiveMembership: mocks.findActiveMembership, listEventsForUser: mocks.listEventsForUser }));
@@ -39,6 +40,7 @@ vi.mock("@/modules/invoices/repository", async () => {
   }
   return { InvoiceError, ...mocks.service };
 });
+vi.mock("@/modules/invoices/delivery-repository", () => ({ ensureInvoiceDocument: mocks.ensureDocument }));
 vi.mock("@/modules/invoices/finalize-access", () => {
   class InvoiceAccessGrantError extends Error {
     constructor(public readonly code: string, message: string) { super(message); }
@@ -92,6 +94,7 @@ beforeEach(() => {
   mocks.service.setEventInvoiceCode.mockResolvedValue({ changed: true, code: "SC" });
   mocks.service.finalizeInvoiceVersion.mockResolvedValue({ changed: true, versionId: "v1", invoiceId: "i1", number: "SC27-0001", revision: 0, amountDueCents: 5000 });
   mocks.grant.mockResolvedValue({ granted: true, changed: true });
+  mocks.ensureDocument.mockResolvedValue({ id: "doc1" });
 });
 
 const finalizeBody = { action: "finalize", versionId: "v1", idempotencyKey: KEY, confirm: true };
@@ -108,6 +111,19 @@ describe("POST /api/events/[eventId]/invoices", () => {
     expect(mocks.service.reviseInvoice).toHaveBeenCalledWith({ eventId: "event-a", invoiceId: "i1", mode: "CONTACT_ONLY", reason: "New treasurer", actorUserId: "user-finance" });
     expect((await POST(request({ action: "set-code", code: "SC" }), context())).status).toBe(200);
     expect(mocks.service.setEventInvoiceCode).toHaveBeenCalledWith({ eventId: "event-a", code: "SC", actorUserId: "user-finance" });
+  });
+
+  it("makes the PDF right after finalizing, and a failure there never fails the finalization (#168)", async () => {
+    expect((await POST(request(finalizeBody), context())).status).toBe(200);
+    expect(mocks.ensureDocument).toHaveBeenCalledWith("event-a", "v1");
+    mocks.ensureDocument.mockRejectedValueOnce(new Error("pdf failed"));
+    const response = await POST(request(finalizeBody), context());
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ number: "SC27-0001" });
+    mocks.service.finalizeInvoiceVersion.mockRejectedValueOnce(new InvoiceError("Draft stale.", "DRAFT_STALE"));
+    mocks.ensureDocument.mockClear();
+    expect((await POST(request(finalizeBody), context())).status).toBe(409);
+    expect(mocks.ensureDocument).not.toHaveBeenCalled();
   });
 
   it("MANAGE_FINANCE alone does not carry the Finalize invoices permission into finalization", async () => {

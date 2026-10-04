@@ -9,6 +9,7 @@ describe("invoice delivery migration (#168)", () => {
   it("adds the template key and recipient kind without touching existing values", () => {
     expect(sql).toContain(`ALTER TYPE "MessageTemplateKey" ADD VALUE 'INVOICE_DELIVERY'`);
     expect(sql).toContain(`ALTER TYPE "MessageRecipientKind" ADD VALUE 'BILLING_CONTACT'`);
+    expect(sql).toContain(`ALTER TYPE "MessageRecipientKind" ADD VALUE 'CLUB_DIRECTOR'`);
   });
 
   it("stores an attachment once, with its size and hash checked against its content, never rewritten", () => {

@@ -2776,6 +2776,13 @@ export async function retryMessage(
           "That message is no longer available.",
         );
       }
+      // An invoice email is resent only from Finance, which records the delivery against a FINALIZED version (#168).
+      if (source.templateKey === "INVOICE_DELIVERY") {
+        throw new MessagingError(
+          "MESSAGE_NOT_RETRYABLE",
+          "Resend this invoice from Finance → Invoices.",
+        );
+      }
       const expectedFingerprint = messageRetryRequestFingerprint({
         eventId,
         sourceMessageId: source.id,
