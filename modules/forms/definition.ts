@@ -97,7 +97,7 @@ export const formFieldSchema = z.object({
   type: z.enum(formFieldTypes),
   scope: z.enum(formFieldScopes),
   required: z.boolean(),
-  options: z.array(z.string().trim().min(1).max(120).refine((value) => !value.startsWith("__"), "Choice values can't start with two underscores.")).max(200).default([]),
+  options: z.array(z.string().trim().min(1).max(120)).max(200).default([]),
   optionSource: z.enum(["ATTENDEE_TYPES", "CLUBS_DIRECTORY", "CHURCHES_DIRECTORY", "SCHOOLS_DIRECTORY"]).optional(),
   optionLabels: z.record(z.string(), z.string().trim().min(1).max(120)).optional(),
   optionDescriptions: z.record(
@@ -232,6 +232,26 @@ export const formSectionSchema = z.object({
   isReviewStep: z.boolean().optional(),
   fields: z.array(formFieldSchema).min(1, "Every section needs at least one field.").max(20),
 });
+
+export const RESERVED_CHOICE_VALUE_MESSAGE = "Choice values can't start with two underscores.";
+
+/**
+ * Save-time check only (the form builder's PATCH). It is deliberately not part
+ * of `registrationFormDefinitionSchema`, which also READS stored definitions:
+ * a form already saved with such an option must keep loading. The answer
+ * filter reserves the "__" prefix for its no-answer / other buckets, and drops
+ * any such option as a backstop. Throws a ZodError so callers use the existing
+ * INVALID_FORM response.
+ */
+export function assertNoReservedChoiceValues(definition: z.infer<typeof registrationFormDefinitionSchema>) {
+  const issues: z.core.$ZodIssue[] = [];
+  definition.sections.forEach((section, sectionIndex) => section.fields.forEach((field, fieldIndex) => field.options.forEach((option, optionIndex) => {
+    if (option.startsWith("__")) {
+      issues.push({ code: "custom", path: ["sections", sectionIndex, "fields", fieldIndex, "options", optionIndex], message: RESERVED_CHOICE_VALUE_MESSAGE, input: option });
+    }
+  })));
+  if (issues.length > 0) throw new z.ZodError(issues);
+}
 
 export const registrationFormDefinitionSchema = z.object({
   title: z.string().trim().min(3, "Form title must be at least 3 characters.").max(120),

@@ -7,6 +7,7 @@ import { isLockTimeoutError } from "@/lib/prisma-errors";
 import {
   formTemplates,
   getFormTemplate,
+  assertNoReservedChoiceValues,
   registrationFormDefinitionSchema,
   summarizeChoiceUsage,
   type RegistrationFormDefinition,
@@ -266,6 +267,7 @@ export async function updateRegistrationForm(
   input: { definition: RegistrationFormDefinition; expectedUpdatedAt: string },
 ) {
   const definition = registrationFormDefinitionSchema.parse(input.definition);
+  assertNoReservedChoiceValues(definition);
   const storedDefinition = stripDirectoryOptions(stripAttendeeTypeOptions(definition));
   try {
   await formWriteTransaction(async (tx) => {

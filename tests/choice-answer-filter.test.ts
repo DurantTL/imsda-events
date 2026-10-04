@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formTemplates, registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { assertNoReservedChoiceValues, formTemplates, registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import type { RegistrationRecord } from "@/modules/registrations/repository";
 import {
   CHOICE_FILTER_OTHER,
@@ -181,13 +181,27 @@ describe("choice answer filter", () => {
     expect(matchesForChoice(rows, question, CHOICE_FILTER_OTHER).map((match) => match.registrationId)).toEqual(["R3"]);
   });
 
-  it("rejects choice values starting with two underscores in the form definition", () => {
-    const bad = withFields(definition, (fields) => fields.map((field) => (field as { key: string }).key === "meal_preference"
-      ? { ...field, options: ["Standard", "__other"] }
+  it("still reads a stored definition with a __ option (treated as other), but refuses to save one", () => {
+    const stored = withFields(definition, (fields) => fields.map((field) => (field as { key: string }).key === "meal_preference"
+      ? { ...field, options: ["Standard", "__other", "__unanswered"] }
       : field));
-    const result = registrationFormDefinitionSchema.safeParse(bad);
-    expect(result.success).toBe(false);
-    expect(JSON.stringify(result.error?.issues)).toContain("Choice values can't start with two underscores.");
+    const parsed = registrationFormDefinitionSchema.safeParse(stored);
+    expect(parsed.success).toBe(true);
+    expect(() => assertNoReservedChoiceValues(parsed.data!)).toThrow("Choice values can't start with two underscores.");
+    expect(() => assertNoReservedChoiceValues(registrationFormDefinitionSchema.parse(definition))).not.toThrow();
+    const rows = [registration("Z1", "CONFIRMED", [attendee("z1", "Zed", "Synthetic", { meal_preference: "__other" })])];
+    const withStored = rows.map((row) => ({ ...row, publicSubmission: { definition: stored, responses: {}, attendeeResponses: [] } })) as unknown as RegistrationRecord[];
+    const question = listChoiceQuestions(withStored, staff).find((candidate) => candidate.key === "meal_preference")!;
+    expect(question.choices.map((choice) => choice.value)).toEqual(["Standard"]);
+    const counts = choiceAnswerCounts(withStored, question);
+    expect(counts.other).toBe(1);
+    expect(matchesForChoice(withStored, question, CHOICE_FILTER_OTHER)).toHaveLength(1);
+  });
+
+  it("no built-in form template offers a choice value starting with two underscores", () => {
+    for (const template of formTemplates) {
+      expect(() => assertNoReservedChoiceValues(registrationFormDefinitionSchema.parse(template.definition))).not.toThrow();
+    }
   });
 
   it("never resolves a reserved value for a sensitive question without VIEW_SENSITIVE_DATA", () => {
