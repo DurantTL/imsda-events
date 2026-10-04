@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const root = process.cwd();
 const dockerfile = readFileSync(path.join(root, "Dockerfile"), "utf8");
@@ -56,6 +56,26 @@ describe("portable Docker deployment contract", () => {
     expect(buildTsconfig.exclude).toEqual(
       expect.arrayContaining(["tests", "scripts", "prisma"]),
     );
+  });
+
+  it("skips Next's build-time type check only in the image, where CI already ran it", async () => {
+    expect(dockerfile).toContain("ARG NEXT_SKIP_BUILD_TYPECHECK=1");
+    expect(dockerfile).toContain("ENV NEXT_SKIP_BUILD_TYPECHECK=${NEXT_SKIP_BUILD_TYPECHECK}");
+    const previous = process.env.NEXT_SKIP_BUILD_TYPECHECK;
+    try {
+      delete process.env.NEXT_SKIP_BUILD_TYPECHECK;
+      vi.resetModules();
+      const checked = (await import("../next.config")).default;
+      expect(checked.typescript?.ignoreBuildErrors).toBe(false);
+      process.env.NEXT_SKIP_BUILD_TYPECHECK = "1";
+      vi.resetModules();
+      const skipped = (await import("../next.config")).default;
+      expect(skipped.typescript?.ignoreBuildErrors).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.NEXT_SKIP_BUILD_TYPECHECK;
+      else process.env.NEXT_SKIP_BUILD_TYPECHECK = previous;
+      vi.resetModules();
+    }
   });
 
   it("backs up the upload volume alongside PostgreSQL", () => {

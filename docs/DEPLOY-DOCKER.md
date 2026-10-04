@@ -16,6 +16,11 @@ What happens on `docker compose up`:
    form templates, #610) before starting `next start` on port 3000.
    The app validates its whole environment before accepting a request and **refuses
    to start** if anything required is missing — see [Environment variables](#environment-variables-set-these-in-the-xcloud-env-panel).
+   The image build skips Next's TypeScript check, which needs more memory than the
+   4 GB production server has (pass `--build-arg NEXT_SKIP_BUILD_TYPECHECK=0` on a
+   bigger host to keep it). GitHub CI type-checks every commit, so **deploy only
+   commits whose CI is green**: a finished image build no longer proves the code
+   type-checks.
 3. **outbox-sweeper** retries queued email that failed a first delivery attempt, and
    sends the daily location waitlist digest each morning at 7:00 Central
    (see [LOCATION-WAITLISTS.md](LOCATION-WAITLISTS.md)).
@@ -284,7 +289,9 @@ the override file above, and the commit SHA being deployed.
    docker build -t imsda-events:manual-<short-sha> .
 ```
 
-   Check the build actually finished (and didn't error) before continuing.
+   Check the build actually finished (and didn't error) before continuing. The
+   build skips the TypeScript check, so also confirm the commit's GitHub CI is
+   green before deploying it.
 
 3. **Rename the old container instead of removing it**, so rollback is one
    command:
