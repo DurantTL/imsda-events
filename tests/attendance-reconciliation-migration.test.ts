@@ -28,7 +28,7 @@ describe("attendance reconciliation migration (#166)", () => {
   it("is additive: no drops, deletes, or changes to existing columns", () => {
     for (const statement of sql.split(/;\s*\n/).map((part) => part.trim()).filter(Boolean)) {
       expect(statement).not.toMatch(/^(DELETE|UPDATE|TRUNCATE|DROP)\b/i);
-      if (/^ALTER TABLE/.test(statement)) expect(statement).toMatch(/^ALTER TABLE "Attendance(Correction|ReconciliationVersion)"/);
+      if (/^ALTER TABLE/.test(statement)) expect(statement).toMatch(/^ALTER TABLE "Attendance(Correction|ReconciliationVersion|ReviewAcknowledgement)"/);
     }
   });
 });

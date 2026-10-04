@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     prepareReconciliation: vi.fn(),
     approveReconciliation: vi.fn(),
     recordAttendanceCorrection: vi.fn(),
+    acknowledgeRosterReview: vi.fn(),
     getAttendanceReconciliationView: vi.fn(),
     getAttendanceReconciliationExport: vi.fn(),
   },
@@ -98,6 +99,16 @@ describe("POST /api/events/[eventId]/attendance-reconciliation", () => {
     expect(mocks.service.prepareReconciliation).not.toHaveBeenCalled();
   });
 
+  it("acknowledging a roster review needs a reason, MANAGE_FINANCE on the event, and acts as the signed-in user", async () => {
+    mocks.service.acknowledgeRosterReview.mockResolvedValue({ changed: true, acknowledgementId: "ack-1" });
+    expect((await POST(post({ action: "acknowledge", registrationId: "r1", reason: "Accept the prorated figure" }), context())).status).toBe(200);
+    expect(mocks.service.acknowledgeRosterReview).toHaveBeenCalledWith({ eventId: "event-a", registrationId: "r1", reason: "Accept the prorated figure", actorUserId: "user-finance" });
+    expect((await POST(post({ action: "acknowledge", registrationId: "r1", reason: " " }), context())).status).toBe(400);
+    expect((await POST(post({ action: "acknowledge", registrationId: "r1", reason: "x" }), context("event-c"))).status).toBe(403);
+    expect((await POST(post({ action: "acknowledge", registrationId: "r1", reason: "x" }), context("event-b"))).status).toBe(403);
+    expect(mocks.service.acknowledgeRosterReview).toHaveBeenCalledTimes(1);
+  });
+
   it("requires a reason for every correction, and validates the body", async () => {
     expect((await POST(post({ action: "correct", attendeeId: "att-1", kind: "MARK_ATTENDED" }), context())).status).toBe(400);
     expect((await POST(post({ action: "correct", attendeeId: "att-1", kind: "MARK_ATTENDED", reason: "   " }), context())).status).toBe(400);
@@ -127,7 +138,7 @@ describe("attendance reconciliation reads", () => {
       key: "g", title: "=SUM(1+1)", partyKind: "ORGANIZATION", partyId: "o", partyName: "Church", clubId: null,
       registrations: [{
         registrationId: "r1", confirmationCode: "C-1", status: "CONFIRMED", label: "+Club", clubId: null, locationId: null, locationName: null,
-        estimatedCents: 2500, people: [], registrationChargeCents: 0, credits: [], registrationAdjustmentCents: 0, hasPriceLines: true,
+        estimatedCents: 2500, people: [], registrationCharges: [], credits: [], promo: null, review: null, registrationAdjustmentCents: 0, hasPriceLines: true,
       }],
     }], "PER_CHURCH");
     mocks.service.getAttendanceReconciliationExport.mockResolvedValue({ result, versionLabel: "Current facts (not saved)", factsChanged: null });

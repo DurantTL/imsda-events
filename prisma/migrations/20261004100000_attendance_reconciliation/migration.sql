@@ -48,6 +48,19 @@ CREATE TABLE "AttendanceReconciliationVersion" (
     CONSTRAINT "AttendanceReconciliationVersion_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "AttendanceReviewAcknowledgement" (
+    "id" TEXT NOT NULL,
+    "eventId" TEXT NOT NULL,
+    "registrationId" TEXT NOT NULL,
+    "reviewKey" TEXT NOT NULL,
+    "reason" TEXT NOT NULL,
+    "actorUserId" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "AttendanceReviewAcknowledgement_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE INDEX "AttendanceCorrection_eventId_createdAt_idx" ON "AttendanceCorrection"("eventId", "createdAt");
 
@@ -62,6 +75,12 @@ CREATE INDEX "AttendanceReconciliationVersion_eventId_status_idx" ON "Attendance
 
 -- CreateIndex
 CREATE UNIQUE INDEX "AttendanceReconciliationVersion_eventId_versionNumber_key" ON "AttendanceReconciliationVersion"("eventId", "versionNumber");
+
+-- CreateIndex
+CREATE INDEX "AttendanceReviewAcknowledgement_eventId_createdAt_idx" ON "AttendanceReviewAcknowledgement"("eventId", "createdAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "AttendanceReviewAcknowledgement_registrationId_reviewKey_key" ON "AttendanceReviewAcknowledgement"("registrationId", "reviewKey");
 
 -- AddForeignKey
 ALTER TABLE "AttendanceCorrection" ADD CONSTRAINT "AttendanceCorrection_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -84,9 +103,18 @@ ALTER TABLE "AttendanceReconciliationVersion" ADD CONSTRAINT "AttendanceReconcil
 -- AddForeignKey
 ALTER TABLE "AttendanceReconciliationVersion" ADD CONSTRAINT "AttendanceReconciliationVersion_approvedByUserId_fkey" FOREIGN KEY ("approvedByUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
+-- AddForeignKey
+ALTER TABLE "AttendanceReviewAcknowledgement" ADD CONSTRAINT "AttendanceReviewAcknowledgement_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AttendanceReviewAcknowledgement" ADD CONSTRAINT "AttendanceReviewAcknowledgement_registrationId_fkey" FOREIGN KEY ("registrationId") REFERENCES "Registration"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AttendanceReviewAcknowledgement" ADD CONSTRAINT "AttendanceReviewAcknowledgement_actorUserId_fkey" FOREIGN KEY ("actorUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 
--- #166: reviewed attendance and billable-unit reconciliation. Additive only (two enums, two new
+
+-- #166: reviewed attendance and billable-unit reconciliation. Additive only (two enums, three new
 -- tables). Corrections are append-only; a reconciliation version is an immutable snapshot whose
 -- only changes are its status transitions. All of it is enforced here, not only in the app.
 
@@ -197,3 +225,26 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER "AttendanceReconciliationVersion_guard" BEFORE INSERT OR UPDATE OR DELETE ON "AttendanceReconciliationVersion" FOR EACH ROW EXECUTE FUNCTION "AttendanceReconciliationVersion_guard"();
+
+-- A roster-review acknowledgement carries its reason, is never edited or deleted (only the actor
+-- clearing itself when that user is deleted, and the rows going with their event or registration,
+-- both only from inside a foreign-key action).
+ALTER TABLE "AttendanceReviewAcknowledgement" ADD CONSTRAINT "AttendanceReviewAcknowledgement_reason_present" CHECK (length(btrim("reason")) > 0);
+CREATE FUNCTION "AttendanceReviewAcknowledgement_guard"() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF pg_trigger_depth() > 1 AND (
+      NOT EXISTS (SELECT 1 FROM "Event" WHERE "id" = OLD."eventId")
+      OR NOT EXISTS (SELECT 1 FROM "Registration" WHERE "id" = OLD."registrationId")
+    ) THEN
+      RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'A roster-review acknowledgement is never deleted.' USING ERRCODE = '23001';
+  END IF;
+  IF pg_trigger_depth() > 1 AND NEW."actorUserId" IS NULL AND (to_jsonb(NEW) - 'actorUserId') = (to_jsonb(OLD) - 'actorUserId') THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'A roster-review acknowledgement is not rewritten.' USING ERRCODE = '23001';
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER "AttendanceReviewAcknowledgement_guard" BEFORE UPDATE OR DELETE ON "AttendanceReviewAcknowledgement" FOR EACH ROW EXECUTE FUNCTION "AttendanceReviewAcknowledgement_guard"();

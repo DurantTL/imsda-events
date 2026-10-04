@@ -27,6 +27,7 @@ reconciled attended count.
 | Staff correction | `AttendanceCorrection`: "mark attended" (came, missed at check-in), "mark not attended" (checked in by mistake), or "withdraw" (back to the check-in record). Reason required, actor recorded, audited |
 | Price | The registration's recorded price lines (the latest amendment's, else the submission's) |
 | Credit | The #409 meal-sponsorship credit, recomputed from the form's own credit field |
+| Promo code | The whole-registration code (`PromoCodeRedemption`) and the discount in the latest pricing snapshot |
 | Responsible party | The RECORDED billing responsibility (#165), grouped per church or per club as the event's setting says |
 
 Not in the codebase, so not invented here: excluded people and complimentary roles. A free person
@@ -49,10 +50,21 @@ Per registration, per invoice group and for the event:
 
 - A person's own price lines (the per-person rate, which already carries the late price when the
   registration was priced after the late date) count only for attended people.
-- **Registration-level charges** (a flat or late fee for the whole registration, not for a person)
-  cannot be split per person. They follow #409: kept whole, once. Choice made here: they apply
-  while at least one person attended and are $0 when nobody did, because a church is not billed for
-  a registration nobody came to.
+- **Registration-level charges** (a flat or late fee for the whole registration, or a per-unit
+  charge, not for a person) cannot be split per person. They follow #409: kept whole, once. Choice
+  made here: they apply while at least one person attended and are $0 when nobody did, because a
+  church is not billed for a registration nobody came to. They are listed per registration under
+  "Charges not tied to a person" and in a CSV column so staff can see them. Whether they should
+  shrink with attendance is a decision for Caleb; this keeps the estimate's behaviour until then.
+- **Whole-registration promo code** (the redemption recorded when the registration was priced or
+  amended; per-person codes are adjustment rows and are counted with the adjustments, never twice):
+  it applies to what the attended people owe after credits, the way the estimate applied it to the
+  registered subtotal. A percentage code gives the same percentage (and honours its maximum); a
+  fixed code is applied in full, capped at what the attended people owe. Neither ever exceeds the
+  discount the estimate recorded, so a registration where everyone attends never bills more than
+  its estimate, and nothing goes below $0. It is shown as its own line on the screen, in the
+  snapshot and in the CSV. A code's minimum-subtotal condition is not re-checked against the
+  smaller attended subtotal (the church keeps the discount it was promised).
 - **Meal-sponsorship credit**: units entered times the form's credit per unit, capped at the people
   who **attended** (the estimate caps it at the people registered), and never more than the
   charges. If the form's credit field cannot be found (an old form), the recorded credit is kept
@@ -85,6 +97,29 @@ The view's "People" drilldown shows each person's status (checked in, no-show, c
 correction reason and actor. Correction buttons appear only on the live view, never on a saved
 version.
 
+**What a saved version holds.** For a correction, only its id, kind and the person: never the
+reason text, who made it, or when. The screen reads those live from the append-only correction row
+(it never changes), so no free text is copied into a snapshot. The fingerprint ignores the
+correction's id, so withdrawing a correction and re-entering an identical one (same person, same
+kind) does not force a new approval. The reason field tells staff not to include health or medical
+details ("did not attend" or "missed at check-in" is enough), and audit rows never hold the reason.
+
+**One thing at a time.** Prepare, approve, correct and acknowledge all take one per-event database
+lock (`pg_advisory_xact_lock`). Approve re-reads the facts inside its locked transaction and
+refuses if they differ from the draft, so a correction cannot slip in between the check and the
+approval.
+
+## Roster changed after pricing (member transfers)
+
+Prices are matched to people by their place on the roster, and a member transfer shifts places. A
+registration is marked "Needs review: roster changed after pricing" when a price line points past
+the roster, a price line's person name is not the person at that place (a substituted seat keeps
+its price and is not compared), or an approved transfer touched the registration after its prices
+were recorded. It is billed on the prorated estimate, not the per-person lines, and approval is
+refused until staff acknowledge it with a reason (an append-only, audited record naming exactly
+that mismatch; a later transfer needs a new one). Acknowledging changes the facts, so prepare
+again, then approve.
+
 ## Blocked until billing responsibility is ready (#165, #167)
 
 Invoices go to the recorded responsible party, so preparing and approving are refused while any
@@ -93,8 +128,10 @@ reason and a link to Billing responsibility. Corrections stay possible meanwhile
 
 ## CSV
 
-One row per registration with the invoice group, counts, estimated and billable amounts, how the
-amount was worked out, the version, and whether facts changed since approval. No attendee names.
+One row per registration with the invoice group, counts, estimated and billable amounts, the
+promo code, charges not tied to a person, how the amount was worked out, the version, whether facts
+changed since approval, and the roster review state. It contains the responsible party and the
+club or registrant name, not attendee lists.
 Cells go through the shared formula-safe writer. `?version=` exports a saved version.
 
 ## Known limits and open items
@@ -103,6 +140,8 @@ Cells go through the shared formula-safe writer. `?version=` exports a saved ver
   submission time (60 second grace); it is informational and does not change an amount.
 - A substitution replaces the person on the same roster seat, so a check-in recorded before a
   substitution stays with the seat. Staff correct it when it matters.
+- If an attendee record is deleted, a staff adjustment that was for that person loses its link and
+  is then counted as a whole-registration adjustment (the existing foreign-key behaviour).
 - Invoice numbering, finalization and delivery (#167, #168), and any exclusion or complimentary
   concept, are out of scope.
 

@@ -11,7 +11,7 @@ import { withRequestContext } from "@/lib/request-context";
 /**
  * Attendance reconciliation as a CSV (#166): one row per registration with the registered,
  * checked-in, no-show, adjusted and billable counts and the estimated and billable amounts.
- * Staff finance export (MANAGE_FINANCE); no attendee names. `?version=` names a saved version of
+ * Staff finance export (MANAGE_FINANCE); responsible party and club or registrant names, never an attendee list. `?version=` names a saved version of
  * this event, otherwise the facts now. Follows the location filter (#413). Formula-safe.
  */
 async function getHandler(request: Request, context: { params: Promise<{ eventId: string }> }) {

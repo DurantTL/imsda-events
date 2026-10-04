@@ -4,6 +4,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import {
   AttendanceReconciliationError,
+  acknowledgeRosterReview,
   approveReconciliation,
   prepareReconciliation,
   recordAttendanceCorrection,
@@ -27,6 +28,7 @@ function statusFor(error: AttendanceReconciliationError) {
     case "EVENT_NOT_FOUND":
     case "ATTENDEE_NOT_FOUND":
     case "VERSION_NOT_FOUND":
+    case "REGISTRATION_NOT_FOUND":
       return 404;
     default:
       return 409;
@@ -46,6 +48,8 @@ async function postHandler(request: Request, context: RouteContext) {
         return Response.json(await prepareReconciliation({ eventId, actorUserId }));
       case "approve":
         return Response.json(await approveReconciliation({ eventId, versionId: body.versionId, actorUserId }));
+      case "acknowledge":
+        return Response.json(await acknowledgeRosterReview({ eventId, registrationId: body.registrationId, reason: body.reason, actorUserId }));
       case "correct":
         return Response.json(await recordAttendanceCorrection({ eventId, attendeeId: body.attendeeId, kind: body.kind, reason: body.reason, actorUserId }));
     }

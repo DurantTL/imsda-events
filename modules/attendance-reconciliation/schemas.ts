@@ -11,6 +11,7 @@ const reason = z.string().trim().min(1, "Say why you are correcting this person'
 export const attendanceReconciliationActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("prepare") }),
   z.object({ action: z.literal("approve"), versionId: id }),
+  z.object({ action: z.literal("acknowledge"), registrationId: id, reason: z.string().trim().min(1, "Say why you accept the prorated figure for this registration.").max(CORRECTION_REASON_MAX, `Keep the reason to ${CORRECTION_REASON_MAX} characters or fewer.`) }),
   z.object({
     action: z.literal("correct"),
     attendeeId: id,

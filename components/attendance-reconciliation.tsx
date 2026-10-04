@@ -1,10 +1,11 @@
 import { ClipboardCheck, Download } from "lucide-react";
-import { ApproveControl, CorrectionForm, PrepareControl } from "@/components/attendance-reconciliation-controls";
+import { AcknowledgeForm, ApproveControl, CorrectionForm, PrepareControl } from "@/components/attendance-reconciliation-controls";
 import {
   basisLabel,
   blockerReasonLabel,
   correctionLabel,
   personStateLabel,
+  rosterReviewReasonLabel,
   type Counts,
   type GroupResult,
   type RegistrationResult,
@@ -65,7 +66,7 @@ export function AttendanceReconciliation({
       </section>
     );
   }
-  const { result, blockers, approved, draft, versions, shown } = view;
+  const { result, blockers, approved, draft, versions, shown, correctionDetails, acknowledgementDetails, reviewPending } = view;
   const isLive = shown.kind === "LIVE";
   const locationQuery = locationId ? `location=${encodeURIComponent(locationId)}` : "";
   const exportQuery = [shown.kind === "VERSION" ? `version=${encodeURIComponent(shown.version.id)}` : "", locationQuery].filter(Boolean).join("&");
@@ -137,8 +138,11 @@ export function AttendanceReconciliation({
         )}
         <span className="billing-inline-action">
           <PrepareControl disabled={blocked} disabledReason="Finish billing responsibility first." eventId={eventId} />
-          {draft && draftIsCurrent && <ApproveControl disabled={blocked} eventId={eventId} versionId={draft.id} versionNumber={draft.versionNumber} />}
+          {draft && draftIsCurrent && <ApproveControl disabled={blocked || reviewPending.length > 0} eventId={eventId} versionId={draft.id} versionNumber={draft.versionNumber} />}
         </span>
+        {reviewPending.length > 0 && (
+          <p><small>Approval waits for {reviewPending.length} roster {reviewPending.length === 1 ? "review" : "reviews"} below (&ldquo;Needs review&rdquo;). Acknowledge {reviewPending.length === 1 ? "it" : "each"} with a reason, then prepare again.</small></p>
+        )}
         <p><small>Preparing is for the whole event, whatever location is selected below. Preparing again with nothing changed makes no new version.</small></p>
       </section>
 
@@ -165,7 +169,7 @@ export function AttendanceReconciliation({
           <p>Submitted and confirmed registrations appear here.</p>
         </div>
       )}
-      {result.groups.map((group) => <GroupPanel eventId={eventId} group={group} isLive={isLive} key={group.key} />)}
+      {result.groups.map((group) => <GroupPanel acknowledgementDetails={acknowledgementDetails} correctionDetails={correctionDetails} eventId={eventId} group={group} isLive={isLive} key={group.key} />)}
 
       <section className="panel finance-list" aria-label="Version history">
         <div className="section-heading"><h3>Version history</h3></div>
@@ -194,7 +198,9 @@ function VersionRow({ eventId, version, shownId }: { eventId: string; version: V
   );
 }
 
-function GroupPanel({ eventId, group, isLive }: { eventId: string; group: GroupResult; isLive: boolean }) {
+type Details = Record<string, { reason: string; actorName: string | null; createdAt: string }>;
+
+function GroupPanel({ eventId, group, isLive, correctionDetails, acknowledgementDetails }: { eventId: string; group: GroupResult; isLive: boolean; correctionDetails: Details; acknowledgementDetails: Details }) {
   return (
     <section className="panel finance-list billing-group" aria-label={`Invoice group ${group.title}`}>
       <div className="section-heading">
@@ -204,7 +210,7 @@ function GroupPanel({ eventId, group, isLive }: { eventId: string; group: GroupR
         </div>
       </div>
       {HEAD}
-      {group.registrations.map((registration) => <RegistrationRow eventId={eventId} isLive={isLive} key={registration.registrationId} registration={registration} />)}
+      {group.registrations.map((registration) => <RegistrationRow acknowledgementDetails={acknowledgementDetails} correctionDetails={correctionDetails} eventId={eventId} isLive={isLive} key={registration.registrationId} registration={registration} />)}
       <div className="finance-row attendance-row">
         <span><strong>Group total</strong></span><CountCells counts={group.counts} /><span>{money(group.estimatedCents)}</span><span><strong>{money(group.billableCents)}</strong></span>
       </div>
@@ -212,12 +218,22 @@ function GroupPanel({ eventId, group, isLive }: { eventId: string; group: GroupR
   );
 }
 
-function RegistrationRow({ eventId, registration, isLive }: { eventId: string; registration: RegistrationResult; isLive: boolean }) {
+function RegistrationRow({ eventId, registration, isLive, correctionDetails, acknowledgementDetails }: { eventId: string; registration: RegistrationResult; isLive: boolean; correctionDetails: Details; acknowledgementDetails: Details }) {
+  const review = registration.review && registration.review.reasons.length > 0 ? registration.review : null;
+  const acknowledgement = review?.acknowledgementId ? acknowledgementDetails[review.acknowledgementId] : undefined;
   return (
     <div className="finance-row attendance-row">
       <span>
         <strong>{registration.label}</strong>
         <small>{registration.confirmationCode}{registration.locationName ? ` · ${registration.locationName}` : ""} · {basisLabel(registration.basis)}</small>
+        {review && (
+          <small role="status">
+            <strong>{review.acknowledged ? "Roster review acknowledged" : "Needs review: roster changed after pricing"}</strong>
+            {" "}({review.reasons.map(rosterReviewReasonLabel).join("; ")}). The amount is prorated from the estimate; approval waits for an acknowledgement.
+            {acknowledgement && ` Acknowledged${acknowledgement.actorName ? ` by ${acknowledgement.actorName}` : ""} on ${when(acknowledgement.createdAt)}. Reason: ${acknowledgement.reason}`}
+            {isLive && !review.acknowledged && <> <AcknowledgeForm eventId={eventId} registrationId={registration.registrationId} /></>}
+          </small>
+        )}
         <details>
           <summary>People ({registration.people.length})</summary>
           <ul>
@@ -229,7 +245,10 @@ function RegistrationRow({ eventId, registration, isLive }: { eventId: string; r
                 {person.substituted ? " · substituted" : ""}
                 {person.correction && (
                   <small>
-                    {" "}{correctionLabel(person.correction.kind)}{person.correction.actorName ? ` by ${person.correction.actorName}` : ""} on {when(person.correction.createdAt)}. Reason: {person.correction.reason}
+                    {" "}{correctionLabel(person.correction.kind)}
+                    {correctionDetails[person.correction.id]
+                      ? `${correctionDetails[person.correction.id]!.actorName ? ` by ${correctionDetails[person.correction.id]!.actorName}` : ""} on ${when(correctionDetails[person.correction.id]!.createdAt)}. Reason: ${correctionDetails[person.correction.id]!.reason}`
+                      : ""}
                   </small>
                 )}
                 {isLive && <CorrectionForm attended={person.billable} attendeeId={person.attendeeId} eventId={eventId} hasCorrection={person.correction !== null} personName={person.name} />}
@@ -240,8 +259,20 @@ function RegistrationRow({ eventId, registration, isLive }: { eventId: string; r
             Charges for attended people {money(registration.components.personChargesCents)}
             {registration.components.registrationChargeCents > 0 ? ` · registration-level charges ${money(registration.components.registrationChargeCents)}` : ""}
             {registration.credits.map((credit) => ` · ${credit.label}${credit.units !== null ? ` (${credit.units} ${credit.units === 1 ? "person" : "people"})` : ""} ${money(credit.appliedCents)}`).join("")}
+            {registration.promo ? ` · promo code ${registration.promo.code} ${money(registration.promo.appliedCents)}` : ""}
             {registration.components.adjustmentCents !== 0 ? ` · staff adjustments ${money(registration.components.adjustmentCents)}` : ""}
           </small>
+          {registration.unattached.length > 0 && (
+            <>
+              <h4>Charges not tied to a person</h4>
+              <small>Kept whole, not reduced by who attended (the same as the estimate).</small>
+              <ul>
+                {registration.unattached.map((entry, index) => (
+                  <li key={`${entry.label}-${index}`}>{entry.label}: {money(entry.amountCents)}{entry.kind === "CREDIT_AS_RECORDED" ? " (credit as recorded)" : ""}</li>
+                ))}
+              </ul>
+            </>
+          )}
         </details>
       </span>
       <CountCells counts={registration.counts} />

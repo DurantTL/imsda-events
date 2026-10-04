@@ -48,7 +48,9 @@ function registration(people: PersonSource[], overrides: Partial<RegistrationSou
     locationName: null,
     estimatedCents: people.reduce((total, entry) => total + entry.chargeCents, 0),
     people,
-    registrationChargeCents: 0,
+    registrationCharges: [],
+    promo: null,
+    review: null,
     credits: [],
     registrationAdjustmentCents: 0,
     hasPriceLines: true,
@@ -60,8 +62,6 @@ const correction = (kind: "MARK_ATTENDED" | "MARK_NOT_ATTENDED", reason = "Staff
   id: `corr-${kind}-${counter}`,
   kind,
   reason,
-  actorName: "Finance Staff",
-  createdAt: "2026-10-04T12:00:00.000Z",
 });
 
 describe("billable means attended", () => {
@@ -79,7 +79,7 @@ describe("billable means attended", () => {
   });
 
   it("bills nothing when nobody attended", () => {
-    const result = reconcileRegistration(registration([person(), person()], { registrationChargeCents: 1000 }));
+    const result = reconcileRegistration(registration([person(), person()], { registrationCharges: [{ label: "Registration fee", cents: 1000 }] }));
     expect(result.counts.billable).toBe(0);
     expect(result.billableCents).toBe(0);
     expect(result.basis).toBe("NO_ONE_ATTENDED");
@@ -185,7 +185,7 @@ describe("#409 amounts applied to attended people", () => {
   });
 
   it("keeps a registration-level fee whole while anyone attended, and drops it when nobody did", () => {
-    const withFee = (attended: boolean) => reconcileRegistration(registration([person({ checkedIn: attended }), person({ checkedIn: attended })], { registrationChargeCents: 2000 }));
+    const withFee = (attended: boolean) => reconcileRegistration(registration([person({ checkedIn: attended }), person({ checkedIn: attended })], { registrationCharges: [{ label: "Registration fee", cents: 2000 }] }));
     expect(withFee(true).billableCents).toBe(5000 + 2000);
     expect(withFee(false).billableCents).toBe(0);
   });
@@ -222,7 +222,7 @@ describe("grouping, fingerprint, location filter", () => {
 
   it("the same facts give the same fingerprint input; a changed fact or rule changes it", () => {
     const build = (checkedIn: boolean, actorName = "A", createdAt = "t1") => {
-      const entry = person({ attendeeId: "fixed", name: "Fixed", checkedIn, correction: { id: "c1", kind: "MARK_ATTENDED", reason: "r", actorName, createdAt } });
+      const entry = person({ attendeeId: "fixed", name: "Fixed", checkedIn, correction: { id: `c-${actorName}-${createdAt}`, kind: "MARK_ATTENDED" } });
       return reconcileEvent([groupOf("g", [registration([entry])])], "PER_CHURCH");
     };
     expect(fingerprintInput(build(false))).toBe(fingerprintInput(build(false, "B", "t2")));

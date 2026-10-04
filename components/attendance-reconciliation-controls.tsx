@@ -80,6 +80,39 @@ export function ApproveControl({ eventId, versionId, versionNumber, disabled }: 
   );
 }
 
+export const REASON_HELP = "Don't include health or medical details. A short reason like 'did not attend' or 'missed at check-in' is enough.";
+
+/** Staff accept the prorated figure for a registration whose roster changed after pricing. A reason is required. */
+export function AcknowledgeForm({ eventId, registrationId }: { eventId: string; registrationId: string }) {
+  const { busy, error, run } = useAction(eventId);
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const reasonId = useId();
+  if (!open) {
+    return <button className="secondary-button" onClick={() => setOpen(true)} type="button">Acknowledge…</button>;
+  }
+  return (
+    <form
+      className="billing-link-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void run({ action: "acknowledge", registrationId, reason }).then((ok) => {
+          if (ok) setOpen(false);
+        });
+      }}
+    >
+      <label htmlFor={reasonId}>Why do you accept the prorated figure for this registration?</label>
+      <textarea aria-describedby={`${reasonId}-help`} id={reasonId} maxLength={500} onChange={(event) => setReason(event.target.value)} required rows={2} value={reason} />
+      <small id={`${reasonId}-help`}>{REASON_HELP}</small>
+      <span className="billing-inline-action">
+        <button className="primary-button" disabled={busy || reason.trim() === ""} type="submit">{busy ? "Saving…" : "Acknowledge"}</button>
+        <button className="secondary-button" onClick={() => setOpen(false)} type="button">Cancel</button>
+      </span>
+      {error && <small className="form-error" role="alert">{error}</small>}
+    </form>
+  );
+}
+
 /** Mark a person attended or not attended, or withdraw an earlier correction. A reason is required. */
 export function CorrectionForm({
   eventId,
@@ -118,7 +151,8 @@ export function CorrectionForm({
       }}
     >
       <label htmlFor={reasonId}>Why are you correcting {personName}?</label>
-      <textarea id={reasonId} maxLength={500} onChange={(event) => setReason(event.target.value)} required rows={2} value={reason} />
+      <textarea aria-describedby={`${reasonId}-help`} id={reasonId} maxLength={500} onChange={(event) => setReason(event.target.value)} required rows={2} value={reason} />
+      <small id={`${reasonId}-help`}>{REASON_HELP}</small>
       <span className="billing-inline-action">
         <button className="primary-button" disabled={busy || reason.trim() === ""} type="submit">
           {busy ? "Saving…" : attended ? "Mark not attended" : "Mark attended"}

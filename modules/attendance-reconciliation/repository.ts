@@ -7,6 +7,9 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   IN_SCOPE_STATUSES,
   LATE_ADDITION_GRACE_MS,
+  reviewPending,
+  rosterMismatchReasons,
+  type PromoSource,
   RECONCILIATION_RULE_VERSION,
   blockerReasonLabel,
   filterResultByLocation,
@@ -46,6 +49,9 @@ export type AttendanceReconciliationErrorCode =
   | "RESPONSIBILITY_NOT_READY"
   | "NOTHING_TO_RECONCILE"
   | "FACTS_CHANGED"
+  | "REVIEW_REQUIRED"
+  | "REGISTRATION_NOT_FOUND"
+  | "NO_REVIEW_NEEDED"
   | "VERSION_SUPERSEDED"
   | "CONCURRENT_CHANGE";
 
@@ -133,18 +139,31 @@ const factsSelect = {
       checkIns: { where: { undoneAt: null }, select: { id: true } },
       attendanceCorrections: {
         where: { supersededAt: null },
-        select: { id: true, kind: true, reason: true, createdAt: true, actor: { select: { displayName: true } } },
+        select: { id: true, kind: true },
       },
     },
   },
   adjustments: { select: { amountCents: true, registrationAttendeeId: true } },
-  publicFormSubmission: { select: { responses: true, pricingSnapshot: true, formVersion: { select: { definition: true } } } },
-  operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
+  publicFormSubmission: { select: { responses: true, pricingSnapshot: true, createdAt: true, formVersion: { select: { definition: true } } } },
+  operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true, createdAt: true } },
+  promoCodeRedemption: {
+    select: { codeSnapshot: true, discountTypeSnapshot: true, discountValueSnapshot: true, maximumDiscountCentsSnapshot: true, discountAmountCents: true },
+  },
 } satisfies Prisma.RegistrationSelect;
 
 type FactsRow = Prisma.RegistrationGetPayload<{ select: typeof factsSelect }>;
 
-function sourceFor(row: FactsRow, substitutedAttendeeIds: ReadonlySet<string>): RegistrationSource {
+/** What the reconciliation knows about the registrations beyond the registration rows themselves. */
+type SourceContext = {
+  substitutedAttendeeIds: ReadonlySet<string>;
+  /** Approved member transfers that touched each registration, with when they were decided. */
+  transfersByRegistration: ReadonlyMap<string, Array<{ id: string; decidedAt: Date | null }>>;
+  /** Roster-review acknowledgements by registration, as review key to acknowledgement id. */
+  acknowledgements: ReadonlyMap<string, ReadonlyMap<string, string>>;
+};
+
+function sourceFor(row: FactsRow, context: SourceContext): { source: RegistrationSource; reviewKey: string | null } {
+  const substitutedAttendeeIds = context.substitutedAttendeeIds;
   const amended = record(record(row.operations[0]?.afterSnapshot).pricingSnapshot);
   const snapshot = Object.keys(amended).length > 0 ? amended : record(row.publicFormSubmission?.pricingSnapshot);
   const lines = (Array.isArray(snapshot.lineItems) ? snapshot.lineItems.map(record) : [])
@@ -160,15 +179,7 @@ function sourceFor(row: FactsRow, substitutedAttendeeIds: ReadonlySet<string>): 
       attendeeId: attendee.id,
       name: attendeeName(attendee),
       checkedIn: attendee.checkIns.length > 0,
-      correction: correction && correction.kind !== "CLEAR"
-        ? {
-            id: correction.id,
-            kind: correction.kind,
-            reason: correction.reason,
-            actorName: correction.actor?.displayName ?? null,
-            createdAt: correction.createdAt.toISOString(),
-          }
-        : null,
+      correction: correction && correction.kind !== "CLEAR" ? { id: correction.id, kind: correction.kind } : null,
       addedAfterSubmission: attendee.createdAt.getTime() > submittedAt + LATE_ADDITION_GRACE_MS,
       substituted: substitutedAttendeeIds.has(attendee.id),
       chargeCents: own.reduce((total, line) => total + (line.amountCents as number), 0),
@@ -195,7 +206,35 @@ function sourceFor(row: FactsRow, substitutedAttendeeIds: ReadonlySet<string>): 
         recordedCents: line.amountCents as number,
       };
     });
-  return {
+  // Prices are matched to people by their place on the roster; a member transfer shifts places.
+  const pricedAt = row.operations[0]?.createdAt ?? row.publicFormSubmission?.createdAt ?? row.createdAt;
+  const transfersAfterPricing = (context.transfersByRegistration.get(row.id) ?? []).filter((move) => move.decidedAt === null || move.decidedAt > pricedAt);
+  const reasons = rosterMismatchReasons({
+    priceLines: lines.flatMap((line) => (typeof line.attendeeIndex === "number"
+      ? [{ attendeeIndex: line.attendeeIndex, attendeeLabel: typeof line.attendeeLabel === "string" ? line.attendeeLabel : null }]
+      : [])),
+    attendees: people.map((person) => ({ name: person.name, substituted: person.substituted })),
+    transfersAfterPricing: transfersAfterPricing.length,
+  });
+  const reviewKey = reasons.length > 0
+    ? `${reasons.join(",")}|${pricedAt.toISOString()}|${transfersAfterPricing.map((move) => move.id).sort().join(",")}`
+    : null;
+  const acknowledgementId = reviewKey ? context.acknowledgements.get(row.id)?.get(reviewKey) ?? null : null;
+
+  // A whole-registration promo code is the redemption; per-person codes are adjustment rows, counted with the adjustments.
+  const recordedDiscount = typeof snapshot.discountAmountCents === "number" ? snapshot.discountAmountCents : row.promoCodeRedemption?.discountAmountCents ?? 0;
+  const redemption = row.promoCodeRedemption;
+  const promo: PromoSource | null = redemption && recordedDiscount > 0
+    ? {
+        code: redemption.codeSnapshot,
+        type: redemption.discountTypeSnapshot,
+        value: redemption.discountValueSnapshot,
+        maximumDiscountCents: redemption.maximumDiscountCentsSnapshot,
+        recordedCents: recordedDiscount,
+      }
+    : null;
+
+  const source: RegistrationSource = {
     registrationId: row.id,
     confirmationCode: row.confirmationCode,
     status: row.status,
@@ -205,14 +244,19 @@ function sourceFor(row: FactsRow, substitutedAttendeeIds: ReadonlySet<string>): 
     locationName: row.location?.name ?? null,
     estimatedCents: moneyToCents(row.totalAmount),
     people,
-    registrationChargeCents: registrationLines.filter((line) => (line.amountCents as number) > 0).reduce((total, line) => total + (line.amountCents as number), 0),
+    registrationCharges: registrationLines
+      .filter((line) => (line.amountCents as number) > 0)
+      .map((line) => ({ label: typeof line.label === "string" ? line.label : "Charge", cents: line.amountCents as number })),
     credits,
+    promo,
+    review: reasons.length > 0 ? { reasons, acknowledged: acknowledgementId !== null, acknowledgementId } : null,
     // Whole-registration adjustments only; a person's own are counted with that person, and only when they attended.
     registrationAdjustmentCents: row.adjustments
       .filter((adjustment) => adjustment.registrationAttendeeId === null)
       .reduce((total, adjustment) => total + adjustment.amountCents, 0),
     hasPriceLines: lines.length > 0,
   };
+  return { source, reviewKey };
 }
 
 /**
@@ -234,7 +278,30 @@ export async function loadReconciliationFacts(client: Client, eventId: string) {
     select: { attendeeId: true },
   });
   const substituted = new Set(substitutions.flatMap((entry) => (entry.attendeeId ? [entry.attendeeId] : [])));
-  const byId = new Map(rows.map((row) => [row.id, sourceFor(row, substituted)]));
+  const registrationIds = rows.map((row) => row.id);
+  const moves = await client.memberTransferRegistrationMove.findMany({
+    where: { eventId, status: "APPROVED", OR: [{ fromRegistrationId: { in: registrationIds } }, { toRegistrationId: { in: registrationIds } }] },
+    select: { id: true, fromRegistrationId: true, toRegistrationId: true, decidedAt: true },
+  });
+  const transfersByRegistration = new Map<string, Array<{ id: string; decidedAt: Date | null }>>();
+  for (const move of moves) {
+    for (const registrationId of new Set([move.fromRegistrationId, move.toRegistrationId])) {
+      if (!registrationId) continue;
+      transfersByRegistration.set(registrationId, [...(transfersByRegistration.get(registrationId) ?? []), { id: move.id, decidedAt: move.decidedAt }]);
+    }
+  }
+  const acknowledgementRows = await client.attendanceReviewAcknowledgement.findMany({
+    where: { eventId },
+    select: { id: true, registrationId: true, reviewKey: true },
+  });
+  const acknowledgements = new Map<string, Map<string, string>>();
+  for (const entry of acknowledgementRows) {
+    acknowledgements.set(entry.registrationId, (acknowledgements.get(entry.registrationId) ?? new Map()).set(entry.reviewKey, entry.id));
+  }
+  const context: SourceContext = { substitutedAttendeeIds: substituted, transfersByRegistration, acknowledgements };
+  const built = new Map(rows.map((row) => [row.id, sourceFor(row, context)]));
+  const byId = new Map([...built].map(([id, entry]) => [id, entry.source]));
+  const reviewKeys = new Map([...built].flatMap(([id, entry]) => (entry.reviewKey ? [[id, entry.reviewKey] as const] : [])));
 
   const blockers = responsibilityBlockers(billing.groups.flatMap((group) => group.lines.map((line) => ({
     registrationId: line.registrationId,
@@ -265,8 +332,15 @@ export async function loadReconciliationFacts(client: Client, eventId: string) {
   }
   const result = reconcileEvent(groups, event.invoiceGrouping);
   const fingerprint = createHash("sha256").update(fingerprintInput(result)).digest("hex");
-  return { event, result, fingerprint, blockers };
+  return { event, result, fingerprint, blockers, reviewPending: reviewPending(result), reviewKeys };
 }
+
+/** One lock per event for everything that changes or approves the reconciliation, so it is one thing at a time. */
+async function lockEvent(tx: Prisma.TransactionClient, eventId: string) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`attendance-reconciliation:${eventId}`}))`;
+}
+
+const LONG_TRANSACTION = { timeout: 30_000, maxWait: 10_000 } as const;
 
 // ---------------------------------------------------------------------------------------------
 // Corrections
@@ -292,6 +366,7 @@ export async function recordAttendanceCorrection(input: {
   try {
     return await prisma.$transaction(async (tx) => {
       await requireDeferredEvent(tx, input.eventId);
+      await lockEvent(tx, input.eventId);
       const attendee = await tx.registrationAttendee.findFirst({
         where: { id: input.attendeeId, eventId: input.eventId, registration: { eventId: input.eventId, status: { in: [...IN_SCOPE_STATUSES] } } },
         select: { id: true, registrationId: true },
@@ -303,7 +378,7 @@ export async function recordAttendanceCorrection(input: {
         select: { id: true, kind: true },
       });
       const plan = planCorrection(
-        { checkedIn, correction: active && active.kind !== "CLEAR" ? { id: active.id, kind: active.kind, reason: "", actorName: null, createdAt: "" } : null },
+        { checkedIn, correction: active && active.kind !== "CLEAR" ? { id: active.id, kind: active.kind } : null },
         input.kind,
       );
       if (!plan.ok) {
@@ -351,6 +426,47 @@ export async function recordAttendanceCorrection(input: {
       }, tx);
       return { correctionId: id };
     });
+  } catch (error) {
+    if (isUniqueViolation(error)) throw concurrent();
+    throw error;
+  }
+}
+
+/**
+ * Staff acknowledge that a registration's prices may not belong to the people now on its roster
+ * (a member was transferred after pricing). That registration is billed on its prorated estimate,
+ * and approval waits for this record. A reason is required and the actor recorded; it is append-only
+ * and names exactly the mismatch seen, so a later transfer needs a new acknowledgement. Idempotent.
+ */
+export async function acknowledgeRosterReview(input: { eventId: string; registrationId: string; reason: string; actorUserId: string }) {
+  const reason = input.reason.trim();
+  if (!reason) throw new AttendanceReconciliationError("Say why you accept the prorated figure for this registration.", "NO_CHANGE");
+  const prisma = getPrisma();
+  try {
+    return await prisma.$transaction(async (tx) => {
+      await requireDeferredEvent(tx, input.eventId);
+      await lockEvent(tx, input.eventId);
+      const facts = await loadReconciliationFacts(tx, input.eventId);
+      const registration = facts.result.groups.flatMap((group) => group.registrations).find((entry) => entry.registrationId === input.registrationId);
+      if (!registration) throw new AttendanceReconciliationError("That registration is not a billed registration of this event.", "REGISTRATION_NOT_FOUND");
+      const reviewKey = facts.reviewKeys.get(input.registrationId);
+      if (!registration.review || !reviewKey) throw new AttendanceReconciliationError("This registration does not need a roster review.", "NO_REVIEW_NEEDED");
+      if (registration.review.acknowledged) return { changed: false as const, acknowledgementId: registration.review.acknowledgementId };
+      const created = await tx.attendanceReviewAcknowledgement.create({
+        data: { eventId: input.eventId, registrationId: input.registrationId, reviewKey, reason, actorUserId: input.actorUserId },
+        select: { id: true },
+      });
+      await writeAuditLog({
+        eventId: input.eventId,
+        actorUserId: input.actorUserId,
+        action: "ATTENDANCE_ROSTER_REVIEW_ACKNOWLEDGED",
+        entityType: "AttendanceReviewAcknowledgement",
+        entityId: created.id,
+        summary: "Acknowledged that a registration's roster changed after pricing.",
+        metadata: { eventId: input.eventId, registrationId: input.registrationId, reasons: registration.review.reasons },
+      }, tx);
+      return { changed: true as const, acknowledgementId: created.id };
+    }, LONG_TRANSACTION);
   } catch (error) {
     if (isUniqueViolation(error)) throw concurrent();
     throw error;
@@ -445,18 +561,21 @@ function blockedError(blockers: ResponsibilityBlocker[]) {
 export async function prepareReconciliation(input: { eventId: string; actorUserId: string }) {
   const prisma = getPrisma();
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const facts = await loadReconciliationFacts(prisma, input.eventId);
-    if (facts.blockers.length > 0) throw blockedError(facts.blockers);
-    if (facts.result.groups.length === 0) {
-      throw new AttendanceReconciliationError("There are no submitted or confirmed registrations to reconcile yet.", "NOTHING_TO_RECONCILE");
-    }
-    const existing = await prisma.attendanceReconciliationVersion.findFirst({
-      where: { eventId: input.eventId, fingerprint: facts.fingerprint, status: { not: "SUPERSEDED" } },
-      select: { id: true, versionNumber: true, status: true },
-    });
-    if (existing) return { created: false as const, versionId: existing.id, versionNumber: existing.versionNumber, status: existing.status };
     try {
       return await prisma.$transaction(async (tx) => {
+        // One at a time per event: the facts are read and the version written under the same lock that corrections take.
+        await requireDeferredEvent(tx, input.eventId);
+        await lockEvent(tx, input.eventId);
+        const facts = await loadReconciliationFacts(tx, input.eventId);
+        if (facts.blockers.length > 0) throw blockedError(facts.blockers);
+        if (facts.result.groups.length === 0) {
+          throw new AttendanceReconciliationError("There are no submitted or confirmed registrations to reconcile yet.", "NOTHING_TO_RECONCILE");
+        }
+        const existing = await tx.attendanceReconciliationVersion.findFirst({
+          where: { eventId: input.eventId, fingerprint: facts.fingerprint, status: { not: "SUPERSEDED" } },
+          select: { id: true, versionNumber: true, status: true },
+        });
+        if (existing) return { created: false as const, versionId: existing.id, versionNumber: existing.versionNumber, status: existing.status };
         const latest = await tx.attendanceReconciliationVersion.findFirst({
           where: { eventId: input.eventId },
           orderBy: { versionNumber: "desc" },
@@ -498,9 +617,9 @@ export async function prepareReconciliation(input: { eventId: string; actorUserI
           metadata: { eventId: input.eventId, versionNumber: created.versionNumber, registered: totals.registered, checkedIn: totals.checkedIn, billable: totals.billable, billableCents: totals.billableCents },
         }, tx);
         return { created: true as const, versionId: created.id, versionNumber: created.versionNumber, status: created.status };
-      });
+      }, LONG_TRANSACTION);
     } catch (error) {
-      // A parallel prepare won the version number or the fingerprint: look again and return its version.
+      // The lock makes a race unlikely; if the unique indexes still fire, look again.
       if (isUniqueViolation(error) && attempt < 2) continue;
       if (isUniqueViolation(error)) throw concurrent();
       throw error;
@@ -518,22 +637,31 @@ export async function prepareReconciliation(input: { eventId: string; actorUserI
  */
 export async function approveReconciliation(input: { eventId: string; versionId: string; actorUserId: string }) {
   const prisma = getPrisma();
-  const version = await prisma.attendanceReconciliationVersion.findFirst({
-    where: { id: input.versionId, eventId: input.eventId },
-    select: { id: true, versionNumber: true, status: true, fingerprint: true },
-  });
-  if (!version) throw new AttendanceReconciliationError("That reconciliation does not belong to this event.", "VERSION_NOT_FOUND");
-  if (version.status === "APPROVED") return { changed: false as const, versionId: version.id, versionNumber: version.versionNumber };
-  if (version.status === "SUPERSEDED") {
-    throw new AttendanceReconciliationError("A newer reconciliation replaced this draft. Review the newer one.", "VERSION_SUPERSEDED");
-  }
-  const facts = await loadReconciliationFacts(prisma, input.eventId);
-  if (facts.blockers.length > 0) throw blockedError(facts.blockers);
-  if (facts.fingerprint !== version.fingerprint) {
-    throw new AttendanceReconciliationError("Attendance or billing facts changed since this draft was prepared. Prepare it again and review the new numbers.", "FACTS_CHANGED");
-  }
   try {
     return await prisma.$transaction(async (tx) => {
+      await requireDeferredEvent(tx, input.eventId);
+      // Under the event's lock (corrections and prepares take it too) the facts cannot move between this check and the approval.
+      await lockEvent(tx, input.eventId);
+      const version = await tx.attendanceReconciliationVersion.findFirst({
+        where: { id: input.versionId, eventId: input.eventId },
+        select: { id: true, versionNumber: true, status: true, fingerprint: true },
+      });
+      if (!version) throw new AttendanceReconciliationError("That reconciliation does not belong to this event.", "VERSION_NOT_FOUND");
+      if (version.status === "APPROVED") return { changed: false as const, versionId: version.id, versionNumber: version.versionNumber };
+      if (version.status === "SUPERSEDED") {
+        throw new AttendanceReconciliationError("A newer reconciliation replaced this draft. Review the newer one.", "VERSION_SUPERSEDED");
+      }
+      const facts = await loadReconciliationFacts(tx, input.eventId);
+      if (facts.blockers.length > 0) throw blockedError(facts.blockers);
+      if (facts.reviewPending.length > 0) {
+        throw new AttendanceReconciliationError(
+          `${facts.reviewPending.length} ${facts.reviewPending.length === 1 ? "registration needs" : "registrations need"} a roster review before approval (the roster changed after pricing). Acknowledge ${facts.reviewPending.length === 1 ? "it" : "each"} with a reason, then prepare again.`,
+          "REVIEW_REQUIRED",
+        );
+      }
+      if (facts.fingerprint !== version.fingerprint) {
+        throw new AttendanceReconciliationError("Attendance or billing facts changed since this draft was prepared. Prepare it again and review the new numbers.", "FACTS_CHANGED");
+      }
       const now = new Date();
       // Settle the previous approval first: the database allows one approved version per event.
       await tx.attendanceReconciliationVersion.updateMany({
@@ -559,7 +687,7 @@ export async function approveReconciliation(input: { eventId: string; versionId:
         metadata: { eventId: input.eventId, versionNumber: version.versionNumber, billable: facts.result.totals.billable, billableCents: facts.result.totals.billableCents },
       }, tx);
       return { changed: true as const, versionId: version.id, versionNumber: version.versionNumber };
-    });
+    }, LONG_TRANSACTION);
   } catch (error) {
     const lost = error instanceof AttendanceReconciliationError ? error.code === "CONCURRENT_CHANGE" : isUniqueViolation(error);
     if (!lost) throw error;
@@ -576,6 +704,32 @@ export async function approveReconciliation(input: { eventId: string; versionId:
 // ---------------------------------------------------------------------------------------------
 // Screen and export data
 // ---------------------------------------------------------------------------------------------
+
+/** The reasons and actors of the corrections a result refers to, read live from the append-only rows (never copied into a snapshot). */
+async function correctionDetails(client: Client, eventId: string, result: ReconciliationResult) {
+  const ids = result.groups.flatMap((group) => group.registrations.flatMap((registration) => registration.people.flatMap((person) => (person.correction ? [person.correction.id] : []))));
+  const details: Record<string, { reason: string; actorName: string | null; createdAt: string }> = {};
+  if (ids.length === 0) return details;
+  const rows = await client.attendanceCorrection.findMany({
+    where: { eventId, id: { in: ids } },
+    select: { id: true, reason: true, createdAt: true, actor: { select: { displayName: true } } },
+  });
+  for (const row of rows) details[row.id] = { reason: row.reason, actorName: row.actor?.displayName ?? null, createdAt: row.createdAt.toISOString() };
+  return details;
+}
+
+/** The roster-review acknowledgements' reasons, by acknowledgement id, read live. */
+async function acknowledgementDetails(client: Client, eventId: string, result: ReconciliationResult) {
+  const ids = result.groups.flatMap((group) => group.registrations.flatMap((registration) => (registration.review?.acknowledgementId ? [registration.review.acknowledgementId] : [])));
+  const details: Record<string, { reason: string; actorName: string | null; createdAt: string }> = {};
+  if (ids.length === 0) return details;
+  const rows = await client.attendanceReviewAcknowledgement.findMany({
+    where: { eventId, id: { in: ids } },
+    select: { id: true, reason: true, createdAt: true, actor: { select: { displayName: true } } },
+  });
+  for (const row of rows) details[row.id] = { reason: row.reason, actorName: row.actor?.displayName ?? null, createdAt: row.createdAt.toISOString() };
+  return details;
+}
 
 /**
  * The finance screen's data: the live reconciliation of the facts now (filtered by location for
@@ -616,6 +770,9 @@ export async function getAttendanceReconciliationView(eventId: string, options: 
     invoiceGrouping: event.invoiceGrouping,
     shown,
     result: filterResultByLocation(result, options.locationId ?? null),
+    correctionDetails: await correctionDetails(prisma, eventId, result),
+    acknowledgementDetails: await acknowledgementDetails(prisma, eventId, result),
+    reviewPending: facts.reviewPending,
     liveTotals: facts.result.totals,
     liveFingerprint: facts.fingerprint,
     blockers: facts.blockers,

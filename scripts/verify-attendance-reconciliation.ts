@@ -11,6 +11,9 @@
  *   untouched while the view flags the change; approving a newer draft supersedes it;
  * - parallel approvals of one draft approve it once; the database lets only one of two drafts be
  *   approved at the same moment;
+ * - a registration whose roster changed after pricing is prorated and blocks approval until staff
+ *   acknowledge it (an append-only record with a reason, safe under parallel writes); every prepare,
+ *   approve and correction takes the event's advisory lock, and no reason text is saved in a version;
  * - corrections are append-only with supersede: one active per person even under parallel writes,
  *   a reason is required, rows cannot be edited or deleted, and another event's people and versions
  *   are refused;
@@ -30,6 +33,7 @@ import { fillBlankSyntheticEnv } from "./support/synthetic-env";
 import { resolveEventBillingResponsibility } from "@/modules/billing-responsibility/repository";
 import {
   AttendanceReconciliationError,
+  acknowledgeRosterReview,
   approveReconciliation,
   getAttendanceReconciliationView,
   prepareReconciliation,
@@ -158,8 +162,14 @@ async function main() {
     { key: "meal_sponsorship_count", label: "Meal sponsorship credit", amountCents: -2000 },
   ];
   const r1 = await registration(ids.eventA, ids.club1, ["Ann", "Bo", "Cy", "Di"], { lines, responses: { meal_sponsorship_count: 4 }, definition, totalCents: 8000 });
-  // Club 2: no price lines on file, two people and a $50 estimate; one comes.
-  const r2 = await registration(ids.eventA, ids.club2, ["Ed", "Flo"]);
+  // Club 2: two people, a $50 estimate, and three price lines for two people (the roster changed after
+  // pricing, as a member transfer does): it needs a roster review and is prorated. One comes.
+  const r2 = await registration(ids.eventA, ids.club2, ["Ed", "Flo"], {
+    lines: [0, 1, 2].map((index) => ({ key: `attendees.${index}.fee`, label: "Fee", amountCents: 2500, attendeeIndex: index })),
+    responses: {},
+    definition: { sections: [] },
+    totalCents: 5000,
+  });
   await checkIn(ids.eventA, r1.attendees.Ann!);
   await checkIn(ids.eventA, r1.attendees.Bo!);
   await checkIn(ids.eventA, r2.attendees.Ed!);
@@ -192,8 +202,29 @@ async function main() {
   assert(afterRace.length === 2 && afterRace[0]!.status === "SUPERSEDED" && afterRace[1]!.status === "DRAFT" && afterRace[1]!.versionNumber === 2, "parallel prepares leave one new draft and supersede the old one");
   assert(afterRace[1]!.checkedInCount === 4 && afterRace[1]!.billableCents === 6500 + 2500 - 500, "the new draft sees Cy: +$25, credit for 3 people");
 
+  // A registration whose roster changed after pricing blocks approval until staff acknowledge it.
+  const reviewDraft = afterRace[1]!;
+  const reviewRefused = await approveReconciliation({ eventId: ids.eventA, versionId: reviewDraft.id, actorUserId: ids.staff }).catch((error: unknown) => error);
+  assert(reviewRefused instanceof AttendanceReconciliationError && reviewRefused.code === "REVIEW_REQUIRED", "approval waits for the roster review");
+  assert((reviewDraft.snapshot as { groups: Array<{ registrations: Array<{ confirmationCode: string; basis: string }> }> }).groups[0]!.registrations.some((entry) => entry.basis === "PRORATED_ESTIMATE"), "the registration is prorated while it needs review");
+  assert(await rejects(acknowledgeRosterReview({ eventId: ids.eventA, registrationId: r2.id, reason: "  ", actorUserId: ids.staff })), "an acknowledgement needs a reason");
+  assert(await rejects(acknowledgeRosterReview({ eventId: ids.eventB, registrationId: r2.id, reason: "wrong event", actorUserId: ids.staff })), "another event's registration is refused");
+  const acks = await Promise.allSettled(Array.from({ length: 4 }, (_, index) => acknowledgeRosterReview({ eventId: ids.eventA, registrationId: r2.id, reason: `${REASON} ${index}`, actorUserId: ids.staff })));
+  assert(acks.every((entry) => entry.status === "fulfilled"), "parallel acknowledgements all end acknowledged");
+  const ackRows = await prisma.attendanceReviewAcknowledgement.findMany({ where: { registrationId: r2.id } });
+  assert(ackRows.length === 1 && ackRows[0]!.actorUserId === ids.staff, "one acknowledgement, with its actor");
+  assert(await rejects(prisma.attendanceReviewAcknowledgement.update({ where: { id: ackRows[0]!.id }, data: { reason: "rewritten" } })), "an acknowledgement cannot be rewritten");
+  assert(await rejects(prisma.attendanceReviewAcknowledgement.deleteMany({ where: { id: ackRows[0]!.id } })), "an acknowledgement cannot be deleted");
+  assert(await rejects(prisma.attendanceReviewAcknowledgement.create({ data: { eventId: ids.eventA, registrationId: r1.id, reviewKey: "x", reason: "  ", actorUserId: ids.staff } })), "the database refuses a blank acknowledgement reason");
+  const staleReview = await approveReconciliation({ eventId: ids.eventA, versionId: reviewDraft.id, actorUserId: ids.staff }).catch((error: unknown) => error);
+  assert(staleReview instanceof AttendanceReconciliationError && staleReview.code === "FACTS_CHANGED", "the acknowledgement is a fact: the earlier draft is stale");
+  const reviewed = await prepareReconciliation({ eventId: ids.eventA, actorUserId: ids.staff });
+  assert(reviewed.created && reviewed.versionNumber === 3, "a new draft is prepared after the acknowledgement");
+  const reviewedRow = await prisma.attendanceReconciliationVersion.findUniqueOrThrow({ where: { id: reviewed.versionId } });
+  assert(!JSON.stringify(reviewedRow).includes("Verify reason text"), "no reason text is saved in a version");
+
   // Approve (twice in parallel): once.
-  const draftId = afterRace[1]!.id;
+  const draftId = reviewed.versionId;
   const approvals = await Promise.allSettled(Array.from({ length: 6 }, (_, index) => approveReconciliation({ eventId: ids.eventA, versionId: draftId, actorUserId: index % 2 ? ids.staff : ids.staff2 })));
   for (const outcome of approvals) assert(outcome.status === "fulfilled", "every parallel approval of one draft ends approved");
   const changedCount = approvals.filter((outcome) => outcome.status === "fulfilled" && outcome.value.changed).length;
@@ -223,10 +254,10 @@ async function main() {
 
   // A new draft; approving it supersedes the old approval; one approved version per event.
   const second = await prepareReconciliation({ eventId: ids.eventA, actorUserId: ids.staff });
-  assert(second.created && second.versionNumber === 3, "a new draft is prepared");
+  assert(second.created && second.versionNumber === 4, "a new draft is prepared");
   await approveReconciliation({ eventId: ids.eventA, versionId: second.versionId, actorUserId: ids.staff });
   const statuses = (await prisma.attendanceReconciliationVersion.findMany({ where: { eventId: ids.eventA }, orderBy: { versionNumber: "asc" } })).map((row) => row.status);
-  assert(statuses.join() === "SUPERSEDED,SUPERSEDED,APPROVED", "approving a new draft supersedes the earlier approval");
+  assert(statuses.join() === "SUPERSEDED,SUPERSEDED,SUPERSEDED,APPROVED", "approving a new draft supersedes the earlier approval");
   assert(await rejects(prisma.attendanceReconciliationVersion.update({ where: { id: draftId }, data: { status: "APPROVED", supersededAt: null } })), "a superseded version cannot be approved again");
   assert(await rejects(prisma.attendanceReconciliationVersion.update({ where: { id: draftId }, data: { billableCents: 7 } })), "a superseded version is still immutable");
 

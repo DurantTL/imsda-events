@@ -701,6 +701,7 @@ model User {
   attendanceCorrections        AttendanceCorrection[]                    @relation("AttendanceCorrectionActor")
   preparedAttendanceVersions   AttendanceReconciliationVersion[]         @relation("AttendanceVersionPreparedBy")
   approvedAttendanceVersions   AttendanceReconciliationVersion[]         @relation("AttendanceVersionApprovedBy")
+  attendanceReviewAcknowledgements AttendanceReviewAcknowledgement[]     @relation("AttendanceReviewAckActor")
 
   @@index([accountStatus])
 }
@@ -1382,6 +1383,7 @@ model Event {
   billingResponsibilityChanges        RegistrationBillingResponsibilityChange[]
   attendanceCorrections               AttendanceCorrection[]
   attendanceReconciliationVersions    AttendanceReconciliationVersion[]
+  attendanceReviewAcknowledgements    AttendanceReviewAcknowledgement[]
   clubRegistrationDrafts              ClubRegistrationDraft[]
   clubAssignments                     ClubEventAssignment[]
   honorEnrollments                    HonorEnrollment[]
@@ -2438,6 +2440,7 @@ model Registration {
   billingResponsibility        RegistrationBillingResponsibility?
   billingResponsibilityChanges RegistrationBillingResponsibilityChange[]
   attendanceCorrections        AttendanceCorrection[]
+  attendanceReviewAcknowledgements AttendanceReviewAcknowledgement[]
   honorEnrollments        HonorEnrollment[]
   adjustments             RegistrationAdjustment[]
   memberTransferMovesFrom MemberTransferRegistrationMove[] @relation("MemberTransferMoveFrom")
@@ -5472,4 +5475,25 @@ model AttendanceReconciliationVersion {
 
   @@unique([eventId, versionNumber])
   @@index([eventId, status])
+}
+
+/// Staff acknowledgement that a registration's prices may not belong to the people now on its roster
+/// (a member was transferred after pricing, #166). The figure for that registration is prorated from
+/// its estimate, and approval waits for this record. `reviewKey` names exactly the mismatch seen, so a
+/// new transfer needs a new acknowledgement. Append-only; the reason is required and the actor recorded.
+model AttendanceReviewAcknowledgement {
+  id             String   @id @default(cuid())
+  eventId        String
+  registrationId String
+  reviewKey      String
+  reason         String
+  actorUserId    String?
+  createdAt      DateTime @default(now())
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  actor        User?        @relation("AttendanceReviewAckActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@unique([registrationId, reviewKey])
+  @@index([eventId, createdAt])
 }
