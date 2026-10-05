@@ -41,7 +41,6 @@ function row(overrides: Record<string, unknown> = {}, mapping: unknown = { ...me
     rosterAction: null,
     rosterActionMemberId: null,
     rosterActionMember: null,
-    rosterMemberId: null,
     organization: { name: "Example Pathfinders" },
     template: {
       id: "tpl-1", key: membership.key, name: membership.name, description: membership.description, version: membership.version,
