@@ -87,7 +87,7 @@ const systemAdmin: Viewer = { permissions: eventPermissions, systemAdmin: true }
 const eventAdmin: Viewer = { permissions: rolePermissions.EVENT_ADMIN };
 const fullOrder = [
   "# Main", "Dashboard",
-  "# Run the event", "Check-in", "Registrations", "Imports",
+  "# Run the event", "Check-in", "Registrations", "Attendee list", "Imports",
   "# Set up the event", "Event settings", "Registration forms", "Attendee setup", "Tags",
   "# People", "Team", "Emails",
   "# Money", "Payments", "Promo codes",
@@ -118,7 +118,8 @@ describe("sidebar order (#741 slice 4)", () => {
   it("shows a check-in-only role Dashboard and Check-in, with the other groups hidden", () => {
     expect(sidebar({ permissions: rolePermissions.CHECK_IN_STAFF })).toEqual([
       "# Main", "Dashboard",
-      "# Run the event", "Check-in", "Registrations",
+      "# Run the event", "Check-in", "Registrations", "Attendee list",
+      "More",
     ]);
     expect(sidebar({ permissions: ["MANAGE_CHECK_IN"] })).toEqual([
       "# Main", "Dashboard",
@@ -129,7 +130,7 @@ describe("sidebar order (#741 slice 4)", () => {
   it("shows a finance-only role Money and its reports, with the empty groups hidden", () => {
     expect(sidebar({ permissions: rolePermissions.FINANCE_MANAGER })).toEqual([
       "# Main", "Dashboard",
-      "# Run the event", "Registrations",
+      "# Run the event", "Registrations", "Attendee list",
       "# Money", "Payments", "Promo codes",
       "# Reports", "Operational reports", "Operational health",
       "More",
@@ -197,7 +198,7 @@ describe("phone tabs (#741 slice 4)", () => {
   });
 
   it("hides tabs the viewer may not open, keeping the order", () => {
-    expect(phoneTabs({ permissions: rolePermissions.CHECK_IN_STAFF }).labels).toEqual(["Home", "People", "Check-in"]);
+    expect(phoneTabs({ permissions: rolePermissions.CHECK_IN_STAFF }).labels).toEqual(["Home", "People", "Check-in", "More"]);
     expect(phoneTabs({ permissions: rolePermissions.FINANCE_MANAGER }).labels).toEqual(["Home", "People", "More"]);
     expect(phoneTabs({ permissions: rolePermissions.COMMUNICATIONS_MANAGER }).labels).toEqual(["Home", "Emails", "More"]);
     expect(phoneTabs({ permissions: rolePermissions.READ_ONLY_STAFF }).labels).toEqual(["Home"]);
