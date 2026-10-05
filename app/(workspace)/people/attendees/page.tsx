@@ -4,12 +4,14 @@ import { Download } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
 import { staffPageTitles } from "@/components/staff-navigation";
 import { resolveEventContext } from "@/modules/events/selection";
+import { isClubAudienceEvent } from "@/modules/events/repository";
 import { listRegistrations } from "@/modules/registrations/repository";
 import {
   LISTING_COLUMNS,
   LISTING_STATUSES,
   MEAL_CATEGORIES,
   attendeeListingParams,
+  canViewDietaryDetails,
   buildAttendeeListingRows,
   filterAttendeeListing,
   mealTotals,
@@ -31,7 +33,9 @@ export default async function AttendeeListingPage({ searchParams }: { searchPara
   }
   const query = parseAttendeeListingQuery(params);
   const registrations = await listRegistrations(event.id, { statuses: query.statuses });
-  const rows = filterAttendeeListing(buildAttendeeListingRows(registrations), query);
+  // Free-text dietary answers are health-type: the same function gates the CSV.
+  const showDietaryDetails = canViewDietaryDetails({ permissions, clubEvent: await isClubAudienceEvent(event.id) });
+  const rows = filterAttendeeListing(buildAttendeeListingRows(registrations, { showDietaryDetails }), query);
   const totals = mealTotals(rows);
   const canExport = permissions.includes("VIEW_REPORTS");
 
@@ -56,6 +60,8 @@ export default async function AttendeeListingPage({ searchParams }: { searchPara
           <Link className="secondary-button" href={`/people?event=${encodeURIComponent(event.id)}`}>Back to Registrations</Link>
         </div>
       </div>
+
+      {!showDietaryDetails && <p className="choice-filter-note" role="note">Dietary details are limited to staff with health access. This list shows only whether an attendee has dietary needs.</p>}
 
       <section className="panel" aria-label="Meal totals">
         <ul className="choice-filter-counts">

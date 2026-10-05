@@ -762,3 +762,12 @@ export async function findEventSlug(eventId: string) {
   });
   return event?.slug ?? null;
 }
+
+/** Whether the event is for clubs (CLUB audience). Unknown events read as not a club event. */
+export async function isClubAudienceEvent(eventId: string) {
+  const event = await getPrisma().event.findUnique({
+    where: { id: eventId },
+    select: { audience: true },
+  });
+  return event?.audience === "CLUB";
+}

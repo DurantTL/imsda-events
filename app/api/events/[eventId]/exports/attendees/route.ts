@@ -1,9 +1,10 @@
 import { AccessDeniedError, effectivePermissions, requirePermission } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
-import { findActiveMembership } from "@/modules/events/repository";
+import { findActiveMembership, isClubAudienceEvent } from "@/modules/events/repository";
 import { listRegistrations } from "@/modules/registrations/repository";
 import {
   attendeeListingCsv,
+  canViewDietaryDetails,
   buildAttendeeListingRows,
   filterAttendeeListing,
   parseAttendeeListingQuery,
@@ -30,12 +31,15 @@ async function getHandler(
     }
     const query = parseAttendeeListingQuery(new URL(request.url).searchParams);
     const registrations = await listRegistrations(eventId, { statuses: query.statuses });
-    const rows = filterAttendeeListing(buildAttendeeListingRows(registrations), query);
+    const showDietaryDetails = canViewDietaryDetails({ permissions, clubEvent: await isClubAudienceEvent(eventId) });
+    const rows = filterAttendeeListing(buildAttendeeListingRows(registrations, { showDietaryDetails }), query);
+    const safeEventId = eventId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 100) || "event";
     return new Response(attendeeListingCsv(rows), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${eventId}-attendees.csv"`,
-        "Cache-Control": "no-store",
+        "Content-Disposition": `attachment; filename="${safeEventId}-attendees.csv"`,
+        "Cache-Control": "private, no-store, max-age=0",
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (error) {
