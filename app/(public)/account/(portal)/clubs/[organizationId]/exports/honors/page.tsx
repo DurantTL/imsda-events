@@ -38,7 +38,7 @@ export default async function ClubHonorsReportPage({
   return (
     <>
       <BackLink href={`/account/clubs/${organizationId}/honors`}>Back to honors</BackLink>
-      <section className="panel" aria-labelledby="honors-report-heading">
+      <section className="panel honors-report-panel" aria-labelledby="honors-report-heading">
         <h2 id="honors-report-heading">Honors report: {access.club.name}, {clubYear}</h2>
         <form className="report-actions" method="get">
           <label>Club year
@@ -68,7 +68,11 @@ export default async function ClubHonorsReportPage({
           <p className="muted">No honors recorded for the chosen filters. If the roster is empty, add members on the Roster page first.</p>
         ) : (
           <div className="report-table-wrap">
-            <table aria-labelledby="honors-report-heading" className="report-table">
+            <table aria-labelledby="honors-report-heading" className="report-table honors-report-table">
+              <colgroup>
+                <col style={{ width: "18%" }} /><col style={{ width: "11%" }} /><col style={{ width: "23%" }} /><col style={{ width: "13%" }} />
+                <col style={{ width: "10%" }} /><col style={{ width: "13%" }} /><col style={{ width: "12%" }} />
+              </colgroup>
               <thead>
                 <tr>
                   <th>Member</th><th>Class</th><th>Honor</th><th>Category</th><th>Status</th><th>Date</th><th>Event</th>
@@ -82,7 +86,7 @@ export default async function ClubHonorsReportPage({
                     <td>{row.honorName}</td>
                     <td>{row.category}</td>
                     <td>{row.status}</td>
-                    <td>{row.dateEarned} ({row.dateKind.toLowerCase()})</td>
+                    <td>{row.dateEarned ? `${row.dateEarned} (${row.dateKind.toLowerCase()})` : "No date"}</td>
                     <td>{row.eventName}</td>
                   </tr>
                 ))}
@@ -95,7 +99,7 @@ export default async function ClubHonorsReportPage({
           <p className="muted">No completed honors.</p>
         ) : (
           <div className="report-table-wrap">
-            <table aria-label="Completed honors per honor" className="report-table">
+            <table aria-label="Completed honors per honor" className="report-table honors-report-table">
               <thead><tr><th>Honor</th><th>Category</th><th>Count</th></tr></thead>
               <tbody>
                 {summary.map((entry) => (

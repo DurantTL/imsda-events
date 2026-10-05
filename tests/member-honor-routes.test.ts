@@ -101,10 +101,30 @@ describe("POST club honors (bulk entry)", () => {
     expect(mocks.recordMemberHonorEntries).not.toHaveBeenCalled();
   });
 
-  it("surfaces an invalid entry (completed with no date) as 400", async () => {
+  it("accepts a completed honor with the completion date omitted or blank (#790)", async () => {
     mocks.requireHonorsEditAccess.mockResolvedValue({ accountId: "acct-1" });
-    mocks.recordMemberHonorEntries.mockRejectedValue(new MemberHonorError("ENTRY_INVALID", "Enter the completion date."));
-    const response = await CLUB_HONORS_POST(postRequest({ memberIds: ["m1"], honorId: "honor-1", status: "COMPLETED" }), ctx());
+    for (const body of [
+      { memberIds: ["m1", "m2"], honorId: "honor-1", status: "COMPLETED" },
+      { memberIds: ["m1", "m2"], honorId: "honor-1", status: "COMPLETED", completionDate: "" },
+    ]) {
+      const response = await CLUB_HONORS_POST(postRequest(body), ctx());
+      expect(response.status).toBe(201);
+    }
+    expect(mocks.recordMemberHonorEntries).toHaveBeenCalledTimes(2);
+    expect(mocks.recordMemberHonorEntries).toHaveBeenLastCalledWith("club-1", ["m1", "m2"], expect.objectContaining({ status: "COMPLETED", completionDate: "" }), { accountId: "acct-1" });
+  });
+
+  it("refuses a malformed completion date as 400 before the repository", async () => {
+    mocks.requireHonorsEditAccess.mockResolvedValue({ accountId: "acct-1" });
+    const response = await CLUB_HONORS_POST(postRequest({ memberIds: ["m1"], honorId: "honor-1", status: "COMPLETED", completionDate: "last Tuesday" }), ctx());
+    expect(response.status).toBe(400);
+    expect(mocks.recordMemberHonorEntries).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an invalid entry (a future or impossible date) as 400", async () => {
+    mocks.requireHonorsEditAccess.mockResolvedValue({ accountId: "acct-1" });
+    mocks.recordMemberHonorEntries.mockRejectedValue(new MemberHonorError("ENTRY_INVALID", "The completion date can't be in the future."));
+    const response = await CLUB_HONORS_POST(postRequest({ memberIds: ["m1"], honorId: "honor-1", status: "COMPLETED", completionDate: "2999-01-01" }), ctx());
     expect(response.status).toBe(400);
   });
 });
@@ -134,6 +154,14 @@ describe("single-member honor history and edit", () => {
     const response = await MEMBER_POST(postRequest({ honorId: "honor-1", status: "IN_PROGRESS", completionDate: "", note: "" }), memberCtx());
     expect(response.status).toBe(201);
     expect(mocks.recordMemberHonorEntries).toHaveBeenCalledWith("club-1", ["member-1"], expect.objectContaining({ honorId: "honor-1" }), { accountId: "acct-1" });
+  });
+
+  it("POST records a completed honor for one member with no completion date (#790)", async () => {
+    mocks.requireHonorsEditAccess.mockResolvedValue({ accountId: "acct-1" });
+    mocks.listMemberHonorHistory.mockResolvedValue({ firstName: "Ada", lastName: "Lin", current: [], history: [] });
+    const response = await MEMBER_POST(postRequest({ honorId: "honor-1", status: "COMPLETED" }), memberCtx());
+    expect(response.status).toBe(201);
+    expect(mocks.recordMemberHonorEntries).toHaveBeenCalledWith("club-1", ["member-1"], expect.objectContaining({ status: "COMPLETED", completionDate: "" }), { accountId: "acct-1" });
   });
 
   it("an Area Coordinator viewer is rejected on POST and nothing is recorded", async () => {

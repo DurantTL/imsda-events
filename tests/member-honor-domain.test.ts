@@ -27,9 +27,8 @@ const entry = (overrides: Partial<MemberHonorEntryRecord>): MemberHonorEntryReco
 });
 
 describe("memberHonorEntryProblem", () => {
-  it("requires a completion date for a completed honor", () => {
-    expect(memberHonorEntryProblem({ status: "COMPLETED", completionDate: "" }, "2026-09-28"))
-      .toMatch(/Enter the completion date/);
+  it("doesn't require a completion date for a completed honor (#790)", () => {
+    expect(memberHonorEntryProblem({ status: "COMPLETED", completionDate: "" }, "2026-09-28")).toBeNull();
   });
 
   it("refuses a completion date in the future", () => {

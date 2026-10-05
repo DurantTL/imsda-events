@@ -15,6 +15,7 @@ import {
   voidMemberHonorEntry,
   voidMemberHonorEntryAsStaff,
 } from "@/modules/honors/member-honor-repository";
+import { SUPERSEDED_VOID_REASON } from "@/modules/honors/member-honor-domain";
 
 type Row = Record<string, unknown> & { id: string };
 
@@ -98,7 +99,7 @@ function fakeDatabase() {
       create: async ({ data }: { data: Row }) => {
         const row = { ...data, id: id("entry"), seq: ++seq, createdAt: now };
         db.entries.push(row);
-        return { id: row.id };
+        return { id: row.id, seq: row.seq };
       },
       findUnique: async ({ where }: { where: { id: string } }) => {
         const row = db.entries.find((entry) => entry.id === where.id);
@@ -108,23 +109,27 @@ function fakeDatabase() {
         const row = db.entries.find((entry) => entry.id === where.id && entry.personId === where.personId);
         return row ? { ...row, honor: db.honors.find((honor) => honor.id === row.honorId), void: db.voids.some((v) => v.entryId === row.id) ? { id: "void" } : null } : null;
       },
-      findMany: async ({ where }: { where: { personId: string | { in: string[] } } }) => {
+      findMany: async ({ where }: { where: { personId: string | { in: string[] }; honorId?: string; seq?: { lt: number } } }) => {
         const personId = where.personId;
-        const matches = typeof personId === "string"
+        const matchesPerson = typeof personId === "string"
           ? (row: Row) => row.personId === personId
           : (row: Row) => (personId as { in: string[] }).in.includes(row.personId as string);
+        const matches = (row: Row) => matchesPerson(row)
+          && (where.honorId === undefined || row.honorId === where.honorId)
+          && (where.seq === undefined || (row.seq as number) < where.seq.lt);
         return db.entries.filter(matches).sort((a, b) => (b.seq as number) - (a.seq as number)).map(withRelations);
       },
     },
   };
+  const clientWithLock = Object.assign(client, { $executeRaw: async () => 0 });
   mocks.getPrisma.mockReturnValue({
-    ...client,
+    ...clientWithLock,
     $transaction: async (work: (tx: typeof client) => unknown, options?: unknown) => {
       mocks.transactionOptions.push(options);
-      return work(client);
+      return work(clientWithLock);
     },
   });
-  return { ...db, client };
+  return { ...db, client: clientWithLock };
 }
 
 function addMember(db: ReturnType<typeof fakeDatabase>, overrides: Partial<Row> = {}) {
@@ -193,12 +198,12 @@ describe("recordMemberHonorEntries", () => {
     expect(db.entries).toHaveLength(0);
   });
 
-  it("refuses a completed honor with no completion date, writing nothing", async () => {
+  it("records a completed honor with no completion date (#790)", async () => {
     const member = addMember(db);
-    await expect(recordMemberHonorEntries("club-1", [member.id as string], {
+    await recordMemberHonorEntries("club-1", [member.id as string], {
       honorId: "honor-1", status: "COMPLETED", completionDate: "", note: "",
-    }, actor, now)).rejects.toMatchObject({ code: "ENTRY_INVALID" });
-    expect(db.entries).toHaveLength(0);
+    }, actor, now);
+    expect(db.entries).toEqual([expect.objectContaining({ status: "COMPLETED", completionDate: "" })]);
   });
 
   it("refuses an honor that doesn't exist", async () => {
@@ -235,6 +240,80 @@ describe("recordMemberHonorEntries", () => {
   });
 });
 
+describe("completing replaces in-progress (#790)", () => {
+  const entry = (member: Row, status: "IN_PROGRESS" | "COMPLETED", completionDate = "") => recordMemberHonorEntries("club-1", [member.id as string], {
+    honorId: "honor-1", status, completionDate, note: "",
+  }, actor, now);
+
+  it("voids the in-progress entry with a system reason, leaving one current completed entry and the full history", async () => {
+    const member = addMember(db);
+    await entry(member, "IN_PROGRESS");
+    await entry(member, "COMPLETED", "2026-09-20");
+
+    expect(db.entries).toHaveLength(2);
+    expect(db.voids).toEqual([expect.objectContaining({
+      entryId: db.entries[0].id,
+      reason: SUPERSEDED_VOID_REASON,
+      voidedByAccountId: "account-director",
+    })]);
+    const history = await listMemberHonorHistory("club-1", member.id as string);
+    expect(history.current).toEqual([expect.objectContaining({ status: "COMPLETED", completionDate: "2026-09-20" })]);
+    expect(history.history[1]).toMatchObject({ status: "IN_PROGRESS", voided: { reason: SUPERSEDED_VOID_REASON } });
+    expect(history.history[0].voided).toBeNull();
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "MEMBER_HONOR_VOIDED",
+      entityId: db.entries[0].id,
+      metadata: expect.objectContaining({ superseded: true, supersededByEntryId: db.entries[1].id }),
+    }), db.client);
+  });
+
+  it("supersedes every un-voided in-progress entry, and works with no completion date", async () => {
+    const member = addMember(db);
+    await entry(member, "IN_PROGRESS");
+    await entry(member, "IN_PROGRESS");
+    await entry(member, "COMPLETED");
+    expect(db.voids.map((row) => row.entryId)).toEqual([db.entries[1].id, db.entries[0].id]);
+  });
+
+  it("does not touch another honor, an already-voided entry, or one behind an earlier completion", async () => {
+    const member = addMember(db);
+    db.honors.push({ id: "honor-2", code: "AR-012", name: "Other", isActive: true });
+    await recordMemberHonorEntries("club-1", [member.id as string], { honorId: "honor-2", status: "IN_PROGRESS", completionDate: "", note: "" }, actor, now);
+    await entry(member, "IN_PROGRESS");
+    await voidMemberHonorEntry("club-1", member.id as string, db.entries[1].id, "Entered by mistake", actor);
+    await entry(member, "COMPLETED");
+    // Reopened after the completion, then completed again: only the reopened entry is superseded.
+    await entry(member, "IN_PROGRESS");
+    await entry(member, "COMPLETED");
+    const voided = db.voids.map((row) => row.entryId);
+    expect(voided).not.toContain(db.entries[0].id);
+    expect(voided).toEqual([db.entries[1].id, db.entries[3].id]);
+    expect(db.entries).toHaveLength(5);
+  });
+
+  it("supersedes an in-progress entry another club recorded, since a transferred member has one current status", async () => {
+    const member = addMember(db);
+    db.entries.push({ id: "entry-other", seq: 0, personId: member.personId, honorId: "honor-1", status: "IN_PROGRESS", organizationId: "club-2" });
+    await entry(member, "COMPLETED");
+    expect(db.voids).toEqual([expect.objectContaining({ entryId: "entry-other", reason: SUPERSEDED_VOID_REASON })]);
+  });
+
+  it("records an in-progress entry without voiding anything", async () => {
+    const member = addMember(db);
+    await entry(member, "IN_PROGRESS");
+    await entry(member, "IN_PROGRESS");
+    expect(db.voids).toHaveLength(0);
+  });
+
+  it("attributes the system void to the staff user when staff acts as the director", async () => {
+    const member = addMember(db);
+    await entry(member, "IN_PROGRESS");
+    await recordMemberHonorEntries("club-1", [member.id as string], { honorId: "honor-1", status: "COMPLETED", completionDate: "", note: "" }, { userId: "user-9", actAsId: "actas-1" }, now);
+    expect(db.voids[0]).toMatchObject({ voidedByUserId: "user-9" });
+    expect(db.voids[0]).not.toHaveProperty("voidedByAccountId");
+  });
+});
+
 describe("voidMemberHonorEntry (#591)", () => {
   const record = (member: Row, status: "IN_PROGRESS" | "COMPLETED", note = "") => recordMemberHonorEntries("club-1", [member.id as string], {
     honorId: "honor-1", status, completionDate: status === "COMPLETED" ? "2026-09-01" : "", note,
@@ -242,7 +321,7 @@ describe("voidMemberHonorEntry (#591)", () => {
 
   it("voiding the latest entry makes the previous non-voided entry current, keeping every row", async () => {
     const member = addMember(db);
-    await record(member, "IN_PROGRESS", "Started");
+    await record(member, "COMPLETED", "Started");
     await record(member, "COMPLETED", "Marked by mistake");
     const mistaken = db.entries[1];
 
@@ -256,9 +335,9 @@ describe("voidMemberHonorEntry (#591)", () => {
       id: mistaken.id,
       voided: { reason: "Marked completed by mistake", voidedByName: "Dana Director" },
     });
-    expect(history.current).toEqual([expect.objectContaining({ status: "IN_PROGRESS" })]);
+    expect(history.current).toEqual([expect.objectContaining({ status: "COMPLETED" })]);
     const rows = await listClubHonorsPage("club-1", "2026-27");
-    expect(rows[0].honors).toEqual([expect.objectContaining({ status: "IN_PROGRESS" })]);
+    expect(rows[0].honors).toEqual([expect.objectContaining({ status: "COMPLETED" })]);
   });
 
   it("leaves no status when every entry is voided, and audits each void inside the transaction", async () => {

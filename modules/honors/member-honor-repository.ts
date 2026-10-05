@@ -6,10 +6,12 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   type ClubHonorsRow,
   type MemberHonorEntryRecord,
+  SUPERSEDED_VOID_REASON,
   VOID_REASON_MAX,
   VOID_REASON_MIN,
   currentHonorsFromHistory,
   memberHonorEntryProblem,
+  supersededInProgressEntryIds,
 } from "@/modules/honors/member-honor-domain";
 import type { BulkMemberHonorEntryInput, MemberHonorEntryInput } from "@/modules/honors/member-honor-schemas";
 import { CONFERENCE_TIME_ZONE } from "@/modules/calendar/domain";
@@ -27,6 +29,10 @@ import { CONFERENCE_TIME_ZONE } from "@/modules/calendar/domain";
  * the audit trail; a person's full history is returned regardless of which
  * club (past or present) made each entry, matching #489's "honor history
  * follows the member" requirement.
+ *
+ * Recording an honor as Completed voids the person's in-progress entry for
+ * it with a system reason (#790), through the same void row, so no duplicate
+ * remains and history still shows it.
  *
  * A mistaken entry is voided, never deleted (#591): `MemberHonorEntryVoid` is
  * its own append-only row, and current status ignores voided entries.
@@ -110,6 +116,11 @@ export async function recordMemberHonorEntries(
       ? { recordedByAccountId: actor.accountId }
       : { recordedByUserId: actor.userId };
     for (const [memberId, personId] of byMemberId) {
+      // Same per-person-and-honor lock as the Honors Weekend write-back, so two
+      // writers never both decide what is current (and what to supersede).
+      if (input.status === "COMPLETED") {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-honor-entry:${personId}:${input.honorId}`}))`;
+      }
       const entry = await tx.memberHonorEntry.create({
         data: {
           personId,
@@ -120,9 +131,12 @@ export async function recordMemberHonorEntries(
           organizationId,
           ...attribution,
         },
-        select: { id: true },
+        select: { id: true, seq: true },
       });
       const who = actorAuditFields(actor);
+      if (input.status === "COMPLETED") {
+        await supersedeInProgressEntries(tx, personId, input.honorId, entry, actor);
+      }
       // `tx`: the audit row commits or rolls back with the entry it describes.
       await writeAuditLog({
         ...who.actorFields,
@@ -409,6 +423,37 @@ export async function voidMemberHonorEntryAsStaff(entryId: string, reason: strin
     if (!entry) throw new MemberHonorError("ENTRY_NOT_FOUND", "That honor entry could not be found.");
     await writeVoid(tx, entry, trimmed, { voidedByUserId: staffUserId }, { actorUserId: staffUserId, metadata: { staffVoid: true } });
   }));
+}
+
+/**
+ * A Completed entry replaces the person's in-progress entry for that honor
+ * (#790) by voiding it with a system reason, inside the recording
+ * transaction. Nothing is deleted: it is the ordinary void row and audit
+ * entry, attributed to whoever recorded the completion, whichever club
+ * recorded the in-progress one (a transferred member keeps one current status
+ * per honor).
+ */
+async function supersedeInProgressEntries(
+  tx: Prisma.TransactionClient,
+  personId: string,
+  honorId: string,
+  completed: { id: string; seq: number },
+  actor: MemberHonorActor,
+) {
+  const prior = await tx.memberHonorEntry.findMany({
+    where: { personId, honorId, seq: { lt: completed.seq } },
+    orderBy: { seq: "desc" },
+    select: { id: true, status: true, honorId: true, organizationId: true, honor: { select: { name: true } }, void: { select: { id: true } } },
+  });
+  const superseded = new Set(supersededInProgressEntryIds(prior.map((entry) => ({ id: entry.id, status: entry.status, voided: Boolean(entry.void) }))));
+  const who = actorAuditFields(actor);
+  const voidedBy = "accountId" in actor ? { voidedByAccountId: actor.accountId } : { voidedByUserId: actor.userId };
+  for (const entry of prior.filter((row) => superseded.has(row.id))) {
+    await writeVoid(tx, entry, SUPERSEDED_VOID_REASON, voidedBy, {
+      actorUserId: "userId" in actor ? actor.userId : undefined,
+      metadata: { superseded: true, supersededByEntryId: completed.id, ...who.metadata },
+    });
+  }
 }
 
 /** Every active honor in the catalog, for the Honors page's picker and filter. */
