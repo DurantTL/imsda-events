@@ -16,6 +16,8 @@ vi.mock("@/lib/logger", async () => {
   return { ...actual, logWarn: dependencies.logWarn };
 });
 
+const lodgingMocks = vi.hoisted(() => ({ noteLodgingOnAdmission: vi.fn() }));
+vi.mock("@/modules/lodging/registration-form", () => lodgingMocks);
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 vi.mock("@/modules/registrations/repository", () => ({
@@ -105,6 +107,7 @@ function transactionFixture() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lodgingMocks.noteLodgingOnAdmission.mockResolvedValue({ hasRequest: false });
   const queued = {
     messageIds: ["message-1"],
     pendingMessageIds: ["message-1"],
@@ -186,6 +189,9 @@ describe("registration lifecycle repository", () => {
       where: { id: "entry-fit" },
       data: expect.objectContaining({ status: "PROMOTED" }),
     });
+    // Only the promoted registration's lodging request is touched (locks and capacity version), never the one that did not fit.
+    expect(lodgingMocks.noteLodgingOnAdmission).toHaveBeenCalledTimes(1);
+    expect(lodgingMocks.noteLodgingOnAdmission).toHaveBeenCalledWith(tx, expect.any(String), fitting.id);
     expect(tx.auditLog.create).toHaveBeenCalledTimes(2);
     expect(dependencies.enqueueRegistrationCancelledMessage)
       .toHaveBeenCalledWith(tx, expect.objectContaining({

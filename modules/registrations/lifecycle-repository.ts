@@ -3,6 +3,7 @@ import "server-only";
 import { countLocationSeats, lockEventLocation } from "@/modules/event-locations/admission";
 import { locationHasRoom, remainingLocationSeats } from "@/modules/event-locations/domain";
 import { EventLocationError, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
+import { noteLodgingOnAdmission } from "@/modules/lodging/registration-form";
 import { locationWaitlistPlace, recordLocationWaitlistChange } from "@/modules/event-locations/waitlist";
 
 import { Prisma, type RegistrationStatus } from "@prisma/client";
@@ -508,6 +509,9 @@ async function promoteWithinTransaction(
       lastBlockedReason: null,
     },
   });
+  // A lodging request starts counting as demand again. This never blocks or changes the promotion and never charges; the
+  // lodging review queue lists the request as unconfirmed when it no longer fits or carries no lodging line (#199).
+  const lodging = await noteLodgingOnAdmission(tx, registration.eventId, registration.id);
   await auditTransition(tx, {
     eventId: registration.eventId,
     actorUserId,
@@ -523,6 +527,7 @@ async function promoteWithinTransaction(
       activatedReservations,
       totalAmountPreserved: true,
       paymentHistoryPreserved: true,
+      lodgingRequestHeld: lodging.hasRequest,
     },
   });
   await recordLocationWaitlistChange(tx, {
@@ -1037,6 +1042,8 @@ export async function reactivateRegistration(
         },
       });
     }
+    // A reinstated registration's lodging request counts as demand again: same locks and capacityVersion bump, no charge.
+    await noteLodgingOnAdmission(tx, eventId, registration.id);
     await auditTransition(tx, {
       eventId,
       actorUserId,

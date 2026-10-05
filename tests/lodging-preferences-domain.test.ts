@@ -383,6 +383,16 @@ describe("the staff review queue", () => {
     expect(kinds(fits)).not.toContain("PARTY_EXCEEDS_ATTENDEES");
   });
 
+  it("lists a promoted registration whose request is priced without a line or no longer fits, and no other", () => {
+    const base = { promotedRegistrationIds: ["r1"], requests: [request({ registrationId: "r1", category: "DORM_ROOM", partySize: 2 })] };
+    const unpriced = buildReviewItems(facts({ ...base, lodgingCharges: [{ registrationId: "r1", chargedCents: 0, currentCents: 4000 }] }));
+    expect(kinds(unpriced)).toContain("PROMOTED_UNCONFIRMED");
+    const full = buildReviewItems(facts({ ...base, capacity: { DORM_ROOM: capacity(1) } }));
+    expect(kinds(full)).toContain("PROMOTED_UNCONFIRMED");
+    expect(kinds(buildReviewItems(facts(base)))).not.toContain("PROMOTED_UNCONFIRMED");
+    expect(kinds(buildReviewItems(facts({ ...base, promotedRegistrationIds: [], lodgingCharges: [{ registrationId: "r1", chargedCents: 0, currentCents: 4000 }] })))).not.toContain("PROMOTED_UNCONFIRMED");
+  });
+
   it("lists a charge that differs from the request, and nothing when they agree", () => {
     const differs = buildReviewItems(facts({ lodgingCharges: [{ registrationId: "r1", chargedCents: 4000, currentCents: 6000 }] }));
     expect(kinds(differs)).toEqual(["PRICE_DIFFERS"]);

@@ -399,6 +399,7 @@ export const reviewKinds = [
   "CHANGE_REQUESTED",
   "PRICE_DIFFERS",
   "PARTY_EXCEEDS_ATTENDEES",
+  "PROMOTED_UNCONFIRMED",
 ] as const;
 export type ReviewKind = (typeof reviewKinds)[number];
 
@@ -416,6 +417,7 @@ export const reviewKindLabels: Record<ReviewKind, string> = {
   CHANGE_REQUESTED: "Change requested",
   PRICE_DIFFERS: "Lodging charge differs from the request",
   PARTY_EXCEEDS_ATTENDEES: "Party is larger than the registration",
+  PROMOTED_UNCONFIRMED: "Promoted from the waitlist with an unconfirmed lodging request",
 };
 
 /** Kinds that disclose an accessibility flag: only staff with VIEW_SENSITIVE_DATA see them. */
@@ -454,6 +456,8 @@ export type ReviewFacts = {
   changeRequests?: ReadonlyArray<{ id: string; registrationId: string; category: LodgingCategory | null; chargedCents?: number; requestedCents?: number }>;
   /** What each active registration was charged for lodging, against what its request costs at today's rates. */
   lodgingCharges?: ReadonlyArray<{ registrationId: string; chargedCents: number; currentCents: number }>;
+  /** Registrations promoted from the waitlist (automatically or by staff): their lodging request was never priced or confirmed. */
+  promotedRegistrationIds?: readonly string[];
 };
 
 export type ReviewItem = {
@@ -683,6 +687,29 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
       });
       break;
     }
+  }
+
+  // --- Promoted from the waitlist with a lodging request ---------------------------
+  // A promotion never waits on lodging and never charges for it, so the request is listed for the event team to confirm
+  // when its type no longer fits or it is priced but carries no lodging line.
+  for (const registrationId of facts.promotedRegistrationIds ?? []) {
+    if (!active(registrationId)) continue;
+    const request = facts.requests.find((candidate) => candidate.registrationId === registrationId);
+    if (!request?.category) continue;
+    const charge = (facts.lodgingCharges ?? []).find((candidate) => candidate.registrationId === registrationId);
+    const unpriced = Boolean(charge && charge.currentCents > 0 && charge.chargedCents === 0);
+    const capacity = facts.capacity[request.category];
+    const byNight = demand.get(request.category);
+    const full = Boolean(capacity && capacity.unitsInService > 0 && requestNights(request, facts.nights).some((night) => {
+      const limit = capacity.perNight[night];
+      return limit !== null && limit !== undefined && (byNight?.get(night) ?? 0) > limit;
+    }));
+    if (!unpriced && !full) continue;
+    push({
+      key: `promoted:${registrationId}`, kind: "PROMOTED_UNCONFIRMED", fingerprint: `${request.requestId}@${request.version}:${full ? "full" : "fits"}:${unpriced ? "unpriced" : "priced"}`, registrationIds: [registrationId],
+      title: `${label(facts, registrationId)} was promoted from the waitlist with an unconfirmed lodging request`,
+      detail: `${full ? "The requested type is full for those nights. " : ""}${unpriced ? "No lodging charge was added. " : ""}Confirm or change the lodging, and add any charge in Payments.`,
+    });
   }
 
   return items.sort((a, b) => reviewKinds.indexOf(a.kind) - reviewKinds.indexOf(b.kind) || a.key.localeCompare(b.key));

@@ -764,6 +764,7 @@ async function loadReviewFacts(client: Client, context: Context) {
       where: { eventId, status: { not: "DRAFT" }, clubRegistration: { is: null }, groupRegistration: { is: null } },
       select: {
         id: true, status: true, confirmationCode: true,
+        waitlistEntry: { select: { status: true } },
         accountHolderPerson: { select: { firstName: true, lastName: true } },
         attendees: { orderBy: [{ position: "asc" }, { id: "asc" }], select: { personId: true, profileSnapshot: true, person: { select: { firstName: true, lastName: true } } } },
       },
@@ -826,7 +827,7 @@ async function loadReviewFacts(client: Client, context: Context) {
     chargedCents: context.churchBilled ? 0 : chargedByRegistration.get(change.registrationId) ?? 0,
     requestedCents: costOf(change.category, requestNights({ firstNight: change.firstNight ? toNight(change.firstNight) : null, lastNight: change.lastNight ? toNight(change.lastNight) : null }, context.nights).length, change.partySize),
   }));
-  const items = buildReviewItems({ nights: context.nights, registrations: registrationFacts, people, requests: requestSnapshots, roommates: roommateRows, rules: ruleRows, guardians, capacity, changeRequests: changeRequestFacts, lodgingCharges });
+  const items = buildReviewItems({ nights: context.nights, registrations: registrationFacts, people, requests: requestSnapshots, roommates: roommateRows, rules: ruleRows, guardians, capacity, changeRequests: changeRequestFacts, lodgingCharges, promotedRegistrationIds: registrations.filter((registration) => registration.waitlistEntry?.status === "PROMOTED").map((registration) => registration.id) });
   const acked = new Set(acks.map((ack) => `${ack.itemKey}\u0000${ack.fingerprint}`));
   return { registrations, registrationFacts, people, requestSnapshots, roommates, roommateRows, ruleRows, guardians, capacity, unitIdsByCategory, items, acked };
 }

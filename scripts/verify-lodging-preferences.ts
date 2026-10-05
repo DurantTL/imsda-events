@@ -594,14 +594,28 @@ async function main() {
   assert(Number((await prisma.registration.findUniqueOrThrow({ where: { id: billed.reg.id } })).totalAmount) === 0, "the total stays 0");
 
   // Waitlisted at submit: the choice is kept as an unpriced request, and the confirmation says so.
-  await submitTo(waitTarget, { people: 1 });
+  const seated = await submitTo(waitTarget, { people: 1 });
   const waited = await submitTo(waitTarget, { people: 1, lodging: { category: "DORM_ROOM", partySize: 1 } });
   assert(waited.registration.status === "WAITLISTED" && waited.result.registrationStatus === "WAITLISTED", "the second registration for a one-seat event is waitlisted");
   const waitedVersion = await prisma.eventLodgingRequestVersion.findFirstOrThrow({ where: { request: { registrationId: waited.reg.id } } });
   assert(waitedVersion.source === "REGISTRATION_FORM" && waitedVersion.category === "DORM_ROOM" && waitedVersion.sourceFormVersionId === `${ids.formVersion}_w`, "its lodging choice is kept as a request from the form");
   assert(!lodgingLineOf(waited.snapshot) && Number(waited.registration.totalAmount) === 0, "unpriced");
   assert(/Your lodging choice is saved; the event team will confirm it if a place opens/.test(waited.result.message), `and the confirmation says so, got: ${waited.result.message}`);
-  assert((await getStaffLodgingRequestsView(waitEventId, { canSeeSensitive: true, now: before }, prisma)).requests.every((request) => request.registrationId !== waited.reg.id), "a waitlisted registration is not in the staff's lodging requests until it is promoted");
+  assert((await getStaffLodgingRequestsView(waitEventId, { canSeeSensitive: true, now: before }, prisma)).requests.every((request) => request.registrationId !== waited.reg.id), "a waitlisted registration is not in the staff's lodging requests until it is promotedWaiter");
+
+  // Auto-promotion of a registration that holds a lodging request, into a type that is now full: the promotion goes
+  // through, nothing is charged, the capacity version is bumped under the unit locks, and the queue lists the request.
+  await prisma.eventLodgingUnit.updateMany({ where: { eventId: waitEventId }, data: { capacityOverride: 0 } });
+  const waitVersionBefore = (await prisma.eventLodging.findUniqueOrThrow({ where: { eventId: waitEventId } })).capacityVersion;
+  const { cancelRegistration } = await import("../modules/registrations/lifecycle-repository");
+  await cancelRegistration(waitEventId, seated.registration.id, userId, "Synthetic cancellation frees the seat.", before);
+  const promotedWaiter = await prisma.registration.findUniqueOrThrow({ where: { id: waited.reg.id }, include: { waitlistEntry: true } });
+  assert(promotedWaiter.status !== "WAITLISTED" && promotedWaiter.waitlistEntry?.status === "PROMOTED", "the freed seat promotes the waitlisted registration automatically, whatever its lodging");
+  assert((await prisma.eventLodging.findUniqueOrThrow({ where: { eventId: waitEventId } })).capacityVersion > waitVersionBefore, "the promotion bumps the capacity version under the unit locks");
+  assert(Number(promotedWaiter.totalAmount) === 0 && (await prisma.payment.count({ where: { registrationId: waited.reg.id } })) === 0, "and charges nothing");
+  const promotedQueue = (await getStaffLodgingRequestsView(waitEventId, { canSeeSensitive: true, now: before }, prisma)).queue;
+  assert(promotedQueue.some((item) => item.kind === "PROMOTED_UNCONFIRMED" && item.registrationIds.includes(waited.reg.id)), "the queue lists it as promotedWaiter with an unconfirmed lodging request");
+  assert((await prisma.eventLodgingRequestVersion.count({ where: { request: { registrationId: waited.reg.id } } })) === 1, "the request itself is untouched");
 
   // A request for more people than the registration now has is listed.
   const partyReg = await makeRegistration(eventId, "pp", 2);

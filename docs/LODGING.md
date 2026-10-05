@@ -160,6 +160,10 @@ night must be in service with room for the party.
   in id order) through `lockEventLodgingUnits`. **#200 must take the same lock
   before it counts occupancy and allocates an exclusive unit**, and should add a
   similar exclusion constraint on its assignment table for night ranges.
+- **Lock order** is always: unit rows (id order), then `EventLodging`
+  (`touchEventLodgingCapacity`). That includes `selectEventProperty` when it
+  applies a new window, and waitlist promotion and reinstatement of a registration
+  that holds a request (`noteLodgingOnAdmission`).
 - **`EventLodging.capacityVersion` makes a stale reader fail.** The registration
   submission is Serializable and reads capacity from several tables. A writer that
   runs at Read Committed (a private-page save, a staff save, an override, a hold)
@@ -595,6 +599,14 @@ columns are present only for staff with VIEW_SENSITIVE_DATA.
 
 - Pricing lodging for a **waitlisted** registration: its choice is kept as an
   unpriced request, and staff add the charge in Payments if a place opens.
+  **Promotion can be automatic** (a freed seat promotes the next waiting
+  registration, or staff promote or reinstate one). Promotion never waits on
+  lodging, never changes the request and never charges. It takes the event's unit
+  locks and bumps `capacityVersion` (the request counts as demand again), and the
+  review queue lists **Promoted from the waitlist with an unconfirmed lodging
+  request** when the requested type no longer fits for those nights or the type has
+  a rate but the registration carries no lodging line. Staff confirm the lodging and
+  add any charge in Payments.
 - Assignments, moves, the waitlist for full types and the attendee room display
   (#200); the interactive site map (#779); staff editing of the property
   templates themselves (templates are code data).

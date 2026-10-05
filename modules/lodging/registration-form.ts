@@ -267,3 +267,21 @@ export async function recordRegistrationLodging(
   return { requestId: request.id, roommateRequests: roommateCount };
 }
 
+
+/**
+ * A registration was promoted from the waitlist (or reinstated) while it holds a lodging request. Takes the same unit
+ * locks and bumps `capacityVersion` like every other capacity writer, because the request starts counting as demand again.
+ * It never blocks or changes the promotion and never charges: the staff review queue lists the request as unconfirmed
+ * ("Promoted from the waitlist with an unconfirmed lodging request") when its type no longer fits or it is priced but has no
+ * lodging line. Whether it still fits is worked out by the queue (derived from live capacity), not here.
+ */
+export async function noteLodgingOnAdmission(tx: Tx, eventId: string, registrationId: string) {
+  const request = await tx.eventLodgingRequest.findUnique({ where: { eventId_registrationId: { eventId, registrationId } }, select: { id: true } });
+  if (!request) return { hasRequest: false as const };
+  const eventLodging = await tx.eventLodging.findUnique({ where: { eventId }, select: { id: true } });
+  if (!eventLodging) return { hasRequest: true as const };
+  const units = await tx.eventLodgingUnit.findMany({ where: { eventLodgingId: eventLodging.id }, select: { id: true } });
+  await lockEventLodgingUnits(tx, eventId, units.map((unit) => unit.id));
+  await touchEventLodgingCapacity(tx, eventLodging.id);
+  return { hasRequest: true as const };
+}

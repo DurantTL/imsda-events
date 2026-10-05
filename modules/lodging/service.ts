@@ -161,6 +161,11 @@ export async function selectEventProperty(eventId: string, actorUserId: string, 
       });
       created = true;
     } else if (input.firstNight !== undefined || input.lastNight !== undefined) {
+      // Lock every unit and bump capacityVersion before the EventLodging row is written, in the order every other
+      // capacity writer uses (units, then the EventLodging row), so two writers cannot wait on each other.
+      const rows = await tx.eventLodgingUnit.findMany({ where: { eventLodgingId: eventLodging.id }, select: { id: true } });
+      await lockEventLodgingUnits(tx, eventId, rows.map((row) => row.id));
+      await touchEventLodgingCapacity(tx, eventLodging.id);
       // A window given on a re-pick is applied, never ignored.
       eventLodging = await tx.eventLodging.update({
         where: { id: eventLodging.id },
