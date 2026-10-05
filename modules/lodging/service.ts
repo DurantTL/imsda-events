@@ -74,11 +74,52 @@ function assertWithin(nights: readonly string[], firstNight: string, lastNight: 
 // Choosing a property
 // ---------------------------------------------------------------------------
 
+type SnapshotSource = { defaultCapacity: number | null; assignable: boolean; retiredAt: Date | null; beds: Array<{ type: string }> };
+
+function snapshotOf(unit: SnapshotSource) {
+  return {
+    defaultCapacity: unit.defaultCapacity,
+    bedsSummary: bedSummary(unit.beds.map((bed) => bed.type)),
+    assignable: unit.assignable,
+    retired: unit.retiredAt !== null,
+  };
+}
+
 /**
- * An event picks a property (idempotent: picking the same one again adds any
- * units a newer template introduced). Each unit gets its per-event row, with
- * the template's unavailable default; a unit's default hold (cooks, the nurse)
- * is placed for the event's whole window, once, by the row's creation.
+ * Moves the system-placed default holds (cooks, nurse; never a staff-placed
+ * hold) to cover the event's current nights, with a history row for each. A
+ * default hold that would collide with another active hold is left alone; the
+ * screen then warns that it no longer covers the event.
+ */
+async function followEventNights(tx: Tx, eventId: string, nights: readonly string[], actorUserId: string) {
+  if (nights.length === 0) return 0;
+  const first = nights[0]!;
+  const last = nights[nights.length - 1]!;
+  const defaults = await tx.eventLodgingHold.findMany({ where: { eventId, systemDefault: true, releasedAt: null } });
+  let moved = 0;
+  for (const hold of defaults) {
+    if (toNight(hold.firstNight) === first && toNight(hold.lastNight) === last) continue;
+    await lockEventLodgingUnits(tx, eventId, [hold.eventLodgingUnitId]);
+    const clash = await tx.eventLodgingHold.count({
+      where: { eventLodgingUnitId: hold.eventLodgingUnitId, releasedAt: null, id: { not: hold.id }, firstNight: { lte: toDate(last) }, lastNight: { gte: toDate(first) } },
+    });
+    if (clash > 0) continue;
+    await tx.eventLodgingHold.update({ where: { id: hold.id }, data: { firstNight: toDate(first), lastNight: toDate(last) } });
+    await tx.eventLodgingHoldHistory.create({ data: { eventId, holdId: hold.id, type: "WINDOW_CHANGED", actorUserId, firstNight: toDate(first), lastNight: toDate(last) } });
+    moved += 1;
+  }
+  return moved;
+}
+
+/**
+ * An event picks a property (idempotent). Each unit gets its per-event row
+ * with a snapshot of the layout (capacity, beds), so later template versions
+ * never change a live event's capacity; they reach it only through
+ * `updateEventLayout`. The template's unavailable default is copied, and a
+ * unit's default hold (cooks, nurse) is placed for the event's nights as a
+ * system-placed hold. Choosing the same property again applies a given night
+ * window (or leaves it) and moves the default holds to cover the event's
+ * current nights.
  */
 export async function selectEventProperty(eventId: string, actorUserId: string, rawInput: unknown, client: PrismaClient = getPrisma()) {
   const input = selectPropertySchema.parse(rawInput);
@@ -87,9 +128,9 @@ export async function selectEventProperty(eventId: string, actorUserId: string, 
     if (!event) throw new LodgingError("EVENT_NOT_FOUND", "That event was not found.");
     const property = await tx.lodgingProperty.findUnique({ where: { key: input.propertyKey } });
     if (!property) throw new LodgingError("PROPERTY_UNKNOWN", "That lodging property is not set up. Run npm run lodging:sync.");
-    // Serialize concurrent picks for one event on the (unique) event row's lodging insert.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`lodging-select:${eventId}`}))`;
-    let eventLodging = await tx.eventLodging.findUnique({ where: { eventId }, include: { event: { select: { startsAt: true, endsAt: true, timezone: true } } } });
+    const eventInclude = { event: { select: { startsAt: true, endsAt: true, timezone: true } } } as const;
+    let eventLodging = await tx.eventLodging.findUnique({ where: { eventId }, include: eventInclude });
     let created = false;
     if (eventLodging && eventLodging.propertyId !== property.id) {
       throw new LodgingError("PROPERTY_ALREADY_SET", "This event already uses a different lodging property.");
@@ -104,48 +145,105 @@ export async function selectEventProperty(eventId: string, actorUserId: string, 
           lastNight: input.lastNight ? toDate(input.lastNight) : null,
           createdByUserId: actorUserId,
         },
-        include: { event: { select: { startsAt: true, endsAt: true, timezone: true } } },
+        include: eventInclude,
       });
       created = true;
-    } else if (eventLodging.templateVersion !== property.templateVersion) {
+    } else if (input.firstNight !== undefined || input.lastNight !== undefined) {
+      // A window given on a re-pick is applied, never ignored.
       eventLodging = await tx.eventLodging.update({
         where: { id: eventLodging.id },
-        data: { templateVersion: property.templateVersion },
-        include: { event: { select: { startsAt: true, endsAt: true, timezone: true } } },
+        data: {
+          ...(input.firstNight !== undefined ? { firstNight: input.firstNight ? toDate(input.firstNight) : null } : {}),
+          ...(input.lastNight !== undefined ? { lastNight: input.lastNight ? toDate(input.lastNight) : null } : {}),
+        },
+        include: eventInclude,
       });
     }
     const nights = nightsFor(eventLodging);
-    const existing = new Set((await tx.eventLodgingUnit.findMany({ where: { eventLodgingId: eventLodging.id }, select: { unitId: true } })).map((row) => row.unitId));
-    const units = await tx.lodgingUnit.findMany({ where: { propertyId: property.id, retiredAt: null, id: { notIn: [...existing] } }, orderBy: { sortOrder: "asc" } });
+    let unitsAdded = 0;
     let holdsPlaced = 0;
-    for (const unit of units) {
-      const row = await tx.eventLodgingUnit.create({
-        data: {
-          eventId,
-          eventLodgingId: eventLodging.id,
-          unitId: unit.id,
-          unavailable: unit.defaultUnavailable,
-          unavailableReason: unit.defaultUnavailable ? "Unavailable by default" : null,
-          updatedByUserId: actorUserId,
-        },
-      });
-      if (unit.defaultHoldKind && unit.defaultHoldReason && nights.length > 0) {
-        await insertHold(tx, eventId, row.id, { kind: unit.defaultHoldKind, reason: unit.defaultHoldReason, firstNight: nights[0]!, lastNight: nights[nights.length - 1]! }, actorUserId);
-        holdsPlaced += 1;
+    if (created) {
+      const units = await tx.lodgingUnit.findMany({ where: { propertyId: property.id, retiredAt: null }, include: { beds: { orderBy: { position: "asc" } } }, orderBy: { sortOrder: "asc" } });
+      for (const unit of units) {
+        const row = await tx.eventLodgingUnit.create({
+          data: {
+            eventId,
+            eventLodgingId: eventLodging.id,
+            unitId: unit.id,
+            ...snapshotOf(unit),
+            unavailable: unit.defaultUnavailable,
+            unavailableReason: unit.defaultUnavailable ? "Unavailable by default" : null,
+            updatedByUserId: actorUserId,
+          },
+        });
+        unitsAdded += 1;
+        if (unit.defaultHoldKind && unit.defaultHoldReason && nights.length > 0) {
+          await insertHold(tx, eventId, row.id, { kind: unit.defaultHoldKind, reason: unit.defaultHoldReason, firstNight: nights[0]!, lastNight: nights[nights.length - 1]! }, actorUserId, true);
+          holdsPlaced += 1;
+        }
       }
     }
-    if (created || units.length > 0) {
+    const holdsMoved = created ? 0 : await followEventNights(tx, eventId, nights, actorUserId);
+    if (created || holdsMoved > 0 || input.firstNight !== undefined || input.lastNight !== undefined) {
       await writeAuditLog({
         eventId,
         actorUserId,
         action: "LODGING_PROPERTY_SELECTED",
         entityType: "EventLodging",
         entityId: eventLodging.id,
-        summary: `${created ? "Chose" : "Updated"} lodging property ${property.name} (${units.length} unit(s) added).`,
-        metadata: { propertyKey: property.key, templateVersion: property.templateVersion, unitsAdded: units.length, holdsPlaced },
+        summary: `${created ? "Chose" : "Re-checked"} lodging property ${property.name} (${unitsAdded} unit(s) added, ${holdsMoved} default hold(s) moved).`,
+        metadata: { propertyKey: property.key, templateVersion: eventLodging.templateVersion, unitsAdded, holdsPlaced, holdsMoved },
       }, tx);
     }
-    return { eventLodgingId: eventLodging.id, created, unitsAdded: units.length, holdsPlaced };
+    return { eventLodgingId: eventLodging.id, created, unitsAdded, holdsPlaced, holdsMoved };
+  }, { timeout: lodgingTransactionTimeoutMs });
+}
+
+/**
+ * "Update to latest property layout": the only way a newer template version
+ * reaches an event. Refreshes every unit's capacity, beds, assignable and
+ * retired snapshot from the property's current layout and adds units the
+ * template introduced (with their default unavailable state and holds).
+ * Per-event overrides, unavailable flags and holds are kept. Audited.
+ */
+export async function updateEventLayout(eventId: string, actorUserId: string, client: PrismaClient = getPrisma()) {
+  return client.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`lodging-select:${eventId}`}))`;
+    const lodging = await eventLodgingFor(tx, eventId);
+    const property = await tx.lodgingProperty.findUniqueOrThrow({ where: { id: lodging.propertyId } });
+    const rows = await tx.eventLodgingUnit.findMany({ where: { eventLodgingId: lodging.id } });
+    await lockEventLodgingUnits(tx, eventId, rows.map((row) => row.id));
+    const units = await tx.lodgingUnit.findMany({ where: { propertyId: property.id }, include: { beds: { orderBy: { position: "asc" } } }, orderBy: { sortOrder: "asc" } });
+    const nights = nightsFor(lodging);
+    const byUnit = new Map(rows.map((row) => [row.unitId, row]));
+    let updated = 0;
+    let added = 0;
+    for (const unit of units) {
+      const snapshot = snapshotOf(unit);
+      const row = byUnit.get(unit.id);
+      if (row) {
+        if (row.defaultCapacity !== snapshot.defaultCapacity || row.bedsSummary !== snapshot.bedsSummary || row.assignable !== snapshot.assignable || row.retired !== snapshot.retired) {
+          await tx.eventLodgingUnit.update({ where: { id: row.id }, data: snapshot });
+          updated += 1;
+        }
+      } else if (!unit.retiredAt) {
+        const created = await tx.eventLodgingUnit.create({
+          data: { eventId, eventLodgingId: lodging.id, unitId: unit.id, ...snapshot, unavailable: unit.defaultUnavailable, unavailableReason: unit.defaultUnavailable ? "Unavailable by default" : null, updatedByUserId: actorUserId },
+        });
+        added += 1;
+        if (unit.defaultHoldKind && unit.defaultHoldReason && nights.length > 0) {
+          await insertHold(tx, eventId, created.id, { kind: unit.defaultHoldKind, reason: unit.defaultHoldReason, firstNight: nights[0]!, lastNight: nights[nights.length - 1]! }, actorUserId, true);
+        }
+      }
+    }
+    const from = lodging.templateVersion;
+    await tx.eventLodging.update({ where: { id: lodging.id }, data: { templateVersion: property.templateVersion } });
+    await writeAuditLog({
+      eventId, actorUserId, action: "LODGING_LAYOUT_UPDATED", entityType: "EventLodging", entityId: lodging.id,
+      summary: `Updated the ${property.name} layout from version ${from} to ${property.templateVersion} (${updated} changed, ${added} added).`,
+      metadata: { propertyKey: property.key, fromVersion: from, toVersion: property.templateVersion, unitsChanged: updated, unitsAdded: added },
+    }, tx);
+    return { fromVersion: from, toVersion: property.templateVersion, unitsChanged: updated, unitsAdded: added };
   }, { timeout: lodgingTransactionTimeoutMs });
 }
 
@@ -197,10 +295,11 @@ async function insertHold(
   eventUnitId: string,
   hold: { kind: LodgingHoldKind; reason: string; firstNight: string; lastNight: string },
   actorUserId: string | null,
+  systemDefault = false,
 ) {
   try {
     const row = await tx.eventLodgingHold.create({
-      data: { eventId, eventLodgingUnitId: eventUnitId, kind: hold.kind, reason: hold.reason, firstNight: toDate(hold.firstNight), lastNight: toDate(hold.lastNight), createdByUserId: actorUserId },
+      data: { eventId, eventLodgingUnitId: eventUnitId, kind: hold.kind, reason: hold.reason, firstNight: toDate(hold.firstNight), lastNight: toDate(hold.lastNight), systemDefault, createdByUserId: actorUserId },
     });
     await tx.eventLodgingHoldHistory.create({
       data: { eventId, holdId: row.id, type: "CREATED", actorUserId, kind: hold.kind, reason: hold.reason, firstNight: toDate(hold.firstNight), lastNight: toDate(hold.lastNight) },
@@ -280,17 +379,22 @@ export async function setEventRate(eventId: string, actorUserId: string, rawInpu
     const before = await tx.eventLodgingRate.findUnique({ where: { eventLodgingId_category: { eventLodgingId: lodging.id, category: input.category } } });
     const snapshot = (rate: { amountCents: number; basis: LodgingRateBasis; minimumNights: number | null } | null) =>
       rate ? { amountCents: rate.amountCents, basis: rate.basis, minimumNights: rate.minimumNights } : null;
+    let rateId = before?.id;
     if (input.rate) {
-      await tx.eventLodgingRate.upsert({
+      const saved = await tx.eventLodgingRate.upsert({
         where: { eventLodgingId_category: { eventLodgingId: lodging.id, category: input.category } },
         create: { eventId, eventLodgingId: lodging.id, category: input.category, ...input.rate, updatedByUserId: actorUserId },
         update: { ...input.rate, updatedByUserId: actorUserId },
       });
+      rateId = saved.id;
     } else if (before) {
       await tx.eventLodgingRate.delete({ where: { id: before.id } });
+    } else {
+      // Removing a rate that does not exist changes nothing and leaves no audit row.
+      return { category: input.category, rate: null };
     }
     await writeAuditLog({
-      eventId, actorUserId, action: "LODGING_RATE_CHANGED", entityType: "EventLodgingRate", entityId: before?.id ?? lodging.id,
+      eventId, actorUserId, action: "LODGING_RATE_CHANGED", entityType: "EventLodgingRate", entityId: rateId!,
       summary: `Changed the ${input.category.toLowerCase().replaceAll("_", " ")} lodging rate.`,
       metadata: { category: input.category, from: snapshot(before), to: snapshot(input.rate) },
     }, tx);
@@ -310,6 +414,10 @@ export type LodgingHoldView = {
   lastNight: string;
   createdAt: string;
   active: boolean;
+  /** Placed by the property template (cooks, nurse), not by staff. */
+  systemDefault: boolean;
+  /** A default hold that no longer covers every night of the event: extend it to cover the event. */
+  staleDefault: boolean;
   releaseReason: string | null;
   history: Array<{ type: string; at: string; reason: string | null; firstNight: string | null; lastNight: string | null; actorUserId: string | null }>;
 };
@@ -327,6 +435,8 @@ export type LodgingUnitView = {
   linensProvided: boolean | null;
   specialUse: boolean;
   assignable: boolean;
+  /** Dropped by a template version this event has adopted; shown only while a hold is still active. */
+  retired: boolean;
   notes: string | null;
   beds: string;
   defaultCapacity: number | null;
@@ -362,7 +472,7 @@ export async function getLodgingView(eventId: string, client: PrismaClient = get
       rates: true,
       units: {
         include: {
-          unit: { include: { beds: { orderBy: { position: "asc" } }, building: true } },
+          unit: { include: { building: true } },
           holds: { include: { history: { orderBy: { at: "asc" } } }, orderBy: { createdAt: "asc" } },
         },
       },
@@ -374,9 +484,9 @@ export async function getLodgingView(eventId: string, client: PrismaClient = get
   const nights = nightsFor(lodging);
   const states: UnitNightState[] = lodging.units.map((row) => ({
     unitId: row.id,
-    assignable: row.unit.assignable,
-    retired: row.unit.retiredAt !== null,
-    defaultCapacity: row.unit.defaultCapacity,
+    assignable: row.assignable,
+    retired: row.retired,
+    defaultCapacity: row.defaultCapacity,
     capacityOverride: row.capacityOverride,
     unavailable: row.unavailable,
     activeFrom: row.unit.activeFrom ? toNight(row.unit.activeFrom) : null,
@@ -386,7 +496,8 @@ export async function getLodgingView(eventId: string, client: PrismaClient = get
   const projection = projectAvailability({ nights, units: states });
   const buildings = new Map<string, { sortOrder: number; key: string; name: string; units: Array<{ sort: number; view: LodgingUnitView }> }>();
   for (const row of lodging.units) {
-    if (row.unit.retiredAt) continue;
+    // A retired unit stays visible only while it still has an active hold.
+    if (row.retired && !row.holds.some((hold) => hold.releasedAt === null)) continue;
     const rows = projection.get(row.id) ?? [];
     const view: LodgingUnitView = {
       eventUnitId: row.id,
@@ -400,10 +511,11 @@ export async function getLodgingView(eventId: string, client: PrismaClient = get
       bathroom: row.unit.bathroom,
       linensProvided: row.unit.linensProvided,
       specialUse: row.unit.specialUse,
-      assignable: row.unit.assignable,
+      assignable: row.assignable,
+      retired: row.retired,
       notes: row.unit.notes,
-      beds: bedSummary(row.unit.beds.map((bed) => bed.type)),
-      defaultCapacity: row.unit.defaultCapacity,
+      beds: row.bedsSummary,
+      defaultCapacity: row.defaultCapacity,
       capacityOverride: row.capacityOverride,
       unavailable: row.unavailable,
       unavailableReason: row.unavailableReason,
@@ -417,6 +529,9 @@ export async function getLodgingView(eventId: string, client: PrismaClient = get
         lastNight: toNight(hold.lastNight),
         createdAt: hold.createdAt.toISOString(),
         active: hold.releasedAt === null,
+        systemDefault: hold.systemDefault,
+        staleDefault: hold.systemDefault && hold.releasedAt === null && nights.length > 0
+          && (toNight(hold.firstNight) > nights[0]! || toNight(hold.lastNight) < nights[nights.length - 1]!),
         releaseReason: hold.releaseReason,
         history: hold.history.map((entry) => ({
           type: entry.type,

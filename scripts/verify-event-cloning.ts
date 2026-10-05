@@ -19,6 +19,8 @@ import { getServerEnv } from "../lib/env";
 import { eventCloneApiError } from "../modules/event-clones/api-errors";
 import { cloneEvent, EventCloneOperationError, previewEventClone } from "../modules/event-clones/repository";
 import { EventCloneReviewError, cloneDomainKeys, type CloneDomainKey, type ClonePlan } from "../modules/event-clones/domain";
+import { selectEventProperty } from "../modules/lodging/service";
+import { syncLodgingTemplates } from "../modules/lodging/sync";
 import { eventSettingsInputSchema } from "../modules/events/schemas";
 import { registrationFormDefinitionSchema } from "../modules/forms/definition";
 import { createRegistrationFormFromTemplateInTransaction } from "../modules/forms/repository";
@@ -325,6 +327,10 @@ async function run() {
 
   // 3. The full clone: configuration copied, history never.
   const before = await sourceDump(sourceId);
+  // The source uses a lodging property (with its default holds); a clone must not carry any of it (#198).
+  await syncLodgingTemplates(prisma);
+  await selectEventProperty(sourceId, adminId, { propertyKey: "camp-heritage" }, prisma);
+  assert(await prisma.eventLodgingHold.count({ where: { eventId: sourceId } }) === 3, "the source has lodging holds");
   const fullBody = confirmBody(sourceId, plan, `${P}-clone-2028`, `${P}-key-full`);
   const cloned = await cloneEvent(adminId, fullBody);
   assert(!cloned.alreadyCloned, "the first clone creates the event");
@@ -341,6 +347,14 @@ async function run() {
   const community = await prisma.eventCommunitySettings.findUniqueOrThrow({ where: { eventId: cloneId } });
   assert(community.isEnabled && !community.allowReplies && community.retentionDays === 45 && community.updatedByUserId === adminId, "community settings are copied");
 
+  const cloneLodging = await Promise.all([
+    prisma.eventLodging.count({ where: { eventId: cloneId } }),
+    prisma.eventLodgingUnit.count({ where: { eventId: cloneId } }),
+    prisma.eventLodgingHold.count({ where: { eventId: cloneId } }),
+    prisma.eventLodgingHoldHistory.count({ where: { eventId: cloneId } }),
+    prisma.eventLodgingRate.count({ where: { eventId: cloneId } }),
+  ]);
+  assert(cloneLodging.every((count) => count === 0), `a clone carries no lodging property, unit state, hold, history, or rate: ${cloneLodging.join()}`);
   const cloneHistory = await historyCounts(cloneId);
   assert(Object.values(cloneHistory).every((count) => count === 0), `no registration, attendee, payment, refund, check-in, outbox, waitlist, note, announcement, order, merchandise, payment instruction, delivery setting, file, or token was copied: ${JSON.stringify(cloneHistory)}`);
   assert(await prisma.checkIn.count({ where: { attendee: { eventId: cloneId } } }) === 0, "no check-in reaches the clone through an attendee");

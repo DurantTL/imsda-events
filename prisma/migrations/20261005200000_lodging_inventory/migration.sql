@@ -107,6 +107,10 @@ CREATE TABLE "EventLodgingUnit" (
     "eventId" TEXT NOT NULL,
     "eventLodgingId" TEXT NOT NULL,
     "unitId" TEXT NOT NULL,
+    "defaultCapacity" INTEGER,
+    "bedsSummary" TEXT NOT NULL DEFAULT '',
+    "assignable" BOOLEAN NOT NULL DEFAULT true,
+    "retired" BOOLEAN NOT NULL DEFAULT false,
     "capacityOverride" INTEGER,
     "unavailable" BOOLEAN NOT NULL DEFAULT false,
     "unavailableReason" TEXT,
@@ -126,6 +130,7 @@ CREATE TABLE "EventLodgingHold" (
     "reason" TEXT NOT NULL,
     "firstNight" DATE NOT NULL,
     "lastNight" DATE NOT NULL,
+    "systemDefault" BOOLEAN NOT NULL DEFAULT false,
     "createdByUserId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "releasedAt" TIMESTAMP(3),
@@ -266,7 +271,8 @@ ALTER TABLE "EventLodgingHold" ADD CONSTRAINT "EventLodgingHold_no_overlap"
   EXCLUDE USING gist ("eventLodgingUnitId" WITH =, daterange("firstNight", "lastNight", '[]') WITH &&)
   WHERE ("releasedAt" IS NULL);
 
--- An event's unit rows must come from the property the event chose.
+-- A property's structure must stay consistent: an event's unit rows come from the property the event
+-- chose, a unit sits in a building of its own property, and nothing an event references can move.
 CREATE FUNCTION "EventLodgingUnit_same_property"() RETURNS trigger AS $$
 BEGIN
   IF (SELECT "propertyId" FROM "EventLodging" WHERE "id" = NEW."eventLodgingId")
@@ -278,24 +284,83 @@ END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER "EventLodgingUnit_same_property" BEFORE INSERT OR UPDATE OF "unitId", "eventLodgingId" ON "EventLodgingUnit" FOR EACH ROW EXECUTE FUNCTION "EventLodgingUnit_same_property"();
 
--- Holds and their history are never deleted, and history is never rewritten. The only exception is the
--- rows going with their event or unit row, from inside a foreign-key action (pg_trigger_depth() > 1).
-CREATE FUNCTION "EventLodgingHold_refuse_delete"() RETURNS trigger AS $$
+CREATE FUNCTION "EventLodging_property_fixed"() RETURNS trigger AS $$
 BEGIN
-  IF pg_trigger_depth() > 1 AND NOT EXISTS (SELECT 1 FROM "EventLodgingUnit" WHERE "id" = OLD."eventLodgingUnitId") THEN
-    RETURN OLD;
+  IF EXISTS (
+    SELECT 1 FROM "EventLodgingUnit" eu JOIN "LodgingUnit" u ON u."id" = eu."unitId"
+    WHERE eu."eventLodgingId" = NEW."id" AND u."propertyId" <> NEW."propertyId"
+  ) THEN
+    RAISE EXCEPTION 'An event with lodging units cannot move to a different property.' USING ERRCODE = '23001';
   END IF;
-  RAISE EXCEPTION 'A lodging hold is never deleted; release it.' USING ERRCODE = '23001';
+  RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-CREATE TRIGGER "EventLodgingHold_no_delete" BEFORE DELETE ON "EventLodgingHold" FOR EACH ROW EXECUTE FUNCTION "EventLodgingHold_refuse_delete"();
+CREATE TRIGGER "EventLodging_property_fixed" BEFORE UPDATE OF "propertyId" ON "EventLodging" FOR EACH ROW EXECUTE FUNCTION "EventLodging_property_fixed"();
 
-CREATE FUNCTION "EventLodgingHoldHistory_append_only"() RETURNS trigger AS $$
+CREATE FUNCTION "LodgingUnit_structure"() RETURNS trigger AS $$
 BEGIN
-  IF TG_OP = 'DELETE' AND pg_trigger_depth() > 1 AND NOT EXISTS (SELECT 1 FROM "EventLodgingHold" WHERE "id" = OLD."holdId") THEN
+  IF (SELECT "propertyId" FROM "LodgingBuilding" WHERE "id" = NEW."buildingId") IS DISTINCT FROM NEW."propertyId" THEN
+    RAISE EXCEPTION 'The unit''s building belongs to a different lodging property.' USING ERRCODE = '23001';
+  END IF;
+  IF TG_OP = 'UPDATE' AND NEW."propertyId" <> OLD."propertyId" AND EXISTS (SELECT 1 FROM "EventLodgingUnit" WHERE "unitId" = NEW."id") THEN
+    RAISE EXCEPTION 'A unit that events use cannot move to a different property.' USING ERRCODE = '23001';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER "LodgingUnit_structure" BEFORE INSERT OR UPDATE OF "propertyId", "buildingId" ON "LodgingUnit" FOR EACH ROW EXECUTE FUNCTION "LodgingUnit_structure"();
+
+CREATE FUNCTION "LodgingBuilding_property_fixed"() RETURNS trigger AS $$
+BEGIN
+  IF NEW."propertyId" <> OLD."propertyId" AND EXISTS (SELECT 1 FROM "LodgingUnit" WHERE "buildingId" = NEW."id") THEN
+    RAISE EXCEPTION 'A building with units cannot move to a different property.' USING ERRCODE = '23001';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER "LodgingBuilding_property_fixed" BEFORE UPDATE OF "propertyId" ON "LodgingBuilding" FOR EACH ROW EXECUTE FUNCTION "LodgingBuilding_property_fixed"();
+
+-- Event lodging rows are never deleted on their own. The only exception is the rows going with their
+-- event, from inside a foreign-key action (pg_trigger_depth() > 1) once the Event itself is gone.
+CREATE FUNCTION "EventLodging_refuse_delete"() RETURNS trigger AS $$
+BEGIN
+  IF pg_trigger_depth() > 1 AND NOT EXISTS (SELECT 1 FROM "Event" WHERE "id" = OLD."eventId") THEN
     RETURN OLD;
   END IF;
+  RAISE EXCEPTION 'Event lodging rows are never deleted while the event exists.' USING ERRCODE = '23001';
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER "EventLodging_no_delete" BEFORE DELETE ON "EventLodging" FOR EACH ROW EXECUTE FUNCTION "EventLodging_refuse_delete"();
+CREATE TRIGGER "EventLodgingUnit_no_delete" BEFORE DELETE ON "EventLodgingUnit" FOR EACH ROW EXECUTE FUNCTION "EventLodging_refuse_delete"();
+CREATE TRIGGER "EventLodgingHoldHistory_no_delete" BEFORE DELETE ON "EventLodgingHoldHistory" FOR EACH ROW EXECUTE FUNCTION "EventLodging_refuse_delete"();
+
+-- A hold is never deleted, and only its window and release fields ever change. A released hold never
+-- changes again, so it is released once.
+CREATE FUNCTION "EventLodgingHold_guard"() RETURNS trigger AS $$
+DECLARE
+  changeable CONSTANT text[] := ARRAY['firstNight', 'lastNight', 'releasedAt', 'releasedByUserId', 'releaseReason'];
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF pg_trigger_depth() > 1 AND NOT EXISTS (SELECT 1 FROM "Event" WHERE "id" = OLD."eventId") THEN
+      RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'A lodging hold is never deleted; release it.' USING ERRCODE = '23001';
+  END IF;
+  IF OLD."releasedAt" IS NOT NULL THEN
+    RAISE EXCEPTION 'A released lodging hold is never changed.' USING ERRCODE = '23001';
+  END IF;
+  IF (to_jsonb(NEW) - changeable) <> (to_jsonb(OLD) - changeable) THEN
+    RAISE EXCEPTION 'A lodging hold changes only its window and its release.' USING ERRCODE = '23001';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER "EventLodgingHold_guard" BEFORE UPDATE OR DELETE ON "EventLodgingHold" FOR EACH ROW EXECUTE FUNCTION "EventLodgingHold_guard"();
+
+-- Hold history is append-only: never rewritten (deletes are refused by EventLodgingHoldHistory_no_delete).
+CREATE FUNCTION "EventLodgingHoldHistory_append_only"() RETURNS trigger AS $$
+BEGIN
   RAISE EXCEPTION 'Lodging hold history is append-only.' USING ERRCODE = '23001';
 END;
 $$ LANGUAGE plpgsql;
-CREATE TRIGGER "EventLodgingHoldHistory_append_only" BEFORE UPDATE OR DELETE ON "EventLodgingHoldHistory" FOR EACH ROW EXECUTE FUNCTION "EventLodgingHoldHistory_append_only"();
+CREATE TRIGGER "EventLodgingHoldHistory_append_only" BEFORE UPDATE ON "EventLodgingHoldHistory" FOR EACH ROW EXECUTE FUNCTION "EventLodgingHoldHistory_append_only"();

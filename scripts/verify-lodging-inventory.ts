@@ -29,13 +29,14 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { assertLocalDatabase } from "./support/local-only-guard";
 import { quoteStay, stayFit } from "@/modules/lodging/domain";
-import { LodgingError } from "@/modules/lodging/errors";
+import { LodgingError, lodgingErrorStatus } from "@/modules/lodging/errors";
 import {
   changeHold,
   createHold,
   getLodgingView,
   selectEventProperty,
   setEventRate,
+  updateEventLayout,
   updateEventUnit,
 } from "@/modules/lodging/service";
 import { syncLodgingTemplates } from "@/modules/lodging/sync";
@@ -73,7 +74,7 @@ async function expectDatabaseRefusal(promise: Promise<unknown>, message: string)
 async function cleanup() {
   await prisma.event.deleteMany({ where: { id: { startsWith: `${P}_` } } });
   await prisma.auditLog.deleteMany({ where: { OR: [{ actorUserId: userId }, { eventId: { startsWith: `${P}_` } }] } });
-  await prisma.lodgingProperty.deleteMany({ where: { key: scratchKey } });
+  await prisma.lodgingProperty.deleteMany({ where: { key: { startsWith: P } } });
   await prisma.user.deleteMany({ where: { id: userId } });
 }
 
@@ -239,6 +240,15 @@ async function main() {
   assert(results.filter((result) => result instanceof LodgingError && result.code === "HOLD_OVERLAP").length === 4, "the other four are refused as overlapping");
   assert(await prisma.eventLodgingHold.count({ where: { eventLodgingUnitId: raceRoom, releasedAt: null } }) === 1, "one active hold remains");
 
+  // Another event's ids answer "not found", never a change.
+  const sunHold = await prisma.eventLodgingHold.findFirstOrThrow({ where: { eventLodgingUnitId: raceRoom, releasedAt: null } });
+  await selectEventProperty(eventIds.heritage, userId, { propertyKey: "camp-heritage" }, prisma);
+  const crossRelease = await caught(changeHold(eventIds.heritage, sunHold.id, userId, { action: "release", reason: "Cross event" }, prisma));
+  assert(crossRelease instanceof LodgingError && crossRelease.code === "HOLD_NOT_FOUND" && lodgingErrorStatus(crossRelease.code) === 404, "changing another event's hold answers 404");
+  const crossCreate = await caught(createHold(eventIds.heritage, raceRoom, userId, { kind: "STAFF", reason: "Cross event", firstNight: "2027-06-15", lastNight: "2027-06-15" }, prisma));
+  assert(crossCreate instanceof LodgingError && crossCreate.code === "UNIT_NOT_FOUND" && lodgingErrorStatus(crossCreate.code) === 404, "placing a hold on another event's unit answers 404");
+  assert((await prisma.eventLodgingHold.findUniqueOrThrow({ where: { id: sunHold.id } })).releasedAt === null, "the other event's hold is untouched");
+
   // The database itself refuses what the service would.
   await expectDatabaseRefusal(prisma.$executeRaw`INSERT INTO "EventLodgingHold" ("id","eventId","eventLodgingUnitId","kind","reason","firstNight","lastNight") VALUES (${`${P}_raw`}, ${eventIds.sunnydale}, ${raceRoom}, 'STAFF', 'Raw overlap', '2027-06-16', '2027-06-16')`, "a raw overlapping hold");
   const heldRow = await prisma.eventLodgingHold.findFirstOrThrow({ where: { eventLodgingUnitId: raceRoom } });
@@ -249,6 +259,13 @@ async function main() {
   const foreignUnit = herUnits[0]!;
   const sunnydaleLodging = await prisma.eventLodging.findUniqueOrThrow({ where: { eventId: eventIds.sunnydale } });
   await expectDatabaseRefusal(prisma.eventLodgingUnit.create({ data: { eventId: eventIds.sunnydale, eventLodgingId: sunnydaleLodging.id, unitId: foreignUnit.id } }), "attaching a unit from another property");
+  await expectDatabaseRefusal(prisma.eventLodgingUnit.delete({ where: { id: raceRoom } }), "deleting an event's unit row while the event exists");
+  await expectDatabaseRefusal(prisma.eventLodging.delete({ where: { id: sunnydaleLodging.id } }), "deleting event lodging while the event exists");
+  await expectDatabaseRefusal(prisma.eventLodgingHold.update({ where: { id: heldRow.id }, data: { reason: "Rewritten" } }), "rewriting a hold's reason");
+  await expectDatabaseRefusal(prisma.eventLodgingHold.update({ where: { id: hold.id }, data: { lastNight: new Date("2027-06-18T00:00:00Z") } }), "changing a released hold");
+  await expectDatabaseRefusal(prisma.eventLodging.update({ where: { id: sunnydaleLodging.id }, data: { propertyId: heritage.id } }), "moving event lodging to another property");
+  await expectDatabaseRefusal(prisma.lodgingUnit.update({ where: { id: foreignUnit.id }, data: { propertyId: sunnydale.id } }), "moving a unit to another property");
+  await expectDatabaseRefusal(prisma.lodgingUnit.update({ where: { id: foreignUnit.id }, data: { buildingId: sunUnits[0]!.buildingId } }), "putting a unit in another property's building");
 
   // External hotel details are never inventory.
   const totalsBeforeHotel = JSON.stringify((await getLodgingView(eventIds.sunnydale, prisma)).totalsByNight);
@@ -266,12 +283,87 @@ async function main() {
   assert(quoteStay({ rates: priced.rates, category: "DORM_ROOM", nights: 3, partySize: 2 }).kind === "BELOW_MINIMUM_NIGHTS", "the 4-night minimum applies");
   assert(quoteStay({ rates: priced.rates, category: "RV_SITE", nights: 3, partySize: 2 }).kind === "INCLUDED", "a category with no rate is included");
   await setEventRate(eventIds.sunnydale, userId, { category: "TENT", rate: { amountCents: 1500, basis: "PER_PERSON_NIGHT", minimumNights: null } }, prisma);
+  const tentRow = await prisma.eventLodgingRate.findFirstOrThrow({ where: { eventId: eventIds.sunnydale, category: "TENT" } });
   const rateAudit = await prisma.auditLog.findMany({ where: { eventId: eventIds.sunnydale, action: "LODGING_RATE_CHANGED" }, orderBy: { createdAt: "asc" } });
   assert(rateAudit.length === 3 && JSON.stringify(rateAudit[2]!.metadata).includes('"amountCents":1234') && JSON.stringify(rateAudit[2]!.metadata).includes('"amountCents":1500'), "rate changes are audited with old and new values");
+  assert(rateAudit[0]!.entityId === tentRow.id, "a new rate's audit row names the rate's own id");
+  await setEventRate(eventIds.sunnydale, userId, { category: "RV_SITE", rate: null }, prisma);
+  assert(await prisma.auditLog.count({ where: { eventId: eventIds.sunnydale, action: "LODGING_RATE_CHANGED" } }) === 3, "removing a rate that does not exist leaves no audit row");
   await setEventRate(eventIds.sunnydale, userId, { category: "TENT", rate: null }, prisma);
   assert(!(await getLodgingView(eventIds.sunnydale, prisma)).rates.TENT, "a rate can be removed");
   assert(await caught(setEventRate(eventIds.sunnydale, userId, { category: "TENT", rate: { amountCents: -1, basis: "PER_UNIT_NIGHT", minimumNights: null } }, prisma)), "a negative rate is refused");
 
+  // ---- Default holds follow the event's nights ----------------------------------
+  const staffWolf = (await getLodgingView(eventIds.heritage, prisma)).buildings.flatMap((building) => building.units).find((unit) => unit.key === "wildlife-inn-wolf")!;
+  const staffHold = await createHold(eventIds.heritage, staffWolf.eventUnitId, userId, { kind: "STAFF", reason: "Staff-placed", firstNight: "2027-06-16", lastNight: "2027-06-16" }, prisma);
+  await prisma.event.update({ where: { id: eventIds.heritage }, data: { endsAt: new Date("2027-06-21T15:00:00Z") } });
+  const heritageHolds = async () => (await getLodgingView(eventIds.heritage, prisma)).buildings.flatMap((building) => building.units).flatMap((unit) => unit.holds);
+  let defaultsNow = (await heritageHolds()).filter((entry) => entry.systemDefault);
+  assert(defaultsNow.length === 3 && defaultsNow.every((entry) => entry.staleDefault), "after the event gets longer, every default hold is flagged as not covering it");
+  assert(!(await heritageHolds()).find((entry) => entry.id === staffHold.id)!.staleDefault, "a staff-placed hold is never flagged");
+  const moved = await selectEventProperty(eventIds.heritage, userId, { propertyKey: "camp-heritage" }, prisma);
+  assert(moved.holdsMoved === 3 && !moved.created, "choosing the property again moves the three default holds");
+  defaultsNow = (await heritageHolds()).filter((entry) => entry.systemDefault);
+  assert(defaultsNow.every((entry) => entry.lastNight === "2027-06-20" && !entry.staleDefault && entry.history.map((row) => row.type).join() === "CREATED,WINDOW_CHANGED"), "default holds now cover the new nights, with a history row");
+  const staffAfter = (await heritageHolds()).find((entry) => entry.id === staffHold.id)!;
+  assert(staffAfter.firstNight === "2027-06-16" && staffAfter.lastNight === "2027-06-16" && staffAfter.history.length === 1, "the staff-placed hold did not move");
+  // The one-click path: extend a flagged hold through the normal hold change.
+  await prisma.event.update({ where: { id: eventIds.heritage }, data: { endsAt: new Date("2027-06-23T15:00:00Z") } });
+  let flagged = (await heritageHolds()).filter((entry) => entry.staleDefault);
+  assert(flagged.length === 3, "a further extension flags them again");
+  const heritageNights = (await getLodgingView(eventIds.heritage, prisma)).nights;
+  await changeHold(eventIds.heritage, flagged[0]!.id, userId, { action: "change_window", firstNight: heritageNights[0], lastNight: heritageNights[heritageNights.length - 1] }, prisma);
+  flagged = (await heritageHolds()).filter((entry) => entry.staleDefault);
+  assert(flagged.length === 2, "extending one flagged hold to cover the event clears its flag");
+  // A window given on a re-pick is applied (and invalid ones refused), never ignored.
+  const narrowed = await selectEventProperty(eventIds.heritage, userId, { propertyKey: "camp-heritage", firstNight: "2027-06-16", lastNight: "2027-06-17" }, prisma);
+  assert(narrowed.holdsMoved >= 2, "the window on a re-pick is applied and the default holds follow it");
+  const narrowedView = await getLodgingView(eventIds.heritage, prisma);
+  assert(narrowedView.nights.join() === "2027-06-16,2027-06-17", "the re-pick window sets the nights");
+  const badWindow = await caught(selectEventProperty(eventIds.heritage, userId, { propertyKey: "camp-heritage", firstNight: "2027-06-18", lastNight: "2027-06-16" }, prisma));
+  assert(badWindow && (badWindow as { name?: string }).name === "ZodError", "a window ending before it starts is a validation error");
+  await selectEventProperty(eventIds.heritage, userId, { propertyKey: "camp-heritage", firstNight: null, lastNight: null }, prisma);
+  assert((await getLodgingView(eventIds.heritage, prisma)).nights.length === 8, "clearing the window returns to the event's own nights");
+
+  // ---- A template change reaches a live event only by an explicit update -------
+  const snapKey = `${P}-snap`;
+  const snap = (version: number): LodgingPropertySeed => ({
+    key: snapKey,
+    name: "Snapshot check",
+    version,
+    buildings: [{ key: "b", name: "B", units: version === 1
+      ? [
+        { key: "u1", name: "U1", kind: "ROOM", beds: ["TWIN"], defaultHold: { kind: "STAFF", reason: "Held for the check" } },
+        { key: "u2", name: "U2", kind: "ROOM", beds: ["TWIN"] },
+        { key: "u4", name: "U4", kind: "ROOM", beds: ["TWIN"] },
+      ]
+      : [
+        { key: "u1", name: "U1", kind: "ROOM", beds: ["QUEEN", "QUEEN"], defaultHold: { kind: "STAFF", reason: "Held for the check" } },
+        { key: "u3", name: "U3", kind: "ROOM", beds: ["DOUBLE"] },
+      ] }],
+  });
+  await syncLodgingTemplates(prisma, [snap(1)]);
+  await selectEventProperty(eventIds.other, userId, { propertyKey: snapKey }, prisma);
+  const snapUnits = async () => (await getLodgingView(eventIds.other, prisma)).buildings.flatMap((building) => building.units);
+  const snapRow = async (key: string) => (await snapUnits()).find((unit) => unit.key === key);
+  await updateEventUnit(eventIds.other, (await snapRow("u1"))!.eventUnitId, userId, { capacityOverride: 3 }, prisma);
+  await createHold(eventIds.other, (await snapRow("u2"))!.eventUnitId, userId, { kind: "MAINTENANCE", reason: "Kept after retirement", firstNight: "2027-06-15", lastNight: "2027-06-15" }, prisma);
+  await syncLodgingTemplates(prisma, [snap(2)]);
+  let snapView = await getLodgingView(eventIds.other, prisma);
+  assert(snapView.property!.templateVersion === 1 && snapView.property!.currentTemplateVersion === 2, "the event stays on version 1 while version 2 exists");
+  assert((await snapRow("u1"))!.defaultCapacity === 1 && (await snapRow("u1"))!.beds === "1 twin" && !(await snapRow("u3")) && !(await snapRow("u2"))!.retired, "a newer template changes nothing for the live event");
+  const layout = await updateEventLayout(eventIds.other, userId, prisma);
+  assert(layout.fromVersion === 1 && layout.toVersion === 2 && layout.unitsAdded === 1 && layout.unitsChanged === 3, `the explicit update applies the new layout, got ${JSON.stringify(layout)}`);
+  snapView = await getLodgingView(eventIds.other, prisma);
+  assert(Number(snapView.property!.templateVersion) === 2, "the event is now on version 2");
+  assert((await snapRow("u1"))!.defaultCapacity === 4 && (await snapRow("u1"))!.beds === "2 queen" && (await snapRow("u1"))!.capacityOverride === 3, "capacity and beds follow the new layout and the staff override survives");
+  assert((await snapRow("u3"))!.beds === "1 double", "a unit the template added appears");
+  assert((await snapRow("u2"))?.retired === true && (await snapRow("u2"))!.holds.some((entry) => entry.active), "a retired unit with an active hold stays visible, marked retired");
+  assert(!(await snapRow("u4")), "a retired unit with no hold is hidden");
+  const layoutAudit = await prisma.auditLog.findFirstOrThrow({ where: { eventId: eventIds.other, action: "LODGING_LAYOUT_UPDATED" } });
+  assert(JSON.stringify(layoutAudit.metadata).includes('"fromVersion":1') && JSON.stringify(layoutAudit.metadata).includes('"toVersion":2') && layoutAudit.actorUserId === userId, "the layout update is audited with versions and actor");
+
+  // ---- Cloning carries no lodging state (checked in verify-event-cloning) ------
   // ---- Rows go with their event --------------------------------------------
   await prisma.event.delete({ where: { id: eventIds.sunnydale } });
   const leftover = await Promise.all([

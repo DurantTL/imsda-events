@@ -30,15 +30,15 @@ after `prisma migrate deploy`):
   later version lists it again.
 - The sync never touches an event's own state (overrides, holds, rates).
 
-An event that already uses a property picks up new template units by choosing
-the same property again ("Add any new units from the template").
+A template change never reaches a live event by itself (see "Layout snapshot"
+below).
 
 ## Model
 
 | Table | What it is |
 | --- | --- |
 | `LodgingProperty`, `LodgingBuilding` | A property and its buildings or areas. |
-| `LodgingUnit` | A room, a numbered RV site, or a counted area (`isArea`). Kind `ROOM`, `RV_SITE`, `TENT`. Floor, ground level, bathroom, linens, special use, assignable, default "sleeps up to" (null is no fixed limit), default unavailable, default hold, effective dates, optional rate `category`. |
+| `LodgingUnit` | A room, a numbered RV site, or a counted area (`isArea`). Kind `ROOM`, `RV_SITE`, `TENT`. Floor, ground level, bathroom, linens, special use, assignable, default "sleeps up to" (null is no fixed limit), default unavailable, default hold, optional rate `category`. `activeFrom`/`activeUntil` are **reserved for a later slice**: the columns exist and availability honours them, but no screen or template sets them yet. |
 | `LodgingBed` | One row per bed: queen, double, twin, twin bunk. |
 | `EventLodging` | An event's one property, plus an optional night window. |
 | `EventLodgingUnit` | Per-event state of a unit: capacity override and the unavailable flag. |
@@ -83,8 +83,30 @@ with:
 - an **unavailable** flag, which starts from the template's default;
 - **holds**: whole-unit, for a window of nights (both ends inclusive), with a
   required reason, a kind (staff or maintenance), and the actor. A unit's default
-  hold (the cooks' and the nurse's rooms) is placed once, for the event's whole
-  window, when the property is chosen.
+  hold (the cooks' and the nurse's rooms) is placed when the property is
+  chosen, as a *system-placed* hold covering the event's nights.
+
+### Layout snapshot
+
+When an event chooses a property, each unit's default capacity, bed summary,
+assignable and retired state are copied onto its `EventLodgingUnit` row, and
+availability reads that snapshot (an override still wins). A later template
+version therefore never silently changes a live event's capacity. It reaches
+an event only through the explicit, audited **Update to latest property
+layout** action (`POST .../lodging/layout`, CONFIGURE_EVENT), which refreshes
+the snapshots and adds units the template introduced, keeping overrides,
+unavailable flags and holds. A unit the new layout drops is marked **Retired**
+and stays visible while it still has an active hold; otherwise it is hidden.
+
+### Default holds and the event's dates
+
+System-placed default holds follow the event's nights. Choosing the property
+again (the re-pick, which also applies a night window if one is given, and
+refuses one that ends before it starts) moves them to cover the event's
+current nights, with a history row each. A staff-placed hold is never moved.
+Changing the event's dates does not do this by itself: the lodging screen
+flags a default hold that no longer covers the event's nights and offers
+"Extend to cover the event".
 
 Holds are never deleted. Changing a window or releasing one appends a row to
 the history (`CREATED`, `WINDOW_CHANGED`, `RELEASED`, each with actor, time and
@@ -107,7 +129,7 @@ and `lastNight` can narrow or widen that.
 For each unit and night, the first match wins:
 
 1. **NOT_ASSIGNABLE**: storage, or a retired unit;
-2. **INACTIVE**: outside the unit's effective dates (`activeFrom`/`activeUntil`);
+2. **INACTIVE**: outside the unit's effective dates (`activeFrom`/`activeUntil`, reserved: nothing sets them yet);
 3. **UNAVAILABLE**: the unavailable flag (a closure);
 4. **HELD**: an unreleased hold covers the night;
 5. otherwise **AVAILABLE** with `capacity = override ?? default` (null: no fixed limit).
@@ -122,9 +144,13 @@ night must be in service with room for the party.
 - A unit has at most one **unreleased hold on any night**, enforced by an
   exclusion constraint (`btree_gist`, `daterange` overlap per event unit), so
   racing requests cannot both win; the loser gets `HOLD_OVERLAP`.
-- Holds and their history cannot be deleted or rewritten directly (triggers);
-  they go only with their event or unit row.
-- A unit row must come from the property its event chose, and children carry
+- Holds and their history cannot be deleted directly, and event lodging and
+  unit rows cannot be deleted while the event exists (triggers). They go only
+  with the event, from inside the foreign-key cascade once the event is gone.
+  Hold history is never rewritten; a hold changes only its window and release
+  fields, and a released hold never changes again.
+- A unit row must come from the property its event chose (also enforced when
+  an event's property, a unit's property or a unit's building changes), and children carry
   the event id in composite foreign keys, so they cannot cross events.
 - Every change to a unit takes the `EventLodgingUnit` row lock (`FOR UPDATE`,
   in id order) through `lockEventLodgingUnits`. **#200 must take the same lock
@@ -172,7 +198,8 @@ Server-side on every route and on the page:
 Cloning an event copies configuration only, from an explicit list of domains,
 and lodging is not on it: a clone starts with no property, holds, overrides or
 rates, and never carries assignments (there are none yet). The cloned event
-picks a property again.
+picks a property again. `npm run test:event-cloning` checks that a clone of an
+event that uses a property carries none of it.
 
 ## Checks
 
