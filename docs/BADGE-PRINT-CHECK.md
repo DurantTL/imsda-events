@@ -68,8 +68,11 @@ exported; the local-only checks above still apply to whatever it resolves to.
 `playwright-core install` needs network access; with no download available,
 point `BADGE_PRINT_BROWSER` at any Chromium or Chrome executable instead.
 
-CI runs this check in its own job, "Badge print (real browser, optional)",
-separate from `verify`, using the Google Chrome that GitHub-hosted runners ship.
+CI runs this check in its own workflow, `.github/workflows/badge-print.yml`
+("Badge print (real browser, optional)"), separate from `verify`, using the
+Google Chrome that GitHub-hosted runners ship. To save Actions minutes it runs
+only on pull requests that change badge or print files (see its `paths` list),
+and it can be started by hand from the Actions tab.
 
 The script adds synthetic attendees ("Badgecheck SampleNNN", 30 by default,
 `BADGE_PRINT_ATTENDEES` to change) to the seeded Women's Retreat event and signs
