@@ -210,6 +210,12 @@ ALTER TABLE "EventLodgingChangeRequest" ADD CONSTRAINT "EventLodgingChangeReques
 ALTER TABLE "EventLodgingChangeRequest" ADD CONSTRAINT "EventLodgingChangeRequest_registrationId_fkey" FOREIGN KEY ("registrationId") REFERENCES "Registration"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 
+-- AlterEnum
+-- Flat-for-the-event lodging rates (Man Camp): per room or site, or per person, for the whole event.
+ALTER TYPE "LodgingRateBasis" ADD VALUE 'PER_UNIT_PER_EVENT';
+ALTER TYPE "LodgingRateBasis" ADD VALUE 'PER_PERSON_PER_EVENT';
+
+
 -- ---------------------------------------------------------------------------
 -- Constraints Prisma cannot express (#199). Additive only.
 -- ---------------------------------------------------------------------------

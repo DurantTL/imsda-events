@@ -77,6 +77,26 @@ function nightsRefinement(value: { firstNight?: string | null; lastNight?: strin
 export const lodgingRequestSchema = z.object(requestShape).strict().superRefine(nightsRefinement);
 export type LodgingRequestInput = z.infer<typeof lodgingRequestSchema>;
 
+/**
+ * The lodging step of the public registration form (#199): the same fields a registrant can later change on the
+ * private page, plus roommate requests, made before the registration exists. A roommate on another registration is
+ * named by name and confirmation code together; one on this registration is named by the attendee rows' client ids.
+ */
+export const registrationLodgingSchema = z.object({
+  ...requestShape,
+  roommates: z.array(z.object({
+    name: z.string().trim().min(1, "Enter the name.").max(120),
+    confirmationCode: z.string().trim().min(4, "Enter the confirmation code.").max(40),
+    /** The attendee row (client id) asking; omitted means the whole registration. */
+    fromClientId: z.string().trim().min(1).max(80).optional(),
+  }).strict()).max(5).optional(),
+  roommatesWithin: z.array(z.object({
+    fromClientId: z.string().trim().min(1).max(80),
+    targetClientId: z.string().trim().min(1).max(80),
+  }).strict()).max(10).optional(),
+}).strict().superRefine(nightsRefinement);
+export type RegistrationLodgingInput = z.infer<typeof registrationLodgingSchema>;
+
 /** A staff edit carries the reason it was made (and is the only way to change a request after the deadline). */
 export const staffLodgingRequestSchema = z.object({ ...requestShape, reason: reasonSchema }).strict().superRefine(nightsRefinement);
 
@@ -375,6 +395,7 @@ export const reviewKinds = [
   "ACCESSIBILITY_NEEDED",
   "ACCESSIBILITY_UNMET",
   "CHANGE_REQUESTED",
+  "PRICE_DIFFERS",
 ] as const;
 export type ReviewKind = (typeof reviewKinds)[number];
 
@@ -390,6 +411,7 @@ export const reviewKindLabels: Record<ReviewKind, string> = {
   ACCESSIBILITY_NEEDED: "Accessibility need",
   ACCESSIBILITY_UNMET: "Accessibility need cannot be met",
   CHANGE_REQUESTED: "Change requested",
+  PRICE_DIFFERS: "Lodging charge differs from the request",
 };
 
 /** Kinds that disclose an accessibility flag: only staff with VIEW_SENSITIVE_DATA see them. */
@@ -426,6 +448,8 @@ export type ReviewFacts = {
   capacity: Partial<Record<LodgingCategory, CategoryCapacity>>;
   /** Open registrant changes the edit policy kept from applying. */
   changeRequests?: ReadonlyArray<{ id: string; registrationId: string; category: LodgingCategory | null }>;
+  /** What each active registration was charged for lodging, against what its request costs at today's rates. */
+  lodgingCharges?: ReadonlyArray<{ registrationId: string; chargedCents: number; currentCents: number }>;
 };
 
 export type ReviewItem = {
@@ -612,6 +636,17 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
       key: `change:${change.id}`, kind: "CHANGE_REQUESTED", fingerprint: change.id, registrationIds: [change.registrationId],
       title: `${label(facts, change.registrationId)} asked to change lodging${change.category ? ` to ${lodgingCategoryLabels[change.category].toLowerCase()}` : ""}`,
       detail: "Payment is already on this registration, so the change was not applied. Make the change for them if it is right, then acknowledge this.",
+    });
+  }
+
+  // --- Lodging charge against the request ---------------------------------------
+  for (const charge of facts.lodgingCharges ?? []) {
+    if (!active(charge.registrationId) || charge.chargedCents === charge.currentCents) continue;
+    const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+    push({
+      key: `price:${charge.registrationId}`, kind: "PRICE_DIFFERS", fingerprint: `${charge.chargedCents}:${charge.currentCents}`, registrationIds: [charge.registrationId],
+      title: `${label(facts, charge.registrationId)} was charged ${dollars(charge.chargedCents)} for lodging; the request costs ${dollars(charge.currentCents)}`,
+      detail: "Nothing is changed automatically after payment or on a registration with a promo code or amendments. Record any difference in Payments.",
     });
   }
 

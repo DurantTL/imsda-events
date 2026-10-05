@@ -1,6 +1,7 @@
 import "server-only";
 
 import { checkLocationSeats } from "@/modules/event-locations/admission";
+import { LODGING_LINE_KEY } from "@/modules/lodging/pricing";
 import { promoteWaitlistAfterSeatsFreed } from "@/modules/registrations/lifecycle-repository";
 import { EventLocationError, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
 import { locationChangeBlock } from "@/modules/honors/locations";
@@ -13,6 +14,7 @@ import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/backgro
 import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
 import {
+  calculationWithLine,
   getAvailabilityMode,
   isChoiceFieldType,
   isFieldVisible,
@@ -1221,10 +1223,18 @@ async function prepareAmendment(
     throw error;
   }
 
+  // The lodging line (#199) is priced from the lodging request, not from the form's fields, so an amendment of the
+  // form's answers carries the stored line through unchanged instead of silently dropping it from the total.
+  const storedLodgingLine = Array.isArray(pricingSnapshot.lineItems)
+    ? pricingSnapshot.lineItems.map(recordFromJson).find((line) => line.key === LODGING_LINE_KEY && typeof line.amountCents === "number") ?? null
+    : null;
+  const calculationWithLodging = storedLodgingLine
+    ? calculationWithLine(definition, prepared.registrationResponses, prepared.calculation, LODGING_LINE_KEY, storedLodgingLine as unknown as FormCalculation["lineItems"][number])
+    : prepared.calculation;
   const pricedCalculation = applyStoredPromo(
     definition,
     prepared.registrationResponses,
-    prepared.calculation,
+    calculationWithLodging,
     registration.promoCodeRedemption,
   );
   const netPaidCents = paidCents(registration);

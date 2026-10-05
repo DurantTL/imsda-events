@@ -15,6 +15,7 @@ import {
 } from "@/modules/communications/messaging-repository";
 import { enqueueWaitlistJoinedMessage } from "@/modules/communications/transactional-messages";
 import {
+  calculationWithLine,
   getAttendeeRosterConfig,
   getAvailabilityMode,
   isChoiceFieldType,
@@ -64,6 +65,8 @@ import {
 import { attendeeTypeSelector } from "@/modules/attendee-types/form-options";
 import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 import { recordRegistrationDeclarations } from "@/modules/guardian-authority/repository";
+import { LodgingError } from "@/modules/lodging/errors";
+import { getPublicLodgingOffer, planRegistrationLodging, recordRegistrationLodging, type LodgingPlan, type PublicLodgingOffer } from "@/modules/lodging/registration-form";
 import { eventStartDate, planPublicResponsibleAdults } from "@/modules/guardian-authority/domain";
 
 export type PublicRegistrationErrorCode =
@@ -246,6 +249,8 @@ export type PublicRegistrationExperience = {
   };
   choiceUsage: ChoiceUsage;
   pricingDate: string;
+  /** The lodging step (#199): null when the event collects no lodging. Never offered to club or group registrations. */
+  lodging: PublicLodgingOffer | null;
   lifecycle: {
     phase: EventRegistrationPhase;
     capacityDecision: CapacityDecision | null;
@@ -357,6 +362,7 @@ function submissionHash(input: PublicRegistrationInput) {
         attendees: input.attendees.map((attendee) => attendee.responses),
         // Only present when the form asked for it (#131), so a hash stored before it existed still matches.
         ...(input.responsibleAdults && Object.keys(input.responsibleAdults).length > 0 ? { responsibleAdults: input.responsibleAdults } : {}),
+        ...(input.lodging ? { lodging: input.lodging } : {}),
       }
     : { versionId: input.versionId, responses: input.responses };
   return createHash("sha256").update(stableJson(semanticInput)).digest("hex");
@@ -542,6 +548,7 @@ export async function getPublicRegistrationExperience(eventSlug: string, formSlu
     { occupied, requested: getAttendeeRosterConfig(definition).minAttendees },
     now
   );
+  const lodging = await getPublicLodgingOffer(form.eventId, prisma);
 
   return {
     event: {
@@ -561,6 +568,7 @@ export async function getPublicRegistrationExperience(eventSlug: string, formSlu
     form: { slug: form.slug, versionId: version.id, versionNumber: version.versionNumber, definition },
     choiceUsage: usageFromReservations(definition, reservations),
     pricingDate,
+    lodging,
     lifecycle: {
       ...admission,
       waitingRegistrations,
@@ -854,6 +862,39 @@ async function createPublicRegistrationTransaction(
     );
   }
 
+  // The lodging step (#199): decided here, under the unit locks, so a full type is refused and the price joins the total
+  // before promo codes and fees. Club and group registrations never carry it, and a waitlisted one chooses after promotion.
+  const lodgingStepIssue = (message: string) => [{
+    kind: "validation" as const,
+    code: "INVALID_RESPONSE" as const,
+    fieldId: null,
+    key: "lodging",
+    path: "lodging",
+    attendeeIndex: null,
+    message,
+  }];
+  if (input.lodging && bulk) {
+    throw new PublicRegistrationError("INVALID_SUBMISSION", "Lodging is not chosen on this kind of registration.", lodgingStepIssue("Lodging is not chosen on this kind of registration."));
+  }
+  let lodgingPlan: LodgingPlan | null = null;
+  if (input.lodging && !bulk && !isWaitlisted) {
+    try {
+      lodgingPlan = await planRegistrationLodging(tx, {
+        eventId: form.eventId,
+        lodging: input.lodging,
+        attendeeCount: Math.max(1, prepared.attendees.length),
+        // A church-billed event bills through its invoice, not through the registration total.
+        priced: !churchBilledDisplay,
+      });
+    } catch (error) {
+      if (!(error instanceof LodgingError)) throw error;
+      throw new PublicRegistrationError("INVALID_SUBMISSION", `Lodging step: ${error.message}`, lodgingStepIssue(`Lodging step: ${error.message}`));
+    }
+  }
+  const baseCalculation: FormCalculation = lodgingPlan?.line
+    ? calculationWithLine(definition, prepared.registrationResponses, prepared.calculation, lodgingPlan.line.key, lodgingPlan.line)
+    : prepared.calculation;
+
   const configuredPromoField = promoCodeField(definition);
   const submittedPromoCode = configuredPromoField
     && typeof prepared.registrationResponses[configuredPromoField.key]
@@ -867,13 +908,13 @@ async function createPublicRegistrationTransaction(
     preDiscountSubtotalCents?: number;
     discountAmountCents?: number;
     promoCode?: string;
-  } = prepared.calculation;
+  } = baseCalculation;
   if (submittedPromoCode && configuredPromoField) {
     try {
       claimedPromo = await claimPromoCode(tx, {
         eventId: form.eventId,
         submittedCode: submittedPromoCode,
-        eligibleSubtotalCents: prepared.calculation.subtotalCents,
+        eligibleSubtotalCents: baseCalculation.subtotalCents,
         pricingDate: prepared.pricingDate,
         fieldId: configuredPromoField.id,
         hideAmounts: churchBilledDisplay,
@@ -881,7 +922,7 @@ async function createPublicRegistrationTransaction(
       pricedCalculation = applyPromoCodeToCalculation(
         definition,
         prepared.registrationResponses,
-        prepared.calculation,
+        baseCalculation,
         claimedPromo.evaluation
       );
     } catch (error) {
@@ -911,7 +952,7 @@ async function createPublicRegistrationTransaction(
       eventId: form.eventId,
       field: configuredAttendeePromoField,
       attendees: prepared.attendees,
-      calculation: prepared.calculation,
+      calculation: baseCalculation,
       pricingDate: prepared.pricingDate,
       claim: true,
       hideAmounts: churchBilledDisplay,
@@ -936,7 +977,7 @@ async function createPublicRegistrationTransaction(
       pricedCalculation = applyAttendeePromoCodes(
         definition,
         prepared.registrationResponses,
-        prepared.calculation,
+        baseCalculation,
         attendeeDiscounts,
       );
     }
@@ -1094,6 +1135,22 @@ async function createPublicRegistrationTransaction(
         adultPersonId: declaration.adultKey ? personByClientId.get(declaration.adultKey)! : null,
       })),
     });
+  }
+  if (input.lodging && lodgingPlan) {
+    try {
+      await recordRegistrationLodging(tx, {
+        eventId: form.eventId,
+        registrationId: registration.id,
+        confirmationCode,
+        formVersionId: version.id,
+        plan: lodgingPlan,
+        lodging: input.lodging,
+        attendees: createdAttendees.map((attendee) => ({ clientId: attendee.clientId, personId: attendee.personId })),
+      });
+    } catch (error) {
+      if (!(error instanceof LodgingError)) throw error;
+      throw new PublicRegistrationError("INVALID_SUBMISSION", `Lodging step: ${error.message}`, lodgingStepIssue(`Lodging step: ${error.message}`));
+    }
   }
   const registrationAttendeeType = createdAttendees.length > 0
     && createdAttendees.every((attendee) => attendee.attendeeType === "WORKER")

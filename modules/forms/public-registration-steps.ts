@@ -15,6 +15,8 @@ export type PublicRegistrationStep = {
   sectionId: string | null;
   isReview: boolean;
   managesAttendees: boolean;
+  /** The lodging step (#199): shown before review on events that collect lodging; its answers travel beside the form's own. */
+  isLodging?: boolean;
 };
 
 const attendeeIdentityTerms = [
@@ -68,6 +70,7 @@ export function isPublicReviewSection(
 export function getPublicRegistrationStepPlan(
   definition: RegistrationFormDefinition,
   visibleFieldKeys?: ReadonlySet<string>,
+  options: { lodging?: boolean } = {},
 ): PublicRegistrationStep[] {
   const sectionSteps = definition.sections.flatMap((section) => {
     const fieldKeys = section.fields
@@ -87,14 +90,29 @@ export function getPublicRegistrationStepPlan(
     }];
   });
 
+  const lodgingStep: PublicRegistrationStep[] = options.lodging
+    ? [{
+        id: "__lodging",
+        shortLabel: "Lodging",
+        title: "Where you will stay",
+        description: "Choose a lodging type and nights, and ask to room with someone. Full types cannot be picked.",
+        fieldKeys: [],
+        sectionId: null,
+        isReview: false,
+        managesAttendees: false,
+        isLodging: true,
+      }]
+    : [];
   const reviewStep = sectionSteps.find((step) => step.isReview);
   const orderedSteps = reviewStep
     ? [
         ...sectionSteps.filter((step) => step.id !== reviewStep.id),
+        ...lodgingStep,
         reviewStep,
       ]
     : [
         ...sectionSteps,
+        ...lodgingStep,
         {
           id: "__review",
           shortLabel: "Review",

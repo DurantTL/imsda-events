@@ -1677,6 +1677,22 @@ function finalizeCalculation(
   return { subtotalCents, processingFeeCents, totalCents: subtotalCents + processingFeeCents, lineItems };
 }
 
+/**
+ * The same calculation with a registration-level line added, replaced (same key) or, with `null`, removed: a line the
+ * form's own fields do not price, such as lodging (#199). The processing fee follows the new subtotal exactly as it
+ * does for the form's own lines.
+ */
+export function calculationWithLine(
+  definition: RegistrationFormDefinition,
+  registrationResponses: Record<string, unknown>,
+  calculation: FormCalculation,
+  key: string,
+  line: FormCalculation["lineItems"][number] | null,
+): FormCalculation {
+  const others = calculation.lineItems.filter((item) => item.key !== key);
+  return finalizeCalculation(definition, registrationResponses, line ? [...others, line] : others);
+}
+
 export function processingFeeForSubtotal(
   payment: RegistrationFormDefinition["payment"],
   subtotalCents: number,

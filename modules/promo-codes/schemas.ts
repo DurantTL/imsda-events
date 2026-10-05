@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { registrationLodgingSchema } from "@/modules/lodging/preferences-domain";
 import {
   isNormalizedPromoCode,
   normalizePromoCode,
@@ -111,6 +112,8 @@ export const publicPromoCodeQuoteInputSchema = z.object({
   code: z.string().trim().min(1).max(80),
   responses: z.record(z.string(), z.unknown()),
   attendees: z.array(quoteAttendeeSchema).max(50).optional(),
+  /** The lodging step's choice (#199), so the quote prices the lodging line that the submission will add. */
+  lodging: registrationLodgingSchema.optional(),
 }).strict();
 
 export type PromoCodeInput = z.infer<typeof promoCodeInputSchema>;

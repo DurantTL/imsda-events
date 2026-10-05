@@ -173,9 +173,15 @@ registration price includes lodging).
 - Categories: dorm room, conference center room, RV site, tent with power,
   tent. A unit carries its category (Sunnydale only; Camp Heritage units have
   none).
-- A rate is `amountCents`, a basis (**per room or site per night**, or per
-  person per night) and optional `minimumNights` (the legacy CM26 dorms
-  required 4+). Dorm rooms are priced per room per night.
+- A rate is `amountCents`, a basis and optional `minimumNights` (the legacy
+  CM26 dorms required 4+). Four bases:
+  - **per room or site per night** (`PER_UNIT_NIGHT`) and **per person per
+    night** (`PER_PERSON_NIGHT`), for Camp Meeting housing (dorm rooms are per
+    room per night);
+  - **per room or site for the whole event** (`PER_UNIT_PER_EVENT`) and **per
+    person for the whole event** (`PER_PERSON_PER_EVENT`), flat amounts that do
+    not grow with the nights, for Man Camp, where the registration price differs
+    by housing choice. A minimum number of nights can still be set on them.
 - **Tent with power shares the tent rate.** It stays its own inventory
   category (capacity 4) but has no rate of its own unless one is set;
   `rateForCategory` falls back from tent with power to tent (one way only).
@@ -184,10 +190,10 @@ registration price includes lodging).
   changes are a human-gated action, so rates are only ever set by a person in
   the UI, never seeded. Each change is audited with the old and new values.
 - `quoteStay` is a pure helper: category, nights, party size (and units) give
-  `INCLUDED`, a `CHARGE` total, or `BELOW_MINIMUM_NIGHTS`. Per unit:
-  amount x nights x units; per person: amount x nights x people. #199 shows the
-  quote at selection; **charging it at registration is not wired** (see "Not in
-  this slice").
+  `INCLUDED`, a `CHARGE` total, or `BELOW_MINIMUM_NIGHTS`. Per unit per night:
+  amount x nights x units; per person per night: amount x nights x people; flat
+  per unit: amount x units; flat per person: amount x people. #199 shows the
+  quote at selection and **charges it with the registration** (see "Charging").
 
 ## Access
 
@@ -216,9 +222,10 @@ waitlist (that is #200). The rules below come from the "Build scope for slice
 ### Who chooses lodging
 
 - **Man Camp and Camp Meeting**: registrants pick a lodging type (dorm room,
-  conference center room, RV site, tent with power, tent) on their private
-  registration page (`/manage/<token>`), after they register. The types
-  offered are the categories that have at least one unit in service at the
+  conference center room, RV site, tent with power, tent) **in the public
+  registration form**, in a lodging step before review, and can change it later
+  on their private page (`/manage/<token>`) under the event's edit policy. The
+  types offered are the categories that have at least one unit in service at the
   event's property.
 - **Club events**: staff assign, so the event setting **Registrants choose a
   lodging type** stays off and nothing is collected.
@@ -231,9 +238,83 @@ waitlist (that is #200). The rules below come from the "Build scope for slice
   - `fullBehavior`: `SHOW_FULL` (default) or `WAITLIST`. Both show "Full" in
     this slice; the waitlist itself is #200.
 - The price shown at selection is `quoteStay` over the event's lodging rates
-  (see "Optional lodging rates"). **Nothing is charged here**: adding lodging to
-  the registration total, and payment, are not wired in this slice (see
-  "Not in this slice").
+  (see "Optional lodging rates"); it is added to the registration total (see
+  "Charging").
+
+### The lodging step of the registration form
+
+The step is part of the registration form, built the way the form's other
+non-field parts are (like the responsible-adult choice): the form's step plan
+adds a **Lodging** step before review (`getPublicRegistrationStepPlan(...,
+{ lodging: true })`), its answers travel beside the form's own as `lodging` in the
+submission, and the server decides them inside the registration's transaction.
+
+- **Shown only** on an individual registration at an event with
+  `collectsPreferences` that is not joining the waitlist. Club and group
+  registrations never show it (the page does not pass the offer, the component
+  ignores it for club and group props, and the server refuses a `lodging` on a
+  club or group submission). A registrant who joins the waitlist chooses lodging
+  on their private page after they are promoted.
+- **What it asks**: type (a type that is full for the chosen nights and people is
+  shown as Full and cannot be picked), first and last night, how many of the
+  registration's attendees are staying, private room, whether the party can be
+  split, the two yes/no accessibility boxes ("No medical details" is stated),
+  and roommate requests (by name plus confirmation code, or between two people on
+  the registration).
+- **On submit** (`planRegistrationLodging`): the nights, party and type are
+  checked, **every unit row of the event's lodging is locked** (the same
+  `lockEventLodgingUnits` the later steps take), a full type is refused with a
+  field error on the `lodging` key that starts "Lodging step:", and a stay under a
+  rate's minimum is refused. The submission transaction is Serializable, so two
+  registrants racing for the last place leave one winner (the loser is retried
+  and then told the step is full). A refusal rolls everything back: no
+  registration, person, payment claim or lodging row is left behind.
+- Then, once the registration and attendees exist (`recordRegistrationLodging`),
+  version 1 of the request is written with source `REGISTRATION_FORM` and the
+  form version id, with the roommate requests (source `REGISTRATION_FORM`) and an
+  audit entry, all in the same transaction. A roommate who cannot be found is a
+  field error on the step (same uniform message). Roommate lookups at submit are
+  covered by the submission endpoint's own rate limit; misses at submit roll
+  back, so they are not in the audit log (the private-page lookup audits them).
+
+### Charging
+
+The lodging price is added to the registration's priced total through the
+registration's own calculation, as **its own line labelled "Lodging: <type>"**
+(key `lodging`, no attendee, with a note such as "$25.00 per room or site per
+night, 3 nights"):
+
+- `lodgingCharge` (`modules/lodging/pricing.ts`) turns a type, nights, party and
+  the event's rates into the line. **No rate means no line**: a type without a
+  rate adds nothing (Camp Heritage club events, or any unpriced type). Nothing is
+  seeded; staff enter every amount, and only MANAGE_FINANCE can.
+- `calculationWithLine` (in the form definition module) adds the line to the form's
+  own calculation, so the **processing fee follows the new subtotal** exactly as
+  it does for the form's own lines. The browser prices the same way for the running
+  total and the review step; the server prices again and its numbers win.
+- Because the line is in the pricing snapshot, it reaches the confirmation, the
+  confirmation email, the private page's order, the payments page and the card
+  payment amount (all read the snapshot or the registration total) with no other
+  wiring. An **amendment** of the form's answers carries the stored lodging line
+  through unchanged instead of repricing it away.
+- **Promo codes.** A registration-level promo code discounts the whole subtotal, so
+  it applies to the lodging line like every other priced line (the quote endpoint
+  is given the same `lodging` choice, so the discount the registrant sees is the one
+  the submission applies). A per-person promo code is limited to that person's own
+  lines and never touches the lodging line, which has no attendee. A church-billed
+  event (deferred organization invoice) bills through its invoice: lodging is
+  recorded but not priced into the registration.
+- **After submission** the charge follows the request while nothing else rides on
+  the registration: with no payment (pending or succeeded), no promo code, no
+  amendment, no adjustment, no waitlist promotion and no payment choice, a change to the request that alters the charge
+  replaces the lodging line, the stored pricing and the registration total
+  (audited as `LODGING_CHARGE_CHANGED`). Otherwise the registrant's change becomes a
+  change request (see the edit policy below) and a staff change leaves the total
+  alone. **Nothing creates a payment, a refund or a new charge by itself**; the
+  review queue lists **Lodging charge differs from the request** (also after a rate
+  changes) so staff record any difference in Payments. A registration that never
+  went through a form (an import) has no stored pricing: its request is applied
+  without repricing and listed the same way.
 
 ### Data model
 
@@ -366,16 +447,17 @@ This is the rule until the event team rules otherwise:
     a registrant changing them afterwards is refused with `FLAGS_STAFF_ONLY`
     and the section tells them to contact the event team (the form stops sending
     them once locked);
-  - a **change of type to a priced type** (one with an event rate; a tent with
-    power counts as priced when the tent is) applies only while the registration
-    has **no payment** (pending or succeeded). Otherwise nothing is applied: the
-    change is recorded as an open `EventLodgingChangeRequest` (category, nights,
-    party, private room, household; never the flags), the registrant is told it
-    went to the event team, and the review queue shows **Change requested**. A
-    staff save for that registration resolves it. Moves to an unpriced type,
-    nights, party size and the other preferences stay self-service. This is the
-    simplest safe rule: money already on the registration is never silently
-    re-priced.
+  - a **change that alters the lodging charge** (a different priced type, or
+    different nights or party on a priced type) is applied, and the total repriced,
+    only while the registration has **no payment** (pending or succeeded), no promo
+    code, no amendment, no adjustment, no waitlist promotion and no payment choice. Otherwise nothing is applied: the change
+    is recorded as an open `EventLodgingChangeRequest` (category, nights, party,
+    private room, household; never the flags), the registrant is told it went to the
+    event team, and the review queue shows **Change requested**. A staff save for
+    that registration resolves it. Changes that leave the charge unchanged (a type
+    with no rate, the other preferences) stay self-service. This is the simplest
+    safe rule: money already on the registration is never silently re-priced, and a
+    decrease is a refund, which only a human issues.
 - Roommate requests carry no price or sensitive data, so under TIERED they stay
   self-service until the deadline.
 - **Individual registrations only.** Club and group registrations are refused in
@@ -443,7 +525,8 @@ columns are present only for staff with VIEW_SENSITIVE_DATA.
 
 - Unit tests: `tests/lodging-domain.test.ts`, `tests/lodging-templates.test.ts`,
   `tests/lodging-routes.test.ts`, `tests/lodging-preferences-domain.test.ts`,
-  `tests/lodging-preferences-routes.test.ts`.
+  `tests/lodging-preferences-routes.test.ts`, `tests/lodging-registration-form.test.ts`
+  (every rate basis, the lodging line and its promo scope, the form's step and submission).
 - Real database: `npm run test:lodging` (`scripts/verify-lodging-inventory.ts`,
   local database only, wired into CI). It covers template sync idempotency and
   parallel runs, versioned retirement, event property choice, default holds,
@@ -460,20 +543,21 @@ columns are present only for staff with VIEW_SENSITIVE_DATA.
   values, household rules (responsible adult, split, join, keep apart, a person
   who changes household, history kept), the review queue and acknowledgements,
   the database refusing cross-event rows and rewrites, and cascade on
-  registration and event deletion.
+  registration and event deletion; and, through the real public submission, the
+  lodging step: the first version from the form, a charge for each rate basis,
+  no line for an unpriced type, a full type refused at submit (and five racing
+  submissions leaving one winner), repricing after submission, and changes after
+  payment becoming change requests with no payment or refund created.
 
 ## Not in this slice
 
-- **Charging at registration.** The price is shown at selection from the
-  event's rates, but a lodging total is not added to the registration or sent
-  to payment. Changing what a registration owes is a pricing action that a
-  human should approve, so it is left open for #200 / a follow-up.
-- **Choosing lodging inside the registration form itself.** Registrants choose
-  on their private registration page right after registering (the private link they
-  receive after registering). `sourceFormVersionId` and the `REGISTRATION_FORM` source
-  are in the model for when the form submission writes the first version.
-- Assignments, moves, the waitlist and the attendee room display (#200); the
-  interactive site map (#779); staff editing of the property templates
-  themselves (templates are code data).
+- Lodging for a **waitlisted** registration: the form step is skipped and the
+  registrant chooses on their private page once promoted. A promoted waitlist
+  registration has its own payment-choice pricing, so its lodging charge is never
+  repriced automatically: the choice becomes a change request and staff add the
+  charge in Payments.
+- Assignments, moves, the waitlist for full types and the attendee room display
+  (#200); the interactive site map (#779); staff editing of the property
+  templates themselves (templates are code data).
 - The protected-records projection of an accommodation action (#192, ADR 0005
   still Proposed): the two flags are the only accommodation data held.

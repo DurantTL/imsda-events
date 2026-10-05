@@ -33,6 +33,16 @@ import { RegistrationAccountPrompt } from "@/components/registration-account-pro
 import { SearchableSelect } from "@/components/searchable-select";
 import { SubmitButton } from "@/components/submit-button";
 import { ResponsibleAdultChoice } from "@/components/responsible-adult-choice";
+import { PublicLodgingStep } from "@/components/public-lodging-step";
+import {
+  chosenNights,
+  defaultLodgingChoice,
+  lodgingStepInput,
+  lodgingStepLine,
+  lodgingStepProblem,
+  type LodgingChoice,
+  type LodgingStepOffer,
+} from "@/modules/lodging/form-step";
 import {
   DEFAULT_AGE_OF_MAJORITY,
   RESPONSIBLE_ADULT_NONE,
@@ -53,6 +63,7 @@ import { hasAddressValue, isPlainAddressObject, type AddressValue } from "@/modu
 import {
   calculateFormLineItems,
   calculateFormTotal,
+  calculationWithLine,
   dateFieldBounds,
   isBirthDateField,
   calculateRosterLineItems,
@@ -230,6 +241,11 @@ export type PublicRegistrationFormProps = {
     remainingSpots: number | null;
     waitingRegistrations: number;
   };
+  /**
+   * The lodging step (#199): offered only on an individual registration at an event that collects lodging. A club or
+   * group registration never shows it, whatever is passed.
+   */
+  lodging?: LodgingStepOffer | null;
   initialResponses?: FormResponses;
   initialAttendeeResponses?: FormResponses;
   embedded?: boolean;
@@ -444,6 +460,7 @@ export function PublicRegistrationForm({
   choiceUsage,
   pricingDate,
   lifecycle,
+  lodging = null,
   initialResponses = {},
   initialAttendeeResponses = {},
   embedded = false,
@@ -547,6 +564,28 @@ export function PublicRegistrationForm({
       return [minor.key, picked && validKeys.has(picked) ? picked : preselected];
     }));
   }, [responsibleAdultMinors, responsibleAdultOptions, responsibleAdultPeople, responsibleAdultPicks]);
+  // The lodging step (#199). Shown only on an individual registration that is not joining a waitlist; the server decides
+  // again on submit, under the unit locks.
+  const lodgingActive = Boolean(lodging) && !club && !group && lifecycle.capacityDecision !== "WAITLIST";
+  const noLodgingOffer: LodgingStepOffer = { nights: [], deadline: "", fullBehavior: "SHOW_FULL", categories: [] };
+  const lodgingOffer = lodging ?? noLodgingOffer;
+  const [lodgingChoiceState, setLodgingChoice] = useState<LodgingChoice>(() => defaultLodgingChoice(lodgingOffer, attendees.length));
+  const lodgingAttendees = useMemo(
+    () => attendees.map((attendee, index) => ({ clientId: attendee.clientId, name: attendeeName(attendee, index, roster.attendeeLabel) })),
+    [attendees, roster.attendeeLabel],
+  );
+  // People who left the registration cannot still be asking, or be asked for, and the party cannot outgrow it.
+  const lodgingChoice = useMemo<LodgingChoice>(() => {
+    const present = new Set(attendees.map((attendee) => attendee.clientId));
+    return {
+      ...lodgingChoiceState,
+      partySize: Math.min(lodgingChoiceState.partySize, Math.max(1, attendees.length)),
+      roommates: lodgingChoiceState.roommates.map((row) => (row.fromClientId && !present.has(row.fromClientId) ? { ...row, fromClientId: "" } : row)),
+      within: lodgingChoiceState.within.filter((pair) => present.has(pair.fromClientId) && present.has(pair.targetClientId)),
+    };
+  }, [attendees, lodgingChoiceState]);
+  const lodgingLine = lodgingActive && !deferredOrganizationBilling ? lodgingStepLine(lodgingOffer, lodgingChoice) : null;
+  const lodgingSubmission = lodgingActive ? lodgingStepInput(lodgingOffer, lodgingChoice) : null;
   const [error, setError] = useState("");
   const [rosterAnnouncement, setRosterAnnouncement] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -707,7 +746,7 @@ export function PublicRegistrationForm({
             : calculateFormLineItems(definition, responses, pricingDate),
         };
       }
-      return rosterEnabled
+      const priced = rosterEnabled
         ? calculateRosterTotal(
           definition,
           registrationResponses,
@@ -715,8 +754,12 @@ export function PublicRegistrationForm({
           pricingDate,
         )
         : calculateFormTotal(definition, responses, pricingDate);
+      // The lodging charge is its own line of the total, ahead of promo codes and fees (#199).
+      return lodgingLine
+        ? calculationWithLine(definition, rosterEnabled ? registrationResponses : responses, priced, lodgingLine.key, lodgingLine)
+        : priced;
     },
-    [attendees, definition, deferredOrganizationBilling, pricingDate, registrationResponses, responses, rosterEnabled],
+    [attendees, definition, deferredOrganizationBilling, lodgingLine, pricingDate, registrationResponses, responses, rosterEnabled],
   );
   // An applied code survives answers that don't change the price (checking the
   // acknowledgment, picking pay later); a price change re-checks it below.
@@ -803,8 +846,8 @@ export function PublicRegistrationForm({
     rosterEnabled,
   ]);
   const registrationSteps = useMemo(
-    () => getPublicRegistrationStepPlan(definition, visibleFieldKeys),
-    [definition, visibleFieldKeys],
+    () => getPublicRegistrationStepPlan(definition, visibleFieldKeys, { lodging: lodgingActive }),
+    [definition, lodgingActive, visibleFieldKeys],
   );
   const [currentStepId, setCurrentStepId] = useState<PublicRegistrationStepId>(
     () => registrationSteps[0]?.id ?? "__review",
@@ -817,6 +860,7 @@ export function PublicRegistrationForm({
     setRegistrationResponses(initialResponses);
     const rebuiltAttendees = buildInitialAttendees();
     setAttendees(rebuiltAttendees);
+    setLodgingChoice(defaultLodgingChoice(lodgingOffer, rebuiltAttendees.length));
     setActiveAttendeeId(initialActiveAttendeeId(rebuiltAttendees));
     setSheetOpen(false);
     setWebsite("");
@@ -877,6 +921,7 @@ export function PublicRegistrationForm({
     if (issue.key === "attendees" || issue.path === "attendees") {
       return registrationSteps.find((step) => step.managesAttendees);
     }
+    if (issue.key === "lodging") return registrationSteps.find((step) => step.isLodging);
     return registrationSteps.find((step) => step.fieldKeys.includes(issue.key));
   }
 
@@ -911,7 +956,17 @@ export function PublicRegistrationForm({
     window.requestAnimationFrame(() => stepHeadingRef.current?.focus());
   }
 
+  function lodgingIssues(): FormIssue[] {
+    if (!lodgingActive) return [];
+    const problem = lodgingStepProblem(lodgingOffer, lodgingChoice, attendees.length);
+    return problem ? [{ key: "lodging", path: "lodging", message: problem }] : [];
+  }
+
   function allClientIssues() {
+    return [...formClientIssues(), ...lodgingIssues()];
+  }
+
+  function formClientIssues() {
     const ignoredFieldKeys = joiningWaitlist
       && definition.payment?.enabled
       ? [definition.payment.paymentMethodFieldKey]
@@ -981,6 +1036,7 @@ export function PublicRegistrationForm({
                 responses: attendee.responses,
               })),
             } : {}),
+            ...(lodgingSubmission && !deferredOrganizationBilling ? { lodging: lodgingSubmission } : {}),
           }),
         },
       );
@@ -1065,6 +1121,7 @@ export function PublicRegistrationForm({
             code: firstCode,
             responses: registrationResponses,
             attendees: attendees.map((attendee) => ({ clientId: attendee.clientId, responses: attendee.responses })),
+            ...(lodgingSubmission && !deferredOrganizationBilling ? { lodging: lodgingSubmission } : {}),
           }),
         },
       );
@@ -1134,6 +1191,7 @@ export function PublicRegistrationForm({
     if (issue.key === "attendees" || issue.path === "attendees") {
       return step.managesAttendees;
     }
+    if (issue.key === "lodging") return step.isLodging === true;
     return step.fieldKeys.includes(issue.key);
   }
 
@@ -2475,6 +2533,23 @@ export function PublicRegistrationForm({
           </section>
         )}
 
+        {lodgingActive && (
+          <section className="public-registration-review-card" aria-labelledby="public_lodging_review_title">
+            <p className="public-registration-eyebrow">Where you will stay</p>
+            <h3 id="public_lodging_review_title">Lodging</h3>
+            {lodgingChoice.category === "" ? (
+              <p>No lodging type chosen.</p>
+            ) : (
+              <p>
+                {lodgingOffer.categories.find((option) => option.category === lodgingChoice.category)?.label ?? "Lodging"}, {chosenNights(lodgingChoice).length} night{chosenNights(lodgingChoice).length === 1 ? "" : "s"}
+                {" "}({lodgingChoice.firstNight} to {lodgingChoice.lastNight}), {lodgingChoice.partySize} {lodgingChoice.partySize === 1 ? "person" : "people"}
+                {lodgingLine ? `. Lodging charge ${lodgingLine.amountCents < 0 ? "-" : ""}$${(Math.abs(lodgingLine.amountCents) / 100).toFixed(2)} is part of your total below.` : ". Included in your registration."}
+              </p>
+            )}
+            {lodgingSubmission && ((lodgingSubmission.roommates?.length ?? 0) + (lodgingSubmission.roommatesWithin?.length ?? 0)) > 0 && <p>Roommate requests: {(lodgingSubmission.roommates?.length ?? 0) + (lodgingSubmission.roommatesWithin?.length ?? 0)}. Each stays private until the other person asks for you too, or the event team approves it.</p>}
+          </section>
+        )}
+
         {responsibleAdultMinors.length > 0 && (
           <section className="public-registration-review-card" aria-labelledby="public_responsible_adult_title">
             <p className="public-registration-eyebrow">Minors on this registration</p>
@@ -2769,6 +2844,7 @@ export function PublicRegistrationForm({
             })),
           } : {}),
           ...(responsibleAdultMinors.length > 0 ? { responsibleAdults: responsibleAdultValues } : {}),
+          ...(lodgingSubmission ? { lodging: lodgingSubmission } : {}),
           ...(club?.locationId ? { locationId: club.locationId } : {}),
           ...(club?.honorSelections && Object.keys(club.honorSelections).length > 0 ? { honorSelections: club.honorSelections } : {}),
           ...(group?.locationId ? { locationId: group.locationId } : {}),
@@ -3101,6 +3177,20 @@ export function PublicRegistrationForm({
             </header>
             <div className="public-registration-step-content">
               {renderStepFields(currentStep)}
+              {currentStep.isLodging && lodgingActive && (
+                <PublicLodgingStep
+                  offer={lodgingOffer}
+                  choice={lodgingChoice}
+                  attendees={lodgingAttendees}
+                  issues={issues.filter((issue) => issue.key === "lodging")}
+                  onChange={(next) => {
+                    setLodgingChoice(next);
+                    setIssues((current) => current.filter((issue) => issue.key !== "lodging"));
+                    setError("");
+                    setIdempotencyKey(null);
+                  }}
+                />
+              )}
               {currentStep.isReview && renderReview()}
             </div>
           </section>

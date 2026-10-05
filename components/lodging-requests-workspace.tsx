@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { lodgingCategories, lodgingCategoryLabels } from "@/modules/lodging/domain";
+import { describeRate, lodgingCategories, lodgingCategoryLabels } from "@/modules/lodging/domain";
 import {
   fullBehaviors,
   lodgingRuleKindLabels,
@@ -19,8 +19,7 @@ async function call(url: string, method: string, body: unknown): Promise<{ reque
   return json;
 }
 
-const formatRate = (rate: { amountCents: number; basis: string; minimumNights: number | null }) =>
-  `$${(rate.amountCents / 100).toFixed(2)} ${rate.basis === "PER_UNIT_NIGHT" ? "per room or site per night" : "per person per night"}${rate.minimumNights ? `, ${rate.minimumNights}+ nights` : ""}`;
+const formatRate = describeRate;
 
 /**
  * Staff review of lodging requests (#199): settings, the review queue, what each registration asked for, and the

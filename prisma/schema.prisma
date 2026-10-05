@@ -6060,6 +6060,10 @@ enum LodgingCategory {
 enum LodgingRateBasis {
   PER_UNIT_NIGHT
   PER_PERSON_NIGHT
+  /// Flat for the whole event, per room or site (Man Camp housing choices).
+  PER_UNIT_PER_EVENT
+  /// Flat for the whole event, per person.
+  PER_PERSON_PER_EVENT
 }
 
 enum LodgingHoldKind {

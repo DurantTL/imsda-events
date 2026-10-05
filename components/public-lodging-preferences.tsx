@@ -2,20 +2,20 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import { AlertCircle, BedDouble, CheckCircle2 } from "lucide-react";
-import { quoteStay, stayNights, addDays, type LodgingCategory } from "@/modules/lodging/domain";
+import { describeRate, quoteStay, stayNights, addDays, type LodgingCategory } from "@/modules/lodging/domain";
 import type { RegistrantLodgingView } from "@/modules/lodging/preferences-service";
 
 type Status = { kind: "idle" | "saving" | "saved" | "error"; message: string };
 
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
-type Sent = { lodging: RegistrantLodgingView; changeRequested: boolean };
+type Sent = { lodging: RegistrantLodgingView; changeRequested: boolean; repriced: boolean };
 
 async function send(url: string, method: string, body: unknown): Promise<Sent> {
   const response = await fetch(url, { method, cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const payload = await response.json().catch(() => null) as { message?: string; lodging?: RegistrantLodgingView; result?: { changeRequested?: boolean } } | null;
+  const payload = await response.json().catch(() => null) as { message?: string; lodging?: RegistrantLodgingView; result?: { changeRequested?: boolean; repriced?: boolean } } | null;
   if (!response.ok || !payload?.lodging) throw new Error(payload?.message ?? "That could not be saved. Try again.");
-  return { lodging: payload.lodging, changeRequested: payload.result?.changeRequested === true };
+  return { lodging: payload.lodging, changeRequested: payload.result?.changeRequested === true, repriced: payload.result?.repriced === true };
 }
 
 /**
@@ -45,7 +45,7 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
     try {
       const sent = await action();
       setView(sent.lodging);
-      setStatus({ kind: "saved", message: sent.changeRequested ? "Thank you. This change needs the event team, so it was sent to them and has not been applied yet." : success });
+      setStatus({ kind: "saved", message: sent.changeRequested ? "Thank you. This change needs the event team, so it was sent to them and has not been applied yet." : sent.repriced ? `${success} Your registration total was updated.` : success });
     } catch (error) {
       setStatus({ kind: "error", message: error instanceof Error ? error.message : "That could not be saved. Try again." });
     }
@@ -89,7 +89,7 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
               <label key={option.category}>
                 <input type="radio" name="category" checked={selected} disabled={option.full && !selected} onChange={() => setCategory(option.category)} />
                 {" "}{option.label}{option.full ? " — Full" : ""}
-                {option.rate ? ` — ${money(option.rate.amountCents)} ${option.rate.basis === "PER_UNIT_NIGHT" ? "per room or site per night" : "per person per night"}${option.rate.minimumNights ? `, ${option.rate.minimumNights}+ nights` : ""}` : " — included"}
+                {option.rate ? ` — ${describeRate(option.rate)}` : " — included"}
               </label>
             );
           })}
@@ -133,7 +133,7 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
 
         {quote ? <p role="status">
           {quote.kind === "INCLUDED" ? "Lodging for this choice is included in your registration." : null}
-          {quote.kind === "CHARGE" ? `Estimated lodging: ${money(quote.totalCents)} for ${quote.nights} night${quote.nights === 1 ? "" : "s"}. Nothing is charged until the event team confirms your lodging.` : null}
+          {quote.kind === "CHARGE" ? `Estimated lodging: ${money(quote.totalCents)} for ${quote.nights} night${quote.nights === 1 ? "" : "s"}. This is part of your registration total.` : null}
           {quote.kind === "BELOW_MINIMUM_NIGHTS" ? `This type needs at least ${quote.minimumNights} nights.` : null}
         </p> : null}
 
