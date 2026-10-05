@@ -51,6 +51,7 @@ describe("the passenger list print (#610)", () => {
     enteredVia: "ATTENDEE" as const,
     hasSensitiveAnswers: false,
     answers,
+    rosterAdd: null,
     sensitiveRevealed: restrictedKeys.length === 0,
     restrictedKeys,
   });

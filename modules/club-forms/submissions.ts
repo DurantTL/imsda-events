@@ -30,6 +30,7 @@ import { ClubFormError } from "@/modules/club-forms/errors";
 import { openSensitiveAnswers, sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
 import { assertClubFormTemplateCurrent, lockClubFormTemplateForWrite } from "@/modules/club-forms/template-lock";
 import { getEnabledClubFormTemplate, withLiveDirectory } from "@/modules/club-forms/templates";
+import { usableRosterMapping } from "@/modules/club-forms/roster-mapping";
 import { getClubFormTemplateAtVersion } from "@/modules/club-forms/versions";
 
 /**
@@ -278,7 +279,7 @@ export async function listSubmissionsForViewer(viewer: ClubFormsViewer, filter: 
 
 export type ClubFormSubmissionListRow = Awaited<ReturnType<typeof listSubmissionsForViewer>>[number];
 
-export type SubmissionViewPurpose = "VIEW" | "EDIT" | "PRINT";
+export type SubmissionViewPurpose = "VIEW" | "EDIT" | "PRINT" | "ROSTER_ADD";
 
 /**
  * One submission for a viewer. When it holds sensitive answers, the audit row
@@ -309,11 +310,14 @@ export async function getSubmissionForViewer(
       sealedSensitiveAnswers: true,
       hasSensitiveAnswers: true,
       templateVersion: true,
+      rosterAction: true,
+      rosterActionMemberId: true,
+      rosterActionMember: { select: { clubYear: true, status: true } },
       organization: { select: { name: true } },
       template: {
         select: {
           id: true, key: true, name: true, description: true, version: true, definition: true, sectionNotes: true,
-          sensitiveFieldKeys: true, birthDateFieldKeys: true, staffOnlyFieldKeys: true, hiddenFieldKeys: true, printLayout: true, enabled: true, customizedAt: true,
+          sensitiveFieldKeys: true, birthDateFieldKeys: true, staffOnlyFieldKeys: true, hiddenFieldKeys: true, printLayout: true, rosterMapping: true, enabled: true, customizedAt: true,
         },
       },
     },
@@ -400,6 +404,21 @@ export async function getSubmissionForViewer(
     enteredVia: row.enteredVia,
     hasSensitiveAnswers: row.hasSensitiveAnswers,
     answers,
+    /**
+     * "Add to roster" (#721), for a club's director or deputy only: whether the form can be added (its template's
+     * setting is on and passes every check, and the form is submitted and not yet added), or what was done with it.
+     * Holds no answer.
+     */
+    rosterAdd: viewer.kind !== "CLUB_LEADER" ? null : (() => {
+      // A member who was removed from the roster is gone: the form counts as not added, so it can be added again.
+      const done = row.rosterAction && row.rosterActionMemberId && row.rosterActionMember?.status !== "REMOVED"
+        ? { action: row.rosterAction, memberId: row.rosterActionMemberId, clubYear: row.rosterActionMember?.clubYear ?? row.clubYear }
+        : null;
+      return {
+        available: !done && row.status === "SUBMITTED" && usableRosterMapping(current.rosterMapping, current) !== null,
+        done,
+      };
+    })(),
     sensitiveRevealed: reveal,
     /** Fields shown as "Restricted": every sensitive field this viewer may not read, answered or not, so a blank does not tell. */
     restrictedKeys: [...restricted],

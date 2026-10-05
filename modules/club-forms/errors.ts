@@ -17,7 +17,10 @@ export type ClubFormErrorCode =
   | "TEMPLATE_NEEDS_SYNC"
   | "TEMPLATE_CHANGED"
   | "FORM_BUSY"
-  | "FORM_UNAVAILABLE";
+  | "FORM_UNAVAILABLE"
+  | "ROSTER_ADD_UNAVAILABLE"
+  | "ALREADY_ON_ROSTER"
+  | "DUPLICATE_ON_ROSTER";
 
 /** A club forms rule that stopped a request. Messages never carry an answer. */
 export class ClubFormError extends Error {
