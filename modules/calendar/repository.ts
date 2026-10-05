@@ -2,6 +2,7 @@ import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { planBulkAction, type BulkAction, type BulkSkip } from "@/modules/calendar/admin-list";
 import {
   addDays,
   calendarDateIn,
@@ -12,7 +13,7 @@ import {
 import { feedLockKey } from "@/modules/calendar/feed-plan";
 import { importedFieldNames } from "@/modules/calendar/ics-import";
 import { expandOccurrences, parseRepeatRule, repeatStartProblem, serializeRepeatRule } from "@/modules/calendar/recurrence";
-import type { CalendarEntryInput, CalendarEntryUpdate, CalendarEventSettings, CalendarRepeatInput } from "@/modules/calendar/schemas";
+import type { CalendarBulkRequest, CalendarEntryInput, CalendarEntryUpdate, CalendarEventSettings, CalendarRepeatInput } from "@/modules/calendar/schemas";
 import { evaluateEventRegistrationPhase } from "@/modules/events/lifecycle";
 
 export class CalendarError extends Error {
@@ -165,7 +166,7 @@ export type CalendarAdminEntry = Awaited<ReturnType<typeof listCalendarEntries>>
 export async function listCalendarEntries() {
   const entries = await getPrisma().calendarEntry.findMany({
     orderBy: [{ startsOn: "desc" }, { title: "asc" }],
-    take: 300,
+    take: 1000,
     include: { sourceFeed: { select: { name: true } } },
   });
   return entries.map((entry) => ({
@@ -284,6 +285,54 @@ export async function updateCalendarEntry(entryId: string, input: CalendarEntryU
     }, tx);
   });
   return listCalendarEntries();
+}
+
+export type CalendarBulkResult = {
+  action: BulkAction["action"];
+  changed: number;
+  skipped: BulkSkip[];
+};
+
+/**
+ * One bulk change over up to `maxBulkEntries` entries, all in one transaction.
+ * Imported entries' feeds are locked first (in a fixed order), so a refresh
+ * can't overwrite the change. One summary audit row lists the entry ids.
+ */
+export async function bulkUpdateCalendarEntries(request: CalendarBulkRequest, actorUserId: string) {
+  const prisma = getPrisma();
+  const result = await prisma.$transaction(async (tx) => {
+    const found = await tx.calendarEntry.findMany({ where: { id: { in: request.ids } } });
+    const feedIds = [...new Set(found.map((row) => row.sourceFeedId).filter((id): id is string => id !== null))].sort();
+    for (const feedId of feedIds) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${feedLockKey(feedId)}))`;
+    }
+    // Read again under the locks, so the plan sees what a refresh just wrote.
+    const rows = feedIds.length > 0 ? await tx.calendarEntry.findMany({ where: { id: { in: request.ids } } }) : found;
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const ordered = request.ids.flatMap((id) => byId.get(id) ?? []);
+    const plan = planBulkAction(ordered, request.change);
+    for (const missing of request.ids.filter((id) => !byId.has(id))) {
+      plan.skipped.push({ id: missing, title: "", reason: "No longer exists." });
+    }
+    for (const change of plan.changes) {
+      await tx.calendarEntry.update({ where: { id: change.id }, data: { ...change.data, updatedByUserId: actorUserId } });
+    }
+    if (plan.changes.length > 0) {
+      await writeAuditLog({
+        actorUserId,
+        action: "CALENDAR_ENTRIES_BULK_UPDATED",
+        entityType: "CalendarEntry",
+        summary: `Bulk "${request.change.action}" on ${plan.changes.length} calendar ${plan.changes.length === 1 ? "entry" : "entries"}.`,
+        metadata: {
+          change: request.change,
+          entryIds: plan.changes.map((change) => change.id),
+          skipped: plan.skipped.map(({ id, reason }) => ({ id, reason })),
+        },
+      }, tx);
+    }
+    return { action: request.change.action, changed: plan.changes.length, skipped: plan.skipped } satisfies CalendarBulkResult;
+  });
+  return { result, entries: await listCalendarEntries() };
 }
 
 export async function deleteCalendarEntry(entryId: string, actorUserId: string) {

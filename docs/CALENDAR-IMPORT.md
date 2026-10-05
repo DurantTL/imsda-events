@@ -75,6 +75,32 @@ feed and paste it again).
 - One feed failing records a short message on that feed (shown in the list) and
   changes nothing else.
 
+## Sorting through many entries (#796)
+
+The **Calendar entries** list has a search box (title, location and description,
+any case), filters that combine (category or "No category", source, state, when,
+type) and a sort (date soonest first by default, title, category). "When" defaults
+to Upcoming; a repeating entry with no end, or one that ends today or later, counts
+as upcoming. The list states how many entries match and its sort order.
+
+Tick rows, or **Select all N matching** (the whole filtered set, not only the rows
+shown; up to 500 at a time), then **Set category** (an existing or new name, or
+**Clear category**), **Publish**, **Unpublish**, **Hide** or **Unhide**. A confirm
+step names the action and the count, and a notice reports how many changed and
+how many were skipped, by reason (already in that state, not imported, gone from
+its feed, no longer exists).
+
+Rules, all enforced by `POST /api/admin/calendar/entries/bulk` (system
+administrators only, 500 entries at most, one transaction):
+
+- A category change on an imported entry adds `category` to `locallyEditedFields`.
+  A refresh never changes the category anyway (it is not an imported field), and
+  **Reset to Google's version** clears the mark.
+- Hide and Unhide apply to imported entries only. Publish skips an entry that has
+  left its feed, as a refresh would unpublish it again.
+- Feeds are locked first, so a refresh can't overwrite a bulk change. One audit row
+  (`CALENDAR_ENTRIES_BULK_UPDATED`) lists the changed entry ids.
+
 ## Refresh cadence
 
 The existing five-minute sweep (`POST /api/internal/outbox/sweep`) calls

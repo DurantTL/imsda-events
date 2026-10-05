@@ -7709,6 +7709,9 @@ th[aria-sort="descending"] .table-sort-button { color: var(--imsda-navy); font-w
 }
 .calendar-admin-list > li > div:first-child { display: grid; gap: 3px; min-width: 0; }
 .calendar-admin-list small { color: var(--muted); font-size: max(var(--type-floor, 0px), 0.7rem); }
+.calendar-list-summary { margin: 8px 0; color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.8rem); }
+.calendar-bulk-bar { display: grid; gap: 8px; margin-bottom: 10px; }
+.calendar-row-select { display: flex; align-items: center; min-height: 40px; min-width: 28px; }
 .calendar-admin-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .calendar-admin-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .calendar-admin-actions input { width: 150px; border: 1px solid #cbdbe2; border-radius: 10px; padding: 8px 10px; font-size: max(var(--type-body-floor, 0px), 0.76rem); }

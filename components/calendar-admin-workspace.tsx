@@ -1,11 +1,27 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { CalendarDays, Eye, EyeOff, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { CalendarFeedsPanel } from "@/components/calendar-feeds-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import type { CalendarAdminFeed } from "@/modules/calendar/feeds";
-import { calendarStatusLabels, closureLabel, formatDateRange } from "@/modules/calendar/domain";
+import {
+  bulkConfirmMessage,
+  defaultEntryFilters,
+  describeEntryCount,
+  describeEntrySort,
+  filterAndSortEntries,
+  maxBulkEntries,
+  noCategoryFilter,
+  selectAllMatching,
+  staffSourceFilter,
+  summarizeSkips,
+  type BulkAction,
+  type BulkSkip,
+  type EntryFilters,
+  type EntrySort,
+} from "@/modules/calendar/admin-list";
+import { calendarDateIn, calendarStatusLabels, closureLabel, formatDateRange } from "@/modules/calendar/domain";
 import { describeRepeat, previewOccurrences, weekdayLabels, type RepeatRule } from "@/modules/calendar/recurrence";
 import type { CalendarAdminEntry, CalendarAdminEvent } from "@/modules/calendar/repository";
 
@@ -14,6 +30,7 @@ type ApiResponse = {
   events?: CalendarAdminEvent[];
   message?: string;
   applied?: boolean;
+  result?: { action: BulkAction["action"]; changed: number; skipped: BulkSkip[] };
   issues?: Array<{ message?: string }>;
 };
 
@@ -27,6 +44,8 @@ export type RepeatDraft = {
   count: number;
   weekStart: RepeatRule["weekStart"];
 };
+
+const pageSize = 50;
 
 export const noRepeat: RepeatDraft = { frequency: "NEVER", interval: 1, weekdays: [], endMode: "never", until: "", count: 10, weekStart: 0 };
 
@@ -104,6 +123,63 @@ export function CalendarAdminWorkspace({
   const [startsOn, setStartsOn] = useState("");
   const [repeat, setRepeat] = useState<RepeatDraft>(noRepeat);
   const [skipped, setSkipped] = useState<string[]>([]);
+  // Entries list (#796): search, filters, sort, and the rows ticked for a bulk action.
+  const [filters, setFilters] = useState<EntryFilters>(defaultEntryFilters);
+  const [sort, setSort] = useState<EntrySort>("date");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [visibleCount, setVisibleCount] = useState(pageSize);
+  const [bulkCategory, setBulkCategory] = useState("");
+  const [bulkTarget, setBulkTarget] = useState<BulkAction | null>(null);
+  const today = calendarDateIn(new Date());
+  const matching = useMemo(() => filterAndSortEntries(entries, filters, sort, today), [entries, filters, sort, today]);
+  const selectedMatching = matching.filter((entry) => selected.has(entry.id));
+
+  // A new view starts with nothing ticked, so a bulk action never touches rows you can't see.
+  function startNewView() {
+    setSelected(new Set());
+    setVisibleCount(pageSize);
+  }
+
+  function changeFilters(patch: Partial<EntryFilters>) {
+    setFilters((current) => ({ ...current, ...patch }));
+    startNewView();
+  }
+
+  function toggleSelected(id: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }
+
+  async function runBulk() {
+    if (!bulkTarget) return;
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/admin/calendar/entries/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: [...selected], change: bulkTarget }),
+      });
+      const result = await response.json().catch(() => ({})) as ApiResponse;
+      if (!response.ok || !result.result) throw new Error(result.message ?? result.issues?.[0]?.message ?? "The entries could not be updated.");
+      if (result.entries) setEntries(result.entries);
+      const { changed, skipped: skippedEntries } = result.result;
+      setNotice(
+        `Changed ${describeEntryCount(changed)}.` +
+        (skippedEntries.length > 0 ? ` Skipped ${skippedEntries.length}: ${summarizeSkips(skippedEntries)}.` : ""),
+      );
+      setSelected(new Set());
+      setBulkTarget(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The entries could not be updated.");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function call(url: string, method: string, body: unknown, success: string) {
     setSaving(true);
@@ -234,7 +310,7 @@ export function CalendarAdminWorkspace({
 
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
       {/* While the remove dialog is open, its own alert shows the error; one announcement, not two. */}
-      {error && !removeTarget && <div className="inline-notice error" role="alert">{error}</div>}
+      {error && !removeTarget && !bulkTarget && <div className="inline-notice error" role="alert">{error}</div>}
 
       {tab === "entries" && (
         <>
@@ -328,9 +404,63 @@ export function CalendarAdminWorkspace({
                 <p>Add dates for events that aren&apos;t registered here, such as rallies or camporees.</p>
               </div>
             ) : (
+              <>
+              <EntryFiltersBar
+                categories={categoryOptions}
+                feeds={initialFeeds}
+                filters={filters}
+                onChange={changeFilters}
+                onReset={() => { setFilters(defaultEntryFilters); startNewView(); }}
+                onSort={(next) => { setSort(next); startNewView(); }}
+                sort={sort}
+              />
+              <p aria-live="polite" className="calendar-list-summary" role="status">
+                {describeEntryCount(matching.length)} match. {describeEntrySort(sort)}.
+              </p>
+              <div className="calendar-bulk-bar">
+                <label className="checkbox-label">
+                  <input
+                    checked={matching.length > 0 && selectedMatching.length === matching.length}
+                    disabled={matching.length === 0 || matching.length > maxBulkEntries}
+                    onChange={(event) => setSelected(new Set(event.target.checked ? selectAllMatching(matching) : []))}
+                    type="checkbox"
+                  />{" "}
+                  Select all {matching.length} matching
+                </label>
+                {matching.length > maxBulkEntries && (
+                  <small>Narrow the list to {maxBulkEntries} or fewer to change them together.</small>
+                )}
+                {selected.size > 0 && (
+                  <div className="calendar-admin-actions" role="group" aria-label={`Change ${describeEntryCount(selected.size)}`}>
+                    <strong>{selected.size} selected</strong>
+                    <input
+                      aria-label="Category for the selected entries"
+                      list="calendar-categories"
+                      maxLength={40}
+                      onChange={(event) => setBulkCategory(event.target.value)}
+                      placeholder="Category"
+                      value={bulkCategory}
+                    />
+                    <button className="secondary-button" disabled={saving || !bulkCategory.trim()} onClick={() => setBulkTarget({ action: "setCategory", category: bulkCategory.trim() })} type="button">Set category</button>
+                    <button className="secondary-button" disabled={saving} onClick={() => setBulkTarget({ action: "setCategory", category: "" })} type="button">Clear category</button>
+                    <button className="secondary-button" disabled={saving} onClick={() => setBulkTarget({ action: "publish" })} type="button">Publish</button>
+                    <button className="secondary-button" disabled={saving} onClick={() => setBulkTarget({ action: "unpublish" })} type="button">Unpublish</button>
+                    <button className="secondary-button" disabled={saving} onClick={() => setBulkTarget({ action: "hide" })} type="button">Hide</button>
+                    <button className="secondary-button" disabled={saving} onClick={() => setBulkTarget({ action: "unhide" })} type="button">Unhide</button>
+                    <button className="secondary-button" onClick={() => setSelected(new Set())} type="button">Clear selection</button>
+                  </div>
+                )}
+              </div>
+              {matching.length === 0 ? (
+                <div className="empty-state"><h3>No entries match</h3><p>Change the search or filters to see more.</p></div>
+              ) : (
               <ul className="calendar-admin-list">
-                {entries.map((entry) => (
+                {matching.slice(0, visibleCount).map((entry) => (
                   <li key={entry.id}>
+                    <label className="calendar-row-select">
+                      <input checked={selected.has(entry.id)} onChange={() => toggleSelected(entry.id)} type="checkbox" />
+                      <span className="sr-only">Select {entry.title}</span>
+                    </label>
                     <div>
                       <strong>{entry.title}</strong>
                       <small>
@@ -403,6 +533,15 @@ export function CalendarAdminWorkspace({
                   </li>
                 ))}
               </ul>
+              )}
+              {matching.length > visibleCount && (
+                <p>
+                  <button className="secondary-button" onClick={() => setVisibleCount((count) => count + pageSize)} type="button">
+                    Show more ({matching.length - visibleCount} not shown)
+                  </button>
+                </p>
+              )}
+              </>
             )}
           </section>
         </>
@@ -469,6 +608,18 @@ export function CalendarAdminWorkspace({
           )}
         </section>
       )}
+
+      <ConfirmDialog
+        busy={saving}
+        confirmLabel="Confirm"
+        error={error}
+        onCancel={() => setBulkTarget(null)}
+        onConfirm={() => void runBulk()}
+        open={bulkTarget !== null}
+        title={bulkTarget ? bulkConfirmMessage(bulkTarget, selected.size) : "Change entries?"}
+      >
+        <p>Imported entries keep your changes when their calendar refreshes. Nothing is changed in Google.</p>
+      </ConfirmDialog>
 
       <ConfirmDialog
         busy={saving}
@@ -615,5 +766,92 @@ function RepeatEditor({
         </>
       )}
     </fieldset>
+  );
+}
+
+/** Search box, the filters and the sort for the Entries list. */
+function EntryFiltersBar({
+  categories,
+  feeds,
+  filters,
+  onChange,
+  onReset,
+  onSort,
+  sort,
+}: {
+  categories: string[];
+  feeds: CalendarAdminFeed[];
+  filters: EntryFilters;
+  onChange: (patch: Partial<EntryFilters>) => void;
+  onReset: () => void;
+  onSort: (sort: EntrySort) => void;
+  sort: EntrySort;
+}) {
+  return (
+    <div className="form-grid two-column calendar-filters">
+      <label>
+        Search
+        <input
+          maxLength={100}
+          onChange={(event) => onChange({ search: event.target.value })}
+          placeholder="Title, location or description"
+          type="search"
+          value={filters.search}
+        />
+      </label>
+      <label>
+        Category
+        <select onChange={(event) => onChange({ category: event.target.value })} value={filters.category}>
+          <option value="">Any category</option>
+          <option value={noCategoryFilter}>No category</option>
+          {categories.map((category) => <option key={category} value={category}>{category}</option>)}
+        </select>
+      </label>
+      <label>
+        Source
+        <select onChange={(event) => onChange({ source: event.target.value })} value={filters.source}>
+          <option value="">Any source</option>
+          <option value={staffSourceFilter}>Made by staff</option>
+          {feeds.map((feed) => <option key={feed.id} value={feed.id}>Imported: {feed.name}</option>)}
+        </select>
+      </label>
+      <label>
+        State
+        <select onChange={(event) => onChange({ state: event.target.value as EntryFilters["state"] })} value={filters.state}>
+          <option value="all">Any state</option>
+          <option value="published">Published</option>
+          <option value="draft">Draft (unpublished)</option>
+          <option value="hidden">Hidden here</option>
+          <option value="removed">Removed from the feed</option>
+        </select>
+      </label>
+      <label>
+        When
+        <select onChange={(event) => onChange({ time: event.target.value as EntryFilters["time"] })} value={filters.time}>
+          <option value="upcoming">Upcoming</option>
+          <option value="past">Past</option>
+          <option value="all">All dates</option>
+        </select>
+      </label>
+      <label>
+        Type
+        <select onChange={(event) => onChange({ entryType: event.target.value as EntryFilters["entryType"] })} value={filters.entryType}>
+          <option value="">Any type</option>
+          <option value="STANDARD">Conference date</option>
+          <option value="CLOSURE">{closureLabel}</option>
+        </select>
+      </label>
+      <label>
+        Sort by
+        <select onChange={(event) => onSort(event.target.value as EntrySort)} value={sort}>
+          <option value="date">Date, soonest first</option>
+          <option value="title">Title</option>
+          <option value="category">Category</option>
+        </select>
+      </label>
+      <div>
+        <button className="secondary-button" onClick={onReset} type="button">Reset filters</button>
+      </div>
+    </div>
   );
 }
