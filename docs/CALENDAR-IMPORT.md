@@ -75,6 +75,41 @@ feed and paste it again).
 - One feed failing records a short message on that feed (shown in the list) and
   changes nothing else.
 
+## Sorting through many entries (#796)
+
+The **Calendar entries** list has a search box (title, location and description,
+any case), filters that combine (category or "No category", source, state, when,
+type) and a sort (date soonest first by default, title, category). "When" defaults
+to Upcoming; a repeating entry counts as upcoming while any of its occurrences
+(skipped dates excluded) is today or later, so one that repeats a set number of times
+is judged by its real last date. The list states how many entries match and its sort
+order. It loads the newest 1000 entries by start date and says so when it reaches
+that limit, because Past and All counts are then incomplete.
+
+Tick rows, or **Select all N matching** (the whole filtered set, not only the rows
+shown; up to 500 at a time), then **Set category** (an existing or new name, or
+**Clear category**), **Publish**, **Unpublish**, **Hide** or **Unhide**. A confirm
+step names the action and the count, and a notice reports how many changed and
+how many were skipped, by reason (already in that state, not imported, gone from
+its feed, no longer exists).
+
+Rules, all enforced by `POST /api/admin/calendar/entries/bulk` (system
+administrators only, 500 entries at most, one transaction):
+
+- A category is not a field a feed imports, so a refresh never changes it. A bulk
+  category change therefore records nothing in `locallyEditedFields`, the same as
+  a single edit, and the entry does not show "Edited here".
+- Hide and Unhide apply to imported entries only. Publish skips an entry that has
+  left its feed: a refresh unpublished it, and if it returns the refresh restores
+  its earlier publish state. (The single-entry edit does not make this check.)
+- Only the rows currently listed and ticked are sent; a tick on a row that has
+  since left the list (filtered out, removed, refreshed away) is dropped.
+- Feeds are locked first and the rows read again under the lock, so a refresh can't
+  overwrite a bulk change; an entry re-linked to another feed meanwhile is skipped
+  ("Changed while saving, try again."). One audit row
+  (`CALENDAR_ENTRIES_BULK_UPDATED`) lists the changed entry ids.
+- `npm run test:calendar-bulk` proves this against a real local PostgreSQL.
+
 ## Refresh cadence
 
 The existing five-minute sweep (`POST /api/internal/outbox/sweep`) calls
