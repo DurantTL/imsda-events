@@ -81,7 +81,7 @@ export function ClubHonorsWorkspace({
   const [voidTarget, setVoidTarget] = useState<MemberHonorEntryRecord | null>(null);
   const [voidReason, setVoidReason] = useState("");
   const [voidError, setVoidError] = useState("");
-  const closeHistory = () => setHistoryFor(null);
+  const closeHistory = () => { historyRequest.current += 1; setHistoryFor(null); };
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(historyFor) && !voidTarget, closeHistory);
   const closeVoid = () => { setVoidTarget(null); setVoidReason(""); };
   const voidDialogRef = useAccessibleDialog<HTMLElement>(Boolean(voidTarget), closeVoid);
@@ -147,29 +147,40 @@ export function ClubHonorsWorkspace({
     }
   }
 
-  async function openHistory(row: ClubHonorsRow) {
-    // Only the latest request may update the dialog, so a slow reply for one
-    // member never lands in another member's history.
-    const request = ++historyRequest.current;
-    setHistoryFor(row);
+  // Every history reload goes through here. Only the latest request may update
+  // the dialog, so a slow reply for one member never lands in another's history.
+  async function loadHistory(memberId: string, request: number) {
     setHistory(null);
     setHistoryError("");
     try {
-      const response = await fetch(`${base}/roster/${encodeURIComponent(row.memberId)}/honors`);
+      const response = await fetch(`${base}/roster/${encodeURIComponent(memberId)}/honors`);
       const result = await response.json().catch(() => ({})) as HistoryResponse;
       if (request !== historyRequest.current) return;
-      if (!response.ok) throw new Error(result.message ?? "Honor history could not be loaded.");
-      setHistory(result);
-    } catch (caught) {
+      if (!response.ok) {
+        setHistoryError(result.message ?? "Honor history could not be loaded.");
+      } else if (!Array.isArray(result.history)) {
+        setHistoryError("Honor history could not be loaded.");
+      } else {
+        setHistory(result);
+      }
+    } catch {
       if (request !== historyRequest.current) return;
-      setHistoryError(caught instanceof Error && caught.message !== "Failed to fetch" ? caught.message : "Honor history could not be loaded. Check your connection and try again.");
+      setHistoryError("Honor history could not be loaded. Check your connection and try again.");
     }
+  }
+
+  async function openHistory(row: ClubHonorsRow) {
+    const request = ++historyRequest.current;
+    setHistoryFor(row);
+    await loadHistory(row.memberId, request);
   }
 
   async function recordSingle(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!historyFor) return;
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const request = historyRequest.current;
+    const form = new FormData(formElement);
     const status = String(form.get("status") ?? "IN_PROGRESS");
     setSaving(true);
     setError("");
@@ -186,11 +197,14 @@ export function ClubHonorsWorkspace({
       });
       const result = await response.json().catch(() => ({})) as HistoryResponse;
       if (!response.ok) throw new Error(result.message ?? result.issues?.[0]?.message ?? "That honor could not be recorded.");
-      setHistory(result);
+      if (request === historyRequest.current) {
+        setHistory(result);
+        setHistoryError("");
+      }
       const refreshed = await fetch(`${base}/honors`);
       const refreshedBody = await refreshed.json().catch(() => ({})) as { rows?: ClubHonorsRow[] };
       if (refreshedBody.rows) setRows(refreshedBody.rows);
-      event.currentTarget.reset();
+      formElement.reset();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That honor could not be recorded.");
     } finally {
@@ -201,6 +215,8 @@ export function ClubHonorsWorkspace({
   async function submitVoid(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!historyFor || !voidTarget) return;
+    const memberId = historyFor.memberId;
+    const request = historyRequest.current;
     setSaving(true);
     setVoidError("");
     try {
@@ -214,15 +230,17 @@ export function ClubHonorsWorkspace({
       });
       const result = await response.json().catch(() => ({})) as HistoryResponse;
       if (!response.ok) throw new Error(result.message ?? result.issues?.[0]?.message ?? "That entry could not be voided.");
+      // The void is done; whatever happens to the history reload below, the
+      // entry stays voided.
+      closeVoid();
+      setVoidError("");
       if (staff) {
         // The staff void answers with no history; load it again.
-        const reloaded = await fetch(`${base}/roster/${encodeURIComponent(historyFor.memberId)}/honors`);
-        const reloadedBody = await reloaded.json().catch(() => null) as HistoryResponse | null;
-        setHistory(reloaded.ok ? reloadedBody : null);
-      } else {
+        if (request === historyRequest.current) await loadHistory(memberId, request);
+      } else if (request === historyRequest.current) {
         setHistory(result);
+        setHistoryError("");
       }
-      closeVoid();
       const refreshed = await fetch(`${base}/honors`);
       const refreshedBody = await refreshed.json().catch(() => ({})) as { rows?: ClubHonorsRow[] };
       if (refreshedBody.rows) setRows(refreshedBody.rows);
@@ -432,10 +450,10 @@ export function ClubHonorsWorkspace({
             {historyError ? (
               <div className="form-stack">
                 <p className="form-error" role="alert">{historyError}</p>
-                <button className="secondary-button" onClick={() => void openHistory(historyFor)} type="button">Retry</button>
+                <button className="secondary-button" onClick={() => { dialogRef.current?.focus(); void loadHistory(historyFor.memberId, ++historyRequest.current); }} type="button">Retry</button>
               </div>
             ) : !history ? (
-              <p className="public-manage-empty">Loading history…</p>
+              <p className="public-manage-empty" role="status">Loading history…</p>
             ) : history.history.length === 0 ? (
               <p className="public-manage-empty">No honors recorded yet.</p>
             ) : (
