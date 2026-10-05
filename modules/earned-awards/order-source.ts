@@ -17,6 +17,8 @@ import { type ClubClassLevel, clubClassLevelLabels, clubYearFor } from "@/module
 import { clubSupplySectionLabels } from "@/modules/club-supplies/domain";
 import {
   AWARD_SECTIONS,
+  buildClassHistory,
+  type ClassHistoryEntry,
   calendarDate,
   classInsigniaSourceId,
   classLabel,
@@ -824,6 +826,8 @@ export type AwardNeedRow = {
   /** No AdventSource number (conference-made): flagged, not dropped. */
   missingCatalogNumber: boolean;
   status: "NEEDED" | "ORDERED" | "RECEIVED";
+  /** True when the person has moved to another club (#791): no class history link. */
+  classHistoryHidden?: boolean;
 };
 
 export type EarnedAwardsWorkspaceData = {
@@ -883,8 +887,10 @@ export async function loadEarnedAwardsWorkspace(
     forEditing ? listPatchSuggestions(organizationId, now) : Promise.resolve([]),
     loadMasterAwardProgress(organizationId, now),
   ]);
+  const movedAway = await personIdsMovedToOtherClubs(organizationId, needs.map((need) => need.personId), now);
   const rows = needs
     .map((need): AwardNeedRow => ({
+      ...(movedAway.has(need.personId) ? { classHistoryHidden: true } : {}),
       needId: need.id,
       personId: need.personId,
       firstName: need.person.firstName,
@@ -915,5 +921,56 @@ export async function loadEarnedAwardsWorkspace(
     insignia,
     patches,
     masterAwards,
+  };
+}
+
+// ---------------------------------------------------------------- class history
+
+/**
+ * Which of these people have moved to another club (#791), in bulk. "Moved"
+ * is how a transfer (#489) lands: a current-year roster row that is not
+ * removed in a different club. A person who is also still a current,
+ * non-removed member of this club has not moved away from it. Reads only.
+ */
+export async function personIdsMovedToOtherClubs(organizationId: string, personIds: readonly string[], now = new Date()): Promise<Set<string>> {
+  const ids = [...new Set(personIds)];
+  if (ids.length === 0) return new Set();
+  const rows = await getPrisma().clubRosterMember.findMany({
+    where: { clubYear: clubYearFor(now), status: { not: "REMOVED" }, personId: { in: ids } },
+    select: { organizationId: true, personId: true },
+  });
+  const here = new Set(rows.filter((row) => row.organizationId === organizationId).map((row) => row.personId));
+  return new Set(rows.flatMap((row) => (row.personId && row.organizationId !== organizationId && !here.has(row.personId) ? [row.personId] : [])));
+}
+
+export type MemberClassHistory = { personId: string; firstName: string; lastName: string; entries: ClassHistoryEntry[] };
+
+/**
+ * One member's class history (#791): recorded completions and the current
+ * class, names and class levels only. Reads only; the caller passes the
+ * class-tracking gate first. `null` when the person was never on this club's
+ * roster, so another club's member is never shown.
+ */
+export async function loadMemberClassHistory(organizationId: string, personId: string, now = new Date()): Promise<MemberClassHistory | null> {
+  const prisma = getPrisma();
+  const [rosterRows, completions, moved] = await Promise.all([
+    prisma.clubRosterMember.findMany({
+      where: { organizationId, personId, status: { not: "REMOVED" } },
+      orderBy: { clubYear: "desc" },
+      select: { clubYear: true, classLevel: true, status: true, person: { select: { firstName: true, lastName: true } } },
+    }),
+    prisma.memberClassCompletion.findMany({ where: { organizationId, personId }, select: { classLevel: true, completedOn: true } }),
+    personIdsMovedToOtherClubs(organizationId, [personId], now),
+  ]);
+  const person = rosterRows[0]?.person;
+  if (!person) return null;
+  // A former member who is now on another club's roster is that club's to see, not this one's (#791).
+  if (moved.has(personId)) return null;
+  const current = rosterRows.find((row) => row.clubYear === clubYearFor(now) && row.status === "ACTIVE");
+  return {
+    personId,
+    firstName: person.firstName,
+    lastName: person.lastName,
+    entries: buildClassHistory(completions, current?.classLevel ?? null),
   };
 }

@@ -10,6 +10,7 @@ import { rosterYearView } from "@/modules/club-rosters/domain";
 import { rosterGuardiansForAccess } from "@/modules/club-rosters/guardians-access";
 import { listRoster } from "@/modules/club-rosters/repository";
 import { listTransferClubOptions } from "@/modules/club-transfers/repository";
+import { personIdsMovedToOtherClubs } from "@/modules/earned-awards/order-source";
 import { honorSummaryByMemberId } from "@/modules/honors/member-honor-domain";
 import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 import { requireHealthViewerForClub } from "@/modules/health-records/access";
@@ -48,6 +49,9 @@ export default async function ClubRosterPage({
     // Guardian contacts (#510): the club's director and deputy only, and only on the current year, where they can be edited.
     readOnly ? Promise.resolve(undefined) : rosterGuardiansForAccess(access, organizationId, clubYear),
   ]);
+  // No class history link for someone who has moved to another club (#791); the page would 404 for them. One query for the whole roster.
+  const movedAway = await personIdsMovedToOtherClubs(organizationId, members.flatMap((member) => (member.personId ? [member.personId] : [])));
+  const linkableMembers = members.map((member) => (member.personId && movedAway.has(member.personId) ? { ...member, personId: undefined } : member));
   // The Health tab (#611): only with the feature on, for the current year, and
   // for the club's own director or deputy. Status and a plain flag, never text.
   const healthTab = healthRecordsEnabled() && !readOnly
@@ -74,6 +78,7 @@ export default async function ClubRosterPage({
       {/* Keyed by year, so a client-side year change never keeps the other year's people in the table. */}
       <ClubRosterWorkspace
         key={clubYear}
+        classHistoryBase={`/account/clubs/${organizationId}/class-tracking`}
         canSeeBirthDates={access.capabilities.seeBirthDates && !readOnly}
         clubYear={clubYear}
         complianceFilter={complianceFilterFrom(complianceParam)}
@@ -84,7 +89,7 @@ export default async function ClubRosterPage({
         healthRecordFlags={healthRecordFlags}
         healthTab={healthTab}
         honorsPopup={{ canRecord: !readOnly }}
-        initialMembers={members}
+        initialMembers={linkableMembers}
         organizationId={organizationId}
         readOnly={readOnly}
       />

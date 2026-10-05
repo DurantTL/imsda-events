@@ -65,6 +65,8 @@ function ageFrom(member: StoredMember, onDate: string) {
 function serializeMember(member: StoredMember, today: string) {
   return {
     id: member.id,
+    /** Links a row to the member's class history (#791). */
+    personId: member.personId,
     firstName: member.person?.firstName ?? "",
     lastName: member.person?.lastName ?? "",
     attendeeType: member.attendeeType,
@@ -81,7 +83,8 @@ function serializeMember(member: StoredMember, today: string) {
   };
 }
 
-export type RosterMemberRecord = ReturnType<typeof serializeMember>;
+/** `personId` is optional so records built without it (fixtures, older callers) still fit; the class history link needs it. */
+export type RosterMemberRecord = Omit<ReturnType<typeof serializeMember>, "personId"> & { personId?: string | null };
 
 function audit(
   tx: Prisma.TransactionClient,

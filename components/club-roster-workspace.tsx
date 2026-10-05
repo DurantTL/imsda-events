@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useCallback, useRef, useState } from "react";
 import { Award, Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
@@ -67,6 +68,7 @@ export function ClubRosterWorkspace({
   complianceStatuses,
   honorSummaries: initialHonorSummaries,
   honorsPopup,
+  classHistoryBase,
   complianceFilter: initialComplianceFilter = null,
   headingActions,
   healthTab,
@@ -96,6 +98,13 @@ export function ClubRosterWorkspace({
    * Omit where the caller can't use the club honors endpoints (staff views).
    */
   honorsPopup?: { canRecord: boolean };
+  /**
+   * The club portal's class tracking address (#791). Only that page sets it: the
+   * class history page opens on the club portal's own gate, so area and staff
+   * views omit it and show no link. A string, not a function, so it can cross
+   * from a server page.
+   */
+  classHistoryBase?: string;
   /** `?compliance=` from the What's next reminder link (#479): narrows the list to that one flag. */
   complianceFilter?: ComplianceFilterValue | null;
   /** Extra actions beside "Add to roster", such as "Request a transfer" (#489). */
@@ -464,6 +473,11 @@ export function ClubRosterWorkspace({
                           <tr key={member.id}>
                             <td className="roster-card-name" data-label="Name">
                               <strong translate="no">{member.lastName}, {member.firstName}</strong>
+                              {classHistoryBase && member.personId && (
+                                <Link className="text-button roster-class-history-link" href={`${classHistoryBase}/${encodeURIComponent(member.personId)}`}>
+                                  Class history<span className="sr-only"> for {member.firstName} {member.lastName}</span>
+                                </Link>
+                              )}
                             </td>
                             <td data-label="Age" translate="no">
                               {member.age ?? (member.reportedAge !== null ? `${member.reportedAge} (reported)` : "—")}

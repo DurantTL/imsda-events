@@ -214,3 +214,33 @@ export const masterAwardStatusLabels = { DRAFT: "Draft", ACTIVE: "Active", INACT
 export function calendarDate(now: Date) {
   return now.toISOString().slice(0, 10);
 }
+
+// ---------------------------------------------------------------- class history
+
+export type ClassHistoryEntry = {
+  classLevel: ClubClassLevel;
+  classLabel: string;
+  status: "COMPLETED" | "IN_PROGRESS";
+  /** The calendar date (`YYYY-MM-DD`) a completed class was recorded; null while in progress. */
+  completedOn: string | null;
+};
+
+/**
+ * One member's class history (#791) from existing class-tracking data: every
+ * recorded completion (in class order, then by date) and the class the roster
+ * currently has them in, when that class has not been recorded as completed.
+ */
+export function buildClassHistory(
+  completions: ReadonlyArray<{ classLevel: ClubClassLevel; completedOn: string }>,
+  currentClassLevel: ClubClassLevel | null,
+): ClassHistoryEntry[] {
+  const levels = Object.keys(clubClassLevelLabels);
+  const order = (level: ClubClassLevel) => levels.indexOf(level);
+  const entries = [...completions]
+    .sort((a, b) => order(a.classLevel) - order(b.classLevel) || a.completedOn.localeCompare(b.completedOn))
+    .map((row): ClassHistoryEntry => ({ classLevel: row.classLevel, classLabel: classLabel(row.classLevel), status: "COMPLETED", completedOn: row.completedOn }));
+  if (currentClassLevel && !entries.some((entry) => entry.classLevel === currentClassLevel)) {
+    entries.push({ classLevel: currentClassLevel, classLabel: classLabel(currentClassLevel), status: "IN_PROGRESS", completedOn: null });
+  }
+  return entries;
+}
