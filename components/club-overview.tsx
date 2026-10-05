@@ -186,7 +186,7 @@ export async function ClubOverview({
       <section className="public-manage-card" aria-labelledby="open-club-reports">
         <div className="public-manage-card-heading">
           <p className="public-registration-eyebrow">Club year {clubYear}</p>
-          <h2 id="open-club-reports">Monthly reports</h2>
+          <h2 id="open-club-reports">Monthly Records</h2>
         </div>
         {months.length === 0 ? (
           <p className="public-manage-empty"><FileText size={17} aria-hidden="true" /> No reports are due yet this club year. Check back when the first month opens.</p>

@@ -53,11 +53,11 @@ export function clubReporterNavItems({ base, capabilities }: { base: string; cap
  * open (each page still checks access on the server); the director's
  * editing-only screens (Class tracking, Club settings, Health, Monthly Records
  * entry) are never listed. Every item stays inside this club: Roster, Events
- * and Monthly reports are sections of the club's Home page (ages only), and
+ * and Monthly Records are sections of the club's Home page (ages only), and
  * the background-check counts are on its roster tile.
  *
  * Anchor items (`#open-club-...`) can't show an active state: the nav reads
- * `usePathname`, which has no hash. Monthly reports is active on the report
+ * `usePathname`, which has no hash. Monthly Records is active on the report
  * month pages through `alsoMatchPrefix`.
  */
 export function areaClubPortalNavItems({ organizationId }: { organizationId: string }): AccountNavItem[] {
@@ -68,7 +68,7 @@ export function areaClubPortalNavItems({ organizationId }: { organizationId: str
     { href: `${base}/honors`, label: "Honors", group: "People", hideGroupLabel: true },
     { href: `${base}#open-club-events`, label: "Events", group: "Events", hideGroupLabel: true },
     { href: `${base}/forms`, label: "Club forms", matchChildren: true, group: "Events", hideGroupLabel: true },
-    { href: `${base}#open-club-reports`, label: "Monthly reports", alsoMatchPrefix: `${base}/reports`, group: "Records", hideGroupLabel: true },
+    { href: `${base}#open-club-reports`, label: "Monthly Records", alsoMatchPrefix: `${base}/reports`, group: "Records", hideGroupLabel: true },
     { href: `${base}/orders`, label: "Orders", group: "Orders", hideGroupLabel: true },
     { href: `${base}/awards`, label: "Earned awards", group: "Orders", hideGroupLabel: true },
   ];

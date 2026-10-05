@@ -19,7 +19,7 @@ describe("area coordinator club menu (#722)", () => {
       `Honors -> ${base}/honors`,
       `Events -> ${base}#open-club-events`,
       `Club forms -> ${base}/forms`,
-      `Monthly reports -> ${base}#open-club-reports`,
+      `Monthly Records -> ${base}#open-club-reports`,
       `Orders -> ${base}/orders`,
       `Earned awards -> ${base}/awards`,
     ]);
@@ -51,8 +51,8 @@ describe("area coordinator club menu (#722)", () => {
     expect(items[0]).toMatchObject({ label: "Home" });
   });
 
-  it("keeps the report month pages under Monthly reports", () => {
-    expect(items.find((item) => item.label === "Monthly reports")?.alsoMatchPrefix).toBe(`${base}/reports`);
+  it("keeps the report month pages under Monthly Records", () => {
+    expect(items.find((item) => item.label === "Monthly Records")?.alsoMatchPrefix).toBe(`${base}/reports`);
   });
 });
 
