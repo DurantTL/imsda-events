@@ -98,6 +98,7 @@ export const staffPageTitles = {
   eventSettings: "Event settings",
   registrations: "Registrations",
   attendeeList: "Attendee list",
+  kitchenReport: "Kitchen report",
   imports: "Imports",
   team: "Team",
   payments: "Payments",

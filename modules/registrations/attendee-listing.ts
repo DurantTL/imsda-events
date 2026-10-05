@@ -129,7 +129,7 @@ export function mealCategoryOf(meal: string): MealCategory {
   return "other";
 }
 
-const NO_DIETARY_NEEDS = /^(?:none(?: needed)?|n\/?a|na|no(?: (?:dietary )?(?:restrictions?|needs?))?|neither|nil|nothing|-+|\.)\.?$/i;
+export const NO_DIETARY_NEEDS = /^(?:none(?: needed)?|n\/?a|na|no(?: (?:dietary )?(?:restrictions?|needs?))?|neither|nil|nothing|-+|\.)\.?$/i;
 
 export function hasDietaryNeeds(text: string): boolean {
   const parts = text.split(";").map((part) => part.trim()).filter(Boolean);

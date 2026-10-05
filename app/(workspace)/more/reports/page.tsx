@@ -214,6 +214,7 @@ export default async function OperationalReportsPage({
           <Link className="secondary-button" href={`/more/reports/clubs${peopleQuery}`}><Tent aria-hidden="true" size={15} /> Camporee club reports</Link>
           <Link className="secondary-button" href={`/more/reports/clubs/check-in-book${peopleQuery}`}><ClipboardCheck aria-hidden="true" size={15} /> Check-in book</Link>
           <Link className="secondary-button" href={`/more/honors/rosters${peopleQuery}`}><Award aria-hidden="true" size={15} /> Honors rosters</Link>
+          <Link className="secondary-button" href={`/more/kitchen-report${peopleQuery}`}><Utensils aria-hidden="true" size={15} /> Kitchen report</Link>
           <PrintReportButton />
         </div>
       </div>
