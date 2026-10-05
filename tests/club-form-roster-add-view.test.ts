@@ -41,6 +41,7 @@ function row(overrides: Record<string, unknown> = {}, mapping: unknown = { ...me
     rosterAction: null,
     rosterActionMemberId: null,
     rosterActionMember: null,
+    rosterMemberId: null,
     organization: { name: "Example Pathfinders" },
     template: {
       id: "tpl-1", key: membership.key, name: membership.name, description: membership.description, version: membership.version,
@@ -81,13 +82,18 @@ describe("the Add to roster action on a submitted form (#721)", () => {
   });
 
   it("reads 'Added to roster' with the member once the form is recorded, and is no longer offered", async () => {
-    mocks.submissionFindFirst.mockResolvedValue(row({ rosterAction: "ADDED", rosterActionMemberId: "member-1", rosterActionMember: { clubYear: "2026-27" } }));
+    mocks.submissionFindFirst.mockResolvedValue(row({ rosterAction: "ADDED", rosterActionMemberId: "member-1", rosterActionMember: { clubYear: "2026-27", status: "ACTIVE" } }));
     expect((await getSubmissionForViewer(director, "sub-1")).rosterAdd).toEqual({
       available: false,
       done: { action: "ADDED", memberId: "member-1", clubYear: "2026-27" },
     });
-    mocks.submissionFindFirst.mockResolvedValue(row({ rosterAction: "LINKED", rosterActionMemberId: "member-2", rosterActionMember: { clubYear: "2025-26" } }));
+    mocks.submissionFindFirst.mockResolvedValue(row({ rosterAction: "LINKED", rosterActionMemberId: "member-2", rosterActionMember: { clubYear: "2025-26", status: "INACTIVE" } }));
     expect((await getSubmissionForViewer(director, "sub-1")).rosterAdd?.done).toEqual({ action: "LINKED", memberId: "member-2", clubYear: "2025-26" });
+  });
+
+  it("reads as not added, and is offered again, when the member was removed from the roster", async () => {
+    mocks.submissionFindFirst.mockResolvedValue(row({ rosterAction: "ADDED", rosterActionMemberId: "member-1", rosterActionMember: { clubYear: "2026-27", status: "REMOVED" } }));
+    expect((await getSubmissionForViewer(director, "sub-1")).rosterAdd).toEqual({ available: true, done: null });
   });
 
   it("is offered to nobody but the club's director or deputy", async () => {
@@ -98,7 +104,7 @@ describe("the Add to roster action on a submitted form (#721)", () => {
   });
 
   it("leaves the submission's answers exactly as they were", async () => {
-    mocks.submissionFindFirst.mockResolvedValue(row({ rosterAction: "ADDED", rosterActionMemberId: "member-1", rosterActionMember: { clubYear: "2026-27" } }));
+    mocks.submissionFindFirst.mockResolvedValue(row({ rosterAction: "ADDED", rosterActionMemberId: "member-1", rosterActionMember: { clubYear: "2026-27", status: "ACTIVE" } }));
     const view = await getSubmissionForViewer(director, "sub-1");
     expect(view.answers).toEqual({ full_name: "Jordan Sample", birth_date: "2013-04-09" });
   });

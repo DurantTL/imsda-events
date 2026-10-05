@@ -87,17 +87,27 @@ steps.
 - **Flow:** on a submitted form, **Add to roster** opens a review screen,
   pre-filled from the mapped answers (the open is audited like any open of a
   form with sensitive answers). Nothing is written until the director confirms.
-  The director picks the club year (previous, current or next), checks and edits
-  the details, and the roster's own validation applies. Guardian contacts are
-  kept on the current year only (#510).
+  The director checks and edits the details, and the roster's own validation
+  applies. It is always the current club year (only it is editable, #541). A
+  form already filed against a member can only be linked to them, never add a
+  new person. A member later removed from the roster counts as not added, so the
+  form can be added again.
 - **Duplicates:** the same name and birth date in the club and year offers
   **Link to existing member** instead. People are never merged; linking only
   records which member the form belongs to and changes nothing on the member.
 - **Record:** the submission stores `rosterAction` (`ADDED` or `LINKED`),
-  `rosterActionMemberId` and `rosterActionAt`; its answers never change. The
+  `rosterActionMemberId` and `rosterActionAt`, and also files itself against the
+  member (`rosterMemberId`), so the form shows in the member's own list of forms;
+  its answers never change. The applicant's address stays on the form. The
   action then reads "Added to roster" and links to the member. Add and link are
   audited (`CLUB_FORM_SUBMISSION_ADDED_TO_ROSTER`,
   `CLUB_FORM_SUBMISSION_LINKED_TO_ROSTER`) with ids and the template key only.
+- **Birth date:** only the applicant's own birth-date question can fill the
+  roster's birth date: the first birth-date question in form order that is not
+  about a child or relative (the Staff form has five children's birth dates).
+- **Gender:** both seeded forms (version 3) ask a required Male/Female question
+  that maps to the roster's gender. Older submissions without it still work; the
+  director picks it on the review screen.
 - **Not mapped:** the roster has no address or member-contact field, so the
   applicant's address and own phone or email are not copied. The Membership
   Application's phone pre-fills the first guardian's phone.

@@ -312,7 +312,7 @@ export async function getSubmissionForViewer(
       templateVersion: true,
       rosterAction: true,
       rosterActionMemberId: true,
-      rosterActionMember: { select: { clubYear: true } },
+      rosterActionMember: { select: { clubYear: true, status: true } },
       organization: { select: { name: true } },
       template: {
         select: {
@@ -409,14 +409,16 @@ export async function getSubmissionForViewer(
      * setting is on and passes every check, and the form is submitted and not yet added), or what was done with it.
      * Holds no answer.
      */
-    rosterAdd: viewer.kind !== "CLUB_LEADER" ? null : {
-      available: row.status === "SUBMITTED"
-        && !row.rosterActionMemberId
-        && usableRosterMapping(current.rosterMapping, current) !== null,
-      done: row.rosterAction && row.rosterActionMemberId
+    rosterAdd: viewer.kind !== "CLUB_LEADER" ? null : (() => {
+      // A member who was removed from the roster is gone: the form counts as not added, so it can be added again.
+      const done = row.rosterAction && row.rosterActionMemberId && row.rosterActionMember?.status !== "REMOVED"
         ? { action: row.rosterAction, memberId: row.rosterActionMemberId, clubYear: row.rosterActionMember?.clubYear ?? row.clubYear }
-        : null,
-    },
+        : null;
+      return {
+        available: !done && row.status === "SUBMITTED" && usableRosterMapping(current.rosterMapping, current) !== null,
+        done,
+      };
+    })(),
     sensitiveRevealed: reveal,
     /** Fields shown as "Restricted": every sensitive field this viewer may not read, answered or not, so a blank does not tell. */
     restrictedKeys: [...restricted],

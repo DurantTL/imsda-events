@@ -19,20 +19,14 @@ export const dynamic = "force-dynamic";
  * writes the same audit row as opening the form (who and what, never an
  * answer).
  */
-export default async function AddToRosterPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ organizationId: string; submissionId: string }>;
-  searchParams: Promise<{ year?: string }>;
-}) {
-  const [{ organizationId, submissionId }, { year }] = await Promise.all([params, searchParams]);
+export default async function AddToRosterPage({ params }: { params: Promise<{ organizationId: string; submissionId: string }> }) {
+  const { organizationId, submissionId } = await params;
   const access = await getRosterAccessStateForPage(organizationId);
   if (access.state !== "OPEN") return null;
   if (!isClubFormsRole(access.club.role)) notFound();
   const viewer = clubLeaderViewerFromAccess(access);
   const formHref = `/account/clubs/${organizationId}/forms/submissions/${submissionId}`;
-  const outcome = await getRosterAddReview(viewer, { organizationId, submissionId, clubYear: typeof year === "string" ? year : undefined })
+  const outcome = await getRosterAddReview(viewer, { organizationId, submissionId })
     .then((review) => ({ review, message: "" }))
     .catch((error: unknown) => {
       if (error instanceof ClubFormError && error.code === "SUBMISSION_NOT_FOUND") return null;
@@ -49,7 +43,7 @@ export default async function AddToRosterPage({
         <BackLink href={formHref}>Back to this form</BackLink>
       </div>
       {outcome.review
-        ? <ClubFormRosterAdd formHref={formHref} review={outcome.review} yearAction={`${formHref}/roster`} />
+        ? <ClubFormRosterAdd formHref={formHref} review={outcome.review} />
         : <div className="inline-notice" role="status">{outcome.message}</div>}
     </div>
   );

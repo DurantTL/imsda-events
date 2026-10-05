@@ -29,13 +29,12 @@ export const templateEnabledSchema = z.object({ enabled: z.boolean() }).strict()
 /**
  * Confirming "Add to roster" (#721). ADD carries the details the director
  * checked, validated by the roster's own schema (so its rules apply unchanged);
- * LINK names an existing member of the club. Nothing else can ride along: the
+ * LINK names an existing member of the club. There is no club year: only the current one can be added to. Nothing else can ride along: the
  * schemas are strict, so no answer or health value has a field to travel in.
  */
 export const rosterAddSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("ADD"),
-    clubYear: z.string().trim().regex(/^\d{4}-\d{2}$/, "Choose a club year."),
     member: rosterMemberInputSchema,
   }).strict(),
   z.object({

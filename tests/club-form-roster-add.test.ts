@@ -32,7 +32,7 @@ vi.mock("@/modules/club-rosters/repository", async (importOriginal) => ({
 
 import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
 import type { ClubFormsViewer } from "@/modules/club-forms/domain";
-import { confirmAddToRoster, getRosterAddReview, reviewClubYear } from "@/modules/club-forms/roster-add";
+import { confirmAddToRoster, getRosterAddReview } from "@/modules/club-forms/roster-add";
 import { RosterOperationError } from "@/modules/club-rosters/repository";
 import type { RosterMemberInput } from "@/modules/club-rosters/schemas";
 
@@ -75,6 +75,9 @@ function submissionRow(overrides: Record<string, unknown> = {}) {
     status: "SUBMITTED",
     rosterAction: null,
     rosterActionMemberId: null,
+    rosterActionMember: null,
+    rosterMemberId: null,
+    rosterMember: null,
     template: templateRow(),
     ...overrides,
   };
@@ -112,10 +115,10 @@ beforeEach(() => {
   mocks.refreshBackgroundCheckMatchesSafely.mockResolvedValue(undefined);
 });
 
-const review = (viewer: ClubFormsViewer = director, extra: { clubYear?: string } = {}) =>
-  getRosterAddReview(viewer, { organizationId: "club-a", submissionId: "sub-1", ...extra }, now);
+const review = (viewer: ClubFormsViewer = director) =>
+  getRosterAddReview(viewer, { organizationId: "club-a", submissionId: "sub-1" }, now);
 const add = (overrides: Partial<Extract<Parameters<typeof confirmAddToRoster>[1], { action: "ADD" }>> = {}, viewer: ClubFormsViewer = director) =>
-  confirmAddToRoster(viewer, { action: "ADD", organizationId: "club-a", submissionId: "sub-1", clubYear: "2026-27", member: memberInput, ...overrides }, now);
+  confirmAddToRoster(viewer, { action: "ADD", organizationId: "club-a", submissionId: "sub-1", member: memberInput, ...overrides }, now);
 const link = (memberId = "member-9", viewer: ClubFormsViewer = director) =>
   confirmAddToRoster(viewer, { action: "LINK", organizationId: "club-a", submissionId: "sub-1", memberId }, now);
 
@@ -168,13 +171,12 @@ describe("only a template with the setting on offers it (#721)", () => {
 });
 
 describe("the review step writes nothing (#721)", () => {
-  it("pre-fills from the mapped answers and offers the club years", async () => {
+  it("pre-fills from the mapped answers, for the current club year", async () => {
     const result = await review();
     expect(result).toMatchObject({
       submissionId: "sub-1",
       clubYear: "2026-27",
-      currentClubYear: "2026-27",
-      clubYearChoices: ["2025-26", "2026-27", "2027-28"],
+      canAdd: true,
       duplicates: [],
       prefill: { firstName: "Jordan", lastName: "Sample", birthDate: "2013-04-09", attendeeType: "YOUTH", classLevel: "EXPLORER" },
     });
@@ -188,26 +190,21 @@ describe("the review step writes nothing (#721)", () => {
     expect(mocks.refreshBackgroundCheckMatchesSafely).not.toHaveBeenCalled();
   });
 
-  it("offers Link to existing member for a duplicate, in the chosen year", async () => {
+  it("offers Link to existing member for a duplicate in the current year", async () => {
     mocks.listRosterDuplicates.mockResolvedValue([{ id: "member-9", firstName: "Jordan", lastName: "Sample", attendeeType: "YOUTH", status: "ACTIVE" }]);
     const result = await review();
     expect(result.duplicates).toEqual([expect.objectContaining({ id: "member-9" })]);
     // Compared on the pre-filled name and birth date, in this club and year.
     expect(mocks.listRosterDuplicates).toHaveBeenCalledWith("club-a", "2026-27", "Jordan", "Sample", "2013-04-09");
-    await review(director, { clubYear: "2025-26" });
-    expect(mocks.listRosterDuplicates).toHaveBeenLastCalledWith("club-a", "2025-26", "Jordan", "Sample", "2013-04-09");
   });
 
-  it("leaves guardians off a non-current year, where they are not kept", async () => {
-    const result = await review(director, { clubYear: "2027-28" });
-    expect(result.clubYear).toBe("2027-28");
-    expect(result.prefill.guardians.every((guardian) => !guardian.name && !guardian.phone)).toBe(true);
-  });
-
-  it("falls back to a year it allows", () => {
-    expect(reviewClubYear("1999-00", "2026-27", now).clubYear).toBe("2026-27");
-    expect(reviewClubYear(undefined, "2019-20", now).clubYear).toBe("2026-27");
-    expect(reviewClubYear("2025-26", "2026-27", now).clubYear).toBe("2025-26");
+  it("is always the current club year, even for a form filled in another year (#541: only the current year is editable)", async () => {
+    mocks.submissionFindFirst.mockResolvedValue(submissionRow({ clubYear: "2025-26" }));
+    expect((await review()).clubYear).toBe("2026-27");
+    // A review taken in a later club year is for that year, with its guardians.
+    const later = await getRosterAddReview(director, { organizationId: "club-a", submissionId: "sub-1" }, new Date("2027-09-15T15:00:00Z"));
+    expect(later.clubYear).toBe("2027-28");
+    expect(later.prefill.guardians[0].name).toBe("Pat Sample");
   });
 
   it("never carries a sensitive or health answer into the pre-fill, whatever the answers hold", async () => {
@@ -229,8 +226,8 @@ describe("confirming adds the person and records it (#721)", () => {
     expect(call[5]).toMatchObject({ source: "DIRECTOR", now });
     // The submission records the member; its answers are not part of the write.
     expect(mocks.submissionUpdateMany).toHaveBeenCalledWith({
-      where: { id: "sub-1", organizationId: "club-a", status: "SUBMITTED", rosterActionMemberId: null },
-      data: { rosterAction: "ADDED", rosterActionMemberId: "member-new", rosterActionAt: now },
+      where: { id: "sub-1", organizationId: "club-a", status: "SUBMITTED", OR: [{ rosterActionMemberId: null }, { rosterActionMember: { status: "REMOVED" } }] },
+      data: { rosterAction: "ADDED", rosterActionMemberId: "member-new", rosterActionAt: now, rosterMemberId: "member-new" },
     });
     expect(Object.keys(mocks.submissionUpdateMany.mock.calls[0][0].data)).not.toContain("answers");
     expect(mocks.writeAuditLog).toHaveBeenCalledTimes(1);
@@ -259,11 +256,15 @@ describe("confirming adds the person and records it (#721)", () => {
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
   });
 
-  it("keeps guardians off a non-current year, and refuses a year outside the allowed three", async () => {
-    await add({ clubYear: "2027-28" });
-    expect(mocks.addRosterMemberInTransaction.mock.calls[0][3].guardians).toBeUndefined();
-    await expect(add({ clubYear: "2031-32" })).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
-    expect(mocks.addRosterMemberInTransaction).toHaveBeenCalledTimes(1);
+  it("adds to the current club year only, whatever year the form was filled in, with its guardians", async () => {
+    mocks.submissionFindFirst.mockResolvedValue(submissionRow({ clubYear: "2025-26" }));
+    const result = await add();
+    expect(result.clubYear).toBe("2026-27");
+    expect(mocks.addRosterMemberInTransaction.mock.calls[0][2]).toBe("2026-27");
+    expect(mocks.addRosterMemberInTransaction.mock.calls[0][3].guardians).toHaveLength(1);
+    // The year comes from the clock, not the request: a confirm in the next club year adds to that one.
+    await confirmAddToRoster(director, { action: "ADD", organizationId: "club-a", submissionId: "sub-1", member: memberInput }, new Date("2027-09-15T15:00:00Z"));
+    expect(mocks.addRosterMemberInTransaction.mock.calls[1][2]).toBe("2027-28");
   });
 
   it("refuses a duplicate and offers the existing member instead, recording nothing", async () => {
@@ -286,7 +287,7 @@ describe("confirming adds the person and records it (#721)", () => {
   });
 
   it("refuses a form that is already on the roster", async () => {
-    mocks.submissionFindFirst.mockResolvedValue(submissionRow({ rosterAction: "ADDED", rosterActionMemberId: "member-7" }));
+    mocks.submissionFindFirst.mockResolvedValue(submissionRow({ rosterAction: "ADDED", rosterActionMemberId: "member-7", rosterActionMember: { status: "ACTIVE" } }));
     await expect(review()).rejects.toMatchObject({ code: "ALREADY_ON_ROSTER" });
     await expect(add()).rejects.toMatchObject({ code: "ALREADY_ON_ROSTER" });
     expect(mocks.addRosterMemberInTransaction).not.toHaveBeenCalled();
@@ -300,8 +301,8 @@ describe("linking to an existing member (#721)", () => {
     expect(mocks.addRosterMemberInTransaction).not.toHaveBeenCalled();
     expect(mocks.refreshBackgroundCheckMatchesSafely).not.toHaveBeenCalled();
     expect(mocks.submissionUpdateMany).toHaveBeenCalledWith({
-      where: { id: "sub-1", organizationId: "club-a", status: "SUBMITTED", rosterActionMemberId: null },
-      data: { rosterAction: "LINKED", rosterActionMemberId: "member-9", rosterActionAt: now },
+      where: { id: "sub-1", organizationId: "club-a", status: "SUBMITTED", OR: [{ rosterActionMemberId: null }, { rosterActionMember: { status: "REMOVED" } }] },
+      data: { rosterAction: "LINKED", rosterActionMemberId: "member-9", rosterActionAt: now, rosterMemberId: "member-9" },
     });
     expect(mocks.writeAuditLog.mock.calls[0][0]).toMatchObject({
       action: "CLUB_FORM_SUBMISSION_LINKED_TO_ROSTER",
@@ -323,5 +324,47 @@ describe("linking to an existing member (#721)", () => {
     mocks.submissionUpdateMany.mockResolvedValue({ count: 0 });
     await expect(link()).rejects.toMatchObject({ code: "ALREADY_ON_ROSTER" });
     expect(mocks.writeAuditLog).not.toHaveBeenCalled();
+  });
+});
+
+describe("a form already filed against a member (#721)", () => {
+  const filed = { id: "member-5", status: "ACTIVE", person: { firstName: "Jordan", lastName: "Sample" } };
+  beforeEach(() => {
+    mocks.submissionFindFirst.mockResolvedValue(submissionRow({ rosterMemberId: "member-5", rosterMember: filed }));
+  });
+
+  it("offers only Link to that member, reads no answers, and adds nobody", async () => {
+    const result = await review();
+    expect(result.canAdd).toBe(false);
+    expect(result.duplicates).toEqual([expect.objectContaining({ id: "member-5", firstName: "Jordan" })]);
+    expect(mocks.getSubmissionForViewer).not.toHaveBeenCalled();
+    expect(mocks.listRosterDuplicates).not.toHaveBeenCalled();
+  });
+
+  it("refuses to create a new person for it, or to link it to anyone else", async () => {
+    await expect(add()).rejects.toMatchObject({ code: "ROSTER_ADD_UNAVAILABLE" });
+    await expect(link("member-9")).rejects.toMatchObject({ code: "ROSTER_ADD_UNAVAILABLE" });
+    expect(mocks.addRosterMemberInTransaction).not.toHaveBeenCalled();
+    expect(mocks.submissionUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("links it to that member", async () => {
+    mocks.memberFindFirst.mockResolvedValue({ id: "member-5", clubYear: "2026-27" });
+    await expect(link("member-5")).resolves.toMatchObject({ action: "LINKED", rosterMemberId: "member-5" });
+  });
+
+  it("treats a form filed against a removed member as unfiled, so it can be added", async () => {
+    mocks.submissionFindFirst.mockResolvedValue(submissionRow({ rosterMemberId: "member-5", rosterMember: { ...filed, status: "REMOVED" } }));
+    expect((await review()).canAdd).toBe(true);
+    await expect(add()).resolves.toMatchObject({ action: "ADDED" });
+  });
+});
+
+describe("a member who was removed from the roster (#721)", () => {
+  it("counts as not added: the form can be added or linked again", async () => {
+    mocks.submissionFindFirst.mockResolvedValue(submissionRow({ rosterAction: "ADDED", rosterActionMemberId: "member-7", rosterActionMember: { status: "REMOVED" } }));
+    await expect(review()).resolves.toMatchObject({ canAdd: true });
+    await expect(add()).resolves.toMatchObject({ action: "ADDED" });
+    await expect(link()).resolves.toMatchObject({ action: "LINKED" });
   });
 });

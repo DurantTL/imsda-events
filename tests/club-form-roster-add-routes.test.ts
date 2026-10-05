@@ -36,24 +36,26 @@ beforeEach(() => {
 
 describe("POST roster for a submitted form (#721)", () => {
   it("adds, scoped to the club and form in the URL, never the body, and answers private and no-store", async () => {
-    const response = await post({ action: "ADD", clubYear: "2026-27", member });
+    const response = await post({ action: "ADD", member });
     expect(response.status).toBe(201);
     expect(response.headers.get("Cache-Control")).toContain("no-store");
     expect(await response.json()).toEqual({ result: { action: "ADDED", rosterMemberId: "member-1", clubYear: "2026-27" } });
     expect(mocks.requireClubLeaderViewer).toHaveBeenCalledWith("club-a");
-    expect(mocks.confirmAddToRoster).toHaveBeenCalledWith(leader, expect.objectContaining({ action: "ADD", organizationId: "club-a", submissionId: "sub-1", clubYear: "2026-27" }));
+    expect(mocks.confirmAddToRoster).toHaveBeenCalledWith(leader, expect.objectContaining({ action: "ADD", organizationId: "club-a", submissionId: "sub-1" }));
   });
 
   it("applies the roster's own member rules (a missing gender is a 400, nothing is added)", async () => {
-    const response = await post({ action: "ADD", clubYear: "2026-27", member: { ...member, gender: null } });
+    const response = await post({ action: "ADD", member: { ...member, gender: null } });
     expect(response.status).toBe(400);
     expect(mocks.confirmAddToRoster).not.toHaveBeenCalled();
   });
 
   it("has no field for any other answer to travel in (strict bodies)", async () => {
-    expect((await post({ action: "ADD", clubYear: "2026-27", member, answers: { health_limitation: "Yes" } })).status).toBe(400);
-    expect((await post({ action: "ADD", clubYear: "2026-27", member: { ...member, healthNotes: "Synthetic" } })).status).toBe(400);
+    expect((await post({ action: "ADD", member, answers: { health_limitation: "Yes" } })).status).toBe(400);
+    expect((await post({ action: "ADD", member: { ...member, healthNotes: "Synthetic" } })).status).toBe(400);
     expect((await post({ action: "LINK", memberId: "member-9", organizationId: "club-b" })).status).toBe(400);
+    // Only the current club year can be added to: the request has no year to name (#541).
+    expect((await post({ action: "ADD", clubYear: "2027-28", member })).status).toBe(400);
     expect((await post({ action: "MERGE", memberId: "member-9" })).status).toBe(400);
     expect(mocks.confirmAddToRoster).not.toHaveBeenCalled();
   });
@@ -79,6 +81,15 @@ describe("POST roster for a submitted form (#721)", () => {
     mocks.rejectCrossOriginRequest.mockReturnValueOnce(Response.json({ error: "CROSS_ORIGIN" }, { status: 403 }));
     expect((await post({ action: "LINK", memberId: "member-9" })).status).toBe(403);
     expect(mocks.requireClubLeaderViewer).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 when LINK names another club's member, and records nothing", async () => {
+    mocks.confirmAddToRoster.mockRejectedValue(new ClubFormError("MEMBER_NOT_FOUND", "That person isn't on your club's roster."));
+    const response = await post({ action: "LINK", memberId: "member-of-club-b" });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: "MEMBER_NOT_FOUND" });
+    // The club comes from the URL, so the service looks the member up in club-a only.
+    expect(mocks.confirmAddToRoster).toHaveBeenCalledWith(leader, { action: "LINK", memberId: "member-of-club-b", organizationId: "club-a", submissionId: "sub-1" });
   });
 
   it.each([

@@ -100,7 +100,7 @@ describe("seeded club form templates", () => {
   it("keeps the club-entered fee fields off a private link but on the director's form (#719)", () => {
     const fees = ["registration_fee", "club_dues", "insurance_fee"];
     expect(membership().staffOnlyFieldKeys).toEqual(fees);
-    expect(membership().version).toBe(2);
+    expect(membership().version).toBe(3);
     const linkKeys = allFields(definitionForLink(membership())).map((field) => field.key);
     for (const key of fees) expect(linkKeys).not.toContain(key);
     expect(definitionForLink(membership()).sections.map((section) => section.title)).not.toContain("Fees");
@@ -221,6 +221,7 @@ const membershipAnswers = {
   been_pathfinder: "No",
   certified_name: "Sam Sample",
   birth_date: "2015-04-02",
+  gender: "Female",
   mother_guardian_signature: "Pat Sample",
   approval_agreement: true,
   application_date: "2026-10-01",
@@ -280,6 +281,7 @@ describe("staff form answers", () => {
   const base = {
     full_name: "Alex Volunteer",
     birth_date: "1985-06-15",
+    gender: "Male",
     street: "2 Example Road",
     city: "Exampleville",
     state: "MO",

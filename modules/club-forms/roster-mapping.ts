@@ -91,10 +91,44 @@ const guardianTypes: Record<GuardianMappingPart, readonly FieldType[]> = {
  * backstop for a field nobody flagged as sensitive: the roster is never a home
  * for health information, so such a field cannot be mapped even by mistake.
  */
-const HEALTH_WORDS = /health|medical|medication|allerg|physician|doctor|diagnos|illness|sickness|injur|immuni[sz]|disabilit|dietary|diet\b|condition|insurance|surgery|asthma|diabet/i;
+const HEALTH_WORDS = new RegExp([
+  // The wording the attendee-account edit policy treats as sensitive (registration-answer-policy.ts), minus guardian,
+  // age, birth and gender, which are exactly what the roster is filled from.
+  "medical", "medicat", "medicine", "meds\\b", "health", "allerg", "dietary", "diet\\b", "accessib", "disabil", "special\\s*needs?", "emergency",
+  // Beyond it: care, conditions and treatment.
+  "prescri", "hospital", "vaccin", "immuni[sz]", "epi[- ]?pen", "accommodat", "mental", "therap", "seizure",
+  "physician", "doctor", "diagnos", "illness", "sickness", "injur", "condition", "insurance", "surgery", "asthma", "diabet",
+].join("|"), "i");
 
-export function looksLikeHealthField(field: Pick<RegistrationFormField, "key" | "label">, sectionTitle = "") {
-  return HEALTH_WORDS.test(`${field.key} ${field.label} ${sectionTitle}`);
+/**
+ * Whether a question's key, label, help text or section title reads as health
+ * information. Underscores count as spaces, so `special_needs` is caught.
+ */
+export function looksLikeHealthField(field: Pick<RegistrationFormField, "key" | "label"> & { helpText?: string }, sectionTitle = "") {
+  return HEALTH_WORDS.test(`${field.key.replaceAll("_", " ")} ${field.label} ${field.helpText ?? ""} ${sectionTitle}`);
+}
+
+/** Wording that makes a question about someone other than the applicant (a child, a spouse, a parent). */
+const OTHER_PERSON_WORDS = /\b(?:child|children|kid|son|daughter|spouse|wife|husband|dependent|sibling|brother|sister|parent|mother|father|guardian)\b|child_\d|children/i;
+
+/**
+ * The one birth-date question the roster's birth date may come from: the first
+ * birth-date question in form order that is about the applicant. Questions
+ * about a child, spouse or parent are skipped (the Staff/Volunteer form has a
+ * birth date for each of five children), so a roster member can never be given
+ * someone else's birth date. Null when there is none.
+ */
+export function ownBirthDateKey(spec: Pick<RosterMappingSpec, "definition" | "birthDateFieldKeys" | "hiddenFieldKeys">): string | null {
+  const birth = new Set(spec.birthDateFieldKeys);
+  const hidden = new Set(spec.hiddenFieldKeys ?? []);
+  for (const section of spec.definition.sections) {
+    for (const field of section.fields) {
+      if (!birth.has(field.key) || hidden.has(field.key) || field.type !== "DATE") continue;
+      if (OTHER_PERSON_WORDS.test(`${field.key.replaceAll("_", " ")} ${field.label}`)) continue;
+      return field.key;
+    }
+  }
+  return null;
 }
 
 export type RosterMappingSpec = {
@@ -150,7 +184,11 @@ export function rosterMappingProblems(mapping: RosterMapping, spec: RosterMappin
       continue;
     }
     if (isBirthTarget) {
-      if (!birth.has(fieldKey)) problems.push(`Roster mapping: ${label} must come from a field marked as a birth date, so it stays sealed. ${name} is not one.`);
+      if (!birth.has(fieldKey)) {
+        problems.push(`Roster mapping: ${label} must come from a field marked as a birth date, so it stays sealed. ${name} is not one.`);
+      } else if (fieldKey !== ownBirthDateKey(spec)) {
+        problems.push(`Roster mapping: ${name} is not the applicant's own birth date. The roster's birth date comes from the first birth-date question about the applicant, not a child's or a relative's.`);
+      }
     } else if (birth.has(fieldKey)) {
       problems.push(`Roster mapping: ${name} is a birth-date field and can only fill the roster's birth date.`);
     } else if (sensitive.has(fieldKey)) {
@@ -302,7 +340,8 @@ export function rosterPrefillFromAnswers(
   const named = fields.fullName ? splitFullName(text(answers, plain(fields.fullName), 160)) : null;
   const firstName = (named ? named.firstName : text(answers, plain(fields.firstName), 80)).slice(0, 80);
   const lastName = (named ? named.lastName : text(answers, plain(fields.lastName), 80)).slice(0, 80);
-  const birthKey = fields.birthDate && birth.has(fields.birthDate) ? fields.birthDate : undefined;
+  // Only the applicant's own birth-date question, whatever the mapping says.
+  const birthKey = fields.birthDate && birth.has(fields.birthDate) && fields.birthDate === ownBirthDateKey(spec) ? fields.birthDate : undefined;
   const birthRaw = text(answers, birthKey, 20);
   const birthDate = birthRaw ? parseRosterBirthDateInput(birthRaw) ?? "" : "";
   const gender = genderFrom(text(answers, plain(fields.gender), 20));
@@ -359,7 +398,7 @@ export function rosterMappingCandidates(
   for (const section of spec.definition.sections) {
     for (const field of section.fields) {
       if (hidden.has(field.key) || !types.includes(field.type) || looksLikeHealthField(field, section.title)) continue;
-      if (target === "birthDate" ? !birth.has(field.key) : birth.has(field.key) || sensitive.has(field.key)) continue;
+      if (target === "birthDate" ? field.key !== ownBirthDateKey(spec) : birth.has(field.key) || sensitive.has(field.key)) continue;
       result.push(field);
     }
   }

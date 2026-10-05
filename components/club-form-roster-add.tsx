@@ -29,7 +29,7 @@ import {
 
 type Duplicate = RosterAddReview["duplicates"][number];
 
-export function ClubFormRosterAdd({ review, formHref, yearAction }: { review: RosterAddReview; formHref: string; yearAction: string }) {
+export function ClubFormRosterAdd({ review, formHref }: { review: RosterAddReview; formHref: string }) {
   const { prefill } = review;
   const [fieldErrors, setFieldErrors] = useState<RosterFormErrors>({});
   const [guardianErrors, setGuardianErrors] = useState<GuardianFormErrors>({});
@@ -39,7 +39,6 @@ export function ClubFormRosterAdd({ review, formHref, yearAction }: { review: Ro
   const [formBirthDate, setFormBirthDate] = useState(prefill.birthDate);
   const [duplicates, setDuplicates] = useState<Duplicate[]>(review.duplicates);
   const base = `/api/attendee/clubs/${encodeURIComponent(review.organizationId)}/forms/submissions/${encodeURIComponent(review.submissionId)}/roster`;
-  const guardiansAllowed = review.clubYear === review.currentClubYear;
   const typeHint = formBirthDate
     ? attendeeTypeAgeHint(formType as keyof typeof clubRosterAttendeeTypeLabels, formBirthDate, calendarDateInEventTimeZone(new Date(), "America/Chicago"))
     : null;
@@ -82,15 +81,13 @@ export function ClubFormRosterAdd({ review, formHref, yearAction }: { review: Ro
       editing: false,
     });
     setFieldErrors(errors);
-    const guardians = guardiansAllowed
-      ? Array.from({ length: GUARDIAN_SLOTS }, (_, index) => ({
-        name: String(form.get(`g${index + 1}Name`) ?? "").trim(),
-        relationship: String(form.get(`g${index + 1}Relationship`) ?? "").trim(),
-        email: String(form.get(`g${index + 1}Email`) ?? "").trim(),
-        phone: String(form.get(`g${index + 1}Phone`) ?? "").trim(),
-      }))
-      : null;
-    const guardianProblems = guardians ? validateGuardianForm(guardians) : {};
+    const guardians = Array.from({ length: GUARDIAN_SLOTS }, (_, index) => ({
+      name: String(form.get(`g${index + 1}Name`) ?? "").trim(),
+      relationship: String(form.get(`g${index + 1}Relationship`) ?? "").trim(),
+      email: String(form.get(`g${index + 1}Email`) ?? "").trim(),
+      phone: String(form.get(`g${index + 1}Phone`) ?? "").trim(),
+    }));
+    const guardianProblems = validateGuardianForm(guardians);
     setGuardianErrors(guardianProblems);
     const firstInvalid = rosterFormFieldOrder.find((field) => errors[field]);
     if (firstInvalid) {
@@ -104,7 +101,6 @@ export function ClubFormRosterAdd({ review, formHref, yearAction }: { review: Ro
     }
     void send({
       action: "ADD",
-      clubYear: review.clubYear,
       member: {
         firstName: String(form.get("firstName") ?? ""),
         lastName: String(form.get("lastName") ?? ""),
@@ -113,7 +109,7 @@ export function ClubFormRosterAdd({ review, formHref, yearAction }: { review: Ro
         role: String(form.get("role") ?? ""),
         classLevel: String(form.get("classLevel") ?? "") || null,
         gender: String(form.get("gender") ?? "") || null,
-        ...(guardians ? { guardians } : {}),
+        guardians,
       },
     });
   }
@@ -129,21 +125,11 @@ export function ClubFormRosterAdd({ review, formHref, yearAction }: { review: Ro
         </p>
       </header>
 
-      <form action={yearAction} className="form-grid two-column" method="get">
-        <label>Club year
-          <select defaultValue={review.clubYear} name="year">
-            {review.clubYearChoices.map((year) => <option key={year} value={year}>{year}{year === review.currentClubYear ? " (current)" : ""}</option>)}
-          </select>
-        </label>
-        <div><button className="secondary-button" type="submit">Show for this year</button></div>
-        <p className="field-help">Changing the year reloads this screen from the form, so choose it first.</p>
-      </form>
-
       {duplicates.length > 0 && (
         <div className="inline-notice" role="status">
           <p>
-            <strong>Possible duplicate.</strong> Someone with this name and birth date is already on the {review.clubYear} roster. Link this form to them
-            instead of adding a duplicate. Nothing is merged: linking only records which member this form belongs to.
+            <strong>{review.canAdd ? "Possible duplicate." : "Already filed."}</strong> {review.canAdd ? `Someone with this name and birth date is already on the ${review.clubYear} roster. Link this form to them
+            instead of adding a duplicate.` : "This form belongs to this roster member."} Nothing is merged: linking only records which member this form belongs to.
           </p>
           <ul>
             {duplicates.map((member) => (
@@ -160,6 +146,7 @@ export function ClubFormRosterAdd({ review, formHref, yearAction }: { review: Ro
 
       {error && <div className="inline-notice error" role="alert">{error}</div>}
 
+      {review.canAdd ? (
       <form
         className="form-stack"
         noValidate
@@ -213,8 +200,7 @@ export function ClubFormRosterAdd({ review, formHref, yearAction }: { review: Ro
           </label>
         </div>
 
-        {guardiansAllowed ? (
-          <fieldset className="roster-guardians">
+        <fieldset className="roster-guardians">
             <legend>Guardian contacts (optional)</legend>
             <p className="field-help">Up to two guardians, from the parent or guardian details on the form. Only your club&apos;s director and deputy, Area Coordinators and conference staff with sensitive-data access can see them.</p>
             {Array.from({ length: GUARDIAN_SLOTS }, (_, index) => {
@@ -241,16 +227,16 @@ export function ClubFormRosterAdd({ review, formHref, yearAction }: { review: Ro
                 </div>
               );
             })}
-          </fieldset>
-        ) : (
-          <p className="field-help">Guardian contacts are kept on the current club year&apos;s roster only, so none are added for {review.clubYear}.</p>
-        )}
+        </fieldset>
 
         <div className="intro-actions">
           <button className="primary-button" disabled={saving} type="submit">Add to roster</button>
           <a className="text-button" href={formHref}>Cancel</a>
         </div>
       </form>
+      ) : (
+        <p className="field-help">This form is already filed against a roster member, so it can only be linked to them. No new person is added.</p>
+      )}
     </div>
   );
 }

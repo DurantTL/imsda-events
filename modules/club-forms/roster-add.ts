@@ -13,7 +13,7 @@ import {
 import { ClubFormError } from "@/modules/club-forms/errors";
 import { rosterPrefillFromAnswers, usableRosterMapping, type RosterPrefill } from "@/modules/club-forms/roster-mapping";
 import { getSubmissionForViewer } from "@/modules/club-forms/submissions";
-import { clubYearChoices, clubYearFor } from "@/modules/club-rosters/domain";
+import { clubYearFor } from "@/modules/club-rosters/domain";
 import { addRosterMemberInTransaction, listRosterDuplicates, RosterOperationError } from "@/modules/club-rosters/repository";
 import type { RosterMemberInput } from "@/modules/club-rosters/schemas";
 
@@ -22,6 +22,10 @@ import type { RosterMemberInput } from "@/modules/club-rosters/schemas";
  * deputy (or a system administrator acting as that director) may use it, for
  * their own club: a registrar, an Area Coordinator and conference staff never
  * can. It is two steps, and nothing is written by the first:
+ *
+ * Only the current club year can be added to (#541: only the current year is
+ * editable), and a member who was removed from the roster counts as not added,
+ * so the form can be added again.
  *
  * 1. `getRosterAddReview` opens the form (audited like any other open of a form
  *    with sensitive answers) and pre-fills a roster member from the answers the
@@ -60,6 +64,9 @@ const templateSelect = {
   printLayout: true, rosterMapping: true, enabled: true, customizedAt: true,
 } as const;
 
+/** A removed member is erased from the roster: a form that pointed at one is as good as not added. */
+const stillOnRoster = (member: { status: string } | null | undefined) => Boolean(member) && member!.status !== "REMOVED";
+
 /** The submission, once it is checked to be this club's, submitted, not yet on the roster, and from a template that allows it. */
 async function loadAddable(organizationId: string, submissionId: string) {
   const row = await getPrisma().clubFormSubmission.findFirst({
@@ -71,6 +78,10 @@ async function loadAddable(organizationId: string, submissionId: string) {
       status: true,
       rosterAction: true,
       rosterActionMemberId: true,
+      rosterActionMember: { select: { status: true } },
+      // A form the director filed against an existing member when filling it in.
+      rosterMemberId: true,
+      rosterMember: { select: { id: true, status: true, person: { select: { firstName: true, lastName: true } } } },
       template: { select: templateSelect },
     },
   });
@@ -78,7 +89,7 @@ async function loadAddable(organizationId: string, submissionId: string) {
   if (row.status !== "SUBMITTED") {
     throw new ClubFormError("ROSTER_ADD_UNAVAILABLE", "Only a submitted form can be added to the roster.");
   }
-  if (row.rosterActionMemberId) {
+  if (row.rosterActionMemberId && stillOnRoster(row.rosterActionMember)) {
     throw new ClubFormError("ALREADY_ON_ROSTER", "This form has already been added to the roster.");
   }
   const template = parseClubFormTemplate(row.template);
@@ -86,29 +97,29 @@ async function loadAddable(organizationId: string, submissionId: string) {
   if (!mapping) {
     throw new ClubFormError("ROSTER_ADD_UNAVAILABLE", "This form isn't set up to add people to the roster.");
   }
-  return { row, template, mapping };
+  const filedMember = row.rosterMemberId && row.rosterMember && stillOnRoster(row.rosterMember)
+    ? { id: row.rosterMember.id, firstName: row.rosterMember.person?.firstName ?? "", lastName: row.rosterMember.person?.lastName ?? "" }
+    : null;
+  return { row, template, mapping, filedMember };
 }
+
+type MemberChoice = { id: string; firstName: string; lastName: string; attendeeType: string; status: string };
 
 export type RosterAddReview = {
   submissionId: string;
   organizationId: string;
   formName: string;
   prefill: RosterPrefill;
-  /** The club year this review is for, and the years a director may choose. */
+  /** Always the current club year: only it is editable (#541). */
   clubYear: string;
-  currentClubYear: string;
-  clubYearChoices: string[];
-  /** Roster members of that year with the same name and birth date: offered as "Link to existing member". */
-  duplicates: Array<{ id: string; firstName: string; lastName: string; attendeeType: string; status: string }>;
+  /**
+   * Roster members offered as "Link to existing member": those of the current year with the same name and birth
+   * date, or, for a form already filed against a member, only that member.
+   */
+  duplicates: MemberChoice[];
+  /** False when the form is already filed against a roster member: it can only be linked to them, never add a new person. */
+  canAdd: boolean;
 };
-
-/** Which year the review is for: the one asked for, if it is previous, current or next; else the form's own, else the current. */
-export function reviewClubYear(requested: string | undefined, formClubYear: string, now: Date) {
-  const choices = clubYearChoices(now);
-  const current = clubYearFor(now);
-  const clubYear = choices.find((year) => year === requested) ?? (choices.includes(formClubYear) ? formClubYear : current);
-  return { clubYear, current, choices };
-}
 
 /**
  * Step one: the review screen's data. Writes nothing to the roster. Opening
@@ -116,31 +127,32 @@ export function reviewClubYear(requested: string | undefined, formClubYear: stri
  */
 export async function getRosterAddReview(
   viewer: ClubFormsViewer,
-  input: { organizationId: string; submissionId: string; clubYear?: string },
+  input: { organizationId: string; submissionId: string },
   now = new Date(),
 ): Promise<RosterAddReview> {
   requireLeader(viewer, input.organizationId);
-  const { row, template, mapping } = await loadAddable(input.organizationId, input.submissionId);
+  const { row, template, mapping, filedMember } = await loadAddable(input.organizationId, input.submissionId);
+  const clubYear = clubYearFor(now);
+  const base = { submissionId: row.id, organizationId: row.organizationId, formName: template.name, clubYear };
+  if (filedMember) {
+    // Already filed against a member: only a link to them is offered, so nothing is read from the answers.
+    const empty = { name: "", relationship: "", email: "", phone: "" };
+    return {
+      ...base,
+      prefill: { firstName: "", lastName: "", birthDate: "", attendeeType: mapping.rosterType, role: "", classLevel: null, gender: null, guardians: [empty, empty] },
+      duplicates: [{ ...filedMember, attendeeType: "", status: "" }],
+      canAdd: false,
+    };
+  }
   // The audited, permission-checked read of the answers: a director's own club only.
   const submission = await getSubmissionForViewer(viewer, input.submissionId, "ROSTER_ADD", input.organizationId);
   const prefill = rosterPrefillFromAnswers(mapping, submission.answers, template);
-  const { clubYear, current, choices } = reviewClubYear(input.clubYear, row.clubYear, now);
   const duplicates = await listRosterDuplicates(input.organizationId, clubYear, prefill.firstName, prefill.lastName, prefill.birthDate);
-  return {
-    submissionId: row.id,
-    organizationId: row.organizationId,
-    formName: template.name,
-    // Guardian contacts live only on the current club year's row (#510).
-    prefill: clubYear === current ? prefill : { ...prefill, guardians: prefill.guardians.map(() => ({ name: "", relationship: "", email: "", phone: "" })) },
-    clubYear,
-    currentClubYear: current,
-    clubYearChoices: choices,
-    duplicates,
-  };
+  return { ...base, prefill, duplicates, canAdd: true };
 }
 
 export type RosterAddInput =
-  | { action: "ADD"; organizationId: string; submissionId: string; clubYear: string; member: RosterMemberInput }
+  | { action: "ADD"; organizationId: string; submissionId: string; member: RosterMemberInput }
   | { action: "LINK"; organizationId: string; submissionId: string; memberId: string };
 
 export type RosterAddResult = { action: "ADDED" | "LINKED"; rosterMemberId: string; clubYear: string };
@@ -149,19 +161,31 @@ export type RosterAddResult = { action: "ADDED" | "LINKED"; rosterMemberId: stri
  * Step two: the director has checked the details and confirmed. Adds the
  * person (or links an existing member) and records it on the submission in one
  * transaction, so a failure to record leaves no stray roster member. The
- * submission's answers are never changed.
+ * submission's answers are never changed. The submission also files itself
+ * against the member (`rosterMemberId`), so the form shows in the member's own
+ * list of forms, where staff can open it (the address stays on the form).
  */
 export async function confirmAddToRoster(viewer: ClubFormsViewer, input: RosterAddInput, now = new Date()): Promise<RosterAddResult> {
   const leader = requireLeader(viewer, input.organizationId);
-  const { row, template } = await loadAddable(input.organizationId, input.submissionId);
+  const { row, template, filedMember } = await loadAddable(input.organizationId, input.submissionId);
   const who = viewerAuditFields(leader);
   const actor = rosterActor(leader);
   const prisma = getPrisma();
-  // The submission is claimed last, guarded on "not yet on the roster": of two confirms that race, the loser's whole transaction rolls back.
+  const clubYear = clubYearFor(now);
+  if (filedMember && (input.action === "ADD" || input.memberId !== filedMember.id)) {
+    // Never a new person for a form that already belongs to a member.
+    throw new ClubFormError("ROSTER_ADD_UNAVAILABLE", "This form is already filed against a roster member. Link it to them instead of adding a new person.");
+  }
+  // The submission is claimed last, guarded on "not yet on the roster" (or its member since removed): of two confirms that race, the loser's whole transaction rolls back.
   const claim = (tx: Prisma.TransactionClient, action: "ADDED" | "LINKED", memberId: string) =>
     tx.clubFormSubmission.updateMany({
-      where: { id: row.id, organizationId: row.organizationId, status: "SUBMITTED", rosterActionMemberId: null },
-      data: { rosterAction: action, rosterActionMemberId: memberId, rosterActionAt: now },
+      where: {
+        id: row.id,
+        organizationId: row.organizationId,
+        status: "SUBMITTED",
+        OR: [{ rosterActionMemberId: null }, { rosterActionMember: { status: "REMOVED" } }],
+      },
+      data: { rosterAction: action, rosterActionMemberId: memberId, rosterActionAt: now, rosterMemberId: memberId },
     });
 
   try {
@@ -188,14 +212,9 @@ export async function confirmAddToRoster(viewer: ClubFormsViewer, input: RosterA
       });
     }
 
-    const choices = clubYearChoices(now);
-    if (!choices.includes(input.clubYear)) {
-      throw new ClubFormError("VALIDATION_FAILED", "Choose the previous, current or next club year.");
-    }
-    // Guardian contacts live only on the current club year's row (#510).
-    const member = input.clubYear === clubYearFor(now) ? input.member : { ...input.member, guardians: undefined };
+    const member = input.member;
     const result = await prisma.$transaction(async (tx) => {
-      const added = await addRosterMemberInTransaction(tx, input.organizationId, input.clubYear, member, actor, { source: "DIRECTOR", now });
+      const added = await addRosterMemberInTransaction(tx, input.organizationId, clubYear, member, actor, { source: "DIRECTOR", now });
       if ((await claim(tx, "ADDED", added.memberId)).count === 0) {
         throw new ClubFormError("ALREADY_ON_ROSTER", "This form has already been added to the roster.");
       }
@@ -211,21 +230,19 @@ export async function confirmAddToRoster(viewer: ClubFormsViewer, input: RosterA
           organizationId: row.organizationId,
           templateKey: template.key,
           rosterMemberId: added.memberId,
-          clubYear: input.clubYear,
+          clubYear,
           attendeeType: member.attendeeType,
         },
       }, tx);
-      return { added, clubYear: input.clubYear };
+      return added;
     });
     // Same as a person added on the roster screen (#527): matched against the background check list right away.
-    await refreshBackgroundCheckMatchesSafely([result.added.personId]);
-    return { action: "ADDED", rosterMemberId: result.added.memberId, clubYear: result.clubYear };
+    await refreshBackgroundCheckMatchesSafely([result.personId]);
+    return { action: "ADDED", rosterMemberId: result.memberId, clubYear };
   } catch (error) {
     if (error instanceof RosterOperationError) {
-      if (error.code === "DUPLICATE_MEMBER") {
-        const duplicates = input.action === "ADD"
-          ? await listRosterDuplicates(input.organizationId, input.clubYear, input.member.firstName, input.member.lastName, input.member.birthDate)
-          : [];
+      if (error.code === "DUPLICATE_MEMBER" && input.action === "ADD") {
+        const duplicates = await listRosterDuplicates(input.organizationId, clubYear, input.member.firstName, input.member.lastName, input.member.birthDate);
         throw new ClubFormError(
           "DUPLICATE_ON_ROSTER",
           "Someone with this name and birth date is already on the roster. Link this form to them instead of adding a duplicate.",

@@ -5,6 +5,7 @@ import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
 import { allFields, parseClubFormTemplate, templateSpecProblems } from "@/modules/club-forms/domain";
 import {
   looksLikeHealthField,
+  ownBirthDateKey,
   parseRosterMapping,
   rosterMappingCandidates,
   rosterMappingProblems,
@@ -41,6 +42,21 @@ describe("the seeded mappings (#721)", () => {
     expect(rosterMappingProblems(mapping, specOf(seed))).toEqual([]);
     expect(rosterMappingProblems(on(mapping), specOf(seed))).toEqual([]);
     expect(templateSpecProblems({ ...seed, rosterMapping: mapping })).toEqual([]);
+  });
+
+  it("ask for a required gender with just Male and Female, and map it to the roster's gender", () => {
+    for (const seed of [membership, staffForm]) {
+      const gender = allFields(seed.definition).find((field) => field.key === "gender")!;
+      expect(gender).toMatchObject({ type: "RADIO", required: true, options: ["Male", "Female"] });
+      expect(seed.rosterMapping!.fields.gender).toBe("gender");
+      // Not sensitive: it is plain roster data.
+      expect(seed.sensitiveFieldKeys).not.toContain("gender");
+    }
+  });
+
+  it("bump the version so the sync brings stored templates up to date", () => {
+    expect(membership.version).toBe(3);
+    expect(staffForm.version).toBe(3);
   });
 
   it("map the birth date only from a field the template marks as a birth date, and never a health field", () => {
@@ -146,8 +162,8 @@ describe("mapping validation: protected fields only, no health (#721)", () => {
   it("offers the builder only the questions the rules allow", () => {
     const spec = specOf(staffForm);
     const keys = (target: Parameters<typeof rosterMappingCandidates>[0]) => rosterMappingCandidates(target, spec).map((field) => field.key);
-    // The birth date offers birth-date questions only (the staff form has six: the person's and five children's).
-    expect(keys("birthDate")).toEqual(staffForm.birthDateFieldKeys);
+    // The birth date offers the applicant's own birth-date question only (the staff form has six: theirs and five children's).
+    expect(keys("birthDate")).toEqual(["birth_date"]);
     expect(keys("fullName")).toContain("full_name");
     for (const target of ["fullName", "role", "gender"] as const) {
       for (const key of keys(target)) {
@@ -275,5 +291,104 @@ describe("pre-filling a roster member from the answers (#721)", () => {
     expect(parseRosterMapping({ enabled: true, rosterType: "YOUTH", fields: { fullName: "a", extra: "b" }, guardians: [] })).toBeNull();
     expect(parseRosterMapping({ enabled: true, rosterType: "YOUTH", fields: {}, guardians: [{}, {}, {}] })).toBeNull();
     expect(parseRosterMapping({ enabled: true, rosterType: "STAFF", fields: { fullName: "a" } })).toMatchObject({ guardians: [] });
+  });
+});
+
+describe("the health keyword backstop (#721)", () => {
+  const field = (key: string, label = "Question", helpText = "") => ({ key, label, helpText });
+  it.each([
+    ["a medicine question", field("q1", "Current medicine")],
+    ["meds", field("current_meds")],
+    ["a prescription", field("q2", "Prescription details")],
+    ["a hospital", field("hospital_visits")],
+    ["a vaccine", field("q3", "Vaccination record")],
+    ["an EpiPen", field("q4", "Carries an epi-pen?")],
+    ["an EpiPen key", field("epi_pen")],
+    ["special needs", field("special_needs")],
+    ["accessibility", field("q5", "Accessibility requirements")],
+    ["an accommodation", field("q6", "Accommodations needed")],
+    ["mental health", field("q7", "Mental wellbeing")],
+    ["therapy", field("q8", "Therapy or counseling")],
+    ["a seizure", field("q9", "History of seizures")],
+    ["an allergy", field("q10", "Any allergies?")],
+    ["emergency details", field("emergency_contact")],
+    ["a key", field("medical_notes")],
+    ["help text", field("notes", "Notes", "Include any medication or allergy details")],
+  ])("flags %s", (_name, candidate) => {
+    expect(looksLikeHealthField(candidate)).toBe(true);
+  });
+
+  it("flags a question under a health section", () => {
+    expect(looksLikeHealthField(field("notes", "Notes"), "II. Health history")).toBe(true);
+  });
+
+  it.each([
+    field("full_name", "Applicant name"),
+    field("birth_date", "was born on"),
+    field("gender", "Gender"),
+    field("ay_class", "AY class"),
+    field("father_guardian_signature", "Father or guardian signature (type full name)"),
+    field("phone", "Phone"),
+  ])("leaves the roster's own questions alone: $key", (candidate) => {
+    expect(looksLikeHealthField(candidate)).toBe(false);
+  });
+
+  it("refuses to map a field whose help text reads as health, even if the label does not", () => {
+    const definition = {
+      ...membership.definition,
+      sections: [{ id: "s", title: "Applicant", description: "", fields: [
+        { id: "f1", key: "full_name", label: "Name", helpText: "", type: "TEXT" as const, scope: "REGISTRATION" as const, required: true, options: [] },
+        { id: "f2", key: "birth_date", label: "Born", helpText: "", type: "DATE" as const, scope: "REGISTRATION" as const, required: true, options: [] },
+        { id: "f3", key: "notes", label: "Notes", helpText: "Anything about seizures", type: "TEXT" as const, scope: "REGISTRATION" as const, required: false, options: [] },
+      ] }],
+    };
+    const spec = { definition, sensitiveFieldKeys: ["birth_date"], birthDateFieldKeys: ["birth_date"], hiddenFieldKeys: [] };
+    const mapping: RosterMapping = { enabled: true, rosterType: "STAFF", fields: { fullName: "full_name", birthDate: "birth_date", role: "notes" }, guardians: [] };
+    expect(rosterMappingProblems(mapping, spec).join(" ")).toMatch(/Health information never goes onto the roster/);
+    expect(rosterMappingCandidates("role", spec)).toEqual([expect.objectContaining({ key: "full_name" })]);
+    expect(rosterPrefillFromAnswers(mapping, { full_name: "Riley Sample", birth_date: "1988-01-02", notes: "Synthetic seizure note" }, spec).role).toBe("");
+  });
+});
+
+describe("one birth-date field: the applicant's own (#721)", () => {
+  const spec = specOf(staffForm);
+  const base: RosterMapping = { enabled: true, rosterType: "STAFF", fields: { fullName: "full_name", birthDate: "birth_date" }, guardians: [] };
+
+  it("is the first birth-date question about the applicant, skipping a child's", () => {
+    expect(ownBirthDateKey(spec)).toBe("birth_date");
+    expect(ownBirthDateKey(specOf(membership))).toBe("birth_date");
+  });
+
+  it("refuses a child's birth date for the roster, even though it is a birth-date field", () => {
+    expect(staffForm.birthDateFieldKeys).toContain("child_1_birth_date");
+    const result = rosterMappingProblems({ ...base, fields: { ...base.fields, birthDate: "child_1_birth_date" } }, spec);
+    expect(result.join(" ")).toMatch(/not the applicant's own birth date/);
+    // And the prefill never reads it, even from a stale mapping.
+    const prefill = rosterPrefillFromAnswers({ ...base, fields: { ...base.fields, birthDate: "child_1_birth_date" } }, { full_name: "Riley Sample", child_1_birth_date: "2015-05-05", birth_date: "1988-01-02" }, spec);
+    expect(prefill.birthDate).toBe("");
+  });
+
+  it("is still the first applicant question when a child's comes first in the form", () => {
+    const reordered = {
+      ...spec,
+      definition: { ...spec.definition, sections: [...spec.definition.sections].sort((a, b) => (a.id === "sec_children" ? -1 : b.id === "sec_children" ? 1 : 0)) },
+    };
+    expect(reordered.definition.sections[0].id).toBe("sec_children");
+    expect(ownBirthDateKey(reordered)).toBe("birth_date");
+    expect(rosterMappingCandidates("birthDate", reordered).map((candidate) => candidate.key)).toEqual(["birth_date"]);
+  });
+
+  it("with two applicant-style birth dates, only the first in form order may be mapped", () => {
+    const definition = {
+      ...membership.definition,
+      sections: [{ id: "s", title: "Applicant", description: "", fields: [
+        { id: "f1", key: "full_name", label: "Name", helpText: "", type: "TEXT" as const, scope: "REGISTRATION" as const, required: true, options: [] },
+        { id: "f2", key: "birth_date", label: "Birth date", helpText: "", type: "DATE" as const, scope: "REGISTRATION" as const, required: true, options: [] },
+        { id: "f3", key: "other_date", label: "Another date of birth", helpText: "", type: "DATE" as const, scope: "REGISTRATION" as const, required: false, options: [] },
+      ] }],
+    };
+    const two = { definition, sensitiveFieldKeys: ["birth_date", "other_date"], birthDateFieldKeys: ["birth_date", "other_date"], hiddenFieldKeys: [] };
+    expect(rosterMappingProblems(base, two)).toEqual([]);
+    expect(rosterMappingProblems({ ...base, fields: { ...base.fields, birthDate: "other_date" } }, two).join(" ")).toMatch(/not the applicant's own birth date/);
   });
 });

@@ -79,6 +79,9 @@ const money = (key: string, label: string, extra: FieldExtra = {}) => field(key,
 const today: FieldExtra = { autoDate: "TODAY" };
 const whenYes = (fieldKey: string): FieldExtra => ({ conditional: { fieldKey, operator: "EQUALS", value: "Yes" } });
 
+/** The roster's gender (#721): Male or Female, required. Not sensitive. */
+const genderField = () => field("gender", "Gender", "RADIO", true, { options: ["Male", "Female"] });
+
 const churchField = (required: boolean) => field("church", "Church", "SELECT", required, { optionSource: "CHURCHES_DIRECTORY" });
 const churchOther = () => text("church_other", "Church name", true, { conditional: { fieldKey: "church", operator: "EQUALS", value: "Not listed" } });
 
@@ -96,7 +99,7 @@ const membershipApplication: ClubFormTemplateSeed = {
   key: "pathfinder_membership_application",
   name: "Pathfinder Club Membership Application",
   description: "An applicant's membership application with the parent or guardian's approval, waiver and signatures.",
-  version: 2,
+  version: 3,
   sortOrder: 10,
   printLayout: "STANDARD",
   // #721: the youth roster fields this form knows. The class names match the roster's; the applicant's phone is the
@@ -105,7 +108,7 @@ const membershipApplication: ClubFormTemplateSeed = {
   rosterMapping: {
     enabled: false,
     rosterType: "YOUTH",
-    fields: { fullName: "full_name", birthDate: "birth_date", classLevel: "ay_class" },
+    fields: { fullName: "full_name", birthDate: "birth_date", gender: "gender", classLevel: "ay_class" },
     guardians: [
       { name: "father_guardian_signature", relationshipLabel: "Father or guardian", phone: "phone" },
       { name: "mother_guardian_signature", relationshipLabel: "Mother or guardian" },
@@ -144,6 +147,8 @@ const membershipApplication: ClubFormTemplateSeed = {
       ], "Amounts the club enters."),
       section("sec_details", "Applicant details", [
         text("full_name", "Applicant name", true),
+        // v3 (#721): the roster needs a gender, so the form asks for it. Two choices, as the roster has.
+        genderField(),
         phone("phone", "Phone", true),
         field("ay_class", "AY class", "SELECT", true, { options: ["Friend", "Companion", "Explorer", "Ranger", "Voyager", "Guide"] }),
         text("street", "Street address", true),
@@ -207,7 +212,7 @@ const staffForm: ClubFormTemplateSeed = {
   key: "pathfinder_staff_service_information",
   name: "Pathfinder Staff/Volunteer Service Information Form",
   description: "A staff or volunteer's record, health history, experience, honors to teach, conduct disclosure and references.",
-  version: 2,
+  version: 3,
   sortOrder: 20,
   printLayout: "STANDARD",
   // #721: staff are added as staff roster members, from the name and birth date. The health and conduct answers
@@ -215,7 +220,7 @@ const staffForm: ClubFormTemplateSeed = {
   rosterMapping: {
     enabled: false,
     rosterType: "STAFF",
-    fields: { fullName: "full_name", birthDate: "birth_date" },
+    fields: { fullName: "full_name", birthDate: "birth_date", gender: "gender" },
     guardians: [],
   },
   sensitiveFieldKeys: [
@@ -258,6 +263,7 @@ const staffForm: ClubFormTemplateSeed = {
       section("sec_record", "I. Date of record", [
         text("full_name", "Name", true),
         date("birth_date", "Birth date", true),
+        genderField(),
         text("street", "Street address", true),
         text("city", "City", true),
         text("state", "State", true),
