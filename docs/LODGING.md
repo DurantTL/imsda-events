@@ -68,8 +68,9 @@ beds (Boys 314-316, special use, hold 8; storage has 0).
   by the cafeteria), tents with power (a counted area, default 4) and tent camping
   (no fixed limit, no sites).
 - Boys 121, 210 and 212 start **unavailable for every event** but stay in the
-  inventory. Boys 314-316 are special use. Boys 302 is a double room with a private
-  bath (recorded as one double bed, sleeps 2). Boys 121 is two doubles, sleeps 4.
+  inventory. Boys 314-316 are special use. Boys 302 is two connected rooms (2 twins
+  each) sharing a bathroom, usually used by one large family: one assignable unit,
+  4 twin beds, sleeps 4, private bath. Boys 121 is two doubles, sleeps 4.
   The Boys Dorm 1st-floor restroom has set hours that are not modeled.
 - Not modeled yet (not enough data): which RV sites have hookups, and the Hall A
   and Hall B layout of the Girls Dorm.

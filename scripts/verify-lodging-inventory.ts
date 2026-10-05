@@ -113,7 +113,7 @@ async function main() {
   assert(["boys-121", "boys-210", "boys-212"].every((key) => byKey.get(key)?.defaultUnavailable === true), "Boys 121, 210 and 212 are unavailable by default");
   assert(byKey.get("boys-122")?.floor === 1 && byKey.get("boys-123")?.floor === 1, "Boys 120-123 are on the 1st floor");
   assert(["boys-314", "boys-315", "boys-316"].every((key) => byKey.get(key)?.specialUse && byKey.get(key)?.defaultCapacity === 8), "Boys 314-316 are special use, cap 8");
-  assert(byKey.get("boys-302")?.bathroom === "PRIVATE", "Boys 302 has a private bath");
+  assert(byKey.get("boys-302")?.bathroom === "PRIVATE" && byKey.get("boys-302")?.defaultCapacity === 4 && byKey.get("boys-302")?.beds.length === 4, "Boys 302 is one unit with a private bath, 4 twins, sleeping 4");
   assert([101, 102, 103, 104, 105, 106, 107, 108].every((n) => byKey.has(`girls-${n}`)), "Girls 1st floor is 101-108");
   assert([byKey.get("cc-01"), byKey.get("cc-02"), byKey.get("cc-1a"), byKey.get("cc-1b")].map((unit) => unit?.defaultCapacity).join() === "2,4,1,1", "conference center capacities are 2, 4, 1, 1");
   assert(byKey.get("tents-with-power")?.defaultCapacity === 4, "tents with power default to 4");
