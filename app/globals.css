@@ -7707,7 +7707,8 @@ th[aria-sort="descending"] .table-sort-button { color: var(--imsda-navy); font-w
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
   border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
 }
-.calendar-admin-list > li > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.calendar-admin-list > li > div:first-child,
+.calendar-admin-list > li > .calendar-entry-text { display: grid; gap: 3px; min-width: 0; }
 .calendar-admin-list small { color: var(--muted); font-size: max(var(--type-floor, 0px), 0.7rem); }
 .calendar-list-summary { margin: 8px 0; color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.8rem); }
 .calendar-bulk-bar { display: grid; gap: 8px; margin-bottom: 10px; }

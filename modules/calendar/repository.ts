@@ -2,7 +2,7 @@ import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { planBulkAction, type BulkAction, type BulkSkip } from "@/modules/calendar/admin-list";
+import { calendarEntryListLimit, planBulkAction, type BulkAction, type BulkChange, type BulkSkip } from "@/modules/calendar/admin-list";
 import {
   addDays,
   calendarDateIn,
@@ -166,7 +166,7 @@ export type CalendarAdminEntry = Awaited<ReturnType<typeof listCalendarEntries>>
 export async function listCalendarEntries() {
   const entries = await getPrisma().calendarEntry.findMany({
     orderBy: [{ startsOn: "desc" }, { title: "asc" }],
-    take: 1000,
+    take: calendarEntryListLimit,
     include: { sourceFeed: { select: { name: true } } },
   });
   return entries.map((entry) => ({
@@ -301,21 +301,35 @@ export type CalendarBulkResult = {
 export async function bulkUpdateCalendarEntries(request: CalendarBulkRequest, actorUserId: string) {
   const prisma = getPrisma();
   const result = await prisma.$transaction(async (tx) => {
-    const found = await tx.calendarEntry.findMany({ where: { id: { in: request.ids } } });
+    const found = await tx.calendarEntry.findMany({ where: { id: { in: request.ids } }, select: { sourceFeedId: true } });
     const feedIds = [...new Set(found.map((row) => row.sourceFeedId).filter((id): id is string => id !== null))].sort();
     for (const feedId of feedIds) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${feedLockKey(feedId)}))`;
     }
     // Read again under the locks, so the plan sees what a refresh just wrote.
-    const rows = feedIds.length > 0 ? await tx.calendarEntry.findMany({ where: { id: { in: request.ids } } }) : found;
+    const rows = await tx.calendarEntry.findMany({ where: { id: { in: request.ids } } });
+    const locked = new Set(feedIds);
     const byId = new Map(rows.map((row) => [row.id, row]));
     const ordered = request.ids.flatMap((id) => byId.get(id) ?? []);
-    const plan = planBulkAction(ordered, request.change);
+    // An entry that joined a feed we did not lock (re-linked meanwhile) is not safe to change now.
+    const stable = ordered.filter((row) => row.sourceFeedId === null || locked.has(row.sourceFeedId));
+    const plan = planBulkAction(stable, request.change);
+    for (const row of ordered.filter((candidate) => !stable.includes(candidate))) {
+      plan.skipped.push({ id: row.id, title: row.title, reason: "Changed while saving, try again." });
+    }
     for (const missing of request.ids.filter((id) => !byId.has(id))) {
       plan.skipped.push({ id: missing, title: "", reason: "No longer exists." });
     }
+    // Entries getting the same values go in one statement.
+    const groups = new Map<string, { data: BulkChange["data"]; ids: string[] }>();
     for (const change of plan.changes) {
-      await tx.calendarEntry.update({ where: { id: change.id }, data: { ...change.data, updatedByUserId: actorUserId } });
+      const key = JSON.stringify(change.data);
+      const group = groups.get(key) ?? { data: change.data, ids: [] };
+      group.ids.push(change.id);
+      groups.set(key, group);
+    }
+    for (const group of groups.values()) {
+      await tx.calendarEntry.updateMany({ where: { id: { in: group.ids } }, data: { ...group.data, updatedByUserId: actorUserId } });
     }
     if (plan.changes.length > 0) {
       await writeAuditLog({
@@ -331,7 +345,7 @@ export async function bulkUpdateCalendarEntries(request: CalendarBulkRequest, ac
       }, tx);
     }
     return { action: request.change.action, changed: plan.changes.length, skipped: plan.skipped } satisfies CalendarBulkResult;
-  });
+  }, { timeout: 30_000, maxWait: 10_000 });
   return { result, entries: await listCalendarEntries() };
 }
 

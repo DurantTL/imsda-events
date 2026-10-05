@@ -6,6 +6,9 @@ const state = vi.hoisted(() => ({
   rows: [] as Array<Record<string, unknown> & { id: string }>,
   audits: [] as Array<Record<string, unknown>>,
   locks: 0,
+  updateManyCalls: 0,
+  reads: 0,
+  afterFirstRead: null as null | (() => void),
 }));
 const mocks = vi.hoisted(() => ({
   rejectCrossOriginRequest: vi.fn(),
@@ -22,12 +25,15 @@ vi.mock("@/lib/prisma", () => {
     calendarEntry: {
       findMany: async (args: { where?: { id?: { in: string[] } } } = {}) => {
         const ids = args.where?.id?.in;
+        state.reads += 1;
+        if (state.reads === 2) state.afterFirstRead?.();
         return state.rows.filter((row) => !ids || ids.includes(row.id)).map((row) => ({
           repeatRule: null, updatedAt: new Date("2026-10-01T00:00:00Z"), sourceFeed: null, sourceRemovedAt: null, ...row,
         }));
       },
-      update: async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
-        Object.assign(state.rows.find((row) => row.id === where.id)!, data);
+      updateMany: async ({ where, data }: { where: { id: { in: string[] } }; data: Record<string, unknown> }) => {
+        state.updateManyCalls += 1;
+        for (const row of state.rows.filter((candidate) => where.id.in.includes(candidate.id))) Object.assign(row, data);
       },
     },
   };
@@ -56,6 +62,9 @@ beforeEach(() => {
   mocks.requireSystemAdministrator.mockResolvedValue({ id: "admin-1" });
   state.audits = [];
   state.locks = 0;
+  state.updateManyCalls = 0;
+  state.reads = 0;
+  state.afterFirstRead = null;
   state.rows = [
     row("staff-1"),
     row("imp-1", { sourceFeedId: "feed-1", sourceUid: "uid-1", isPublished: true, locallyEditedFields: ["title"] }),
@@ -99,17 +108,19 @@ describe("POST /api/admin/calendar/entries/bulk", () => {
     expect(state.audits).toHaveLength(0);
   });
 
-  it("sets a category, recording it as a local edit on imported entries only, with one audit row", async () => {
+  it("sets a category without marking local edits, with one audit row and one statement", async () => {
     const response = await POST(request({ ids: ["staff-1", "imp-1", "imp-2"], change: { action: "setCategory", category: "  Youth " } }));
     expect(response.status).toBe(200);
     const body = await response.json();
     expect(body.result).toMatchObject({ action: "setCategory", changed: 3, skipped: [] });
     expect(state.rows.map((item) => item.category)).toEqual(["Youth", "Youth", "Youth"]);
+    // Category is not an imported field: a refresh already leaves it alone, so nothing is marked.
     expect(state.rows[0].locallyEditedFields).toEqual([]);
-    expect(state.rows[1].locallyEditedFields).toEqual(["title", "category"]);
-    expect(state.rows[2].locallyEditedFields).toEqual(["category"]);
+    expect(state.rows[1].locallyEditedFields).toEqual(["title"]);
+    expect(state.rows[2].locallyEditedFields).toEqual([]);
+    expect(state.updateManyCalls).toBe(1);
     expect(state.rows.every((item) => item.updatedByUserId === "admin-1")).toBe(true);
-    expect(state.locks).toBe(2 + 0); // one lock per feed, taken before the entries are read again
+    expect(state.locks).toBe(2); // one lock per feed, taken before the entries are read again
     expect(state.audits).toHaveLength(1);
     expect(state.audits[0]).toMatchObject({
       action: "CALENDAR_ENTRIES_BULK_UPDATED",
@@ -143,6 +154,16 @@ describe("POST /api/admin/calendar/entries/bulk", () => {
     const unhide = await (await POST(request({ ids: ["imp-1"], change: { action: "unhide" } }))).json();
     expect(unhide.result.changed).toBe(1);
     expect(state.rows[1].isHiddenLocally).toBe(false);
+  });
+
+  it("skips an entry that joined an unlocked feed while saving", async () => {
+    // Between the first read and the re-read, staff-1 is re-linked to a feed we never locked.
+    state.afterFirstRead = () => { state.rows[0].sourceFeedId = "feed-9"; };
+    const body = await (await POST(request({ ids: ["staff-1", "imp-2"], change: { action: "publish" } }))).json();
+    expect(body.result.changed).toBe(1);
+    expect(body.result.skipped).toEqual([{ id: "staff-1", title: "Entry staff-1", reason: "Changed while saving, try again." }]);
+    expect(state.rows[0].isPublished).toBe(false);
+    expect(state.rows[2].isPublished).toBe(true);
   });
 
   it("writes no audit row when nothing changed", async () => {

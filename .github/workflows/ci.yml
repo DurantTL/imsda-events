@@ -115,6 +115,8 @@ jobs:
       # timing out as a retryable busy, the location filters and CSV columns,
       # and cloning with shifted dates (#413).
       - run: npm run test:event-locations
+      # Real-database check of calendar bulk changes (#796): the feed's advisory lock is taken and rows are read again under it, a racing feed sync never leaves a removed entry published and a bulk hide survives it, the 500-entry cap, and a refresh keeping a bulk-set category with no local-edit mark.
+      - run: npm run test:calendar-bulk
       # Real-database check of location waitlists: a full location waitlists the club there in per-location order, a freed seat promotes the next club at that location only and never overfills it under races, a busy location is skipped, and the daily digest reaches the active coordinator and event administrators once a day while an email failure changes nothing (#599).
       - run: npm run test:location-waitlist
 

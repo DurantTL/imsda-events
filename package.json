@@ -29,6 +29,7 @@
     "test:group-registration": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-group-registration.ts",
     "test:honor-sites": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-sites.ts",
     "test:event-locations": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-locations.ts",
+    "test:calendar-bulk": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-calendar-bulk.ts",
     "test:club-roster-guardians": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-roster-guardians.ts",
     "test:billing-responsibility": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-billing-responsibility.ts",
     "test:attendance-reconciliation": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-attendance-reconciliation.ts",

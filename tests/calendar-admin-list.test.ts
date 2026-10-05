@@ -8,6 +8,7 @@ import {
   noCategoryFilter,
   planBulkAction,
   selectAllMatching,
+  selectedMatchingIds,
   sortEntries,
   staffSourceFilter,
   summarizeSkips,
@@ -15,6 +16,7 @@ import {
   type BulkEntryRow,
   type EntryFilters,
 } from "@/modules/calendar/admin-list";
+import type { RepeatRule } from "@/modules/calendar/recurrence";
 import { planFeedSync, type FeedDefaults, type StoredFeedEntry } from "@/modules/calendar/feed-plan";
 import { parseIcsFeed } from "@/modules/calendar/ics-import";
 
@@ -36,6 +38,7 @@ const entry = (patch: Partial<AdminListEntry> = {}): AdminListEntry => ({
   repeat: null,
   ...patch,
 });
+const rule = (patch: Partial<RepeatRule>): RepeatRule => ({ frequency: "WEEKLY", interval: 1, weekdays: [], until: null, count: null, weekStart: 0, ...patch });
 const filters = (patch: Partial<EntryFilters> = {}): EntryFilters => ({ ...defaultEntryFilters, time: "all", ...patch });
 const titles = (list: AdminListEntry[]) => list.map((item) => item.title);
 
@@ -85,9 +88,29 @@ describe("calendar admin filters", () => {
     expect(run({ time: "upcoming" })).toEqual(["A", "B", "C", "D"]);
     expect(run({ time: "past" })).toEqual(["E"]);
     expect(defaultEntryFilters.time).toBe("upcoming");
-    const repeating = entry({ title: "Weekly", startsOn: "2026-01-01", endsOn: "2026-01-01", repeat: { until: null } });
-    const ended = entry({ title: "Ended", startsOn: "2026-01-01", endsOn: "2026-01-01", repeat: { until: "2026-02-01" } });
+    const repeating = entry({ title: "Weekly", startsOn: "2026-01-01", endsOn: "2026-01-01", repeat: rule({}) });
+    const ended = entry({ title: "Ended", startsOn: "2026-01-01", endsOn: "2026-01-01", repeat: rule({ until: "2026-02-01" }) });
     expect(titles(filterAndSortEntries([repeating, ended], filters({ time: "upcoming" }), "title", today))).toEqual(["Weekly"]);
+  });
+
+  it("works out a count-bounded repeat's real last occurrence", () => {
+    // Weekly from 2026-09-01 (a Tuesday): 4 times ends 2026-09-22, 8 times ends 2026-10-20 (skipping the last three leaves none upcoming).
+    const base = { startsOn: "2026-09-01", endsOn: "2026-09-01" };
+    const over = entry({ ...base, title: "Over", repeat: rule({ count: 4 }) });
+    const open = entry({ ...base, title: "Open", repeat: rule({ count: 8 }) });
+    const skippedRest = entry({ ...base, title: "SkippedRest", repeat: rule({ count: 8 }), repeatExceptions: ["2026-10-06", "2026-10-13", "2026-10-20"] });
+    const list = [over, open, skippedRest];
+    expect(titles(filterAndSortEntries(list, filters({ time: "upcoming" }), "title", today))).toEqual(["Open"]);
+    expect(titles(filterAndSortEntries(list, filters({ time: "past" }), "title", today))).toEqual(["Over", "SkippedRest"]);
+  });
+
+  it("only acts on selected rows that are still in the matching list", () => {
+    const rows = [entry({ title: "A" }), entry({ title: "B" }), entry({ title: "C" })];
+    const selected = new Set([rows[0].id, rows[2].id, "removed-or-edited-away"]);
+    expect(selectedMatchingIds(rows, selected)).toEqual([rows[0].id, rows[2].id]);
+    // After a filter hides C, its tick no longer counts.
+    expect(selectedMatchingIds(rows.slice(0, 2), selected)).toEqual([rows[0].id]);
+    expect(selectedMatchingIds([], selected)).toEqual([]);
   });
 
   it("filters by entry type and combines filters", () => {
@@ -138,20 +161,18 @@ describe("bulk action planning", () => {
     isPublished: false,
     isHiddenLocally: false,
     sourceFeedId: null,
-    sourceUid: null,
     sourceRemovedAt: null,
-    locallyEditedFields: [],
     ...patch,
   });
 
-  it("sets a category and records it as a local edit only on imported entries", () => {
+  it("sets a category without marking anything as a local edit", () => {
     const staff = row({ title: "Staff" });
-    const imported = row({ title: "Imported", sourceFeedId: "feed-1", sourceUid: "uid", locallyEditedFields: ["title"] });
+    const imported = row({ title: "Imported", sourceFeedId: "feed-1" });
     const same = row({ title: "Same", category: "Youth" });
     const plan = planBulkAction([staff, imported, same], { action: "setCategory", category: "Youth" });
     expect(plan.changes.map((change) => [change.title, change.data])).toEqual([
       ["Staff", { category: "Youth" }],
-      ["Imported", { category: "Youth", locallyEditedFields: ["title", "category"] }],
+      ["Imported", { category: "Youth" }],
     ]);
     expect(plan.skipped).toEqual([{ id: same.id, title: "Same", reason: "Already has that category." }]);
   });
@@ -201,7 +222,7 @@ describe("a feed refresh after a bulk category change", () => {
   const parsed = parseIcsFeed(fixture).entries;
   const defaults: FeedDefaults = { publishNewItems: false, defaultCategory: "Conference", defaultEntryType: "STANDARD" };
 
-  it("keeps the category staff set", () => {
+  it("keeps a bulk-set category, with no local-edit mark", () => {
     const first = planFeedSync([], parsed, defaults).creates[0];
     const stored: StoredFeedEntry & { category: string } = {
       ...first.data,
@@ -217,13 +238,14 @@ describe("a feed refresh after a bulk category change", () => {
     const bulk = planBulkAction([{ ...stored, sourceFeedId: "feed-1", isHiddenLocally: false }], { action: "setCategory", category: "Youth" });
     Object.assign(stored, bulk.changes[0].data);
     expect(stored.category).toBe("Youth");
-    expect(stored.locallyEditedFields).toContain("category");
+    expect(stored.locallyEditedFields).toEqual([]);
 
     const renamed = parsed.map((item) => (item.uid === first.entry.uid ? { ...item, title: "Renamed in Google" } : item));
     const plan = planFeedSync([stored], renamed.filter((item) => item.uid === first.entry.uid), defaults);
     expect(plan.updates).toHaveLength(1);
     expect(plan.updates[0].patch).toMatchObject({ title: "Renamed in Google" });
     expect(plan.updates[0].patch).not.toHaveProperty("category");
+    expect(plan.updates[0].patch).not.toHaveProperty("locallyEditedFields");
     Object.assign(stored, plan.updates[0].patch);
     expect(stored.category).toBe("Youth");
   });

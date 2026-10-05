@@ -13,7 +13,9 @@ import {
   filterAndSortEntries,
   maxBulkEntries,
   noCategoryFilter,
+  calendarEntryListLimit,
   selectAllMatching,
+  selectedMatchingIds,
   staffSourceFilter,
   summarizeSkips,
   type BulkAction,
@@ -132,7 +134,8 @@ export function CalendarAdminWorkspace({
   const [bulkTarget, setBulkTarget] = useState<BulkAction | null>(null);
   const today = calendarDateIn(new Date());
   const matching = useMemo(() => filterAndSortEntries(entries, filters, sort, today), [entries, filters, sort, today]);
-  const selectedMatching = matching.filter((entry) => selected.has(entry.id));
+  // Only rows still in the current list count: a stale tick (an entry edited, removed or refreshed away) never reaches the server.
+  const selectedIds = selectedMatchingIds(matching, selected);
 
   // A new view starts with nothing ticked, so a bulk action never touches rows you can't see.
   function startNewView() {
@@ -162,7 +165,7 @@ export function CalendarAdminWorkspace({
       const response = await fetch("/api/admin/calendar/entries/bulk", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids: [...selected], change: bulkTarget }),
+        body: JSON.stringify({ ids: selectedIds, change: bulkTarget }),
       });
       const result = await response.json().catch(() => ({})) as ApiResponse;
       if (!response.ok || !result.result) throw new Error(result.message ?? result.issues?.[0]?.message ?? "The entries could not be updated.");
@@ -416,11 +419,12 @@ export function CalendarAdminWorkspace({
               />
               <p aria-live="polite" className="calendar-list-summary" role="status">
                 {describeEntryCount(matching.length)} match. {describeEntrySort(sort)}.
+                {entries.length >= calendarEntryListLimit && ` Showing the newest ${calendarEntryListLimit} entries by start date; older ones are not listed.`}
               </p>
               <div className="calendar-bulk-bar">
                 <label className="checkbox-label">
                   <input
-                    checked={matching.length > 0 && selectedMatching.length === matching.length}
+                    checked={matching.length > 0 && selectedIds.length === matching.length}
                     disabled={matching.length === 0 || matching.length > maxBulkEntries}
                     onChange={(event) => setSelected(new Set(event.target.checked ? selectAllMatching(matching) : []))}
                     type="checkbox"
@@ -430,9 +434,9 @@ export function CalendarAdminWorkspace({
                 {matching.length > maxBulkEntries && (
                   <small>Narrow the list to {maxBulkEntries} or fewer to change them together.</small>
                 )}
-                {selected.size > 0 && (
-                  <div className="calendar-admin-actions" role="group" aria-label={`Change ${describeEntryCount(selected.size)}`}>
-                    <strong>{selected.size} selected</strong>
+                {selectedIds.length > 0 && (
+                  <div className="calendar-admin-actions" role="group" aria-label={`Change ${describeEntryCount(selectedIds.length)}`}>
+                    <strong>{selectedIds.length} selected</strong>
                     <input
                       aria-label="Category for the selected entries"
                       list="calendar-categories"
@@ -461,7 +465,7 @@ export function CalendarAdminWorkspace({
                       <input checked={selected.has(entry.id)} onChange={() => toggleSelected(entry.id)} type="checkbox" />
                       <span className="sr-only">Select {entry.title}</span>
                     </label>
-                    <div>
+                    <div className="calendar-entry-text">
                       <strong>{entry.title}</strong>
                       <small>
                         {formatDateRange(entry.startsOn, entry.endsOn)}
@@ -616,7 +620,7 @@ export function CalendarAdminWorkspace({
         onCancel={() => setBulkTarget(null)}
         onConfirm={() => void runBulk()}
         open={bulkTarget !== null}
-        title={bulkTarget ? bulkConfirmMessage(bulkTarget, selected.size) : "Change entries?"}
+        title={bulkTarget ? bulkConfirmMessage(bulkTarget, selectedIds.length) : "Change entries?"}
       >
         <p>Imported entries keep your changes when their calendar refreshes. Nothing is changed in Google.</p>
       </ConfirmDialog>

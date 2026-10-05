@@ -4,6 +4,11 @@
  * definition and tests need no database.
  */
 
+import { expandOccurrences, type RepeatRule } from "@/modules/calendar/recurrence";
+
+/** The most entries the admin list loads (newest start dates first). */
+export const calendarEntryListLimit = 1000;
+
 export type AdminListEntry = {
   id: string;
   title: string;
@@ -17,7 +22,8 @@ export type AdminListEntry = {
   isHiddenLocally: boolean;
   sourceFeedId: string | null;
   sourceRemovedAt: string | Date | null;
-  repeat?: { until: string | null } | null;
+  repeat?: RepeatRule | null;
+  repeatExceptions?: readonly string[];
 };
 
 export const noCategoryFilter = "__none__";
@@ -54,12 +60,18 @@ export function matchesSearch(entry: Pick<AdminListEntry, "title" | "location" |
 }
 
 /**
- * Upcoming = not over yet on `today` (YYYY-MM-DD). A repeating entry that has
- * no end date, or ends today or later, still has dates ahead.
+ * Upcoming = not over yet on `today` (YYYY-MM-DD). A repeating entry is
+ * upcoming while any of its occurrences (skipped dates excluded) ends today or
+ * later: one with no end always is, and one ended by a date or a count is
+ * checked against its real last occurrence.
  */
-export function isUpcoming(entry: Pick<AdminListEntry, "endsOn" | "repeat">, today: string) {
+export function isUpcoming(entry: Pick<AdminListEntry, "startsOn" | "endsOn" | "repeat" | "repeatExceptions">, today: string) {
   if (entry.endsOn >= today) return true;
-  return Boolean(entry.repeat && (!entry.repeat.until || entry.repeat.until >= today));
+  const rule = entry.repeat;
+  if (!rule) return false;
+  if (!rule.until && !rule.count) return true;
+  // Bounded by `until` or `count`, so this always ends.
+  return expandOccurrences(entry, rule, entry.repeatExceptions ?? [], today, "9999-12-31").length > 0;
 }
 
 export function matchesFilters(entry: AdminListEntry, filters: EntryFilters, today: string) {
@@ -104,6 +116,11 @@ export function selectAllMatching(matching: Array<{ id: string }>) {
   return matching.map((entry) => entry.id);
 }
 
+/** The ticked ids that are still in the current matching list, in list order: all a bulk action may touch. */
+export function selectedMatchingIds(matching: Array<{ id: string }>, selected: ReadonlySet<string>) {
+  return matching.filter((entry) => selected.has(entry.id)).map((entry) => entry.id);
+}
+
 export function describeEntryCount(count: number) {
   return `${count} ${count === 1 ? "entry" : "entries"}`;
 }
@@ -131,15 +148,13 @@ export type BulkEntryRow = {
   isPublished: boolean;
   isHiddenLocally: boolean;
   sourceFeedId: string | null;
-  sourceUid: string | null;
   sourceRemovedAt: Date | string | null;
-  locallyEditedFields: string[];
 };
 
 export type BulkChange = {
   id: string;
   title: string;
-  data: { category?: string; isPublished?: boolean; isHiddenLocally?: boolean; locallyEditedFields?: string[] };
+  data: { category?: string; isPublished?: boolean; isHiddenLocally?: boolean };
 };
 export type BulkSkip = { id: string; title: string; reason: string };
 export type BulkPlan = { changes: BulkChange[]; skipped: BulkSkip[] };
@@ -157,11 +172,13 @@ export function bulkConfirmMessage(action: BulkAction, count: number) {
 }
 
 /**
- * What a bulk action does to each row, following the single-entry rules: an
- * imported (or detached) entry whose category changes records `category` in
- * `locallyEditedFields`; only imported entries can be hidden or unhidden; an
- * entry gone from its feed is not republished. Rows already in the wanted
- * state, or that don't qualify, are skipped with a reason.
+ * What a bulk action does to each row. A category is not a field a feed
+ * imports, so a refresh never overwrites it and nothing is recorded in
+ * `locallyEditedFields` (the same as a single edit). Only imported entries can
+ * be hidden or unhidden. An entry gone from its feed is not republished: a
+ * refresh unpublished it, and if it returns the refresh restores its earlier
+ * publish state. Rows already in the wanted state, or that don't qualify, are
+ * skipped with a reason.
  */
 export function planBulkAction(rows: BulkEntryRow[], request: BulkAction): BulkPlan {
   const plan: BulkPlan = { changes: [], skipped: [] };
@@ -170,15 +187,7 @@ export function planBulkAction(rows: BulkEntryRow[], request: BulkAction): BulkP
     switch (request.action) {
       case "setCategory": {
         if (row.category === request.category) { skip(row, "Already has that category."); break; }
-        const imported = row.sourceFeedId !== null || row.sourceUid !== null;
-        plan.changes.push({
-          id: row.id,
-          title: row.title,
-          data: {
-            category: request.category,
-            ...(imported ? { locallyEditedFields: [...new Set([...row.locallyEditedFields, "category"])] } : {}),
-          },
-        });
+        plan.changes.push({ id: row.id, title: row.title, data: { category: request.category } });
         break;
       }
       case "publish":
