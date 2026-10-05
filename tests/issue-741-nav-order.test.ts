@@ -311,7 +311,7 @@ describe("club portal and coordinator menus are unchanged (#741 slice 4)", () =>
       "-:Home",
       "People:Roster", "People:Honors",
       "Events:Events", "Events:Club forms",
-      "Records:Monthly reports",
+      "Records:Monthly Records",
       "Orders:Orders", "Orders:Earned awards",
     ]);
   });

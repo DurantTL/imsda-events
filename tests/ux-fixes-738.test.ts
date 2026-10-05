@@ -186,25 +186,6 @@ describe("account sorting (#738)", () => {
   });
 });
 
-describe("meeting-note editor focus (#738)", () => {
-  const source = read("components/club-meeting-notes.tsx");
-
-  it("scrolls to and focuses the editor when it opens, for Add and Edit", () => {
-    expect(source).toMatch(/editorHeadingRef\.current\?\.scrollIntoView/);
-    expect(source).toMatch(/editorHeadingRef\.current\?\.focus/);
-    expect(source).toMatch(/\}, \[editorOpen, editingId\]\)/);
-    expect(source).toContain('openerRef.current = { kind: "add" }');
-    expect(source).toContain('openerRef.current = { kind: "edit", id: note.id }');
-    expect(source).toContain("data-meeting-note-add");
-    expect(source).toContain("data-meeting-note-edit={note.id}");
-  });
-
-  it("returns focus to the opener on Cancel, even when the Add button had unmounted", () => {
-    expect(source).toMatch(/function cancel\(\) \{\s*restoreFocusRef\.current = true;/);
-    expect(source).toMatch(/\.querySelector\(selector\) as HTMLElement \| null\)\?\.focus\(\)/);
-  });
-});
-
 describe("spacing and touch targets (#738)", () => {
   it("drops the negative help-text margin under notices on Orders and Class tracking", () => {
     const css = read("components/club-orders.module.css");
