@@ -102,4 +102,30 @@ describe("People page with a choice-answer filter", () => {
     const props = dependencies.workspaceProps.mock.calls.at(-1)![0] as { matchingPersonFilter: boolean };
     expect(props.matchingPersonFilter).toBe(false);
   });
+
+  it("shows Email these people only with MANAGE_COMMUNICATIONS", async () => {
+    const query = { event: "evt", answerQuestion: "ATTENDEE:meal_preference", answerValue: "Vegan" };
+    const event = { id: "evt", slug: "wr", timezone: "UTC", waitlistEnabled: false };
+    dependencies.resolveEventContext.mockResolvedValue({ event, permissions: ["VIEW_SENSITIVE_DATA"] });
+    expect(await render(query)).not.toContain("Email these people");
+    dependencies.resolveEventContext.mockResolvedValue({ event, permissions: ["VIEW_SENSITIVE_DATA", "MANAGE_COMMUNICATIONS"] });
+    expect(await render(query)).toContain("Email these people");
+    // Nothing to email on an empty result.
+    dependencies.listRegistrations.mockResolvedValue([registration("R2", "Standard")]);
+    expect(await render(query)).not.toContain("Email these people");
+  });
+
+  it("passes ?registration= to the workspace without changing its key, so it follows the URL instead of remounting", async () => {
+    const query = { event: "evt", answerQuestion: "ATTENDEE:meal_preference", answerValue: "Vegan" };
+    dependencies.resolveEventContext.mockResolvedValue({ event: { id: "evt", slug: "wr", timezone: "UTC", waitlistEnabled: false }, permissions: ["VIEW_SENSITIVE_DATA"] });
+    const workspaceFor = async (extra: Record<string, string>) => {
+      const tree = await PeoplePage({ searchParams: Promise.resolve({ ...query, ...extra }) }) as { props: { children: Array<{ key: string | null; props: Record<string, unknown> }> } };
+      return tree.props.children.at(-1)!;
+    };
+    const closed = await workspaceFor({});
+    const opened = await workspaceFor({ registration: "R1" });
+    expect(opened.key).toBe(closed.key);
+    expect(closed.props.initialRegistrationId).toBeUndefined();
+    expect(opened.props.initialRegistrationId).toBe("R1");
+  });
 });

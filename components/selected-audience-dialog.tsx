@@ -58,14 +58,17 @@ export function SelectedAudienceDialog({
   eventId,
   registrationIds,
   onClose,
+  initialDraft,
 }: {
   eventId: string;
   registrationIds: string[];
   onClose: () => void;
+  /** A starting message (#783). Staff can edit all of it, and nothing sends until they confirm. */
+  initialDraft?: { templateKey: SelectedAudienceTemplateKey; title: string; body: string };
 }) {
-  const [templateKey, setTemplateKey] = useState<SelectedAudienceTemplateKey>("BALANCE_REMINDER");
-  const [announcementTitle, setAnnouncementTitle] = useState("");
-  const [announcementBody, setAnnouncementBody] = useState("");
+  const [templateKey, setTemplateKey] = useState<SelectedAudienceTemplateKey>(initialDraft?.templateKey ?? "BALANCE_REMINDER");
+  const [announcementTitle, setAnnouncementTitle] = useState(initialDraft?.title ?? "");
+  const [announcementBody, setAnnouncementBody] = useState(initialDraft?.body ?? "");
   const [preview, setPreview] = useState<SelectedAudiencePreview | null>(null);
   const [operation, setOperation] = useState<BatchOperation | null>(null);
   const [loading, setLoading] = useState(true);
