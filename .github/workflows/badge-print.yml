@@ -10,13 +10,26 @@ on:
       - "**/*badge*/**"
       - "app/globals.css"
       - "modules/checkin/**"
+      - "components/print-report-button.tsx"
+      - "components/access-restricted.tsx"
+      - "modules/registrations/**"
+      - "modules/events/**"
+      - "scripts/support/**"
+      - "prisma/**"
+      - "app/layout.tsx"
+      - "app/(workspace)/layout.tsx"
+      - "proxy.ts"
+      - "next.config.ts"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/badge-print.yml"
+  # Weekly safety run, so a change outside the paths above still gets caught.
+  schedule:
+    - cron: "37 9 * * 1"
   workflow_dispatch:
 
 concurrency:
-  group: badge-print-${{ github.event.pull_request.number || github.ref }}
+  group: badge-print-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
