@@ -1476,6 +1476,7 @@ model Event {
   attendeeTypes                       EventAttendeeType[]
   attendeeClassifications             EventAttendeeClassification[]
   tags                                EventTag[]
+  lodging                             EventLodging?
   notes                               StaffNote[]
   registrationTagAssignments          RegistrationTagAssignment[]
   attendeeTagAssignments              AttendeeTagAssignment[]
@@ -5979,4 +5980,241 @@ model InvoicePayment {
 
   @@index([invoiceId, createdAt])
   @@index([eventId])
+}
+
+// ---------------------------------------------------------------------------
+// Lodging inventory and availability (#198, slice 1). Facility data only: no
+// person, assignment, preference or waitlist is stored here (those are #199 and
+// #200). The property templates are code data synced by `npm run lodging:sync`.
+// Actor columns are plain user ids (no foreign key) so the append-only history
+// never has to be rewritten when a user is deleted.
+// ---------------------------------------------------------------------------
+
+enum LodgingUnitKind {
+  ROOM
+  RV_SITE
+  TENT
+}
+
+enum LodgingBedType {
+  QUEEN
+  DOUBLE
+  TWIN
+  /// A bunk bed: a lower and an upper twin, so it sleeps two.
+  TWIN_BUNK
+}
+
+enum LodgingBathroom {
+  PRIVATE
+  SHARED
+  BATHHOUSE
+  UNSPECIFIED
+}
+
+/// The categories an event can set an optional rate for (never seeded).
+enum LodgingCategory {
+  DORM_ROOM
+  CONFERENCE_CENTER_ROOM
+  RV_SITE
+  TENT_WITH_POWER
+  TENT
+}
+
+enum LodgingRateBasis {
+  PER_UNIT_NIGHT
+  PER_PERSON_NIGHT
+}
+
+enum LodgingHoldKind {
+  STAFF
+  MAINTENANCE
+}
+
+enum LodgingHoldHistoryType {
+  CREATED
+  WINDOW_CHANGED
+  RELEASED
+}
+
+model LodgingProperty {
+  id              String   @id @default(cuid())
+  key             String   @unique
+  name            String
+  /// The template version last applied by the sync.
+  templateVersion Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  buildings LodgingBuilding[]
+  units     LodgingUnit[]
+  events    EventLodging[]
+}
+
+model LodgingBuilding {
+  id         String   @id @default(cuid())
+  propertyId String
+  key        String
+  name       String
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  property LodgingProperty @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  units    LodgingUnit[]
+
+  @@unique([propertyId, key])
+}
+
+/// One reservable unit: a room, a numbered RV site, or a counted area (`isArea`).
+model LodgingUnit {
+  id                 String           @id @default(cuid())
+  propertyId         String
+  buildingId         String
+  key                String
+  name               String
+  kind               LodgingUnitKind
+  /// A counted area with a capacity but no numbered sites.
+  isArea             Boolean          @default(false)
+  category           LodgingCategory?
+  floor              Int?
+  groundLevel        Boolean          @default(false)
+  bathroom           LodgingBathroom  @default(UNSPECIFIED)
+  linensProvided     Boolean?
+  specialUse         Boolean          @default(false)
+  /// False for storage and similar: never has capacity.
+  assignable         Boolean          @default(true)
+  /// "Sleeps up to"; null means no fixed limit.
+  defaultCapacity    Int?
+  defaultUnavailable Boolean          @default(false)
+  defaultHoldKind    LodgingHoldKind?
+  defaultHoldReason  String?
+  notes              String?
+  sortOrder          Int              @default(0)
+  activeFrom         DateTime?        @db.Date
+  activeUntil        DateTime?        @db.Date
+  /// Set when a later template version no longer lists the unit; never deleted.
+  retiredAt          DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
+  property   LodgingProperty    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  building   LodgingBuilding    @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  beds       LodgingBed[]
+  eventUnits EventLodgingUnit[]
+
+  @@unique([propertyId, key])
+  @@index([buildingId, sortOrder])
+}
+
+model LodgingBed {
+  id       String         @id @default(cuid())
+  unitId   String
+  position Int
+  type     LodgingBedType
+  sleeps   Int
+
+  unit LodgingUnit @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@unique([unitId, position])
+}
+
+/// An event's use of one property. External hotel details stay on Event and are never inventory.
+model EventLodging {
+  id              String    @id @default(cuid())
+  eventId         String    @unique
+  propertyId      String
+  templateVersion Int
+  /// Optional bookable-night window; defaults to the event's own dates (last night = day before the end date).
+  firstNight      DateTime? @db.Date
+  lastNight       DateTime? @db.Date
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  event    Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  property LodgingProperty    @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  units    EventLodgingUnit[]
+  rates    EventLodgingRate[]
+
+  @@unique([id, eventId])
+}
+
+/// Per-event state for one unit. The row doubles as the lock #200 takes (FOR UPDATE) before allocating.
+model EventLodgingUnit {
+  id                String   @id @default(cuid())
+  eventId           String
+  eventLodgingId    String
+  unitId            String
+  capacityOverride  Int?
+  unavailable       Boolean  @default(false)
+  unavailableReason String?
+  updatedByUserId   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  eventLodging EventLodging       @relation(fields: [eventLodgingId, eventId], references: [id, eventId], onDelete: Cascade)
+  unit         LodgingUnit        @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  holds        EventLodgingHold[]
+
+  @@unique([eventLodgingId, unitId])
+  @@unique([id, eventId])
+}
+
+/// A staff or maintenance hold: whole-unit, for a window of nights (both ends inclusive). Released, never deleted.
+model EventLodgingHold {
+  id                 String          @id @default(cuid())
+  eventId            String
+  eventLodgingUnitId String
+  kind               LodgingHoldKind
+  reason             String
+  firstNight         DateTime        @db.Date
+  lastNight          DateTime        @db.Date
+  createdByUserId    String?
+  createdAt          DateTime        @default(now())
+  releasedAt         DateTime?
+  releasedByUserId   String?
+  releaseReason      String?
+
+  eventUnit EventLodgingUnit          @relation(fields: [eventLodgingUnitId, eventId], references: [id, eventId], onDelete: Cascade)
+  history   EventLodgingHoldHistory[]
+
+  @@unique([id, eventId])
+  @@index([eventLodgingUnitId, releasedAt])
+  @@index([eventId])
+}
+
+/// Append-only: one row per change to a hold.
+model EventLodgingHoldHistory {
+  id          String                 @id @default(cuid())
+  eventId     String
+  holdId      String
+  type        LodgingHoldHistoryType
+  actorUserId String?
+  at          DateTime               @default(now())
+  kind        LodgingHoldKind?
+  reason      String?
+  firstNight  DateTime?              @db.Date
+  lastNight   DateTime?              @db.Date
+
+  hold EventLodgingHold @relation(fields: [holdId, eventId], references: [id, eventId], onDelete: Cascade)
+
+  @@index([holdId, at])
+}
+
+/// Optional rate for a category. No row means lodging is included or free. Set only by a person; never seeded.
+model EventLodgingRate {
+  id              String           @id @default(cuid())
+  eventId         String
+  eventLodgingId  String
+  category        LodgingCategory
+  amountCents     Int
+  basis           LodgingRateBasis
+  minimumNights   Int?
+  updatedByUserId String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  eventLodging EventLodging @relation(fields: [eventLodgingId, eventId], references: [id, eventId], onDelete: Cascade)
+
+  @@unique([eventLodgingId, category])
 }

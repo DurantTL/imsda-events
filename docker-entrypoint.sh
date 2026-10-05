@@ -22,6 +22,11 @@ npx prisma migrate deploy
 echo "[entrypoint] Syncing club form templates (npm run club-forms:sync)..."
 npm run club-forms:sync
 
+# Bring the lodging property templates (#198) to this release's version. It only
+# adds or updates facility inventory and never touches an event's own lodging state.
+echo "[entrypoint] Syncing lodging property templates (npm run lodging:sync)..."
+npm run lodging:sync
+
 if [ "${RUN_DB_SEED}" = "true" ]; then
   echo "[entrypoint] RUN_DB_SEED is no longer supported. Fictitious demo data is local-only;" >&2
   echo "[entrypoint] use 'npm run admin:create' to create a real administrator." >&2

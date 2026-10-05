@@ -5,6 +5,7 @@ import {
   ChartNoAxesCombined,
   FileText,
   FileUp,
+  BedDouble,
   HeartPulse,
   LayoutDashboard,
   ListChecks,
@@ -127,6 +128,7 @@ export const staffPageTitles = {
   merchandise: "Merchandise catalog",
   assignmentRoster: "Assignment roster",
   programAssignments: "Seminar assignments",
+  lodging: "Lodging",
 } as const;
 
 type SubpageRule = readonly [path: string, match: "exact" | "prefix" | "under", title: string];
@@ -156,6 +158,7 @@ const subpageRules: readonly SubpageRule[] = [
   ["/more/event-patches", "prefix", staffPageTitles.eventPatches],
   ["/more/health", "prefix", staffPageTitles.operationalHealth],
   ["/more/merchandise", "prefix", staffPageTitles.merchandise],
+  ["/more/lodging", "prefix", staffPageTitles.lodging],
   ["/more/program-assignments/", "under", staffPageTitles.assignmentRoster],
   ["/more/program-assignments", "exact", staffPageTitles.programAssignments],
 ];
@@ -425,6 +428,7 @@ export function buildMoreDirectoryCards({
     { key: "attendee-configuration", group: "setup", allowed: Boolean(attendeeConfigurationPermission && has(attendeeConfigurationPermission)), href: `/more/attendee-configuration${eventQuery}`, icon: Tags, title: "Attendee setup", description: "Define the attendee types and per-type pricing this event registers.", cta: "Open attendee setup" },
     { key: "tags", group: "setup", allowed: Boolean(tagsPermission && has(tagsPermission)), href: `/more/tags${eventQuery}`, icon: Tag, title: "Tags", description: "Create and color-code the tags staff use to mark and filter registrations.", cta: "Manage tags" },
     { key: "honors", group: "setup", allowed: has("CONFIGURE_EVENT"), href: `/more/honors${eventQuery}`, icon: Award, title: "Honors Weekend classes", description: "Name this site's sessions and set the honor classes, seats, and age limits it offers.", cta: "Set up classes" },
+    { key: "lodging", group: "setup", allowed: has("CONFIGURE_EVENT"), href: `/more/lodging${eventQuery}`, icon: BedDouble, title: "Lodging", description: "See rooms, beds and sites night by night, set capacity, mark units unavailable, and place holds.", cta: "Open lodging" },
     { key: "registration-builder", group: "setup", allowed: has("MANAGE_FORMS"), href: `/registration-builder${eventQuery}`, icon: PanelsTopLeft, title: "Registration forms", description: "Build, test, and publish the form people use to register.", cta: "Open form builder" },
     { key: "program-assignments", group: "setup", allowed: canManageProgramAssignments(permissions), href: `/more/program-assignments${eventQuery}`, icon: ListChecks, title: "Seminar assignments", description: "Turn attendee rankings and room limits into reviewed, printable session rosters.", cta: "Preview assignments" },
     { key: "event-content", group: "content-sales", allowed: has("CONFIGURE_EVENT"), href: `/more/event-content${eventQuery}`, icon: FileText, title: "Public content", description: "Speaker bios, seminar descriptions, lodging, schedules, and downloads shown publicly.", cta: "Edit page" },
