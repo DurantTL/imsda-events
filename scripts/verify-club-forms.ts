@@ -299,7 +299,7 @@ async function main() {
   const BIRTH = "1985-06-15";
   const birthForm = await submissions.saveClubFormSubmission(directorA, {
     organizationId: clubs.a, templateKey: STAFF_FORM, answers: {
-      full_name: "Birth Verify", birth_date: BIRTH, child_1_name: "Kid Verify", child_1_birth_date: "2018-02-03", street: "2 Example Road", city: "Exampleville",
+      full_name: "Birth Verify", birth_date: BIRTH, gender: "Male", child_1_name: "Kid Verify", child_1_birth_date: "2018-02-03", street: "2 Example Road", city: "Exampleville",
       state: "MO", zip: "64000", email: `birth@${emailDomain}`, church: "Verify Forms Church", club: "Verify Forms Club A",
       health_limitation: "Yes", health_limitation_how: SECRET_HEALTH, conduct_accused: "No",
       reference_1_name: "A", reference_1_address: "B", reference_1_phone: "C", reference_2_name: "A", reference_2_address: "B", reference_2_phone: "C",
@@ -527,7 +527,7 @@ async function main() {
 
   // 6. Staff-only fields on the staff form, and the CSV ----------------------------
   const staffAnswers = {
-    full_name: "Alex Verify", birth_date: "1985-06-15", street: "2 Example Road", city: "Exampleville", state: "MO", zip: "64000",
+    full_name: "Alex Verify", birth_date: "1985-06-15", gender: "Male", street: "2 Example Road", city: "Exampleville", state: "MO", zip: "64000",
     email: `alex@${emailDomain}`, church: "Verify Forms Church", club: "Verify Forms Club A", health_limitation: "Yes", health_limitation_how: SECRET_HEALTH, conduct_accused: "No",
     reference_1_name: "A", reference_1_address: "B", reference_1_phone: "C", reference_2_name: "A", reference_2_address: "B", reference_2_phone: "C",
     reference_3_name: "A", reference_3_address: "B", reference_3_phone: "C",

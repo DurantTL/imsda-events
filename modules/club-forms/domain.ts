@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { clubFormTemplateSeeds } from "@/modules/club-forms/definitions";
+import { parseRosterMapping, rosterMappingProblems, type RosterMapping } from "@/modules/club-forms/roster-mapping";
 import { formatAddressDisplay, isPlainAddressObject, sanitizeAddressInput } from "@/modules/forms/address";
 import {
   isFieldVisible,
@@ -53,6 +54,11 @@ export type ClubFormTemplateRecord = {
    */
   hiddenFieldKeys: string[];
   printLayout: ClubFormPrintLayout;
+  /**
+   * The "Allow adding to the roster" setting (#721): the stored mapping, or the
+   * code seed's (off) until one is stored. Null for a form with neither.
+   */
+  rosterMapping: RosterMapping | null;
   enabled: boolean;
   /** Edited or created in the app (#712): `club-forms:sync` leaves it alone. */
   customized: boolean;
@@ -61,7 +67,7 @@ export type ClubFormTemplateRecord = {
 export type ClubFormTemplateSpec = Pick<
   ClubFormTemplateRecord,
   "definition" | "sectionNotes" | "sensitiveFieldKeys" | "birthDateFieldKeys" | "staffOnlyFieldKeys"
->;
+> & { hiddenFieldKeys?: string[]; rosterMapping?: RosterMapping | null };
 
 /**
  * Sets every auto-date field the answers should carry to today's date in the
@@ -112,6 +118,7 @@ export function templateSpecProblems(spec: ClubFormTemplateSpec): string[] {
   for (const id of Object.keys(spec.sectionNotes)) {
     if (!sectionIds.has(id)) problems.push(`Notes name section ${id}, which is not in the form.`);
   }
+  if (spec.rosterMapping) problems.push(...rosterMappingProblems(spec.rosterMapping, spec));
   return problems;
 }
 
@@ -129,6 +136,7 @@ export function parseClubFormTemplate(row: {
   staffOnlyFieldKeys: string[];
   hiddenFieldKeys?: string[];
   printLayout: string;
+  rosterMapping?: unknown;
   enabled: boolean;
   customizedAt?: Date | null;
 }): ClubFormTemplateRecord {
@@ -148,6 +156,9 @@ export function parseClubFormTemplate(row: {
     staffOnlyFieldKeys: row.staffOnlyFieldKeys,
     hiddenFieldKeys: row.hiddenFieldKeys ?? [],
     printLayout: row.printLayout === "PASSENGER_LIST" ? "PASSENGER_LIST" : "STANDARD",
+    // A stored mapping wins; until one is stored the code's pre-filled (off) mapping applies. One that does not
+    // parse reads as none, so a damaged value can only turn the feature off.
+    rosterMapping: parseRosterMapping(row.rosterMapping) ?? seed?.rosterMapping ?? null,
     enabled: row.enabled,
     customized: Boolean(row.customizedAt),
   };

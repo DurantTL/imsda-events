@@ -4149,6 +4149,8 @@ model ClubRosterMember {
   /// The transfer, if any, that created this row at the receiving club (#489).
   transferAsReceiver MemberTransfer?  @relation("MemberTransferToRoster")
   clubFormSubmissions ClubFormSubmission[]
+  /// Submissions added or linked to this member with "Add to roster" (#721).
+  clubFormRosterActions ClubFormSubmission[] @relation("ClubFormSubmissionRosterAction")
   clubFormLinks       ClubFormLink[]
   meetingAttendance   ClubMeetingAttendance[]
   /// Up to two guardian contacts (#510). Deleted with the member's removal.
@@ -5175,6 +5177,13 @@ enum ClubFormSubmissionStatus {
   SUBMITTED
 }
 
+/// What a director did with a submitted club form on the roster (#721).
+/// ADDED created a new roster member; LINKED recorded an existing one.
+enum ClubFormRosterAction {
+  ADDED
+  LINKED
+}
+
 /// How a club form submission was entered (#610): a club director or deputy
 /// signed in with their own account, a system administrator acting as that
 /// director, or the person who opened a single-use private link.
@@ -5226,6 +5235,13 @@ model ClubFormTemplate {
   /// Field keys kept in the definition (so their sensitive flags and old
   /// answers stay put) but not offered to new fills (#712).
   hiddenFieldKeys    String[]  @default([])
+  /// The "Allow adding to the roster" setting (#721): whether a submitted form
+  /// can be added to the club roster, as which roster type, and which form
+  /// fields fill which roster fields (by field key, never an answer). Null
+  /// until set in the builder; a seeded template then falls back to the code's
+  /// pre-filled mapping, which is off. Birth-date and sensitive fields map only
+  /// to protected roster fields and health fields never map (validated in code).
+  rosterMapping      Json?
   sortOrder          Int       @default(0)
   enabled            Boolean   @default(false)
   enabledAt          DateTime?
@@ -5298,10 +5314,17 @@ model ClubFormSubmission {
   enteredByUserId        String?
   linkId                 String?                  @unique
   submittedAt            DateTime?
+  /// "Add to roster" outcome (#721): the roster member this form was added to
+  /// or linked to. The answers are never changed. `rosterActionAt` stays set
+  /// if the member is later erased (the member id then goes null).
+  rosterAction           ClubFormRosterAction?
+  rosterActionMemberId   String?
+  rosterActionAt         DateTime?
   createdAt              DateTime                 @default(now())
   updatedAt              DateTime                 @updatedAt
 
   template         ClubFormTemplate  @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  rosterActionMember ClubRosterMember? @relation("ClubFormSubmissionRosterAction", fields: [rosterActionMemberId], references: [id], onDelete: SetNull)
   organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   rosterMember     ClubRosterMember? @relation(fields: [rosterMemberId], references: [id], onDelete: SetNull)
   enteredByAccount AttendeeAccount?  @relation("ClubFormSubmissionEnteredByAccount", fields: [enteredByAccountId], references: [id], onDelete: SetNull)
@@ -5311,6 +5334,7 @@ model ClubFormSubmission {
   @@index([organizationId, templateId, status])
   @@index([organizationId, clubYear])
   @@index([rosterMemberId])
+  @@index([rosterActionMemberId])
   @@index([templateId, submittedAt])
 }
 

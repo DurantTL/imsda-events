@@ -1,4 +1,5 @@
 import type { ClubFormDraftSpec } from "@/modules/club-forms/builder-domain";
+import { mappingWithRenamedKey, mappingWithoutKey, type RosterMapping } from "@/modules/club-forms/roster-mapping";
 import { isChoiceFieldType, type RegistrationFormField } from "@/modules/forms/definition";
 
 /**
@@ -162,6 +163,7 @@ export function renameFieldKey(spec: ClubFormDraftSpec, fieldId: string, newKey:
     birthDateFieldKeys: renameIn(spec.birthDateFieldKeys, oldKey, newKey),
     staffOnlyFieldKeys: renameIn(spec.staffOnlyFieldKeys, oldKey, newKey),
     hiddenFieldKeys: renameIn(spec.hiddenFieldKeys, oldKey, newKey),
+    rosterMapping: mappingWithRenamedKey(spec.rosterMapping, oldKey, newKey),
   };
 }
 
@@ -233,6 +235,7 @@ export function removeField(spec: ClubFormDraftSpec, fieldId: string): ClubFormD
     birthDateFieldKeys: without(spec.birthDateFieldKeys, key),
     staffOnlyFieldKeys: without(spec.staffOnlyFieldKeys, key),
     hiddenFieldKeys: without(spec.hiddenFieldKeys, key),
+    rosterMapping: mappingWithoutKey(spec.rosterMapping, key),
   };
 }
 
@@ -240,6 +243,16 @@ export function removeSection(spec: ClubFormDraftSpec, sectionId: string): ClubF
   const section = spec.definition.sections.find((candidate) => candidate.id === sectionId);
   if (!section) return spec;
   return section.fields.reduce((next, field) => removeField(next, field.id), spec);
+}
+
+/** A new, switched-off mapping for a form that has none yet. */
+export function blankRosterMapping(): RosterMapping {
+  return { enabled: false, rosterType: "YOUTH", fields: {}, guardians: [] };
+}
+
+/** Replaces the roster mapping (#721). Pass null to clear it. */
+export function setRosterMapping(spec: ClubFormDraftSpec, rosterMapping: RosterMapping | null): ClubFormDraftSpec {
+  return { ...spec, rosterMapping };
 }
 
 export function sectionNotesFromText(text: string) {
