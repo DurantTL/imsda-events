@@ -83,4 +83,26 @@ describe("kitchen report (#787)", () => {
     expect(csv).toContain(`"'=SUM(A1)","1"`);
     expect(csv).toContain('"People with any dietary need","1"');
   });
+
+  it("does not count a double-spaced no-needs answer as a need", () => {
+    const result = buildKitchenReport([registration("W", "CONFIRMED", [{ dietary_needs: "No  needs" }, { dietary_needs: "Vegan" }])]);
+    expect(result.peopleWithNeeds).toBe(1);
+    expect(result.needs).toEqual([{ answer: "Vegan", count: 1 }]);
+  });
+
+  it("counts a registration-wide dietary answer once, however many people are on it", () => {
+    const wide = {
+      ...definition,
+      sections: (definition.sections as Array<{ fields: Array<Record<string, unknown>> }>).map((section) => ({
+        ...section,
+        fields: section.fields.map((field) => (field.key === "dietary_needs" ? { ...field, scope: "REGISTRATION" } : field)),
+      })),
+    };
+    const record = registration("G", "CONFIRMED", [{}, {}, {}]) as unknown as { publicSubmission: Record<string, unknown> };
+    record.publicSubmission = { definition: wide, responses: { dietary_needs: "Shellfish allergy" }, attendeeResponses: [] };
+    const result = buildKitchenReport([record as unknown as RegistrationRecord]);
+    expect(result.totalPeople).toBe(3);
+    expect(result.peopleWithNeeds).toBe(1);
+    expect(result.needs).toEqual([{ answer: "Shellfish allergy", count: 1 }]);
+  });
 });

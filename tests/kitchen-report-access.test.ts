@@ -135,4 +135,23 @@ describe("kitchen report: Area Coordinator path", () => {
     expect((await areaCsv(request, params)).status).toBe(404);
     expect(mocks.listRegistrations).not.toHaveBeenCalled();
   });
+
+  it("reads a real club-event form template (Spring Camporee) on the coordinator path", async () => {
+    const clubDefinition = formTemplates.find((template) => template.key === "spring_camporee_export")!.definition;
+    mocks.listRegistrations.mockResolvedValue([{
+      ...synthetic,
+      attendees: [
+        { ...synthetic.attendees[0], responses: { dietary_needs: "Gluten free" } },
+        { ...synthetic.attendees[0], id: "a2", responses: { dietary_needs: "gluten  FREE" } },
+        { ...synthetic.attendees[0], id: "a3", responses: { dietary_needs: "None" } },
+      ],
+      publicSubmission: { definition: clubDefinition, responses: {}, attendeeResponses: [] },
+    }]);
+    const response = await areaCsv(request, params);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain('"Gluten free","2"');
+    expect(text).toContain('"People with any dietary need","2"');
+    expect(text).not.toMatch(/SYNTH-|Surname|Family|example\.test/);
+  });
 });

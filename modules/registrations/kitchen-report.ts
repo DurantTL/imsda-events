@@ -43,7 +43,6 @@ export function buildKitchenReport(registrations: readonly RegistrationRecord[])
   let peopleWithNeeds = 0;
   for (const row of rows) {
     if (!row.hasDietaryNeeds) continue;
-    peopleWithNeeds += 1;
     const seen = new Set<string>();
     for (const part of row.dietaryNeeds.split(";")) {
       const wording = part.replace(/\s+/g, " ").trim();
@@ -56,6 +55,8 @@ export function buildKitchenReport(registrations: readonly RegistrationRecord[])
       group.wordings.set(wording, (group.wordings.get(wording) ?? 0) + 1);
       groups.set(key, group);
     }
+    // Only people with at least one counted answer, so the total never exceeds the table.
+    if (seen.size > 0) peopleWithNeeds += 1;
   }
   const needs = [...groups.values()].map((group) => {
     // Most common wording; ties go to the first in plain code order (capitalized wording first) so the page is stable.

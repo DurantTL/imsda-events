@@ -657,3 +657,24 @@ only.
 - Emergency contact name and relationship are missing from the permission slip.
 - The 30-day window and the exception need the same owner sign-off as the rest
   of this ADR before it moves from Proposed to Accepted.
+
+## Addendum D: Anonymous kitchen report
+
+Status: **Proposed**, like the rest of this ADR. Recorded 2026-10-05 for GitHub
+issue #787, from the Communication Director's decision of 2026-10-05.
+
+- **What it shows.** Meal-type counts and the dietary-needs answers as people
+  typed them, grouped (trim, ignore case, collapse spaces) and counted, plus the
+  number of people with any need. "No needs" answers such as None or N/A are
+  left out. Confirmed registrations only. There are no names, confirmation
+  codes, contact details, churches or clubs, and no answer links to a person.
+- **Who sees it.** Event staff holding `VIEW_REPORTS`, without needing
+  `VIEW_SENSITIVE_DATA` or `VIEW_HEALTH_INFORMATION`, and Area Coordinators on
+  published club-audience events. Attendees and club directors cannot open it.
+  The Addendum C rows for the coordinator health view are unchanged and still
+  apply to that view.
+- **Not audited.** Opening or downloading it is not written to the audit log,
+  because the report contains no names.
+- **Accepted risk.** Free text can still identify someone at a small event
+  (for example a rare allergy at a small club event). The director accepted that
+  risk for this report.

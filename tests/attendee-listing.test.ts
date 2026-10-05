@@ -244,6 +244,8 @@ describe("no-needs answers", () => {
       expect(hasDietaryNeeds(text), text).toBe(true);
     }
     expect(hasDietaryNeeds("None; Neither")).toBe(false);
+    expect(hasDietaryNeeds("No  needs")).toBe(false);
+    expect(hasDietaryNeeds("  none \t needed ; N/A")).toBe(false);
   });
 
   it("reads a Neither meal answer as Regular and Both as Other", () => {
