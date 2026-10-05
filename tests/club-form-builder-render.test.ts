@@ -56,3 +56,42 @@ describe("the club form builder page (#712)", () => {
     expect(markup).toContain("A copy of");
   });
 });
+
+describe("the Allow adding to the roster setting (#721)", () => {
+  const membership = clubFormTemplateSeeds.find((candidate) => candidate.key === "pathfinder_membership_application")!;
+  const membershipSpec = specFromRecord({
+    name: membership.name,
+    description: membership.description,
+    definition: registrationFormDefinitionSchema.parse(membership.definition),
+    sectionNotes: membership.sectionNotes,
+    sensitiveFieldKeys: membership.sensitiveFieldKeys,
+    birthDateFieldKeys: membership.birthDateFieldKeys,
+    staffOnlyFieldKeys: membership.staffOnlyFieldKeys,
+    hiddenFieldKeys: [],
+    printLayout: membership.printLayout,
+    sortOrder: membership.sortOrder,
+    rosterMapping: membership.rosterMapping,
+  });
+  const render = (initial: typeof membershipSpec) => renderToStaticMarkup(createElement(ClubFormBuilder, {
+    templateKey: membership.key, version: 2, enabled: false, submissionCount: 0, initial, hasDraft: false, draftUpdatedAt: null,
+    lockedSensitiveKeys: membership.sensitiveFieldKeys, lockedBirthDateKeys: membership.birthDateFieldKeys, publishedKeys: [], versions: [],
+  }));
+
+  it("shows the setting off, with the seeded mapping pre-filled", () => {
+    const markup = render(membershipSpec);
+    expect(markup).toContain("Allow adding to the roster");
+    expect(markup).toContain("Add people as");
+    expect(markup).toContain("Birth date (sealed)");
+    expect(markup).toMatch(/<input[^>]*type="checkbox"(?![^>]*checked)[^>]*\/> Allow adding to the roster/);
+  });
+
+  it("offers the birth date only birth-date questions, and never a sensitive or health question for a plain field", () => {
+    const markup = render(membershipSpec);
+    const section = markup.slice(markup.indexOf("Add to the club roster"));
+    const birthSelect = section.slice(section.indexOf("Birth date (sealed)"), section.indexOf("Gender"));
+    expect(birthSelect).toContain("was born on");
+    expect(birthSelect).not.toContain("Date of application");
+    // A sensitive question is not offered anywhere else in the setting.
+    expect(section.slice(section.indexOf("Gender"))).not.toContain("was born on");
+  });
+});

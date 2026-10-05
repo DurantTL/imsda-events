@@ -52,6 +52,7 @@ const rowSelect = {
   staffOnlyFieldKeys: true,
   hiddenFieldKeys: true,
   printLayout: true,
+  rosterMapping: true,
   sortOrder: true,
   enabled: true,
   customizedAt: true,
@@ -305,6 +306,7 @@ function liveColumns(spec: ClubFormDraftSpec) {
     birthDateFieldKeys: spec.birthDateFieldKeys,
     staffOnlyFieldKeys: spec.staffOnlyFieldKeys,
     hiddenFieldKeys: spec.hiddenFieldKeys,
+    rosterMapping: spec.rosterMapping ? (spec.rosterMapping as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
   };
 }
 

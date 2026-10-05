@@ -60,6 +60,58 @@ and health answers).
 club's past submissions, and the Area Coordinator and staff views of them, stay
 readable (read-only). A private link to a switched-off form stops working.
 
+## Add to roster (#721)
+
+A template can allow its submitted forms to be added to the club roster. It is
+a per-form setting in the builder ("Allow adding to the roster"), stored as
+`ClubFormTemplate.rosterMapping` (field keys only, never an answer) and edited
+with the rest of the draft, so it is published and versioned with the form.
+`roster-mapping.ts` holds the shape and every rule; `roster-add.ts` the two
+steps.
+
+- **Mapping:** the admin picks the roster type (youth member or staff) and which
+  question fills each roster field (name, birth date, gender, class, role, up to
+  two guardian contacts). The seeded Membership Application and Staff/Volunteer
+  templates ship with a mapping pre-filled from their field keys, **off**; it
+  applies until the template has its own stored mapping.
+- **Protection rules** (checked in the builder, at publish, and again before the
+  action is offered or used): the roster's birth date comes only from a field the
+  template marks as a birth date and stays sealed; a birth-date field can fill
+  nothing else; any other sensitive field can fill nothing; a health field can
+  never be mapped (sensitive health answers are blocked by the rule above, and a
+  health-looking question that nobody flagged is blocked by wording). The
+  encrypted Health Record (#611) is never read or written from a form.
+- **Who:** the club's director and deputy (or an admin acting as the director),
+  for their own club. Registrars, Area Coordinators and conference staff never
+  see the action.
+- **Flow:** on a submitted form, **Add to roster** opens a review screen,
+  pre-filled from the mapped answers (the open is audited like any open of a
+  form with sensitive answers). Nothing is written until the director confirms.
+  The director checks and edits the details, and the roster's own validation
+  applies. It is always the current club year (only it is editable, #541). A
+  form already filed against a member can only be linked to them, never add a
+  new person. A member later removed from the roster counts as not added, so the
+  form can be added again.
+- **Duplicates:** the same name and birth date in the club and year offers
+  **Link to existing member** instead. People are never merged; linking only
+  records which member the form belongs to and changes nothing on the member.
+- **Record:** the submission stores `rosterAction` (`ADDED` or `LINKED`),
+  `rosterActionMemberId` and `rosterActionAt`, and also files itself against the
+  member (`rosterMemberId`), so the form shows in the member's own list of forms;
+  its answers never change. The applicant's address stays on the form. The
+  action then reads "Added to roster" and links to the member. Add and link are
+  audited (`CLUB_FORM_SUBMISSION_ADDED_TO_ROSTER`,
+  `CLUB_FORM_SUBMISSION_LINKED_TO_ROSTER`) with ids and the template key only.
+- **Birth date:** only the applicant's own birth-date question can fill the
+  roster's birth date: the first birth-date question in form order that is not
+  about a child or relative (the Staff form has five children's birth dates).
+- **Gender:** both seeded forms (version 3) ask a required Male/Female question
+  that maps to the roster's gender. Older submissions without it still work; the
+  director picks it on the review screen.
+- **Not mapped:** the roster has no address or member-contact field, so the
+  applicant's address and own phone or email are not copied. The Membership
+  Application's phone pre-fills the first guardian's phone.
+
 ## Sensitive answers
 
 - Marked per field in the template (`sensitiveFieldKeys`).
