@@ -16,6 +16,7 @@
  */
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
+import type { CalendarBulkRequest } from "@/modules/calendar/schemas";
 import { assertLocalDatabase } from "./support/local-only-guard";
 
 loadEnvConfig(process.cwd());
@@ -61,7 +62,7 @@ async function main() {
   await cleanup();
   await prisma.user.create({ data: { id: userId, email: `${P}-admin@example.test`, displayName: "Calendar Bulk Check", globalRole: "SYSTEM_ADMIN" } });
 
-  const bulk = (ids: string[], change: Parameters<typeof calendarBulkSchema.parse>[0]["change"]) =>
+  const bulk = (ids: string[], change: CalendarBulkRequest["change"]) =>
     bulkUpdateCalendarEntries(calendarBulkSchema.parse({ ids, change }), userId);
 
   // A feed with three imported entries, and two staff-made ones.
