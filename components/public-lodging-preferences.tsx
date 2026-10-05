@@ -9,11 +9,13 @@ type Status = { kind: "idle" | "saving" | "saved" | "error"; message: string };
 
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
-async function send(url: string, method: string, body: unknown): Promise<RegistrantLodgingView> {
+type Sent = { lodging: RegistrantLodgingView; changeRequested: boolean };
+
+async function send(url: string, method: string, body: unknown): Promise<Sent> {
   const response = await fetch(url, { method, cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const payload = await response.json().catch(() => null) as { message?: string; lodging?: RegistrantLodgingView } | null;
+  const payload = await response.json().catch(() => null) as { message?: string; lodging?: RegistrantLodgingView; result?: { changeRequested?: boolean } } | null;
   if (!response.ok || !payload?.lodging) throw new Error(payload?.message ?? "That could not be saved. Try again.");
-  return payload.lodging;
+  return { lodging: payload.lodging, changeRequested: payload.result?.changeRequested === true };
 }
 
 /**
@@ -38,11 +40,12 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
     return quoteStay({ rates: chosen.rate ? { [chosen.category]: chosen.rate } : {}, category: chosen.category, nights: nightCount, partySize });
   }, [view.offered, category, nightCount, partySize]);
 
-  async function run(action: () => Promise<RegistrantLodgingView>, success: string) {
+  async function run(action: () => Promise<Sent>, success: string) {
     setStatus({ kind: "saving", message: "Saving…" });
     try {
-      setView(await action());
-      setStatus({ kind: "saved", message: success });
+      const sent = await action();
+      setView(sent.lodging);
+      setStatus({ kind: "saved", message: sent.changeRequested ? "Thank you. This change needs the event team, so it was sent to them and has not been applied yet." : success });
     } catch (error) {
       setStatus({ kind: "error", message: error instanceof Error ? error.message : "That could not be saved. Try again." });
     }
@@ -59,8 +62,8 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
       partySize,
       privateRoomRequested: form.get("privateRoomRequested") === "on",
       householdPreference: form.get("householdPreference"),
-      groundFloorNeeded: form.get("groundFloorNeeded") === "on",
-      accessibleRoomNeeded: form.get("accessibleRoomNeeded") === "on",
+      // After the first save these go through the event team, so a locked form does not send them.
+      ...(view.flagsLocked ? {} : { groundFloorNeeded: form.get("groundFloorNeeded") === "on", accessibleRoomNeeded: form.get("accessibleRoomNeeded") === "on" }),
     }), "Saved. You can change this until the deadline.");
   }
 
@@ -72,7 +75,8 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
         <h2 id="public_manage_lodging_title">Lodging</h2>
         <p>
           Tell us what you would like. This is a request, not a reservation: the event team assigns rooms and sites later.
-          {view.canEdit ? ` You can change it through ${view.deadline}.` : view.closedReason === "DEADLINE_PASSED" ? ` Changes closed after ${view.deadline}. Contact the event team to change it.` : ""}
+          {view.canEdit ? ` You can change it through ${view.deadline}.` : view.closedReason === "DEADLINE_PASSED" ? ` Changes closed after ${view.deadline}. Contact the event team to change it.` : view.closedReason === "VERIFICATION_REQUIRED" ? " This event verifies every change. To change this, contact the event team." : ""}
+          {view.changeRequested ? " A change you asked for is waiting for the event team." : ""}
         </p>
       </div>
       <form onSubmit={save}>
@@ -119,10 +123,11 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
           <label><input type="checkbox" name="privateRoomRequested" defaultChecked={request?.privateRoomRequested ?? false} /> I would like a private room if one is available</label>
         </fieldset>
 
-        <fieldset disabled={disabled}>
+        <fieldset disabled={disabled || view.flagsLocked}>
           <legend>Accessibility</legend>
           <label><input type="checkbox" name="groundFloorNeeded" defaultChecked={request?.groundFloorNeeded ?? false} /> A ground floor is needed</label>
           <label><input type="checkbox" name="accessibleRoomNeeded" defaultChecked={request?.accessibleRoomNeeded ?? false} /> An accessible room is needed</label>
+          {view.flagsLocked ? <p>To change these after saving, contact the event team.</p> : null}
           <p>These are yes or no only. Please do not enter medical details here; if the event team needs to know more, they will ask you privately.</p>
         </fieldset>
 
@@ -132,6 +137,7 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
           {quote.kind === "BELOW_MINIMUM_NIGHTS" ? `This type needs at least ${quote.minimumNights} nights.` : null}
         </p> : null}
 
+        {view.canEdit && view.pricedChangeNeedsStaff && view.offered.some((option) => option.rate && option.category !== request?.category) ? <p>Payment has been made on this registration, so a change to a type with a price is sent to the event team instead of applying at once.</p> : null}
         {view.canEdit ? <button className="primary-button" type="submit" disabled={disabled || nightCount < 1}><BedDouble size={18} aria-hidden="true" /> Save lodging</button> : null}
         {request ? <p>Saved version {request.version}{view.earlierVersions > 0 ? `, ${view.earlierVersions} earlier version${view.earlierVersions === 1 ? "" : "s"} kept by the event team` : ""}.</p> : null}
       </form>
@@ -151,7 +157,7 @@ function Roommates({ view, base, run, disabled }: {
   token: string;
   view: RegistrantLodgingView;
   base: string;
-  run: (action: () => Promise<RegistrantLodgingView>, success: string) => Promise<void>;
+  run: (action: () => Promise<Sent>, success: string) => Promise<void>;
   disabled: boolean;
 }) {
   return (

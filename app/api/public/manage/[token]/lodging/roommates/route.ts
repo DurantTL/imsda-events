@@ -3,8 +3,8 @@ import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { lodgingApiError } from "@/modules/lodging/api-errors";
 import { changeRegistrantRoommates, getRegistrantLodgingView } from "@/modules/lodging/preferences-service";
 import { authorizeRegistrationAccessToken } from "@/modules/public-access/repository";
-import { applyRateLimitHeaders, type RateLimitOutcome } from "@/modules/rate-limit/domain";
-import { checkPublicManageRateLimit } from "@/modules/rate-limit/service";
+import { applyRateLimitHeaders, mergeRateLimitOutcomes, type RateLimitOutcome } from "@/modules/rate-limit/domain";
+import { checkPublicManageRateLimit, checkPublicRoommateLookupRateLimit } from "@/modules/rate-limit/service";
 
 /**
  * The registrant asks to room with someone, or takes the request back (#199). Someone on another registration is
@@ -40,6 +40,16 @@ async function postHandler(request: Request, context: Context) {
     const body = await request.text();
     if (new TextEncoder().encode(body).byteLength > maximumBodyBytes) {
       return json({ error: "REQUEST_TOO_LARGE", message: "The roommate request is too large." }, { status: 413 }, rateLimit);
+    }
+    // A lookup by name and confirmation code is the one thing here that could be used to guess codes: it has its own,
+    // tighter budget on top of the update budget.
+    let isLookup = false;
+    try { isLookup = (JSON.parse(body) as { action?: unknown } | null)?.action === "add_by_code"; } catch { /* the service reports bad JSON */ }
+    if (isLookup) {
+      rateLimit = mergeRateLimitOutcomes(rateLimit, await checkPublicRoommateLookupRateLimit(request, token));
+      if (!rateLimit.allowed) {
+        return json({ error: "RATE_LIMITED", message: "Too many roommate lookups for this private registration link. Try again later." }, { status: 429 }, rateLimit);
+      }
     }
     const access = await authorizeRegistrationAccessToken(token);
     if (!access) {

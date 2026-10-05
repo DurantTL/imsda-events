@@ -41,7 +41,7 @@ import {
   updateLodgingSettings,
   type Actor,
 } from "@/modules/lodging/preferences-service";
-import { selectEventProperty, updateEventUnit, getLodgingView } from "@/modules/lodging/service";
+import { selectEventProperty, setEventRate, updateEventUnit, getLodgingView } from "@/modules/lodging/service";
 import { syncLodgingTemplates } from "@/modules/lodging/sync";
 
 loadEnvConfig(process.cwd());
@@ -54,6 +54,7 @@ const userId = `${P}_user`;
 const eventId = `${P}_ev`;
 const otherEventId = `${P}_ev_other`;
 const bareEventId = `${P}_ev_bare`;
+const verifyEventId = `${P}_ev_verify`;
 const before = new Date("2027-05-20T12:00:00Z");
 const after = new Date("2027-06-05T12:00:00Z");
 
@@ -92,7 +93,7 @@ async function createEvent(id: string, extra: Record<string, unknown> = {}) {
     data: {
       id, slug: `${id}-slug`, name: `Lodging preferences check ${id}`,
       startsAt: new Date("2027-06-15T15:00:00Z"), endsAt: new Date("2027-06-19T15:00:00Z"), timezone: "America/Chicago",
-      registrationClosesOn: "2027-06-01", ...extra,
+      registrationClosesOn: "2027-06-01", attendeeEditPolicy: "TIERED", ...extra,
     },
   });
 }
@@ -122,7 +123,13 @@ async function makeRegistration(forEvent: string, tag: string, peopleCount = 1, 
 }
 
 const fullName = (reg: Reg, index = 0) => `${reg.people[index]!.first} ${reg.people[index]!.last}`;
-const save = (reg: Reg, raw: unknown, actor: Actor = reg.token, now = before) => saveLodgingRequest({ eventId, registrationId: reg.id, actor, raw, now }, prisma);
+const saveAny = (reg: Reg, raw: unknown, actor: Actor = reg.token, now = before, forEvent = eventId) => saveLodgingRequest({ eventId: forEvent, registrationId: reg.id, actor, raw, now }, prisma);
+/** A save that applies (not one the edit policy held for staff). */
+const save = async (reg: Reg, raw: unknown, actor: Actor = reg.token, now = before) => {
+  const result = await saveAny(reg, raw, actor, now);
+  if (result.changeRequested) throw new Error("FAILED: the change was held for staff when it should have applied");
+  return result;
+};
 const view = (reg: Reg, now = before) => getRegistrantLodgingView({ eventId, registrationId: reg.id, now }, prisma);
 const addByCode = (from: Reg, target: Reg, name = fullName(target), code = target.code, now = before) =>
   changeRegistrantRoommates({ eventId, registrationId: from.id, accessTokenId: `${P}_tok_${from.code}`, raw: { action: "add_by_code", name, confirmationCode: code }, now }, prisma);
@@ -151,11 +158,11 @@ async function main() {
   assert(await caught(updateLodgingSettings(eventId, userId, { fullBehavior: "NOPE" }, prisma)), "an unknown full behavior is refused");
 
   // ---- Versioned requests ---------------------------------------------------
-  const first = await save(registrationA, { category: "DORM_ROOM", partySize: 2, privateRoomRequested: true });
+  const first = await save(registrationA, { category: "DORM_ROOM", partySize: 2, privateRoomRequested: true, groundFloorNeeded: true });
   assert(first.changed && first.version === 1, "the first save is version 1");
   const same = await save(registrationA, { category: "DORM_ROOM", partySize: 2, privateRoomRequested: true });
   assert(!same.changed && same.version === 1, "an unchanged save adds no version");
-  const second = await save(registrationA, { category: "CONFERENCE_CENTER_ROOM", partySize: 2, firstNight: "2027-06-16", lastNight: "2027-06-17", groundFloorNeeded: true });
+  const second = await save(registrationA, { category: "CONFERENCE_CENTER_ROOM", partySize: 2, firstNight: "2027-06-16", lastNight: "2027-06-17" });
   assert(second.changed && second.version === 2, "a change is version 2");
   const versions = await prisma.eventLodgingRequestVersion.findMany({ where: { eventId }, orderBy: { version: "asc" } });
   assert(versions.length === 2 && versions[0]!.category === "DORM_ROOM" && versions[0]!.firstNight === null && versions[0]!.privateRoomRequested, "the earlier version is kept exactly as it was");
@@ -201,7 +208,11 @@ async function main() {
   // The audit log says that a flag changed, never what it was.
   const audits = await prisma.auditLog.findMany({ where: { eventId, action: "LODGING_REQUEST_SAVED" } });
   assert(audits.length === 4 && audits.every((row) => !JSON.stringify(row.metadata).includes("groundFloorNeeded") && !JSON.stringify(row.metadata).includes("accessibleRoomNeeded")), "audit entries never carry accessibility values");
-  assert(audits.some((row) => JSON.stringify(row.metadata).includes('"accessibilityChanged":true')), "audit entries do say that accessibility changed");
+  const createAudit = audits.find((row) => (row.metadata as { version?: number }).version === 1)!;
+  assert(!JSON.stringify(createAudit.metadata).includes("accessibilityChanged"), "creating a request does not record whether its flags were set");
+  await save(registrationA, { category: "TENT_WITH_POWER", partySize: 2, accessibleRoomNeeded: true, reason: "Guest phoned the office" }, staff);
+  const flipAudit = await prisma.auditLog.findFirstOrThrow({ where: { eventId, action: "LODGING_REQUEST_SAVED" }, orderBy: { createdAt: "desc" } });
+  assert(JSON.stringify(flipAudit.metadata).includes('"accessibilityChanged":true') && !JSON.stringify(flipAudit.metadata).includes("accessibleRoomNeeded"), "a later change says that accessibility changed, never to what");
 
   // ---- Capacity, partial stays and the race --------------------------------
   const tentRow = (await getLodgingView(eventId, prisma)).buildings.flatMap((building) => building.units).find((unit) => unit.key === "tents-with-power")!;
@@ -244,6 +255,70 @@ async function main() {
   assert(!(await view(c)).offered.some((entry) => entry.category === "CONFERENCE_CENTER_ROOM"), "an unavailable type is not offered");
   for (const unit of conferenceRows) await updateEventUnit(eventId, unit.eventUnitId, userId, { unavailable: false }, prisma);
 
+  // ---- Edit policy, payments, minimum nights, eligibility ------------------
+  // The main event is TIERED. The accessibility needs may be set by the first saved version only.
+  await expectLodgingError(save(registrationA, { category: "TENT", groundFloorNeeded: false }), "FLAGS_STAFF_ONLY", "a registrant changing the flags after the first version");
+  const flagsUnchanged = await save(registrationA, { category: "TENT", groundFloorNeeded: true, partySize: 2 });
+  assert(flagsUnchanged.changed, "re-sending the flags unchanged is not a flag change");
+  const lockedView = await view(registrationA);
+  assert(lockedView.flagsLocked && lockedView.canEdit, "the registrant view says the flags are locked after the first save");
+
+  // A registrant cannot choose fewer nights than a rate's minimum; staff may make the exception.
+  await setEventRate(eventId, userId, { category: "DORM_ROOM", rate: { amountCents: 2000, basis: "PER_UNIT_NIGHT", minimumNights: 2 } }, prisma);
+  const shortStay = await makeRegistration(eventId, "s", 1);
+  await expectLodgingError(save(shortStay, { category: "DORM_ROOM", firstNight: "2027-06-15", lastNight: "2027-06-15" }), "BELOW_MINIMUM_NIGHTS", "fewer nights than the rate's minimum");
+  assert((await save(shortStay, { category: "DORM_ROOM", firstNight: "2027-06-15", lastNight: "2027-06-16" })).changed, "the minimum number of nights is accepted");
+  assert((await save(shortStay, { category: "DORM_ROOM", firstNight: "2027-06-15", lastNight: "2027-06-15", reason: "Day visit, approved" }, staff)).changed, "staff may make an exception to the minimum");
+
+  // Once money is on the registration, a registrant's move to a priced type goes to staff instead of applying.
+  const paid = await makeRegistration(eventId, "p", 1);
+  await save(paid, { category: "TENT", partySize: 1 });
+  await prisma.payment.create({ data: { eventId, registrationId: paid.id, amount: 10, status: "SUCCEEDED", method: "CARD_REFERENCE", receivedAt: before } });
+  const held = await saveAny(paid, { category: "DORM_ROOM", partySize: 1 });
+  assert(held.changeRequested === true, "a change to a priced type with a payment on the registration is held for staff");
+  const stillTent = await prisma.eventLodgingRequest.findFirstOrThrow({ where: { registrationId: paid.id } });
+  assert(stillTent.currentVersion === 1 && (await prisma.eventLodgingChangeRequest.count({ where: { registrationId: paid.id, resolvedAt: null } })) === 1, "nothing was applied and one change request is open");
+  assert((await queueKinds()).includes("CHANGE_REQUESTED") && (await view(paid)).changeRequested && (await view(paid)).pricedChangeNeedsStaff, "the queue and the registrant view show the open change request");
+  assert((await save(paid, { category: "TENT_WITH_POWER", partySize: 1 })).changed, "a type with no price still applies with a payment on file");
+  await expectDatabaseRefusal(prisma.eventLodgingChangeRequest.delete({ where: { id: held.changeRequested ? held.changeRequestId : "" } }), "deleting a change request");
+  await save(paid, { category: "DORM_ROOM", partySize: 1, reason: "Moved to a dorm room after the guest phoned" }, staff);
+  assert((await prisma.eventLodgingChangeRequest.count({ where: { registrationId: paid.id, resolvedAt: null } })) === 0 && !(await queueKinds()).includes("CHANGE_REQUESTED"), "a staff change resolves the open change request");
+  await setEventRate(eventId, userId, { category: "DORM_ROOM", rate: null }, prisma);
+
+  // Only the places a request asks for more of need checking again.
+  const shrink = await makeRegistration(eventId, "t", 2);
+  await updateEventUnit(eventId, tentRow.eventUnitId, userId, { capacityOverride: 100 }, prisma);
+  await save(shrink, { category: "TENT_WITH_POWER", partySize: 2 });
+  const tentDemand = (await staffView()).offered.find((entry) => entry.category === "TENT_WITH_POWER")!.requested;
+  await updateEventUnit(eventId, tentRow.eventUnitId, userId, { capacityOverride: 1 }, prisma);
+  assert(tentDemand > 1, "the tents are now over-subscribed");
+  assert((await save(shrink, { category: "TENT_WITH_POWER", partySize: 2, privateRoomRequested: true })).changed, "a change that asks for no more places is not stopped by a full type");
+  assert((await save(shrink, { category: "TENT_WITH_POWER", partySize: 1 })).changed, "asking for fewer people is not stopped either");
+  await expectLodgingError(save(shrink, { category: "TENT_WITH_POWER", partySize: 2 }), "CATEGORY_FULL", "asking for more people than before");
+  await updateEventUnit(eventId, tentRow.eventUnitId, userId, { capacityOverride: 100 }, prisma);
+
+  // Club and group registrations are not for guests to choose lodging.
+  const groupReg = await makeRegistration(eventId, "gr", 1);
+  await prisma.groupEventRegistration.create({ data: { eventId, registrationId: groupReg.id, billingPersonId: groupReg.people[0]!.id } });
+  await expectLodgingError(saveAny(groupReg, { category: "TENT" }), "REGISTRATION_NOT_ELIGIBLE", "a group registration, by its registrant");
+  await expectLodgingError(saveAny(groupReg, { category: "TENT", reason: "Staff" }, staff), "REGISTRATION_NOT_ELIGIBLE", "a group registration, by staff");
+  assert(!(await view(groupReg)).enabled, "a group registration sees no lodging section");
+  const target = await makeRegistration(eventId, "gt", 1);
+  await expectLodgingError(addByCode(target, groupReg), "ROOMMATE_NOT_FOUND", "asking to room with a group registration");
+  assert(!(await staffView()).people.some((person) => person.registration.includes(groupReg.code)), "group registrations are not listed in the lodging screens");
+
+  // An event that verifies every edit keeps the private link read-only.
+  await createEvent(verifyEventId, { attendeeEditPolicy: "VERIFY_EVERY_EDIT" });
+  await selectEventProperty(verifyEventId, userId, { propertyKey: "sunnydale-academy" }, prisma);
+  await updateLodgingSettings(verifyEventId, userId, { collectsPreferences: true }, prisma);
+  const verified = await makeRegistration(verifyEventId, "v", 1);
+  const verifiedOther = await makeRegistration(verifyEventId, "u", 1);
+  await expectLodgingError(saveAny(verified, { category: "TENT" }, verified.token, before, verifyEventId), "EDIT_POLICY_REQUIRES_VERIFICATION", "a registrant on a verify-every-edit event");
+  await expectLodgingError(changeRegistrantRoommates({ eventId: verifyEventId, registrationId: verified.id, accessTokenId: `${P}_tok_v`, raw: { action: "add_by_code", name: fullName(verifiedOther), confirmationCode: verifiedOther.code }, now: before }, prisma), "EDIT_POLICY_REQUIRES_VERIFICATION", "a roommate request on a verify-every-edit event");
+  const verifyView = await getRegistrantLodgingView({ eventId: verifyEventId, registrationId: verified.id, now: before }, prisma);
+  assert(verifyView.enabled && !verifyView.canEdit && verifyView.closedReason === "VERIFICATION_REQUIRED", "the section is read-only on a verify-every-edit event");
+  assert((await saveAny(verified, { category: "TENT", reason: "Verified by phone" }, staff, before, verifyEventId)).changeRequested !== true, "staff can still record the request");
+
   // ---- Roommate requests ----------------------------------------------------
   const e = await makeRegistration(eventId, "e", 1);
   const f = await makeRegistration(eventId, "f", 1);
@@ -251,6 +326,10 @@ async function main() {
   const wrongName = await expectLodgingError(addByCode(e, f, "Nobody Atall"), "ROOMMATE_NOT_FOUND", "a wrong name");
   const wrongCode = await expectLodgingError(addByCode(e, f, fullName(f), "REG-NOSUCHCODE"), "ROOMMATE_NOT_FOUND", "a wrong code again");
   assert((wrongName as LodgingError).message === (wrongCode as LodgingError).message, "a wrong name and a wrong code get the same answer");
+  const missAudits = await prisma.auditLog.findMany({ where: { eventId, action: "LODGING_ROOMMATE_LOOKUP_MISSED" } });
+  assert(missAudits.length >= 3, "each lookup miss is audited");
+  const missText = JSON.stringify(missAudits.map((row) => [row.summary, row.metadata]));
+  assert(!missText.includes("Nobody Atall") && !missText.includes("NOSUCHCODE") && missText.includes("missesInTheLastHour") && missText.includes(e.id), "a miss records ids and a count, never the typed name or code");
   await expectLodgingError(addByCode(e, e), "ROOMMATE_INVALID", "asking for your own registration by code");
   const cancelled = await makeRegistration(eventId, "x", 1, "CANCELLED");
   await expectLodgingError(addByCode(e, cancelled), "ROOMMATE_NOT_FOUND", "a cancelled registration");
@@ -322,6 +401,13 @@ async function main() {
   await expectDatabaseRefusal(prisma.eventLodgingRoommateRequest.create({ data: { eventId, fromRegistrationId: e.id, targetRegistrationId: otherReg.id, source: "REGISTRANT" } }), "a roommate request across events");
   await expectDatabaseRefusal(prisma.eventLodgingRoommateRequest.create({ data: { eventId, fromRegistrationId: e.id, targetRegistrationId: f.id, targetPersonId: registrationA.people[0]!.id, source: "REGISTRANT" } }), "a named person who is not on the target registration");
   await expectDatabaseRefusal(prisma.eventLodgingRoommateRequest.update({ where: { id: reAsked.id }, data: { targetRegistrationId: g.id } }), "changing who a request names");
+  await expectDatabaseRefusal(prisma.eventLodgingRoommateRequest.update({ where: { id: reAsked.id }, data: { accessTokenId: "someone-elses-link" } }), "changing the link a request came through");
+  await expectDatabaseRefusal(prisma.eventLodgingRoommateRequest.update({ where: { id: gh.id }, data: { decisionReason: "Rewritten" } }), "rewriting a staff decision");
+  await expectDatabaseRefusal(prisma.eventLodgingRoommateRequest.update({ where: { id: gh.id }, data: { decision: "DECLINED" } }), "reversing a staff decision");
+  const personKeys = await prisma.$queryRaw<Array<{ n: bigint }>>`
+    SELECT count(*) AS n FROM pg_constraint WHERE contype = 'f' AND confrelid = '"Person"'::regclass
+      AND conrelid IN ('"EventLodgingRoommateRequest"'::regclass, '"EventLodgingRule"'::regclass)`;
+  assert(Number(personKeys[0]!.n) === 4, "person ids on roommate requests and rules are foreign keys");
   await expectDatabaseRefusal(prisma.eventLodgingRoommateRequest.delete({ where: { id: reAsked.id } }), "deleting a roommate request");
   await expectDatabaseRefusal(prisma.eventLodgingRoommateRequest.update({ where: { id: asked.id }, data: { withdrawalReason: "Rewritten" } }), "rewriting a withdrawal");
   await expectDatabaseRefusal(prisma.eventLodgingRequest.create({ data: { eventId: otherEventId, registrationId: e.id, currentVersion: 1 } }), "a request whose registration is on another event");
@@ -377,6 +463,15 @@ async function main() {
   assert((await staffView()).rules.some((rule) => rule.id === apart.id && rule.ended && rule.endReason === "Resolved with the family"), "ended rules stay in the history");
   await expectDatabaseRefusal(prisma.eventLodgingRule.update({ where: { id: apart.id }, data: { endReason: "Edited" } }), "editing an ended rule");
 
+  // A registration that says its party can be split is not joined into one group.
+  const flexReg = await makeRegistration(eventId, "fx", 2);
+  const flexApart = await createLodgingRule(eventId, userId, { kind: "SEPARATE", personAId: flexReg.people[0]!.id, personBId: flexReg.people[1]!.id, reason: "Keep these two apart" }, prisma);
+  await save(flexReg, { category: null, householdPreference: "TOGETHER" });
+  assert((await queueKinds()).includes("CONFLICT_SEPARATION"), "a party that stays together conflicts with a keep-apart rule inside it");
+  await save(flexReg, { category: null, householdPreference: "FLEXIBLE" });
+  assert(!(await queueKinds()).includes("CONFLICT_SEPARATION"), "a flexible party is not joined for conflict detection");
+  await endLodgingRule(eventId, userId, flexApart.id, "Done", prisma);
+
   // A household that changes: join two registrations, then move a person to another registration.
   const sep2 = await createLodgingRule(eventId, userId, { kind: "SEPARATE", personAId: teen.id, personBId: f.people[0]!.id, reason: "Keep these two apart" }, prisma);
   assert(!(await queueKinds()).includes("CONFLICT_SEPARATION"), "different registrations are not kept together");
@@ -397,6 +492,11 @@ async function main() {
   assert(flagged.groundFloorNeeded === true, "staff with VIEW_SENSITIVE_DATA see the flag");
   assert(blindView.requests.every((request) => !("groundFloorNeeded" in request) && !("accessibleRoomNeeded" in request)), "staff without it get no flag fields at all");
   assert(sensitiveView.queue.some((item) => item.kind === "ACCESSIBILITY_NEEDED"), "the flagged request is in the queue for staff who may see it");
+  const sensitiveHistory = sensitiveView.requests.find((request) => request.registrationId === registrationA.id)!.history;
+  const blindHistory = blindView.requests.find((request) => request.registrationId === registrationA.id)!.history;
+  assert(sensitiveHistory.some((entry) => entry.reason === "Guest phoned the office"), "staff who may see the flags see the history reasons");
+  assert(blindHistory.every((entry) => entry.reason === null) && blindHistory.length < sensitiveHistory.length, "staff who may not see them get no reasons and no version that changed only the flags");
+  assert(blindView.requests.find((request) => request.registrationId === registrationA.id)!.version === blindHistory.length, "and the version number does not reveal the hidden one");
   assert(blindView.queue.every((item) => !item.sensitive) && !JSON.stringify(blindView).includes("ground floor"), "the queue never mentions accessibility to staff who may not see it");
   const exportRows = await getLodgingRequestExportRows(eventId, prisma);
   const plainCsv = lodgingRequestsCsv(exportRows, false);
@@ -418,6 +518,11 @@ async function main() {
   assert((await queueKinds()).includes("PAST_DEADLINE"), "an acknowledged item returns when the request changes");
   const sensitiveItem = (await staffView(true)).queue.find((item) => item.sensitive)!;
   await expectLodgingError(acknowledgeReviewItem(eventId, { userId, canSeeSensitive: false }, { action: "acknowledge", itemKey: sensitiveItem.key, fingerprint: sensitiveItem.fingerprint, note: "Seen" }, prisma), "ITEM_NOT_FOUND", "acknowledging a restricted item without access");
+  await acknowledgeReviewItem(eventId, { userId, canSeeSensitive: true }, { action: "acknowledge", itemKey: sensitiveItem.key, fingerprint: sensitiveItem.fingerprint, note: "Needs a ramp near the entrance" }, prisma);
+  const restrictedAck = await prisma.eventLodgingReviewAck.findFirstOrThrow({ where: { eventId, itemKey: sensitiveItem.key } });
+  assert(restrictedAck.note === "Acknowledged (restricted item)", "a restricted item stores no typed note");
+  const restrictedAudit = await prisma.auditLog.findFirstOrThrow({ where: { eventId, action: "LODGING_REVIEW_ACKNOWLEDGED", metadata: { path: ["restricted"], equals: true } } });
+  assert(!JSON.stringify(restrictedAudit).includes("ramp") && !restrictedAudit.summary.toLowerCase().includes("accessib") && restrictedAudit.entityId === null, "its audit entry is generic");
   const ackRow = await prisma.eventLodgingReviewAck.findFirstOrThrow({ where: { eventId } });
   await expectDatabaseRefusal(prisma.eventLodgingReviewAck.update({ where: { id: ackRow.id }, data: { note: "Rewritten" } }), "rewriting an acknowledgement");
   await expectDatabaseRefusal(prisma.eventLodgingReviewAck.delete({ where: { id: ackRow.id } }), "deleting an acknowledgement");

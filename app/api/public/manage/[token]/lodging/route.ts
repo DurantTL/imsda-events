@@ -33,12 +33,17 @@ function json(body: unknown, init?: ResponseInit, rateLimit?: RateLimitOutcome) 
 
 const unavailable = { error: "REGISTRATION_ACCESS_UNAVAILABLE", message: "This private registration link is invalid or no longer active." };
 
-async function getHandler(_request: Request, context: Context) {
+async function getHandler(request: Request, context: Context) {
+  let rateLimit: RateLimitOutcome | undefined;
   try {
     const { token } = await context.params;
+    rateLimit = await checkPublicManageRateLimit(request, token, "read");
+    if (!rateLimit.allowed) {
+      return json({ error: "RATE_LIMITED", message: "Too many requests for this private registration link. Try again later." }, { status: 429 }, rateLimit);
+    }
     const access = await authorizeRegistrationAccessToken(token);
-    if (!access) return json(unavailable, { status: 404 });
-    return json({ lodging: await getRegistrantLodgingView({ eventId: access.eventId, registrationId: access.registrationId }) });
+    if (!access) return json(unavailable, { status: 404 }, rateLimit);
+    return json({ lodging: await getRegistrantLodgingView({ eventId: access.eventId, registrationId: access.registrationId }) }, undefined, rateLimit);
   } catch (error) {
     logError("Private lodging view failed.", error);
     return json({ error: "LODGING_REQUEST_FAILED", message: "Lodging could not be loaded. Try again in a moment." }, { status: 500 });

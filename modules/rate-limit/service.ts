@@ -595,6 +595,22 @@ export async function checkPublicManageRateLimit(
   ], configuration);
 }
 
+/**
+ * Roommate lookups by name and confirmation code (#199) get their own, tighter budget on top of the ordinary update
+ * budget: 5 per private link and 10 per client every 15 minutes (and 5 per client and link together), so the form
+ * cannot be used to guess confirmation codes.
+ */
+export async function checkPublicRoommateLookupRateLimit(request: Request, token: string) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const tokenHash = hashRateLimitIdentifier("registration-manage-token", token, configuration);
+  return evaluate([
+    { policy: "public.manage.roommate-lookup.client", limit: 10, windowSeconds: fifteenMinutes, identifierHashes: [client] },
+    { policy: "public.manage.roommate-lookup.token", limit: 5, windowSeconds: fifteenMinutes, identifierHashes: [tokenHash] },
+    { policy: "public.manage.roommate-lookup.client-token", limit: 5, windowSeconds: fifteenMinutes, identifierHashes: [client, tokenHash] },
+  ], configuration);
+}
+
 export async function checkPublicPaymentRateLimit(
   request: Request,
   token: string,

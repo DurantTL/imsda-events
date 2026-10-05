@@ -256,7 +256,14 @@ nothing. The unique and cross-event rules are enforced by the database:
   partial unique index; a withdrawn request is kept and the pair can ask again);
 - a roommate request's parties and source cannot be rewritten; a decision or a
   withdrawal changes only its own columns, and a withdrawal is final;
-- a rule can only be ended, once; acknowledgements are append-only;
+- a rule can only be ended, once; acknowledgements are append-only; a staff
+  decision on a roommate request is final and the link a request came through
+  is frozen;
+- person ids on roommate requests and rules are foreign keys to `Person` with
+  `ON DELETE RESTRICT`, like the guardian-authority records. Nothing in the
+  product deletes a person today (club erasure removes roster rows); if a
+  person-erasure feature is added it must end or anonymize their rules and
+  roommate requests first, because a rule's CHECK needs both people;
 - all of it goes with its event or registration, and only then.
 
 ### Privacy
@@ -272,8 +279,15 @@ nothing. The unique and cross-event rules are enforced by the database:
   set them (an attempt is `SENSITIVE_DATA_FORBIDDEN`), and their edits carry the
   existing flags forward. The review queue's accessibility items are hidden from
   them and cannot be acknowledged by them.
-- The audit log records **that** accessibility changed (`accessibilityChanged`),
-  never the values.
+- The audit log records **that** accessibility changed on an existing request
+  (`accessibilityChanged`), never the values, and does not record whether a first
+  request set them. Acknowledging a restricted item stores a generic note and a
+  generic audit entry (no kind, key or typed note).
+- Staff without VIEW_SENSITIVE_DATA also cannot infer the flags from the version
+  history: a version that changed only the flags is left out, version numbers
+  and the "last changed" time are counted over what they can see, and change
+  reasons (free text) are not shown. The reason and note fields say "No medical
+  details".
 - The protected-records projection (ADR 0005, #192) is not built yet. When an
   approved projection exists it may set one of these two flags; nothing from a
   protected record, and no medical text, is copied into lodging.
@@ -290,7 +304,13 @@ A registrant names someone **by name and confirmation code together**, or picks
 a person on their own registration. A wrong name, a wrong code, a cancelled
 registration and a registration on another event all give the same answer, so
 the form cannot be used to find out which codes or names exist. The route is
-rate limited per link like the other private-link edits.
+rate limited per link like the other private-link edits, and a lookup by name
+and code has its **own, tighter budget**: 5 per link, 5 per link and client,
+and 10 per client every 15 minutes. Each miss is audited with the registration
+id, the link and a running count for the hour, never the typed name or code, so
+a pattern of guessing is visible to staff. (The registrant's own list does show
+a request as "matched" once the other side has asked back or staff approved,
+because by then both people named each other; it never says who asked for them.)
 
 A request counts as **mutual only when**:
 
@@ -330,17 +350,50 @@ event team. Staff can change a request at any time with a reason; a staff change
 after the deadline is marked `afterDeadline` and listed in the review queue.
 Every change, by anyone, is a new version with its actor or access token.
 
-The registrant link route is open to lodging preferences even when the event's
-edit policy is "verify every edit": a lodging choice is a category and two
-yes/no boxes, in the same class as a seminar preference, and the deadline
-bounds it. Identity answers are unaffected.
+### The event's edit policy on the private link
+
+Lodging follows the same `attendeeEditPolicy` as every other private-link edit.
+This is the rule until the event team rules otherwise:
+
+- **VERIFY_EVERY_EDIT** (the default): the lodging section on `/manage/<token>`
+  is **read-only** (like the responsible-adult section). The request and
+  roommate routes refuse on the server with `EDIT_POLICY_REQUIRES_VERIFICATION`
+  ("This event requires verification before this change. To change this, contact
+  the event team."). Staff can still record a request for the guest.
+- **TIERED**, following `isTieredAttendeeFieldEditable` (sensitive and priced
+  answers are not self-service):
+  - the **accessibility flags** may be set by the **first saved version** only;
+    a registrant changing them afterwards is refused with `FLAGS_STAFF_ONLY`
+    and the section tells them to contact the event team (the form stops sending
+    them once locked);
+  - a **change of type to a priced type** (one with an event rate; a tent with
+    power counts as priced when the tent is) applies only while the registration
+    has **no payment** (pending or succeeded). Otherwise nothing is applied: the
+    change is recorded as an open `EventLodgingChangeRequest` (category, nights,
+    party, private room, household; never the flags), the registrant is told it
+    went to the event team, and the review queue shows **Change requested**. A
+    staff save for that registration resolves it. Moves to an unpriced type,
+    nights, party size and the other preferences stay self-service. This is the
+    simplest safe rule: money already on the registration is never silently
+    re-priced.
+- Roommate requests carry no price or sensitive data, so under TIERED they stay
+  self-service until the deadline.
+- **Individual registrations only.** Club and group registrations are refused in
+  the service (`REGISTRATION_NOT_ELIGIBLE`), for registrants and staff, and are
+  not listed or findable as roommates: their directors' rosters are placed by staff.
+- A registrant is refused fewer nights than a rate's `minimumNights`
+  (`BELOW_MINIMUM_NIGHTS`); staff may make the exception.
 
 ### Selecting a full type
 
 At selection a registrant is refused a type that is full for the nights they
 asked for, counted in **people** against the type's capacity night by night
 (partial stays on other nights still fit; a type with no fixed limit never
-fills). Selection takes the `EventLodgingUnit` row locks for the type's units
+fills). The check runs only when the change asks for more than it replaces: a
+different type, a bigger party, or a night the earlier request did not cover
+(so a registrant can still adjust a request that is already inside a type that
+has since filled). Selection takes the `EventLodgingUnit` row locks for **every
+unit of the event's lodging**, before any capacity is read
 (`lockEventLodgingUnits`, the same lock #200 must take before it assigns), so
 five registrants racing for the last place produce exactly one winner. Staff
 are not stopped by "full"; the queue then shows the type as over capacity.
@@ -353,12 +406,15 @@ stored but the acknowledgements). It lists:
 - one-sided roommate requests (approve or decline) and requests for a
   registration that is no longer registered;
 - keep-apart rules that the household, responsible-adult or keep-together rules
-  contradict, or that a mutual roommate pair contradicts;
+  contradict, or that a mutual roommate pair contradicts (a registration whose
+  request says the party is FLEXIBLE is not joined into one group by the
+  household default);
 - mutual roommates who asked for different types or share no night;
 - nights outside the event's bookable nights, and a type with nothing in
   service;
 - requests changed after the deadline;
 - types with more people asking on some night than the type takes;
+- changes a registrant asked for that the edit policy held for staff;
 - accessibility items (hidden without VIEW_SENSITIVE_DATA), including a ground
   floor need in a type with no ground-level unit.
 
@@ -371,9 +427,9 @@ thing it is about changes, so a changed item comes back.
 | --- | --- |
 | View requests and the review queue, edit a request, decide roommates, add or end rules, acknowledge | **MANAGE_REGISTRATION** |
 | Read or set the accessibility flags | plus **VIEW_SENSITIVE_DATA** |
-| Collection, deadline and "Full" settings | **CONFIGURE_EVENT** |
+| Collection, deadline and "Full" settings | **CONFIGURE_EVENT** (the response carries only the result unless the caller also holds MANAGE_REGISTRATION) |
 | Staff CSV export (`/api/events/<id>/exports/lodging-requests`) | **VIEW_REPORTS**; accessibility columns also need VIEW_SENSITIVE_DATA |
-| Registrant request and roommate routes (`/api/public/manage/<token>/lodging`) | a valid private registration link, for that registration only |
+| Registrant request and roommate routes (`/api/public/manage/<token>/lodging`) | a valid private registration link, for that registration only, subject to the event's edit policy; the view is on the `read` rate budget, saves on `update` |
 
 ### Export
 

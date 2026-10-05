@@ -1481,6 +1481,7 @@ model Event {
   lodgingRoommateRequests             EventLodgingRoommateRequest[]
   lodgingRules                        EventLodgingRule[]
   lodgingReviewAcks                   EventLodgingReviewAck[]
+  lodgingChangeRequests               EventLodgingChangeRequest[]
   notes                               StaffNote[]
   registrationTagAssignments          RegistrationTagAssignment[]
   attendeeTagAssignments              AttendeeTagAssignment[]
@@ -1836,6 +1837,10 @@ model Person {
   guardianAuthoritiesDeclared GuardianAuthority[] @relation("GuardianAuthorityActorPerson")
   guardianConflictsAsMinor   GuardianAuthorityConflict[] @relation("GuardianConflictMinor")
   guardianConflictsAsAdult   GuardianAuthorityConflict[] @relation("GuardianConflictAdult")
+  lodgingRoommateAsker       EventLodgingRoommateRequest[] @relation("LodgingRoommateFromPerson")
+  lodgingRoommateAsked       EventLodgingRoommateRequest[] @relation("LodgingRoommateTargetPerson")
+  lodgingRulesAsA            EventLodgingRule[] @relation("LodgingRulePersonA")
+  lodgingRulesAsB            EventLodgingRule[] @relation("LodgingRulePersonB")
 
   @@index([lastName, firstName])
 }
@@ -2527,6 +2532,7 @@ model Registration {
   guardianAuthorities     GuardianAuthority[]
   guardianAuthorityConflicts GuardianAuthorityConflict[]
   lodgingRequests         EventLodgingRequest[]
+  lodgingChangeRequests   EventLodgingChangeRequest[]
   lodgingRoommateRequestsFrom EventLodgingRoommateRequest[] @relation("LodgingRoommateFrom")
   lodgingRoommateRequestsTo   EventLodgingRoommateRequest[] @relation("LodgingRoommateTarget")
   honorEnrollments        HonorEnrollment[]
@@ -6379,6 +6385,8 @@ model EventLodgingRoommateRequest {
   event              Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
   fromRegistration   Registration @relation("LodgingRoommateFrom", fields: [fromRegistrationId], references: [id], onDelete: Cascade)
   targetRegistration Registration @relation("LodgingRoommateTarget", fields: [targetRegistrationId], references: [id], onDelete: Cascade)
+  fromPerson         Person?      @relation("LodgingRoommateFromPerson", fields: [fromPersonId], references: [id], onDelete: Restrict)
+  targetPerson       Person?      @relation("LodgingRoommateTargetPerson", fields: [targetPersonId], references: [id], onDelete: Restrict)
 
   /// A migration-level partial unique index allows one open request per (event, from, target, people).
   @@index([eventId, fromRegistrationId])
@@ -6404,9 +6412,13 @@ model EventLodgingRule {
   endedByUserId  String?
   endReason      String?
 
-  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event   Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  personA Person  @relation("LodgingRulePersonA", fields: [personAId], references: [id], onDelete: Restrict)
+  personB Person? @relation("LodgingRulePersonB", fields: [personBId], references: [id], onDelete: Restrict)
 
   @@index([eventId, kind])
+  @@index([personAId])
+  @@index([personBId])
 }
 
 /// A staff acknowledgement of a review item. The fingerprint changes when the item changes, so a changed item reappears.
@@ -6422,4 +6434,30 @@ model EventLodgingReviewAck {
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
 
   @@unique([eventId, itemKey, fingerprint])
+}
+
+/// A registrant's change that their event's edit policy keeps from applying itself (a priced lodging type once money
+/// is on the registration). Nothing is applied: it waits in the staff review queue until staff act on it or dismiss it.
+/// It never carries the accessibility flags (those are staff-only after the first version).
+model EventLodgingChangeRequest {
+  id                   String                     @id @default(cuid())
+  eventId              String
+  registrationId       String
+  category             LodgingCategory?
+  firstNight           DateTime?                  @db.Date
+  lastNight            DateTime?                  @db.Date
+  partySize            Int
+  privateRoomRequested Boolean                    @default(false)
+  householdPreference  LodgingHouseholdPreference @default(TOGETHER)
+  accessTokenId        String?
+  createdAt            DateTime                   @default(now())
+  resolvedAt           DateTime?
+  resolvedByUserId     String?
+  resolution           String?
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, resolvedAt])
+  @@index([registrationId])
 }

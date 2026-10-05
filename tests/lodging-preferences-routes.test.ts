@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   changeRegistrantRoommates: vi.fn(),
   authorizeRegistrationAccessToken: vi.fn(),
   checkPublicManageRateLimit: vi.fn(),
+  checkPublicRoommateLookupRateLimit: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -40,7 +41,7 @@ vi.mock("@/modules/lodging/preferences-service", () => ({
   changeRegistrantRoommates: mocks.changeRegistrantRoommates,
 }));
 vi.mock("@/modules/public-access/repository", () => ({ authorizeRegistrationAccessToken: mocks.authorizeRegistrationAccessToken }));
-vi.mock("@/modules/rate-limit/service", () => ({ checkPublicManageRateLimit: mocks.checkPublicManageRateLimit }));
+vi.mock("@/modules/rate-limit/service", () => ({ checkPublicManageRateLimit: mocks.checkPublicManageRateLimit, checkPublicRoommateLookupRateLimit: mocks.checkPublicRoommateLookupRateLimit }));
 
 import { GET as requestsGet, POST as requestsPost } from "@/app/api/events/[eventId]/lodging/requests/route";
 import { PUT as requestPut } from "@/app/api/events/[eventId]/lodging/requests/[registrationId]/route";
@@ -87,6 +88,7 @@ beforeEach(() => {
   mocks.changeRegistrantRoommates.mockResolvedValue({ id: "rm1", created: true });
   mocks.authorizeRegistrationAccessToken.mockResolvedValue({ accessTokenId: "tok1", registrationId: "reg1", eventId: "ev1", registrationStatus: "CONFIRMED", attendeeEditPolicy: "VERIFY_EVERY_EDIT" });
   mocks.checkPublicManageRateLimit.mockResolvedValue({ allowed: true, decisions: [] });
+  mocks.checkPublicRoommateLookupRateLimit.mockResolvedValue({ allowed: true, decisions: [] });
 });
 
 describe("staff lodging request routes", () => {
@@ -160,6 +162,25 @@ describe("staff lodging request routes", () => {
   });
 });
 
+describe("the settings route", () => {
+  it("returns only the result to someone who cannot manage registrations", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user });
+    mocks.findActiveMembership.mockResolvedValue(membership("READ_ONLY_STAFF", ["CONFIGURE_EVENT"]));
+    const response = await settingsPatch(request("PATCH", { fullBehavior: "WAITLIST" }), { params: Promise.resolve(eventParams) });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(Object.keys(body)).toEqual(["result"]);
+    expect(mocks.getStaffLodgingRequestsView).not.toHaveBeenCalled();
+  });
+
+  it("adds the staff view only when the caller also manages registrations", async () => {
+    mocks.getCurrentSession.mockResolvedValue({ user });
+    mocks.findActiveMembership.mockResolvedValue(membership("EVENT_ADMIN"));
+    const body = await (await settingsPatch(request("PATCH", { fullBehavior: "WAITLIST" }), { params: Promise.resolve(eventParams) })).json();
+    expect(body.requests).toBeDefined();
+  });
+});
+
 describe("the lodging request export", () => {
   it("holds accessibility columns only for staff with VIEW_SENSITIVE_DATA", async () => {
     mocks.getCurrentSession.mockResolvedValue({ user });
@@ -189,6 +210,38 @@ describe("registrant lodging routes", () => {
     expect((await publicRoommates(request("POST", { action: "withdraw", requestId: "x" }), { params: Promise.resolve(tokenParams) })).status).toBe(404);
     expect(mocks.saveLodgingRequest).not.toHaveBeenCalled();
     expect(mocks.changeRegistrantRoommates).not.toHaveBeenCalled();
+  });
+
+  it("puts the view on the read budget and refuses when it is spent", async () => {
+    await publicGet(request("GET"), { params: Promise.resolve(tokenParams) });
+    expect(mocks.checkPublicManageRateLimit).toHaveBeenLastCalledWith(expect.anything(), "synthetic-token", "read");
+    mocks.checkPublicManageRateLimit.mockResolvedValue({ allowed: false, decisions: [{ allowed: false, limit: 120, remaining: 0, windowSeconds: 900, resetAfterSeconds: 30 }] });
+    expect((await publicGet(request("GET"), { params: Promise.resolve(tokenParams) })).status).toBe(429);
+    expect(mocks.getRegistrantLodgingView).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives a roommate lookup by name and code its own, tighter budget", async () => {
+    mocks.checkPublicRoommateLookupRateLimit.mockResolvedValue({ allowed: false, decisions: [{ allowed: false, limit: 5, remaining: 0, windowSeconds: 900, resetAfterSeconds: 60 }] });
+    const lookup = await publicRoommates(request("POST", { action: "add_by_code", name: "Pat Example", confirmationCode: "REG-ABCDEF123456" }), { params: Promise.resolve(tokenParams) });
+    expect(lookup.status).toBe(429);
+    expect(mocks.changeRegistrantRoommates).not.toHaveBeenCalled();
+    // Withdrawing a request is not a lookup and does not spend that budget.
+    const withdraw = await publicRoommates(request("POST", { action: "withdraw", requestId: "x" }), { params: Promise.resolve(tokenParams) });
+    expect(withdraw.status).toBe(200);
+    expect(mocks.checkPublicRoommateLookupRateLimit).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an event that verifies every edit, and a registrant changing their flags, with their own codes", async () => {
+    mocks.saveLodgingRequest.mockRejectedValueOnce(new LodgingError("EDIT_POLICY_REQUIRES_VERIFICATION", "This event requires verification before this change. To change this, contact the event team."));
+    const verify = await publicPut(request("PUT", { category: "TENT" }), { params: Promise.resolve(tokenParams) });
+    expect(verify.status).toBe(403);
+    expect((await verify.json()).error).toBe("EDIT_POLICY_REQUIRES_VERIFICATION");
+    mocks.saveLodgingRequest.mockRejectedValueOnce(new LodgingError("FLAGS_STAFF_ONLY", "Contact the event team."));
+    const flags = await publicPut(request("PUT", { category: "TENT", groundFloorNeeded: false }), { params: Promise.resolve(tokenParams) });
+    expect(flags.status).toBe(403);
+    expect((await flags.json()).error).toBe("FLAGS_STAFF_ONLY");
+    mocks.changeRegistrantRoommates.mockRejectedValueOnce(new LodgingError("EDIT_POLICY_REQUIRES_VERIFICATION", "Contact the event team."));
+    expect((await publicRoommates(request("POST", { action: "withdraw", requestId: "x" }), { params: Promise.resolve(tokenParams) })).status).toBe(403);
   });
 
   it("takes the registration from the link, never from the body", async () => {

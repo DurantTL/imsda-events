@@ -12,6 +12,7 @@ import {
   lodgingSettingsSchema,
   normalizeName,
   registrantRoommateSchema,
+  requestGrew,
   roommateStatus,
   ruleCreateSchema,
   separationViolations,
@@ -203,7 +204,37 @@ const capacity = (perNight: number | null, extra: Partial<CategoryCapacity> = {}
   perNight: Object.fromEntries(nights.map((night) => [night, perNight])), unitsInService: 2, groundLevelUnits: 1, ...extra,
 });
 
-describe("capacity at selection", () => {
+describe("a party that can be split", () => {
+  it("is not joined into one group by the household default", () => {
+    const rules = [rule({ id: "x", kind: "SEPARATE", personAId: "adult1", personBId: "teen1" })];
+    expect(separationViolations(nights, { people, rules, guardians: [] })).toHaveLength(1);
+    expect(separationViolations(nights, { people, rules, guardians: [], flexibleRegistrationIds: ["r1"] })).toEqual([]);
+    expect(asSets(togetherGroupsOn("2027-06-16", { people, rules: [], guardians: [], flexibleRegistrationIds: ["r1"] }))).toEqual([["adult2", "son2"]]);
+  });
+
+  it("still keeps a minor with a declared responsible adult", () => {
+    const guardians: GuardianLink[] = [{ authorityId: "g1", minorPersonId: "teen1", adultPersonId: "adult1", declaredAt: "2027-01-01T00:00:00Z" }];
+    expect(asSets(togetherGroupsOn("2027-06-16", { people, rules: [], guardians, flexibleRegistrationIds: ["r1"] }))).toContainEqual(["adult1", "teen1"]);
+  });
+});
+
+describe("when a changed request needs room again", () => {
+  const before = { category: "DORM_ROOM" as const, partySize: 2, nights: ["2027-06-15", "2027-06-16"] };
+  it("does for a new request, another type, a bigger party or a new night", () => {
+    expect(requestGrew(null, before)).toBe(true);
+    expect(requestGrew(before, { ...before, category: "TENT" })).toBe(true);
+    expect(requestGrew(before, { ...before, partySize: 3 })).toBe(true);
+    expect(requestGrew(before, { ...before, nights: ["2027-06-15", "2027-06-16", "2027-06-17"] })).toBe(true);
+    expect(requestGrew(before, { ...before, nights: ["2027-06-16", "2027-06-17"] })).toBe(true);
+  });
+  it("does not for the same, fewer people or fewer nights", () => {
+    expect(requestGrew(before, before)).toBe(false);
+    expect(requestGrew(before, { ...before, partySize: 1 })).toBe(false);
+    expect(requestGrew(before, { ...before, nights: ["2027-06-16"] })).toBe(false);
+  });
+});
+
+describe("the capacity at selection", () => {
   it("counts the people already asking, per night, for partial stays", () => {
     const demand = demandByCategoryNight([
       { registrationId: "r1", category: "DORM_ROOM", nights: ["2027-06-15", "2027-06-16"], partySize: 3 },
@@ -330,6 +361,11 @@ describe("the staff review queue", () => {
     // A review item never carries free text from the guest: only the flags' meaning.
     for (const item of items) expect(`${item.title} ${item.detail}`).not.toMatch(/surgery|medication|diagnos/i);
     expect(buildReviewItems(facts({ requests: [request({ registrationId: "r1" })] })).filter((item) => item.sensitive)).toEqual([]);
+  });
+
+  it("lists an open change request for an active registration", () => {
+    const items = buildReviewItems(facts({ changeRequests: [{ id: "c1", registrationId: "r1", category: "DORM_ROOM" }, { id: "c2", registrationId: "r4", category: "TENT" }] }));
+    expect(items.map((item) => [item.kind, item.key])).toEqual([["CHANGE_REQUESTED", "change:c1"]]);
   });
 
   it("changes an item's fingerprint when the request changes, so an acknowledged item returns", () => {

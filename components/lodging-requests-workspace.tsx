@@ -10,9 +10,9 @@ import {
 } from "@/modules/lodging/preferences-domain";
 import type { StaffLodgingRequestView, StaffLodgingRequestsView } from "@/modules/lodging/preferences-service";
 
-type Run = (action: () => Promise<{ requests: StaffLodgingRequestsView }>, success: string) => Promise<void>;
+type Run = (action: () => Promise<{ requests?: StaffLodgingRequestsView }>, success: string) => Promise<void>;
 
-async function call(url: string, method: string, body: unknown): Promise<{ requests: StaffLodgingRequestsView }> {
+async function call(url: string, method: string, body: unknown): Promise<{ requests?: StaffLodgingRequestsView }> {
   const response = await fetch(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const json = await response.json();
   if (!response.ok) throw new Error(json.message ?? "That could not be saved.");
@@ -44,7 +44,8 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
     setBusy(true); setError(""); setNotice("");
     try {
       const result = await action();
-      setView(result.requests);
+      // The settings route sends the staff view only to someone who may read it; otherwise keep what is on screen.
+      if (result.requests) setView(result.requests);
       setNotice(success);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That could not be saved.");
@@ -104,15 +105,17 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
           void run(() => call(`${base}/roommates`, "POST", { action: submitter?.value ?? "decline", requestId: item.roommateRequestId, reason }), "Roommate request updated.");
         }}>
           <label>Reason <input name="reason" required maxLength={300} /></label>
+          <span className="field-hint">No medical details.</span>
           <button type="submit" value="approve" disabled={busy || item.kind !== "ONE_SIDED_ROOMMATE"}>Approve as mutual</button>
           <button type="submit" value="decline" disabled={busy}>Decline</button>
         </form> : null}
         {!item.acknowledged ? <form onSubmit={(event: FormEvent<HTMLFormElement>) => {
           event.preventDefault();
-          const note = String(new FormData(event.currentTarget).get("note") ?? "");
+          // A restricted item keeps no typed note.
+          const note = item.sensitive ? "Acknowledged" : String(new FormData(event.currentTarget).get("note") ?? "");
           void run(() => call(`${base}/requests`, "POST", { action: "acknowledge", itemKey: item.key, fingerprint: item.fingerprint, note }), "Acknowledged.");
         }}>
-          <label>Note <input name="note" required maxLength={300} /></label>
+          {item.sensitive ? null : <><label>Note <input name="note" required maxLength={300} /></label><span className="field-hint">No medical details.</span></>}
           <button type="submit" disabled={busy}>Acknowledge</button>
         </form> : null}
       </li>)}</ul>}
@@ -143,6 +146,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
           void run(() => call(`${base}/rules`, "POST", { action: "end", ruleId: rule.id, reason }), "Rule ended.");
         }}>
           <label>Reason for ending <input name="reason" required maxLength={300} /></label>
+          <span className="field-hint">No medical details.</span>
           <button type="submit" disabled={busy}>End rule</button>
         </form>
       </li>)}</ul>}
@@ -166,6 +170,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
         <label>First night <input type="date" name="effectiveFrom" /></label>
         <label>Last night <input type="date" name="effectiveUntil" /></label>
         <label>Reason <input name="reason" required maxLength={300} /></label>
+        <span className="field-hint">No medical details.</span>
         <button className="primary-button" type="submit" disabled={busy || view.people.length === 0}>Add rule</button>
       </form>
     </section>
@@ -202,6 +207,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
             void run(() => call(`${base}/roommates`, "POST", { action: "withdraw", requestId: row.id, reason }), "Roommate request withdrawn.");
           }}>
             <label>Reason <input name="reason" required maxLength={300} /></label>
+            <span className="field-hint">No medical details.</span>
             <button type="submit" disabled={busy}>Withdraw</button>
           </form> : null}
         </li>)}</ul>
@@ -233,6 +239,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
           <label><input type="checkbox" name="accessibleRoomNeeded" defaultChecked={request.accessibleRoomNeeded} /> Accessible room needed</label>
         </> : null}
         <label>Reason <input name="reason" required maxLength={300} /></label>
+        <span className="field-hint">No medical details.</span>
         <button className="primary-button" type="submit" disabled={busy}>Save change</button>
       </form>
     </td></tr> : null}

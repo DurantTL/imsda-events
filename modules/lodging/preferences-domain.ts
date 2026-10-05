@@ -247,18 +247,28 @@ export type TogetherSource = "HOUSEHOLD_DEFAULT" | "RESPONSIBLE_ADULT" | "STAFF"
 
 /**
  * Who is kept together on one night, as lists of person ids (two or more). Three sources, in this order:
- * - the household default: everyone on one registration, except a person staff split out (an active split rule);
+ * - the household default: everyone on one registration, except a person staff split out (an active split rule)
+ *   and except a registration whose request is FLEXIBLE (it asked to be placeable in more than one unit);
  * - a declared responsible adult (#131) with their minor, derived from the guardian records so it follows
  *   them and never goes stale (the system keep-together rule);
  * - a staff keep-together rule.
  */
-export function togetherGroupsOn(night: string, input: { people: readonly RulePerson[]; rules: readonly RuleRow[]; guardians: readonly GuardianLink[] }) {
+export type TogetherInput = {
+  people: readonly RulePerson[];
+  rules: readonly RuleRow[];
+  guardians: readonly GuardianLink[];
+  /** Registrations whose request says the party can be split (FLEXIBLE): the household default does not join them. */
+  flexibleRegistrationIds?: readonly string[];
+};
+
+export function togetherGroupsOn(night: string, input: TogetherInput) {
   const present = new Set(input.people.map((person) => person.personId));
   const split = new Set(input.rules.filter((rule) => rule.kind === "SPLIT_HOUSEHOLD" && ruleActiveOn(rule, night)).map((rule) => rule.personAId));
   const groups = new UnionFind();
+  const flexible = new Set(input.flexibleRegistrationIds ?? []);
   const byRegistration = new Map<string, string[]>();
   for (const person of input.people) {
-    if (split.has(person.personId)) continue;
+    if (split.has(person.personId) || flexible.has(person.registrationId)) continue;
     const list = byRegistration.get(person.registrationId) ?? [];
     list.push(person.personId);
     byRegistration.set(person.registrationId, list);
@@ -283,7 +293,7 @@ export function togetherGroupsOn(night: string, input: { people: readonly RulePe
 export type SeparationViolation = { ruleId: string; personAId: string; personBId: string; firstNight: string };
 
 /** A keep-apart rule whose two people the together rules put in one group on some night. */
-export function separationViolations(nights: readonly string[], input: { people: readonly RulePerson[]; rules: readonly RuleRow[]; guardians: readonly GuardianLink[] }) {
+export function separationViolations(nights: readonly string[], input: TogetherInput) {
   const found = new Map<string, SeparationViolation>();
   const separate = input.rules.filter((rule) => rule.kind === "SEPARATE" && rule.personBId && !rule.ended);
   if (separate.length === 0) return [];
@@ -364,6 +374,7 @@ export const reviewKinds = [
   "OVER_CAPACITY",
   "ACCESSIBILITY_NEEDED",
   "ACCESSIBILITY_UNMET",
+  "CHANGE_REQUESTED",
 ] as const;
 export type ReviewKind = (typeof reviewKinds)[number];
 
@@ -378,6 +389,7 @@ export const reviewKindLabels: Record<ReviewKind, string> = {
   OVER_CAPACITY: "More requested than the lodging takes",
   ACCESSIBILITY_NEEDED: "Accessibility need",
   ACCESSIBILITY_UNMET: "Accessibility need cannot be met",
+  CHANGE_REQUESTED: "Change requested",
 };
 
 /** Kinds that disclose an accessibility flag: only staff with VIEW_SENSITIVE_DATA see them. */
@@ -412,6 +424,8 @@ export type ReviewFacts = {
   rules: readonly RuleRow[];
   guardians: readonly GuardianLink[];
   capacity: Partial<Record<LodgingCategory, CategoryCapacity>>;
+  /** Open registrant changes the edit policy kept from applying. */
+  changeRequests?: ReadonlyArray<{ id: string; registrationId: string; category: LodgingCategory | null }>;
 };
 
 export type ReviewItem = {
@@ -530,7 +544,8 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
   }
 
   // --- Keep-apart rules against the together groups ------------------------
-  for (const violation of separationViolations(facts.nights, { people: facts.people, rules: facts.rules, guardians: facts.guardians })) {
+  const flexibleRegistrationIds = facts.requests.filter((request) => request.householdPreference === "FLEXIBLE").map((request) => request.registrationId);
+  for (const violation of separationViolations(facts.nights, { people: facts.people, rules: facts.rules, guardians: facts.guardians, flexibleRegistrationIds })) {
     const rule = rulesById.get(violation.ruleId);
     const a = personRegistration.get(violation.personAId);
     const b = personRegistration.get(violation.personBId);
@@ -588,6 +603,16 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
         detail: "Yes/no flags only. Place them where it is met.",
       });
     }
+  }
+
+  // --- Changes the edit policy kept from applying -----------------------------
+  for (const change of facts.changeRequests ?? []) {
+    if (!active(change.registrationId)) continue;
+    push({
+      key: `change:${change.id}`, kind: "CHANGE_REQUESTED", fingerprint: change.id, registrationIds: [change.registrationId],
+      title: `${label(facts, change.registrationId)} asked to change lodging${change.category ? ` to ${lodgingCategoryLabels[change.category].toLowerCase()}` : ""}`,
+      detail: "Payment is already on this registration, so the change was not applied. Make the change for them if it is right, then acknowledge this.",
+    });
   }
 
   // --- Over capacity --------------------------------------------------------
@@ -666,4 +691,17 @@ export function lodgingRequestExportCells(row: LodgingRequestExportRow, includeA
   ];
   if (includeAccessibility) cells.push(yesNo(row.groundFloorNeeded), yesNo(row.accessibleRoomNeeded));
   return cells;
+}
+
+/**
+ * Whether a changed request asks for more than the one it replaces: a different type, a larger party, or a night
+ * the earlier request did not cover. Only then does the type's capacity need checking again.
+ */
+export function requestGrew(
+  previous: { category: LodgingCategory | null; partySize: number; nights: readonly string[] } | null,
+  next: { category: LodgingCategory | null; partySize: number; nights: readonly string[] },
+) {
+  if (!previous || previous.category !== next.category || next.partySize > previous.partySize) return true;
+  const had = new Set(previous.nights);
+  return next.nights.some((night) => !had.has(night));
 }

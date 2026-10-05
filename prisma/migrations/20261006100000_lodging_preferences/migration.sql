@@ -111,6 +111,26 @@ CREATE TABLE "EventLodgingReviewAck" (
     CONSTRAINT "EventLodgingReviewAck_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "EventLodgingChangeRequest" (
+    "id" TEXT NOT NULL,
+    "eventId" TEXT NOT NULL,
+    "registrationId" TEXT NOT NULL,
+    "category" "LodgingCategory",
+    "firstNight" DATE,
+    "lastNight" DATE,
+    "partySize" INTEGER NOT NULL,
+    "privateRoomRequested" BOOLEAN NOT NULL DEFAULT false,
+    "householdPreference" "LodgingHouseholdPreference" NOT NULL DEFAULT 'TOGETHER',
+    "accessTokenId" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "resolvedAt" TIMESTAMP(3),
+    "resolvedByUserId" TEXT,
+    "resolution" TEXT,
+
+    CONSTRAINT "EventLodgingChangeRequest_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "EventLodgingRequest_eventId_registrationId_key" ON "EventLodgingRequest"("eventId", "registrationId");
 
@@ -133,7 +153,19 @@ CREATE INDEX "EventLodgingRoommateRequest_eventId_targetRegistrationId_idx" ON "
 CREATE INDEX "EventLodgingRule_eventId_kind_idx" ON "EventLodgingRule"("eventId", "kind");
 
 -- CreateIndex
+CREATE INDEX "EventLodgingRule_personAId_idx" ON "EventLodgingRule"("personAId");
+
+-- CreateIndex
+CREATE INDEX "EventLodgingRule_personBId_idx" ON "EventLodgingRule"("personBId");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "EventLodgingReviewAck_eventId_itemKey_fingerprint_key" ON "EventLodgingReviewAck"("eventId", "itemKey", "fingerprint");
+
+-- CreateIndex
+CREATE INDEX "EventLodgingChangeRequest_eventId_resolvedAt_idx" ON "EventLodgingChangeRequest"("eventId", "resolvedAt");
+
+-- CreateIndex
+CREATE INDEX "EventLodgingChangeRequest_registrationId_idx" ON "EventLodgingChangeRequest"("registrationId");
 
 -- AddForeignKey
 ALTER TABLE "EventLodgingRequest" ADD CONSTRAINT "EventLodgingRequest_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -154,11 +186,28 @@ ALTER TABLE "EventLodgingRoommateRequest" ADD CONSTRAINT "EventLodgingRoommateRe
 ALTER TABLE "EventLodgingRoommateRequest" ADD CONSTRAINT "EventLodgingRoommateRequest_targetRegistrationId_fkey" FOREIGN KEY ("targetRegistrationId") REFERENCES "Registration"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "EventLodgingRoommateRequest" ADD CONSTRAINT "EventLodgingRoommateRequest_fromPersonId_fkey" FOREIGN KEY ("fromPersonId") REFERENCES "Person"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "EventLodgingRoommateRequest" ADD CONSTRAINT "EventLodgingRoommateRequest_targetPersonId_fkey" FOREIGN KEY ("targetPersonId") REFERENCES "Person"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "EventLodgingRule" ADD CONSTRAINT "EventLodgingRule_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "EventLodgingRule" ADD CONSTRAINT "EventLodgingRule_personAId_fkey" FOREIGN KEY ("personAId") REFERENCES "Person"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "EventLodgingRule" ADD CONSTRAINT "EventLodgingRule_personBId_fkey" FOREIGN KEY ("personBId") REFERENCES "Person"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "EventLodgingReviewAck" ADD CONSTRAINT "EventLodgingReviewAck_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
+-- AddForeignKey
+ALTER TABLE "EventLodgingChangeRequest" ADD CONSTRAINT "EventLodgingChangeRequest_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "EventLodgingChangeRequest" ADD CONSTRAINT "EventLodgingChangeRequest_registrationId_fkey" FOREIGN KEY ("registrationId") REFERENCES "Registration"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 
 -- ---------------------------------------------------------------------------
@@ -261,8 +310,14 @@ BEGIN
   IF NEW."eventId" IS DISTINCT FROM OLD."eventId" OR NEW."fromRegistrationId" IS DISTINCT FROM OLD."fromRegistrationId"
      OR NEW."targetRegistrationId" IS DISTINCT FROM OLD."targetRegistrationId" OR NEW."fromPersonId" IS DISTINCT FROM OLD."fromPersonId"
      OR NEW."targetPersonId" IS DISTINCT FROM OLD."targetPersonId" OR NEW."source" IS DISTINCT FROM OLD."source"
-     OR NEW."actorUserId" IS DISTINCT FROM OLD."actorUserId" OR NEW."createdAt" IS DISTINCT FROM OLD."createdAt" THEN
+     OR NEW."actorUserId" IS DISTINCT FROM OLD."actorUserId" OR NEW."accessTokenId" IS DISTINCT FROM OLD."accessTokenId"
+     OR NEW."createdAt" IS DISTINCT FROM OLD."createdAt" THEN
     RAISE EXCEPTION 'A roommate request''s parties and source cannot be changed.' USING ERRCODE = '23001';
+  END IF;
+  IF OLD."decision" <> 'PENDING' AND (
+       NEW."decision" IS DISTINCT FROM OLD."decision" OR NEW."decidedAt" IS DISTINCT FROM OLD."decidedAt"
+       OR NEW."decidedByUserId" IS DISTINCT FROM OLD."decidedByUserId" OR NEW."decisionReason" IS DISTINCT FROM OLD."decisionReason") THEN
+    RAISE EXCEPTION 'A staff decision on a roommate request is final.' USING ERRCODE = '23001';
   END IF;
   IF OLD."withdrawnAt" IS NOT NULL AND (NEW."withdrawnAt" IS DISTINCT FROM OLD."withdrawnAt" OR NEW."withdrawalReason" IS DISTINCT FROM OLD."withdrawalReason") THEN
     RAISE EXCEPTION 'A withdrawn roommate request is final.' USING ERRCODE = '23001';
@@ -325,3 +380,45 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER "EventLodgingReviewAck_append_only" BEFORE UPDATE OR DELETE ON "EventLodgingReviewAck" FOR EACH ROW EXECUTE FUNCTION "EventLodgingReviewAck_append_only"();
+
+-- Change requests: same event, never rewritten except to resolve once, never deleted on their own.
+ALTER TABLE "EventLodgingChangeRequest" ADD CONSTRAINT "EventLodgingChangeRequest_party_positive" CHECK ("partySize" >= 1);
+ALTER TABLE "EventLodgingChangeRequest" ADD CONSTRAINT "EventLodgingChangeRequest_nights" CHECK (
+  (("firstNight" IS NULL) = ("lastNight" IS NULL)) AND ("firstNight" IS NULL OR "lastNight" >= "firstNight")
+);
+ALTER TABLE "EventLodgingChangeRequest" ADD CONSTRAINT "EventLodgingChangeRequest_resolution_fields" CHECK (("resolvedAt" IS NULL) = ("resolution" IS NULL));
+
+CREATE FUNCTION "EventLodgingChangeRequest_same_event"() RETURNS trigger AS $$
+BEGIN
+  IF (SELECT "eventId" FROM "Registration" WHERE "id" = NEW."registrationId") IS DISTINCT FROM NEW."eventId" THEN
+    RAISE EXCEPTION 'The registration is not on the change request''s event.' USING ERRCODE = '23001';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER "EventLodgingChangeRequest_same_event" BEFORE INSERT ON "EventLodgingChangeRequest" FOR EACH ROW EXECUTE FUNCTION "EventLodgingChangeRequest_same_event"();
+
+CREATE FUNCTION "EventLodgingChangeRequest_guard"() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    IF pg_trigger_depth() > 1 AND (
+      NOT EXISTS (SELECT 1 FROM "Event" WHERE "id" = OLD."eventId")
+      OR NOT EXISTS (SELECT 1 FROM "Registration" WHERE "id" = OLD."registrationId")
+    ) THEN
+      RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'A lodging change request is resolved, never deleted.' USING ERRCODE = '23001';
+  END IF;
+  IF OLD."resolvedAt" IS NOT NULL
+     OR NEW."eventId" IS DISTINCT FROM OLD."eventId" OR NEW."registrationId" IS DISTINCT FROM OLD."registrationId"
+     OR NEW."category" IS DISTINCT FROM OLD."category" OR NEW."firstNight" IS DISTINCT FROM OLD."firstNight"
+     OR NEW."lastNight" IS DISTINCT FROM OLD."lastNight" OR NEW."partySize" IS DISTINCT FROM OLD."partySize"
+     OR NEW."privateRoomRequested" IS DISTINCT FROM OLD."privateRoomRequested"
+     OR NEW."householdPreference" IS DISTINCT FROM OLD."householdPreference"
+     OR NEW."accessTokenId" IS DISTINCT FROM OLD."accessTokenId" OR NEW."createdAt" IS DISTINCT FROM OLD."createdAt" THEN
+    RAISE EXCEPTION 'A lodging change request can only be resolved, once.' USING ERRCODE = '23001';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER "EventLodgingChangeRequest_guard" BEFORE UPDATE OR DELETE ON "EventLodgingChangeRequest" FOR EACH ROW EXECUTE FUNCTION "EventLodgingChangeRequest_guard"();

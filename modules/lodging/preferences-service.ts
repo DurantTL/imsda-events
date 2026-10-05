@@ -25,6 +25,7 @@ import {
   normalizeConfirmationCode,
   normalizeName,
   registrantRoommateSchema,
+  requestGrew,
   requestNights,
   roommateStatus,
   ruleActionSchema,
@@ -66,6 +67,10 @@ const toDate = (night: string) => new Date(`${night}T00:00:00Z`);
 const toNight = (date: Date) => date.toISOString().slice(0, 10);
 const record = (value: unknown): Record<string, unknown> => (value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {});
 
+function verificationRequired() {
+  return new LodgingError("EDIT_POLICY_REQUIRES_VERIFICATION", "This event requires verification before this change. To change this, contact the event team.");
+}
+
 export type Actor =
   | { kind: "REGISTRANT"; accessTokenId: string }
   | { kind: "STAFF"; userId: string; canSeeSensitive: boolean };
@@ -77,7 +82,7 @@ export type Actor =
 async function loadContext(client: Client, eventId: string) {
   const lodging = await client.eventLodging.findUnique({
     where: { eventId },
-    include: { event: { select: { id: true, name: true, startsAt: true, endsAt: true, timezone: true, registrationClosesOn: true } } },
+    include: { event: { select: { id: true, name: true, startsAt: true, endsAt: true, timezone: true, registrationClosesOn: true, attendeeEditPolicy: true } } },
   });
   if (!lodging) throw new LodgingError("NO_PROPERTY", "This event has no lodging set up.");
   const nights = nightsFor(lodging);
@@ -93,6 +98,7 @@ async function loadContext(client: Client, eventId: string) {
     timezone: lodging.event.timezone,
     nights,
     deadlineDay,
+    editPolicy: lodging.event.attendeeEditPolicy,
     collectsPreferences: lodging.collectsPreferences,
     fullBehavior: lodging.fullBehavior as FullBehavior,
     preferencesDeadline: lodging.preferencesDeadline ? toNight(lodging.preferencesDeadline) : null,
@@ -165,6 +171,13 @@ type RequestRow = {
   createdAt: Date;
 };
 
+async function loadRates(client: Client, eventLodgingId: string) {
+  const rows = await client.eventLodgingRate.findMany({ where: { eventLodgingId } });
+  const rates: Partial<Record<LodgingCategory, LodgingRate | null>> = {};
+  for (const rate of rows) rates[rate.category] = { amountCents: rate.amountCents, basis: rate.basis, minimumNights: rate.minimumNights };
+  return rates;
+}
+
 async function loadCurrentRequests(client: Client, eventId: string, where: Prisma.EventLodgingRequestWhereInput = {}): Promise<RequestRow[]> {
   const requests = await client.eventLodgingRequest.findMany({
     where: { eventId, ...where },
@@ -216,11 +229,17 @@ async function loadRegistration(tx: Client, eventId: string, registrationId: str
       id: true,
       status: true,
       confirmationCode: true,
+      clubRegistration: { select: { id: true } },
+      groupRegistration: { select: { id: true } },
       accountHolderPerson: { select: { firstName: true, lastName: true } },
       attendees: { orderBy: [{ position: "asc" }, { id: "asc" }], select: { personId: true, profileSnapshot: true, person: { select: { firstName: true, lastName: true } } } },
     },
   });
   if (!registration) throw new LodgingError("REGISTRATION_NOT_FOUND", "That registration was not found for this event.");
+  // Club and group registrations have rosters their directors place; guests do not choose lodging for them.
+  if (registration.clubRegistration || registration.groupRegistration) {
+    throw new LodgingError("REGISTRATION_NOT_ELIGIBLE", "Lodging requests are for individual registrations. Club and group lodging is assigned by staff.");
+  }
   return {
     ...registration,
     people: registration.attendees.map((attendee) => ({ personId: attendee.personId, name: attendeeName(attendee) })),
@@ -268,7 +287,10 @@ export async function updateLodgingSettings(eventId: string, actorUserId: string
 // Saving a request: every change is a new, immutable version
 // ---------------------------------------------------------------------------
 
-export type SaveRequestResult = { requestId: string; version: number; changed: boolean; afterDeadline: boolean };
+export type SaveRequestResult =
+  | { requestId: string; version: number; changed: boolean; afterDeadline: boolean; changeRequested?: false }
+  /** The event's edit policy kept the change from applying itself; it waits in the staff review queue. */
+  | { changeRequested: true; changeRequestId: string };
 
 /**
  * A registrant (through their private link) or staff saves the lodging request for one registration.
@@ -276,6 +298,13 @@ export type SaveRequestResult = { requestId: string; version: number; changed: b
  * at any time with a reason (after the deadline the change is flagged for review) and are not stopped by
  * "full" (the review queue then shows the category as over capacity). Staff without VIEW_SENSITIVE_DATA
  * cannot read or set the accessibility flags; their edits carry the existing flags forward.
+ *
+ * The event's edit policy (as for every private-link edit) applies to the registrant:
+ * - VERIFY_EVERY_EDIT: refused with EDIT_POLICY_REQUIRES_VERIFICATION; the screen is read-only.
+ * - TIERED: the accessibility flags may be set by the first saved version only; later changes are staff-only
+ *   (FLAGS_STAFF_ONLY). A change to a priced type is applied only while no payment (pending or succeeded) exists
+ *   on the registration; otherwise it is recorded as a change request for staff and nothing is applied.
+ * A registrant is also refused fewer nights than a rate's minimum (BELOW_MINIMUM_NIGHTS); staff may make the exception.
  */
 export async function saveLodgingRequest(
   input: { eventId: string; registrationId: string; actor: Actor; raw: unknown; sourceFormVersionId?: string | null; now?: Date },
@@ -292,6 +321,7 @@ export async function saveLodgingRequest(
     assertActiveRegistration(registration.status);
     const pastDeadline = isPastLodgingDeadline(context.deadlineDay, now, context.timezone);
     if (!staff) {
+      if (context.editPolicy === "VERIFY_EVERY_EDIT") throw verificationRequired();
       if (!context.collectsPreferences) throw new LodgingError("PREFERENCES_NOT_COLLECTED", "This event does not collect lodging preferences from registrants.");
       if (pastDeadline) throw new LodgingError("DEADLINE_PASSED", `The deadline to change lodging was ${context.deadlineDay}. Contact the event team.`);
     }
@@ -299,6 +329,11 @@ export async function saveLodgingRequest(
       throw new LodgingError("SENSITIVE_DATA_FORBIDDEN", "Your event role cannot read or change accessibility flags.");
     }
     const previous = (await loadCurrentRequests(tx, input.eventId, { registrationId: input.registrationId }))[0] ?? null;
+    if (!staff && previous
+      && ((parsed.groundFloorNeeded !== undefined && parsed.groundFloorNeeded !== previous.groundFloorNeeded)
+        || (parsed.accessibleRoomNeeded !== undefined && parsed.accessibleRoomNeeded !== previous.accessibleRoomNeeded))) {
+      throw new LodgingError("FLAGS_STAFF_ONLY", "Accessibility needs can be set when you first choose lodging. To change them now, contact the event team.");
+    }
 
     const nights = parsed.firstNight && parsed.lastNight ? requestNights({ firstNight: parsed.firstNight, lastNight: parsed.lastNight }, context.nights) : context.nights;
     if (parsed.firstNight && parsed.lastNight && (parsed.firstNight < context.nights[0]! || parsed.lastNight > context.nights[context.nights.length - 1]!)) {
@@ -329,16 +364,49 @@ export async function saveLodgingRequest(
       return { requestId: previous.requestId, version: previous.version, changed: false, afterDeadline: previous.afterDeadline };
     }
 
+    const rates = await loadRates(tx, context.eventLodgingId);
+    const rate = next.category ? rateForCategory(rates, next.category) : null;
+    if (!staff && rate?.minimumNights && nights.length < rate.minimumNights) {
+      throw new LodgingError("BELOW_MINIMUM_NIGHTS", `${lodgingCategoryLabels[next.category!]} needs at least ${rate.minimumNights} nights.`);
+    }
+    if (!staff && next.category && rate && next.category !== (previous?.category ?? null)) {
+      // Money may already ride on the registration; a registrant cannot move it to a priced type by themselves.
+      const paid = await tx.payment.count({ where: { registrationId: input.registrationId, status: { in: ["PENDING", "SUCCEEDED"] } } });
+      if (paid > 0) {
+        await tx.eventLodgingChangeRequest.updateMany({
+          where: { registrationId: input.registrationId, resolvedAt: null },
+          data: { resolvedAt: now, resolution: "Superseded by a newer request" },
+        });
+        const change = await tx.eventLodgingChangeRequest.create({
+          data: {
+            eventId: input.eventId, registrationId: input.registrationId, category: next.category,
+            firstNight: next.firstNight ? toDate(next.firstNight) : null, lastNight: next.lastNight ? toDate(next.lastNight) : null,
+            partySize: next.partySize, privateRoomRequested: next.privateRoomRequested, householdPreference: next.householdPreference,
+            accessTokenId: input.actor.kind === "REGISTRANT" ? input.actor.accessTokenId : null,
+          },
+        });
+        await writeAuditLog({
+          eventId: input.eventId, action: "LODGING_CHANGE_REQUESTED", entityType: "EventLodgingChangeRequest", entityId: change.id,
+          summary: `A change to a priced lodging type was requested on ${registration.confirmationCode}.`,
+          metadata: { registrationId: input.registrationId, category: next.category, accessTokenId: change.accessTokenId },
+        }, tx);
+        return { changeRequested: true as const, changeRequestId: change.id };
+      }
+    }
+
     if (next.category) {
-      // The unit rows of this category are the lock every selection takes, so two registrants racing for the last
-      // places cannot both get them (#200 takes the same lock before it assigns).
-      const { capacity, unitIdsByCategory } = await loadCategoryCapacity(tx, context);
+      // Every unit row of the event's lodging is the lock a selection takes, before any capacity is read, so two
+      // registrants racing for the last places cannot both get them (#200 takes the same lock before it assigns).
+      const everyUnit = await tx.eventLodgingUnit.findMany({ where: { eventLodgingId: context.eventLodgingId }, select: { id: true } });
+      await lockEventLodgingUnits(tx, input.eventId, everyUnit.map((row) => row.id));
+      const { capacity } = await loadCategoryCapacity(tx, context);
       const categoryCapacity = capacity[next.category];
       if (!categoryCapacity || categoryCapacity.unitsInService === 0) {
         throw new LodgingError("CATEGORY_NOT_OFFERED", `${lodgingCategoryLabels[next.category]} is not available for this event.`);
       }
-      if (!staff) {
-        await lockEventLodgingUnits(tx, input.eventId, unitIdsByCategory.get(next.category) ?? []);
+      // Only a request that asks for more than it replaces needs room: the type, a bigger party, or a new night.
+      const grew = requestGrew(previous ? { category: previous.category, partySize: previous.partySize, nights: requestNights(previous, context.nights) } : null, { category: next.category, partySize, nights });
+      if (!staff && grew) {
         const demand = (await demandExcluding(tx, input.eventId, context.nights, input.registrationId)).get(next.category);
         const fit = categoryFits({ capacity: categoryCapacity, demand, nights, partySize });
         if (!fit.fits) {
@@ -375,9 +443,10 @@ export async function saveLodgingRequest(
       },
     });
     const changedFields = (["category", "firstNight", "lastNight", "partySize", "privateRoomRequested", "householdPreference"] as const).filter((field) => !previous || previous[field] !== next[field]);
-    const accessibilityChanged = !previous
-      ? next.groundFloorNeeded || next.accessibleRoomNeeded
-      : previous.groundFloorNeeded !== next.groundFloorNeeded || previous.accessibleRoomNeeded !== next.accessibleRoomNeeded;
+    // Said only when an existing request's flags change; a first request never records whether they were set.
+    const accessibilityChanged = previous
+      ? previous.groundFloorNeeded !== next.groundFloorNeeded || previous.accessibleRoomNeeded !== next.accessibleRoomNeeded
+      : null;
     await writeAuditLog({
       eventId: input.eventId,
       actorUserId: input.actor.kind === "STAFF" ? input.actor.userId : undefined,
@@ -392,11 +461,17 @@ export async function saveLodgingRequest(
         source: staff ? "STAFF" : "REGISTRANT",
         category: { from: previous?.category ?? null, to: next.category },
         changedFields,
-        accessibilityChanged,
+        ...(accessibilityChanged === null ? {} : { accessibilityChanged }),
         afterDeadline: staff && pastDeadline,
         ...(input.actor.kind === "REGISTRANT" ? { accessTokenId: input.actor.accessTokenId } : {}),
       },
     }, tx);
+    if (staff) {
+      await tx.eventLodgingChangeRequest.updateMany({
+        where: { registrationId: input.registrationId, resolvedAt: null },
+        data: { resolvedAt: now, resolvedByUserId: input.actor.kind === "STAFF" ? input.actor.userId : null, resolution: "Handled by staff" },
+      });
+    }
     return { requestId: request.id, version, changed: true, afterDeadline: staff && pastDeadline };
   }, { timeout: lodgingTransactionTimeoutMs });
 }
@@ -411,16 +486,39 @@ function toRoommateRow(row: { id: string; fromRegistrationId: string; targetRegi
 
 export type RegistrantRoommateResult = { id: string; created: boolean };
 
+type RoommateChangeInput = { eventId: string; registrationId: string; accessTokenId: string; raw: unknown; now?: Date };
+
 /**
- * A registrant asks to room with someone, or takes the request back. Someone on another registration is found by
- * name and confirmation code together; any mismatch gives the same answer, so this cannot be used to find out which
- * codes or names exist. Someone on the registrant's own registration is picked from their own attendees.
- * The result never says whether the other side has asked and never carries a contact detail.
+ * A registrant asks to room with someone, or takes the request back. Someone on another individual registration is
+ * found by name and confirmation code together; any mismatch (wrong code, wrong name, cancelled, other event, club or
+ * group) gives the same answer, so this cannot be used to find out which codes or names exist. Someone on the
+ * registrant's own registration is picked from their own attendees.
+ *
+ * The result never carries a contact detail and never says who has asked for this registration. The registrant's view
+ * does show a request as "matched" once the other side has asked back (or staff approved), because by then both
+ * people named each other. A lookup miss is audited by ids and a running count only (never the typed name or code),
+ * outside the failed transaction, so a pattern of guessing is visible to staff. Like every private-link edit it is
+ * refused when the event verifies every edit.
  */
-export async function changeRegistrantRoommates(
-  input: { eventId: string; registrationId: string; accessTokenId: string; raw: unknown; now?: Date },
-  client: PrismaClient = getPrisma(),
-): Promise<RegistrantRoommateResult | { withdrawn: true }> {
+export async function changeRegistrantRoommates(input: RoommateChangeInput, client: PrismaClient = getPrisma()): Promise<RegistrantRoommateResult | { withdrawn: true }> {
+  try {
+    return await changeRegistrantRoommatesInTransaction(input, client);
+  } catch (error) {
+    const raw = input.raw as { action?: unknown } | null;
+    if (error instanceof LodgingError && error.code === "ROOMMATE_NOT_FOUND" && raw && raw.action === "add_by_code") {
+      const since = new Date((input.now ?? new Date()).getTime() - 60 * 60 * 1000);
+      const recent = await client.auditLog.count({ where: { eventId: input.eventId, action: "LODGING_ROOMMATE_LOOKUP_MISSED", entityId: input.registrationId, createdAt: { gte: since } } });
+      await writeAuditLog({
+        eventId: input.eventId, action: "LODGING_ROOMMATE_LOOKUP_MISSED", entityType: "Registration", entityId: input.registrationId,
+        summary: "A roommate lookup on a registration found no match.",
+        metadata: { registrationId: input.registrationId, accessTokenId: input.accessTokenId, missesInTheLastHour: recent + 1 },
+      }, client);
+    }
+    throw error;
+  }
+}
+
+async function changeRegistrantRoommatesInTransaction(input: RoommateChangeInput, client: PrismaClient): Promise<RegistrantRoommateResult | { withdrawn: true }> {
   const now = input.now ?? new Date();
   const action = registrantRoommateSchema.parse(input.raw);
   return client.$transaction(async (tx) => {
@@ -428,6 +526,7 @@ export async function changeRegistrantRoommates(
     const context = await loadContext(tx, input.eventId);
     const own = await loadRegistration(tx, input.eventId, input.registrationId);
     assertActiveRegistration(own.status);
+    if (context.editPolicy === "VERIFY_EVERY_EDIT") throw verificationRequired();
     if (!context.collectsPreferences) throw new LodgingError("PREFERENCES_NOT_COLLECTED", "This event does not collect lodging preferences from registrants.");
     if (isPastLodgingDeadline(context.deadlineDay, now, context.timezone)) {
       throw new LodgingError("DEADLINE_PASSED", `The deadline to change lodging was ${context.deadlineDay}. Contact the event team.`);
@@ -465,7 +564,10 @@ export async function changeRegistrantRoommates(
       }
       const notFound = new LodgingError("ROOMMATE_NOT_FOUND", "We could not find a registration with that name and confirmation code. Check both and try again.");
       const target = await tx.registration.findFirst({
-        where: { eventId: input.eventId, confirmationCode: normalizeConfirmationCode(action.confirmationCode), status: { in: [...lodgingActiveRegistrationStatuses] } },
+        where: {
+          eventId: input.eventId, confirmationCode: normalizeConfirmationCode(action.confirmationCode), status: { in: [...lodgingActiveRegistrationStatuses] },
+          clubRegistration: { is: null }, groupRegistration: { is: null },
+        },
         select: {
           id: true,
           accountHolderPerson: { select: { firstName: true, lastName: true } },
@@ -608,9 +710,9 @@ export async function endLodgingRule(eventId: string, actorUserId: string, ruleI
 
 async function loadReviewFacts(client: Client, context: Context) {
   const eventId = context.eventId;
-  const [registrations, roommates, rules, authorities, requests, acks] = await Promise.all([
+  const [registrations, roommates, rules, authorities, requests, acks, changeRequests] = await Promise.all([
     client.registration.findMany({
-      where: { eventId, status: { not: "DRAFT" } },
+      where: { eventId, status: { not: "DRAFT" }, clubRegistration: { is: null }, groupRegistration: { is: null } },
       select: {
         id: true, status: true, confirmationCode: true,
         accountHolderPerson: { select: { firstName: true, lastName: true } },
@@ -623,6 +725,7 @@ async function loadReviewFacts(client: Client, context: Context) {
     client.guardianAuthority.findMany({ where: { eventId, state: "ACTIVE", adultPersonId: { not: null } }, select: { id: true, minorPersonId: true, adultPersonId: true, declaredAt: true } }),
     loadCurrentRequests(client, eventId),
     client.eventLodgingReviewAck.findMany({ where: { eventId }, select: { itemKey: true, fingerprint: true } }),
+    client.eventLodgingChangeRequest.findMany({ where: { eventId, resolvedAt: null }, select: { id: true, registrationId: true, category: true }, orderBy: { createdAt: "asc" } }),
   ]);
   const { capacity, unitIdsByCategory } = await loadCategoryCapacity(client, context);
   const registrationFacts = new Map<string, RegistrationFact>(registrations.map((registration) => [registration.id, {
@@ -649,7 +752,7 @@ async function loadReviewFacts(client: Client, context: Context) {
     householdPreference: request.householdPreference, afterDeadline: request.afterDeadline, source: request.source, updatedAt: request.createdAt.toISOString(),
   }));
   const roommateRows = roommates.map(toRoommateRow);
-  const items = buildReviewItems({ nights: context.nights, registrations: registrationFacts, people, requests: requestSnapshots, roommates: roommateRows, rules: ruleRows, guardians, capacity });
+  const items = buildReviewItems({ nights: context.nights, registrations: registrationFacts, people, requests: requestSnapshots, roommates: roommateRows, rules: ruleRows, guardians, capacity, changeRequests });
   const acked = new Set(acks.map((ack) => `${ack.itemKey}\u0000${ack.fingerprint}`));
   return { registrations, registrationFacts, people, requestSnapshots, roommates, roommateRows, ruleRows, guardians, capacity, unitIdsByCategory, items, acked };
 }
@@ -668,14 +771,15 @@ export async function acknowledgeReviewItem(eventId: string, actor: { userId: st
     if (!item) throw new LodgingError("ITEM_NOT_FOUND", "That item has changed or is no longer in the queue. Refresh and look again.");
     // skipDuplicates: acknowledging the same item twice must not abort the transaction.
     const created = await tx.eventLodgingReviewAck.createMany({
-      data: [{ eventId, itemKey: item.key, fingerprint: item.fingerprint, note: input.note, actorUserId: actor.userId }],
+      // A restricted (accessibility) item stores no typed note: nothing free-text may sit beside a guest's flags.
+      data: [{ eventId, itemKey: item.key, fingerprint: item.fingerprint, note: item.sensitive ? "Acknowledged (restricted item)" : input.note, actorUserId: actor.userId }],
       skipDuplicates: true,
     });
     if (created.count === 0) return { itemKey: item.key, alreadyAcknowledged: true };
     await writeAuditLog({
-      eventId, actorUserId: actor.userId, action: "LODGING_REVIEW_ACKNOWLEDGED", entityType: "EventLodgingReviewAck", entityId: item.key,
-      summary: `Acknowledged a lodging review item (${item.kind.toLowerCase().replaceAll("_", " ")}).`,
-      metadata: { kind: item.kind, itemKey: item.key, note: input.note },
+      eventId, actorUserId: actor.userId, action: "LODGING_REVIEW_ACKNOWLEDGED", entityType: "EventLodgingReviewAck", entityId: item.sensitive ? undefined : item.key,
+      summary: item.sensitive ? "Acknowledged a lodging review item." : `Acknowledged a lodging review item (${item.kind.toLowerCase().replaceAll("_", " ")}).`,
+      metadata: item.sensitive ? { restricted: true } : { kind: item.kind, itemKey: item.key, note: input.note },
     }, tx);
     return { itemKey: item.key, alreadyAcknowledged: false };
   }, { timeout: lodgingTransactionTimeoutMs });
@@ -724,20 +828,29 @@ export async function getStaffLodgingRequestsView(eventId: string, options: { ca
   const now = options.now ?? new Date();
   const context = await loadContext(client, eventId);
   const facts = await loadReviewFacts(client, context);
-  const [ratesRows, versions, ruleEnds] = await Promise.all([
-    client.eventLodgingRate.findMany({ where: { eventLodgingId: context.eventLodgingId } }),
+  const [rates, versions, ruleEnds] = await Promise.all([
+    loadRates(client, context.eventLodgingId),
     client.eventLodgingRequestVersion.findMany({ where: { eventId }, orderBy: [{ requestId: "asc" }, { version: "asc" }] }),
     client.eventLodgingRule.findMany({ where: { eventId }, select: { id: true, endReason: true } }),
   ]);
-  const rates: Partial<Record<LodgingCategory, LodgingRate | null>> = {};
-  for (const rate of ratesRows) rates[rate.category] = { amountCents: rate.amountCents, basis: rate.basis, minimumNights: rate.minimumNights };
   const label = (registrationId: string) => facts.registrationFacts.get(registrationId)?.label ?? "Unknown registration";
   const personName = new Map(facts.people.map((person) => [person.personId, person.name]));
   const personLabel = (personId: string | null) => (personId ? personName.get(personId) ?? "Someone no longer registered" : null);
+  // Staff who may not read accessibility flags must not be able to infer them from the history: a version that changed
+  // only the flags is left out, and a change reason (free text, which may mention them) is not shown.
   const history = new Map<string, StaffLodgingRequestView["history"]>();
+  const lastShown = new Map<string, typeof versions[number]>();
   for (const version of versions) {
+    const before = lastShown.get(version.requestId);
+    const sameButFlags = before !== undefined
+      && before.category === version.category && before.partySize === version.partySize
+      && before.firstNight?.getTime() === version.firstNight?.getTime() && before.lastNight?.getTime() === version.lastNight?.getTime()
+      && before.privateRoomRequested === version.privateRoomRequested && before.householdPreference === version.householdPreference
+      && !version.afterDeadline;
+    if (!options.canSeeSensitive && sameButFlags) continue;
+    lastShown.set(version.requestId, version);
     const list = history.get(version.requestId) ?? [];
-    list.push({ version: version.version, at: version.createdAt.toISOString(), source: version.source, category: version.category, reason: version.changeReason, afterDeadline: version.afterDeadline });
+    list.push({ version: list.length + 1, at: version.createdAt.toISOString(), source: version.source, category: version.category, reason: options.canSeeSensitive ? version.changeReason : null, afterDeadline: version.afterDeadline });
     history.set(version.requestId, list);
   }
   const requests: StaffLodgingRequestView[] = facts.requestSnapshots
@@ -746,7 +859,7 @@ export async function getStaffLodgingRequestsView(eventId: string, options: { ca
       requestId: request.requestId,
       registrationId: request.registrationId,
       registration: label(request.registrationId),
-      version: request.version,
+      version: options.canSeeSensitive ? request.version : history.get(request.requestId)?.length ?? request.version,
       versionCount: history.get(request.requestId)?.length ?? request.version,
       category: request.category,
       firstNight: request.firstNight,
@@ -756,7 +869,7 @@ export async function getStaffLodgingRequestsView(eventId: string, options: { ca
       householdPreference: request.householdPreference,
       source: request.source,
       afterDeadline: request.afterDeadline,
-      updatedAt: request.updatedAt,
+      updatedAt: options.canSeeSensitive ? request.updatedAt : history.get(request.requestId)?.at(-1)?.at ?? request.updatedAt,
       ...(options.canSeeSensitive ? { groundFloorNeeded: request.groundFloorNeeded, accessibleRoomNeeded: request.accessibleRoomNeeded } : {}),
       roommates: facts.roommateRows
         .filter((row) => !row.withdrawn && (row.fromRegistrationId === request.registrationId || row.targetRegistrationId === request.registrationId))
@@ -821,7 +934,13 @@ export type RegistrantLodgingView = {
   enabled: boolean;
   canEdit: boolean;
   /** Why editing is closed: nothing to show when open. */
-  closedReason: "NOT_COLLECTED" | "DEADLINE_PASSED" | "REGISTRATION_NOT_ACTIVE" | null;
+  closedReason: "NOT_COLLECTED" | "DEADLINE_PASSED" | "REGISTRATION_NOT_ACTIVE" | "VERIFICATION_REQUIRED" | null;
+  /** TIERED events: accessibility needs can be set once; later changes go through the event team. */
+  flagsLocked: boolean;
+  /** TIERED events: a change to a priced type is held for staff once money is on the registration. */
+  pricedChangeNeedsStaff: boolean;
+  /** A change the registrant asked for that is waiting for the event team. */
+  changeRequested: boolean;
   deadline: string;
   fullBehavior: FullBehavior;
   nights: string[];
@@ -845,7 +964,7 @@ export type RegistrantLodgingView = {
 };
 
 const emptyView = (overrides: Partial<RegistrantLodgingView>): RegistrantLodgingView => ({
-  enabled: false, canEdit: false, closedReason: "NOT_COLLECTED", deadline: "", fullBehavior: "SHOW_FULL", nights: [], offered: [], people: [], request: null, earlierVersions: 0, roommates: [], ...overrides,
+  enabled: false, canEdit: false, closedReason: "NOT_COLLECTED", flagsLocked: false, pricedChangeNeedsStaff: false, changeRequested: false, deadline: "", fullBehavior: "SHOW_FULL", nights: [], offered: [], people: [], request: null, earlierVersions: 0, roommates: [], ...overrides,
 });
 
 export async function getRegistrantLodgingView(input: { eventId: string; registrationId: string; now?: Date }, client: PrismaClient = getPrisma()): Promise<RegistrantLodgingView> {
@@ -853,19 +972,23 @@ export async function getRegistrantLodgingView(input: { eventId: string; registr
   const lodging = await client.eventLodging.findUnique({ where: { eventId: input.eventId }, select: { collectsPreferences: true } });
   if (!lodging || !lodging.collectsPreferences) return emptyView({});
   const context = await loadContext(client, input.eventId);
-  const own = await loadRegistration(client, input.eventId, input.registrationId);
+  const own = await loadRegistration(client, input.eventId, input.registrationId).catch((error: unknown) => {
+    if (error instanceof LodgingError && error.code === "REGISTRATION_NOT_ELIGIBLE") return null;
+    throw error;
+  });
+  if (!own) return emptyView({});
   const { capacity } = await loadCategoryCapacity(client, context);
-  const [requests, rateRows, roommateRows, versionCount] = await Promise.all([
+  const [requests, rates, roommateRows, versionCount, openChanges, payments] = await Promise.all([
     loadCurrentRequests(client, input.eventId, { registrationId: input.registrationId }),
-    client.eventLodgingRate.findMany({ where: { eventLodgingId: context.eventLodgingId } }),
+    loadRates(client, context.eventLodgingId),
     client.eventLodgingRoommateRequest.findMany({
       where: { eventId: input.eventId, OR: [{ fromRegistrationId: input.registrationId }, { targetRegistrationId: input.registrationId }] },
     }),
     client.eventLodgingRequestVersion.count({ where: { eventId: input.eventId, request: { registrationId: input.registrationId } } }),
+    client.eventLodgingChangeRequest.count({ where: { registrationId: input.registrationId, resolvedAt: null } }),
+    client.payment.count({ where: { registrationId: input.registrationId, status: { in: ["PENDING", "SUCCEEDED"] } } }),
   ]);
   const current = requests[0] ?? null;
-  const rates: Partial<Record<LodgingCategory, LodgingRate | null>> = {};
-  for (const rate of rateRows) rates[rate.category] = { amountCents: rate.amountCents, basis: rate.basis, minimumNights: rate.minimumNights };
   const demand = demandByCategoryNight((await loadCurrentRequests(client, input.eventId, {
     registrationId: { not: input.registrationId },
     registration: { status: { in: [...lodgingActiveRegistrationStatuses] } },
@@ -882,7 +1005,9 @@ export async function getRegistrantLodgingView(input: { eventId: string; registr
     }));
   const active = (lodgingActiveRegistrationStatuses as readonly string[]).includes(own.status);
   const pastDeadline = isPastLodgingDeadline(context.deadlineDay, now, context.timezone);
-  const closedReason = !active ? "REGISTRATION_NOT_ACTIVE" as const : pastDeadline ? "DEADLINE_PASSED" as const : null;
+  const closedReason = !active ? "REGISTRATION_NOT_ACTIVE" as const
+    : context.editPolicy === "VERIFY_EVERY_EDIT" ? "VERIFICATION_REQUIRED" as const
+    : pastDeadline ? "DEADLINE_PASSED" as const : null;
 
   // Only this registration's own outgoing requests; the other side's requests are visible solely as "matched".
   const allRows = roommateRows.map(toRoommateRow);
@@ -912,6 +1037,9 @@ export async function getRegistrantLodgingView(input: { eventId: string; registr
     enabled: true,
     canEdit: closedReason === null,
     closedReason,
+    flagsLocked: current !== null,
+    pricedChangeNeedsStaff: payments > 0,
+    changeRequested: openChanges > 0,
     deadline: context.deadlineDay,
     fullBehavior: context.fullBehavior,
     nights: context.nights,

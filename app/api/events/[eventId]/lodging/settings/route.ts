@@ -12,7 +12,9 @@ async function patchHandler(request: Request, context: { params: Promise<{ event
     const { eventId } = await context.params;
     const staff = await requireLodgingStaff(eventId, "CONFIGURE_EVENT");
     const result = await updateLodgingSettings(eventId, staff.userId, await request.json());
-    return Response.json({ result, requests: await getStaffLodgingRequestsView(eventId, { canSeeSensitive: staff.canSeeSensitive }) }, { headers: { "Cache-Control": "no-store" } });
+    // The settings permission alone does not open the guests' requests: send the staff view only to someone who may read it.
+    const requests = staff.has("MANAGE_REGISTRATION") ? await getStaffLodgingRequestsView(eventId, { canSeeSensitive: staff.canSeeSensitive }) : undefined;
+    return Response.json({ result, ...(requests ? { requests } : {}) }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return lodgingApiError(error, "Saving the lodging settings");
   }

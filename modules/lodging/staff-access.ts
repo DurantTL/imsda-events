@@ -9,8 +9,10 @@ import { findActiveMembership } from "@/modules/events/repository";
  */
 export async function requireLodgingStaff(eventId: string, permission: EventPermission) {
   const access = await requirePermission(await getCurrentSession(), eventId, permission, findActiveMembership);
+  const held = new Set(effectivePermissions(access.user, access.membership));
   return {
     userId: access.user.id,
+    has: (other: EventPermission) => held.has(other),
     canSeeSensitive: new Set(effectivePermissions(access.user, access.membership)).has("VIEW_SENSITIVE_DATA"),
   };
 }

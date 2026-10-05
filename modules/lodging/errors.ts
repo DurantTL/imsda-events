@@ -27,7 +27,11 @@ export type LodgingErrorCode =
   | "RULE_INVALID"
   | "RULE_ENDED"
   | "PERSON_NOT_ON_EVENT"
-  | "ITEM_NOT_FOUND";
+  | "ITEM_NOT_FOUND"
+  | "EDIT_POLICY_REQUIRES_VERIFICATION"
+  | "FLAGS_STAFF_ONLY"
+  | "BELOW_MINIMUM_NIGHTS"
+  | "REGISTRATION_NOT_ELIGIBLE";
 
 /** Every refusal the lodging module can make (#198). Free of server-only imports so any layer can catch it. */
 export class LodgingError extends Error {
@@ -52,6 +56,8 @@ export function lodgingErrorStatus(code: LodgingErrorCode) {
     case "ITEM_NOT_FOUND":
       return 404;
     case "SENSITIVE_DATA_FORBIDDEN":
+    case "EDIT_POLICY_REQUIRES_VERIFICATION":
+    case "FLAGS_STAFF_ONLY":
       return 403;
     case "PROPERTY_ALREADY_SET":
     case "HOLD_OVERLAP":
@@ -63,6 +69,7 @@ export function lodgingErrorStatus(code: LodgingErrorCode) {
     case "CATEGORY_FULL":
     case "ROOMMATE_DECIDED":
     case "RULE_ENDED":
+    case "REGISTRATION_NOT_ELIGIBLE":
       return 409;
     default:
       return 400;
