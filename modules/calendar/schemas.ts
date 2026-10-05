@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { maxBulkEntries } from "@/modules/calendar/admin-list";
 import { isCalendarDate } from "@/modules/calendar/domain";
 import { maxRepeatCount, maxRepeatInterval, repeatFrequencies, repeatStartProblem } from "@/modules/calendar/recurrence";
 
@@ -117,6 +118,22 @@ export const calendarFeedInputSchema = z.object({
 export const calendarFeedUpdateSchema = z.object(feedFields).partial().strict();
 
 export const calendarFeedSyncSchema = z.object({ allowEmpty: z.boolean().optional() }).strict();
+
+/** One bulk request (#796): up to `maxBulkEntries` distinct ids and one action. */
+export const calendarBulkSchema = z.object({
+  ids: z.array(z.string().min(1).max(100)).min(1, "Select at least one entry.")
+    .max(maxBulkEntries, `Change at most ${maxBulkEntries} entries at a time.`)
+    .refine((ids) => new Set(ids).size === ids.length, "Each entry can be listed only once."),
+  change: z.discriminatedUnion("action", [
+    z.object({ action: z.literal("setCategory"), category: entryFields.category }).strict(),
+    z.object({ action: z.literal("publish") }).strict(),
+    z.object({ action: z.literal("unpublish") }).strict(),
+    z.object({ action: z.literal("hide") }).strict(),
+    z.object({ action: z.literal("unhide") }).strict(),
+  ]),
+}).strict();
+
+export type CalendarBulkRequest = z.infer<typeof calendarBulkSchema>;
 
 export const calendarEntrySourceActionSchema = z.object({ action: z.enum(["hide", "show", "reset"]) }).strict();
 

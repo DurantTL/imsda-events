@@ -1,16 +1,28 @@
 name: CI
 
+# GitHub Actions minutes are limited (#ci-minutes, Caleb Oct 5, 2026):
+# - every pull request runs the full gate ("verify");
+# - a push to main (a merge) runs only the quick "main-smoke" job, because the
+#   pull request already ran the full gate on the merged code;
+# - the full gate also runs once a week on main, and can be started by hand,
+#   to catch anything two back-to-back merges broke together.
+# The badge-print browser check lives in badge-print.yml and runs only when
+# badge or print files change.
 on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   verify:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -121,6 +133,8 @@ jobs:
       - run: npm run test:lodging
       # Real-database check of lodging preferences, roommate requests and household rules (#199): versioned requests that keep every earlier version, a registrant deadline that staff changes can pass and are flagged for, a full type refused at selection and one winner when five registrants race for the last place, directional roommate requests that are mutual only when both ask or staff approve and never reveal who asked or any contact detail, yes/no accessibility flags with no free-text column that staff without sensitive access neither see nor set, keep-together/split/keep-apart rules that keep history and follow a household change, the review queue, and the database refusing cross-event rows and rewrites.
       - run: npm run test:lodging-preferences
+      # Real-database check of calendar bulk changes (#796): the feed's advisory lock is taken and rows are read again under it, a racing feed sync never leaves a removed entry published and a bulk hide survives it, the 500-entry cap, and a refresh keeping a bulk-set category with no local-edit mark.
+      - run: npm run test:calendar-bulk
       # Real-database check of location waitlists: a full location waitlists the club there in per-location order, a freed seat promotes the next club at that location only and never overfills it under races, a busy location is skipped, and the daily digest reaches the active coordinator and event administrators once a day while an email failure changes nothing (#599).
       - run: npm run test:location-waitlist
 
@@ -175,7 +189,7 @@ jobs:
       # which requires these values: they are fictitious, exist only for this
       # throwaway job, and no email is ever delivered (events use local capture).
       # Fictitious CI-only values for production mode. Keep this block identical
-      # to the one in the other job ("badge-print" / "verify").
+      # to the one in badge-print.yml.
       - name: Start the built app
         env:
           MANAGE_LINK_DERIVATION_SECRET: ci-only-manage-link-derivation-secret-0000000
@@ -208,18 +222,12 @@ jobs:
         if: failure()
         run: cat app.log || true
 
-  # Real-browser check of the printable name badge page (#717, #740). It needs a
-  # browser and two packages that are deliberately not dependencies
-  # (playwright-core, pdfjs-dist), so it is its own job and is not part of
-  # `verify`: a browser or runner problem shows up here and never hides, or
-  # fails, the main gate. GitHub-hosted runners ship Google Chrome, which this
-  # job drives instead of downloading a browser. `--no-save` keeps the
-  # lockfile untouched.
-  badge-print:
-    name: Badge print (real browser, optional)
+  # Quick check after a merge to main: install, migrate a clean database with the
+  # drift check, seed, then lint, type-check and unit tests. No production build,
+  # real-database suites or HTTP suites; the pull request already ran those.
+  main-smoke:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    # Optional: a browser or runner flake must not turn the run red.
-    continue-on-error: true
     services:
       postgres:
         image: postgres:16-alpine
@@ -244,39 +252,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run db:deploy
-      - run: npm run db:seed
-      - run: npm run build
-      - run: npm i --no-save playwright-core@1.56.1 pdfjs-dist@4.10.38
-      # Fictitious CI-only values for production mode. Keep this block identical
-      # to the one in the other job ("badge-print" / "verify").
-      - name: Start the built app
+      - name: Check for schema/migration drift
         env:
-          MANAGE_LINK_DERIVATION_SECRET: ci-only-manage-link-derivation-secret-0000000
-          ATTENDEE_PASS_SIGNING_SECRET: ci-only-attendee-pass-signing-secret-000000
-          RATE_LIMIT_HASH_SECRET: ci-only-rate-limit-hash-secret-0000000000
-          OUTBOX_SWEEP_TOKEN: ci-only-outbox-sweep-token-000000000000
-          SECRET_ENCRYPTION_KEY: ci-only-secret-encryption-key-00000000000
-          ACCOUNT_EMAIL_SENDER_ADDRESS: events@ci.example.test
-          RESEND_API_KEY: ci-placeholder-never-sent
+          PGPASSWORD: imsda_ci
         run: |
-          nohup npm run start > app.log 2>&1 &
-          for attempt in $(seq 1 60); do
-            if curl -fsS -o /dev/null http://localhost:3000/; then exit 0; fi
-            sleep 2
-          done
-          echo "The app did not start:" && cat app.log && exit 1
-      - name: Check name badge printing
-        env:
-          BADGE_PRINT_BROWSER: /usr/bin/google-chrome
-          BADGE_PRINT_OUT_DIR: ${{ runner.temp }}/badge-print
-        run: npm run test:badge-print
-      - name: Keep the printed PDFs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: badge-print-output
-          path: ${{ runner.temp }}/badge-print
-          if-no-files-found: ignore
-      - name: Show the app log when the check failed
-        if: failure()
-        run: cat app.log || true
+          psql -h localhost -U imsda -d imsda_events -c "CREATE DATABASE imsda_events_shadow;"
+          npx prisma migrate diff \
+            --from-migrations prisma/migrations \
+            --to-schema-datamodel prisma/schema.prisma \
+            --shadow-database-url "postgresql://imsda:imsda_ci@localhost:5432/imsda_events_shadow?schema=public" \
+            --exit-code
+      - run: npm run db:seed
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
