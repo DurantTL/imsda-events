@@ -11,6 +11,9 @@ import {
   finalizeInvoiceVersion,
   regenerateInvoiceDraft,
   reviseInvoice,
+  addManualInvoiceLine,
+  removeManualInvoiceLine,
+  setEventInvoiceClubType,
   setEventInvoiceCode,
 } from "@/modules/invoices/repository";
 import { invoiceActionSchema } from "@/modules/invoices/schemas";
@@ -36,6 +39,7 @@ function statusFor(error: InvoiceError) {
     case "FINALIZE_PERMISSION_REQUIRED":
       return 403;
     case "CODE_INVALID":
+    case "INVALID_INPUT":
     case "CONFIRMATION_REQUIRED":
       return 400;
     default:
@@ -62,6 +66,24 @@ async function postHandler(request: Request, context: RouteContext) {
         return Response.json(await reviseInvoice({ eventId, invoiceId: body.invoiceId, mode: body.mode, reason: body.reason, actorUserId }));
       case "set-code":
         return Response.json(await setEventInvoiceCode({ eventId, code: body.code, actorUserId }));
+      case "set-club-type":
+        return Response.json(await setEventInvoiceClubType({ eventId, clubType: body.clubType, actorUserId }));
+      case "add-manual-line":
+        return Response.json(await addManualInvoiceLine({
+          eventId,
+          invoiceId: body.invoiceId,
+          line: { item: body.item, description: body.description ?? null, quantity: body.quantity, rateCents: body.rate },
+          actorUserId,
+          canFinalizeInvoices: effectivePermissions(user, membership).includes("FINALIZE_INVOICES"),
+        }));
+      case "remove-manual-line":
+        return Response.json(await removeManualInvoiceLine({
+          eventId,
+          invoiceId: body.invoiceId,
+          lineId: body.lineId,
+          actorUserId,
+          canFinalizeInvoices: effectivePermissions(user, membership).includes("FINALIZE_INVOICES"),
+        }));
       case "finalize": {
         const finalized = await finalizeInvoiceVersion({
           eventId,

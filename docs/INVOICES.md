@@ -20,6 +20,9 @@ and refuses any invoice or version outside the event in the URL (404).
 | --- | --- |
 | View invoices, create drafts, regenerate a draft, start a revision, set the event's invoice code | MANAGE_FINANCE on the event |
 | Finalize an original invoice, or a revision that changes any billable amount | MANAGE_FINANCE **and** the Finalize invoices permission |
+| Add or remove a manual line on a draft (#780) | MANAGE_FINANCE **and** the Finalize invoices permission, for that event |
+| Set the club type printed on the PDF (#780) | MANAGE_FINANCE on the event |
+| Edit the invoice PDF header block (#780) | System administrator (Platform settings) |
 | Finalize a revision that changes only the billing contact | MANAGE_FINANCE |
 | Grant or remove the Finalize invoices permission | System administrator only |
 
@@ -198,15 +201,55 @@ invoice page (`/finance/invoices/[invoiceId]`), the send page (`/finance/invoice
 ### The PDF
 
 Made by `modules/invoices/invoice-pdf.ts` with **pdf-lib** (pure JavaScript, MIT, no native code and no headless browser; its only
-dependencies are small pure-JS helpers), from the **finalized version's immutable snapshot** and a few fixed facts, never from live data:
-the conference name (platform settings, plain text), invoice number (with `-R<n>`), issue date (the finalization time, in the event's time
-zone), event, billed-to church and the billing contact **as finalized**, one block per club registration with registered and billable counts and its
-amount, the credits, promo code, charges not tied to a person and staff adjustments under it, the total, "Supersedes SC27-0001" on a revision, and the
-payment instruction. Attendee names are not printed, and neither is a registration's confirmation code (with a contact email it opens that registration, and the PDF goes to every director on the invoice): each block carries a plain "Line N" reference instead. The layout version is recorded on each document (now 3); a promo discount prints as "Promo discount" with no code, since a code may be private.
+dependencies are small pure-JS helpers), from the **finalized version's immutable snapshot**, the version's manual lines and a few fixed facts.
+**Layout version 4 (#780)** follows the conference's sample invoice (Spring Camporee):
+
+- **Header block** (top left): the department line, organization name, mailing address lines and phone from the **Invoice PDF header** platform
+  setting (`PlatformSettings.invoiceHeaderDepartment`, `invoiceHeaderOrganization`, `invoiceHeaderAddress`, `invoiceHeaderPhone`), which a system
+  administrator edits under Platform settings. Every part is optional; with the whole block empty the PDF prints the platform organization name alone.
+  Real addresses live only in that setting, never in code or tests.
+- **Bill To** (beside the invoice meta): the billed church's name and its address from `Organization` (`streetAddress`, then "`city`, `state` `postalCode`"). Any
+  missing part, or a line with nothing left, is omitted. The billing contact as finalized is shown under it as "Attn:".
+- **Invoice meta**: the invoice number (`SC27-0001`, `-R1`; unchanged), the invoice date (the finalization time, in the event's time zone), the event name, and
+  "Supersedes ..." on a revision.
+- **Line-item table** with the columns **Item / Description / Qty / Rate / Amount** (`modules/invoices/invoice-layout.ts`, tested as data):
+  - lines are grouped under a heading, the event's **club type** (`Event.invoiceClubType`, set by finance staff on the Invoices screen; for example "Pathfinders";
+    blank prints "Registrations");
+  - attended people are collapsed into **one row per distinct rate** (qty x rate), so a club of 10 at $25 is one row; a **late-rate** row appears separately
+    (the person's own price carries `lateRate` in the snapshot; a snapshot made before #780 has no flag and shows every rate as a regular one);
+  - a registration-level charge is its own row; every **discount is its own negative row**: each credit (qty x its per-unit rate when known), "Promo discount"
+    (never the code, which may be private) and "Staff adjustments". When a credit is capped so a registration cannot go below $0, a "Credit limit adjustment"
+    row shows the difference, so the rows always add up to the registration's amount. A prorated registration is one row ("Prorated: 3 of 4 attended");
+  - **manual lines** (below) follow under the heading "Other charges".
+- **Footer**: **Total**, **Payments/Credits** (every `InvoicePayment` of the invoice, less voided ones, shown negative) and **Balance Due** (never below
+  zero), then the payment instruction.
+
+Attendee names are not printed, and neither is a registration's confirmation code (with a contact email it opens that registration, and the PDF goes to every
+director on the invoice). The layout version is recorded on each document (now 4); **PDFs made earlier keep their stored bytes and their old layout version**: nothing
+is regenerated. What the layout used (header block, bill-to lines, club-type heading, payments total) is copied onto the document as `layoutInputs`, so a test or an
+auditor can rebuild the same bytes. **Payments/Credits is the figure when the PDF was first made** (normally at finalization, so usually $0); the ledger screen is the
+current balance and the statement is the running account.
+
+### Manual lines (#780)
+
+Patch orders are usually custom, so staff add them by hand: **item, description, quantity and rate** (a negative rate is a credit). They are stored on the draft
+version (`InvoiceVersion.manualLines`, at most 50), are included in the version's `amountDueCents`, its receivable and its amounts fingerprint (with no lines the
+fingerprint is exactly what it was before, so older invoices are unchanged), and print under "Other charges". The snapshot's own totals stay the reconciliation's.
+
+- **Who.** Only someone with MANAGE_FINANCE **and** Finalize invoices for that event can add or remove a line (the route passes the permission; the service checks it
+  again). Adding a line changes what is owed, so it is held to the same rule as finalizing an amount.
+- **When.** Only on an open draft built from the reconciliation (not a contact-only copy). Regenerating or re-creating drafts keeps the lines. A revision started
+  from a finalized invoice carries its lines forward, and a revision whose lines differ from the finalized version's counts as an amount change (it needs the permission).
+- **Frozen.** The `InvoiceVersion_guard` trigger (replaced in migration `20261005120000_invoice_pdf_sample_layout`) lets a DRAFT change `manualLines`, `amountDueCents`
+  and `amountsFingerprint` together, and nothing else, without a regeneration. Finalizing and superseding still change none of them, so a FINALIZED or SUPERSEDED
+  version's lines are frozen with its snapshot (`npm run test:invoices` proves it).
+- **Audited**: `INVOICE_MANUAL_LINE_ADDED` and `INVOICE_MANUAL_LINE_REMOVED`, with ids and amounts (not the item text).
+- **Not built**: an automatic patch-order feed, and changing a finalized invoice's lines other than by a revision (a revision needs the reconciliation or the contact to
+  have changed; staff cannot yet start one only to add a line).
 
 The payment instruction is a finance setting, not a fixed fact: the event's `invoicePaymentInstructions` (editable by MANAGE_FINANCE, audited), defaulting to
 "Please remit by check to the Iowa-Missouri Conference." The text used is copied onto the stored document, so changing the setting later never changes a PDF
-that was already made.
+that was already made. The header block and the club type work the same way: changing them never changes a PDF already made.
 
 **Deterministic and stored once.** The renderer uses no clock and no random ids (creation and modification dates are the finalization time), so the same input gives
 the same bytes (tests render twice and compare hashes). The PDF is made and stored **right after finalization commits**, by the finalize route, on a best-effort basis: if generation fails, finalization has already succeeded, the failure is logged, and the PDF is made on first view, download or send exactly as before (so a version may have no stored document yet; nothing is ever sent by this). Otherwise the first send or download stores the bytes (`MessageAttachment`, with `sizeBytes` and `sha256`, which a
@@ -288,9 +331,9 @@ prove no other route reads the stored bytes. A version of another event is a 404
 
 Database triggers (not only application code) enforce, and `npm run test:invoices` proves:
 
-- a finalized or superseded version never changes (amount, snapshot, contact, number, reopening, delete),
-  except its own FINALIZED to SUPERSEDED step; a draft changes only by counted regeneration; a version is
-  created only as a draft;
+- a finalized or superseded version never changes (amount, snapshot, manual lines, contact, number, reopening, delete),
+  except its own FINALIZED to SUPERSEDED step; a draft changes only by counted regeneration, or (#780) by its manual lines
+  and the totals that include them changing together; a version is created only as a draft;
 - an invoice's number is assigned once; the counter only counts up by one; a receivable matches one
   finalized version and its amount and moves only OPEN to SUPERSEDED;
 - the event's invoice code cannot change after numbers exist;
@@ -334,3 +377,5 @@ database refuses it); AR is once per version and corrected only by a new posting
 cannot hit a superseded receivable; statements, the report and the CSV are scoped to the event and the CSV is formula-safe; no audit row holds an address or a name. Unit tests:
 `tests/invoice-delivery-domain.test.ts`, `tests/invoice-pdf.test.ts`, `tests/invoice-delivery-routes.test.ts` (permissions, unauthorized statement access, the PDF is never public) and
 `tests/invoice-delivery-migration.test.ts`.
+
+The sample-layout work (#780) adds `tests/invoice-layout.test.ts` (grouping under the club type, rate collapsing, the late-rate row, negative discount rows, manual lines, the footer totals with payments, the bill-to address and the header fallback), `tests/invoice-manual-lines.test.ts` (manual-line rules, the Finalize invoices permission and draft-only refusals in the service, and the migration) and route and platform-setting cases in `tests/invoices-routes.test.ts` and `tests/platform-settings.test.ts`. `npm run test:invoices` also proves the trigger: a draft's manual lines change, a finalized version's never do.

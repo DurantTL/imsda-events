@@ -17,7 +17,7 @@ function version(overrides: Partial<InvoiceVersionSummary> = {}): InvoiceVersion
   return {
     id: "v1", invoiceId: "i1", revision: 0, status: "FINALIZED", basis: "RECONCILIATION", supersedesVersionId: null, reconciliationVersionId: "recon-1", reconciliationVersionNumber: 2,
     number: "SC27-0001", groupTitle: "Church One", organizationName: "Church One", contact, registeredCount: 5, billableCount: 4, amountDueCents: 10000, amountsFingerprint: "fp",
-    revisionReason: null, createdAt: "2026-10-04T10:00:00.000Z", createdByName: "Fran Finance", regenerationCount: 0, finalizedAt: "2026-10-04T12:00:00.000Z", finalizedByName: "Tess Treasurer",
+    manualLines: [], revisionReason: null, createdAt: "2026-10-04T10:00:00.000Z", createdByName: "Fran Finance", regenerationCount: 0, finalizedAt: "2026-10-04T12:00:00.000Z", finalizedByName: "Tess Treasurer",
     supersededAt: null, supersededByVersionId: null, receivable: { amountCents: 10000, status: "OPEN" },
     ...overrides,
   };
@@ -35,7 +35,7 @@ function row(overrides: Partial<InvoiceListRow> = {}): InvoiceListRow {
 function view(overrides: Partial<Extract<InvoicesView, { isDeferred: true }>> = {}): InvoicesView {
   return {
     isDeferred: true, eventName: "Spring Camporee 2027", invoiceGrouping: "PER_CHURCH",
-    code: { effective: "SC", explicit: null, locked: false, year: 2027 },
+    code: { effective: "SC", explicit: null, locked: false, year: 2027 }, clubType: null,
     approved: { id: "recon-1", versionNumber: 2, billableCents: 12500, approvedAt: "2026-10-04T09:00:00.000Z", freshness: "CURRENT" },
     blockers: [], invoices: [row()], groupsWithoutInvoice: [], finalizers: ["Tess Treasurer"], totals: { draftCount: 0, finalizedCount: 1, finalizedCents: 10000 },
     ...overrides,

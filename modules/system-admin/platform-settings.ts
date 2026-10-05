@@ -52,6 +52,16 @@ export const platformSettingsInputSchema = z.object({
    * (#456). Blank means only the account holder is emailed.
    */
   securityAlertEmail: optionalEmail,
+  /**
+   * The header block of the church invoice PDF (#780): the department line, the organization name, the mailing
+   * address (one line per row) and the phone. All blank means the PDF prints the platform organization name alone.
+   */
+  invoiceHeaderDepartment: optionalField(z.string().max(120)),
+  invoiceHeaderOrganization: optionalField(z.string().max(120)),
+  invoiceHeaderAddress: optionalField(
+    z.string().max(400).refine((value) => value.split(/\r?\n/).length <= 4, "Use at most four address lines."),
+  ),
+  invoiceHeaderPhone: optionalField(z.string().max(40)),
 }).strict();
 
 export type PlatformSettingsInput = z.infer<typeof platformSettingsInputSchema>;
@@ -88,6 +98,10 @@ export async function getPlatformSettings(): Promise<PlatformSettingsRecord> {
     defaultAttendeeEditPolicy: row.defaultAttendeeEditPolicy,
     passkeyRpId: row.passkeyRpId,
     securityAlertEmail: row.securityAlertEmail,
+    invoiceHeaderDepartment: row.invoiceHeaderDepartment,
+    invoiceHeaderOrganization: row.invoiceHeaderOrganization,
+    invoiceHeaderAddress: row.invoiceHeaderAddress,
+    invoiceHeaderPhone: row.invoiceHeaderPhone,
     updatedAt: row.updatedAt.toISOString(),
     updatedByName: row.updatedBy?.displayName ?? null,
   };
@@ -172,6 +186,10 @@ export async function updatePlatformSettings(
               defaultAttendeeEditPolicy: before.defaultAttendeeEditPolicy,
               passkeyRpId: before.passkeyRpId,
               securityAlertEmail: before.securityAlertEmail,
+              invoiceHeaderDepartment: before.invoiceHeaderDepartment,
+              invoiceHeaderOrganization: before.invoiceHeaderOrganization,
+              invoiceHeaderAddress: before.invoiceHeaderAddress,
+              invoiceHeaderPhone: before.invoiceHeaderPhone,
             }
             : null,
           after: {
@@ -182,6 +200,10 @@ export async function updatePlatformSettings(
             defaultAttendeeEditPolicy: input.defaultAttendeeEditPolicy,
             passkeyRpId: input.passkeyRpId ?? null,
             securityAlertEmail: input.securityAlertEmail ?? null,
+            invoiceHeaderDepartment: input.invoiceHeaderDepartment ?? null,
+            invoiceHeaderOrganization: input.invoiceHeaderOrganization ?? null,
+            invoiceHeaderAddress: input.invoiceHeaderAddress ?? null,
+            invoiceHeaderPhone: input.invoiceHeaderPhone ?? null,
           },
         },
       },

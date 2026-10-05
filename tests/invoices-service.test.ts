@@ -127,6 +127,28 @@ describe("creating drafts is refused without a current approved reconciliation",
 });
 
 describe("creating drafts from an approved reconciliation", () => {
+  it("a draft whose manual lines would bring the rebuilt total below $0 is left as it was and reported, and the other churches carry on (#780)", async () => {
+    const groups = (attended: boolean) => [
+      group("organization:church-1", "Church One", [registration("r1", "Alpha", [person("a1", true), person("a2", attended)])]),
+      group("organization:church-2", "Church Two", [registration("r2", "Beta", [person("b1", attended)])]),
+    ];
+    approve(groups(true));
+    await createInvoiceDrafts({ eventId: "event-1", actorUserId: actor });
+    // Church One's draft carries a $-40 credit line (total $50 - $40 = $10 now); Church Two's carries none.
+    const one = state.versions.find((version) => state.invoices.find((invoice) => invoice.id === version.invoiceId)?.groupKey === "organization:church-1")!;
+    one.manualLines = [{ id: "m1", item: "Credit", description: "", quantity: 1, rateCents: -4000, amountCents: -4000 }];
+    one.amountDueCents = 1000;
+    // The reconciliation is approved again with fewer people attending: Church One would be $25 - $40 < $0.
+    state.approved = null;
+    approve(groups(false).map((entry, index) => (index === 0 ? group("organization:church-1", "Church One", [registration("r1", "Alpha", [person("a1", true), person("a2", false)])]) : entry)));
+    state.approved!.id = "recon-2";
+    const run = await createInvoiceDrafts({ eventId: "event-1", actorUserId: actor });
+    expect(run.negativeTotal).toEqual(["Church One"]);
+    expect(one.amountDueCents).toBe(1000);
+    expect(one.regenerationCount).toBe(0);
+    expect(state.audits.at(-1)?.metadata).toMatchObject({ negativeTotal: 1 });
+  });
+
   it("makes one invoice per church with a line per club, tracing to the reconciliation and snapshotting the contact", async () => {
     approve([
       group("organization:church-1", "Church One", [registration("r1", "Alpha", [person("a1", true), person("a2", false)]), registration("r2", "Beta", [person("b1", true)])]),

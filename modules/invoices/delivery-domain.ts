@@ -32,7 +32,7 @@ export function normalizePaymentInstructions(input: string | null | undefined) {
 }
 
 /** Bump when the PDF layout changes, so old documents say which layout made them. */
-export const INVOICE_PDF_GENERATOR_VERSION = 3;
+export const INVOICE_PDF_GENERATOR_VERSION = 4;
 
 export function invoicePdfFilename(number: string) {
   return `Invoice-${number.replace(/[^A-Za-z0-9-]/g, "_")}.pdf`;
