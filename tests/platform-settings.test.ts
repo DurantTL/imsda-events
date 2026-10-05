@@ -21,6 +21,37 @@ function validInput(overrides: Record<string, unknown> = {}) {
   };
 }
 
+describe("platform settings invoice header (#780)", () => {
+  it("is optional: left out or blank it is unset, so the invoice falls back to the organization name", () => {
+    const parsed = platformSettingsInputSchema.parse(validInput());
+    expect(parsed.invoiceHeaderDepartment).toBeNull();
+    expect(parsed.invoiceHeaderOrganization).toBeNull();
+    expect(parsed.invoiceHeaderAddress).toBeNull();
+    expect(parsed.invoiceHeaderPhone).toBeNull();
+    expect(platformSettingsInputSchema.parse(validInput({ invoiceHeaderDepartment: "  ", invoiceHeaderPhone: "" })).invoiceHeaderDepartment).toBeNull();
+  });
+
+  it("keeps the edited block, trimmed, with the address as lines", () => {
+    const parsed = platformSettingsInputSchema.parse(validInput({
+      invoiceHeaderDepartment: " Synthetic Youth Department ",
+      invoiceHeaderOrganization: "Synthetic Test Conference",
+      invoiceHeaderAddress: "100 Example Road\nSampletown, ZZ 00000",
+      invoiceHeaderPhone: "555-0100",
+    }));
+    expect(parsed).toMatchObject({
+      invoiceHeaderDepartment: "Synthetic Youth Department",
+      invoiceHeaderOrganization: "Synthetic Test Conference",
+      invoiceHeaderAddress: "100 Example Road\nSampletown, ZZ 00000",
+      invoiceHeaderPhone: "555-0100",
+    });
+  });
+
+  it("refuses more than four address lines or an over-long field", () => {
+    expect(() => platformSettingsInputSchema.parse(validInput({ invoiceHeaderAddress: "a\nb\nc\nd\ne" }))).toThrow();
+    expect(() => platformSettingsInputSchema.parse(validInput({ invoiceHeaderPhone: "5".repeat(41) }))).toThrow();
+  });
+});
+
 describe("platform settings input", () => {
   it("treats a cleared field as unset rather than an empty string", () => {
     const parsed = platformSettingsInputSchema.parse(validInput({

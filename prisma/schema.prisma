@@ -1323,6 +1323,12 @@ model PlatformSettings {
   /// Where the short lockout alert goes (#456), in addition to the account
   /// holder. Blank means only the account holder is emailed.
   securityAlertEmail        String?
+  /// The editable header block of the church invoice PDF (#780). All blank: the PDF falls back to `organizationName`.
+  invoiceHeaderDepartment   String?
+  invoiceHeaderOrganization String?
+  /// Mailing address, one line per row.
+  invoiceHeaderAddress      String?
+  invoiceHeaderPhone        String?
   updatedAt                 DateTime           @updatedAt
   updatedByUserId           String?
 
@@ -1371,6 +1377,8 @@ model Event {
   /// The payment instruction printed on every invoice PDF (#168), editable by finance staff; blank uses the built-in
   /// default. Copied onto each invoice's document when its PDF is first made, so later edits never change an earlier PDF.
   invoicePaymentInstructions         String?
+  /// The heading the invoice PDF groups registration lines under, such as "Pathfinders" (#780). Blank prints "Registrations".
+  invoiceClubType                    String?
   /// Explicit audience (#481), independent of `billingMode`: club and church
   /// navigation, club registration oversight, and club reports key off this
   /// field, not the billing mode.
@@ -5755,6 +5763,9 @@ model InvoiceVersion {
   /// fingerprint as the finalized version it replaces changed no billable amount.
   amountsFingerprint      String
   snapshot                Json
+  /// Staff-added custom lines (patch orders and the like, #780): item, description, quantity and rate. Editable only on a
+  /// DRAFT, frozen with it. `amountDueCents` and `amountsFingerprint` include them.
+  manualLines             Json                 @default("[]")
   revisionReason          String?
   createdByUserId         String?
   createdAt               DateTime             @default(now())
@@ -5851,6 +5862,8 @@ model InvoiceVersionDocument {
   /// The finance setting and organization name as they were when the PDF was made.
   paymentInstructions String
   headerName          String
+  /// The header block, bill-to address, club-type heading and payments total the layout used (#780); null on a document made before it.
+  layoutInputs        Json?
   createdAt           DateTime @default(now())
 
   event          Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)

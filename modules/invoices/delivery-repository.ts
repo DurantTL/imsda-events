@@ -22,6 +22,7 @@ import {
   invoicePdfFilename,
   isDeliveryProblem,
   neutralizePlaceholders,
+  netPaidCents,
   recipientDeliveryStatus,
   recipientsFingerprint,
   selectRecipients,
@@ -30,6 +31,8 @@ import {
   type RecipientDeliveryStatus,
 } from "@/modules/invoices/delivery-domain";
 import { formatPdfMoney, renderInvoicePdf } from "@/modules/invoices/invoice-pdf";
+import { billToAddressLines, buildInvoiceLayout, resolveInvoiceHeader } from "@/modules/invoices/invoice-layout";
+import { parseManualLines } from "@/modules/invoices/manual-lines";
 import { InvoiceError, contactOfGroup } from "@/modules/invoices/repository";
 
 /**
@@ -78,7 +81,8 @@ const versionForPdfSelect = {
   contactRoleLabel: true,
   supersedesVersionId: true,
   snapshot: true,
-  event: { select: { name: true, timezone: true, invoicePaymentInstructions: true } },
+  manualLines: true,
+  event: { select: { name: true, timezone: true, invoicePaymentInstructions: true, invoiceClubType: true } },
 } satisfies Prisma.InvoiceVersionSelect;
 
 function sha256Hex(bytes: Uint8Array) {
@@ -107,8 +111,25 @@ export async function ensureInvoiceDocument(eventId: string, versionId: string, 
     : null;
   const platform = await getPlatformSettings();
   const paymentInstructions = effectivePaymentInstructions(version.event.invoicePaymentInstructions);
+  const snapshot = version.snapshot as unknown as InvoiceSnapshot;
+  // The church's address as it is now (the PDF is made once and stored, so it shows what was on file then), and the
+  // payments recorded on the invoice so far, less voided ones (Payments/Credits; the ledger screen is always current).
+  const organization = snapshot.party.kind === "ORGANIZATION" && snapshot.party.id
+    ? await client.organization.findUnique({ where: { id: snapshot.party.id }, select: { streetAddress: true, city: true, state: true, postalCode: true } })
+    : null;
+  const paymentEntries = await client.invoicePayment.findMany({ where: { invoiceId: version.invoiceId }, select: { id: true, kind: true, amountCents: true, reversesPaymentId: true } });
+  const header = resolveInvoiceHeader(platform);
+  const billToLines = organization ? billToAddressLines(organization) : [];
+  const layout = buildInvoiceLayout({
+    snapshot,
+    manualLines: parseManualLines(version.manualLines),
+    clubType: version.event.invoiceClubType,
+    paymentsCreditsCents: netPaidCents(paymentEntries),
+  });
   const bytes = await renderInvoicePdf({
-    headerName: platform.organizationName,
+    header,
+    billToAddressLines: billToLines,
+    layout,
     number: version.number,
     issuedAt: version.finalizedAt,
     timezone: version.event.timezone,
@@ -116,7 +137,7 @@ export async function ensureInvoiceDocument(eventId: string, versionId: string, 
     contact: version.contactName && version.contactEmail ? { name: version.contactName, email: version.contactEmail, roleLabel: version.contactRoleLabel ?? "" } : null,
     organizationName: version.organizationName,
     groupTitle: version.groupTitle,
-    snapshot: version.snapshot as unknown as InvoiceSnapshot,
+    snapshot,
     paymentInstructions,
   });
   const sha256 = sha256Hex(bytes);
@@ -129,7 +150,7 @@ export async function ensureInvoiceDocument(eventId: string, versionId: string, 
         select: { id: true },
       });
       return tx.invoiceVersionDocument.create({
-        data: { eventId, invoiceId: version.invoiceId, invoiceVersionId: version.id, attachmentId: attachment.id, sha256, generatorVersion: INVOICE_PDF_GENERATOR_VERSION, paymentInstructions, headerName: platform.organizationName },
+        data: { eventId, invoiceId: version.invoiceId, invoiceVersionId: version.id, attachmentId: attachment.id, sha256, generatorVersion: INVOICE_PDF_GENERATOR_VERSION, paymentInstructions, headerName: header.organizationName, layoutInputs: { header, billToAddressLines: billToLines, clubType: version.event.invoiceClubType, paymentsCreditsCents: layout.paymentsCreditsCents } },
         select: { id: true, attachmentId: true, createdAt: true },
       });
     });

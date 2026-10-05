@@ -1,5 +1,5 @@
 import { FileText } from "lucide-react";
-import { CreateDraftsControl, InvoiceCodeForm } from "@/components/invoice-controls";
+import { CreateDraftsControl, InvoiceClubTypeForm, InvoiceCodeForm } from "@/components/invoice-controls";
 import { blockerReasonLabel } from "@/modules/attendance-reconciliation/domain";
 import { versionStatusLabel, type InvoiceVersionStatus } from "@/modules/invoices/domain";
 import type { InvoiceListRow, InvoicesView } from "@/modules/invoices/repository";
@@ -119,6 +119,7 @@ export function Invoices({ eventId, view, canFinalize }: { eventId: string; view
       <section className="panel billing-settings" aria-label="Invoice number">
         <div className="section-heading"><h3>Invoice numbers</h3></div>
         <InvoiceCodeForm effective={view.code.effective} eventId={eventId} explicit={view.code.explicit} locked={view.code.locked} year={view.code.year} />
+        <InvoiceClubTypeForm clubType={view.clubType} eventId={eventId} />
       </section>
     </section>
   );

@@ -29,7 +29,9 @@ import { resolveEventBillingResponsibility } from "@/modules/billing-responsibil
 import { captureMessageIdsLocally, ensureEventMessagingDefaults } from "@/modules/communications/messaging-repository";
 import { processExternalEmailQueue } from "@/modules/communications/email-delivery";
 import { mapResendDeliveryEvent, providerTransitionUpdate } from "@/modules/communications/provider-events";
-import { DEFAULT_PAYMENT_INSTRUCTIONS, treasurerCsvRows } from "@/modules/invoices/delivery-domain";
+import { DEFAULT_PAYMENT_INSTRUCTIONS, INVOICE_PDF_GENERATOR_VERSION, treasurerCsvRows } from "@/modules/invoices/delivery-domain";
+import { buildInvoiceLayout, type InvoiceHeader } from "@/modules/invoices/invoice-layout";
+import { parseManualLines } from "@/modules/invoices/manual-lines";
 import { ensureInvoiceDocument, getInvoiceDeliveryHistory, getInvoicePdfForDownload, getInvoiceSendPreview, readInvoiceDocumentBytes, sendInvoiceVersion } from "@/modules/invoices/delivery-repository";
 import { renderInvoicePdf } from "@/modules/invoices/invoice-pdf";
 import {
@@ -274,8 +276,12 @@ async function main() {
   // Regenerating from the same inputs gives the same bytes (what makes "never regenerated" checkable).
   const versionRow = await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: v1 }, include: { event: true } });
   const docRow = await prisma.invoiceVersionDocument.findUniqueOrThrow({ where: { invoiceVersionId: v1 } });
+  const layoutInputs = docRow.layoutInputs as unknown as { header: InvoiceHeader; billToAddressLines: string[]; clubType: string | null; paymentsCreditsCents: number };
+  assert(docRow.generatorVersion === INVOICE_PDF_GENERATOR_VERSION && layoutInputs.header.organizationName === docRow.headerName, "the document records the layout version and the header it used");
   const rebuilt = await renderInvoicePdf({
-    headerName: docRow.headerName, number: versionRow.number!, issuedAt: versionRow.finalizedAt!, timezone: versionRow.event.timezone, supersedesNumber: null,
+    header: layoutInputs.header, billToAddressLines: layoutInputs.billToAddressLines,
+    layout: buildInvoiceLayout({ snapshot: versionRow.snapshot as unknown as InvoiceSnapshot, manualLines: parseManualLines(versionRow.manualLines), clubType: layoutInputs.clubType, paymentsCreditsCents: layoutInputs.paymentsCreditsCents }),
+    number: versionRow.number!, issuedAt: versionRow.finalizedAt!, timezone: versionRow.event.timezone, supersedesNumber: null,
     contact: { name: versionRow.contactName!, email: versionRow.contactEmail!, roleLabel: versionRow.contactRoleLabel ?? "" }, organizationName: versionRow.organizationName, groupTitle: versionRow.groupTitle,
     snapshot: versionRow.snapshot as unknown as InvoiceSnapshot, paymentInstructions: docRow.paymentInstructions,
   });

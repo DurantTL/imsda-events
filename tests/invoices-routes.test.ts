@@ -25,6 +25,9 @@ const mocks = vi.hoisted(() => ({
     reviseInvoice: vi.fn(),
     finalizeInvoiceVersion: vi.fn(),
     setEventInvoiceCode: vi.fn(),
+    setEventInvoiceClubType: vi.fn(),
+    addManualInvoiceLine: vi.fn(),
+    removeManualInvoiceLine: vi.fn(),
     getInvoicesView: vi.fn(),
     getInvoiceDetail: vi.fn(),
   },
@@ -87,11 +90,14 @@ beforeEach(() => {
   signedIn = financeManager;
   mocks.getCurrentSession.mockImplementation(async () => ({ user: signedIn }));
   mocks.findActiveMembership.mockImplementation(async (userId: string, eventId: string) => memberships(userId, eventId));
-  mocks.service.createInvoiceDrafts.mockResolvedValue({ created: 2, regenerated: 0, unchanged: 0, finalized: 0, needRevision: 0, reconciliationVersionNumber: 1 });
+  mocks.service.createInvoiceDrafts.mockResolvedValue({ created: 2, regenerated: 0, unchanged: 0, finalized: 0, needRevision: 0, negativeTotal: [], reconciliationVersionNumber: 1 });
   mocks.service.regenerateInvoiceDraft.mockResolvedValue({ versionId: "v1", invoiceId: "i1" });
   mocks.service.discardInvoiceDraft.mockResolvedValue({ versionId: "v1", invoiceId: "i1" });
   mocks.service.reviseInvoice.mockResolvedValue({ versionId: "v2", invoiceId: "i1", revision: 1 });
   mocks.service.setEventInvoiceCode.mockResolvedValue({ changed: true, code: "SC" });
+  mocks.service.setEventInvoiceClubType.mockResolvedValue({ changed: true, clubType: "Pathfinders" });
+  mocks.service.addManualInvoiceLine.mockResolvedValue({ versionId: "v1", invoiceId: "i1", lineId: "m1", amountDueCents: 9500 });
+  mocks.service.removeManualInvoiceLine.mockResolvedValue({ versionId: "v1", invoiceId: "i1", lineId: "m1", amountDueCents: 5000 });
   mocks.service.finalizeInvoiceVersion.mockResolvedValue({ changed: true, versionId: "v1", invoiceId: "i1", number: "SC27-0001", revision: 0, amountDueCents: 5000 });
   mocks.grant.mockResolvedValue({ granted: true, changed: true });
   mocks.ensureDocument.mockResolvedValue({ id: "doc1" });
@@ -144,6 +150,54 @@ describe("POST /api/events/[eventId]/invoices", () => {
     signedIn = admin;
     await POST(request(finalizeBody), context("event-z"));
     expect(mocks.service.finalizeInvoiceVersion).toHaveBeenLastCalledWith(expect.objectContaining({ actorUserId: "user-admin", eventId: "event-z", canFinalizeInvoices: true }));
+  });
+
+  const addLineBody = { action: "add-manual-line", invoiceId: "i1", item: "Patch order", description: "Camporee patches", quantity: 10, rate: "4.50" };
+  const removeLineBody = { action: "remove-manual-line", invoiceId: "i1", lineId: "m1" };
+
+  it("manual lines: the rate is read in dollars and MANAGE_FINANCE alone does not carry Finalize invoices into the service (#780)", async () => {
+    expect((await POST(request(addLineBody), context())).status).toBe(200);
+    expect(mocks.service.addManualInvoiceLine).toHaveBeenCalledWith({
+      eventId: "event-a", invoiceId: "i1", line: { item: "Patch order", description: "Camporee patches", quantity: 10, rateCents: 450 }, actorUserId: "user-finance", canFinalizeInvoices: false,
+    });
+    expect((await POST(request(removeLineBody), context())).status).toBe(200);
+    expect(mocks.service.removeManualInvoiceLine).toHaveBeenCalledWith({ eventId: "event-a", invoiceId: "i1", lineId: "m1", actorUserId: "user-finance", canFinalizeInvoices: false });
+  });
+
+  it("manual lines: a granted staff member and a system administrator pass the permission; an Event Admin does not have it (#780)", async () => {
+    signedIn = treasurer;
+    await POST(request(addLineBody), context());
+    expect(mocks.service.addManualInvoiceLine).toHaveBeenLastCalledWith(expect.objectContaining({ actorUserId: "user-treasurer", canFinalizeInvoices: true }));
+    signedIn = admin;
+    await POST(request(removeLineBody), context("event-z"));
+    expect(mocks.service.removeManualInvoiceLine).toHaveBeenLastCalledWith(expect.objectContaining({ actorUserId: "user-admin", eventId: "event-z", canFinalizeInvoices: true }));
+    signedIn = eventAdmin;
+    await POST(request(addLineBody), context());
+    expect(mocks.service.addManualInvoiceLine).toHaveBeenLastCalledWith(expect.objectContaining({ actorUserId: "user-event-admin", canFinalizeInvoices: false }));
+  });
+
+  it("manual lines: the service's refusal reaches the caller, and a bad rate never reaches the service (#780)", async () => {
+    mocks.service.addManualInvoiceLine.mockRejectedValueOnce(new InvoiceError("Needs the Finalize invoices permission.", "FINALIZE_PERMISSION_REQUIRED"));
+    expect((await POST(request(addLineBody), context())).status).toBe(403);
+    mocks.service.addManualInvoiceLine.mockRejectedValueOnce(new InvoiceError("Quantity must be a whole number.", "INVALID_INPUT"));
+    expect((await POST(request(addLineBody), context())).status).toBe(400);
+    mocks.service.addManualInvoiceLine.mockClear();
+    expect((await POST(request({ ...addLineBody, rate: "free" }), context())).status).toBe(400);
+    expect(mocks.service.addManualInvoiceLine).not.toHaveBeenCalled();
+  });
+
+  it("the club type is set by finance staff, as themselves (#780)", async () => {
+    expect((await POST(request({ action: "set-club-type", clubType: "Pathfinders" }), context())).status).toBe(200);
+    expect(mocks.service.setEventInvoiceClubType).toHaveBeenCalledWith({ eventId: "event-a", clubType: "Pathfinders", actorUserId: "user-finance" });
+  });
+
+  it("refuses manual-line and club-type requests from a member without MANAGE_FINANCE, before the service (#780)", async () => {
+    for (const body of [addLineBody, removeLineBody, { action: "set-club-type", clubType: "Pathfinders" }]) {
+      expect((await POST(request(body), context("event-c"))).status).toBe(403);
+    }
+    expect(mocks.service.addManualInvoiceLine).not.toHaveBeenCalled();
+    expect(mocks.service.removeManualInvoiceLine).not.toHaveBeenCalled();
+    expect(mocks.service.setEventInvoiceClubType).not.toHaveBeenCalled();
   });
 
   it("refuses a member without MANAGE_FINANCE and an event the user is not assigned to (403), before the service", async () => {

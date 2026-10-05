@@ -97,6 +97,8 @@ export type InvoiceLinePerson = {
   billable: boolean;
   /** The person's own price lines when billed per person; null when not billed or when the registration was prorated. */
   amountCents: number | null;
+  /** True when the person's own price was the late-registration rate (#780). Absent on a snapshot made before it. */
+  lateRate?: boolean;
 };
 
 /** One registration (a club, or a person's registration) on the invoice. */
@@ -156,6 +158,7 @@ export function invoiceLineFor(registration: RegistrationResult): InvoiceLine {
       name: person.name,
       billable: person.billable,
       amountCents: person.billable && perPerson ? person.chargeCents : null,
+      lateRate: person.lateRate,
     })),
     chargesNotTiedToPerson: registration.unattached.map((entry) => ({ label: entry.label, amountCents: entry.amountCents, kind: entry.kind })),
     credits: registration.credits.map((credit) => ({ label: credit.label, units: credit.units, amountCents: credit.appliedCents })),

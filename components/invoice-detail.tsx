@@ -1,4 +1,4 @@
-import { DiscardControl, FinalizeControl, RegenerateControl, ReviseForm } from "@/components/invoice-controls";
+import { DiscardControl, FinalizeControl, ManualLinesPanel, RegenerateControl, ReviseForm } from "@/components/invoice-controls";
 import { InvoiceDeliveryPanel, InvoiceLedgerPanel } from "@/components/invoice-ledger";
 import { StatusBadge, displayNumber, invoiceMoney, invoiceWhen } from "@/components/invoices";
 import { basisLabel } from "@/modules/attendance-reconciliation/domain";
@@ -105,13 +105,25 @@ export function InvoiceDetailView({
         <div className="section-heading"><h3>Lines</h3></div>
         {snapshot.lines.length === 0 && <p style={{ padding: "0 17px" }}>No registrations are on this invoice.</p>}
         {snapshot.lines.map((line) => <LineBlock key={line.registrationId} line={line} />)}
+        {shown.manualLines.map((line) => (
+          <div className="invoice-line" key={line.id}>
+            <span><strong>{line.item}</strong><small>{line.description ? `${line.description} · ` : ""}manual line · {line.quantity} × {invoiceMoney(line.rateCents)}</small></span>
+            <span />
+            <span><strong>{invoiceMoney(line.amountCents)}</strong></span>
+            <span />
+          </div>
+        ))}
         <div className="invoice-line">
           <span><strong>Total due</strong><small>{snapshot.totals.billable} billable of {snapshot.totals.registered} registered ({snapshot.totals.noShow} no-show)</small></span>
           <span />
-          <span><strong>{invoiceMoney(snapshot.totals.amountDueCents)}</strong></span>
+          <span><strong>{invoiceMoney(shown.amountDueCents)}</strong></span>
           <span />
         </div>
       </section>
+
+      {(isDraft || shown.manualLines.length > 0) && (
+        <ManualLinesPanel canEdit={isDraft && shown.basis === "RECONCILIATION" && canFinalize} isDraft={isDraft} eventId={eventId} invoiceId={detail.invoice.id} lines={shown.manualLines} money={invoiceMoney} />
+      )}
 
       <section className="panel billing-settings invoice-actions" aria-label="Actions">
         <div className="section-heading"><h3>Actions</h3></div>

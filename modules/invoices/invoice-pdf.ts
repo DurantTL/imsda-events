@@ -9,14 +9,20 @@
  *
  * pdf-lib is pure JavaScript (no native code and no headless browser). Text outside the standard fonts'
  * Latin character set is replaced with "?" rather than failing a send.
+ *
+ * Layout version 4 (#780) follows the conference's sample invoice: the editable header block, Bill To with the
+ * church's address, the invoice number, date and event, an Item / Description / Qty / Rate / Amount table grouped
+ * under the club type, and Total, Payments/Credits and Balance Due at the foot. No confirmation code and no promo
+ * code is ever printed.
  */
 
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
-import type { InvoiceLine, InvoiceSnapshot } from "@/modules/invoices/domain";
+import type { InvoiceSnapshot } from "@/modules/invoices/domain";
+import type { InvoiceHeader, InvoiceLayout } from "@/modules/invoices/invoice-layout";
 
 export type InvoicePdfInput = {
-  /** The conference's name for the header (the platform organization name). */
-  headerName: string;
+  /** The editable header block (#780), already resolved: the platform organization name stands in when the setting is empty. */
+  header: InvoiceHeader;
   number: string;
   /** The version's finalization time: the issue date, and the document's creation date. */
   issuedAt: Date;
@@ -27,8 +33,12 @@ export type InvoicePdfInput = {
   /** The billing contact as it was when the version was finalized. */
   contact: { name: string; email: string; roleLabel: string } | null;
   organizationName: string;
+  /** The billed church's address lines (street, then "City, ST 12345"); missing parts are already left out. */
+  billToAddressLines: string[];
   groupTitle: string;
   snapshot: InvoiceSnapshot;
+  /** The line-item table and the footer totals (#780). */
+  layout: InvoiceLayout;
   paymentInstructions: string;
 };
 
@@ -145,26 +155,12 @@ class Writer {
   }
 }
 
-function lineExtras(line: InvoiceLine) {
-  const extras: Array<{ label: string; cents: number }> = [];
-  for (const charge of line.chargesNotTiedToPerson) {
-    extras.push({ label: `${charge.kind === "CREDIT_AS_RECORDED" ? "Credit as recorded" : "Charge"}: ${charge.label}`, cents: charge.amountCents });
-  }
-  for (const credit of line.credits) {
-    extras.push({ label: `Credit: ${credit.label}${credit.units !== null ? ` (${credit.units})` : ""}`, cents: credit.amountCents });
-  }
-  // The code itself is never printed: a promo code may be private.
-  if (line.promo) extras.push({ label: "Promo discount", cents: line.promo.amountCents });
-  if (line.adjustmentCents !== 0) extras.push({ label: "Staff adjustments", cents: line.adjustmentCents });
-  return extras;
-}
-
 /** Renders the invoice. The same input always yields the same bytes. */
 export async function renderInvoicePdf(input: InvoicePdfInput): Promise<Uint8Array> {
   const doc = await PDFDocument.create({ updateMetadata: false });
   doc.setTitle(`Invoice ${input.number}`);
   doc.setSubject(`Invoice for ${input.organizationName}`);
-  doc.setAuthor(input.headerName);
+  doc.setAuthor(input.header.organizationName);
   doc.setCreator("IMSDA Events");
   doc.setProducer("IMSDA Events");
   doc.setCreationDate(input.issuedAt);
@@ -172,10 +168,14 @@ export async function renderInvoicePdf(input: InvoicePdfInput): Promise<Uint8Arr
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const w = new Writer(doc, regular, bold);
-  const { snapshot } = input;
+  const { layout } = input;
 
-  // Header
-  w.text(input.headerName, { size: 16, font: bold, width: 330, lead: 20 });
+  // Header block: the editable sender (department, organization, address, phone) on the left, the title and number on the right.
+  const { header } = input;
+  if (header.department) w.text(header.department, { size: 11, font: bold, width: 330, lead: 15 });
+  w.text(header.organizationName, { size: header.department ? 12 : 16, font: bold, width: 330, lead: header.department ? 16 : 20 });
+  for (const addressLine of header.addressLines) w.text(addressLine, { size: 9, color: MUTED, width: 330, lead: 12 });
+  if (header.phone) w.text(header.phone, { size: 9, color: MUTED, width: 330, lead: 12 });
   const afterHeader = w.y;
   w.y = PAGE.height - MARGIN;
   w.right("INVOICE", { size: 20, font: bold });
@@ -183,80 +183,95 @@ export async function renderInvoicePdf(input: InvoicePdfInput): Promise<Uint8Arr
   w.y = Math.min(afterHeader, PAGE.height - MARGIN - 44);
   w.rule(8);
 
-  // Meta
-  const labelX = MARGIN;
-  const valueX = MARGIN + 92;
+  // Bill To (the church's name and the address lines it has) beside the invoice meta.
+  const metaX = 330;
+  const blockTop = w.y;
+  w.text("BILL TO", { size: 8, font: bold, color: MUTED, width: 250, lead: 12 });
+  w.text(input.organizationName, { size: 11, font: bold, width: 250, lead: 15 });
+  for (const addressLine of input.billToAddressLines) w.text(addressLine, { size: 10, width: 250, lead: 13 });
+  if (input.groupTitle && input.groupTitle !== input.organizationName) w.text(input.groupTitle, { size: 9, color: MUTED, width: 250, lead: 12 });
+  if (input.contact) w.text(`Attn: ${input.contact.name}${input.contact.roleLabel ? `, ${input.contact.roleLabel}` : ""}`, { size: 9, color: MUTED, width: 250, lead: 12 });
+  if (input.contact) w.text(input.contact.email, { size: 9, color: MUTED, width: 250, lead: 12 });
+  const afterBillTo = w.y;
+
+  w.y = blockTop;
   const meta = (label: string, value: string, options: { bold?: boolean } = {}) => {
-    const lines = w.wrap(value, options.bold ? bold : regular, 10, PAGE.width - MARGIN - valueX);
-    w.ensure(lines.length * 14);
-    w.page.drawText(w.clean(label), { x: labelX, y: w.y - 10, size: 10, font: regular, color: MUTED });
+    const lines = w.wrap(value, options.bold ? bold : regular, 10, PAGE.width - MARGIN - (metaX + 84));
+    w.page.drawText(w.clean(label), { x: metaX, y: w.y - 10, size: 10, font: regular, color: MUTED });
     for (const line of lines) {
-      w.page.drawText(line, { x: valueX, y: w.y - 10, size: 10, font: options.bold ? bold : regular, color: TEXT });
+      w.page.drawText(line, { x: metaX + 84, y: w.y - 10, size: 10, font: options.bold ? bold : regular, color: TEXT });
       w.y -= 14;
     }
   };
-  meta("Invoice number", input.number, { bold: true });
-  meta("Issue date", formatIssueDate(input.issuedAt, input.timezone));
-  meta("Event", snapshot.event.name);
-  meta("Billed to", input.organizationName, { bold: true });
-  if (input.groupTitle && input.groupTitle !== input.organizationName) meta("Account", input.groupTitle);
-  if (input.contact) {
-    meta("Attention", `${input.contact.name}${input.contact.roleLabel ? `, ${input.contact.roleLabel}` : ""}`);
-    meta("Billing contact email", input.contact.email);
-  }
+  meta("Invoice no.", input.number, { bold: true });
+  meta("Invoice date", formatIssueDate(input.issuedAt, input.timezone));
+  meta("Event", input.snapshot.event.name);
   if (input.supersedesNumber) meta("Supersedes", input.supersedesNumber);
+  w.y = Math.min(w.y, afterBillTo);
   w.gap(6);
   w.rule(4);
 
-  // Lines
+  // The line-item table: Item / Description / Qty / Rate / Amount.
   const amountEdge = PAGE.width - MARGIN;
-  const billableEdge = amountEdge - 96;
-  const registeredEdge = billableEdge - 72;
+  const rateEdge = amountEdge - 78;
+  const qtyEdge = rateEdge - 72;
+  const descriptionX = MARGIN + 122;
+  const itemWidth = 114;
+  const descriptionWidth = qtyEdge - 34 - descriptionX;
   const tableHeader = () => {
     w.ensure(22);
-    w.page.drawText("Registration", { x: MARGIN, y: w.y - 9, size: 9, font: bold, color: MUTED });
-    w.right("Registered", { size: 9, font: bold, color: MUTED, rightEdge: registeredEdge, y: w.y });
-    w.right("Billable", { size: 9, font: bold, color: MUTED, rightEdge: billableEdge, y: w.y });
+    w.page.drawText("Item", { x: MARGIN, y: w.y - 9, size: 9, font: bold, color: MUTED });
+    w.page.drawText("Description", { x: descriptionX, y: w.y - 9, size: 9, font: bold, color: MUTED });
+    w.right("Qty", { size: 9, font: bold, color: MUTED, rightEdge: qtyEdge, y: w.y });
+    w.right("Rate", { size: 9, font: bold, color: MUTED, rightEdge: rateEdge, y: w.y });
     w.right("Amount", { size: 9, font: bold, color: MUTED, rightEdge: amountEdge, y: w.y });
     w.y -= 16;
   };
+  /** Makes room for a block, repeating the column headings when it starts a new page. */
+  const room = (height: number) => {
+    if (w.y - height < MARGIN + 24) {
+      w.newPage();
+      tableHeader();
+    }
+  };
   tableHeader();
-  if (snapshot.lines.length === 0) w.text("No registrations are on this invoice.", { color: MUTED });
-  for (const [lineIndex, line] of snapshot.lines.entries()) {
-    const lineNumber = lineIndex + 1;
-    const labelLines = w.wrap(line.label, bold, 10, registeredEdge - 70 - MARGIN);
-    w.ensure(labelLines.length * 14 + 16);
-    const top = w.y;
-    for (const labelLine of labelLines) {
-      w.page.drawText(labelLine, { x: MARGIN, y: w.y - 10, size: 10, font: bold, color: TEXT });
-      w.y -= 14;
+  if (layout.groups.length === 0) w.text("No registrations are on this invoice.", { color: MUTED });
+  for (const group of layout.groups) {
+    room(40);
+    w.text(group.heading, { size: 10, font: bold, lead: 16 });
+    for (const row of group.rows) {
+      const itemLines = w.wrap(row.item, regular, 10, itemWidth);
+      const descriptionLines = w.wrap(row.description, regular, 10, descriptionWidth);
+      const rowLines = Math.max(itemLines.length, descriptionLines.length, 1);
+      room(rowLines * 13 + 4);
+      const top = w.y;
+      itemLines.forEach((line, index) => w.page.drawText(line, { x: MARGIN, y: top - 10 - index * 13, size: 10, font: regular, color: TEXT }));
+      descriptionLines.forEach((line, index) => w.page.drawText(line, { x: descriptionX, y: top - 10 - index * 13, size: 10, font: regular, color: TEXT }));
+      w.right(String(row.quantity), { rightEdge: qtyEdge, y: top });
+      w.right(formatPdfMoney(row.rateCents), { rightEdge: rateEdge, y: top });
+      w.right(formatPdfMoney(row.amountCents), { rightEdge: amountEdge, y: top });
+      w.y -= rowLines * 13 + 4;
     }
-    w.right(String(line.counts.registered), { rightEdge: registeredEdge, y: top });
-    w.right(String(line.counts.billable), { rightEdge: billableEdge, y: top });
-    w.right(formatPdfMoney(line.amountCents), { rightEdge: amountEdge, y: top, font: bold });
-    // A non-secret line reference. The registration's confirmation code is never printed: with a contact email it opens that registration.
-    w.text(`Line ${lineNumber}`, { size: 8, color: MUTED, x: MARGIN + 8, lead: 11 });
-    for (const extra of lineExtras(line)) {
-      const extraWidth = billableEdge - MARGIN - 70;
-      // Keep the label and its amount on one page.
-      w.ensure(w.wrap(extra.label, w.regular, 9, extraWidth).length * 13);
-      const extraTop = w.y;
-      w.text(extra.label, { size: 9, x: MARGIN + 8, width: extraWidth, lead: 13 });
-      w.right(formatPdfMoney(extra.cents), { size: 9, rightEdge: amountEdge, y: extraTop });
-    }
-    w.gap(4);
     w.rule(2);
   }
 
-  // Total
-  w.ensure(60);
-  w.gap(4);
-  const totalTop = w.y;
-  w.page.drawText("Total due", { x: MARGIN, y: totalTop - 12, size: 12, font: bold, color: TEXT });
-  w.right(formatPdfMoney(snapshot.totals.amountDueCents), { size: 12, font: bold, rightEdge: amountEdge, y: totalTop - 2 });
-  w.y = totalTop - 20;
-  w.text(`${snapshot.totals.billable} billable of ${snapshot.totals.registered} registered`, { size: 9, color: MUTED });
-  if (snapshot.totals.amountDueCents === 0) w.text("Nothing is owed on this invoice.", { size: 9, color: MUTED });
+  // Footer totals: Total, Payments/Credits, Balance Due.
+  w.ensure(96);
+  w.gap(6);
+  const totalRow = (label: string, cents: number, options: { strong?: boolean } = {}) => {
+    const top = w.y;
+    const font = options.strong ? bold : regular;
+    const size = options.strong ? 12 : 10;
+    w.page.drawText(label, { x: rateEdge - 150, y: top - size, size, font, color: TEXT });
+    w.right(formatPdfMoney(cents), { size, font, rightEdge: amountEdge, y: top });
+    w.y -= options.strong ? 20 : 16;
+  };
+  totalRow("Total", layout.totalCents);
+  totalRow("Payments/Credits", layout.paymentsCreditsCents === 0 ? 0 : -layout.paymentsCreditsCents);
+  w.rule(2);
+  totalRow("Balance Due", layout.balanceDueCents, { strong: true });
+  w.text(`${input.snapshot.totals.billable} billable of ${input.snapshot.totals.registered} registered`, { size: 9, color: MUTED });
+  if (layout.totalCents === 0) w.text("Nothing is owed on this invoice.", { size: 9, color: MUTED });
 
   // Payment
   w.gap(14);
