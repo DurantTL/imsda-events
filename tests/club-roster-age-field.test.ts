@@ -8,7 +8,7 @@ vi.mock("next/link", () => ({ default: ({ href, children }: { href: string; chil
 
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
 
-const PROBLEM = "Enter Sam Staff age on the event date.";
+const PROBLEM = "Enter Sam Staff's age on the event date.";
 const render = (props: { attempted?: boolean; error?: string | null; value?: string; newTab?: boolean } = {}) => renderToStaticMarkup(
   createElement(ClubRosterAgeField, {
     attempted: props.attempted,
@@ -33,7 +33,7 @@ describe("Age on event date field (#718)", () => {
 
   it("shows the error once Continue has been pressed", () => {
     const html = render({ attempted: true });
-    expect(html).toContain(PROBLEM);
+    expect(html).toContain(PROBLEM.replace("'", "&#x27;"));
     expect(html).not.toContain('role="alert"');
     expect(html).toContain('aria-invalid="true"');
     expect(html).toContain('aria-describedby="club-age-m3-error"');

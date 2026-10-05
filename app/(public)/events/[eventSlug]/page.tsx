@@ -125,7 +125,14 @@ export default async function PublicEventPage({
         </section>
       )}
 
-      <ClubDirectorSignInNotice event={landing.event} />
+      <ClubDirectorSignInNotice
+        event={{
+          audience: landing.event.audience,
+          slug: landing.event.slug,
+          registrationOpen: landing.lifecycle.ctaEnabled,
+          hasClubPortalForm: landing.forms.some((form) => form.registrationPath === "CLUB_PORTAL"),
+        }}
+      />
 
       {landing.announcements.length > 0 && (
         <section

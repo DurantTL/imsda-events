@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classChoiceReadiness, missingChoicesText, readinessSummaryText } from "@/modules/honors/class-readiness";
+import { classBadge, classChoiceReadiness, missingChoicesText, noClassAvailableText, readinessSummaryText, requiresClassChoice } from "@/modules/honors/class-readiness";
 
 // Synthetic people, sessions and classes only (#799 G3).
 const sessions = [{ id: "s1", name: "Session 1" }, { id: "s2", name: "Session 2" }];
@@ -56,9 +56,12 @@ describe("a member is not complete until every session they can take has a choic
     ];
     const youth = classChoiceReadiness({ attendees: [person("1", { ageOnEventDate: 12 })], sessions, offerings: limited, selections: {} });
     expect(youth.complete).toBe(true);
-    // A staff member takes no seat, so a full class is still open to them.
+    // A staff member takes no seat, so a full class is still open to them, but they owe no choice (optional).
     const staff = classChoiceReadiness({ attendees: [person("2", { consumesSeat: false, attendeeType: "STAFF", ageOnEventDate: 40 })], sessions, offerings: limited, selections: {} });
     expect(staff.people[0]!.missing.map((entry) => entry.sessionId)).toEqual(["s1", "s2"]);
+    expect(staff.people[0]!.required).toBe(false);
+    expect(staff.complete).toBe(true);
+    expect(classBadge(staff.people[0]!)).toBe("optional");
     const withdrawn = classChoiceReadiness({ attendees: [person("3")], sessions, offerings: [offering("a", { isActive: false })], selections: {} });
     expect(withdrawn.complete).toBe(true);
   });
@@ -75,3 +78,50 @@ describe("a member is not complete until every session they can take has a choic
     expect(readinessSummaryText({ people: [], incompleteCount: 0 })).toBe("Everyone has their class choices.");
   });
 });
+
+describe("all-sessions classes, the neutral state, and who owes a choice (#799 G3)", () => {
+  const allOnly = [offering("all", { span: "ALL_SESSIONS", sessionId: null })];
+
+  it("an event with only all-sessions classes: no pick is incomplete, the pick completes", () => {
+    const none = classChoiceReadiness({ attendees: [person("1")], sessions, offerings: allOnly, selections: {} });
+    expect(none.complete).toBe(false);
+    expect(none.people[0]!.missing.map((entry) => entry.sessionName)).toEqual(["the whole weekend"]);
+    expect(missingChoicesText(none.people[0]!)).toBe("Still needs a class for the whole weekend.");
+    expect(classChoiceReadiness({ attendees: [person("1")], sessions, offerings: allOnly, selections: { "1": ["all"] } }).complete).toBe(true);
+  });
+
+  it("an all-sessions class that is full or too advanced asks nothing", () => {
+    const full = [offering("all", { span: "ALL_SESSIONS", sessionId: null, seatsTaken: 20 })];
+    expect(classChoiceReadiness({ attendees: [person("1")], sessions, offerings: full, selections: {} }).complete).toBe(true);
+  });
+
+  it("only youth owe a choice by default; staff, adults and underage are optional", () => {
+    expect(requiresClassChoice({ attendeeType: "YOUTH" })).toBe(true);
+    expect(requiresClassChoice({ attendeeType: null })).toBe(true);
+    for (const attendeeType of ["STAFF", "ADULT", "UNDERAGE"]) expect(requiresClassChoice({ attendeeType })).toBe(false);
+    const adult = classChoiceReadiness({ attendees: [person("1", { attendeeType: "ADULT", consumesSeat: false })], sessions, offerings, selections: {} });
+    expect(adult.complete).toBe(true);
+    expect(adult.incompleteCount).toBe(0);
+  });
+
+  it("says 'No class available' for a session nothing is open in, without calling it chosen", () => {
+    const limited = [offering("a", { sessionId: "s1", minimumAge: 16 }), offering("b", { sessionId: "s2" })];
+    const result = classChoiceReadiness({ attendees: [person("1")], sessions, offerings: limited, selections: { "1": ["b"] } });
+    const youth = result.people[0]!;
+    expect(noClassAvailableText(youth)).toBe("No class available for Session 1.");
+    expect(classBadge(youth)).toBe("chosen");
+    const nothing = classChoiceReadiness({ attendees: [person("2")], sessions, offerings: [limited[0]!], selections: {} }).people[0]!;
+    expect(classBadge(nothing)).toBe("none-available");
+    expect(nothing.complete).toBe(true);
+  });
+
+  it("a class the person already holds counts as open to them even when the club's seats are used up", () => {
+    const full = [offering("a", { sessionId: "s1", seatsTaken: 20 })];
+    const held = classChoiceReadiness({ attendees: [person("1")], sessions: [sessions[0]!], offerings: full, selections: {}, saved: { "1": ["a"] } });
+    // Held in the saved data but dropped from the screen: still owed, since the seat is theirs to re-pick.
+    expect(held.people[0]!.missing.map((entry) => entry.sessionId)).toEqual(["s1"]);
+    const notHeld = classChoiceReadiness({ attendees: [person("1")], sessions: [sessions[0]!], offerings: full, selections: {} });
+    expect(notHeld.people[0]!.missing).toEqual([]);
+  });
+});
+

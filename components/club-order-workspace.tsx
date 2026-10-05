@@ -8,7 +8,7 @@ import { ClubUniformSection, emptyUniformData, type ClubUniformData } from "@/co
 import { ORDER_LIST_SECTIONS, activeHelperLines, needsDatedBefore, orderListSectionLabels, type HelperLine } from "@/modules/club-orders/domain";
 import type { AwardableNeed, OrderBatchSummary, UnmatchedNeed, WaitingNeed } from "@/modules/club-orders/repository";
 import type { ClubStockRow } from "@/modules/club-supplies/repository";
-import { effectiveChoice, matchesSearch } from "@/lib/search-match";
+import { effectiveChoice, makeSearchMatcher } from "@/lib/search-match";
 
 export type ClubOrderWorkspaceData = {
   helper: HelperLine[];
@@ -141,11 +141,12 @@ export function ClubOrderWorkspace({
   }, [data.awardable]);
   const pickerItems = useMemo(() => {
     const listed = new Set(onList.map((line) => line.itemId));
-    return stock.filter((row) => row.isActive && !listed.has(row.itemId) && matchesSearch([row.name, row.catalogNumber, row.sizeLabel], pickerQuery));
+    const matches = makeSearchMatcher(pickerQuery);
+    return stock.filter((row) => row.isActive && !listed.has(row.itemId) && matches([row.name, row.catalogNumber, row.sizeLabel]));
   }, [stock, pickerQuery, onList]);
   const shownPickerItems = useMemo(() => pickerItems.slice(0, PICKER_LIMIT), [pickerItems]);
   // One match needs no second click, and a search can never leave a hidden item chosen (#799).
-  const chosenItem = effectiveChoice(pickerItem, shownPickerItems.map((row) => ({ id: row.itemId })));
+  const chosenItem = effectiveChoice(pickerItem, shownPickerItems.map((row) => ({ id: row.itemId })), pickerQuery);
   // Honors that may have been handed out long ago: the club marks them so they aren't counted as needed.
   const earlier = useMemo(() => data.waiting.filter((need) => need.sourceType === "HONOR" && need.beforeFirstOrder), [data.waiting]);
   // Shown only while the club hasn't edited the helper list or handed anything out here: a one-time cleanup, never in read-only mode.
@@ -500,7 +501,7 @@ export function ClubOrderWorkspace({
             <div className={styles.pickerRow}>
               <label className={styles.pickerField} htmlFor="club-order-picker-search">
                 Search the catalog
-                <input className={styles.select} id="club-order-picker-search" onChange={(event) => setPickerQuery(event.target.value)} placeholder="Name or item number" type="search" value={pickerQuery} />
+                <input className={styles.select} id="club-order-picker-search" onChange={(event) => { setPickerQuery(event.target.value); setPickerItem(""); }} placeholder="Name or item number" type="search" value={pickerQuery} />
               </label>
               <label className={styles.pickerField} htmlFor="club-order-picker-item">
                 Item

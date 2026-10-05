@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { AutoEventInfoCards } from "@/components/auto-event-info-cards";
+import { clubDirectorSignInNotice } from "@/modules/club-registrations/club-notices";
 import { ClubDirectorSignInNotice } from "@/components/club-director-sign-in-notice";
 import { EventInfoCards } from "@/components/event-info-cards";
 import { PublicRegistrationForm } from "@/components/public-registration-form";
@@ -90,6 +91,14 @@ export default async function PublicRegistrationPage({
   // Auto info cards (#651): club events only. The repository returns null for
   // any other audience, so a general event's registration page is unchanged.
   const autoCards = await getAutoEventInfoCards(eventSlug);
+  // The page only renders while registration is open (it redirects otherwise).
+  const clubNoticeEvent = {
+    audience: experience.event.audience,
+    billingMode: experience.event.billingMode,
+    slug: experience.event.slug,
+    registrationOpen: true,
+  };
+  const clubNotice = clubDirectorSignInNotice(clubNoticeEvent);
   const editableCards = await listPublishedRegistrationInfoCards(eventSlug);
 
   return (
@@ -107,9 +116,9 @@ export default async function PublicRegistrationPage({
       initialAttendeeResponses={scopedPrefill("ATTENDEE")}
       disableDrafts={Boolean(account)}
       topContent={
-        editableCards.length > 0 || autoCards || experience.event.audience === "CLUB" ? (
+        editableCards.length > 0 || autoCards || clubNotice ? (
           <>
-            <ClubDirectorSignInNotice event={experience.event} />
+            <ClubDirectorSignInNotice event={clubNoticeEvent} />
             <EventInfoCards sections={editableCards} eventSlug={eventSlug} placement="registration" />
             {autoCards ? <AutoEventInfoCards cards={autoCards} /> : null}
           </>

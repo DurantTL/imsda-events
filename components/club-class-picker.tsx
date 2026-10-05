@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { Award, Save } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { NeedsAttention, StatusComplete } from "@/components/needs-attention";
-import { classChoiceReadiness, missingChoicesText, readinessSummaryText } from "@/modules/honors/class-readiness";
+import { ClassStatus } from "@/components/class-status";
+import { classChoiceReadiness, readinessSummaryText } from "@/modules/honors/class-readiness";
 import { attendeeTypeLabel as typeLabel, seatsNote, unavailableReason } from "@/modules/honors/class-picker-view";
 import { honorsNoteKey } from "@/modules/honors/registration-picks";
 import { sortHonorSessions } from "@/modules/honors/session-order";
@@ -53,8 +54,8 @@ export function ClubClassPicker({
 
   // Who still owes a class choice, from the picks on screen (#799 G3): nobody shows as done until every session they can take has one.
   const readiness = useMemo(
-    () => classChoiceReadiness({ attendees: workspace.attendees, sessions, offerings: workspace.offerings, selections }),
-    [workspace.attendees, sessions, workspace.offerings, selections],
+    () => classChoiceReadiness({ attendees: workspace.attendees, sessions, offerings: workspace.offerings, selections, saved: workspace.selections }),
+    [workspace.attendees, sessions, workspace.offerings, selections, workspace.selections],
   );
   const readinessById = useMemo(() => new Map(readiness.people.map((person) => [person.attendeeId, person])), [readiness]);
 
@@ -163,13 +164,7 @@ export function ClubClassPicker({
                   {attendee.ageOnEventDate !== null ? <>Age <span translate="no">{attendee.ageOnEventDate}</span> · </> : null}
                   {typeLabel(attendee)}{attendee.consumesSeat ? "" : " · no seat needed"}
                 </small>
-                {(() => {
-                  const status = readinessById.get(attendee.id);
-                  if (!status) return null;
-                  return status.complete
-                    ? <small className="class-person-status"><StatusComplete label="Classes chosen" /></small>
-                    : <small className="class-person-status"><NeedsAttention label="Needs classes" /> <span>{missingChoicesText(status)}</span></small>;
-                })()}
+                {readinessById.get(attendee.id) && <small><ClassStatus open={workspace.open} person={readinessById.get(attendee.id)!} /></small>}
               </legend>
               {allSessionOfferings.length > 0 && (
                 <label>

@@ -54,8 +54,8 @@ export default async function ClubEventRegistrationPage({
     workspace.locations.length === 0 ? null : workspace.locations.length === 1 ? workspace.locations[0]!.id : undefined,
   ) : null;
   // A registered club is not "complete" until every person has a class for each session they can take (#799 G3).
-  const classReadiness = classes && !classes.locationRequired && classes.offerings.length > 0
-    ? classChoiceReadiness({ attendees: classes.attendees, sessions: classes.sessions, offerings: classes.offerings, selections: classes.selections })
+  const classReadiness = classes && classes.open && !classes.locationRequired && classes.offerings.length > 0
+    ? classChoiceReadiness({ attendees: classes.attendees, sessions: classes.sessions, offerings: classes.offerings, selections: classes.selections, saved: classes.selections })
     : null;
   // #410: only shown once staff have set something — an empty section would
   // tell a director less than nothing. The loader re-checks this club's

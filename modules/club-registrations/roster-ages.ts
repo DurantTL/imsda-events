@@ -45,14 +45,20 @@ export function ageInputValue(person: AgeInputPerson, text: Readonly<Record<stri
   return text[person.memberId] ?? String(saved[person.memberId] ?? person.reportedAge ?? "");
 }
 
+/** "Sam Synthetic's", or "their" when the roster has no name. */
+function possessiveName(person: Pick<AgeInputPerson, "firstName" | "lastName">) {
+  const name = `${person.firstName} ${person.lastName}`.trim();
+  return name ? `${name}'s` : "their";
+}
+
 /** What is wrong with this person's age entry, or null. A blank entry is never read as the reported age. */
 export function ageInputProblem(person: AgeInputPerson, text: Readonly<Record<string, string>>, saved: Readonly<Record<string, number>>): string | null {
   if (person.ageOnEventDate !== null) return null;
   const raw = ageInputValue(person, text, saved);
-  if (raw.trim() === "") return `Enter ${`${person.firstName} ${person.lastName}`.trim() || "their"} age on the event date.`;
+  if (raw.trim() === "") return `Enter ${possessiveName(person)} age on the event date.`;
   if (parseTypedAge(raw) === undefined) {
     // Name the person: this reads on its own in a summary or to a screen reader (#799 G6).
-    return `Enter ${`${person.firstName} ${person.lastName}`.trim() || "their"} age as a whole number from 0 to 120.`;
+    return `Enter ${possessiveName(person)} age as a whole number from 0 to 120.`;
   }
   return null;
 }

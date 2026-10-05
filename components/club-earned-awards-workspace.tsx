@@ -7,7 +7,7 @@ import styles from "@/components/club-orders.module.css";
 import { clubClassLevelLabels, clubClassLevels, type ClubClassLevel } from "@/modules/club-rosters/domain";
 import { awardEntryTooLarge, awardStatusLabels, MAX_AWARD_NEEDS_PER_ENTRY } from "@/modules/earned-awards/domain";
 import type { EarnedAwardsWorkspaceData } from "@/modules/earned-awards/order-source";
-import { effectiveChoice, matchesSearch } from "@/lib/search-match";
+import { effectiveChoice, makeSearchMatcher, matchesSearch } from "@/lib/search-match";
 
 export type ClubEarnedAwardsData = EarnedAwardsWorkspaceData;
 
@@ -39,7 +39,8 @@ type SearchableMember = { personId: string; firstName: string; lastName: string;
 
 /** Members the search currently shows. */
 export function shownMembers<T extends SearchableMember>(members: readonly T[], query: string): T[] {
-  return members.filter((member) => memberMatchesSearch(member, query));
+  const matches = makeSearchMatcher(query);
+  return members.filter((member) => matches([member.firstName, member.lastName, member.classLabel]));
 }
 
 /**
@@ -207,9 +208,13 @@ export function ClubEarnedAwardsWorkspace({
   }
 
   // ---- add by hand
-  const matchingCatalog = useMemo(() => data.catalog.filter((row) => matchesSearch([row.name], itemQuery)), [data.catalog, itemQuery]);
+  const matchingCatalog = useMemo(() => (() => {
+    const matches = makeSearchMatcher(itemQuery);
+    // An item already chosen to record is not offered again.
+    return data.catalog.filter((row) => matches([row.name]) && !chosen.some((entry) => entry.itemId === row.itemId));
+  })(), [data.catalog, itemQuery, chosen]);
   // One match needs no second click, and a search never leaves a hidden item chosen (#799).
-  const chosenItemId = effectiveChoice(itemId, matchingCatalog.map((row) => ({ id: row.itemId })));
+  const chosenItemId = effectiveChoice(itemId, matchingCatalog.map((row) => ({ id: row.itemId })), itemQuery);
   const group = data.catalog.find((entry) => entry.itemId === chosenItemId);
   const sections = useMemo(() => {
     const bySection = new Map<string, { label: string; items: ClubEarnedAwardsData["catalog"] }>();
@@ -502,7 +507,7 @@ export function ClubEarnedAwardsWorkspace({
                 {data.catalog.length > 8 && (
                   <span className={styles.pickerField}>
                     <label htmlFor="earned-item-search">Find an item</label>
-                    <input autoComplete="off" className={styles.select} id="earned-item-search" onChange={(event) => setItemQuery(event.target.value)} placeholder="Item name" type="search" value={itemQuery} />
+                    <input autoComplete="off" className={styles.select} id="earned-item-search" onChange={(event) => { setItemQuery(event.target.value); setItemId(""); }} placeholder="Item name" type="search" value={itemQuery} />
                   </span>
                 )}
                 <span className={styles.pickerField}>

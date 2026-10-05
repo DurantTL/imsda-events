@@ -16,8 +16,8 @@ import { restoreDraftLocation } from "@/modules/club-registrations/draft-locatio
 import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
 import { sortHonorSessions } from "@/modules/honors/session-order";
-import { NeedsAttention, StatusComplete } from "@/components/needs-attention";
-import { classChoiceReadiness, missingChoicesText } from "@/modules/honors/class-readiness";
+import { ClassStatus } from "@/components/class-status";
+import { classChoiceReadiness } from "@/modules/honors/class-readiness";
 import { MissingAgeSummary } from "@/components/missing-age-summary";
 import { ageFieldId, ageInputProblem, ageInputValue, effectiveRosterAges, parseTypedAge, peopleMissingAges, withRosterAge } from "@/modules/club-registrations/roster-ages";
 import { continueButtonLabel, focusFirstMissingAge, leaveAfterSave } from "@/modules/club-registrations/roster-age-flow";
@@ -288,13 +288,9 @@ export function ClubRegistrationWorkspace({
                 {attendeeTypeLabel(person)}{person.consumesSeat ? "" : " · no seat needed"}
               </small>
             </legend>
-            {(() => {
-              const status = classReadiness?.people.find((entry) => entry.attendeeId === person.clientId);
-              if (!status) return null;
-              return status.complete
-                ? <p className="class-person-status"><StatusComplete label="Classes chosen" /></p>
-                : <p className="class-person-status"><NeedsAttention label="Needs classes" /> {missingChoicesText(status)}</p>;
-            })()}
+            {classReadiness?.people.find((entry) => entry.attendeeId === person.clientId) && (
+              <p className="class-person-status"><ClassStatus person={classReadiness.people.find((entry) => entry.attendeeId === person.clientId)!} /></p>
+            )}
             <ClassPickFields
               attendee={person}
               offerings={honorOfferings}

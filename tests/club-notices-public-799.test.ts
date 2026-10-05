@@ -84,9 +84,9 @@ async function landingMarkup(row: ReturnType<typeof clubEventRow>) {
   return renderToStaticMarkup(await Page({ params: Promise.resolve({ eventSlug: SLUG }) }));
 }
 
-async function registrationMarkup(audience: "CLUB" | "GENERAL") {
+async function registrationMarkup(audience: "CLUB" | "GENERAL", billingMode = "DEFERRED_ORGANIZATION_INVOICE") {
   mocks.getPublicRegistrationExperience.mockResolvedValue({
-    event: { name: "Synthetic Honors Weekend", slug: SLUG, audience, startsAt: new Date("2027-03-12T22:00:00Z"), endsAt: new Date("2027-03-14T17:00:00Z") },
+    event: { name: "Synthetic Honors Weekend", slug: SLUG, audience, billingMode, startsAt: new Date("2027-03-12T22:00:00Z"), endsAt: new Date("2027-03-14T17:00:00Z") },
     lifecycle: { phase: "OPEN", capacityDecision: "OPEN" },
     form: { definition: { sections: [] } },
     choiceUsage: {},
@@ -131,8 +131,8 @@ describe("no club-only notice renders on a published club event's public pages (
 
 describe("the club-director sign-in notice (G8)", () => {
   it("is built only for a club event, and points at the signed-in club door", () => {
-    expect(clubDirectorSignInNotice({ audience: "GENERAL", slug: SLUG })).toBeNull();
-    expect(clubDirectorSignInNotice({ audience: "CLUB", slug: SLUG })?.href).toBe(`/account/club-registration/${SLUG}`);
+    expect(clubDirectorSignInNotice({ audience: "GENERAL", slug: SLUG, registrationOpen: true })).toBeNull();
+    expect(clubDirectorSignInNotice({ audience: "CLUB", slug: SLUG, registrationOpen: true })?.href).toBe(`/account/club-registration/${SLUG}`);
   });
 
   it("is a callout with a heading, an icon, and a sign-in button near the top of the public event page", async () => {
@@ -155,9 +155,41 @@ describe("the club-director sign-in notice (G8)", () => {
 
   it("does not appear on a general event", async () => {
     mocks.getAutoEventInfoCards.mockResolvedValue(null);
-    const registration = await registrationMarkup("GENERAL");
+    const registration = await registrationMarkup("GENERAL", "ATTENDEE_PAY");
     expect(registration).not.toContain(CLUB_DIRECTOR_SIGN_IN_TITLE);
     const landing = await landingMarkup(clubEventRow({ audience: "GENERAL", billingMode: "ATTENDEE_PAY" }));
     expect(landing).not.toContain(CLUB_DIRECTOR_SIGN_IN_TITLE);
+  });
+
+  it("follows the club-portal rule: a club event paid by attendees shows no notice", async () => {
+    const landing = await landingMarkup(clubEventRow({ billingMode: "ATTENDEE_PAY" }));
+    expect(landing).not.toContain(CLUB_DIRECTOR_SIGN_IN_TITLE);
+    const registration = await registrationMarkup("CLUB", "ATTENDEE_PAY");
+    expect(registration).not.toContain(CLUB_DIRECTOR_SIGN_IN_TITLE);
+  });
+
+  it("is hidden when registration is not open", async () => {
+    const closed = await landingMarkup(clubEventRow({ registrationClosesOn: "2020-01-01" }));
+    expect(closed).not.toContain(CLUB_DIRECTOR_SIGN_IN_TITLE);
+  });
+
+  it("is hidden on the landing page when no form opens the club door", async () => {
+    const row = clubEventRow();
+    // A form the club portal will not serve (no roster) keeps its public link, so there is no club card.
+    const definition = row.registrationForms[0]!.versions[0]!.definition as { attendeeRoster?: unknown };
+    definition.attendeeRoster = undefined;
+    const landing = await landingMarkup(row);
+    expect(landing).not.toContain(CLUB_DIRECTOR_SIGN_IN_TITLE);
+  });
+});
+
+describe("the notice rule is one pure function", () => {
+  const base = { audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", slug: SLUG, registrationOpen: true };
+  it("needs a club audience, church billing and open registration", () => {
+    expect(clubDirectorSignInNotice(base)).not.toBeNull();
+    expect(clubDirectorSignInNotice({ ...base, billingMode: "ATTENDEE_PAY" })).toBeNull();
+    expect(clubDirectorSignInNotice({ ...base, registrationOpen: false })).toBeNull();
+    expect(clubDirectorSignInNotice({ ...base, hasClubPortalForm: false })).toBeNull();
+    expect(clubDirectorSignInNotice({ ...base, audience: "GENERAL" })).toBeNull();
   });
 });

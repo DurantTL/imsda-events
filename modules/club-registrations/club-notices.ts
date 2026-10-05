@@ -23,9 +23,24 @@ export const CLUB_DIRECTOR_SIGN_IN_BODY =
   "Do not register your club as individuals. Sign in with your club account and your roster is ready to choose from. After you sign in you come straight back to this event.";
 export const CLUB_DIRECTOR_SIGN_IN_BUTTON = "Sign in to register your club";
 
-/** The notice for a public page of this event, or null when it is not a club event. */
-export function clubDirectorSignInNotice(event: { audience: "GENERAL" | "CLUB" | string; slug: string }) {
+/**
+ * The notice for a public page of this event, or null. The same rule as the
+ * landing page's `clubPortalEvent`: a club-audience event billed to the church,
+ * and only while registration is open. On the landing page, `hasClubPortalForm`
+ * also requires that a form actually opens the club door; the registration page
+ * (which has no list of forms) leaves it undefined.
+ */
+export function clubDirectorSignInNotice(event: {
+  audience: "GENERAL" | "CLUB" | string;
+  slug: string;
+  billingMode?: string;
+  registrationOpen: boolean;
+  hasClubPortalForm?: boolean;
+}) {
   if (event.audience !== "CLUB") return null;
+  if (event.billingMode !== undefined && event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE") return null;
+  if (!event.registrationOpen) return null;
+  if (event.hasClubPortalForm === false) return null;
   return {
     title: CLUB_DIRECTOR_SIGN_IN_TITLE,
     body: CLUB_DIRECTOR_SIGN_IN_BODY,

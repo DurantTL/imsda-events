@@ -7,7 +7,7 @@ import { clubDirectorSignInNotice } from "@/modules/club-registrations/club-noti
  * pages (#799 G8): near the top, an icon plus text (never colour alone), and a
  * sign-in button. Renders nothing for an event without a club audience.
  */
-export function ClubDirectorSignInNotice({ event }: { event: { audience: string; slug: string } }) {
+export function ClubDirectorSignInNotice({ event }: { event: Parameters<typeof clubDirectorSignInNotice>[0] }) {
   const notice = clubDirectorSignInNotice(event);
   if (!notice) return null;
   return (

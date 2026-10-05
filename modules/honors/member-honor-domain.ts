@@ -1,4 +1,4 @@
-import { matchesSearch } from "@/lib/search-match";
+import { makeSearchMatcher } from "@/lib/search-match";
 import { isCalendarDate } from "@/modules/calendar/domain";
 import { clubYearMonths } from "@/modules/club-reports/domain";
 import { toCsv } from "@/modules/reporting/csv";
@@ -77,7 +77,8 @@ export function honorPillWindow<T>(items: readonly T[], expanded: boolean, limit
 
 /** Filters the Honors page's people by a name search: case-insensitive, first and last name in any order (#790). */
 export function filterRowsByPersonName<T extends { firstName: string; lastName: string }>(rows: readonly T[], search: string): T[] {
-  return rows.filter((row) => matchesSearch([row.firstName, row.lastName], search));
+  const matches = makeSearchMatcher(search);
+  return rows.filter((row) => matches([row.firstName, row.lastName]));
 }
 
 /** Who voided an entry, when, and why (#591). Shown struck through in history. */

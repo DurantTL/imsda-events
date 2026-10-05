@@ -121,6 +121,8 @@ export function guestIdFromClientId(clientId: string) {
 export function namedSchemaIssueMessage(issue: { path: ReadonlyArray<PropertyKey>; message: string }): string {
   const [section, position] = issue.path;
   if (section === "guests" && typeof position === "number") return `Extra person ${position + 1}: ${issue.message}`;
+  // The edit flow sends brand-new extra people as `newGuests`.
+  if (section === "newGuests" && typeof position === "number") return `New extra person ${position + 1}: ${issue.message}`;
   return issue.message;
 }
 
