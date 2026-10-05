@@ -3,7 +3,7 @@
 import { SortOrderNote, SortableHeader } from "@/components/list-sort";
 import { flipDirection, nameSortLabel, sortByName, sortOrderText, type SortDirection } from "@/lib/list-sort";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Download, History, UsersRound } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
@@ -76,6 +76,8 @@ export function ClubHonorsWorkspace({
   const [notice, setNotice] = useState("");
   const [historyFor, setHistoryFor] = useState<ClubHonorsRow | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
+  const [historyError, setHistoryError] = useState("");
+  const historyRequest = useRef(0);
   const [voidTarget, setVoidTarget] = useState<MemberHonorEntryRecord | null>(null);
   const [voidReason, setVoidReason] = useState("");
   const [voidError, setVoidError] = useState("");
@@ -146,14 +148,21 @@ export function ClubHonorsWorkspace({
   }
 
   async function openHistory(row: ClubHonorsRow) {
+    // Only the latest request may update the dialog, so a slow reply for one
+    // member never lands in another member's history.
+    const request = ++historyRequest.current;
     setHistoryFor(row);
     setHistory(null);
+    setHistoryError("");
     try {
       const response = await fetch(`${base}/roster/${encodeURIComponent(row.memberId)}/honors`);
       const result = await response.json().catch(() => ({})) as HistoryResponse;
-      if (response.ok) setHistory(result);
-    } catch {
-      // The dialog just stays on "Loading history…" below; nothing to record.
+      if (request !== historyRequest.current) return;
+      if (!response.ok) throw new Error(result.message ?? "Honor history could not be loaded.");
+      setHistory(result);
+    } catch (caught) {
+      if (request !== historyRequest.current) return;
+      setHistoryError(caught instanceof Error && caught.message !== "Failed to fetch" ? caught.message : "Honor history could not be loaded. Check your connection and try again.");
     }
   }
 
@@ -420,7 +429,12 @@ export function ClubHonorsWorkspace({
               </div>
               <button aria-label="Close" className="icon-button modal-close-button" onClick={closeHistory} type="button">×</button>
             </div>
-            {!history ? (
+            {historyError ? (
+              <div className="form-stack">
+                <p className="form-error" role="alert">{historyError}</p>
+                <button className="secondary-button" onClick={() => void openHistory(historyFor)} type="button">Retry</button>
+              </div>
+            ) : !history ? (
               <p className="public-manage-empty">Loading history…</p>
             ) : history.history.length === 0 ? (
               <p className="public-manage-empty">No honors recorded yet.</p>
