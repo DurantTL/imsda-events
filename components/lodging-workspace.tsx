@@ -78,8 +78,11 @@ export function LodgingWorkspace({ eventName, initialView, canSetRates }: { even
     </section> : <>
       <section className="panel">
         <h3>{view.property.name}</h3>
-        <p>Inventory version {view.property.templateVersion}{view.property.currentTemplateVersion !== view.property.templateVersion ? ` (version ${view.property.currentTemplateVersion} is available)` : ""}.{" "}
-          <button type="button" className="secondary-button" disabled={busy} onClick={() => void run(() => call(base, "POST", { propertyKey: view.property!.key }), "Inventory updated from the property template.")}>Add any new units from the template</button></p>
+        <p>Property layout version {view.property.templateVersion}.{" "}
+          {view.property.currentTemplateVersion !== view.property.templateVersion ? <>
+            <span role="status">Version {view.property.currentTemplateVersion} is available. Capacities for this event stay as they are until you update.</span>{" "}
+            <button type="button" className="secondary-button" disabled={busy} onClick={() => void run(() => call(`${base}/layout`, "POST", {}), "Updated to the latest property layout.")}>Update to latest property layout</button>
+          </> : "This event uses the latest layout."}</p>
         {view.nights.length === 0 ? <p>This event has no bookable nights.</p> : <div className="table-wrap"><table>
           <caption>People the inventory takes, by night</caption>
           <thead><tr><th scope="col">Night</th><th scope="col">Capacity in service</th></tr></thead>
@@ -123,7 +126,7 @@ function UnitRow({ unit, nights, base, busy, run }: {
   const activeHolds = unit.holds.filter((hold) => hold.active);
   return <>
     <tr>
-      <th scope="row">{unit.name}</th>
+      <th scope="row">{unit.name}{unit.retired ? " (Retired)" : ""}</th>
       <td>{describeUnit(unit)}{unit.notes ? ` (${unit.notes})` : ""}</td>
       <td>
         <form onSubmit={(event) => {
@@ -145,6 +148,7 @@ function UnitRow({ unit, nights, base, busy, run }: {
     {open ? <tr><td colSpan={6}>
       {unit.holds.length === 0 ? <p>No holds yet.</p> : <ul>{unit.holds.map((hold) => <li key={hold.id}>
         <strong>{hold.kind === "STAFF" ? "Staff hold" : "Maintenance"}</strong>: {hold.reason}, {hold.firstNight} to {hold.lastNight}{hold.active ? "" : ` (released: ${hold.releaseReason})`}
+        {hold.staleDefault ? <span role="alert"> This default hold no longer covers every night of the event. <button type="button" disabled={busy || nights.length === 0} onClick={() => void run(() => call(`${base}/holds/${hold.id}`, "PATCH", { action: "change_window", firstNight: nights[0], lastNight: nights[nights.length - 1] }), "Hold extended to cover the event.")}>Extend to cover the event</button></span> : null}
         <ul>{hold.history.map((entry, index) => <li key={index}>{entry.type.toLowerCase().replace("_", " ")} on {entry.at.slice(0, 10)}{entry.reason ? `: ${entry.reason}` : ""}{entry.firstNight ? ` (${entry.firstNight} to ${entry.lastNight})` : ""}</li>)}</ul>
         {hold.active ? <form onSubmit={(event) => {
           event.preventDefault();

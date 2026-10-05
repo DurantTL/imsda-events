@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   createHold: vi.fn(),
   changeHold: vi.fn(),
   setEventRate: vi.fn(),
+  updateEventLayout: vi.fn(),
   getLodgingView: vi.fn(),
 }));
 
@@ -28,6 +29,7 @@ vi.mock("@/modules/lodging/service", () => ({
   createHold: mocks.createHold,
   changeHold: mocks.changeHold,
   setEventRate: mocks.setEventRate,
+  updateEventLayout: mocks.updateEventLayout,
   getLodgingView: mocks.getLodgingView,
 }));
 
@@ -35,6 +37,7 @@ import { GET as viewRoute, POST as selectRoute } from "@/app/api/events/[eventId
 import { PATCH as unitRoute } from "@/app/api/events/[eventId]/lodging/units/[unitId]/route";
 import { POST as holdCreateRoute } from "@/app/api/events/[eventId]/lodging/units/[unitId]/holds/route";
 import { PATCH as holdChangeRoute } from "@/app/api/events/[eventId]/lodging/holds/[holdId]/route";
+import { POST as layoutRoute } from "@/app/api/events/[eventId]/lodging/layout/route";
 import { PUT as rateRoute } from "@/app/api/events/[eventId]/lodging/rates/route";
 import { LodgingError } from "@/modules/lodging/errors";
 
@@ -50,6 +53,7 @@ const routes: Array<{ name: string; call: () => Promise<Response>; permission: "
   { name: "unit", call: () => unitRoute(request("PATCH", { unavailable: true }), { params: Promise.resolve({ ...params, unitId: "u1" }) }), permission: "CONFIGURE_EVENT" },
   { name: "place hold", call: () => holdCreateRoute(request("POST", {}), { params: Promise.resolve({ ...params, unitId: "u1" }) }), permission: "CONFIGURE_EVENT" },
   { name: "change hold", call: () => holdChangeRoute(request("PATCH", {}), { params: Promise.resolve({ ...params, holdId: "h1" }) }), permission: "CONFIGURE_EVENT" },
+  { name: "update layout", call: () => layoutRoute(request("POST", {}), { params: Promise.resolve(params) }), permission: "CONFIGURE_EVENT" },
   { name: "rates", call: () => rateRoute(request("PUT", {}), { params: Promise.resolve(params) }), permission: "MANAGE_FINANCE" },
 ];
 
@@ -61,6 +65,7 @@ beforeEach(() => {
   mocks.createHold.mockResolvedValue({});
   mocks.changeHold.mockResolvedValue({});
   mocks.setEventRate.mockResolvedValue({});
+  mocks.updateEventLayout.mockResolvedValue({});
 });
 
 describe("lodging route authorization", () => {

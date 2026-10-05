@@ -71,7 +71,9 @@ describe("property templates", () => {
   it("sizes the special rooms, the conference center and the tent areas as recorded", () => {
     for (const key of ["boys-314", "boys-315", "boys-316"]) expect(find(sunnydale, key)).toMatchObject({ specialUse: true, capacity: 8 });
     expect(seedCapacity(find(sunnydale, "boys-121"))).toBe(4);
-    expect(seedCapacity(find(sunnydale, "boys-302"))).toBe(2);
+    expect(seedCapacity(find(sunnydale, "boys-302"))).toBe(4);
+    expect(find(sunnydale, "boys-302").beds).toEqual(["TWIN", "TWIN", "TWIN", "TWIN"]);
+    expect(find(sunnydale, "boys-302").notes).toBe("Two connected rooms (2 twins each) sharing a bathroom; suited to a large family");
     expect(find(sunnydale, "boys-302").bathroom).toBe("PRIVATE");
     expect(seedCapacity(find(sunnydale, "boys-101"))).toBe(2);
     expect(["cc-01", "cc-02", "cc-1a", "cc-1b"].map((key) => seedCapacity(find(sunnydale, key)))).toEqual([2, 4, 1, 1]);

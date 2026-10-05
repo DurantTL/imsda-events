@@ -45,7 +45,7 @@ export const sunnydaleTemplate: LodgingPropertySeed = {
           ? { defaultUnavailable: true, notes: "Unavailable by default." }
           : {}),
         ...boys(3, [...range(301, 303), 305, ...range(307, 316)], (number) => {
-          if (number === 302) return { beds: ["DOUBLE"], bathroom: "PRIVATE", notes: "Double room with a private bath." };
+          if (number === 302) return { beds: ["TWIN", "TWIN", "TWIN", "TWIN"], bathroom: "PRIVATE", notes: "Two connected rooms (2 twins each) sharing a bathroom; suited to a large family" };
           if (number >= 314) return { beds: [], capacity: 8, specialUse: true, notes: "Special use: a group room that holds 8." };
           return {};
         }),

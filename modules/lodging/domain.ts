@@ -246,7 +246,7 @@ export const selectPropertySchema = z.object({
   propertyKey: z.string().trim().min(1).max(80),
   firstNight: nightSchema.nullish(),
   lastNight: nightSchema.nullish(),
-}).strict();
+}).strict().refine((value) => !value.firstNight || !value.lastNight || value.lastNight >= value.firstNight, { message: "The last night cannot be before the first night.", path: ["lastNight"] });
 
 export const unitUpdateSchema = z.object({
   /** null clears the override and uses the property default. */

@@ -6183,6 +6183,14 @@ model EventLodgingUnit {
   eventId           String
   eventLodgingId    String
   unitId            String
+  /// Snapshot of the property layout when the event chose it (or last updated it): later template
+  /// versions reach an event only through the explicit "Update to latest property layout" action.
+  /// "Sleeps up to"; null is no fixed limit.
+  defaultCapacity   Int?
+  bedsSummary       String   @default("")
+  assignable        Boolean  @default(true)
+  /// The unit was dropped by a template version this event has adopted.
+  retired           Boolean  @default(false)
   capacityOverride  Int?
   unavailable       Boolean  @default(false)
   unavailableReason String?
@@ -6207,6 +6215,8 @@ model EventLodgingHold {
   reason             String
   firstNight         DateTime        @db.Date
   lastNight          DateTime        @db.Date
+  /// Placed by the property template's default (cooks, nurse), not by staff; follows the event's nights.
+  systemDefault      Boolean         @default(false)
   createdByUserId    String?
   createdAt          DateTime        @default(now())
   releasedAt         DateTime?

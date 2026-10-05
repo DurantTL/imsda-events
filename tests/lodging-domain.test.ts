@@ -157,6 +157,9 @@ describe("input schemas", () => {
     expect(unitUpdateSchema.safeParse({ capacityOverride: -1 }).success).toBe(false);
     expect(unitUpdateSchema.safeParse({ capacityOverride: null }).success).toBe(true);
     expect(selectPropertySchema.safeParse({ propertyKey: "camp-heritage", extra: 1 }).success).toBe(false);
+    expect(selectPropertySchema.safeParse({ propertyKey: "camp-heritage", firstNight: "2027-06-18", lastNight: "2027-06-16" }).success).toBe(false);
+    expect(selectPropertySchema.safeParse({ propertyKey: "camp-heritage", firstNight: "2027-06-16", lastNight: "2027-06-18" }).success).toBe(true);
+    expect(selectPropertySchema.safeParse({ propertyKey: "camp-heritage", firstNight: null, lastNight: null }).success).toBe(true);
     expect(rateSchema.safeParse({ category: "TENT", rate: null }).success).toBe(true);
     expect(rateSchema.safeParse({ category: "TENT", rate: { amountCents: 100.5, basis: "PER_UNIT_NIGHT", minimumNights: null } }).success).toBe(false);
     expect(rateSchema.safeParse({ category: "HOTEL", rate: null }).success).toBe(false);
