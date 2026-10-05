@@ -180,6 +180,19 @@ type PersonAnswer = {
 };
 
 /**
+ * One attendee's answers by field key: the answers saved on the attendee, else
+ * the ones from the original submission at the same position. The single
+ * place this fallback lives, shared with the attendee listing.
+ */
+export function attendeeAnswerRecord(registration: RegistrationRecord, index: number): Record<string, unknown> {
+  const attendee = registration.attendees[index];
+  if (!attendee) return {};
+  return Object.keys(attendee.responses ?? {}).length > 0
+    ? attendee.responses
+    : (registration.publicSubmission?.attendeeResponses[index] ?? {}) as Record<string, unknown>;
+}
+
+/**
  * Every person's answer to the question on one registration, or null when the
  * registration's own form version does not have it as a filterable question
  * (it was free text there, not flagged, or absent): such a registration is not
@@ -198,12 +211,9 @@ function answersOf(registration: RegistrationRecord, question: ChoiceQuestion): 
     const name = `${registration.accountHolder.firstName} ${registration.accountHolder.lastName}`.trim();
     return [read(null, name, registration.publicSubmission?.responses?.[question.key])];
   }
-  return registration.attendees.map((attendee, index) => {
-    const current = Object.keys(attendee.responses ?? {}).length > 0
-      ? attendee.responses
-      : registration.publicSubmission?.attendeeResponses[index] ?? {};
-    return read(attendee.id, `${attendee.firstName} ${attendee.lastName}`.trim(), (current as Record<string, unknown>)[question.key]);
-  });
+  return registration.attendees.map((attendee, index) => (
+    read(attendee.id, `${attendee.firstName} ${attendee.lastName}`.trim(), attendeeAnswerRecord(registration, index)[question.key])
+  ));
 }
 
 function countedRegistrations(registrations: readonly RegistrationRecord[]) {

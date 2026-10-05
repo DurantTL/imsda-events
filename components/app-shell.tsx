@@ -112,7 +112,10 @@ export function AppShell({
   const isSystemRoute = pathname.startsWith(systemNavigation.href);
   const current = isSystemRoute
     ? systemNavigation
-    : navigation.find((item) => pathname.startsWith(item.href)) ?? navigation[0];
+    // The most specific match wins, so /people/attendees is "Attendee list", not "Registrations".
+    : navigation.reduce<NavigationItem | null>((best, item) => (
+      pathname.startsWith(item.href) && (!best || item.href.length > best.href.length) ? item : best
+    ), null) ?? navigation[0];
   // The header names the page the staff member is on (#685): a `/more/*`
   // page that isn't a nav item names itself instead of reading "More".
   const pageTitle = isProfileRoute ? "Your account" : staffSubpageTitle(pathname) ?? current.label;

@@ -32,11 +32,13 @@ describe("More launcher follows permitted destinations (#737)", () => {
     const cards = buildMoreDirectoryCards({
       permissions, clubOversight: false, clubEvent: true, isSystemAdmin: false, clubFormsAccess: false, eventQuery: "?event=e1",
     }).filter((card) => card.allowed);
-    expect(cards.map((card) => card.key)).toEqual(["event-health"]);
+    expect(cards.map((card) => card.key)).toEqual(["event-health", "attendee-list"]);
   });
 
   it("stays hidden when no More destination is permitted", () => {
-    expect(launcher(rolePermissions.CHECK_IN_STAFF, { clubEvent: true })).toBe(false);
+    // Check-in staff can read attendee records, so the attendee list (#784) is their one destination.
+    expect(launcher(rolePermissions.CHECK_IN_STAFF, { clubEvent: true })).toBe(true);
+    expect(launcher(["MANAGE_CHECK_IN"], { clubEvent: true })).toBe(false);
     expect(launcher(rolePermissions.READ_ONLY_STAFF)).toBe(false);
     // Health information is a club-event page: nothing to open on a general event.
     expect(launcher(["VIEW_HEALTH_INFORMATION"], { clubEvent: false })).toBe(false);
