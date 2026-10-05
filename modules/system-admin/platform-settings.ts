@@ -188,6 +188,8 @@ export async function updatePlatformSettings(
               securityAlertEmail: before.securityAlertEmail,
               invoiceHeaderDepartment: before.invoiceHeaderDepartment,
               invoiceHeaderOrganization: before.invoiceHeaderOrganization,
+              invoiceHeaderAddress: before.invoiceHeaderAddress,
+              invoiceHeaderPhone: before.invoiceHeaderPhone,
             }
             : null,
           after: {
@@ -200,6 +202,8 @@ export async function updatePlatformSettings(
             securityAlertEmail: input.securityAlertEmail ?? null,
             invoiceHeaderDepartment: input.invoiceHeaderDepartment ?? null,
             invoiceHeaderOrganization: input.invoiceHeaderOrganization ?? null,
+            invoiceHeaderAddress: input.invoiceHeaderAddress ?? null,
+            invoiceHeaderPhone: input.invoiceHeaderPhone ?? null,
           },
         },
       },

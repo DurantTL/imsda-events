@@ -35,6 +35,7 @@ import { assertLocalDatabase } from "./support/local-only-guard";
 import { fillBlankSyntheticEnv } from "./support/synthetic-env";
 import { prepareReconciliation, approveReconciliation, recordAttendanceCorrection } from "@/modules/attendance-reconciliation/repository";
 import { resolveEventBillingResponsibility } from "@/modules/billing-responsibility/repository";
+import { parseManualLines } from "@/modules/invoices/manual-lines";
 import {
   InvoiceError,
   addManualInvoiceLine,
@@ -315,8 +316,12 @@ async function main() {
   assert(regeneratedWithLine.amountDueCents === withLine.amountDueCents && regeneratedWithLine.amountsFingerprint === withLine.amountsFingerprint && Array.isArray(regeneratedWithLine.manualLines) && regeneratedWithLine.manualLines.length === 1, "regenerating a draft keeps its manual lines");
   assert((await createInvoiceDrafts({ eventId: ids.eventA, actorUserId: ids.staff })).regenerated === 0, "creating drafts again leaves a draft with manual lines unchanged");
   // The database lets a draft's lines change on their own, and nothing else without a regeneration.
-  assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { manualLines: [], amountDueCents: 1 } })) === false, "a draft's lines and totals can change together");
+  // Lines and the totals that include them change together (here: back to no lines and the matching total), then return.
+  await prisma.invoiceVersion.update({ where: { id: d1.id }, data: { manualLines: [], amountDueCents: beforeLine.amountDueCents, amountsFingerprint: beforeLine.amountsFingerprint } });
   await prisma.invoiceVersion.update({ where: { id: d1.id }, data: { manualLines: withLine.manualLines as never, amountDueCents: withLine.amountDueCents, amountsFingerprint: withLine.amountsFingerprint } });
+  // A write that moves only the total or the fingerprint, with the lines as they are, is not an edit and is refused.
+  assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { amountDueCents: 1 } })), "a draft's total cannot drift on its own");
+  assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { amountsFingerprint: "drifted" } })), "a draft's fingerprint cannot drift on its own");
   assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { manualLines: [], contactEmail: "other@contact.test" } })), "a draft's lines cannot change together with anything else");
   assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { snapshot: {} } })), "a draft's snapshot still changes only by regeneration");
   await removeManualInvoiceLine({ eventId: ids.eventA, invoiceId: inv1.id, lineId: added.lineId, actorUserId: ids.treasurer, canFinalizeInvoices: true });
@@ -512,8 +517,33 @@ async function main() {
   const reGrouped = await createInvoiceDrafts({ eventId: ids.eventF, actorUserId: ids.staff });
   assert(reGrouped.regenerated === 1 && reGrouped.created === 0, "drafting under the new grouping refreshes the draft instead of conflicting");
   assert((await prisma.invoice.findUniqueOrThrow({ where: { id: invF.id } })).invoiceGrouping === "PER_CLUB", "the un-numbered invoice follows the current grouping");
+  // A credit manual line, then the reconciliation lowers the total below it: nothing is written, the other groups carry on, and
+  // regenerating says why (it never reaches the database's check as a server error).
+  const credit = await addManualInvoiceLine({ eventId: ids.eventF, invoiceId: invF.id, line: { item: "Synthetic credit", description: "Goodwill", quantity: 1, rateCents: -3000 }, actorUserId: ids.treasurer, canFinalizeInvoices: true });
+  assert((await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: staleDraft.id } })).amountDueCents === 2000, "a credit line lowers the draft to $20");
+  await recordAttendanceCorrection({ eventId: ids.eventF, attendeeId: f1.attendees.Bo!, kind: "MARK_NOT_ATTENDED", reason: "Went home sick", actorUserId: ids.staff });
+  await approveReconciled(ids.eventF);
+  const beforeNegative = await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: staleDraft.id } });
+  const negativeRun = await createInvoiceDrafts({ eventId: ids.eventF, actorUserId: ids.staff });
+  assert(negativeRun.negativeTotal.length === 1 && negativeRun.regenerated === 0, "a group whose manual lines would bring the rebuilt total below $0 is reported, not written");
+  assert(code(await failure(regenerateInvoiceDraft({ eventId: ids.eventF, invoiceId: invF.id, actorUserId: ids.staff }))) === "NEGATIVE_TOTAL", "regenerating such a draft says the lines must change first");
+  const afterNegative = await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: staleDraft.id } });
+  assert(afterNegative.amountDueCents === beforeNegative.amountDueCents && afterNegative.regenerationCount === beforeNegative.regenerationCount, "the draft was left as it was");
+  await removeManualInvoiceLine({ eventId: ids.eventF, invoiceId: invF.id, lineId: credit.lineId, actorUserId: ids.treasurer, canFinalizeInvoices: true });
+  await recordAttendanceCorrection({ eventId: ids.eventF, attendeeId: f1.attendees.Bo!, kind: "MARK_ATTENDED", reason: "Came back", actorUserId: ids.staff });
+  await approveReconciled(ids.eventF);
+  assert((await createInvoiceDrafts({ eventId: ids.eventF, actorUserId: ids.staff })).regenerated === 1, "with the credit gone the draft is rebuilt from the new approval");
+  // Finalize a draft that still has a manual line: no DRAFT_STALE, and the receivable is the total including the line.
+  const patchLine = await addManualInvoiceLine({ eventId: ids.eventF, invoiceId: invF.id, line: { item: "Patch order", description: "Synthetic patches", quantity: 10, rateCents: 450 }, actorUserId: ids.treasurer, canFinalizeInvoices: true });
+  const withPatch = await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: staleDraft.id } });
+  assert(withPatch.amountDueCents === 5000 + 4500, "the draft totals the reconciliation plus the patch line");
   const fNumber = await finalize(ids.eventF, staleDraft.id, key("f1"));
   assert(fNumber.number === `${CODE_F}29-0001`, "the regrouped invoice finalizes");
+  assert(fNumber.amountDueCents === 9500 && (await prisma.invoiceReceivable.findFirstOrThrow({ where: { invoiceVersionId: staleDraft.id } })).amountCents === 9500, "finalizing a draft with a manual line makes a receivable for the total including it");
+  const finalizedWithLine = await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: staleDraft.id } });
+  assert(parseManualLines(finalizedWithLine.manualLines).length === 1 && finalizedWithLine.amountDueCents === 9500, "the lines are kept on the finalized version");
+  assert(await rejects(prisma.invoiceVersion.update({ where: { id: staleDraft.id }, data: { manualLines: [], amountDueCents: 5000, amountsFingerprint: withPatch.amountsFingerprint } })), "the finalized version's lines are frozen");
+  assert(code(await failure(removeManualInvoiceLine({ eventId: ids.eventF, invoiceId: invF.id, lineId: patchLine.lineId, actorUserId: ids.treasurer, canFinalizeInvoices: true }))) === "NOT_A_DRAFT", "a line cannot be removed once finalized");
   assert((await createInvoiceDrafts({ eventId: ids.eventF, actorUserId: ids.staff })).finalized === 1, "creating drafts again after finalizing does not conflict");
   // An adjustment after finalization is revised under the same grouping; a revision draft can be discarded and started again.
   await recordAttendanceCorrection({ eventId: ids.eventF, attendeeId: f1.attendees.Bo!, kind: "MARK_NOT_ATTENDED", reason: "Went home sick", actorUserId: ids.staff });
@@ -526,7 +556,11 @@ async function main() {
   const withDiscards = await getInvoiceDetail(ids.eventF, invF.id);
   assert(withDiscards !== null && withDiscards.discarded.length === 2 && withDiscards.discarded.every((entry) => entry.discardedByName === "Fran Finance" && entry.discardedAt !== null) && withDiscards.versions.every((version) => version.status !== "DISCARDED"), "the detail lists discarded drafts with who and when, apart from the live versions");
   const fRevDone =await finalize(ids.eventF, fRev2.versionId, key("f2"));
-  assert(fRevDone.number === `${fNumber.number}-R1` && fRevDone.amountDueCents === 2500, "the revision after the regrouping finalizes as -R1 for $25");
+  assert(fRevDone.number === `${fNumber.number}-R1` && fRevDone.amountDueCents === 2500 + 4500, "the revision after the regrouping finalizes as -R1 for $25 plus the carried patch line");
+  const fVersions = await prisma.invoiceVersion.findMany({ where: { invoiceId: invF.id, status: { in: ["FINALIZED", "SUPERSEDED"] } }, orderBy: { revision: "asc" }, include: { receivable: true } });
+  assert(fVersions.map((row) => row.status).join() === "SUPERSEDED,FINALIZED" && fVersions.every((row) => parseManualLines(row.manualLines).length === 1), "the revision carried the manual line forward");
+  assert(fVersions[0]!.amountDueCents === 9500 && fVersions[0]!.receivable?.status === "SUPERSEDED" && fVersions[1]!.receivable?.amountCents === 7000, "the superseded version keeps its total and the new receivable includes the line");
+  assert(await rejects(prisma.invoiceVersion.update({ where: { id: fVersions[0]!.id }, data: { manualLines: [], amountDueCents: 5000 } })), "a superseded version's lines stay frozen");
   assert((await createInvoiceDrafts({ eventId: ids.eventF, actorUserId: ids.staff })).finalized === 1, "and drafting again still does not conflict");
 
   // Permission grants: a role without finance access cannot be granted it; concurrent grants and strips of two

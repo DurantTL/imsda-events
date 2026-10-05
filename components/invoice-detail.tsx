@@ -122,7 +122,7 @@ export function InvoiceDetailView({
       </section>
 
       {(isDraft || shown.manualLines.length > 0) && (
-        <ManualLinesPanel canEdit={isDraft && canFinalize} eventId={eventId} invoiceId={detail.invoice.id} lines={shown.manualLines} money={invoiceMoney} />
+        <ManualLinesPanel canEdit={isDraft && shown.basis === "RECONCILIATION" && canFinalize} isDraft={isDraft} eventId={eventId} invoiceId={detail.invoice.id} lines={shown.manualLines} money={invoiceMoney} />
       )}
 
       <section className="panel billing-settings invoice-actions" aria-label="Actions">

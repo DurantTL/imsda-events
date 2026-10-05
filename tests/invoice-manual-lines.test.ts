@@ -209,7 +209,7 @@ describe("adding and removing manual lines needs Finalize invoices for the event
 
   it("refuses an invalid line, a total below zero, and too many lines", async () => {
     expect(await code(addManualInvoiceLine({ eventId: "event-1", invoiceId: "inv-1", line: { ...newLine, quantity: 0 }, actorUserId: "u1", canFinalizeInvoices: true }))).toBe("INVALID_INPUT");
-    expect(await code(addManualInvoiceLine({ eventId: "event-1", invoiceId: "inv-1", line: { item: "Big credit", quantity: 1, rateCents: -9_000_000 }, actorUserId: "u1", canFinalizeInvoices: true }))).toBe("INVALID_INPUT");
+    expect(await code(addManualInvoiceLine({ eventId: "event-1", invoiceId: "inv-1", line: { item: "Big credit", quantity: 1, rateCents: -9_000_000 }, actorUserId: "u1", canFinalizeInvoices: true }))).toBe("NEGATIVE_TOTAL");
     expect(state.versions[0]!.manualLines).toEqual([]);
     seed("DRAFT", "RECONCILIATION", Array.from({ length: MANUAL_LINES_MAX }, (_, index) => line({ id: `m${index}` })));
     expect(await code(addManualInvoiceLine({ eventId: "event-1", invoiceId: "inv-1", line: newLine, actorUserId: "u1", canFinalizeInvoices: true }))).toBe("INVALID_INPUT");
@@ -233,7 +233,7 @@ describe("the migration (#780)", () => {
 
   it("lets a draft's lines and the totals that include them change without a regeneration, and nothing else", () => {
     expect(sql).toContain(`editing_lines CONSTANT text[] := ARRAY['manualLines', 'amountDueCents', 'amountsFingerprint']`);
-    expect(sql).toContain(`OLD."status" = 'DRAFT' AND NEW."status" = 'DRAFT' AND (new_json - editing_lines) = (old_json - editing_lines)`);
+    expect(sql).toContain(`OLD."status" = 'DRAFT' AND NEW."status" = 'DRAFT' AND NEW."manualLines" IS DISTINCT FROM OLD."manualLines" AND (new_json - editing_lines) = (old_json - editing_lines)`);
   });
 
   it("keeps every other freeze rule of the invoice-version guard as the first migration wrote it", () => {

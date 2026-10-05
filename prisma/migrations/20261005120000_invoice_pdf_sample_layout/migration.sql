@@ -54,7 +54,8 @@ BEGIN
     RETURN NEW;
   END IF;
   -- Staff adding or removing a manual line (#780) changes the lines and the totals that include them, and nothing else.
-  IF OLD."status" = 'DRAFT' AND NEW."status" = 'DRAFT' AND (new_json - editing_lines) = (old_json - editing_lines) THEN
+  -- The lines themselves must change: a write that moves only the amount or the fingerprint is not an edit and falls through to the regeneration rule.
+  IF OLD."status" = 'DRAFT' AND NEW."status" = 'DRAFT' AND NEW."manualLines" IS DISTINCT FROM OLD."manualLines" AND (new_json - editing_lines) = (old_json - editing_lines) THEN
     RETURN NEW;
   END IF;
   IF OLD."status" = 'DRAFT' AND NEW."status" = 'DRAFT' THEN

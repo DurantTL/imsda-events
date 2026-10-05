@@ -59,6 +59,8 @@ export function CreateDraftsControl({ eventId, disabled, disabledReason }: { eve
           const needRevision = Number(result.needRevision ?? 0);
           const parts = [`${created} new ${created === 1 ? "draft" : "drafts"}`, `${regenerated} refreshed`];
           if (needRevision > 0) parts.push(`${needRevision} finalized ${needRevision === 1 ? "invoice needs" : "invoices need"} a revision`);
+          const negative = Array.isArray(result.negativeTotal) ? (result.negativeTotal as unknown[]).map(String) : [];
+          if (negative.length > 0) parts.push(`${negative.length} left as they were because manual lines would make the total less than $0 (${negative.join(", ")}): remove or change a manual line, then create drafts again`);
           return `Done: ${parts.join(", ")}.`;
         })}
         title={disabled ? disabledReason : undefined}
@@ -230,11 +232,15 @@ export function ManualLinesPanel({
   invoiceId,
   lines,
   canEdit,
+  isDraft,
   money,
 }: {
   eventId: string;
   invoiceId: string;
   lines: Array<{ id: string; item: string; description: string; quantity: number; rateCents: number; amountCents: number }>;
+  /** Whether this version is an open draft; the permission note is only for drafts. */
+  isDraft: boolean;
+  /** Draft, built from the reconciliation, and the viewer may finalize invoices. A contact-only copy takes no lines. */
   canEdit: boolean;
   money: (cents: number) => string;
 }) {
@@ -278,9 +284,9 @@ export function ManualLinesPanel({
             <button className="secondary-button" disabled={busy} type="submit">{busy ? "Adding…" : "Add line"}</button>
           </span>
         </form>
-      ) : (
-        <p><small>Only people with permission to finalize invoices can add or remove manual lines.</small></p>
-      )}
+      ) : isDraft ? (
+        <p><small>Manual lines can be added or removed only by people with permission to finalize invoices, on a draft built from the reconciliation.</small></p>
+      ) : null}
       {error && <small className="form-error" role="alert">{error}</small>}
     </section>
   );

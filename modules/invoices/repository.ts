@@ -70,6 +70,7 @@ export type InvoiceErrorCode =
   | "CONTACT_MISSING"
   | "CONTACT_STALE"
   | "NO_CHANGE"
+  | "NEGATIVE_TOTAL"
   | "CONFIRMATION_REQUIRED"
   | "FINALIZE_PERMISSION_REQUIRED"
   | "IDEMPOTENCY_KEY_REUSED"
@@ -317,6 +318,8 @@ function toSummary(row: VersionRow): InvoiceVersionSummary {
 /** The columns of a version made from the figures; the draft's manual lines (#780) are folded into the total and the fingerprint. */
 function figureColumns(baseFigures: InvoiceFigures, contact: InvoiceContact | null, manualLines: readonly ManualInvoiceLine[] = []) {
   const figures = withManualLines(baseFigures, manualLines);
+  // A negative manual line can outweigh what the reconciliation now bills; the database refuses a total below $0.
+  if (figures.amountDueCents < 0) throw new InvoiceError("Manual lines would make this invoice less than $0. Remove or change a manual line first.", "NEGATIVE_TOTAL");
   return {
     groupTitle: figures.groupTitle,
     organizationName: figures.organizationName,
@@ -440,6 +443,8 @@ export type DraftRunResult = {
   finalized: number;
   /** Of those, how many no longer match the approved reconciliation and need a revision. */
   needRevision: number;
+  /** Groups whose draft was left as it was because its manual lines would bring the rebuilt total below $0 (their titles). Staff fix the lines, then create drafts again. */
+  negativeTotal: string[];
   reconciliationVersionNumber: number;
 };
 
@@ -460,7 +465,7 @@ export async function createInvoiceDrafts(input: { eventId: string; actorUserId:
         throw new InvoiceError("Some invoices were finalized under a different invoice grouping. Change the grouping back before creating drafts, or revise those invoices.", "GROUPING_CONFLICT");
       }
       const byKey = new Map(existing.map((invoice) => [invoice.groupKey, invoice]));
-      const run: DraftRunResult = { created: 0, regenerated: 0, unchanged: 0, finalized: 0, needRevision: 0, reconciliationVersionNumber: basis.approved.versionNumber };
+      const run: DraftRunResult = { created: 0, regenerated: 0, unchanged: 0, finalized: 0, needRevision: 0, negativeTotal: [], reconciliationVersionNumber: basis.approved.versionNumber };
       for (const group of basis.result.groups) {
         const { figures, contact } = figuresFor(basis, group, basis.billing.groups.find((candidate) => candidate.key === group.key));
         const invoice = byKey.get(group.key);
@@ -507,6 +512,11 @@ export async function createInvoiceDrafts(input: { eventId: string; actorUserId:
             run.unchanged += 1;
             continue;
           }
+          if (withManualLines(figures, manualLines).amountDueCents < 0) {
+            // One church's lines must not stop the others: leave this draft as it is and report it.
+            run.negativeTotal.push(group.title);
+            continue;
+          }
           await tx.invoiceVersion.update({
             where: { id: latest.id },
             data: { reconciliationVersionId: basis.approved.id, regenerationCount: { increment: 1 }, regeneratedAt: new Date(), ...figureColumns(figures, contact, manualLines) },
@@ -524,7 +534,7 @@ export async function createInvoiceDrafts(input: { eventId: string; actorUserId:
         entityType: "Event",
         entityId: input.eventId,
         summary: "Created invoice drafts from the approved attendance reconciliation.",
-        metadata: { eventId: input.eventId, reconciliationVersionId: basis.approved.id, reconciliationVersionNumber: basis.approved.versionNumber, created: run.created, regenerated: run.regenerated, unchanged: run.unchanged, finalized: run.finalized, needRevision: run.needRevision },
+        metadata: { eventId: input.eventId, reconciliationVersionId: basis.approved.id, reconciliationVersionNumber: basis.approved.versionNumber, created: run.created, regenerated: run.regenerated, unchanged: run.unchanged, finalized: run.finalized, needRevision: run.needRevision, negativeTotal: run.negativeTotal.length },
       }, tx);
       return run;
     }, LONG_TRANSACTION);
@@ -860,7 +870,13 @@ export async function finalizeInvoiceVersion(input: {
         const rebuilt = group
           ? figuresFor(basis, group, contactGroup).figures
           : version.revision > 0 ? emptyFigures(basis, invoice, version.groupTitle, version.organizationName) : null;
-        if (!rebuilt || fingerprintWithManualLines(rebuilt.amountsFingerprint, parseManualLines(version.manualLines)) !== version.amountsFingerprint) {
+        const draftLines = parseManualLines(version.manualLines);
+        if (
+          !rebuilt
+          || fingerprintWithManualLines(rebuilt.amountsFingerprint, draftLines) !== version.amountsFingerprint
+          // The stored total must be the reconciliation's plus the manual lines: never a drifted figure that would become the receivable.
+          || version.amountDueCents !== rebuilt.amountDueCents + manualLinesTotal(draftLines)
+        ) {
           throw new InvoiceError("The approved reconciliation no longer matches this draft. Regenerate the draft first.", "DRAFT_STALE");
         }
         billing = basis.billing;
@@ -950,10 +966,10 @@ async function loadDraftForManualLines(tx: Prisma.TransactionClient, input: { ev
   const invoice = await requireInvoice(tx, input.eventId, input.invoiceId);
   const latest = invoice.versions[0];
   if (!latest || latest.status !== "DRAFT") {
-    throw new InvoiceError("Manual lines can be changed only on a draft. Revise a finalized invoice to start a new draft.", "NOT_A_DRAFT");
+    throw new InvoiceError("Manual lines can only be added to an open draft.", "NOT_A_DRAFT");
   }
   if (latest.basis !== "RECONCILIATION") {
-    throw new InvoiceError("This draft only refreshes the billing contact of a finalized invoice. Start a revision from the reconciliation to add lines.", "NOT_A_DRAFT");
+    throw new InvoiceError("Manual lines can only be added to an open draft built from the reconciliation.", "NOT_A_DRAFT");
   }
   const draft = await tx.invoiceVersion.findUniqueOrThrow({ where: { id: latest.id }, select: { id: true, revision: true, snapshot: true, manualLines: true } });
   return { invoice, draft, snapshot: draft.snapshot as unknown as InvoiceSnapshot, lines: parseManualLines(draft.manualLines) };
@@ -962,7 +978,7 @@ async function loadDraftForManualLines(tx: Prisma.TransactionClient, input: { ev
 /** Stores the new lines with the totals that include them; nothing else about the draft changes (the database enforces it). */
 async function saveManualLines(tx: Prisma.TransactionClient, draftId: string, snapshot: InvoiceSnapshot, lines: ManualInvoiceLine[]) {
   const amountDueCents = snapshot.totals.amountDueCents + manualLinesTotal(lines);
-  if (amountDueCents < 0) throw new InvoiceError("The lines would bring the invoice below $0.", "INVALID_INPUT");
+  if (amountDueCents < 0) throw new InvoiceError("Manual lines would make this invoice less than $0. Remove or change a manual line first.", "NEGATIVE_TOTAL");
   // The reconciliation figures' fingerprint is recomputed from the snapshot itself, so it never depends on the previous lines.
   const base = amountsFingerprintOf(snapshot.lines, snapshot.totals.amountDueCents);
   await tx.invoiceVersion.update({

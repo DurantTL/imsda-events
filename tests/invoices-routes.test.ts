@@ -90,7 +90,7 @@ beforeEach(() => {
   signedIn = financeManager;
   mocks.getCurrentSession.mockImplementation(async () => ({ user: signedIn }));
   mocks.findActiveMembership.mockImplementation(async (userId: string, eventId: string) => memberships(userId, eventId));
-  mocks.service.createInvoiceDrafts.mockResolvedValue({ created: 2, regenerated: 0, unchanged: 0, finalized: 0, needRevision: 0, reconciliationVersionNumber: 1 });
+  mocks.service.createInvoiceDrafts.mockResolvedValue({ created: 2, regenerated: 0, unchanged: 0, finalized: 0, needRevision: 0, negativeTotal: [], reconciliationVersionNumber: 1 });
   mocks.service.regenerateInvoiceDraft.mockResolvedValue({ versionId: "v1", invoiceId: "i1" });
   mocks.service.discardInvoiceDraft.mockResolvedValue({ versionId: "v1", invoiceId: "i1" });
   mocks.service.reviseInvoice.mockResolvedValue({ versionId: "v2", invoiceId: "i1", revision: 1 });
