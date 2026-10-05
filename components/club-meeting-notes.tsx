@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CalendarDays, Download, Pencil, Plus, Trash2, X } from "lucide-react";
 import { notePreview } from "@/components/club-form-state";
+import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { countsFromAttendance, countsToSend, groupAttendanceRoster } from "@/modules/club-meeting-notes/attendance";
 import type { AttendanceRosterEntry, ClubMeetingNoteRecord } from "@/modules/club-meeting-notes/repository";
 import { clubYearFor } from "@/modules/club-rosters/domain";
@@ -100,37 +101,12 @@ export function ClubMeetingNotes({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const base = `/api/attendee/clubs/${encodeURIComponent(organizationId)}/notes`;
-  const containerRef = useRef<HTMLDivElement>(null);
-  const editorHeadingRef = useRef<HTMLHeadingElement>(null);
-  // What opened the editor (#738): closing it returns focus there.
-  const openerRef = useRef<{ kind: "add" } | { kind: "edit"; id: string } | null>(null);
-  const restoreFocusRef = useRef(false);
-
-  // With a long list the editor mounts far below the control that opened it:
-  // bring it into view and focus it when it opens, and put focus back on the
-  // opener when it closes (#738).
+  // The editor is a dialog (#789): useAccessibleDialog moves focus into it,
+  // closes it on Escape, and puts focus back on the Add / Edit button that opened it.
   const editorOpen = adding || editingId !== null;
-  useEffect(() => {
-    if (editorOpen) {
-      editorHeadingRef.current?.scrollIntoView({ block: "start" });
-      editorHeadingRef.current?.focus({ preventScroll: true });
-    }
-  }, [editorOpen, editingId]);
-  useEffect(() => {
-    if (editorOpen || !restoreFocusRef.current) return;
-    restoreFocusRef.current = false;
-    const opener = openerRef.current;
-    const container = containerRef.current;
-    if (opener && container) {
-      const selector = opener.kind === "add"
-        ? "[data-meeting-note-add]"
-        : `[data-meeting-note-edit="${CSS.escape(opener.id)}"]`;
-      (container.querySelector(selector) as HTMLElement | null)?.focus();
-    }
-  }, [editorOpen]);
+  const dialogRef = useAccessibleDialog<HTMLElement>(editorOpen, cancel);
 
   function startAdd() {
-    openerRef.current = { kind: "add" };
     setDraft(emptyDraft(newMeetingDate));
     setAdding(true);
     setEditingId(null);
@@ -139,7 +115,6 @@ export function ClubMeetingNotes({
   }
 
   function startEdit(note: ClubMeetingNoteRecord) {
-    openerRef.current = { kind: "edit", id: note.id };
     setDraft(draftFromNote(note));
     setEditingId(note.id);
     setAdding(false);
@@ -148,7 +123,7 @@ export function ClubMeetingNotes({
   }
 
   function cancel() {
-    restoreFocusRef.current = true;
+    if (saving) return;
     setAdding(false);
     setEditingId(null);
     setError("");
@@ -230,7 +205,6 @@ export function ClubMeetingNotes({
         return [...withoutThis, result.note!].sort((a, b) => (a.meetingDate < b.meetingDate ? 1 : -1));
       });
       setNotice(editingId ? "Meeting note updated." : "Meeting note added.");
-      restoreFocusRef.current = true;
       setAdding(false);
       setEditingId(null);
       // The report below prefills from this month's notes.
@@ -265,9 +239,9 @@ export function ClubMeetingNotes({
   const formOpen = adding || editingId !== null;
 
   return (
-    <div className="club-roster-stack" data-month={month} ref={containerRef}>
+    <div className="club-roster-stack" data-month={month}>
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
-      {error && <div className="inline-notice error" role="alert">{error}</div>}
+      {error && !formOpen && <div className="inline-notice error" role="alert">{error}</div>}
 
       <section className="public-manage-card" aria-labelledby="club-notes-heading">
         <div className="public-manage-card-heading club-roster-heading">
@@ -281,11 +255,9 @@ export function ClubMeetingNotes({
                 <Download aria-hidden="true" size={14} /> Attendance export (CSV)
               </a>
             )}
-            {!formOpen && (
-              <button className="primary-button" data-meeting-note-add="" disabled={saving} onClick={startAdd} type="button">
-                <Plus aria-hidden="true" size={16} /> Add meeting note
-              </button>
-            )}
+            <button className="primary-button" data-meeting-note-add="" disabled={saving} onClick={startAdd} type="button">
+              <Plus aria-hidden="true" size={16} /> Add meeting note
+            </button>
           </span>
         </div>
 
@@ -330,11 +302,19 @@ export function ClubMeetingNotes({
       </section>
 
       {formOpen && (
-        <form className="public-manage-card form-stack" onSubmit={save}>
-          <div className="public-manage-card-heading">
-            <p className="public-registration-eyebrow">{editingId ? "Edit meeting note" : "New meeting note"}</p>
-            <h2 ref={editorHeadingRef} style={{ scrollMarginTop: 96 }} tabIndex={-1}>{editingId ? "Edit" : "Add"} meeting note</h2>
+        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) cancel(); }} role="presentation">
+        <section aria-labelledby="meeting-note-dialog-title" aria-modal="true" className="modal-card modal-card-wide" ref={dialogRef} role="dialog" tabIndex={-1}>
+        <form className="form-stack" onSubmit={save}>
+          <div className="modal-head">
+            <div>
+              <p className="public-registration-eyebrow">{editingId ? "Edit meeting note" : "New meeting note"}</p>
+              <h2 id="meeting-note-dialog-title">{editingId ? "Edit" : "Add"} meeting note</h2>
+            </div>
+            <button aria-label="Close" className="icon-button modal-close-button" disabled={saving} onClick={cancel} type="button">
+              <X aria-hidden="true" size={18} />
+            </button>
           </div>
+          {error && <div className="inline-notice error" role="alert">{error}</div>}
           <div className="form-grid two-column">
             <label>Meeting date
               <input onChange={(event) => setDraft((current) => ({ ...current, meetingDate: event.target.value }))} required type="date" value={draft.meetingDate} />
@@ -403,6 +383,8 @@ export function ClubMeetingNotes({
             <button className="secondary-button" disabled={saving} onClick={cancel} type="button">Cancel</button>
           </div>
         </form>
+        </section>
+        </div>
       )}
     </div>
   );

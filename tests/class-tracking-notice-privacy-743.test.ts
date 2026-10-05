@@ -127,10 +127,12 @@ describe("club notice privacy across signed-out, attendee, director and coordina
     const capabilities = { roster: true, registerForEvents: true, seeBirthDates: true, manageTeam: true, editProfile: true, submitReports: true, guardians: true };
     const director = clubPortalNavItems({ base: "/account/clubs/c", role: "DIRECTOR", capabilities }).map((item) => item.label);
     const coordinator = areaClubPortalNavItems({ organizationId: "c" }).map((item) => item.label);
-    for (const label of ["Class tracking", "Club settings", "Health", "Monthly Records"]) {
+    for (const label of ["Class tracking", "Club settings", "Health"]) {
       expect(director).toContain(label);
       expect(coordinator).not.toContain(label);
     }
+    // The coordinator's tab shares the portal's "Monthly Records" name (#789) but stays on the view-only report pages.
+    expect(areaClubPortalNavItems({ organizationId: "c" }).find((item) => item.label === "Monthly Records")?.href.startsWith("/account/area/c")).toBe(true);
     const reporter = clubReporterNavItems({ base: "/account/clubs/c", capabilities: { ...capabilities, roster: false } }).map((item) => item.label);
     expect(reporter).toEqual(["Home", "Monthly Records"]);
   });

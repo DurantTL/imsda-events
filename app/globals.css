@@ -1763,6 +1763,9 @@ select:focus-visible {
   box-shadow: 0 28px 80px rgba(0, 25, 40, 0.3);
 }
 
+/* The meeting-note and monthly-report forms (#789) are long; give them room. */
+.modal-card.modal-card-wide { width: min(860px, 100%); }
+
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .modal-head h2 { margin: 0; color: var(--ink); font-size: 1.3rem; }
 .form-stack { display: grid; gap: 15px; }

@@ -68,7 +68,7 @@ export function areaClubPortalNavItems({ organizationId }: { organizationId: str
     { href: `${base}/honors`, label: "Honors", group: "People", hideGroupLabel: true },
     { href: `${base}#open-club-events`, label: "Events", group: "Events", hideGroupLabel: true },
     { href: `${base}/forms`, label: "Club forms", matchChildren: true, group: "Events", hideGroupLabel: true },
-    { href: `${base}#open-club-reports`, label: "Monthly reports", alsoMatchPrefix: `${base}/reports`, group: "Records", hideGroupLabel: true },
+    { href: `${base}#open-club-reports`, label: "Monthly Records", alsoMatchPrefix: `${base}/reports`, group: "Records", hideGroupLabel: true },
     { href: `${base}/orders`, label: "Orders", group: "Orders", hideGroupLabel: true },
     { href: `${base}/awards`, label: "Earned awards", group: "Orders", hideGroupLabel: true },
   ];

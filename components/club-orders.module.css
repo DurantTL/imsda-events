@@ -54,3 +54,6 @@
 @media print { .noPrint { display: none !important; } }
 /* Helper copy that follows a notice or list, not a form label: the global .field-help pulls up by 9px, which overlapped the notice above (#738). */
 .helpText:global(.field-help) { margin: 6px 0 0; }
+/* Directly under a notice banner or the export buttons it needs a real gap, not 6px, so the two blocks don't read as one (#789). */
+:global(.inline-notice) + .helpText:global(.field-help),
+:global(.report-actions) + .helpText:global(.field-help) { margin-top: 14px; }
