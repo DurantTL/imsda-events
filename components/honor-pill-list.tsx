@@ -32,14 +32,24 @@ export function HonorPillList({
   const listId = useId();
   const pills = honorPillWindow(honors, expanded);
   if (pills.total === 0) return <>—</>;
+  // Collapsed pills stay in the page, `hidden`, so a printout still lists every honor.
+  // An expanded list scrolls inside a capped height, so it is a keyboard stop.
+  const scrolls = expanded && pills.collapsible;
   return (
     <div className="honor-pill-cell">
-      <div className={`roster-flag-list honor-pill-list${expanded && pills.collapsible ? " expanded" : ""}`} id={listId}>
-        {pills.visible.map((honor) => {
+      <div
+        aria-label={scrolls ? `All ${pills.total} honors` : undefined}
+        className={`roster-flag-list honor-pill-list${scrolls ? " expanded" : ""}`}
+        id={listId}
+        role={scrolls ? "group" : undefined}
+        tabIndex={scrolls ? 0 : undefined}
+      >
+        {honors.map((honor, index) => {
           const statusLabel = memberHonorStatusLabels[honor.status];
           return (
             <span
               className={`status-chip honor-pill ${honor.status === "COMPLETED" ? "green" : "gold"}`}
+              hidden={index >= pills.visible.length}
               key={honor.honorId}
               title={`${honor.honorName}: ${statusLabel}${honor.completionDate ? ` ${honor.completionDate}` : ""}`}
             >
@@ -53,7 +63,7 @@ export function HonorPillList({
         <button
           aria-controls={listId}
           aria-expanded={expanded}
-          className="text-button honor-pill-toggle"
+          className="text-button honor-pill-toggle honor-pill-toggle-screen"
           onClick={() => setExpanded((value) => !value)}
           type="button"
         >

@@ -9153,7 +9153,19 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .honor-pill-list.expanded { max-height: 9.5rem; overflow-y: auto; padding-right: 2px; overscroll-behavior: contain; }
 .honor-pill { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; }
 .honor-pill svg { flex: 0 0 auto; }
+.honor-pill[hidden] { display: none; }
 .honor-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Expanded, long names wrap instead of being cut off. */
+.honor-pill-list.expanded .honor-pill { border-radius: 12px; }
+.honor-pill-list.expanded .honor-pill-text { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+.honor-pill-list:focus-visible { outline: 2px solid var(--imsda-purple, #5b3a8c); outline-offset: 2px; }
+@media print {
+  /* A printout lists every honor: no collapsing, no scroll box, no toggle. */
+  .honor-pill-list, .honor-pill-list.expanded { max-height: none; overflow: visible; }
+  .honor-pill[hidden] { display: inline-flex !important; }
+  .honor-pill-text, .honor-pill-list.expanded .honor-pill-text { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+  .honor-pill-toggle-screen { display: none !important; }
+}
 .honor-pill-toggle { min-height: 32px; padding: 2px 4px; }
 .roster-honors-cell { min-width: 0; max-width: 24rem; }
 .honor-add-button { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }

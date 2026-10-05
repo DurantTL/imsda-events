@@ -5,7 +5,7 @@ import { AlertTriangle, CheckCircle2, Download, Eye, History, PackageCheck, Plus
 import styles from "@/components/club-orders.module.css";
 import { ClubSupplyStockWorkspace } from "@/components/club-supply-stock-workspace";
 import { ClubUniformSection, emptyUniformData, type ClubUniformData } from "@/components/club-uniform-section";
-import { ORDER_LIST_SECTIONS, activeHelperLines, orderListSectionLabels, type HelperLine } from "@/modules/club-orders/domain";
+import { ORDER_LIST_SECTIONS, activeHelperLines, needsDatedBefore, orderListSectionLabels, type HelperLine } from "@/modules/club-orders/domain";
 import type { AwardableNeed, OrderBatchSummary, UnmatchedNeed, WaitingNeed } from "@/modules/club-orders/repository";
 import type { ClubStockRow } from "@/modules/club-supplies/repository";
 
@@ -316,7 +316,7 @@ export function ClubOrderWorkspace({
 
   const unmatchedCount = data.unmatched.length;
   const earlierIds = earlier.map((need) => need.needId);
-  const beforeDateIds = beforeDate ? earlier.filter((need) => need.sourceDate && need.sourceDate < beforeDate).map((need) => need.needId) : [];
+  const beforeDateIds = needsDatedBefore(earlier, beforeDate).map((need) => need.needId);
 
   return (
     <section className="panel">

@@ -93,11 +93,25 @@ async function activeRosterPersons(tx: Prisma.TransactionClient, organizationId:
   return byId;
 }
 
+const personHonorKey = (personId: string, honorId: string) => `${personId}:${honorId}`;
+
+/** The per-person-and-honor lock: recording, voiding and the Honors Weekend write-back all decide "what is current" under it. */
+async function lockPersonHonor(tx: Prisma.TransactionClient, personId: string, honorId: string) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-honor-entry:${personHonorKey(personId, honorId)}`}))`;
+}
+
 /**
  * Records one honor entry per selected member, all in one transaction — the
  * bulk-entry action after a meeting (#486). A single-member edit is the same
  * call with one id. Every write is an append; nothing already on file is
- * ever changed or deleted.
+ * ever changed or deleted. The one side effect is the supersede rule (#790):
+ * a Completed entry voids this club's own in-progress entries for the honor
+ * (a void row, never a deletion).
+ *
+ * The Honors Weekend write-back (`weekend-completion-repository.ts`) also
+ * records COMPLETED entries but deliberately does not apply the supersede
+ * rule: it is outside #790 and unchanged. Its completion is newer, so every
+ * reader already hides the older in-progress entry.
  */
 export async function recordMemberHonorEntries(
   organizationId: string,
@@ -115,12 +129,13 @@ export async function recordMemberHonorEntries(
     const attribution = "accountId" in actor
       ? { recordedByAccountId: actor.accountId }
       : { recordedByUserId: actor.userId };
-    for (const [memberId, personId] of byMemberId) {
-      // Same per-person-and-honor lock as the Honors Weekend write-back, so two
-      // writers never both decide what is current (and what to supersede).
-      if (input.status === "COMPLETED") {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`member-honor-entry:${personId}:${input.honorId}`}))`;
-      }
+    // Locks are taken in one fixed order (the same sort the Honors Weekend
+    // write-back uses), so two overlapping batches can never deadlock.
+    const ordered = [...byMemberId].sort(([, a], [, b]) => personHonorKey(a, input.honorId).localeCompare(personHonorKey(b, input.honorId)));
+    for (const [memberId, personId] of ordered) {
+      // Same per-person-and-honor lock as the Honors Weekend write-back and the
+      // manual voids, so two writers never both decide what is current.
+      if (input.status === "COMPLETED") await lockPersonHonor(tx, personId, input.honorId);
       const entry = await tx.memberHonorEntry.create({
         data: {
           personId,
@@ -135,7 +150,7 @@ export async function recordMemberHonorEntries(
       });
       const who = actorAuditFields(actor);
       if (input.status === "COMPLETED") {
-        await supersedeInProgressEntries(tx, personId, input.honorId, entry, actor);
+        await supersedeInProgressEntries(tx, { personId, honorId: input.honorId, organizationId, memberId }, entry, actor);
       }
       // `tx`: the audit row commits or rolls back with the entry it describes.
       await writeAuditLog({
@@ -390,10 +405,15 @@ export async function voidMemberHonorEntry(
       select: { personId: true },
     });
     if (!member?.personId) throw new MemberHonorError("MEMBER_NOT_FOUND", "That person isn't on this club's roster.");
-    const entry = await tx.memberHonorEntry.findFirst({
+    const found = await tx.memberHonorEntry.findFirst({
       where: { id: entryId, personId: member.personId },
       select: voidableEntrySelect,
     });
+    if (!found) throw new MemberHonorError("ENTRY_NOT_FOUND", "That honor entry could not be found.");
+    // The lock first, then the entry again: a Completed entry recorded at the
+    // same moment may have just voided this one.
+    await lockPersonHonor(tx, found.personId, found.honorId);
+    const entry = await tx.memberHonorEntry.findFirst({ where: { id: entryId, personId: member.personId }, select: voidableEntrySelect });
     if (!entry) throw new MemberHonorError("ENTRY_NOT_FOUND", "That honor entry could not be found.");
     if (entry.organizationId !== organizationId) {
       throw new MemberHonorError("VOID_NOT_ALLOWED", "Only the club that recorded this entry can void it.");
@@ -419,6 +439,9 @@ export async function voidMemberHonorEntry(
 export async function voidMemberHonorEntryAsStaff(entryId: string, reason: string, staffUserId: string) {
   const trimmed = validVoidReason(reason);
   await runVoid(() => getPrisma().$transaction(async (tx) => {
+    const found = await tx.memberHonorEntry.findUnique({ where: { id: entryId }, select: voidableEntrySelect });
+    if (!found) throw new MemberHonorError("ENTRY_NOT_FOUND", "That honor entry could not be found.");
+    await lockPersonHonor(tx, found.personId, found.honorId);
     const entry = await tx.memberHonorEntry.findUnique({ where: { id: entryId }, select: voidableEntrySelect });
     if (!entry) throw new MemberHonorError("ENTRY_NOT_FOUND", "That honor entry could not be found.");
     await writeVoid(tx, entry, trimmed, { voidedByUserId: staffUserId }, { actorUserId: staffUserId, metadata: { staffVoid: true } });
@@ -426,22 +449,24 @@ export async function voidMemberHonorEntryAsStaff(entryId: string, reason: strin
 }
 
 /**
- * A Completed entry replaces the person's in-progress entry for that honor
- * (#790) by voiding it with a system reason, inside the recording
+ * A Completed entry replaces the recording club's own in-progress entry for
+ * that honor (#790) by voiding it with a system reason, inside the recording
  * transaction. Nothing is deleted: it is the ordinary void row and audit
- * entry, attributed to whoever recorded the completion, whichever club
- * recorded the in-progress one (a transferred member keeps one current status
- * per honor).
+ * entry, attributed to whoever recorded the completion. Only the recording
+ * club's entries are touched; another club's in-progress entry stays as it
+ * is, and every reader already hides it behind the newer completion.
+ *
+ * Voiding the completion later does not bring a superseded entry back (there
+ * is no un-void); the director records In progress again.
  */
 async function supersedeInProgressEntries(
   tx: Prisma.TransactionClient,
-  personId: string,
-  honorId: string,
+  target: { personId: string; honorId: string; organizationId: string; memberId: string },
   completed: { id: string; seq: number },
   actor: MemberHonorActor,
 ) {
   const prior = await tx.memberHonorEntry.findMany({
-    where: { personId, honorId, seq: { lt: completed.seq } },
+    where: { personId: target.personId, honorId: target.honorId, organizationId: target.organizationId, seq: { lt: completed.seq } },
     orderBy: { seq: "desc" },
     select: { id: true, status: true, honorId: true, organizationId: true, honor: { select: { name: true } }, void: { select: { id: true } } },
   });
@@ -449,10 +474,18 @@ async function supersedeInProgressEntries(
   const who = actorAuditFields(actor);
   const voidedBy = "accountId" in actor ? { voidedByAccountId: actor.accountId } : { voidedByUserId: actor.userId };
   for (const entry of prior.filter((row) => superseded.has(row.id))) {
-    await writeVoid(tx, entry, SUPERSEDED_VOID_REASON, voidedBy, {
+    // Manual voids take the same lock, so a clash here is a race that slipped
+    // past it: report it as a clean 409 instead of a 500.
+    await runVoid(() => writeVoid(tx, entry, SUPERSEDED_VOID_REASON, voidedBy, {
       actorUserId: "userId" in actor ? actor.userId : undefined,
-      metadata: { superseded: true, supersededByEntryId: completed.id, ...who.metadata },
-    });
+      metadata: {
+        superseded: true,
+        supersededByEntryId: completed.id,
+        supersededAtOrganizationId: target.organizationId,
+        memberId: target.memberId,
+        ...who.metadata,
+      },
+    }));
   }
 }
 

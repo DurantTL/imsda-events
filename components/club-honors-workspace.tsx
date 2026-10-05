@@ -558,6 +558,12 @@ export function ClubHonorsWorkspace({
                 The entry stays in the history, struck through, with your name, the date and this reason. It no longer counts
                 toward the member&apos;s current honors, awards or reports. A void can&apos;t be undone; to restore it, record a new entry.
               </p>
+              {voidTarget.status === "COMPLETED" && (
+                <p>
+                  Voiding a completion does <strong>not</strong> bring back an in-progress entry it replaced. If this honor is still in
+                  progress, record <strong>In progress</strong> again afterwards.
+                </p>
+              )}
               {voidError && <div className="inline-notice error" role="alert">{voidError}</div>}
               <label>
                 Reason (required)

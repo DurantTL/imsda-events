@@ -10,6 +10,7 @@ import {
   isReportYearReportable,
   isYearEndLockedForClub,
   prefillFromRoster,
+  countUndatedHonorCompletions,
   prefillHonorsForClub,
   prefillInvestitures,
   reportYearRange,
@@ -87,26 +88,24 @@ export async function yearEndPrefill(organizationId: string, reportYear: string,
       honor: { select: { category: true } },
     },
   });
-  const honors = prefillHonorsForClub(
-    entries.map((entry) => ({
-      personId: entry.personId,
-      honorId: entry.honorId,
-      status: entry.status,
-      completionDate: entry.completionDate,
-      organizationId: entry.organizationId,
-      voided: entry.void !== null,
-      isMaster: entry.honor.category === "MASTER_AWARDS",
-    })),
-    organizationId,
-    reportYear,
-  );
+  const facts = entries.map((entry) => ({
+    personId: entry.personId,
+    honorId: entry.honorId,
+    status: entry.status,
+    completionDate: entry.completionDate,
+    organizationId: entry.organizationId,
+    voided: entry.void !== null,
+    isMaster: entry.honor.category === "MASTER_AWARDS",
+  }));
+  const honors = prefillHonorsForClub(facts, organizationId, reportYear);
+  const undatedHonorCompletions = countUndatedHonorCompletions(facts, organizationId);
 
   const values: YearEndPrefill = {
     ...rosterCounts.counts,
     ...prefillInvestitures(completions, reportYear),
     ...honors,
   };
-  return { values, unplaced: rosterCounts.unplaced, tltsOnRoster: rosterCounts.tltsOnRoster };
+  return { values, unplaced: rosterCounts.unplaced, tltsOnRoster: rosterCounts.tltsOnRoster, undatedHonorCompletions };
 }
 
 export type YearEndPrefillResult = Awaited<ReturnType<typeof yearEndPrefill>>;
@@ -197,7 +196,7 @@ export async function getYearEndView(organizationId: string, reportYear: string,
   return {
     report: base ? { ...base, resolved, totals: yearEndTotals(resolvedCounts(resolved)) } : null,
     resolved,
-    prefillMeta: { unplaced: prefill.unplaced, tltsOnRoster: prefill.tltsOnRoster },
+    prefillMeta: { unplaced: prefill.unplaced, tltsOnRoster: prefill.tltsOnRoster, undatedHonorCompletions: prefill.undatedHonorCompletions },
   };
 }
 
