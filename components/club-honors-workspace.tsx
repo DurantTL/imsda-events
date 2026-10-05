@@ -4,8 +4,9 @@ import { SortOrderNote, SortableHeader } from "@/components/list-sort";
 import { flipDirection, nameSortLabel, sortByName, sortOrderText, type SortDirection } from "@/lib/list-sort";
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
-import { Download, History, UsersRound } from "lucide-react";
+import { Download, ListPlus, Plus, Search, UsersRound } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { HonorPillList } from "@/components/honor-pill-list";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { bulkScopeSummary } from "@/lib/confirmation-copy";
 import { calendarDateIn } from "@/modules/calendar/domain";
@@ -17,6 +18,7 @@ import {
   clubHonorsEmptyCopy,
   clubHonorsEmptyState,
   filterClubHonorsRows,
+  filterRowsByPersonName,
   memberHonorStatusLabels,
 } from "@/modules/honors/member-honor-domain";
 
@@ -31,7 +33,7 @@ type HistoryResponse = {
   issues?: Array<{ message?: string }>;
 };
 
-const statusTone = { IN_PROGRESS: "gold", COMPLETED: "green" } as const;
+const MULTI_ADD_ID = "honors-multi-add";
 
 /**
  * A club's Honors page (#486): filter by honor, status, and current class
@@ -64,6 +66,7 @@ export function ClubHonorsWorkspace({
   const [honorFilter, setHonorFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [unitFilter, setUnitFilter] = useState("");
+  const [nameSearch, setNameSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkHonorId, setBulkHonorId] = useState("");
   const [bulkStatus, setBulkStatus] = useState<"IN_PROGRESS" | "COMPLETED">("IN_PROGRESS");
@@ -91,12 +94,12 @@ export function ClubHonorsWorkspace({
     : `/api/attendee/clubs/${encodeURIComponent(organizationId)}`;
   const [nameDirection, setNameDirection] = useState<SortDirection>("asc");
   const visible = useMemo(
-    () => sortByName(filterClubHonorsRows(rows, {
+    () => sortByName(filterRowsByPersonName(filterClubHonorsRows(rows, {
       honorId: honorFilter || undefined,
       status: (statusFilter || undefined) as "IN_PROGRESS" | "COMPLETED" | undefined,
       classLevel: unitFilter || undefined,
-    }), nameDirection),
-    [rows, honorFilter, statusFilter, unitFilter, nameDirection],
+    }), nameSearch), nameDirection),
+    [rows, honorFilter, statusFilter, unitFilter, nameSearch, nameDirection],
   );
 
   const emptyState = clubHonorsEmptyState(rows, visible);
@@ -277,7 +280,28 @@ export function ClubHonorsWorkspace({
           )}
         </div>
 
+        {!readOnly && emptyState !== "NO_MEMBERS" && (
+          <p className="honor-multi-add-jump">
+            <a className="secondary-button" href={`#${MULTI_ADD_ID}`}>
+              <ListPlus aria-hidden="true" size={14} /> Add honors to several members
+            </a>
+          </p>
+        )}
+
         <div className="club-roster-tools">
+          <label className="honor-name-search">
+            Find a person
+            <span className="honor-name-search-field">
+              <Search aria-hidden="true" size={14} />
+              <input
+                autoComplete="off"
+                onChange={(event) => setNameSearch(event.target.value)}
+                placeholder="Search by name"
+                type="search"
+                value={nameSearch}
+              />
+            </span>
+          </label>
           <label>
             Honor
             <select onChange={(event) => setHonorFilter(event.target.value)} value={honorFilter}>
@@ -324,7 +348,7 @@ export function ClubHonorsWorkspace({
                   <SortableHeader active direction={nameDirection} label="Name" onSort={() => setNameDirection(flipDirection(nameDirection))} />
                   <th>Current class</th>
                   <th>Honors</th>
-                  <th><span className="sr-only">History</span></th>
+                  <th><span className="sr-only">Add honor and history</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -343,23 +367,11 @@ export function ClubHonorsWorkspace({
                     <td data-label="Name"><strong translate="no">{row.lastName}, {row.firstName}</strong></td>
                     <td data-label="Current class">{row.classLevel ? clubClassLevelLabels[row.classLevel as keyof typeof clubClassLevelLabels] : "—"}</td>
                     <td data-label="Honors">
-                      {row.honors.length === 0 ? "—" : (
-                        <div className="roster-flag-list">
-                          {row.honors.map((honor) => (
-                            <span
-                              className={`status-chip ${statusTone[honor.status]}`}
-                              key={honor.honorId}
-                              title={honor.completionDate ? `Completed ${honor.completionDate}` : undefined}
-                            >
-                              {honor.honorName} · {memberHonorStatusLabels[honor.status]}
-                            </span>
-                          ))}
-                        </div>
-                      )}
+                      <HonorPillList honors={row.honors} showStatus />
                     </td>
-                    <td data-label="History">
-                      <button aria-label={`Honor history for ${row.firstName} ${row.lastName}`} className="secondary-button" onClick={() => openHistory(row)} type="button">
-                        <History aria-hidden="true" size={13} />
+                    <td data-label="Add honor">
+                      <button aria-label={`Add or view honors for ${row.firstName} ${row.lastName}`} className="secondary-button honor-add-button" onClick={() => openHistory(row)} type="button">
+                        <Plus aria-hidden="true" size={13} /> Add
                       </button>
                     </td>
                   </tr>
@@ -376,6 +388,9 @@ export function ClubHonorsWorkspace({
         )}
 
         {!readOnly && emptyState !== "NO_MEMBERS" && (
+          <section aria-labelledby="honors-multi-add-heading" className="honor-multi-add" id={MULTI_ADD_ID} tabIndex={-1}>
+          <h3 id="honors-multi-add-heading">Add honors to several members</h3>
+          <p className="field-help">Tick the names above (or Select all shown), choose an honor, then record it for everyone ticked.</p>
           <div className="club-roster-tools honor-bulk-actions">
             <label>
               Honor
@@ -396,7 +411,7 @@ export function ClubHonorsWorkspace({
             </label>
             {bulkStatus === "COMPLETED" && (
               <label>
-                Completion date
+                Completion date (optional)
                 <input onChange={(event) => setBulkDate(event.target.value)} type="date" value={bulkDate} />
               </label>
             )}
@@ -418,6 +433,7 @@ export function ClubHonorsWorkspace({
               {bulkState.disabledReason && <small className="field-help" id="honor-bulk-reason">{bulkState.disabledReason}</small>}
             </div>
           </div>
+          </section>
         )}
       </section>
       <ConfirmDialog
@@ -434,7 +450,7 @@ export function ClubHonorsWorkspace({
           <strong>{bulkScopeSummary({ count: selected.size, singular: "person", plural: "people", scope: `the ${clubYear} roster` })}</strong>
           {selectedNames.length > 0 && <>: {selectedNames.slice(0, 5).join(", ")}{selectedNames.length > 5 ? `, and ${selectedNames.length - 5} more` : ""}</>}.
         </p>
-        <p>Each will be marked <strong>{memberHonorStatusLabels[bulkStatus]}</strong>{bulkStatus === "COMPLETED" && bulkDate ? ` on ${bulkDate}` : ""}. Nothing is recorded until you confirm; a wrong entry can be voided afterwards.</p>
+        <p>Each will be marked <strong>{memberHonorStatusLabels[bulkStatus]}</strong>{bulkStatus === "COMPLETED" && bulkDate ? ` on ${bulkDate}` : ""}.{bulkStatus === "COMPLETED" ? " An in-progress entry for the same honor is replaced, and stays in the history." : ""} Nothing is recorded until you confirm; a wrong entry can be voided afterwards.</p>
       </ConfirmDialog>
 
       {historyFor && (
@@ -508,7 +524,7 @@ export function ClubHonorsWorkspace({
                     </select>
                   </label>
                   <label>
-                    Completion date
+                    Completion date (optional)
                     <input name="completionDate" type="date" />
                   </label>
                   <label>
@@ -542,6 +558,12 @@ export function ClubHonorsWorkspace({
                 The entry stays in the history, struck through, with your name, the date and this reason. It no longer counts
                 toward the member&apos;s current honors, awards or reports. A void can&apos;t be undone; to restore it, record a new entry.
               </p>
+              {voidTarget.status === "COMPLETED" && (
+                <p>
+                  Voiding a completion does <strong>not</strong> bring back an in-progress entry it replaced. If this honor is still in
+                  progress, record <strong>In progress</strong> again afterwards.
+                </p>
+              )}
               {voidError && <div className="inline-notice error" role="alert">{voidError}</div>}
               <label>
                 Reason (required)

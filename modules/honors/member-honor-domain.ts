@@ -17,22 +17,71 @@ export const memberHonorStatusLabels = {
 export type MemberHonorStatus = keyof typeof memberHonorStatusLabels;
 
 /**
- * Why a new entry can't be recorded, or null. Completed work needs a
- * completion date that isn't in the future; in-progress work has none yet
- * (a correction that reopens a completed honor clears it by recording a new
- * IN_PROGRESS entry).
+ * Why a new entry can't be recorded, or null. The completion date is optional
+ * (a director often doesn't know it): when one is given it must be a real
+ * calendar day that isn't in the future. In-progress work has no date; a
+ * correction that reopens a completed honor records a new IN_PROGRESS entry.
  */
 export function memberHonorEntryProblem(
   input: { status: MemberHonorStatus; completionDate: string },
   today: string,
 ) {
-  if (input.status === "COMPLETED") {
-    if (!input.completionDate) return "Enter the completion date.";
+  if (input.status === "COMPLETED" && input.completionDate) {
     // A real calendar day: 2026-13-45 or 2026-02-30 is refused, not stored.
     if (!isCalendarDate(input.completionDate)) return "Enter a real completion date.";
     if (input.completionDate > today) return "The completion date can't be in the future.";
   }
   return null;
+}
+
+/**
+ * The reason written on an in-progress entry that a Completed entry replaced
+ * (#790). It is an ordinary void row, so history shows the entry struck
+ * through with this reason, and it is recognizable as a system action.
+ */
+export const SUPERSEDED_VOID_REASON = "Superseded: this honor was recorded as completed.";
+
+/**
+ * Which of one person's earlier entries for a single honor a new Completed
+ * entry replaces (#790): every non-voided IN_PROGRESS entry newer than the
+ * latest non-voided COMPLETED one. `entries` are for one person and one honor,
+ * recorded before the new entry, newest first (highest `seq` first). Older
+ * in-progress entries already sitting behind a completion are left alone.
+ */
+export function supersededInProgressEntryIds(
+  entries: ReadonlyArray<{ id: string; status: MemberHonorStatus; voided: boolean }>,
+): string[] {
+  const ids: string[] = [];
+  for (const entry of entries) {
+    if (entry.voided) continue;
+    if (entry.status === "COMPLETED") break;
+    ids.push(entry.id);
+  }
+  return ids;
+}
+
+/** Honors shown before a pill list collapses behind "Show all (N)" (#790). */
+export const HONOR_PILL_COLLAPSE_LIMIT = 6;
+
+/** How many honor pills to show, and whether to offer the Show all / Show fewer toggle (#790). */
+export function honorPillWindow<T>(items: readonly T[], expanded: boolean, limit = HONOR_PILL_COLLAPSE_LIMIT) {
+  const collapsible = items.length > limit;
+  return {
+    visible: collapsible && !expanded ? items.slice(0, limit) : [...items],
+    collapsible,
+    hiddenCount: collapsible && !expanded ? items.length - limit : 0,
+    total: items.length,
+  };
+}
+
+/** Filters the Honors page's people by a name search: case-insensitive, first and last name in any order (#790). */
+export function filterRowsByPersonName<T extends { firstName: string; lastName: string }>(rows: readonly T[], search: string): T[] {
+  const terms = search.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [...rows];
+  return rows.filter((row) => {
+    const haystack = `${row.firstName} ${row.lastName}`.toLowerCase();
+    return terms.every((term) => haystack.includes(term));
+  });
 }
 
 /** Who voided an entry, when, and why (#591). Shown struck through in history. */

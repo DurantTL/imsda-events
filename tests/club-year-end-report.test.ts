@@ -65,7 +65,9 @@ import {
   isYearEndLockedForClub,
   latestStartedReportYear,
   prefillFromRoster,
+  countUndatedHonorCompletions,
   prefillHonorsForClub,
+  undatedHonorCompletionsNote,
   wasActiveDuringYear,
   isReportYearReportable,
   prefillInvestitures,
@@ -308,6 +310,24 @@ describe("honor pre-fill (sections 8 and 9)", () => {
       fact({ honorId: "d", status: "IN_PROGRESS", completionDate: "" }),
       fact({ honorId: "e", completionDate: "2026-12-01", isMaster: true }),
     ], "club-1", "2026-27")).toEqual({ honors: 2, honorMasters: 1 });
+  });
+
+  it("leaves an undated completion out of the counts and reports it separately (#790)", () => {
+    const entries = [
+      fact({ honorId: "a", completionDate: "2026-06-01" }),
+      fact({ honorId: "b", completionDate: "" }),
+      fact({ honorId: "c", completionDate: "", voided: true }),
+      fact({ honorId: "d", completionDate: "", organizationId: "club-2" }),
+      fact({ honorId: "e", completionDate: "", status: "IN_PROGRESS" }),
+      // An older undated completion behind a newer in-progress entry is not current.
+      fact({ honorId: "f", status: "IN_PROGRESS", completionDate: "" }),
+      fact({ honorId: "f", completionDate: "" }),
+    ];
+    expect(prefillHonorsForClub(entries, "club-1", "2026-27")).toEqual({ honors: 1, honorMasters: 0 });
+    expect(countUndatedHonorCompletions(entries, "club-1")).toBe(1);
+    expect(undatedHonorCompletionsNote(0)).toBeNull();
+    expect(undatedHonorCompletionsNote(1)).toBe("1 honor completion has no date and isn't counted here — add dates on the Honors page to include them");
+    expect(undatedHonorCompletionsNote(3)).toBe("3 honor completions have no date and aren't counted here — add dates on the Honors page to include them");
   });
 
   it("doesn't count an honor recorded at another organization", () => {

@@ -9156,6 +9156,55 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .event-modules-leftover .foundation-grid { margin-top: 14px; }
 .event-modules-leftover .foundation-card h3 { margin-top: 0; }
 
+/* Honors feedback (#790): collapsed pill lists, the Add button, search, multi-add section, print report. */
+.honor-pill-cell { display: grid; gap: 4px; min-width: 0; max-width: 100%; justify-items: start; }
+.honor-pill-list { min-width: 0; max-width: 100%; }
+.honor-pill-list.expanded { max-height: 9.5rem; overflow-y: auto; padding-right: 2px; overscroll-behavior: contain; }
+.honor-pill { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; min-width: 0; }
+.honor-pill svg { flex: 0 0 auto; }
+.honor-pill[hidden] { display: none; }
+.honor-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Expanded, long names wrap instead of being cut off. */
+.honor-pill-list.expanded .honor-pill { border-radius: 12px; }
+.honor-pill-list.expanded .honor-pill-text { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+.honor-pill-list:focus-visible { outline: 2px solid var(--imsda-purple, #5b3a8c); outline-offset: 2px; }
+@media print {
+  /* A printout lists every honor: no collapsing, no scroll box, no toggle. */
+  .honor-pill-list, .honor-pill-list.expanded { max-height: none; overflow: visible; }
+  .honor-pill[hidden] { display: inline-flex !important; }
+  .honor-pill-text, .honor-pill-list.expanded .honor-pill-text { overflow: visible; text-overflow: clip; white-space: normal; overflow-wrap: anywhere; }
+  .honor-pill-toggle-screen { display: none !important; }
+}
+.honor-pill-toggle { min-height: 32px; padding: 2px 4px; }
+.roster-honors-cell { min-width: 0; max-width: 24rem; }
+.honor-add-button { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.honor-multi-add-jump { margin: 0 0 10px; }
+.honor-multi-add-jump .secondary-button { display: inline-flex; align-items: center; gap: 6px; }
+.honor-name-search { min-width: min(100%, 220px); }
+.honor-name-search-field { display: flex; align-items: center; gap: 6px; }
+.honor-name-search-field svg { flex: 0 0 auto; color: var(--muted); }
+.honor-name-search-field input { flex: 1 1 auto; min-width: 0; }
+.honor-multi-add { margin-top: 16px; scroll-margin-top: 16px; }
+.honor-multi-add h3 { margin: 0 0 4px; }
+@media (max-width: 640px), (pointer: coarse) {
+  .honor-add-button, .honor-pill-toggle { min-height: 44px; min-width: 44px; }
+}
+
+/* The printed Honors report: fixed columns that wrap instead of clipping, a header row repeated on
+   every page, and no row split across a page break, for any number of people. */
+.honors-report-table { table-layout: fixed; }
+.honors-report-table th, .honors-report-table td { overflow-wrap: anywhere; word-break: normal; }
+.report-table.honors-report-table td:last-child { width: auto; }
+@media print {
+  .honors-report-table { width: 100%; table-layout: fixed; font-size: 8pt; }
+  .honors-report-table thead { display: table-header-group; }
+  .honors-report-table tr { break-inside: avoid; page-break-inside: avoid; }
+  .honors-report-table th, .honors-report-table td { white-space: normal; overflow: visible; text-overflow: clip; }
+  .honors-report-panel .report-table-wrap { overflow: visible; max-width: none; }
+  .honors-report-panel h2, .honors-report-panel h3 { break-after: avoid; }
+  .honors-report-panel { border: 0; box-shadow: none; padding: 0; }
+}
+
 /* Issue 743 (print): expandable descriptions print in full, with no Read more button. */
 @media print {
   html body .expandable-text-body.is-clamped { display: block; overflow: visible; -webkit-line-clamp: unset; line-clamp: unset; }
