@@ -1,3 +1,4 @@
+import type { RosterMapping } from "@/modules/club-forms/roster-mapping";
 import type { RegistrationFormDefinition, RegistrationFormField } from "@/modules/forms/definition";
 
 /**
@@ -38,6 +39,12 @@ export type ClubFormTemplateSeed = {
   birthDateFieldKeys: string[];
   staffOnlyFieldKeys: string[];
   printLayout: "STANDARD" | "PASSENGER_LIST";
+  /**
+   * The pre-filled "Add to roster" mapping (#721), always off here: an
+   * administrator turns it on per form in the builder. Used until the template
+   * has its own stored mapping. Field keys only; see `roster-mapping.ts`.
+   */
+  rosterMapping?: RosterMapping;
 };
 
 type FieldExtra = Partial<RegistrationFormField>;
@@ -92,6 +99,18 @@ const membershipApplication: ClubFormTemplateSeed = {
   version: 2,
   sortOrder: 10,
   printLayout: "STANDARD",
+  // #721: the youth roster fields this form knows. The class names match the roster's; the applicant's phone is the
+  // family's, so it pre-fills the first guardian's phone (the director can change it on the review screen). The
+  // roster has no address field, so the address is not mapped.
+  rosterMapping: {
+    enabled: false,
+    rosterType: "YOUTH",
+    fields: { fullName: "full_name", birthDate: "birth_date", classLevel: "ay_class" },
+    guardians: [
+      { name: "father_guardian_signature", relationshipLabel: "Father or guardian", phone: "phone" },
+      { name: "mother_guardian_signature", relationshipLabel: "Mother or guardian" },
+    ],
+  },
   sensitiveFieldKeys: ["birth_date"],
   birthDateFieldKeys: ["birth_date"],
   // v2 (#719): the fee amounts are entered by the club, so a private-link filler never sees them. Signing dates fill in automatically in the same version.
@@ -191,6 +210,14 @@ const staffForm: ClubFormTemplateSeed = {
   version: 2,
   sortOrder: 20,
   printLayout: "STANDARD",
+  // #721: staff are added as staff roster members, from the name and birth date. The health and conduct answers
+  // are sensitive and can never be mapped.
+  rosterMapping: {
+    enabled: false,
+    rosterType: "STAFF",
+    fields: { fullName: "full_name", birthDate: "birth_date" },
+    guardians: [],
+  },
   sensitiveFieldKeys: [
     "birth_date",
     ...[1, 2, 3, 4, 5].map((n) => `child_${n}_birth_date`),

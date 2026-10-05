@@ -38,6 +38,7 @@ const templateSelect = {
   staffOnlyFieldKeys: true,
   hiddenFieldKeys: true,
   printLayout: true,
+  rosterMapping: true,
   enabled: true,
   customizedAt: true,
 } satisfies Prisma.ClubFormTemplateSelect;

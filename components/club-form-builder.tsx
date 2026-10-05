@@ -19,6 +19,7 @@ import {
   updateSection,
   type FieldFlag,
 } from "@/components/club-form-builder-state";
+import { ClubFormRosterMapping } from "@/components/club-form-roster-mapping";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import type { BuilderIssue, ClubFormDraftSpec } from "@/modules/club-forms/builder-domain";
 import { conditionOperators, formFieldTypes, isChoiceFieldType, type RegistrationFormField } from "@/modules/forms/definition";
@@ -299,6 +300,8 @@ export function ClubFormBuilder(props: ClubFormBuilderProps) {
       <div>
         <button className="secondary-button" onClick={() => edit((s) => addSection(s))} type="button"><Plus aria-hidden="true" size={14} /> Add a section</button>
       </div>
+
+      <ClubFormRosterMapping edit={edit} issues={issuesFor("rosterMapping")} spec={spec} />
 
       <section className="panel">
         <h3>Versions</h3>

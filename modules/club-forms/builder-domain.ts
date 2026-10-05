@@ -6,6 +6,7 @@ import {
   templateSpecProblems,
   type ClubFormTemplateRecord,
 } from "@/modules/club-forms/domain";
+import { rosterMappingProblems, rosterMappingSchema } from "@/modules/club-forms/roster-mapping";
 import { formFieldScopes, formFieldTypes, registrationFormDefinitionSchema, type RegistrationFormDefinition } from "@/modules/forms/definition";
 
 /**
@@ -30,6 +31,8 @@ export const clubFormDraftSchema = z.object({
   birthDateFieldKeys: z.array(z.string().max(60)).max(400).default([]),
   staffOnlyFieldKeys: z.array(z.string().max(60)).max(400).default([]),
   hiddenFieldKeys: z.array(z.string().max(60)).max(400).default([]),
+  /** "Allow adding to the roster" (#721): null until set; a seeded template then uses the code's (off) mapping. */
+  rosterMapping: rosterMappingSchema.nullable().default(null),
 }).strict();
 
 export type ClubFormDraftSpec = z.infer<typeof clubFormDraftSchema>;
@@ -77,6 +80,7 @@ export const clubFormDraftShapeSchema = z.object({
   birthDateFieldKeys: looseKeys,
   staffOnlyFieldKeys: looseKeys,
   hiddenFieldKeys: looseKeys,
+  rosterMapping: z.record(z.string(), z.unknown()).nullable().default(null),
 }).strict();
 
 /** Reads a stored or incoming draft for the builder to show; null when it is not even structurally a draft. */
@@ -111,6 +115,7 @@ function readId(value: unknown): string | null {
 
 /** Turns a schema path into the builder's issue key, using the ids in the raw input. */
 function keyForPath(raw: unknown, path: ReadonlyArray<PropertyKey>): string {
+  if (path[0] === "rosterMapping") return "rosterMapping";
   if (path[0] === "definition" && path[1] === "sections" && typeof path[2] === "number") {
     const sections = (raw as { definition?: { sections?: unknown[] } } | null)?.definition?.sections;
     const section = Array.isArray(sections) ? sections[path[2]] : undefined;
@@ -198,6 +203,12 @@ function flagIssues(spec: ClubFormDraftSpec): BuilderIssue[] {
   return issues;
 }
 
+/** The roster mapping's own checks (#721), keyed `rosterMapping` so the builder shows them beside the setting. */
+function rosterMappingIssues(spec: ClubFormDraftSpec): BuilderIssue[] {
+  if (!spec.rosterMapping) return [];
+  return rosterMappingProblems(spec.rosterMapping, spec).map((message) => ({ key: "rosterMapping", message }));
+}
+
 /**
  * The sensitive-flag protection rules, enforced on the server at save and at
  * publish. A field that was sensitive (or a birth date) in any published
@@ -260,11 +271,12 @@ export function checkClubFormDraft(raw: unknown, history: ClubFormProtectionHist
   const issues = [
     ...clubFormRestrictionIssues(spec.definition),
     ...flagIssues(spec),
+    ...rosterMappingIssues(spec),
     ...protectionIssues(spec, history),
   ];
   if (issues.length === 0) {
-    // Anything the shared spec check still finds is reported on the form as a whole.
-    for (const message of templateSpecProblems(spec)) issues.push({ key: "template", message });
+    // Anything the shared spec check still finds is reported on the form as a whole (its roster mapping is checked above).
+    for (const message of templateSpecProblems({ ...spec, rosterMapping: null })) issues.push({ key: "template", message });
   }
   return issues.length === 0 ? { ok: true, spec, issues: [] } : { ok: false, spec: null, issues };
 }
@@ -279,7 +291,7 @@ export function newlySensitiveKeys(draft: Pick<ClubFormDraftSpec, "sensitiveFiel
 export function specFromRecord(record: Pick<
   ClubFormTemplateRecord,
   "name" | "description" | "definition" | "sectionNotes" | "sensitiveFieldKeys" | "birthDateFieldKeys" | "staffOnlyFieldKeys" | "hiddenFieldKeys" | "printLayout"
-> & { sortOrder: number }): ClubFormDraftSpec {
+> & { sortOrder: number; rosterMapping?: ClubFormTemplateRecord["rosterMapping"] }): ClubFormDraftSpec {
   // The record's sensitive keys include the code seed's, which may name a field since removed.
   const present = new Set(allFields(record.definition).map((field) => field.key));
   const kept = (keys: readonly string[]) => keys.filter((key) => present.has(key));
@@ -294,6 +306,7 @@ export function specFromRecord(record: Pick<
     birthDateFieldKeys: kept(record.birthDateFieldKeys),
     staffOnlyFieldKeys: kept(record.staffOnlyFieldKeys),
     hiddenFieldKeys: kept(record.hiddenFieldKeys),
+    rosterMapping: record.rosterMapping ?? null,
   };
 }
 
@@ -320,6 +333,7 @@ export function blankClubFormSpec(name: string): ClubFormDraftSpec {
     birthDateFieldKeys: [],
     staffOnlyFieldKeys: [],
     hiddenFieldKeys: [],
+    rosterMapping: null,
   };
 }
 
@@ -345,6 +359,8 @@ export function copySpec(source: ClubFormDraftSpec, name: string): ClubFormDraft
     birthDateFieldKeys: keepKeys(source.birthDateFieldKeys),
     staffOnlyFieldKeys: keepKeys(source.staffOnlyFieldKeys),
     hiddenFieldKeys: [],
+    // A copy starts without "Add to roster": whoever copies a form chooses that again for the new one.
+    rosterMapping: null,
   };
 }
 

@@ -148,7 +148,8 @@ function assertBirthDate(birthDate: string, now: Date) {
   if (problem) throw new RosterOperationError("BIRTH_DATE_INVALID", problem);
 }
 
-async function assertNotDuplicate(
+/** Everyone on the club's roster for the year (not removed) with this name and birth date, except `exceptMemberId`. */
+async function findDuplicateMembers(
   tx: Prisma.TransactionClient,
   organizationId: string,
   clubYear: string,
@@ -162,11 +163,23 @@ async function assertNotDuplicate(
     where: { organizationId, clubYear, status: { not: "REMOVED" }, id: exceptMemberId ? { not: exceptMemberId } : undefined },
     select: memberSelect,
   });
-  const duplicate = others.some((member) => member.person
+  return others.filter((member) => member.person
     && nameKey(member.person.firstName, member.person.lastName) === key
     && member.sealedBirthDate
     && openBirthDate(member.sealedBirthDate) === birthDate);
-  if (duplicate) {
+}
+
+async function assertNotDuplicate(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  clubYear: string,
+  firstName: string,
+  lastName: string,
+  birthDate: string,
+  exceptMemberId?: string,
+) {
+  const duplicates = await findDuplicateMembers(tx, organizationId, clubYear, firstName, lastName, birthDate, exceptMemberId);
+  if (duplicates.length > 0) {
     throw new RosterOperationError(
       "DUPLICATE_MEMBER",
       "Someone with this name and birth date is already on the roster. Edit or reactivate them instead.",
@@ -174,49 +187,85 @@ async function assertNotDuplicate(
   }
 }
 
+/**
+ * Who is already on the club's roster for the year with this name and birth
+ * date (#721), for the "Add to roster" review screen to offer "Link to
+ * existing member". Names and ids only; the birth date is opened here to
+ * compare and never returned.
+ */
+export async function listRosterDuplicates(organizationId: string, clubYear: string, firstName: string, lastName: string, birthDate: string) {
+  if (!firstName.trim() || !birthDate) return [];
+  const matches = await findDuplicateMembers(getPrisma(), organizationId, clubYear, firstName, lastName, birthDate);
+  return matches
+    .map((member) => ({
+      id: member.id,
+      firstName: member.person?.firstName ?? "",
+      lastName: member.person?.lastName ?? "",
+      attendeeType: member.attendeeType,
+      status: member.status,
+    }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export type RosterAddOptions = { source?: "DIRECTOR" | "REGISTRATION"; sourceRegistrationId?: string | null; now?: Date };
+
+/**
+ * `addRosterMember` inside a transaction the caller already holds (#721), so
+ * "Add to roster" can record the form's outcome in the same transaction: a
+ * failure to record rolls the new member back.
+ */
+export async function addRosterMemberInTransaction(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  clubYear: string,
+  input: RosterMemberInput,
+  actor: Actor,
+  options: RosterAddOptions = {},
+) {
+  assertBirthDate(input.birthDate, options.now ?? new Date());
+  await assertNotDuplicate(tx, organizationId, clubYear, input.firstName, input.lastName, input.birthDate);
+  const person = await tx.person.create({
+    data: { firstName: input.firstName, lastName: input.lastName },
+    select: { id: true },
+  });
+  const member = await tx.clubRosterMember.create({
+    data: {
+      organizationId,
+      clubYear,
+      personId: person.id,
+      attendeeType: input.attendeeType,
+      role: input.role,
+      classLevel: input.classLevel,
+      gender: input.gender,
+      sealedBirthDate: sealBirthDate(input.birthDate),
+      source: options.source ?? "DIRECTOR",
+      sourceRegistrationId: options.sourceRegistrationId ?? null,
+      ...("accountId" in actor ? { createdByAccountId: actor.accountId } : { createdByUserId: actor.userId }),
+    },
+    select: { id: true },
+  });
+  // Guardian contacts (#510): the route has already refused anyone but a club leader.
+  const guardianCounts = input.guardians ? await replaceGuardians(tx, member.id, input.guardians) : null;
+  await audit(tx, actor, "CLUB_ROSTER_MEMBER_ADDED", organizationId, member.id, "Added a person to a club roster.", {
+    clubYear,
+    attendeeType: input.attendeeType,
+    source: options.source ?? "DIRECTOR",
+    // Counts only, never a guardian's name, email or phone.
+    ...(guardianCounts ? { guardiansStored: guardianCounts.stored } : {}),
+  });
+  return { memberId: member.id, personId: person.id };
+}
+
 export async function addRosterMember(
   organizationId: string,
   clubYear: string,
   input: RosterMemberInput,
   actor: Actor,
-  options: { source?: "DIRECTOR" | "REGISTRATION"; sourceRegistrationId?: string | null; now?: Date } = {},
+  options: RosterAddOptions = {},
 ) {
-  const now = options.now ?? new Date();
-  assertBirthDate(input.birthDate, now);
-  const result = await getPrisma().$transaction(async (tx) => {
-    await assertNotDuplicate(tx, organizationId, clubYear, input.firstName, input.lastName, input.birthDate);
-    const person = await tx.person.create({
-      data: { firstName: input.firstName, lastName: input.lastName },
-      select: { id: true },
-    });
-    const member = await tx.clubRosterMember.create({
-      data: {
-        organizationId,
-        clubYear,
-        personId: person.id,
-        attendeeType: input.attendeeType,
-        role: input.role,
-        classLevel: input.classLevel,
-        gender: input.gender,
-        sealedBirthDate: sealBirthDate(input.birthDate),
-        source: options.source ?? "DIRECTOR",
-        sourceRegistrationId: options.sourceRegistrationId ?? null,
-        ...("accountId" in actor ? { createdByAccountId: actor.accountId } : { createdByUserId: actor.userId }),
-      },
-      select: { id: true },
-    });
-    // Guardian contacts (#510): the route has already refused anyone but a club leader.
-    const guardianCounts = input.guardians ? await replaceGuardians(tx, member.id, input.guardians) : null;
-    await audit(tx, actor, "CLUB_ROSTER_MEMBER_ADDED", organizationId, member.id, "Added a person to a club roster.", {
-      clubYear,
-      attendeeType: input.attendeeType,
-      source: options.source ?? "DIRECTOR",
-      // Counts only, never a guardian's name, email or phone.
-      ...(guardianCounts ? { guardiansStored: guardianCounts.stored } : {}),
-    });
-    return { memberId: member.id, personId: person.id };
-  });
-  return result;
+  // A bad birth date is refused before a transaction opens.
+  assertBirthDate(input.birthDate, options.now ?? new Date());
+  return getPrisma().$transaction((tx) => addRosterMemberInTransaction(tx, organizationId, clubYear, input, actor, options));
 }
 
 export async function updateRosterMember(

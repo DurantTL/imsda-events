@@ -461,7 +461,7 @@ export function ClubRosterWorkspace({
                       section.people.map((member) => {
                         const missing = missingRosterFields(member);
                         return (
-                          <tr key={member.id}>
+                          <tr id={`member-${member.id}`} key={member.id}>
                             <td className="roster-card-name" data-label="Name">
                               <strong translate="no">{member.lastName}, {member.firstName}</strong>
                             </td>
