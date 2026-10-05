@@ -16,10 +16,10 @@ export default async function AreaEventsPage({ searchParams }: { searchParams: P
   const clubYear = resolveAreaClubYear(params.year);
   const query = parseClubQuery(params.q);
   const allEvents = await listAreaClubEvents(clubYear);
-  // With a search, each event lists only the matching clubs, and events with none are left out.
-  const events = query === "" ? allEvents : allEvents.map((event) => ({ ...event, clubs: filterClubsByName(event.clubs, query) })).filter((event) => event.clubs.length > 0);
+  // The component narrows the rows; the counts here only feed the search status line.
+  const matching = allEvents.map((event) => filterClubsByName(event.clubs, query));
   const total = new Set(allEvents.flatMap((event) => event.clubs.map((club) => club.organizationId))).size;
-  const shown = new Set(events.flatMap((event) => event.clubs.map((club) => club.organizationId))).size;
+  const shown = new Set(matching.flat().map((club) => club.organizationId)).size;
   return (
     <section className="page-stack">
       <div className="public-manage-card">
@@ -27,7 +27,7 @@ export default async function AreaEventsPage({ searchParams }: { searchParams: P
         <p className="field-help">Each club&apos;s registration status and headcount. Only registered clubs count toward an event&apos;s total.</p>
       </div>
       <AreaClubSearch basePath="/account/area-clubs/events" clubYear={clubYear} query={query} shown={shown} total={total} />
-      <AreaClubEvents query={query} clubHref={(id) => `/account/area/${id}`} events={events} />
+      <AreaClubEvents query={query} clubHref={(id) => `/account/area/${id}`} events={allEvents} />
     </section>
   );
 }

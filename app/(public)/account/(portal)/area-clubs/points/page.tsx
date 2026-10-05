@@ -24,7 +24,7 @@ export default async function AreaPointsPage({ searchParams }: { searchParams: P
       <p className="field-help">Submitted report points plus 1,500 for an on-time yearly registration.</p>
       <AreaExportLinks basePath="/api/attendee/area-clubs/export" clubYear={clubYear} reports={[{ key: "points", label: "Download points CSV" }]} />
       <AreaClubSearch basePath="/account/area-clubs/points" clubYear={clubYear} query={query} shown={clubs.length} sort={sort} total={allClubs.length} />
-      <AreaPointsChart basePath="/account/area-clubs/points" clubYear={clubYear} clubs={clubs} query={query} sort={sort} />
+      <AreaPointsChart basePath="/account/area-clubs/points" clubYear={clubYear} clubs={allClubs} query={query} sort={sort} />
     </section>
   );
 }

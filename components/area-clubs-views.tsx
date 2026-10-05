@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Download, Search } from "lucide-react";
 import {
   eventHeadcount,
+  filterClubsByName,
   eventStatusLabels,
   monthStatusLabels,
   pointsChartDescription,
@@ -149,8 +150,11 @@ export function AreaMonthlyReportsTable({ clubs, clubYear, links, query }: { clu
  * right below it carries every number. One row per club, so it reads on a phone.
  */
 export function AreaPointsChart({ clubs, clubYear, sort, basePath, query }: { clubs: AreaClubSummary[]; clubYear: string; sort: LeaderboardSort; basePath: string; query?: string }) {
-  const sorted = sortLeaderboard(clubs, sort);
-  const max = Math.max(1, ...sorted.map((club) => club.totalPoints));
+  // Rank and the bar scale come from every club; a search only narrows the rows shown (#791).
+  const ranked = sortLeaderboard(clubs, sort);
+  const max = Math.max(1, ...ranked.map((club) => club.totalPoints));
+  const rankOf = new Map(ranked.map((club, index) => [club.id, index + 1]));
+  const sorted = filterClubsByName(ranked, query);
   const sortHref = (value: LeaderboardSort) => `${basePath}?year=${encodeURIComponent(clubYear)}&sort=${value}${query ? `&q=${encodeURIComponent(query)}` : ""}`;
   return (
     <>
@@ -190,9 +194,9 @@ export function AreaPointsChart({ clubs, clubYear, sort, basePath, query }: { cl
                 </tr>
               </thead>
               <tbody role="rowgroup">
-                {sorted.map((club, index) => (
+                {sorted.map((club) => (
                   <tr role="row" key={club.id}>
-                    <td {...cardCell("Rank")}>{index + 1}</td>
+                    <td {...cardCell("Rank")}>{rankOf.get(club.id)}</td>
                     <th role="rowheader" scope="row" translate="no">{club.name}</th>
                     <td {...cardCell("Report points")}>{formatNumber(club.reportPoints)}</td>
                     <td {...cardCell("Yearly registration")}>{formatNumber(club.totalPoints - club.reportPoints)}</td>
@@ -209,10 +213,12 @@ export function AreaPointsChart({ clubs, clubYear, sort, basePath, query }: { cl
 }
 
 export function AreaClubEvents({ events, clubHref, query }: { events: AreaClubEvent[]; clubHref: (organizationId: string) => string; query?: string }) {
-  if (events.length === 0) return <p className="report-empty">{query ? noClubsText(query) : "No club events this club year."}</p>;
+  // A search narrows each event's club rows and hides events with no match; the event's own totals stay whole (#791).
+  const shownEvents = query ? events.filter((event) => filterClubsByName(event.clubs, query).length > 0) : events;
+  if (shownEvents.length === 0) return <p className="report-empty">{query ? noClubsText(query) : "No club events this club year."}</p>;
   return (
     <>
-      {events.map((event) => (
+      {shownEvents.map((event) => (
         <section className="panel report-panel" key={event.id}>
           <div className="section-heading">
             <div>
@@ -231,7 +237,7 @@ export function AreaClubEvents({ events, clubHref, query }: { events: AreaClubEv
                 <tr role="row"><th role="columnheader" scope="col">Club</th><th role="columnheader" scope="col">Status</th><th role="columnheader" scope="col">Headcount</th></tr>
               </thead>
               <tbody role="rowgroup">
-                {event.clubs.map((club) => (
+                {filterClubsByName(event.clubs, query).map((club) => (
                   <tr role="row" key={club.organizationId}>
                     <th role="rowheader" scope="row" translate="no"><Link href={clubHref(club.organizationId)}>{club.name}</Link></th>
                     <td {...cardCell("Status")}>{eventStatusLabels[club.status]}</td>

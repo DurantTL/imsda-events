@@ -64,6 +64,12 @@ describe("loadMemberClassHistory", () => {
     expect(mocks.completionFindMany.mock.calls[0]![0].where).toEqual({ organizationId: "club-1", personId: "person-1" });
   });
 
+  it("ignores removed roster rows, so a removed-only person gives null", async () => {
+    mocks.rosterFindMany.mockResolvedValue([]);
+    await expect(loadMemberClassHistory("club-1", "person-1", now)).resolves.toBeNull();
+    expect(mocks.rosterFindMany.mock.calls[0]![0].where).toMatchObject({ status: { not: "REMOVED" } });
+  });
+
   it("returns null for someone never on this club's roster", async () => {
     mocks.rosterFindMany.mockResolvedValue([]);
     await expect(loadMemberClassHistory("club-1", "someone-else", now)).resolves.toBeNull();

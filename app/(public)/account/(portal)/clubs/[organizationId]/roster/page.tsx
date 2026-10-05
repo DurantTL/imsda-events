@@ -74,6 +74,7 @@ export default async function ClubRosterPage({
       {/* Keyed by year, so a client-side year change never keeps the other year's people in the table. */}
       <ClubRosterWorkspace
         key={clubYear}
+        classHistoryBase={`/account/clubs/${organizationId}/class-tracking`}
         canSeeBirthDates={access.capabilities.seeBirthDates && !readOnly}
         clubYear={clubYear}
         complianceFilter={complianceFilterFrom(complianceParam)}

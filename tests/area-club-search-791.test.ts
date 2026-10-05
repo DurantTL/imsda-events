@@ -141,6 +141,23 @@ describe.each([
   });
 });
 
+describe("rank and event totals under a search (#791)", () => {
+  it("keeps a club's overall rank and the bar scale when searched", async () => {
+    const out = await html(PointsPage, { q: "alpine" });
+    expect(out).toContain('data-label="Rank">4<');
+    expect(out).toContain('width="37.5"'); // 900 of the unfiltered maximum 2,400
+    expect(out).not.toContain("Bay Trailblazers");
+  });
+
+  it("keeps an event's registered clubs and people whole while a search narrows the rows", async () => {
+    const out = await html(EventsPage, { q: "alpine" });
+    expect(out).toContain("Alpine Eagles");
+    expect(out).not.toContain("Bay Trailblazers");
+    expect(out).toMatch(/2 clubs registered/);
+    expect(out).toContain("32 people");
+  });
+});
+
 describe("points page default order (#791)", () => {
   it("lists the highest total first with no sort in the address", async () => {
     const out = await html(PointsPage, {});
