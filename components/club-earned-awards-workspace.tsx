@@ -567,7 +567,7 @@ export function ClubEarnedAwardsWorkspace({
                       {label}
                     </label>
                   )}
-                  {classHistoryBase && firstForPerson && (
+                  {classHistoryBase && firstForPerson && !need.classHistoryHidden && (
                     <Link className="text-button" href={`${classHistoryBase}/${encodeURIComponent(need.personId)}`}>
                       Class history<span className="sr-only"> for {need.firstName} {need.lastName}</span>
                     </Link>

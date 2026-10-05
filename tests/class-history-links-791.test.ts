@@ -62,6 +62,22 @@ describe("class tracking class history links", () => {
     expect(html.split(`href="${base}/person-2"`).length - 1).toBe(1);
   });
 
+  it("hides the link for someone who has moved to another club", () => {
+    const html = render({
+      classHistoryBase: base,
+      initial: { ...emptyEarnedAwardsData, needs: needs.map((need) => (need.personId === "person-2" ? { ...need, classHistoryHidden: true } : need)) },
+    });
+    expect(html).toContain(`href="${base}/person-1"`);
+    expect(html).not.toContain(`${base}/person-2`);
+  });
+
+  it("the club roster page drops the person id of moved members before the link can show", () => {
+    const page = readFileSync(path.join(process.cwd(), "app/(public)/account/(portal)/clubs/[organizationId]/roster/page.tsx"), "utf8");
+    expect(page).toContain("personIdsMovedToOtherClubs");
+    expect(page).toContain("personId: undefined");
+    expect(page).toContain("initialMembers={linkableMembers}");
+  });
+
   it("shows none on the area view, which does not pass the address", () => {
     const html = render({});
     expect(html).not.toContain("Class history");

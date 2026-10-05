@@ -24,7 +24,7 @@ vi.mock("@/modules/club-rosters/access", () => ({ getRosterAccessStateForPage: m
 import MemberClassHistoryPage from "@/app/(public)/account/(portal)/clubs/[organizationId]/class-tracking/[personId]/page";
 import ClassTrackingPage from "@/app/(public)/account/(portal)/clubs/[organizationId]/class-tracking/page";
 import { buildClassHistory } from "@/modules/earned-awards/domain";
-import { loadMemberClassHistory } from "@/modules/earned-awards/order-source";
+import { loadMemberClassHistory, personIdsMovedToOtherClubs } from "@/modules/earned-awards/order-source";
 
 const now = new Date("2026-10-05T12:00:00Z");
 
@@ -107,5 +107,58 @@ describe("class history page access", () => {
     expect(out).toContain("In progress");
     mocks.rosterFindMany.mockResolvedValue([]);
     await expect(MemberClassHistoryPage(props)).rejects.toThrow("NOT_FOUND");
+  });
+});
+
+describe("a member who has moved to another club (#791 decision)", () => {
+  const thisClubRows = (rows: Array<{ clubYear: string; status: string }>) => rows.map((row) => ({
+    ...row, classLevel: "FRIEND", person: { firstName: "Test", lastName: "Pathfinder" },
+  }));
+  /** Answers the two roster queries: this club's rows for the person, and every current non-removed row anywhere. */
+  function arrange(here: Array<{ clubYear: string; status: string }>, current: Array<{ organizationId: string; personId: string }>) {
+    mocks.completionFindMany.mockResolvedValue([{ classLevel: "FRIEND", completedOn: "2025-05-20" }]);
+    mocks.rosterFindMany.mockImplementation(async (args: { where: { organizationId?: string } }) => (
+      args.where.organizationId ? thisClubRows(here) : current
+    ));
+  }
+  const formerHere = [{ clubYear: "2025-26", status: "INACTIVE" }];
+
+  it("shows a former member who has not joined another club", async () => {
+    arrange(formerHere, []);
+    await expect(loadMemberClassHistory("club-1", "person-1", now)).resolves.toMatchObject({ lastName: "Pathfinder" });
+  });
+
+  it("gives null (404) for a former member now on another club's current roster", async () => {
+    arrange(formerHere, [{ organizationId: "club-2", personId: "person-1" }]);
+    await expect(loadMemberClassHistory("club-1", "person-1", now)).resolves.toBeNull();
+    // The check is current-year and ignores removed rows.
+    const moveQuery = mocks.rosterFindMany.mock.calls.map((call) => call[0].where).find((where) => !where.organizationId);
+    expect(moveQuery).toMatchObject({ clubYear: "2026-27", status: { not: "REMOVED" }, personId: { in: ["person-1"] } });
+  });
+
+  it("gives 404 on the page for that person", async () => {
+    arrange(formerHere, [{ organizationId: "club-2", personId: "person-1" }]);
+    mocks.getRosterAccessStateForPage.mockResolvedValue({ state: "OPEN", capabilities: { manageTeam: true } });
+    await expect(MemberClassHistoryPage({ params: Promise.resolve({ organizationId: "club-1", personId: "person-1" }) })).rejects.toThrow("NOT_FOUND");
+  });
+
+  it("shows a person who is currently on both rosters", async () => {
+    arrange([{ clubYear: "2026-27", status: "ACTIVE" }], [
+      { organizationId: "club-1", personId: "person-1" },
+      { organizationId: "club-2", personId: "person-1" },
+    ]);
+    await expect(loadMemberClassHistory("club-1", "person-1", now)).resolves.not.toBeNull();
+  });
+
+  it("finds the moved people of a whole roster in one query, which hides their link", async () => {
+    mocks.rosterFindMany.mockReset();
+    mocks.rosterFindMany.mockResolvedValue([
+      { organizationId: "club-2", personId: "moved" },
+      { organizationId: "club-1", personId: "both" },
+      { organizationId: "club-2", personId: "both" },
+    ]);
+    const moved = await personIdsMovedToOtherClubs("club-1", ["moved", "both", "stayed"], now);
+    expect([...moved]).toEqual(["moved"]);
+    expect(mocks.rosterFindMany).toHaveBeenCalledTimes(1);
   });
 });
