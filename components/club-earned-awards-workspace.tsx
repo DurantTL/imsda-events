@@ -337,6 +337,9 @@ export function ClubEarnedAwardsWorkspace({
                   {member.classLabel && <small className={styles.muted}> · {member.classLabel}</small>}
                 </span>
               </label>
+              <Link className="text-button" href={`/account/clubs/${organizationId}/class-tracking/${encodeURIComponent(member.personId)}`}>
+                Class history<span className="sr-only"> for {member.firstName} {member.lastName}</span>
+              </Link>
             </li>
           ))}
         </ul>
@@ -559,6 +562,9 @@ export function ClubEarnedAwardsWorkspace({
                       {label}
                     </label>
                   )}
+                  <Link className="text-button" href={`/account/clubs/${organizationId}/class-tracking/${encodeURIComponent(need.personId)}`}>
+                    Class history<span className="sr-only"> for {need.firstName} {need.lastName}</span>
+                  </Link>
                 </li>
               );
             })}

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Download } from "lucide-react";
+import { Download, Search } from "lucide-react";
 import {
   eventHeadcount,
   eventStatusLabels,
@@ -12,6 +12,7 @@ import {
 import type { AreaClubEvent } from "@/modules/club-reports/area-summary-repository";
 import { reportMonthLabel } from "@/modules/club-reports/domain";
 import { cardCell } from "@/components/table-card-labels";
+import { SortOrderNote } from "@/components/list-sort";
 
 /**
  * Read-only cross-club report views shared by the Area Coordinator's Clubs
@@ -28,8 +29,33 @@ export type AreaLinks = {
   reportHref: (organizationId: string, month: string) => string;
 };
 
-export function AreaClubsOverview({ clubs, clubYear, links }: { clubs: AreaClubSummary[]; clubYear: string; links: AreaLinks }) {
-  if (clubs.length === 0) return <p className="report-empty">No active clubs yet.</p>;
+/** What an empty club list says: nothing matched the search, or there are no clubs at all. */
+const noClubsText = (query?: string) => (query ? `No club name matches “${query}”.` : "No active clubs yet.");
+
+/**
+ * A club-name search for the area-coordinator tabs (#791). A plain GET form, so
+ * it works without scripts and the address keeps the search; the year and sort
+ * are carried along. The page filters on the server with `filterClubsByName`.
+ */
+export function AreaClubSearch({ basePath, clubYear, query, sort, shown, total }: { basePath: string; clubYear: string; query: string; sort?: LeaderboardSort; shown: number; total: number }) {
+  return (
+    <form action={basePath} className="area-club-search" method="get" role="search">
+      <input name="year" type="hidden" value={clubYear} />
+      {sort && <input name="sort" type="hidden" value={sort} />}
+      <label className="search-field" htmlFor="area-club-search">
+        <Search aria-hidden="true" size={15} />
+        <span className="sr-only">Search clubs by name</span>
+        <input autoComplete="off" defaultValue={query} id="area-club-search" maxLength={80} name="q" placeholder="Search clubs by name" type="search" />
+      </label>
+      <button className="secondary-button" type="submit">Search</button>
+      {query && <Link className="text-button" href={`${basePath}?year=${encodeURIComponent(clubYear)}${sort ? `&sort=${sort}` : ""}`}>Clear</Link>}
+      <small aria-live="polite" role="status">{query ? `${shown} of ${total} clubs match` : ""}</small>
+    </form>
+  );
+}
+
+export function AreaClubsOverview({ clubs, clubYear, links, query }: { clubs: AreaClubSummary[]; clubYear: string; links: AreaLinks; query?: string }) {
+  if (clubs.length === 0) return <p className="report-empty">{noClubsText(query)}</p>;
   return (
     <div className="report-table-wrap">
       <table role="table" className="report-table table-cards">
@@ -68,8 +94,8 @@ export function AreaClubsOverview({ clubs, clubYear, links }: { clubs: AreaClubS
   );
 }
 
-export function AreaMonthlyReportsTable({ clubs, clubYear, links }: { clubs: AreaClubSummary[]; clubYear: string; links: AreaLinks }) {
-  if (clubs.length === 0) return <p className="report-empty">No active clubs yet.</p>;
+export function AreaMonthlyReportsTable({ clubs, clubYear, links, query }: { clubs: AreaClubSummary[]; clubYear: string; links: AreaLinks; query?: string }) {
+  if (clubs.length === 0) return <p className="report-empty">{noClubsText(query)}</p>;
   const months = clubs[0]!.months.map((cell) => cell.month);
   return (
     <div className="report-table-wrap club-reports-grid">
@@ -122,19 +148,20 @@ export function AreaMonthlyReportsTable({ clubs, clubYear, links }: { clubs: Are
  * description, the bars are hidden from assistive tech, and the data table
  * right below it carries every number. One row per club, so it reads on a phone.
  */
-export function AreaPointsChart({ clubs, clubYear, sort, basePath }: { clubs: AreaClubSummary[]; clubYear: string; sort: LeaderboardSort; basePath: string }) {
+export function AreaPointsChart({ clubs, clubYear, sort, basePath, query }: { clubs: AreaClubSummary[]; clubYear: string; sort: LeaderboardSort; basePath: string; query?: string }) {
   const sorted = sortLeaderboard(clubs, sort);
   const max = Math.max(1, ...sorted.map((club) => club.totalPoints));
-  const sortHref = (value: LeaderboardSort) => `${basePath}?year=${encodeURIComponent(clubYear)}&sort=${value}`;
+  const sortHref = (value: LeaderboardSort) => `${basePath}?year=${encodeURIComponent(clubYear)}&sort=${value}${query ? `&q=${encodeURIComponent(query)}` : ""}`;
   return (
     <>
+      <SortOrderNote>{sort === "name" ? "Sorted by club name, A to Z." : "Sorted by total points, highest first."}</SortOrderNote>
       <p className="field-help">
         Sort by{" "}
         {sort === "points" ? <strong>points</strong> : <Link href={sortHref("points")}>points</Link>}
         {" · "}
         {sort === "name" ? <strong>club name</strong> : <Link href={sortHref("name")}>club name</Link>}
       </p>
-      {sorted.length === 0 ? <p className="report-empty">No active clubs yet.</p> : (
+      {sorted.length === 0 ? <p className="report-empty">{noClubsText(query)}</p> : (
         <>
           <figure className="area-points-chart">
             <figcaption>Total points per club, {clubYear}</figcaption>
@@ -181,8 +208,8 @@ export function AreaPointsChart({ clubs, clubYear, sort, basePath }: { clubs: Ar
   );
 }
 
-export function AreaClubEvents({ events, clubHref }: { events: AreaClubEvent[]; clubHref: (organizationId: string) => string }) {
-  if (events.length === 0) return <p className="report-empty">No club events this club year.</p>;
+export function AreaClubEvents({ events, clubHref, query }: { events: AreaClubEvent[]; clubHref: (organizationId: string) => string; query?: string }) {
+  if (events.length === 0) return <p className="report-empty">{query ? noClubsText(query) : "No club events this club year."}</p>;
   return (
     <>
       {events.map((event) => (

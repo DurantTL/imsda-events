@@ -17,6 +17,8 @@ import { type ClubClassLevel, clubClassLevelLabels, clubYearFor } from "@/module
 import { clubSupplySectionLabels } from "@/modules/club-supplies/domain";
 import {
   AWARD_SECTIONS,
+  buildClassHistory,
+  type ClassHistoryEntry,
   calendarDate,
   classInsigniaSourceId,
   classLabel,
@@ -915,5 +917,36 @@ export async function loadEarnedAwardsWorkspace(
     insignia,
     patches,
     masterAwards,
+  };
+}
+
+// ---------------------------------------------------------------- class history
+
+export type MemberClassHistory = { personId: string; firstName: string; lastName: string; entries: ClassHistoryEntry[] };
+
+/**
+ * One member's class history (#791): recorded completions and the current
+ * class, names and class levels only. Reads only; the caller passes the
+ * class-tracking gate first. `null` when the person was never on this club's
+ * roster, so another club's member is never shown.
+ */
+export async function loadMemberClassHistory(organizationId: string, personId: string, now = new Date()): Promise<MemberClassHistory | null> {
+  const prisma = getPrisma();
+  const [rosterRows, completions] = await Promise.all([
+    prisma.clubRosterMember.findMany({
+      where: { organizationId, personId, status: { not: "REMOVED" } },
+      orderBy: { clubYear: "desc" },
+      select: { clubYear: true, classLevel: true, status: true, person: { select: { firstName: true, lastName: true } } },
+    }),
+    prisma.memberClassCompletion.findMany({ where: { organizationId, personId }, select: { classLevel: true, completedOn: true } }),
+  ]);
+  const person = rosterRows[0]?.person;
+  if (!person) return null;
+  const current = rosterRows.find((row) => row.clubYear === clubYearFor(now) && row.status === "ACTIVE");
+  return {
+    personId,
+    firstName: person.firstName,
+    lastName: person.lastName,
+    entries: buildClassHistory(completions, current?.classLevel ?? null),
   };
 }

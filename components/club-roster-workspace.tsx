@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useCallback, useRef, useState } from "react";
 import { Award, Eye, Pencil, Plus, Power, Save, Trash2, UsersRound, X } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
@@ -464,6 +465,11 @@ export function ClubRosterWorkspace({
                           <tr key={member.id}>
                             <td className="roster-card-name" data-label="Name">
                               <strong translate="no">{member.lastName}, {member.firstName}</strong>
+                              {member.personId && (
+                                <Link className="text-button roster-class-history-link" href={`/account/clubs/${organizationId}/class-tracking/${encodeURIComponent(member.personId)}`}>
+                                  Class history<span className="sr-only"> for {member.firstName} {member.lastName}</span>
+                                </Link>
+                              )}
                             </td>
                             <td data-label="Age" translate="no">
                               {member.age ?? (member.reportedAge !== null ? `${member.reportedAge} (reported)` : "—")}
