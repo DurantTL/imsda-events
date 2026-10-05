@@ -1477,6 +1477,10 @@ model Event {
   attendeeClassifications             EventAttendeeClassification[]
   tags                                EventTag[]
   lodging                             EventLodging?
+  lodgingRequests                     EventLodgingRequest[]
+  lodgingRoommateRequests             EventLodgingRoommateRequest[]
+  lodgingRules                        EventLodgingRule[]
+  lodgingReviewAcks                   EventLodgingReviewAck[]
   notes                               StaffNote[]
   registrationTagAssignments          RegistrationTagAssignment[]
   attendeeTagAssignments              AttendeeTagAssignment[]
@@ -2522,6 +2526,9 @@ model Registration {
   attendanceReviewAcknowledgements AttendanceReviewAcknowledgement[]
   guardianAuthorities     GuardianAuthority[]
   guardianAuthorityConflicts GuardianAuthorityConflict[]
+  lodgingRequests         EventLodgingRequest[]
+  lodgingRoommateRequestsFrom EventLodgingRoommateRequest[] @relation("LodgingRoommateFrom")
+  lodgingRoommateRequestsTo   EventLodgingRoommateRequest[] @relation("LodgingRoommateTarget")
   honorEnrollments        HonorEnrollment[]
   adjustments             RegistrationAdjustment[]
   memberTransferMovesFrom MemberTransferRegistrationMove[] @relation("MemberTransferMoveFrom")
@@ -6151,6 +6158,13 @@ model EventLodging {
   /// Optional bookable-night window; defaults to the event's own dates (last night = day before the end date).
   firstNight      DateTime? @db.Date
   lastNight       DateTime? @db.Date
+  /// Whether registrants choose a lodging category when they register (#199). Off for club events, where staff assign.
+  collectsPreferences Boolean @default(false)
+  /// Last day a registrant may change their lodging preference (inclusive, event time zone); null follows the event's registration close date.
+  preferencesDeadline DateTime? @db.Date
+  /// What a full category shows: "Full" only, or "Full" with a waitlist (the waitlist itself is #200).
+  fullBehavior    LodgingFullBehavior @default(SHOW_FULL)
+  settingsUpdatedByUserId String?
   createdByUserId String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -6241,4 +6255,161 @@ model EventLodgingRate {
   eventLodging EventLodging @relation(fields: [eventLodgingId, eventId], references: [id, eventId], onDelete: Cascade)
 
   @@unique([eventLodgingId, category])
+}
+
+// ---------------------------------------------------------------------------
+// Lodging preferences, roommate requests, household rules (#199, slice 2).
+// A request is what a guest asked for; it is never an assignment (#200).
+// Accessibility is two yes/no flags: no medical free text exists in these tables.
+// ---------------------------------------------------------------------------
+
+enum LodgingFullBehavior {
+  SHOW_FULL
+  WAITLIST
+}
+
+enum LodgingRequestSource {
+  REGISTRANT
+  STAFF
+  REGISTRATION_FORM
+}
+
+enum LodgingHouseholdPreference {
+  /// Everyone on the registration stays together (the default).
+  TOGETHER
+  /// The party can be placed in more than one unit.
+  FLEXIBLE
+}
+
+enum LodgingRoommateDecision {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+enum LodgingRuleKind {
+  /// Join: the two people are kept together, wherever their registrations are.
+  KEEP_TOGETHER
+  /// Split: one person is taken out of their registration's default household.
+  SPLIT_HOUSEHOLD
+  /// The two people are never placed together.
+  SEPARATE
+}
+
+/// One lodging request per registration (the current pointer); every change is a new, immutable version row.
+model EventLodgingRequest {
+  id             String   @id @default(cuid())
+  eventId        String
+  registrationId String
+  currentVersion Int
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  event        Event                        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration                 @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  versions     EventLodgingRequestVersion[]
+
+  @@unique([eventId, registrationId])
+  @@unique([id, eventId])
+}
+
+/// Append-only snapshot of a request. Earlier versions are the history a registrant change never overwrites.
+model EventLodgingRequestVersion {
+  id                   String                     @id @default(cuid())
+  eventId              String
+  requestId            String
+  version              Int
+  category             LodgingCategory?
+  /// Nights slept, both ends inclusive; both null means the event's whole night window.
+  firstNight           DateTime?                  @db.Date
+  lastNight            DateTime?                  @db.Date
+  partySize            Int
+  /// Yes/no flags only. Never medical detail.
+  groundFloorNeeded    Boolean                    @default(false)
+  accessibleRoomNeeded Boolean                    @default(false)
+  privateRoomRequested Boolean                    @default(false)
+  householdPreference  LodgingHouseholdPreference @default(TOGETHER)
+  source               LodgingRequestSource
+  /// The registration form version the choice came from (plain id: forms are versioned elsewhere).
+  sourceFormVersionId  String?
+  actorUserId          String?
+  accessTokenId        String?
+  changeReason         String?
+  /// Made after the lodging deadline (a staff override); the review queue lists it.
+  afterDeadline        Boolean                    @default(false)
+  createdAt            DateTime                   @default(now())
+
+  request EventLodgingRequest @relation(fields: [requestId, eventId], references: [id, eventId], onDelete: Cascade)
+
+  @@unique([requestId, version])
+  @@index([eventId, category])
+}
+
+/// "I would like to room with ...", directional until both sides ask or staff approve. Never carries contact details.
+model EventLodgingRoommateRequest {
+  id                   String                  @id @default(cuid())
+  eventId              String
+  fromRegistrationId   String
+  targetRegistrationId String
+  /// Optional: which person on each registration (person ids); null means the registration as a whole.
+  fromPersonId         String?
+  targetPersonId       String?
+  source               LodgingRequestSource
+  actorUserId          String?
+  accessTokenId        String?
+  decision             LodgingRoommateDecision @default(PENDING)
+  decidedAt            DateTime?
+  decidedByUserId      String?
+  decisionReason       String?
+  withdrawnAt          DateTime?
+  withdrawnByUserId    String?
+  withdrawalReason     String?
+  createdAt            DateTime                @default(now())
+
+  event              Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  fromRegistration   Registration @relation("LodgingRoommateFrom", fields: [fromRegistrationId], references: [id], onDelete: Cascade)
+  targetRegistration Registration @relation("LodgingRoommateTarget", fields: [targetRegistrationId], references: [id], onDelete: Cascade)
+
+  /// A migration-level partial unique index allows one open request per (event, from, target, people).
+  @@index([eventId, fromRegistrationId])
+  @@index([eventId, targetRegistrationId])
+}
+
+/// Staff keep-together, split and separation rules, with who, why, scope and effective nights.
+/// Ended, never deleted. The household default and the responsible-adult rule are derived, not stored.
+model EventLodgingRule {
+  id             String          @id @default(cuid())
+  eventId        String
+  kind           LodgingRuleKind
+  personAId      String
+  /// Null for a split; otherwise the other person (the pair is stored in id order).
+  personBId      String?
+  reason         String
+  actorUserId    String?
+  /// First and last night the rule applies (inclusive); null is open.
+  effectiveFrom  DateTime?       @db.Date
+  effectiveUntil DateTime?       @db.Date
+  createdAt      DateTime        @default(now())
+  endedAt        DateTime?
+  endedByUserId  String?
+  endReason      String?
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, kind])
+}
+
+/// A staff acknowledgement of a review item. The fingerprint changes when the item changes, so a changed item reappears.
+model EventLodgingReviewAck {
+  id          String   @id @default(cuid())
+  eventId     String
+  itemKey     String
+  fingerprint String
+  note        String
+  actorUserId String?
+  createdAt   DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, itemKey, fingerprint])
 }

@@ -54,7 +54,7 @@ async function eventLodgingFor(tx: Tx, eventId: string) {
   return row;
 }
 
-function nightsFor(row: { firstNight: Date | null; lastNight: Date | null; event: { startsAt: Date; endsAt: Date; timezone: string } }) {
+export function nightsFor(row: { firstNight: Date | null; lastNight: Date | null; event: { startsAt: Date; endsAt: Date; timezone: string } }) {
   return eventNights({
     startDate: calendarDay(row.event.startsAt, row.event.timezone),
     endDate: calendarDay(row.event.endsAt, row.event.timezone),

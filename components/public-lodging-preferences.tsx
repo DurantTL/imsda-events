@@ -1,0 +1,196 @@
+"use client";
+
+import { useMemo, useState, type FormEvent } from "react";
+import { AlertCircle, BedDouble, CheckCircle2 } from "lucide-react";
+import { quoteStay, stayNights, addDays, type LodgingCategory } from "@/modules/lodging/domain";
+import type { RegistrantLodgingView } from "@/modules/lodging/preferences-service";
+
+type Status = { kind: "idle" | "saving" | "saved" | "error"; message: string };
+
+const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+
+async function send(url: string, method: string, body: unknown): Promise<RegistrantLodgingView> {
+  const response = await fetch(url, { method, cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const payload = await response.json().catch(() => null) as { message?: string; lodging?: RegistrantLodgingView } | null;
+  if (!response.ok || !payload?.lodging) throw new Error(payload?.message ?? "That could not be saved. Try again.");
+  return payload.lodging;
+}
+
+/**
+ * Lodging on the private registration page (#199): choose a type, nights, and who stays together until the event's
+ * deadline, and ask to room with someone. The price shown comes from the event's lodging rates; nothing is charged
+ * here and no room is assigned. Accessibility is two yes/no boxes: no medical detail is collected.
+ */
+export function PublicLodgingPreferences({ token, initialView }: { token: string; initialView: RegistrantLodgingView }) {
+  const [view, setView] = useState(initialView);
+  const [status, setStatus] = useState<Status>({ kind: "idle", message: "" });
+  const [category, setCategory] = useState<LodgingCategory | "">(initialView.request?.category ?? "");
+  const [firstNight, setFirstNight] = useState(initialView.request?.firstNight ?? initialView.nights[0] ?? "");
+  const [lastNight, setLastNight] = useState(initialView.request?.lastNight ?? initialView.nights[initialView.nights.length - 1] ?? "");
+  const [partySize, setPartySize] = useState(initialView.request?.partySize ?? Math.max(1, initialView.people.length));
+  const base = `/api/public/manage/${encodeURIComponent(token)}/lodging`;
+  const disabled = !view.canEdit || status.kind === "saving";
+
+  const nightCount = lastNight >= firstNight && firstNight ? stayNights(firstNight, addDays(lastNight, 1)).length : 0;
+  const quote = useMemo(() => {
+    const chosen = view.offered.find((entry) => entry.category === category);
+    if (!chosen || nightCount < 1) return null;
+    return quoteStay({ rates: chosen.rate ? { [chosen.category]: chosen.rate } : {}, category: chosen.category, nights: nightCount, partySize });
+  }, [view.offered, category, nightCount, partySize]);
+
+  async function run(action: () => Promise<RegistrantLodgingView>, success: string) {
+    setStatus({ kind: "saving", message: "Saving…" });
+    try {
+      setView(await action());
+      setStatus({ kind: "saved", message: success });
+    } catch (error) {
+      setStatus({ kind: "error", message: error instanceof Error ? error.message : "That could not be saved. Try again." });
+    }
+  }
+
+  function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const wholeEvent = firstNight === view.nights[0] && lastNight === view.nights[view.nights.length - 1];
+    void run(() => send(base, "PUT", {
+      category: category === "" ? null : category,
+      firstNight: wholeEvent ? null : firstNight,
+      lastNight: wholeEvent ? null : lastNight,
+      partySize,
+      privateRoomRequested: form.get("privateRoomRequested") === "on",
+      householdPreference: form.get("householdPreference"),
+      groundFloorNeeded: form.get("groundFloorNeeded") === "on",
+      accessibleRoomNeeded: form.get("accessibleRoomNeeded") === "on",
+    }), "Saved. You can change this until the deadline.");
+  }
+
+  const request = view.request;
+  return (
+    <section className="public-manage-card" aria-labelledby="public_manage_lodging_title">
+      <div className="public-manage-card-heading">
+        <p className="public-registration-eyebrow">Where you would like to stay</p>
+        <h2 id="public_manage_lodging_title">Lodging</h2>
+        <p>
+          Tell us what you would like. This is a request, not a reservation: the event team assigns rooms and sites later.
+          {view.canEdit ? ` You can change it through ${view.deadline}.` : view.closedReason === "DEADLINE_PASSED" ? ` Changes closed after ${view.deadline}. Contact the event team to change it.` : ""}
+        </p>
+      </div>
+      <form onSubmit={save}>
+        <fieldset disabled={disabled}>
+          <legend>Lodging type</legend>
+          <label><input type="radio" name="category" checked={category === ""} onChange={() => setCategory("")} /> No preference</label>
+          {view.offered.map((option) => {
+            const selected = category === option.category;
+            return (
+              <label key={option.category}>
+                <input type="radio" name="category" checked={selected} disabled={option.full && !selected} onChange={() => setCategory(option.category)} />
+                {" "}{option.label}{option.full ? " — Full" : ""}
+                {option.rate ? ` — ${money(option.rate.amountCents)} ${option.rate.basis === "PER_UNIT_NIGHT" ? "per room or site per night" : "per person per night"}${option.rate.minimumNights ? `, ${option.rate.minimumNights}+ nights` : ""}` : " — included"}
+              </label>
+            );
+          })}
+          {view.offered.some((option) => option.full) && view.fullBehavior === "WAITLIST" ? <p>A waitlist for full types will open later.</p> : null}
+        </fieldset>
+
+        <fieldset disabled={disabled}>
+          <legend>Nights</legend>
+          <label>First night
+            <select value={firstNight} onChange={(event) => setFirstNight(event.target.value)}>{view.nights.map((night) => <option key={night} value={night}>{night}</option>)}</select>
+          </label>
+          <label>Last night
+            <select value={lastNight} onChange={(event) => setLastNight(event.target.value)}>{view.nights.map((night) => <option key={night} value={night}>{night}</option>)}</select>
+          </label>
+          {nightCount < 1 ? <p role="alert">The last night cannot be before the first night.</p> : <p>{nightCount} night{nightCount === 1 ? "" : "s"}.</p>}
+        </fieldset>
+
+        <fieldset disabled={disabled}>
+          <legend>Who is staying</legend>
+          <label>People in this lodging
+            <select value={partySize} onChange={(event) => setPartySize(Number(event.target.value))}>
+              {Array.from({ length: Math.max(1, view.people.length) }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count}</option>)}
+            </select>
+          </label>
+          <label>Everyone on this registration
+            <select name="householdPreference" defaultValue={request?.householdPreference ?? "TOGETHER"}>
+              <option value="TOGETHER">stays together</option>
+              <option value="FLEXIBLE">can be placed in more than one room</option>
+            </select>
+          </label>
+          <label><input type="checkbox" name="privateRoomRequested" defaultChecked={request?.privateRoomRequested ?? false} /> I would like a private room if one is available</label>
+        </fieldset>
+
+        <fieldset disabled={disabled}>
+          <legend>Accessibility</legend>
+          <label><input type="checkbox" name="groundFloorNeeded" defaultChecked={request?.groundFloorNeeded ?? false} /> A ground floor is needed</label>
+          <label><input type="checkbox" name="accessibleRoomNeeded" defaultChecked={request?.accessibleRoomNeeded ?? false} /> An accessible room is needed</label>
+          <p>These are yes or no only. Please do not enter medical details here; if the event team needs to know more, they will ask you privately.</p>
+        </fieldset>
+
+        {quote ? <p role="status">
+          {quote.kind === "INCLUDED" ? "Lodging for this choice is included in your registration." : null}
+          {quote.kind === "CHARGE" ? `Estimated lodging: ${money(quote.totalCents)} for ${quote.nights} night${quote.nights === 1 ? "" : "s"}. Nothing is charged until the event team confirms your lodging.` : null}
+          {quote.kind === "BELOW_MINIMUM_NIGHTS" ? `This type needs at least ${quote.minimumNights} nights.` : null}
+        </p> : null}
+
+        {view.canEdit ? <button className="primary-button" type="submit" disabled={disabled || nightCount < 1}><BedDouble size={18} aria-hidden="true" /> Save lodging</button> : null}
+        {request ? <p>Saved version {request.version}{view.earlierVersions > 0 ? `, ${view.earlierVersions} earlier version${view.earlierVersions === 1 ? "" : "s"} kept by the event team` : ""}.</p> : null}
+      </form>
+
+      <Roommates token={token} view={view} base={base} run={run} disabled={disabled} />
+
+      <p role={status.kind === "error" ? "alert" : "status"} aria-live="polite">
+        {status.kind === "saved" && <CheckCircle2 size={16} aria-hidden="true" />}
+        {status.kind === "error" && <AlertCircle size={16} aria-hidden="true" />}
+        {status.message}
+      </p>
+    </section>
+  );
+}
+
+function Roommates({ view, base, run, disabled }: {
+  token: string;
+  view: RegistrantLodgingView;
+  base: string;
+  run: (action: () => Promise<RegistrantLodgingView>, success: string) => Promise<void>;
+  disabled: boolean;
+}) {
+  return (
+    <div>
+      <h3>Rooming with someone</h3>
+      <p>Ask to room with another registration using their name and confirmation code. It counts as a match only when they ask for you too, or the event team approves it. We never show anyone else&apos;s contact details.</p>
+      {view.roommates.length > 0 ? <ul>{view.roommates.map((row) => <li key={row.id}>
+        {row.who}: {row.status === "MATCHED" ? "matched" : row.status === "WAITING" ? "waiting for them to ask for you too" : "not matched"}{" "}
+        {view.canEdit ? <button type="button" disabled={disabled} onClick={() => void run(() => send(`${base}/roommates`, "POST", { action: "withdraw", requestId: row.id }), "Request withdrawn.")}>Withdraw</button> : null}
+      </li>)}</ul> : null}
+      {view.canEdit ? <>
+        <form onSubmit={(event: FormEvent<HTMLFormElement>) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const fromPersonId = String(form.get("fromPersonId") ?? "");
+          void run(() => send(`${base}/roommates`, "POST", {
+            action: "add_by_code",
+            name: form.get("name"),
+            confirmationCode: form.get("confirmationCode"),
+            ...(fromPersonId ? { fromPersonId } : {}),
+          }), "Request sent. It stays private until they ask for you too.");
+        }}>
+          <label>Their full name <input name="name" required maxLength={120} autoComplete="off" /></label>
+          <label>Their confirmation code <input name="confirmationCode" required maxLength={40} autoComplete="off" /></label>
+          {view.people.length > 1 ? <label>Who on your registration is asking
+            <select name="fromPersonId" defaultValue=""><option value="">Everyone</option>{view.people.map((person) => <option key={person.personId} value={person.personId}>{person.name}</option>)}</select>
+          </label> : null}
+          <button type="submit" disabled={disabled}>Ask to room together</button>
+        </form>
+        {view.people.length > 1 ? <form onSubmit={(event: FormEvent<HTMLFormElement>) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          void run(() => send(`${base}/roommates`, "POST", { action: "add_in_registration", fromPersonId: form.get("fromPersonId"), targetPersonId: form.get("targetPersonId") }), "Added.");
+        }}>
+          <label>Room together: <select name="fromPersonId">{view.people.map((person) => <option key={person.personId} value={person.personId}>{person.name}</option>)}</select></label>
+          <label>and <select name="targetPersonId" defaultValue={view.people[1]?.personId}>{view.people.map((person) => <option key={person.personId} value={person.personId}>{person.name}</option>)}</select></label>
+          <button type="submit" disabled={disabled}>Add (people on my registration)</button>
+        </form> : null}
+      </> : null}
+    </div>
+  );
+}

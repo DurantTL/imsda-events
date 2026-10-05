@@ -56,7 +56,7 @@ export function LodgingWorkspace({ eventName, initialView, canSetRates }: { even
     <div className="page-intro"><div>
       <p className="eyebrow">Event configuration</p>
       <h2 className="duplicate-page-title">{staffPageTitles.lodging}</h2>
-      <p>Rooms, beds and sites for {eventName}, night by night. This is inventory only: nobody is assigned here. Hotel details on the event settings page are separate and never counted as on-site lodging.</p>
+      <p>Rooms, beds and sites for {eventName}, night by night. This is inventory only: nobody is assigned here. Hotel details on the event settings page are separate and never counted as on-site lodging. What guests asked for is on the <a href={`/more/lodging/requests?event=${encodeURIComponent(view.eventId)}`}>Lodging requests</a> page.</p>
     </div></div>
     {error ? <p className="form-error" role="alert">{error}</p> : null}
     {notice ? <p className="usage-note" role="status">{notice}</p> : null}
