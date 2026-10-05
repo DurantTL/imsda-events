@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { CircleAlert, RefreshCw, Save, Send } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CircleAlert, FileText, RefreshCw, Save, Send, X } from "lucide-react";
 import {
   MAX_HONORS,
   ON_TIME_POINTS,
@@ -13,6 +13,7 @@ import {
   type PointItemKey,
   type ReportHonor,
 } from "@/modules/club-reports/domain";
+import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { ClubReportRecord } from "@/modules/club-reports/repository";
 import { clubClassLevelLabels, type ClubClassLevel } from "@/modules/club-rosters/domain";
 
@@ -75,6 +76,7 @@ export function ClubReportForm({
   readOnlyNote,
   allowDraft = false,
   variant = "account",
+  asDialog = false,
 }: {
   endpoint: string;
   /** Only for the account variant: reopens a SUBMITTED report back to DRAFT (#426). */
@@ -92,7 +94,10 @@ export function ClubReportForm({
   /** Whether Save draft / Submit report are offered separately (club directors); staff always submits directly. */
   allowDraft?: boolean;
   variant?: "account" | "staff";
+  /** Shows a summary card with an open button, and the form itself in a dialog (#789). */
+  asDialog?: boolean;
 }) {
+  const [open, setOpen] = useState(false);
   const [report, setReport] = useState(initial);
   const [points, setPoints] = useState<PickedPoints>(initial?.points ?? {});
   const [classLevels, setClassLevels] = useState<ClubClassLevel[]>(initial?.classLevels ?? []);
@@ -104,6 +109,17 @@ export function ClubReportForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  // As a dialog the form stays mounted (hidden) so what was typed survives closing it (#789).
+  const dialogOpen = asDialog && open;
+  const feedbackRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  // After a save in the dialog the buttons disable and focus would fall to the page: bring it to the result.
+  useEffect(() => {
+    if (!asDialog) return;
+    (errorRef.current ?? feedbackRef.current)?.focus();
+  }, [asDialog, notice, error]);
+  const dialogRef = useAccessibleDialog<HTMLElement>(dialogOpen, () => { if (!saving) setOpen(false); });
 
   // A draft stores no on-time points yet; show what submitting now would earn.
   const onTime = report?.status === "SUBMITTED" ? report.onTimePoints : expectedOnTime;
@@ -198,9 +214,8 @@ export function ClubReportForm({
     return prefillValue ?? "";
   };
 
-  return (
-    <form className="club-report-form" onSubmit={save}>
-      <div className={`${card} club-report-total`} aria-live="polite">
+  const renderSummary = (inDialog: boolean) => (
+    <div className={`${card} club-report-total${inDialog ? " club-report-total-dialog" : ""}`} aria-live={asDialog && !inDialog ? undefined : "polite"}>
         <div>
           <p className={eyebrow}>{monthLabel}</p>
           <h2>{total} points</h2>
@@ -214,7 +229,17 @@ export function ClubReportForm({
             {isDraft ? "Draft" : `Submitted${report.submittedAt ? ` (${formatShortDate(report.submittedAt)})` : ""}`}
           </span>
         )}
+        {asDialog && !inDialog && (
+          <button className="primary-button" data-monthly-report-open="" onClick={() => setOpen(true)} type="button">
+            <FileText aria-hidden="true" size={16} /> {readOnly ? "View report" : report ? (isDraft ? "Continue report" : "Edit report") : "Open monthly report"}
+          </button>
+        )}
       </div>
+  );
+
+  const formBody = (
+    <>
+      {renderSummary(asDialog)}
 
       {readOnly && (
         <div className="inline-notice" role="status">
@@ -239,8 +264,8 @@ export function ClubReportForm({
           </button>
         </div>
       )}
-      {notice && <div className="inline-notice success" role="status">{notice}</div>}
-      {error && <div className="inline-notice error" role="alert">{error}</div>}
+      {notice && <div className="inline-notice success" data-report-feedback="" ref={feedbackRef} role="status" tabIndex={-1}>{notice}</div>}
+      {error && <div className="inline-notice error" data-report-feedback="" ref={errorRef} role="alert" tabIndex={-1}>{error}</div>}
 
       <fieldset className={`${card} form-stack`} disabled={readOnly || saving}>
         <legend className={eyebrow}>Club facts</legend>
@@ -351,6 +376,28 @@ export function ClubReportForm({
           </div>
         )}
       </fieldset>
-    </form>
+    </>
+  );
+
+  if (!asDialog) return <form className="club-report-form" onSubmit={save}>{formBody}</form>;
+
+  return (
+    <>
+      {renderSummary(false)}
+      <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setOpen(false); }} role="presentation" style={open ? undefined : { display: "none" }}>
+        <section aria-labelledby="monthly-report-dialog-title" aria-modal="true" className="modal-card modal-card-wide" ref={dialogRef} role="dialog" tabIndex={-1}>
+          <div className="modal-head">
+            <div>
+              <p className={eyebrow}>{monthLabel}</p>
+              <h2 id="monthly-report-dialog-title">Monthly report</h2>
+            </div>
+            <button aria-label="Close" className="icon-button modal-close-button" disabled={saving} onClick={() => setOpen(false)} type="button">
+              <X aria-hidden="true" size={18} />
+            </button>
+          </div>
+          <form className="club-report-form" onSubmit={save}>{formBody}</form>
+        </section>
+      </div>
+    </>
   );
 }

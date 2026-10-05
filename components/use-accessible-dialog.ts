@@ -49,6 +49,12 @@ export function useAccessibleDialog<T extends HTMLElement>(
       }
       if (event.key !== "Tab") return;
       const focusable = focusableElements();
+      // Focus can fall to the page when a focused button is disabled (e.g. while saving): pull it back in.
+      if (!dialogElement.contains(document.activeElement)) {
+        event.preventDefault();
+        (focusable[0] ?? dialogElement).focus();
+        return;
+      }
       if (focusable.length === 0) {
         event.preventDefault();
         dialogElement.focus();

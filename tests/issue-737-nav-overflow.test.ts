@@ -96,9 +96,9 @@ describe("club portal child routes keep their tab (#737)", () => {
     );
   });
 
-  it("keeps the coordinator Monthly reports tab on report pages", () => {
+  it("keeps the coordinator Monthly Records tab on report pages", () => {
     const area = areaClubPortalNavItems({ organizationId: "club-1" });
-    expect(active("/account/area/club-1/reports/2026-09", area)).toEqual(["Monthly reports"]);
+    expect(active("/account/area/club-1/reports/2026-09", area)).toEqual(["Monthly Records"]);
   });
 });
 
