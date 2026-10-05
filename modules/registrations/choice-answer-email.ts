@@ -31,7 +31,7 @@ const BODY_LIMIT = 4_000;
  * A suggested announcement for people with no answer to a question. The
  * announcement template already ends with each recipient's own private
  * "Review your registration" link (the manage-link merge field), so the body
- * points at that link instead of carrying a URL. Other selected values get no
+ * refers to that link instead of carrying a URL. Other selected values get no
  * draft: there is nothing to ask of someone who has answered.
  */
 export function choiceEmailDraft(input: { questionLabel: string; value: string | null }): ChoiceEmailDraft | null {
@@ -42,7 +42,7 @@ export function choiceEmailDraft(input: { questionLabel: string; value: string |
   const body = [
     `We do not have your answer to "${label}" yet.`,
     "",
-    "Please use the link below to open your registration and make your selection. It takes only a minute, and it helps us plan for you.",
+    "Please use the link to your registration in this email to make your selection. It takes only a minute, and it helps us plan for you.",
     "",
     "If you have already answered, or you are not sure which choice to make, you can ignore this message or reply and we will help.",
   ].join("\n").slice(0, BODY_LIMIT);

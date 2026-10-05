@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Mail } from "lucide-react";
 import { SelectedAudienceDialog } from "@/components/selected-audience-dialog";
+import type { ChoiceEmailDraft } from "@/modules/registrations/choice-answer-email";
 
 /**
  * Opens the chosen-registrations email dialog for a report's list, e.g. the
@@ -20,7 +21,7 @@ export function EmailRegistrationsButton({
   registrationIds: string[];
   label: string;
   /** Optional starting subject and message for the composer; staff can edit it. */
-  initialDraft?: { templateKey: "EVENT_ANNOUNCEMENT"; title: string; body: string } | null;
+  initialDraft?: ChoiceEmailDraft | null;
 }) {
   const [open, setOpen] = useState(false);
   const unique = [...new Set(registrationIds)].slice(0, 250);

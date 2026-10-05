@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CHOICE_FILTER_UNANSWERED } from "@/modules/registrations/choice-answer-filter";
 import { choiceEmailDraft, choiceEmailRegistrationIds } from "@/modules/registrations/choice-answer-email";
-import { withoutRegistrationParam } from "@/lib/registration-param";
+import { closeRegistrationUrlAction, followRegistrationParam, withoutRegistrationParam } from "@/lib/registration-param";
 
 describe("Email these people on a Filter by answer result (#783)", () => {
   it("counts each registration once even when several attendees on it match", () => {
@@ -21,7 +21,7 @@ describe("Email these people on a Filter by answer result (#783)", () => {
     expect(draft!.templateKey).toBe("EVENT_ANNOUNCEMENT");
     expect(draft!.title).toBe("Please add your answer: Meal preference");
     expect(draft!.body).toContain("Meal preference");
-    expect(draft!.body).toContain("link below");
+    expect(draft!.body).toContain("link to your registration in this email");
     // No URL or token is written here: the announcement template adds each recipient's manage link at delivery.
     expect(draft!.body).not.toMatch(/https?:|__IMSDA_PRIVATE_MANAGE_LINK__/);
   });
@@ -42,5 +42,19 @@ describe("Email these people on a Filter by answer result (#783)", () => {
     expect(withoutRegistrationParam("event=evt&registration=R1&answerQuestion=ATTENDEE%3Ameal_preference&answerValue=__unanswered"))
       .toBe("event=evt&answerQuestion=ATTENDEE%3Ameal_preference&answerValue=__unanswered");
     expect(withoutRegistrationParam("registration=R1")).toBe("");
+  });
+
+  it("follows the URL: the parameter opens, vanishing closes only a detail it opened", () => {
+    expect(followRegistrationParam("R1", null)).toBe("open");
+    expect(followRegistrationParam("R2", { id: "R1", hardLoad: false })).toBe("open");
+    expect(followRegistrationParam(undefined, { id: "R1", hardLoad: false })).toBe("close-state");
+    expect(followRegistrationParam(undefined, null)).toBe("none");
+  });
+
+  it("closes via back after a client navigation, via replace after a hard load, and never touches the URL otherwise", () => {
+    expect(closeRegistrationUrlAction("R1", { id: "R1", hardLoad: false })).toBe("back");
+    expect(closeRegistrationUrlAction("R1", { id: "R1", hardLoad: true })).toBe("replace");
+    expect(closeRegistrationUrlAction("R1", null)).toBe("none");
+    expect(closeRegistrationUrlAction(undefined, { id: "R1", hardLoad: false })).toBe("none");
   });
 });

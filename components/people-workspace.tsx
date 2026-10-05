@@ -8,7 +8,7 @@ import { staffPageTitles } from "@/components/staff-navigation";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { withoutRegistrationParam } from "@/lib/registration-param";
+import { closeRegistrationUrlAction, followRegistrationParam, withoutRegistrationParam, type ParamOpened } from "@/lib/registration-param";
 import {
   ArrowRightLeft,
   Banknote,
@@ -295,27 +295,33 @@ export function PeopleWorkspace({
 
   // A result in "Filter by answer" links to ?registration=<id> (#783). The page
   // keeps this workspace mounted across that navigation (a remount would lose
-  // the search, status filter and ticked rows), so follow the parameter here:
-  // open that registration's detail, scroll it into view and focus it. This
-  // also covers repeat clicks (closing drops the parameter) and back/forward.
+  // the search, status filter and ticked rows), so the URL is the source of
+  // truth for a detail opened this way: the parameter appearing opens it, and
+  // disappearing (back/forward) closes it, state only.
   const registrationsRef = useRef(registrations);
   useEffect(() => { registrationsRef.current = registrations; }, [registrations]);
+  const openedFromParamRef = useRef<ParamOpened>(null);
+  const mountedRef = useRef(false);
   useEffect(() => {
-    if (!initialRegistrationId) return;
-    const record = registrationsRef.current.find((registration) => registration.id === initialRegistrationId);
-    if (!record) return;
-    openDetail(record);
-    const frame = window.requestAnimationFrame(() => {
-      const dialog = dialogRef.current;
-      if (!dialog) return;
-      dialog.scrollIntoView({ block: "start" });
-      dialog.scrollTop = 0;
-      dialog.focus();
-    });
-    return () => window.cancelAnimationFrame(frame);
-    // openDetail only calls state setters, so it is deliberately not a dependency.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const firstRun = !mountedRef.current;
+    mountedRef.current = true;
+    const action = followRegistrationParam(initialRegistrationId, openedFromParamRef.current);
+    if (action === "close-state") {
+      openedFromParamRef.current = null;
+      resetModalState();
+    } else if (action === "open") {
+      const record = registrationsRef.current.find((registration) => registration.id === initialRegistrationId);
+      if (!record) return;
+      openedFromParamRef.current = { id: record.id, hardLoad: firstRun };
+      openDetail(record);
+    }
+    // The helpers only call state setters, so they are deliberately not dependencies.
   }, [initialRegistrationId]);
+  // Bring a newly opened detail to the top; focus is handled by useAccessibleDialog.
+  useEffect(() => {
+    if (modal !== "detail") return;
+    dialogRef.current?.scrollIntoView({ block: "start" });
+  }, [modal, selected?.id, dialogRef]);
 
   const visible = useMemo(() => registrations.filter((registration) => {
     const matchesQuery = registrationMatchesSearch(registration, query);
@@ -373,21 +379,34 @@ export function PeopleWorkspace({
     setNotice("");
     setModal("detail");
   }
+  function resetModalState() {
+    setModal(null);
+    setAddingAttendee(false);
+    setAmending(false);
+    setLifecycleAction(null);
+    setOperationDraft(null);
+    setError("");
+    setNotice("");
+  }
   function closeModal() {
-    if (!saving) {
-      // Drop ?registration= so the same result can be opened again, and keep
-      // every other parameter, the active answer filter included.
-      if (initialRegistrationId) {
-        const remaining = withoutRegistrationParam(searchParams.toString());
+    if (saving) return;
+    const urlAction = closeRegistrationUrlAction(initialRegistrationId, openedFromParamRef.current);
+    // Cleared first, so the parameter disappearing below is not mistaken for a back press.
+    openedFromParamRef.current = null;
+    resetModalState();
+    if (urlAction === "back") {
+      router.back();
+      // If a click on the same result raced the back navigation, the URL can still carry the
+      // parameter with the detail closed, and a further click would change nothing. Settle it.
+      window.setTimeout(() => {
+        if (openedFromParamRef.current || !new URLSearchParams(window.location.search).has("registration")) return;
+        const remaining = withoutRegistrationParam(window.location.search);
         router.replace(remaining ? `${pathname}?${remaining}` : pathname, { scroll: false });
-      }
-      setModal(null);
-      setAddingAttendee(false);
-      setAmending(false);
-      setLifecycleAction(null);
-      setOperationDraft(null);
-      setError("");
-      setNotice("");
+      }, 600);
+    } else if (urlAction === "replace") {
+      // Keep every other parameter, the active answer filter included.
+      const remaining = withoutRegistrationParam(searchParams.toString());
+      router.replace(remaining ? `${pathname}?${remaining}` : pathname, { scroll: false });
     }
   }
 
