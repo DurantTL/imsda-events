@@ -8073,6 +8073,12 @@ th[aria-sort="descending"] .table-sort-button { color: var(--imsda-navy); font-w
 }
 .check-in-book-cover .check-in-book-location { color: var(--ink); font-size: 1.1rem; text-transform: none; }
 
+/* Kitchen report (#787): print just the tables. */
+@media print {
+  .kitchen-report .kitchen-report-actions { display: none !important; }
+  .kitchen-report .panel { border: 0; box-shadow: none; padding: 0; break-inside: avoid; }
+}
+
 /* Club forms (#610) */
 .club-form-fill { display: grid; gap: 16px; }
 .club-form-fill fieldset { min-width: 0; border: 0; }

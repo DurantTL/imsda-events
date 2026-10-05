@@ -195,6 +195,7 @@ export function AreaClubEvents({ events, clubHref }: { events: AreaClubEvent[]; 
                 {" · "}{event.clubs.filter((club) => club.status === "REGISTERED").length} clubs registered · {formatNumber(eventHeadcount(event.clubs))} people
               </p>
             </div>
+            <Link className="secondary-button" href={`/account/area-clubs/kitchen/${encodeURIComponent(event.id)}`}>Kitchen report</Link>
           </div>
           <div className="report-table-wrap">
             <table role="table" className="report-table table-cards">
