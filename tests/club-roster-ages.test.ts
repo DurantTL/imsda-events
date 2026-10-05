@@ -39,7 +39,7 @@ describe("ages typed in for roster people with no birth date (#639)", () => {
     expect(effectiveRosterAges(roster, ["m2"], { m2: "" }, {})).toEqual({});
     // Invalid text is reported and is not an age.
     for (const raw of ["121", "4.5", "-2", "x"]) {
-      expect(ageInputProblem(roster[1]!, { m2: raw }, {})).toBe("Enter the age as a whole number from 0 to 120.");
+      expect(ageInputProblem(roster[1]!, { m2: raw }, {})).toBe("Enter Sam M2 age as a whole number from 0 to 120.");
       expect(effectiveRosterAges(roster, ["m2"], { m2: raw }, {})).toEqual({});
     }
     expect(ageInputProblem(roster[1]!, { m2: "16" }, {})).toBeNull();

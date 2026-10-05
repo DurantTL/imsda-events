@@ -8,6 +8,7 @@ import { ClubUniformSection, emptyUniformData, type ClubUniformData } from "@/co
 import { ORDER_LIST_SECTIONS, activeHelperLines, needsDatedBefore, orderListSectionLabels, type HelperLine } from "@/modules/club-orders/domain";
 import type { AwardableNeed, OrderBatchSummary, UnmatchedNeed, WaitingNeed } from "@/modules/club-orders/repository";
 import type { ClubStockRow } from "@/modules/club-supplies/repository";
+import { effectiveChoice, matchesSearch } from "@/lib/search-match";
 
 export type ClubOrderWorkspaceData = {
   helper: HelperLine[];
@@ -139,12 +140,12 @@ export function ClubOrderWorkspace({
     return [...groups.entries()];
   }, [data.awardable]);
   const pickerItems = useMemo(() => {
-    const text = pickerQuery.trim().toLowerCase();
     const listed = new Set(onList.map((line) => line.itemId));
-    return stock
-      .filter((row) => row.isActive && !listed.has(row.itemId) && (!text || `${row.name} ${row.catalogNumber ?? ""}`.toLowerCase().includes(text)))
-      .slice(0, PICKER_LIMIT);
+    return stock.filter((row) => row.isActive && !listed.has(row.itemId) && matchesSearch([row.name, row.catalogNumber, row.sizeLabel], pickerQuery));
   }, [stock, pickerQuery, onList]);
+  const shownPickerItems = useMemo(() => pickerItems.slice(0, PICKER_LIMIT), [pickerItems]);
+  // One match needs no second click, and a search can never leave a hidden item chosen (#799).
+  const chosenItem = effectiveChoice(pickerItem, shownPickerItems.map((row) => ({ id: row.itemId })));
   // Honors that may have been handed out long ago: the club marks them so they aren't counted as needed.
   const earlier = useMemo(() => data.waiting.filter((need) => need.sourceType === "HONOR" && need.beforeFirstOrder), [data.waiting]);
   // Shown only while the club hasn't edited the helper list or handed anything out here: a one-time cleanup, never in read-only mode.
@@ -229,12 +230,13 @@ export function ClubOrderWorkspace({
 
   async function addLine() {
     const quantity = Number(pickerQuantity);
-    if (!pickerItem || !Number.isSafeInteger(quantity) || quantity < 1) {
+    if (!chosenItem || !Number.isSafeInteger(quantity) || quantity < 1) {
       setError("Choose an item and a quantity of 1 or more.");
       return;
     }
-    if (await setQuantity(pickerItem, quantity, "Added to the list.")) {
+    if (await setQuantity(chosenItem, quantity, "Added to the list.")) {
       setPickerItem("");
+      setPickerQuery("");
       setPickerQuantity("1");
     }
   }
@@ -498,13 +500,13 @@ export function ClubOrderWorkspace({
             <div className={styles.pickerRow}>
               <label className={styles.pickerField} htmlFor="club-order-picker-search">
                 Search the catalog
-                <input className={styles.select} id="club-order-picker-search" onChange={(event) => { setPickerQuery(event.target.value); setPickerItem(""); }} placeholder="Name or item number" type="search" value={pickerQuery} />
+                <input className={styles.select} id="club-order-picker-search" onChange={(event) => setPickerQuery(event.target.value)} placeholder="Name or item number" type="search" value={pickerQuery} />
               </label>
               <label className={styles.pickerField} htmlFor="club-order-picker-item">
                 Item
-                <select className={styles.select} id="club-order-picker-item" onChange={(event) => setPickerItem(event.target.value)} value={pickerItem}>
+                <select className={styles.select} id="club-order-picker-item" onChange={(event) => setPickerItem(event.target.value)} value={chosenItem}>
                   <option value="">Choose an item</option>
-                  {pickerItems.map((row) => (
+                  {shownPickerItems.map((row) => (
                     <option key={row.itemId} value={row.itemId}>
                       {row.name}{row.catalogNumber ? ` · ${row.catalogNumber}` : ""}
                     </option>
@@ -515,7 +517,7 @@ export function ClubOrderWorkspace({
                 Quantity
                 <input className={styles.select} id="club-order-picker-quantity" inputMode="numeric" min={1} onChange={(event) => setPickerQuantity(event.target.value)} type="number" value={pickerQuantity} />
               </label>
-              <button className="secondary-button" disabled={busy || !pickerItem} onClick={() => void addLine()} type="button">
+              <button className="secondary-button" disabled={busy || !chosenItem} onClick={() => void addLine()} type="button">
                 <Plus aria-hidden="true" size={14} /> Add to list
               </button>
             </div>

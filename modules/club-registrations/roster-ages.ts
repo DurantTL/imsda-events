@@ -50,7 +50,11 @@ export function ageInputProblem(person: AgeInputPerson, text: Readonly<Record<st
   if (person.ageOnEventDate !== null) return null;
   const raw = ageInputValue(person, text, saved);
   if (raw.trim() === "") return `Enter ${`${person.firstName} ${person.lastName}`.trim() || "their"} age on the event date.`;
-  return parseTypedAge(raw) === undefined ? "Enter the age as a whole number from 0 to 120." : null;
+  if (parseTypedAge(raw) === undefined) {
+    // Name the person: this reads on its own in a summary or to a screen reader (#799 G6).
+    return `Enter ${`${person.firstName} ${person.lastName}`.trim() || "their"} age as a whole number from 0 to 120.`;
+  }
+  return null;
 }
 
 /** The age in use for each going person with no birth date. Once edited, the reported age never stands in again. */
@@ -87,4 +91,16 @@ export function ageFieldId(memberId: string): string {
 /** What Continue says while ages are still needed, e.g. "Enter 3 ages to continue". */
 export function agesNeededLabel(count: number): string {
   return `Enter ${count} ${count === 1 ? "age" : "ages"} to continue`;
+}
+
+/**
+ * The age summary's lines, one per person who still needs an age, each naming
+ * the person and pointing at their own input (#799 G6): never a bare count.
+ */
+export function missingAgeSummaryItems(missing: ReadonlyArray<AgeInputPerson>): Array<{ memberId: string; fieldId: string; text: string }> {
+  return missing.map((person) => ({
+    memberId: person.memberId,
+    fieldId: ageFieldId(person.memberId),
+    text: `${`${person.firstName} ${person.lastName}`.trim() || "A person"} needs an age on the event date.`,
+  }));
 }

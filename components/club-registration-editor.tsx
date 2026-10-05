@@ -8,6 +8,7 @@ import { ClubLocationPicker } from "@/components/club-location-picker";
 import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
+import { MissingAgeSummary } from "@/components/missing-age-summary";
 import { ageInputProblem, ageInputValue, parseTypedAge, ageFieldId, peopleMissingAges } from "@/modules/club-registrations/roster-ages";
 import { continueButtonLabel, focusFirstMissingAge } from "@/modules/club-registrations/roster-age-flow";
 import {
@@ -346,9 +347,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
       {error && <div className="inline-notice error" role="alert">{error}</div>}
       <ClubLocationPicker currentId={currentLocationId} locations={locationChoices} onChange={setLocationId} value={locationId} />
       {agesAttempted && missingAges.length > 0 && (
-        <div className="inline-notice error club-age-summary" role="alert">
-          {missingAges.length === 1 ? "1 person still needs an age on the event date." : `${missingAges.length} people still need an age on the event date.`}
-        </div>
+        <MissingAgeSummary missing={missingAges} />
       )}
       <ul className="club-going-list">
         {workspace.roster.map((person) => (

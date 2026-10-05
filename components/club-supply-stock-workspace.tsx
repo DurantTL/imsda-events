@@ -5,6 +5,7 @@ import { Eye, Package, Save } from "lucide-react";
 import styles from "@/components/club-supplies.module.css";
 import { type ClubSupplySection, clubSupplySectionLabels, clubSupplySections } from "@/modules/club-supplies/domain";
 import type { ClubStockRow } from "@/modules/club-supplies/repository";
+import { matchesSearch } from "@/lib/search-match";
 
 type SaveResponse = { stock?: { itemId: string; quantityOnHand: number }; error?: string; message?: string; issues?: Array<{ message?: string }> };
 
@@ -45,10 +46,9 @@ export function ClubSupplyStockWorkspace({
   const [onlyInStock, setOnlyInStock] = useState(false);
 
   const groups = useMemo(() => {
-    const text = query.trim().toLowerCase();
     const visible = stock.filter((row) => (!section || row.section === section)
       && (!onlyInStock || row.quantityOnHand > 0)
-      && (!text || `${row.name} ${row.catalogNumber ?? ""}`.toLowerCase().includes(text)));
+      && matchesSearch([row.name, row.catalogNumber, row.sizeLabel], query));
     return clubSupplySections
       .map((value) => ({ section: value, rows: visible.filter((row) => row.section === value) }))
       .filter((group) => group.rows.length > 0);

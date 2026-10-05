@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { AutoEventInfoCards } from "@/components/auto-event-info-cards";
+import { ClubDirectorSignInNotice } from "@/components/club-director-sign-in-notice";
 import { EventInfoCards } from "@/components/event-info-cards";
 import { PublicRegistrationForm } from "@/components/public-registration-form";
 import { listPublishedRegistrationInfoCards } from "@/modules/events/content-repository";
@@ -106,8 +107,9 @@ export default async function PublicRegistrationPage({
       initialAttendeeResponses={scopedPrefill("ATTENDEE")}
       disableDrafts={Boolean(account)}
       topContent={
-        editableCards.length > 0 || autoCards ? (
+        editableCards.length > 0 || autoCards || experience.event.audience === "CLUB" ? (
           <>
+            <ClubDirectorSignInNotice event={experience.event} />
             <EventInfoCards sections={editableCards} eventSlug={eventSlug} placement="registration" />
             {autoCards ? <AutoEventInfoCards cards={autoCards} /> : null}
           </>
