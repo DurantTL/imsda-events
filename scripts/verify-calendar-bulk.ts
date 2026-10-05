@@ -46,6 +46,23 @@ let feedBody = "";
 const transport = async () => ({ status: 200, location: null, body: feedBody });
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
+type Holder = { $queryRaw: PrismaClient["$queryRaw"] };
+
+/**
+ * Polls (every 50 ms, up to 15 s) until another backend is waiting on an
+ * advisory lock, i.e. the bulk change has read its rows and is queued behind the
+ * lock the caller holds. No fixed delay: it returns as soon as that is true.
+ */
+async function waitForBlockedAdvisoryLock(holder: Holder) {
+  const deadline = Date.now() + 15_000;
+  for (;;) {
+    const rows = await holder.$queryRaw<Array<{ n: bigint }>>`SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND pid <> pg_backend_pid()`;
+    if (Number(rows[0].n) >= 1) return;
+    if (Date.now() > deadline) throw new Error("FAILED: the bulk change never waited on the feed's advisory lock");
+    await sleep(50);
+  }
+}
+
 async function cleanup() {
   await prisma.calendarEntry.deleteMany({ where: { createdByUserId: userId } });
   await prisma.calendarFeed.deleteMany({ where: { createdByUserId: userId } });
@@ -85,19 +102,15 @@ async function main() {
 
   // 1. Advisory lock taken: the bulk change waits for a holder of the feed's lock.
   let finished = false;
-  let waiting = 0;
   let pending: Promise<unknown> = Promise.resolve();
   await prisma.$transaction(async (holder) => {
     await feedLock(holder);
     pending = bulk([a.id, b.id], { action: "setCategory", category: "Youth" }).then(() => { finished = true; });
-    await sleep(600);
-    assert(!finished, "the bulk change waits while another transaction holds the feed's lock");
-    const rows = await holder.$queryRaw<Array<{ n: bigint }>>`SELECT count(*) AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`;
-    waiting = Number(rows[0].n);
+    await waitForBlockedAdvisoryLock(holder); // pg_locks shows the bulk change's backend waiting
+    assert(!finished, "the bulk change is still pending while another transaction holds the feed's lock");
     // 2. Re-read under the lock: this change commits while the bulk change waits.
     await holder.calendarEntry.update({ where: { id: b.id }, data: { category: "Youth" } });
-  });
-  assert(waiting >= 1, "pg_locks shows the bulk change waiting on an advisory lock");
+  }, { timeout: 30_000 });
   await pending;
   assert(finished, "the bulk change ran once the lock was released");
   const afterCategory = await prisma.calendarEntry.findMany({ where: { id: { in: [a.id, b.id] } }, orderBy: { title: "asc" } });
@@ -111,9 +124,9 @@ async function main() {
   await prisma.$transaction(async (holder) => {
     await feedLock(holder);
     pending = bulk([c.id], { action: "publish" });
-    await sleep(400);
+    await waitForBlockedAdvisoryLock(holder);
     await holder.calendarEntry.update({ where: { id: c.id }, data: { isPublished: true } });
-  });
+  }, { timeout: 30_000 });
   const published = await pending as Awaited<ReturnType<typeof bulk>>;
   assert(published.result.changed === 0 && published.result.skipped[0]?.reason === "Already published.", "the plan saw the row as committed under the lock");
 
