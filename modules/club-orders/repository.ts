@@ -8,6 +8,7 @@ import {
   buildHelperLines,
   buildOrderLines,
   quantityToOrder,
+  sortNeedsOldestFirst,
   splitNeedsByStock,
   type HelperCatalogItem,
   type HelperLine,
@@ -292,11 +293,12 @@ type NeededRow = Prisma.ClubOrderNeedGetPayload<{ select: typeof neededSelect }>
 
 /** Every NEEDED need for a club, grouped by item, with available stock and which needs it already covers. */
 async function neededPicture(organizationId: string) {
-  const needs: NeededRow[] = await getPrisma().clubOrderNeed.findMany({
+  // Undated needs go last (#790), which the database's ascending string order can't say.
+  const needs: NeededRow[] = sortNeedsOldestFirst(await getPrisma().clubOrderNeed.findMany({
     where: { organizationId, status: "NEEDED" },
     orderBy: oldestFirst,
     select: neededSelect,
-  });
+  }));
   const byItem = groupByItem(needs);
   const available = await availableByItem(getPrisma(), organizationId, [...byItem.keys()]);
   const fromStock = new Set<string>();
@@ -348,11 +350,11 @@ export async function createOrderBatch(organizationId: string, extras: Record<st
   await removeDepartedMemberNeeds(organizationId);
   return getPrisma().$transaction(async (tx) => {
     await lockClubOrders(tx, organizationId);
-    const needs = await tx.clubOrderNeed.findMany({
+    const needs = sortNeedsOldestFirst(await tx.clubOrderNeed.findMany({
       where: { organizationId, status: "NEEDED", itemId: { not: null } },
       orderBy: oldestFirst,
-      select: { id: true, itemId: true },
-    });
+      select: { id: true, itemId: true, sourceDate: true, createdAt: true },
+    }));
     const byItem = groupByItem(needs);
     const itemIds = [...byItem.keys()];
     const [items, available] = await Promise.all([

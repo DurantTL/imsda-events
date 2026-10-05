@@ -10,6 +10,7 @@ import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { RosterTypeDefinitions } from "@/components/roster-type-definitions";
 import { validateRosterForm, rosterFormFieldOrder, type RosterFormErrors, type RosterFormField } from "@/modules/club-rosters/form-validation";
 import { ClubMemberHonorsDialog } from "@/components/club-member-honors-dialog";
+import { HonorPillList } from "@/components/honor-pill-list";
 import { RosterCsvImport } from "@/components/roster-csv-import";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { complianceFilterLabels, complianceFilterState, type ComplianceFilterValue } from "@/modules/background-checks/display";
@@ -521,16 +522,8 @@ export function ClubRosterWorkspace({
                               </td>
                             )}
                             {honorSummaries && (
-                              <td data-label="Honors">
-                                {(honorSummaries[member.id] ?? []).length === 0 ? "—" : (
-                                  <div className="roster-flag-list">
-                                    {(honorSummaries[member.id] ?? []).map((honor) => (
-                                      <span className={`status-chip ${honor.status === "COMPLETED" ? "green" : "gold"}`} key={honor.honorId}>
-                                        <Award aria-hidden="true" size={12} /> {honor.honorName}
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
+                              <td className="roster-honors-cell" data-label="Honors">
+                                <HonorPillList honors={honorSummaries[member.id] ?? []} withIcon />
                                 {honorsPopup && (
                                   <button
                                     aria-haspopup="dialog"

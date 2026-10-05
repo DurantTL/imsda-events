@@ -88,6 +88,30 @@ export function applyExtras(lines: readonly OrderLine[], extras: Readonly<Record
 }
 
 /**
+ * The oldest need first (#790): by source date, createdAt, then id. A need
+ * with no date (a completion recorded without one) sorts last, so it never
+ * jumps the queue for stock ahead of needs whose date is known. Stable, and
+ * the input is not changed.
+ */
+export function sortNeedsOldestFirst<T extends { sourceDate: string; createdAt: Date; id: string }>(needs: readonly T[]): T[] {
+  return [...needs].sort((a, b) => {
+    if (Boolean(a.sourceDate) !== Boolean(b.sourceDate)) return a.sourceDate ? -1 : 1;
+    if (a.sourceDate !== b.sourceDate) return a.sourceDate < b.sourceDate ? -1 : 1;
+    return a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id);
+  });
+}
+
+/**
+ * The "completed before" bulk selection on the order screen (#790): needs
+ * whose date is strictly before `beforeDate`. An undated need is never
+ * "before" any date, so it is only picked up by Select all, never by accident.
+ */
+export function needsDatedBefore<T extends { sourceDate: string }>(needs: readonly T[], beforeDate: string): T[] {
+  if (!beforeDate) return [];
+  return needs.filter((need) => Boolean(need.sourceDate) && need.sourceDate < beforeDate);
+}
+
+/**
  * Splits one item's NEEDED needs (oldest first) into the ones available stock
  * already covers — ready to hand out "from stock" — and the ones that still
  * have to go on an order (#487).
