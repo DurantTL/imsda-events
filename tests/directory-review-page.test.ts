@@ -10,7 +10,9 @@ const dependencies = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => ({ back: vi.fn(), replace: vi.fn(), push: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/people",
+  useSearchParams: () => new URLSearchParams(),
 }));
 vi.mock("@/components/use-accessible-dialog", () => ({
   useAccessibleDialog: () => ({ current: null }),

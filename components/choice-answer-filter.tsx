@@ -1,5 +1,11 @@
 import Link from "next/link";
 import { Download, ListFilter, X } from "lucide-react";
+import { EmailRegistrationsButton } from "@/components/email-registrations-button";
+import {
+  CHOICE_EMAIL_MAX_REGISTRATIONS,
+  choiceEmailDraft,
+  choiceEmailRegistrationIds,
+} from "@/modules/registrations/choice-answer-email";
 import {
   CHOICE_FILTER_QUESTION_PARAM,
   CHOICE_FILTER_OTHER,
@@ -39,6 +45,7 @@ export function ChoiceAnswerFilter({
   view,
   carry,
   canExport,
+  canEmail = false,
 }: {
   eventId: string;
   view: ChoiceFilterView;
@@ -46,9 +53,12 @@ export function ChoiceAnswerFilter({
   carry: Record<string, string | undefined>;
   /** VIEW_REPORTS and VIEW_SENSITIVE_DATA: the filtered export needs both, so others get no button that would refuse. */
   canExport: boolean;
+  /** MANAGE_COMMUNICATIONS (#783): opens the Email selected composer for the listed registrations. */
+  canEmail?: boolean;
 }) {
   if (view.questions.length === 0) return null;
   const { selected } = view;
+  const emailRegistrationIds = canEmail && selected?.value ? choiceEmailRegistrationIds(selected.matches) : [];
 
   function query(extra: Record<string, string | null>) {
     const params = new URLSearchParams({ event: eventId });
@@ -135,7 +145,18 @@ export function ChoiceAnswerFilter({
               <div className="choice-filter-results-head">
                 <strong>{selected.label}: {selectedLabel} · {selected.matches.length} {resultNoun}</strong>
                 {exportHref && <a className="secondary-button" href={exportHref}><Download aria-hidden="true" size={16} /> Export this list (CSV)</a>}
+                {canEmail && emailRegistrationIds.length > 0 && (
+                  <EmailRegistrationsButton
+                    eventId={eventId}
+                    initialDraft={choiceEmailDraft({ questionLabel: selected.label, value: selected.value })}
+                    label="Email these people"
+                    registrationIds={emailRegistrationIds}
+                  />
+                )}
               </div>
+              {canEmail && emailRegistrationIds.length > CHOICE_EMAIL_MAX_REGISTRATIONS && (
+                <p className="choice-filter-note">Email these people covers the first {CHOICE_EMAIL_MAX_REGISTRATIONS} of {emailRegistrationIds.length} registrations; one batch holds at most that many.</p>
+              )}
               {selected.matches.length === 0 ? <p className="choice-filter-note">{emptyText}</p> : (
                 <ul className="choice-filter-list">
                   {selected.matches.map((match) => (
