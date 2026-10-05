@@ -10,7 +10,7 @@ describe("meeting note and monthly report dialogs (#789)", () => {
 
   it("opens the meeting-note editor in an accessible dialog", () => {
     expect(notes).toContain('import { useAccessibleDialog } from "@/components/use-accessible-dialog"');
-    expect(notes).toMatch(/useAccessibleDialog<HTMLElement>\(editorOpen, cancel\)/);
+    expect(notes).toMatch(/useAccessibleDialog<HTMLElement>\(editorOpen, requestClose\)/);
     expect(notes).toContain('role="dialog"');
     expect(notes).toContain('aria-modal="true"');
     expect(notes).toContain('aria-labelledby="meeting-note-dialog-title"');
