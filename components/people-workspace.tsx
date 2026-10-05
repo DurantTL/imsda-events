@@ -6,7 +6,9 @@ import { SortOrderNote } from "@/components/list-sort";
 import { sortOrderText } from "@/lib/list-sort";
 import { staffPageTitles } from "@/components/staff-navigation";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { withoutRegistrationParam } from "@/lib/registration-param";
 import {
   ArrowRightLeft,
   Banknote,
@@ -287,6 +289,33 @@ export function PeopleWorkspace({
   const [emailingSelection, setEmailingSelection] = useState(false);
   const [resendingMessageId, setResendingMessageId] = useState<string | null>(null);
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(modal), closeModal);
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // A result in "Filter by answer" links to ?registration=<id> (#783). The page
+  // keeps this workspace mounted across that navigation (a remount would lose
+  // the search, status filter and ticked rows), so follow the parameter here:
+  // open that registration's detail, scroll it into view and focus it. This
+  // also covers repeat clicks (closing drops the parameter) and back/forward.
+  const registrationsRef = useRef(registrations);
+  useEffect(() => { registrationsRef.current = registrations; }, [registrations]);
+  useEffect(() => {
+    if (!initialRegistrationId) return;
+    const record = registrationsRef.current.find((registration) => registration.id === initialRegistrationId);
+    if (!record) return;
+    openDetail(record);
+    const frame = window.requestAnimationFrame(() => {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      dialog.scrollIntoView({ block: "start" });
+      dialog.scrollTop = 0;
+      dialog.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+    // openDetail only calls state setters, so it is deliberately not a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialRegistrationId]);
 
   const visible = useMemo(() => registrations.filter((registration) => {
     const matchesQuery = registrationMatchesSearch(registration, query);
@@ -346,6 +375,12 @@ export function PeopleWorkspace({
   }
   function closeModal() {
     if (!saving) {
+      // Drop ?registration= so the same result can be opened again, and keep
+      // every other parameter, the active answer filter included.
+      if (initialRegistrationId) {
+        const remaining = withoutRegistrationParam(searchParams.toString());
+        router.replace(remaining ? `${pathname}?${remaining}` : pathname, { scroll: false });
+      }
       setModal(null);
       setAddingAttendee(false);
       setAmending(false);
