@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleAlert, FileText, RefreshCw, Save, Send, X } from "lucide-react";
 import {
   MAX_HONORS,
@@ -112,6 +112,13 @@ export function ClubReportForm({
 
   // As a dialog the form stays mounted (hidden) so what was typed survives closing it (#789).
   const dialogOpen = asDialog && open;
+  const feedbackRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  // After a save in the dialog the buttons disable and focus would fall to the page: bring it to the result.
+  useEffect(() => {
+    if (!asDialog) return;
+    (errorRef.current ?? feedbackRef.current)?.focus();
+  }, [asDialog, notice, error]);
   const dialogRef = useAccessibleDialog<HTMLElement>(dialogOpen, () => { if (!saving) setOpen(false); });
 
   // A draft stores no on-time points yet; show what submitting now would earn.
@@ -207,8 +214,8 @@ export function ClubReportForm({
     return prefillValue ?? "";
   };
 
-  const summary = (
-    <div className={`${card} club-report-total`} aria-live={asDialog ? undefined : "polite"}>
+  const renderSummary = (inDialog: boolean) => (
+    <div className={`${card} club-report-total${inDialog ? " club-report-total-dialog" : ""}`} aria-live={asDialog && !inDialog ? undefined : "polite"}>
         <div>
           <p className={eyebrow}>{monthLabel}</p>
           <h2>{total} points</h2>
@@ -222,7 +229,7 @@ export function ClubReportForm({
             {isDraft ? "Draft" : `Submitted${report.submittedAt ? ` (${formatShortDate(report.submittedAt)})` : ""}`}
           </span>
         )}
-        {asDialog && (
+        {asDialog && !inDialog && (
           <button className="primary-button" data-monthly-report-open="" onClick={() => setOpen(true)} type="button">
             <FileText aria-hidden="true" size={16} /> {readOnly ? "View report" : report ? (isDraft ? "Continue report" : "Edit report") : "Open monthly report"}
           </button>
@@ -232,7 +239,7 @@ export function ClubReportForm({
 
   const formBody = (
     <>
-      {!asDialog && summary}
+      {renderSummary(asDialog)}
 
       {readOnly && (
         <div className="inline-notice" role="status">
@@ -257,8 +264,8 @@ export function ClubReportForm({
           </button>
         </div>
       )}
-      {notice && <div className="inline-notice success" role="status">{notice}</div>}
-      {error && <div className="inline-notice error" role="alert">{error}</div>}
+      {notice && <div className="inline-notice success" data-report-feedback="" ref={feedbackRef} role="status" tabIndex={-1}>{notice}</div>}
+      {error && <div className="inline-notice error" data-report-feedback="" ref={errorRef} role="alert" tabIndex={-1}>{error}</div>}
 
       <fieldset className={`${card} form-stack`} disabled={readOnly || saving}>
         <legend className={eyebrow}>Club facts</legend>
@@ -376,7 +383,7 @@ export function ClubReportForm({
 
   return (
     <>
-      {summary}
+      {renderSummary(false)}
       <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) setOpen(false); }} role="presentation" style={open ? undefined : { display: "none" }}>
         <section aria-labelledby="monthly-report-dialog-title" aria-modal="true" className="modal-card modal-card-wide" ref={dialogRef} role="dialog" tabIndex={-1}>
           <div className="modal-head">

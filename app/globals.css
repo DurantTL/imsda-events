@@ -7313,8 +7313,10 @@ select:focus-visible {
 .club-report-form { display: grid; gap: 16px; }
 .club-report-form fieldset { min-width: 0; margin: 0; }
 .club-report-form legend { float: left; width: 100%; margin-bottom: 8px; padding: 0; }
-.club-report-total { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; position: sticky; top: 8px; z-index: 2; }
+.club-report-total { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; position: sticky; top: 8px; z-index: 2; }
 @media (max-width: 760px) { .club-report-total { position: static; } }
+/* Inside the report dialog the running total stays at the top of the scrolling card (#789). */
+.club-report-total.club-report-total-dialog { position: sticky; top: 0; box-shadow: 0 2px 8px rgba(0, 25, 40, 0.12); }
 .club-gate-reports { margin: 8px 0 0; }
 .club-report-total h2 { margin: 2px 0 4px; font-size: 1.6rem; }
 .club-report-total .field-help { margin: 0; }

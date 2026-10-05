@@ -104,9 +104,15 @@ export function ClubMeetingNotes({
   // The editor is a dialog (#789): useAccessibleDialog moves focus into it,
   // closes it on Escape, and puts focus back on the Add / Edit button that opened it.
   const editorOpen = adding || editingId !== null;
-  const dialogRef = useAccessibleDialog<HTMLElement>(editorOpen, cancel);
+  // Escape, Close and Cancel never throw away typed changes silently: a changed draft asks first.
+  const [baseline, setBaseline] = useState(() => JSON.stringify(emptyDraft(newMeetingDate)));
+  const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+  const dirty = JSON.stringify(draft) !== baseline;
+  const dialogRef = useAccessibleDialog<HTMLElement>(editorOpen, requestClose);
 
   function startAdd() {
+    setBaseline(JSON.stringify(emptyDraft(newMeetingDate)));
+    setConfirmingDiscard(false);
     setDraft(emptyDraft(newMeetingDate));
     setAdding(true);
     setEditingId(null);
@@ -115,6 +121,8 @@ export function ClubMeetingNotes({
   }
 
   function startEdit(note: ClubMeetingNoteRecord) {
+    setBaseline(JSON.stringify(draftFromNote(note)));
+    setConfirmingDiscard(false);
     setDraft(draftFromNote(note));
     setEditingId(note.id);
     setAdding(false);
@@ -124,9 +132,16 @@ export function ClubMeetingNotes({
 
   function cancel() {
     if (saving) return;
+    setConfirmingDiscard(false);
     setAdding(false);
     setEditingId(null);
     setError("");
+  }
+
+  function requestClose() {
+    if (saving) return;
+    if (dirty) setConfirmingDiscard(true);
+    else cancel();
   }
 
   function addHonor() {
@@ -302,7 +317,7 @@ export function ClubMeetingNotes({
       </section>
 
       {formOpen && (
-        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) cancel(); }} role="presentation">
+        <div className="modal-backdrop" role="presentation">
         <section aria-labelledby="meeting-note-dialog-title" aria-modal="true" className="modal-card modal-card-wide" ref={dialogRef} role="dialog" tabIndex={-1}>
         <form className="form-stack" onSubmit={save}>
           <div className="modal-head">
@@ -310,11 +325,20 @@ export function ClubMeetingNotes({
               <p className="public-registration-eyebrow">{editingId ? "Edit meeting note" : "New meeting note"}</p>
               <h2 id="meeting-note-dialog-title">{editingId ? "Edit" : "Add"} meeting note</h2>
             </div>
-            <button aria-label="Close" className="icon-button modal-close-button" disabled={saving} onClick={cancel} type="button">
+            <button aria-label="Close" className="icon-button modal-close-button" disabled={saving} onClick={requestClose} type="button">
               <X aria-hidden="true" size={18} />
             </button>
           </div>
           {error && <div className="inline-notice error" role="alert">{error}</div>}
+          {confirmingDiscard && (
+            <div className="inline-notice error" role="alert">
+              <p>Discard this meeting note? Your changes will be lost.</p>
+              <div className="intro-actions">
+                <button autoFocus className="secondary-button" onClick={() => setConfirmingDiscard(false)} type="button">Keep editing</button>
+                <button className="primary-button" onClick={cancel} type="button">Discard</button>
+              </div>
+            </div>
+          )}
           <div className="form-grid two-column">
             <label>Meeting date
               <input onChange={(event) => setDraft((current) => ({ ...current, meetingDate: event.target.value }))} required type="date" value={draft.meetingDate} />
@@ -380,7 +404,7 @@ export function ClubMeetingNotes({
 
           <div className="intro-actions">
             <button className="primary-button" disabled={saving} type="submit">{editingId ? "Save changes" : "Add meeting note"}</button>
-            <button className="secondary-button" disabled={saving} onClick={cancel} type="button">Cancel</button>
+            <button className="secondary-button" disabled={saving} onClick={requestClose} type="button">Cancel</button>
           </div>
         </form>
         </section>

@@ -30,6 +30,27 @@ describe("meeting note and monthly report dialogs (#789)", () => {
     expect(read("app/(public)/account/(portal)/clubs/[organizationId]/records/page.tsx")).toMatch(/<ClubReportForm\s+allowDraft\s+asDialog/);
   });
 
+  it("never discards a changed meeting-note draft silently", () => {
+    const notes = read("components/club-meeting-notes.tsx");
+    expect(notes).toMatch(/useAccessibleDialog<HTMLElement>\(editorOpen, requestClose\)/);
+    expect(notes).toContain("Discard this meeting note?");
+    expect(notes).toMatch(/if \(dirty\) setConfirmingDiscard\(true\)/);
+    // No close-on-backdrop.
+    expect(notes).toContain('<div className="modal-backdrop" role="presentation">');
+  });
+
+  it("shows the running total inside the report dialog and wraps the page card", () => {
+    expect(report).toContain("renderSummary(asDialog)");
+    expect(report).toContain("data-report-feedback");
+    const css = read("app/globals.css");
+    expect(css).toMatch(/\.club-report-total \{ display: flex; flex-wrap: wrap;/);
+    expect(css).toContain(".club-report-total.club-report-total-dialog");
+  });
+
+  it("pulls focus back into the dialog when Tab is pressed from outside it", () => {
+    expect(read("components/use-accessible-dialog.ts")).toMatch(/!dialogElement\.contains\(document\.activeElement\)/);
+  });
+
   it("keeps the dialog form mounted so typed values survive closing it", () => {
     expect(report).toMatch(/style=\{open \? undefined : \{ display: "none" \}\}/);
   });

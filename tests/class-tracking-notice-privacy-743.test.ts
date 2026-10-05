@@ -132,7 +132,7 @@ describe("club notice privacy across signed-out, attendee, director and coordina
       expect(coordinator).not.toContain(label);
     }
     // The coordinator's tab shares the portal's "Monthly Records" name (#789) but stays on the view-only report pages.
-    expect(areaClubPortalNavItems({ organizationId: "c" }).find((item) => item.label === "Monthly Records")?.href.startsWith("/account/area/c")).toBe(true);
+    for (const item of areaClubPortalNavItems({ organizationId: "c" })) expect(item.href.startsWith("/account/area/c")).toBe(true);
     const reporter = clubReporterNavItems({ base: "/account/clubs/c", capabilities: { ...capabilities, roster: false } }).map((item) => item.label);
     expect(reporter).toEqual(["Home", "Monthly Records"]);
   });
