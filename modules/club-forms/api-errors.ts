@@ -26,6 +26,9 @@ const statusByCode: Record<ClubFormError["code"], number> = {
   TEMPLATE_CHANGED: 409,
   FORM_BUSY: 503,
   FORM_UNAVAILABLE: 503,
+  ROSTER_ADD_UNAVAILABLE: 409,
+  ALREADY_ON_ROSTER: 409,
+  DUPLICATE_ON_ROSTER: 409,
 };
 
 /**

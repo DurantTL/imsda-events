@@ -71,6 +71,19 @@ export default async function ClubFormSubmissionPage({
         <BackLink href={base}>Back to club forms</BackLink>
         <PrintFormButton />
         {editable && <Link className="primary-button" href={`${base}/submissions/${submissionId}?edit=1`}>Continue editing</Link>}
+        {/* "Add to roster" (#721): only on a form whose template allows it, for the club's director and deputy. */}
+        {submission.rosterAdd?.done && (
+          <Link
+            className="secondary-button"
+            href={`/account/clubs/${organizationId}/roster?year=${encodeURIComponent(submission.rosterAdd.done.clubYear)}#member-${submission.rosterAdd.done.memberId}`}
+            title={submission.rosterAdd.done.action === "LINKED" ? "This form was linked to an existing roster member." : undefined}
+          >
+            Added to roster
+          </Link>
+        )}
+        {!submission.rosterAdd?.done && submission.rosterAdd?.available && (
+          <Link className="primary-button" href={`${base}/submissions/${submissionId}/roster`}>Add to roster</Link>
+        )}
       </div>
       <ClubFormSubmissionView submission={submission} />
     </div>

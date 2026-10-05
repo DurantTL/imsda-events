@@ -451,9 +451,11 @@ describe("submitting through a private link (#610)", () => {
 
   it("ignores office-use answers sent by hand", async () => {
     mocks.linkFindUnique.mockResolvedValue(openLink({ template: templateRow("pathfinder_staff_service_information") }));
+    // The row lock re-reads the template at its own (newer) seed version.
+    mocks.templateFindUnique.mockResolvedValue(templateRow("pathfinder_staff_service_information"));
     mocks.organizationFindMany.mockResolvedValue([{ name: "Example Church", normalizedName: "example church" }]);
     const answers = {
-      full_name: "Alex Volunteer", birth_date: "1985-06-15", street: "2 Example Road", city: "Exampleville", state: "MO", zip: "64000",
+      full_name: "Alex Volunteer", birth_date: "1985-06-15", gender: "Male", street: "2 Example Road", city: "Exampleville", state: "MO", zip: "64000",
       email: "alex@example.test", church: "Example Church", club: "Example Church", health_limitation: "No", conduct_accused: "No",
       reference_1_name: "A", reference_1_address: "B", reference_1_phone: "C",
       reference_2_name: "A", reference_2_address: "B", reference_2_phone: "C",

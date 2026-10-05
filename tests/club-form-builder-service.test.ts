@@ -639,3 +639,46 @@ describe("the export formats each row by its own version (#712)", () => {
     expect(csv).toContain("Hike");
   });
 });
+
+describe("the roster setting is saved and published with the form (#721)", () => {
+  const withMapping = (spec: ClubFormDraftSpec, rosterMapping: ClubFormDraftSpec["rosterMapping"]): ClubFormDraftSpec => ({ ...spec, rosterMapping });
+  const safe = { enabled: false, rosterType: "YOUTH" as const, fields: { fullName: "child_name" }, guardians: [] };
+
+  it("stores the mapping on the live template at publish, and keeps it in the draft until then", async () => {
+    const published = await currentSpec();
+    expect(published.rosterMapping).toBeNull();
+    await saveClubFormDraft(slipSeed.key, { draft: withMapping(published, safe), baseVersion: slipSeed.version }, "admin-1", now);
+    expect(state.templates[0].rosterMapping).toBeUndefined();
+    await publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now);
+    expect(state.templates[0].rosterMapping).toEqual(safe);
+    expect((await currentSpec()).rosterMapping).toEqual(safe);
+    // The audit row names the template and version, never the mapping or an answer.
+    expect(JSON.stringify(state.audit)).not.toContain("child_name");
+  });
+
+  it("warns on save and refuses to publish a mapping onto a sensitive field", async () => {
+    const published = await currentSpec();
+    const unsafe = withMapping(published, { ...safe, fields: { fullName: "physician_name" } });
+    const saved = await saveClubFormDraft(slipSeed.key, { draft: unsafe, baseVersion: slipSeed.version }, "admin-1", now);
+    expect(saved.warnings).toEqual(expect.arrayContaining([expect.objectContaining({ key: "rosterMapping" })]));
+    const error = await publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "VALIDATION_FAILED", issues: expect.arrayContaining([expect.objectContaining({ key: "rosterMapping" })]) });
+    expect(state.templates[0].version).toBe(slipSeed.version);
+    expect(state.templates[0].rosterMapping).toBeUndefined();
+  });
+
+  it("refuses to turn the setting on for a form with no birth-date question", async () => {
+    const published = await currentSpec();
+    await saveClubFormDraft(slipSeed.key, { draft: withMapping(published, { ...safe, enabled: true }), baseVersion: slipSeed.version }, "admin-1", now);
+    await expect(publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now)).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
+  });
+
+  it("starts a copy of a form without the setting", async () => {
+    const published = await currentSpec();
+    await saveClubFormDraft(slipSeed.key, { draft: withMapping(published, safe), baseVersion: slipSeed.version }, "admin-1", now);
+    await publishClubFormDraft(slipSeed.key, { baseVersion: slipSeed.version }, "admin-1", now);
+    const copy = await createClubFormTemplate({ name: "Copied slip", copyFromKey: slipSeed.key }, "admin-1", now);
+    const row = state.templates.find((template) => template.key === copy.key)!;
+    expect(row.rosterMapping === undefined || row.rosterMapping === Prisma.DbNull).toBe(true);
+  });
+});
