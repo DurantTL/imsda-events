@@ -1,8 +1,8 @@
 name: Badge print
 
 # Real-browser check of the printable name badge page (#717, #740), split out of
-# ci.yml to save GitHub Actions minutes: it runs only on pull requests that touch
-# badge or print code, and can be started by hand.
+# ci.yml to save GitHub Actions minutes: it runs on pull requests that touch
+# badge or print code (or what that page depends on), weekly, and by hand.
 on:
   pull_request:
     paths:
