@@ -26,8 +26,19 @@ import {
   type InvoiceFigures,
   type InvoiceSnapshot,
   type InvoiceVersionBasis,
+  amountsFingerprintOf,
   type InvoiceVersionStatus,
 } from "@/modules/invoices/domain";
+import {
+  MANUAL_LINES_MAX,
+  fingerprintWithManualLines,
+  manualLinesTotal,
+  normalizeManualLine,
+  parseManualLines,
+  withManualLines,
+  type ManualInvoiceLine,
+  type ManualLineInput,
+} from "@/modules/invoices/manual-lines";
 
 /**
  * Deferred-organization invoices (#167, ADR 0008). Every function takes the event the caller was
@@ -112,7 +123,7 @@ function isDatabaseRefusal(error: unknown) {
 async function requireDeferredEvent(client: Client, eventId: string) {
   const event = await client.event.findUnique({
     where: { id: eventId },
-    select: { id: true, name: true, startsAt: true, timezone: true, billingMode: true, invoiceGrouping: true, invoiceCode: true },
+    select: { id: true, name: true, startsAt: true, timezone: true, billingMode: true, invoiceGrouping: true, invoiceCode: true, invoiceClubType: true },
   });
   if (!event) throw new InvoiceError("That event does not exist.", "EVENT_NOT_FOUND");
   if (event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE") {
@@ -225,6 +236,7 @@ const versionSelect = {
   billableCount: true,
   amountDueCents: true,
   amountsFingerprint: true,
+  manualLines: true,
   revisionReason: true,
   createdAt: true,
   regenerationCount: true,
@@ -258,6 +270,8 @@ export type InvoiceVersionSummary = {
   billableCount: number;
   amountDueCents: number;
   amountsFingerprint: string;
+  /** Staff-added custom lines (#780); included in `amountDueCents`. */
+  manualLines: ManualInvoiceLine[];
   revisionReason: string | null;
   createdAt: string;
   createdByName: string | null;
@@ -287,6 +301,7 @@ function toSummary(row: VersionRow): InvoiceVersionSummary {
     billableCount: row.billableCount,
     amountDueCents: row.amountDueCents,
     amountsFingerprint: row.amountsFingerprint,
+    manualLines: parseManualLines(row.manualLines),
     revisionReason: row.revisionReason,
     createdAt: row.createdAt.toISOString(),
     createdByName: row.createdBy?.displayName ?? null,
@@ -299,7 +314,9 @@ function toSummary(row: VersionRow): InvoiceVersionSummary {
   };
 }
 
-function figureColumns(figures: InvoiceFigures, contact: InvoiceContact | null) {
+/** The columns of a version made from the figures; the draft's manual lines (#780) are folded into the total and the fingerprint. */
+function figureColumns(baseFigures: InvoiceFigures, contact: InvoiceContact | null, manualLines: readonly ManualInvoiceLine[] = []) {
+  const figures = withManualLines(baseFigures, manualLines);
   return {
     groupTitle: figures.groupTitle,
     organizationName: figures.organizationName,
@@ -368,6 +385,31 @@ export async function setEventInvoiceCode(input: { eventId: string; code: string
   }
 }
 
+export const CLUB_TYPE_MAX = 40;
+
+/** The heading the invoice PDF groups registration lines under (for example "Pathfinders"). Blank prints "Registrations". A PDF already made keeps its heading. */
+export async function setEventInvoiceClubType(input: { eventId: string; clubType: string | null; actorUserId: string }) {
+  const clubType = (input.clubType ?? "").replace(/\s+/g, " ").trim();
+  if (clubType.length > CLUB_TYPE_MAX) throw new InvoiceError(`Keep the club type to ${CLUB_TYPE_MAX} characters or fewer.`, "INVALID_INPUT");
+  const value = clubType === "" ? null : clubType;
+  const prisma = getPrisma();
+  return prisma.$transaction(async (tx) => {
+    const event = await requireDeferredEvent(tx, input.eventId);
+    if ((event.invoiceClubType ?? null) === value) return { changed: false as const, clubType: value };
+    await tx.event.update({ where: { id: input.eventId }, data: { invoiceClubType: value } });
+    await writeAuditLog({
+      eventId: input.eventId,
+      actorUserId: input.actorUserId,
+      action: "INVOICE_CLUB_TYPE_SET",
+      entityType: "Event",
+      entityId: input.eventId,
+      summary: value ? "Set the club type printed on invoice PDFs." : "Cleared the club type printed on invoice PDFs.",
+      metadata: { eventId: input.eventId, before: event.invoiceClubType, after: value },
+    }, tx);
+    return { changed: true as const, clubType: value };
+  });
+}
+
 // ---------------------------------------------------------------------------------------------
 // Drafts
 // ---------------------------------------------------------------------------------------------
@@ -383,7 +425,7 @@ const invoiceWithVersionsSelect = {
   versions: {
     where: { status: { not: "DISCARDED" } },
     orderBy: { revision: "desc" },
-    select: { id: true, revision: true, status: true, basis: true, reconciliationVersionId: true, amountsFingerprint: true, contactName: true, contactEmail: true, supersedesVersionId: true },
+    select: { id: true, revision: true, status: true, basis: true, reconciliationVersionId: true, amountsFingerprint: true, manualLines: true, contactName: true, contactEmail: true, supersedesVersionId: true },
   },
 } satisfies Prisma.InvoiceSelect;
 
@@ -459,20 +501,21 @@ export async function createInvoiceDrafts(input: { eventId: string; actorUserId:
             run.unchanged += 1;
             continue;
           }
-          const same = !regrouped && latest.reconciliationVersionId === basis.approved.id && latest.amountsFingerprint === figures.amountsFingerprint && contactsMatch(latest, contact);
+          const manualLines = parseManualLines(latest.manualLines);
+          const same = !regrouped && latest.reconciliationVersionId === basis.approved.id && latest.amountsFingerprint === fingerprintWithManualLines(figures.amountsFingerprint, manualLines) && contactsMatch(latest, contact);
           if (same) {
             run.unchanged += 1;
             continue;
           }
           await tx.invoiceVersion.update({
             where: { id: latest.id },
-            data: { reconciliationVersionId: basis.approved.id, regenerationCount: { increment: 1 }, regeneratedAt: new Date(), ...figureColumns(figures, contact) },
+            data: { reconciliationVersionId: basis.approved.id, regenerationCount: { increment: 1 }, regeneratedAt: new Date(), ...figureColumns(figures, contact, manualLines) },
           });
           run.regenerated += 1;
           continue;
         }
         run.finalized += 1;
-        if (latest.amountsFingerprint !== figures.amountsFingerprint) run.needRevision += 1;
+        if (latest.amountsFingerprint !== fingerprintWithManualLines(figures.amountsFingerprint, parseManualLines(latest.manualLines))) run.needRevision += 1;
       }
       await writeAuditLog({
         eventId: input.eventId,
@@ -549,7 +592,7 @@ export async function regenerateInvoiceDraft(input: { eventId: string; invoiceId
         }
         await tx.invoiceVersion.update({
           where: { id: draft.id },
-          data: { reconciliationVersionId: basis.approved.id, regenerationCount: { increment: 1 }, regeneratedAt: new Date(), ...figureColumns(figures, contact) },
+          data: { reconciliationVersionId: basis.approved.id, regenerationCount: { increment: 1 }, regeneratedAt: new Date(), ...figureColumns(figures, contact, parseManualLines(draft.manualLines)) },
         });
       }
       await writeAuditLog({
@@ -623,7 +666,7 @@ export async function reviseInvoice(input: { eventId: string; invoiceId: string;
       if (latest.status !== "FINALIZED") throw new InvoiceError("Only a finalized invoice can be revised.", "NOT_FINALIZED");
       const prior = await tx.invoiceVersion.findUniqueOrThrow({
         where: { id: latest.id },
-        select: { id: true, snapshot: true, groupTitle: true, organizationName: true, registeredCount: true, billableCount: true, amountDueCents: true, amountsFingerprint: true, reconciliationVersionId: true, contactName: true, contactEmail: true, revision: true },
+        select: { id: true, snapshot: true, manualLines: true, groupTitle: true, organizationName: true, registeredCount: true, billableCount: true, amountDueCents: true, amountsFingerprint: true, reconciliationVersionId: true, contactName: true, contactEmail: true, revision: true },
       });
       let data: Prisma.InvoiceVersionUncheckedCreateInput;
       if (input.mode === "CONTACT_ONLY") {
@@ -651,6 +694,7 @@ export async function reviseInvoice(input: { eventId: string; invoiceId: string;
           amountDueCents: prior.amountDueCents,
           amountsFingerprint: prior.amountsFingerprint,
           snapshot: prior.snapshot as Prisma.InputJsonValue,
+          manualLines: prior.manualLines as Prisma.InputJsonValue,
         };
       } else {
         const basis = await loadApprovedBasis(tx, input.eventId);
@@ -667,7 +711,9 @@ export async function reviseInvoice(input: { eventId: string; invoiceId: string;
           figures = emptyFigures(basis, invoice, prior.groupTitle, prior.organizationName);
           contact = contactOfGroup(contactGroup);
         }
-        if (figures.amountsFingerprint === prior.amountsFingerprint && contactsMatch(prior, contact)) {
+        // A revision carries the finalized version's manual lines forward; staff can then change them on the draft.
+        const manualLines = parseManualLines(prior.manualLines);
+        if (withManualLines(figures, manualLines).amountsFingerprint === prior.amountsFingerprint && contactsMatch(prior, contact)) {
           throw new InvoiceError("Nothing has changed since this version was finalized: the amounts and the contact are the same.", "NO_CHANGE");
         }
         data = {
@@ -679,7 +725,8 @@ export async function reviseInvoice(input: { eventId: string; invoiceId: string;
           reconciliationVersionId: basis.approved.id,
           createdByUserId: input.actorUserId,
           revisionReason: reason,
-          ...figureColumns(figures, contact),
+          manualLines: manualLines as unknown as Prisma.InputJsonValue,
+          ...figureColumns(figures, contact, manualLines),
         };
       }
       const created = await tx.invoiceVersion.create({ data, select: { id: true, revision: true } });
@@ -765,7 +812,7 @@ export async function finalizeInvoiceVersion(input: {
       const version = await tx.invoiceVersion.findFirst({
         where: { id: input.versionId, eventId: input.eventId },
         select: {
-          id: true, invoiceId: true, revision: true, status: true, basis: true, supersedesVersionId: true, reconciliationVersionId: true, amountsFingerprint: true, amountDueCents: true,
+          id: true, invoiceId: true, revision: true, status: true, basis: true, supersedesVersionId: true, reconciliationVersionId: true, amountsFingerprint: true, amountDueCents: true, manualLines: true,
           contactName: true, contactEmail: true, snapshot: true, groupTitle: true, organizationName: true,
           invoice: { select: { id: true, groupKey: true, partyKind: true, partyId: true, clubId: true, baseNumber: true, invoiceGrouping: true } },
         },
@@ -813,7 +860,7 @@ export async function finalizeInvoiceVersion(input: {
         const rebuilt = group
           ? figuresFor(basis, group, contactGroup).figures
           : version.revision > 0 ? emptyFigures(basis, invoice, version.groupTitle, version.organizationName) : null;
-        if (!rebuilt || rebuilt.amountsFingerprint !== version.amountsFingerprint) {
+        if (!rebuilt || fingerprintWithManualLines(rebuilt.amountsFingerprint, parseManualLines(version.manualLines)) !== version.amountsFingerprint) {
           throw new InvoiceError("The approved reconciliation no longer matches this draft. Regenerate the draft first.", "DRAFT_STALE");
         }
         billing = basis.billing;
@@ -885,6 +932,90 @@ export async function finalizeInvoiceVersion(input: {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Manual lines (#780)
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Loads the invoice's open draft for a manual-line change under the event and invoice locks, and refuses anyone without
+ * Finalize invoices (the same permission as finalizing: a line changes what is owed). Only a draft built from the
+ * reconciliation takes manual lines; a contact-only copy of a finalized version changes nothing about amounts.
+ */
+async function loadDraftForManualLines(tx: Prisma.TransactionClient, input: { eventId: string; invoiceId: string; canFinalizeInvoices: boolean }) {
+  if (!input.canFinalizeInvoices) {
+    throw new InvoiceError("Adding or removing a manual invoice line needs the Finalize invoices permission.", "FINALIZE_PERMISSION_REQUIRED");
+  }
+  await lockReconciliationEvent(tx, input.eventId);
+  await requireDeferredEvent(tx, input.eventId);
+  await tx.$queryRaw`SELECT "id" FROM "Invoice" WHERE "id" = ${input.invoiceId} FOR UPDATE`;
+  const invoice = await requireInvoice(tx, input.eventId, input.invoiceId);
+  const latest = invoice.versions[0];
+  if (!latest || latest.status !== "DRAFT") {
+    throw new InvoiceError("Manual lines can be changed only on a draft. Revise a finalized invoice to start a new draft.", "NOT_A_DRAFT");
+  }
+  if (latest.basis !== "RECONCILIATION") {
+    throw new InvoiceError("This draft only refreshes the billing contact of a finalized invoice. Start a revision from the reconciliation to add lines.", "NOT_A_DRAFT");
+  }
+  const draft = await tx.invoiceVersion.findUniqueOrThrow({ where: { id: latest.id }, select: { id: true, revision: true, snapshot: true, manualLines: true } });
+  return { invoice, draft, snapshot: draft.snapshot as unknown as InvoiceSnapshot, lines: parseManualLines(draft.manualLines) };
+}
+
+/** Stores the new lines with the totals that include them; nothing else about the draft changes (the database enforces it). */
+async function saveManualLines(tx: Prisma.TransactionClient, draftId: string, snapshot: InvoiceSnapshot, lines: ManualInvoiceLine[]) {
+  const amountDueCents = snapshot.totals.amountDueCents + manualLinesTotal(lines);
+  if (amountDueCents < 0) throw new InvoiceError("The lines would bring the invoice below $0.", "INVALID_INPUT");
+  // The reconciliation figures' fingerprint is recomputed from the snapshot itself, so it never depends on the previous lines.
+  const base = amountsFingerprintOf(snapshot.lines, snapshot.totals.amountDueCents);
+  await tx.invoiceVersion.update({
+    where: { id: draftId },
+    data: { manualLines: lines as unknown as Prisma.InputJsonValue, amountDueCents, amountsFingerprint: fingerprintWithManualLines(base, lines) },
+  });
+  return amountDueCents;
+}
+
+/** Adds a custom line (item, description, quantity, rate) to an invoice's open draft. Needs Finalize invoices. */
+export async function addManualInvoiceLine(input: { eventId: string; invoiceId: string; line: ManualLineInput; actorUserId: string; canFinalizeInvoices: boolean }) {
+  const prisma = getPrisma();
+  return prisma.$transaction(async (tx) => {
+    const { draft, snapshot, lines } = await loadDraftForManualLines(tx, input);
+    if (lines.length >= MANUAL_LINES_MAX) throw new InvoiceError(`An invoice can carry at most ${MANUAL_LINES_MAX} manual lines.`, "INVALID_INPUT");
+    const normalized = normalizeManualLine(input.line, randomUUID());
+    if (!normalized.ok) throw new InvoiceError(normalized.message, "INVALID_INPUT");
+    const amountDueCents = await saveManualLines(tx, draft.id, snapshot, [...lines, normalized.line]);
+    await writeAuditLog({
+      eventId: input.eventId,
+      actorUserId: input.actorUserId,
+      action: "INVOICE_MANUAL_LINE_ADDED",
+      entityType: "InvoiceVersion",
+      entityId: draft.id,
+      summary: "Added a manual line to an invoice draft.",
+      metadata: { eventId: input.eventId, invoiceId: input.invoiceId, versionId: draft.id, lineId: normalized.line.id, quantity: normalized.line.quantity, rateCents: normalized.line.rateCents, amountCents: normalized.line.amountCents },
+    }, tx);
+    return { versionId: draft.id, invoiceId: input.invoiceId, lineId: normalized.line.id, amountDueCents };
+  }, LONG_TRANSACTION);
+}
+
+/** Removes one manual line from an invoice's open draft. Needs Finalize invoices. */
+export async function removeManualInvoiceLine(input: { eventId: string; invoiceId: string; lineId: string; actorUserId: string; canFinalizeInvoices: boolean }) {
+  const prisma = getPrisma();
+  return prisma.$transaction(async (tx) => {
+    const { draft, snapshot, lines } = await loadDraftForManualLines(tx, input);
+    const removed = lines.find((line) => line.id === input.lineId);
+    if (!removed) throw new InvoiceError("That manual line is no longer on this draft.", "NO_CHANGE");
+    const amountDueCents = await saveManualLines(tx, draft.id, snapshot, lines.filter((line) => line.id !== input.lineId));
+    await writeAuditLog({
+      eventId: input.eventId,
+      actorUserId: input.actorUserId,
+      action: "INVOICE_MANUAL_LINE_REMOVED",
+      entityType: "InvoiceVersion",
+      entityId: draft.id,
+      summary: "Removed a manual line from an invoice draft.",
+      metadata: { eventId: input.eventId, invoiceId: input.invoiceId, versionId: draft.id, lineId: removed.id, amountCents: removed.amountCents },
+    }, tx);
+    return { versionId: draft.id, invoiceId: input.invoiceId, lineId: removed.id, amountDueCents };
+  }, LONG_TRANSACTION);
+}
+
+// ---------------------------------------------------------------------------------------------
 // Screens
 // ---------------------------------------------------------------------------------------------
 
@@ -915,6 +1046,8 @@ export type InvoicesView =
       eventName: string;
       invoiceGrouping: "PER_CHURCH" | "PER_CLUB";
       code: { effective: string; explicit: string | null; locked: boolean; year: number };
+      /** The heading the invoice PDF groups registration lines under (#780). */
+      clubType: string | null;
       approved: { id: string; versionNumber: number; billableCents: number; approvedAt: string | null; freshness: "CURRENT" | "FACTS_CHANGED" | "UNKNOWN" | "SUPERSEDED" } | null;
       blockers: ResponsibilityBlocker[];
       invoices: InvoiceListRow[];
@@ -929,7 +1062,7 @@ export async function getInvoicesView(eventId: string): Promise<InvoicesView> {
   const prisma = getPrisma();
   const event = await prisma.event.findUnique({
     where: { id: eventId },
-    select: { id: true, name: true, startsAt: true, timezone: true, billingMode: true, invoiceGrouping: true, invoiceCode: true },
+    select: { id: true, name: true, startsAt: true, timezone: true, billingMode: true, invoiceGrouping: true, invoiceCode: true, invoiceClubType: true },
   });
   if (!event) throw new InvoiceError("That event does not exist.", "EVENT_NOT_FOUND");
   if (event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE") return { isDeferred: false };
@@ -960,7 +1093,9 @@ export async function getInvoicesView(eventId: string): Promise<InvoicesView> {
             reconciliation: { versionId: approvedRow.id, versionNumber: approvedRow.versionNumber, ruleVersion: approvedRow.ruleVersion }, group,
           })
         : null;
-      amountsOutOfDate = figures ? figures.amountsFingerprint !== finalized.amountsFingerprint : finalized.amountDueCents > 0 || finalized.billableCount > 0;
+      amountsOutOfDate = figures
+        ? fingerprintWithManualLines(figures.amountsFingerprint, finalized.manualLines) !== finalized.amountsFingerprint
+        : finalized.amountDueCents - manualLinesTotal(finalized.manualLines) > 0 || finalized.billableCount > 0;
     }
     return {
       invoiceId: invoice.id,
@@ -997,6 +1132,7 @@ export async function getInvoicesView(eventId: string): Promise<InvoicesView> {
       locked: (await prisma.invoiceNumberCounter.count({ where: { eventId } })) > 0,
       year: eventInvoiceYear(event.startsAt, event.timezone),
     },
+    clubType: event.invoiceClubType,
     approved: approvedRow
       ? { id: approvedRow.id, versionNumber: approvedRow.versionNumber, billableCents: approvedRow.billableCents, approvedAt: approvedRow.approvedAt?.toISOString() ?? null, freshness: versionFreshness(approvedRow, facts.fingerprint) }
       : null,
@@ -1094,9 +1230,9 @@ export async function getInvoiceDetail(eventId: string, invoiceId: string, optio
           party: { kind: group.partyKind === "PERSON" ? "PERSON" : "ORGANIZATION", id: group.partyId, name: group.partyName }, clubId: group.clubId,
           reconciliation: { versionId: approvedRow.id, versionNumber: approvedRow.versionNumber, ruleVersion: approvedRow.ruleVersion }, group,
         });
-        amountsOutOfDate = figures.amountsFingerprint !== liveFinalized.amountsFingerprint;
+        amountsOutOfDate = fingerprintWithManualLines(figures.amountsFingerprint, liveFinalized.manualLines) !== liveFinalized.amountsFingerprint;
       } else if (liveFinalized && !group) {
-        amountsOutOfDate = liveFinalized.amountDueCents > 0;
+        amountsOutOfDate = liveFinalized.amountDueCents - manualLinesTotal(liveFinalized.manualLines) > 0;
       }
     }
   }

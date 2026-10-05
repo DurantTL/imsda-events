@@ -37,6 +37,8 @@ import { prepareReconciliation, approveReconciliation, recordAttendanceCorrectio
 import { resolveEventBillingResponsibility } from "@/modules/billing-responsibility/repository";
 import {
   InvoiceError,
+  addManualInvoiceLine,
+  removeManualInvoiceLine,
   createInvoiceDrafts,
   discardInvoiceDraft,
   finalizeInvoiceVersion,
@@ -298,6 +300,29 @@ async function main() {
   assert(code(await failure(finalize(ids.eventB, d1.id, key("x")))) === "VERSION_NOT_FOUND", "another event's version is refused");
   assert((await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: d1.id } })).status === "DRAFT" && (await prisma.invoiceNumberCounter.count({ where: { eventId: ids.eventA } })) === 0, "refused finalizations change nothing and use no number");
 
+  // Manual lines (#780): staff with Finalize invoices add and remove lines on a draft; they count in the total and the fingerprint.
+  const patch = { item: "Patch order", description: "Synthetic patches", quantity: 10, rateCents: 450 };
+  assert(code(await failure(addManualInvoiceLine({ eventId: ids.eventA, invoiceId: inv1.id, line: patch, actorUserId: ids.staff, canFinalizeInvoices: false }))) === "FINALIZE_PERMISSION_REQUIRED", "a manual line needs the Finalize invoices permission");
+  assert(code(await failure(addManualInvoiceLine({ eventId: ids.eventB, invoiceId: inv1.id, line: patch, actorUserId: ids.treasurer, canFinalizeInvoices: true }))) === "INVOICE_NOT_FOUND", "a manual line cannot be added through another event");
+  const beforeLine = await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: d1.id } });
+  const added = await addManualInvoiceLine({ eventId: ids.eventA, invoiceId: inv1.id, line: patch, actorUserId: ids.treasurer, canFinalizeInvoices: true });
+  const withLine = await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: d1.id } });
+  assert(withLine.amountDueCents === beforeLine.amountDueCents + 4500 && withLine.amountsFingerprint !== beforeLine.amountsFingerprint && withLine.regenerationCount === beforeLine.regenerationCount, "a manual line is in the total and the fingerprint, and is not a regeneration");
+  assert((await prisma.auditLog.count({ where: { eventId: ids.eventA, action: "INVOICE_MANUAL_LINE_ADDED", entityId: d1.id } })) === 1, "adding a manual line is audited");
+  // Regenerating the draft keeps the lines and keeps them in the total.
+  await regenerateInvoiceDraft({ eventId: ids.eventA, invoiceId: inv1.id, actorUserId: ids.staff });
+  const regeneratedWithLine = await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: d1.id } });
+  assert(regeneratedWithLine.amountDueCents === withLine.amountDueCents && regeneratedWithLine.amountsFingerprint === withLine.amountsFingerprint && Array.isArray(regeneratedWithLine.manualLines) && regeneratedWithLine.manualLines.length === 1, "regenerating a draft keeps its manual lines");
+  assert((await createInvoiceDrafts({ eventId: ids.eventA, actorUserId: ids.staff })).regenerated === 0, "creating drafts again leaves a draft with manual lines unchanged");
+  // The database lets a draft's lines change on their own, and nothing else without a regeneration.
+  assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { manualLines: [], amountDueCents: 1 } })) === false, "a draft's lines and totals can change together");
+  await prisma.invoiceVersion.update({ where: { id: d1.id }, data: { manualLines: withLine.manualLines as never, amountDueCents: withLine.amountDueCents, amountsFingerprint: withLine.amountsFingerprint } });
+  assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { manualLines: [], contactEmail: "other@contact.test" } })), "a draft's lines cannot change together with anything else");
+  assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { snapshot: {} } })), "a draft's snapshot still changes only by regeneration");
+  await removeManualInvoiceLine({ eventId: ids.eventA, invoiceId: inv1.id, lineId: added.lineId, actorUserId: ids.treasurer, canFinalizeInvoices: true });
+  const afterRemoval = await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: d1.id } });
+  assert(afterRemoval.amountDueCents === beforeLine.amountDueCents && afterRemoval.amountsFingerprint === beforeLine.amountsFingerprint, "removing the line restores the total and the fingerprint");
+
   // Parallel finalization: both groups at once, church 1 five times with different keys.
   const k1 = Array.from({ length: 5 }, (_, index) => key(`k1-${index}`));
   const k2 = key("k2");
@@ -332,6 +357,9 @@ async function main() {
   // Finalized versions are immutable; numbers and counters cannot be rewritten.
   assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { amountDueCents: 1 } })), "a finalized amount cannot be rewritten");
   assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { snapshot: {} } })), "a finalized snapshot cannot be rewritten");
+  assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { manualLines: [{ id: "x", item: "x", description: "", quantity: 1, rateCents: 1, amountCents: 1 }], amountDueCents: 12501 } })), "a finalized version's manual lines cannot be rewritten");
+  assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { manualLines: [] } })), "a finalized version's manual lines cannot be cleared");
+  assert(code(await failure(addManualInvoiceLine({ eventId: ids.eventA, invoiceId: inv1.id, line: patch, actorUserId: ids.treasurer, canFinalizeInvoices: true }))) === "NOT_A_DRAFT", "a manual line cannot be added once the invoice is finalized");
   assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { contactEmail: "other@contact.test" } })), "a finalized contact cannot be rewritten");
   assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { number: `${CODE_A}27-0099` } })), "a finalized number cannot be changed");
   assert(await rejects(prisma.invoiceVersion.update({ where: { id: d1.id }, data: { status: "DRAFT", number: null, finalizedAt: null, finalizedByName: null, finalizeIdempotencyKey: null } })), "a finalized version cannot be reopened");

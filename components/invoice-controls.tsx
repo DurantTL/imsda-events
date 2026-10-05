@@ -199,6 +199,93 @@ export function FinalizeControl({
   );
 }
 
+export function InvoiceClubTypeForm({ eventId, clubType }: { eventId: string; clubType: string | null }) {
+  const [text, setText] = useState(clubType ?? "");
+  const { busy, error, notice, run } = useAction(eventId);
+  return (
+    <form
+      className="billing-link-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void run({ action: "set-club-type", clubType: text.trim() === "" ? null : text }, () => "Saved.");
+      }}
+    >
+      <label>
+        Club type on invoice PDFs
+        <input disabled={busy} maxLength={40} onChange={(event) => setText(event.target.value)} placeholder="Pathfinders" value={text} />
+      </label>
+      <small>The heading the registration lines are grouped under. Leave it blank to print “Registrations”. A PDF that was already made keeps its heading.</small>
+      <span className="billing-inline-action">
+        <button className="secondary-button" disabled={busy} type="submit">{busy ? "Saving…" : "Save club type"}</button>
+        {notice && <small role="status">{notice}</small>}
+      </span>
+      {error && <small className="form-error" role="alert">{error}</small>}
+    </form>
+  );
+}
+
+/** Staff's custom lines on a draft (patch orders and the like). The server needs Finalize invoices for the event on every change. */
+export function ManualLinesPanel({
+  eventId,
+  invoiceId,
+  lines,
+  canEdit,
+  money,
+}: {
+  eventId: string;
+  invoiceId: string;
+  lines: Array<{ id: string; item: string; description: string; quantity: number; rateCents: number; amountCents: number }>;
+  canEdit: boolean;
+  money: (cents: number) => string;
+}) {
+  const { busy, error, run } = useAction(eventId);
+  const [item, setItem] = useState("");
+  const [description, setDescription] = useState("");
+  const [quantity, setQuantity] = useState("1");
+  const [rate, setRate] = useState("");
+  return (
+    <section className="panel billing-settings" aria-label="Manual lines">
+      <div className="section-heading"><h3>Manual lines</h3></div>
+      {lines.length === 0 && <p><small>No manual lines. Patch orders and other custom charges are added here before the invoice is finalized.</small></p>}
+      {lines.map((line) => (
+        <p className="billing-inline-action" key={line.id}>
+          <span>{line.item}{line.description ? ` · ${line.description}` : ""} · {line.quantity} × {money(line.rateCents)} = <strong>{money(line.amountCents)}</strong></span>
+          {canEdit && (
+            <button className="secondary-button" disabled={busy} onClick={() => void run({ action: "remove-manual-line", invoiceId, lineId: line.id })} type="button">Remove</button>
+          )}
+        </p>
+      ))}
+      {canEdit ? (
+        <form
+          className="billing-link-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void run({ action: "add-manual-line", invoiceId, item, description: description.trim() === "" ? null : description, quantity: Number(quantity), rate }).then((ok) => {
+              if (ok) {
+                setItem("");
+                setDescription("");
+                setQuantity("1");
+                setRate("");
+              }
+            });
+          }}
+        >
+          <label>Item<input maxLength={60} onChange={(event) => setItem(event.target.value)} required value={item} /></label>
+          <label>Description<input maxLength={200} onChange={(event) => setDescription(event.target.value)} value={description} /></label>
+          <label>Quantity<input inputMode="numeric" max={9999} min={1} onChange={(event) => setQuantity(event.target.value)} required type="number" value={quantity} /></label>
+          <label>Rate (dollars)<input inputMode="decimal" onChange={(event) => setRate(event.target.value)} placeholder="4.50" required value={rate} /></label>
+          <span className="billing-inline-action">
+            <button className="secondary-button" disabled={busy} type="submit">{busy ? "Adding…" : "Add line"}</button>
+          </span>
+        </form>
+      ) : (
+        <p><small>Only people with permission to finalize invoices can add or remove manual lines.</small></p>
+      )}
+      {error && <small className="form-error" role="alert">{error}</small>}
+    </section>
+  );
+}
+
 export function InvoiceCodeForm({ eventId, explicit, effective, locked, year }: { eventId: string; explicit: string | null; effective: string; locked: boolean; year: number }) {
   const [code, setCode] = useState(explicit ?? "");
   const { busy, error, notice, run } = useAction(eventId);

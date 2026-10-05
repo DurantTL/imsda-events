@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
  */
 import { reconcileEvent, type GroupSource, type PersonSource, type RegistrationSource } from "@/modules/attendance-reconciliation/domain";
 import { buildInvoiceFigures } from "@/modules/invoices/domain";
+import { buildInvoiceLayout, resolveInvoiceHeader } from "@/modules/invoices/invoice-layout";
 import { renderInvoicePdf, type InvoicePdfInput } from "@/modules/invoices/invoice-pdf";
 
 const person = (id: string, checkedIn: boolean): PersonSource => ({
@@ -34,8 +35,24 @@ function snapshotFor(registrations: RegistrationSource[]) {
   }).snapshot;
 }
 
-const baseInput = (overrides: Partial<InvoicePdfInput> = {}): InvoicePdfInput => ({
-  headerName: "Iowa-Missouri Conference",
+const header = resolveInvoiceHeader({
+  organizationName: "Synthetic Conference",
+  invoiceHeaderDepartment: "Synthetic Youth Department",
+  invoiceHeaderOrganization: "Synthetic Test Conference",
+  invoiceHeaderAddress: "100 Example Road\nSampletown, ZZ 00000",
+  invoiceHeaderPhone: "555-0100",
+});
+
+const baseInput = (overrides: Partial<InvoicePdfInput> = {}): InvoicePdfInput => {
+  const input = baseInputWithoutLayout(overrides);
+  const layout = overrides.layout ?? buildInvoiceLayout({ snapshot: input.snapshot, manualLines: [], clubType: "Pathfinders", paymentsCreditsCents: 0 });
+  return { ...input, layout };
+};
+
+const baseInputWithoutLayout = (overrides: Partial<InvoicePdfInput> = {}): InvoicePdfInput => ({
+  header,
+  billToAddressLines: ["200 Sample Street", "Exampleville, ZZ 11111"],
+  layout: undefined as never,
   number: "SC27-0001",
   issuedAt: new Date("2027-04-12T15:30:00Z"),
   timezone: "America/Chicago",
@@ -47,9 +64,11 @@ const baseInput = (overrides: Partial<InvoicePdfInput> = {}): InvoicePdfInput =>
     registration("r1", "Eagles", [person("a", true), person("b", true), person("c", false)], { credits: [{ key: "meals", label: "Meal sponsorship", centsPerUnit: -500, rawUnits: 2, capAtHeadcount: false, recordedCents: -1000 }] }),
     registration("r2", "Hawks", [person("d", true)]),
   ]),
-  paymentInstructions: "Please remit by check to the Iowa-Missouri Conference.",
+  paymentInstructions: "Please remit by check to the Synthetic Conference.",
   ...overrides,
 });
+
+const withSnapshot = (snapshot: ReturnType<typeof snapshotFor>) => baseInput({ snapshot, layout: buildInvoiceLayout({ snapshot, manualLines: [], clubType: "Pathfinders", paymentsCreditsCents: 0 }) });
 
 /** Every shown string in every page's content stream (pdf-lib writes them as hex or literal strings). */
 async function pdfText(bytes: Uint8Array) {
@@ -93,12 +112,15 @@ describe("invoice PDF (#168)", () => {
   it("shows the header, number, issue date, event, billed-to church, snapshot contact, lines, total and payment text", async () => {
     const { text } = await pdfText(await renderInvoicePdf(baseInput()));
     for (const expected of [
-      "Iowa-Missouri Conference", "SC27-0001", "April 12, 2027", "Spring Camporee 2027", "Church One", "Tess Treasurer, Treasurer", "tess@church-one.test",
-      "Eagles", "Hawks", "Line 1", "Total due", "Please remit by check to the Iowa-Missouri Conference.",
+      "Synthetic Youth Department", "Synthetic Test Conference", "100 Example Road", "Sampletown, ZZ 00000", "555-0100",
+      "BILL TO", "Church One", "200 Sample Street", "Exampleville, ZZ 11111", "Attn: Tess Treasurer, Treasurer", "tess@church-one.test",
+      "SC27-0001", "April 12, 2027", "Spring Camporee 2027",
+      "Item", "Description", "Qty", "Rate", "Amount", "Pathfinders", "Eagles", "Hawks", "Attended", "Total", "Payments/Credits", "Balance Due",
+      "Please remit by check to the Synthetic Conference.",
     ]) {
       expect(text).toContain(expected);
     }
-    expect(text).toContain("Credit: Meal sponsorship (2)");
+    expect(text).toContain("Credit: Meal sponsorship");
     expect(text).not.toContain("Supersedes");
   });
 
@@ -124,7 +146,7 @@ describe("invoice PDF (#168)", () => {
 
   it("flows a long invoice onto more pages with a footer on each", async () => {
     const many = Array.from({ length: 45 }, (_, index) => registration(`m${index}`, `Club ${index}`, [person(`p${index}`, true)]));
-    const { pages, text } = await pdfText(await renderInvoicePdf(baseInput({ snapshot: snapshotFor(many) })));
+    const { pages, text } = await pdfText(await renderInvoicePdf(withSnapshot(snapshotFor(many))));
     expect(pages).toBeGreaterThan(1);
     expect(text).toContain(`Page 1 of ${pages}`);
     expect(text).toContain(`Page ${pages} of ${pages}`);
@@ -135,16 +157,32 @@ describe("invoice PDF (#168)", () => {
     const { text } = await pdfText(await renderInvoicePdf(input));
     for (const line of input.snapshot.lines) expect(text).not.toContain(line.confirmationCode);
     expect(text).not.toMatch(/Confirmation/);
-    expect(text).toContain("Line 2");
+  });
+
+  it("prints the club-type heading, the manual lines, the payments and the balance from the layout", async () => {
+    const snapshot = baseInput().snapshot;
+    const layout = buildInvoiceLayout({
+      snapshot,
+      manualLines: [{ id: "m1", item: "Patch order", description: "Camporee patches", quantity: 12, rateCents: 450, amountCents: 5400 }],
+      clubType: "Pathfinders",
+      paymentsCreditsCents: 2000,
+    });
+    const { text } = await pdfText(await renderInvoicePdf(baseInput({ layout })));
+    expect(text).toContain("Patch order");
+    expect(text).toContain("Camporee patches");
+    expect(text).toContain("$54.00");
+    expect(text).toContain("-$20.00");
+    expect(text).toContain(`$${((layout.totalCents - 2000) / 100).toFixed(2)}`);
   });
 
   it("keeps each extra line's label and amount on the same page when the extras run across a page break", async () => {
     const credit = (index: number) => ({ key: `c${index}`, label: `Meal credit ${index}`, centsPerUnit: -100, rawUnits: 1, capAtHeadcount: false, recordedCents: -100 });
     const many = Array.from({ length: 14 }, (_, index) => registration(`x${index}`, `Club ${index}`, [person(`q${index}`, true), person(`z${index}`, true)], { credits: [credit(1), credit(2), credit(3), credit(4)] }));
-    const { perPage } = await pdfText(await renderInvoicePdf(baseInput({ snapshot: snapshotFor(many) })));
+    const { perPage } = await pdfText(await renderInvoicePdf(withSnapshot(snapshotFor(many))));
     expect(perPage.length).toBeGreaterThan(1);
     for (const page of perPage) {
-      expect(page.filter((entry) => entry.startsWith("Credit:")).length).toBe(page.filter((entry) => /^-\$\d/.test(entry)).length);
+      // Each credit row prints its rate and its amount, both negative, and a row is never split across pages.
+      expect(page.filter((entry) => entry.startsWith("Credit:")).length * 2).toBe(page.filter((entry) => /^-\$\d/.test(entry)).length);
     }
   });
 
@@ -157,7 +195,7 @@ describe("invoice PDF (#168)", () => {
 
   it("prints a promo discount without the (possibly private) promo code", async () => {
     const withPromo = registration("pr", "Eagles", [person("a", true), person("b", true)], { promo: { code: "SECRETCODE25", type: "FIXED_CENTS", value: 500, maximumDiscountCents: null, recordedCents: 500 } });
-    const { text } = await pdfText(await renderInvoicePdf(baseInput({ snapshot: snapshotFor([withPromo]) })));
+    const { text } = await pdfText(await renderInvoicePdf(withSnapshot(snapshotFor([withPromo]))));
     expect(text).toContain("Promo discount");
     expect(text).not.toContain("SECRETCODE25");
   });

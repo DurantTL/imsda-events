@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Building2, KeyRound, Mail, Save } from "lucide-react";
+import { Building2, FileText, KeyRound, Mail, Save } from "lucide-react";
 import type { PlatformSettingsRecord } from "@/modules/system-admin/platform-settings";
 
 type Draft = {
@@ -16,6 +16,10 @@ type Draft = {
   defaultAttendeeEditPolicy: "TIERED" | "VERIFY_EVERY_EDIT";
   passkeyRpId: string;
   securityAlertEmail: string;
+  invoiceHeaderDepartment: string;
+  invoiceHeaderOrganization: string;
+  invoiceHeaderAddress: string;
+  invoiceHeaderPhone: string;
 };
 
 function draftFrom(settings: PlatformSettingsRecord): Draft {
@@ -31,6 +35,10 @@ function draftFrom(settings: PlatformSettingsRecord): Draft {
     defaultAttendeeEditPolicy: settings.defaultAttendeeEditPolicy,
     passkeyRpId: settings.passkeyRpId ?? "",
     securityAlertEmail: settings.securityAlertEmail ?? "",
+    invoiceHeaderDepartment: settings.invoiceHeaderDepartment ?? "",
+    invoiceHeaderOrganization: settings.invoiceHeaderOrganization ?? "",
+    invoiceHeaderAddress: settings.invoiceHeaderAddress ?? "",
+    invoiceHeaderPhone: settings.invoiceHeaderPhone ?? "",
   };
 }
 
@@ -150,6 +158,39 @@ export function PlatformSettingsWorkspace({
               or wrong two-step codes, in addition to the account holder. Leave blank to notify only the account holder.
             </small>
           </label>
+        </section>
+
+        <section className="panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow"><FileText aria-hidden="true" size={14} /> Invoices</p>
+              <h2>Invoice PDF header</h2>
+            </div>
+          </div>
+          <p className="field-help">
+            Printed at the top of every church invoice PDF made from now on. A PDF that was already made keeps its header. Leave every
+            field blank to print just the organization name above.
+          </p>
+          <label>
+            Department line
+            <input maxLength={120} placeholder="Youth Ministries Department" {...field("invoiceHeaderDepartment")} />
+          </label>
+          <label>
+            Organization on invoices
+            <input maxLength={120} {...field("invoiceHeaderOrganization")} />
+            <small>Blank prints the organization name from Identity.</small>
+          </label>
+          <label>
+            Mailing address
+            <textarea
+              maxLength={400}
+              rows={3}
+              value={draft.invoiceHeaderAddress}
+              onChange={(event) => setDraft((current) => ({ ...current, invoiceHeaderAddress: event.target.value }))}
+            />
+            <small>One line per row, up to four.</small>
+          </label>
+          <label>Phone<input maxLength={40} {...field("invoiceHeaderPhone")} /></label>
         </section>
 
         <section className="panel">
