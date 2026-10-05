@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { RotateCcw, Save, Send } from "lucide-react";
 import {
+  undatedHonorCompletionsNote,
   yearEndFields,
   yearEndSectionTitles,
   yearEndTotals,
@@ -22,6 +23,8 @@ type Contact = {
 type PrefillMeta = {
   unplaced: { membersWithoutGender: number; membersWithoutAge: number; membersAgeOutsideBands: number; staffWithoutGender: number };
   tltsOnRoster: number;
+  /** Completed honors with no date: left out of the Honors counts (#790). */
+  undatedHonorCompletions?: number;
 } | null;
 
 type SaveResponse = { report?: YearEndReportRecord; message?: string; issues?: Array<{ message?: string }> };
@@ -174,6 +177,9 @@ export function ClubYearEndReportForm({
         <div className="inline-notice" role="status">
           Your roster has {prefillMeta.tltsOnRoster} TLT{prefillMeta.tltsOnRoster === 1 ? "" : "s"}, but TLT level (1 to 4) isn&apos;t recorded, so enter the TLT counts by hand.
         </div>
+      )}
+      {prefillMeta && undatedHonorCompletionsNote(prefillMeta.undatedHonorCompletions ?? 0) && (
+        <div className="inline-notice" role="status">{undatedHonorCompletionsNote(prefillMeta.undatedHonorCompletions ?? 0)}.</div>
       )}
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
       {error && <div className="inline-notice error" role="alert">{error}</div>}

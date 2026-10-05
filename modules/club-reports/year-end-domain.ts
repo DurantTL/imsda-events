@@ -411,6 +411,32 @@ export function prefillHonorsForClub(entries: readonly HonorEntryFact[], clubId:
   return { honors: regular, honorMasters: masters };
 }
 
+/**
+ * Completed honors this club recorded with no completion date (#790). A date
+ * is optional when recording, but only dated completions can fall inside the
+ * report year, so these are left out of the Honors counts above (which are
+ * unchanged). Counted separately so the report can say so. Same "current
+ * status" rule as `prefillHonorsForClub`.
+ */
+export function countUndatedHonorCompletions(entries: readonly HonorEntryFact[], clubId: string) {
+  const seen = new Set<string>();
+  let undated = 0;
+  for (const entry of entries) {
+    if (entry.voided) continue;
+    const key = `${entry.personId}:${entry.honorId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (entry.organizationId === clubId && entry.status === "COMPLETED" && !entry.completionDate) undated += 1;
+  }
+  return undated;
+}
+
+/** The year-end report's note about undated completions, or null when there are none (#790). */
+export function undatedHonorCompletionsNote(count: number) {
+  if (count <= 0) return null;
+  return `${count} honor completion${count === 1 ? " has" : "s have"} no date and ${count === 1 ? "isn't" : "aren't"} counted here — add dates on the Honors page to include them`;
+}
+
 export const yearEndSectionTitles: Record<YearEndSection, string> = {
   membership: "1. Membership (including TLTs, not adult staff)",
   staff: "2. Staff (not including TLTs)",
