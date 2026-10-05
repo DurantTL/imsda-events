@@ -101,6 +101,20 @@ export function sortLeaderboard<T extends { name: string; totalPoints: number }>
     sort === "name" ? a.name.localeCompare(b.name) : b.totalPoints - a.totalPoints || a.name.localeCompare(b.name));
 }
 
+/** The club-name search the area-coordinator tabs share (#791): the text typed, trimmed and capped. */
+export function parseClubQuery(value: string | string[] | undefined) {
+  const text = Array.isArray(value) ? value[0] : value;
+  return (text ?? "").trim().slice(0, 80);
+}
+
+const normalizeName = (value: string) => value.toLocaleLowerCase("en-US").replace(/\s+/g, " ").trim();
+
+/** Keeps clubs whose name contains the search text, ignoring case and extra spaces. Blank keeps all. Never mutates the input. */
+export function filterClubsByName<T extends { name: string }>(clubs: readonly T[], query: string | undefined) {
+  const needle = normalizeName(query ?? "");
+  return needle === "" ? [...clubs] : clubs.filter((club) => normalizeName(club.name).includes(needle));
+}
+
 /** Plain-language description of a chart, for screen readers. */
 export function pointsChartDescription(clubs: ReadonlyArray<{ name: string; totalPoints: number }>, clubYear: string) {
   if (clubs.length === 0) return `No active clubs for ${clubYear}.`;

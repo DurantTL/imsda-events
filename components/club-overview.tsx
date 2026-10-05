@@ -147,7 +147,8 @@ export async function ClubOverview({
           complianceStatuses={compliance?.statuses}
           honorSummaries={honorSummaries}
           honorsPopup={honorsHref ? { canRecord: false } : undefined}
-          initialMembers={members}
+          // No class history link here (#791): it opens on the club portal's gate, and the id stays off this view.
+          initialMembers={members.map((member) => ({ ...member, personId: undefined }))}
           organizationId={organizationId}
           readOnly
         />

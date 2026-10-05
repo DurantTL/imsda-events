@@ -9790,3 +9790,8 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 .invoice-confirm label { display: flex; align-items: flex-start; gap: 8px; }
 .invoice-detail-lines ul { margin: 6px 0; padding-left: 18px; display: grid; gap: 6px; }
 @media (max-width: 720px) { .invoice-line { grid-template-columns: minmax(0, 1fr); } }
+
+/* Class history link under a roster name (#791). */
+.roster-class-history-link { display: block; margin-top: 2px; padding: 0; font-size: 0.8rem; }
+.area-club-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.area-club-search .search-field { max-width: 360px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }

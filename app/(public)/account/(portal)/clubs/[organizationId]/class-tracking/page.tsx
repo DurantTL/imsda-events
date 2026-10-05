@@ -19,6 +19,7 @@ export default async function ClubAwardsPage({ params }: { params: Promise<{ org
     <>
       <ClubEarnedAwardsWorkspace
         initial={await loadEarnedAwardsWorkspace(organizationId, { forEditing: access.capabilities.manageTeam })}
+        classHistoryBase={`/account/clubs/${organizationId}/class-tracking`}
         exportCsvHref={`/api/attendee/clubs/${organizationId}/exports/class-tracking`}
         exportPrintHref={`/account/clubs/${organizationId}/exports/class-tracking`}
         ordersHref={`/account/clubs/${organizationId}/orders`}

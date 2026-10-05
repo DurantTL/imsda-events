@@ -92,6 +92,7 @@ export function ClubEarnedAwardsWorkspace({
   exportCsvHref,
   exportPrintHref,
   readOnly = false,
+  classHistoryBase,
 }: {
   organizationId: string;
   initial: ClubEarnedAwardsData;
@@ -100,6 +101,8 @@ export function ClubEarnedAwardsWorkspace({
   exportCsvHref?: string;
   exportPrintHref?: string;
   readOnly?: boolean;
+  /** The club portal's class tracking address (#791); omitted on the area view, where the history page does not open. */
+  classHistoryBase?: string;
 }) {
   const [data, setData] = useState(initial);
   const [busy, setBusy] = useState(false);
@@ -337,6 +340,9 @@ export function ClubEarnedAwardsWorkspace({
                   {member.classLabel && <small className={styles.muted}> · {member.classLabel}</small>}
                 </span>
               </label>
+              {classHistoryBase && <Link className="text-button" href={`${classHistoryBase}/${encodeURIComponent(member.personId)}`}>
+                Class history<span className="sr-only"> for {member.firstName} {member.lastName}</span>
+              </Link>}
             </li>
           ))}
         </ul>
@@ -543,7 +549,9 @@ export function ClubEarnedAwardsWorkspace({
           <p className="quiet-copy">No open earned items.</p>
         ) : (
           <ul className={`${styles.people} earned-scroll-list`}>
-            {data.needs.map((need) => {
+            {data.needs.map((need, index) => {
+              // One link per person: needs are sorted by name, so only a person's first row carries it.
+              const firstForPerson = data.needs.findIndex((other) => other.personId === need.personId) === index;
               const label = (
                 <span>
                   <span translate="no">{need.firstName} {need.lastName}</span>
@@ -558,6 +566,11 @@ export function ClubEarnedAwardsWorkspace({
                       <input checked={picked.has(need.needId)} onChange={(event) => setPicked(toggled(picked, need.needId, event.target.checked))} type="checkbox" />
                       {label}
                     </label>
+                  )}
+                  {classHistoryBase && firstForPerson && !need.classHistoryHidden && (
+                    <Link className="text-button" href={`${classHistoryBase}/${encodeURIComponent(need.personId)}`}>
+                      Class history<span className="sr-only"> for {need.firstName} {need.lastName}</span>
+                    </Link>
                   )}
                 </li>
               );
