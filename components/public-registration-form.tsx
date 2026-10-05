@@ -566,7 +566,8 @@ export function PublicRegistrationForm({
   }, [responsibleAdultMinors, responsibleAdultOptions, responsibleAdultPeople, responsibleAdultPicks]);
   // The lodging step (#199). Shown only on an individual registration that is not joining a waitlist; the server decides
   // again on submit, under the unit locks.
-  const lodgingActive = Boolean(lodging) && !club && !group && lifecycle.capacityDecision !== "WAITLIST";
+  // A registration joining the waitlist keeps its lodging choice as an unpriced request: the step is shown, nothing is charged.
+  const lodgingActive = Boolean(lodging) && !club && !group;
   const noLodgingOffer: LodgingStepOffer = { nights: [], deadline: "", fullBehavior: "SHOW_FULL", categories: [] };
   const lodgingOffer = lodging ?? noLodgingOffer;
   const [lodgingChoiceState, setLodgingChoice] = useState<LodgingChoice>(() => defaultLodgingChoice(lodgingOffer, attendees.length));
@@ -584,7 +585,7 @@ export function PublicRegistrationForm({
       within: lodgingChoiceState.within.filter((pair) => present.has(pair.fromClientId) && present.has(pair.targetClientId)),
     };
   }, [attendees, lodgingChoiceState]);
-  const lodgingLine = lodgingActive && !deferredOrganizationBilling ? lodgingStepLine(lodgingOffer, lodgingChoice) : null;
+  const lodgingLine = lodgingActive && !deferredOrganizationBilling && !joiningWaitlist ? lodgingStepLine(lodgingOffer, lodgingChoice) : null;
   const lodgingSubmission = lodgingActive ? lodgingStepInput(lodgingOffer, lodgingChoice) : null;
   const [error, setError] = useState("");
   const [rosterAnnouncement, setRosterAnnouncement] = useState("");
@@ -958,7 +959,7 @@ export function PublicRegistrationForm({
 
   function lodgingIssues(): FormIssue[] {
     if (!lodgingActive) return [];
-    const problem = lodgingStepProblem(lodgingOffer, lodgingChoice, attendees.length);
+    const problem = lodgingStepProblem(lodgingOffer, lodgingChoice, attendees.length, joiningWaitlist);
     return problem ? [{ key: "lodging", path: "lodging", message: problem }] : [];
   }
 
@@ -1036,7 +1037,7 @@ export function PublicRegistrationForm({
                 responses: attendee.responses,
               })),
             } : {}),
-            ...(lodgingSubmission && !deferredOrganizationBilling ? { lodging: lodgingSubmission } : {}),
+            ...(lodgingSubmission && !deferredOrganizationBilling && !joiningWaitlist ? { lodging: lodgingSubmission } : {}),
           }),
         },
       );
@@ -1121,7 +1122,7 @@ export function PublicRegistrationForm({
             code: firstCode,
             responses: registrationResponses,
             attendees: attendees.map((attendee) => ({ clientId: attendee.clientId, responses: attendee.responses })),
-            ...(lodgingSubmission && !deferredOrganizationBilling ? { lodging: lodgingSubmission } : {}),
+            ...(lodgingSubmission && !deferredOrganizationBilling && !joiningWaitlist ? { lodging: lodgingSubmission } : {}),
           }),
         },
       );
@@ -2543,7 +2544,7 @@ export function PublicRegistrationForm({
               <p>
                 {lodgingOffer.categories.find((option) => option.category === lodgingChoice.category)?.label ?? "Lodging"}, {chosenNights(lodgingChoice).length} night{chosenNights(lodgingChoice).length === 1 ? "" : "s"}
                 {" "}({lodgingChoice.firstNight} to {lodgingChoice.lastNight}), {lodgingChoice.partySize} {lodgingChoice.partySize === 1 ? "person" : "people"}
-                {lodgingLine ? `. Lodging charge ${lodgingLine.amountCents < 0 ? "-" : ""}$${(Math.abs(lodgingLine.amountCents) / 100).toFixed(2)} is part of your total below.` : ". Included in your registration."}
+                {lodgingLine ? `. Lodging charge ${lodgingLine.amountCents < 0 ? "-" : ""}$${(Math.abs(lodgingLine.amountCents) / 100).toFixed(2)} is part of your total below.` : joiningWaitlist ? ". Saved with your waitlist request; nothing is charged for lodging now." : ". Included in your registration."}
               </p>
             )}
             {lodgingSubmission && ((lodgingSubmission.roommates?.length ?? 0) + (lodgingSubmission.roommatesWithin?.length ?? 0)) > 0 && <p>Roommate requests: {(lodgingSubmission.roommates?.length ?? 0) + (lodgingSubmission.roommatesWithin?.length ?? 0)}. Each stays private until the other person asks for you too, or the event team approves it.</p>}
@@ -3182,6 +3183,7 @@ export function PublicRegistrationForm({
                   offer={lodgingOffer}
                   choice={lodgingChoice}
                   attendees={lodgingAttendees}
+                  ignoreFull={joiningWaitlist}
                   issues={issues.filter((issue) => issue.key === "lodging")}
                   onChange={(next) => {
                     setLodgingChoice(next);

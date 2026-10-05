@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import { AlertCircle, BedDouble, CheckCircle2 } from "lucide-react";
+import { unitsForParty } from "@/modules/lodging/pricing";
 import { describeRate, quoteStay, stayNights, addDays, type LodgingCategory } from "@/modules/lodging/domain";
 import type { RegistrantLodgingView } from "@/modules/lodging/preferences-service";
 
@@ -9,13 +10,13 @@ type Status = { kind: "idle" | "saving" | "saved" | "error"; message: string };
 
 const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 
-type Sent = { lodging: RegistrantLodgingView; changeRequested: boolean; repriced: boolean };
+type Sent = { lodging: RegistrantLodgingView; changeRequested: boolean };
 
 async function send(url: string, method: string, body: unknown): Promise<Sent> {
   const response = await fetch(url, { method, cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-  const payload = await response.json().catch(() => null) as { message?: string; lodging?: RegistrantLodgingView; result?: { changeRequested?: boolean; repriced?: boolean } } | null;
+  const payload = await response.json().catch(() => null) as { message?: string; lodging?: RegistrantLodgingView; result?: { changeRequested?: boolean } } | null;
   if (!response.ok || !payload?.lodging) throw new Error(payload?.message ?? "That could not be saved. Try again.");
-  return { lodging: payload.lodging, changeRequested: payload.result?.changeRequested === true, repriced: payload.result?.repriced === true };
+  return { lodging: payload.lodging, changeRequested: payload.result?.changeRequested === true };
 }
 
 /**
@@ -37,7 +38,7 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
   const quote = useMemo(() => {
     const chosen = view.offered.find((entry) => entry.category === category);
     if (!chosen || nightCount < 1) return null;
-    return quoteStay({ rates: chosen.rate ? { [chosen.category]: chosen.rate } : {}, category: chosen.category, nights: nightCount, partySize });
+    return quoteStay({ rates: chosen.rate ? { [chosen.category]: chosen.rate } : {}, category: chosen.category, nights: nightCount, partySize, units: unitsForParty(partySize, chosen.unitCapacity) });
   }, [view.offered, category, nightCount, partySize]);
 
   async function run(action: () => Promise<Sent>, success: string) {
@@ -45,7 +46,7 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
     try {
       const sent = await action();
       setView(sent.lodging);
-      setStatus({ kind: "saved", message: sent.changeRequested ? "Thank you. This change needs the event team, so it was sent to them and has not been applied yet." : sent.repriced ? `${success} Your registration total was updated.` : success });
+      setStatus({ kind: "saved", message: sent.changeRequested ? "Thank you. This change needs the event team, so it was sent to them and has not been applied yet." : success });
     } catch (error) {
       setStatus({ kind: "error", message: error instanceof Error ? error.message : "That could not be saved. Try again." });
     }
@@ -137,7 +138,7 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
           {quote.kind === "BELOW_MINIMUM_NIGHTS" ? `This type needs at least ${quote.minimumNights} nights.` : null}
         </p> : null}
 
-        {view.canEdit && view.pricedChangeNeedsStaff && view.offered.some((option) => option.rate && option.category !== request?.category) ? <p>Payment has been made on this registration, so a change to a type with a price is sent to the event team instead of applying at once.</p> : null}
+        {view.canEdit && view.pricedChangeNeedsStaff && view.offered.some((option) => option.rate) ? <p>Your lodging charge was set when you registered. A change that alters it is sent to the event team instead of applying at once; nothing is charged or refunded automatically.</p> : null}
         {view.canEdit ? <button className="primary-button" type="submit" disabled={disabled || nightCount < 1}><BedDouble size={18} aria-hidden="true" /> Save lodging</button> : null}
         {request ? <p>Saved version {request.version}{view.earlierVersions > 0 ? `, ${view.earlierVersions} earlier version${view.earlierVersions === 1 ? "" : "s"} kept by the event team` : ""}.</p> : null}
       </form>

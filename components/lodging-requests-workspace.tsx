@@ -10,9 +10,10 @@ import {
 } from "@/modules/lodging/preferences-domain";
 import type { StaffLodgingRequestView, StaffLodgingRequestsView } from "@/modules/lodging/preferences-service";
 
-type Run = (action: () => Promise<{ requests?: StaffLodgingRequestsView }>, success: string) => Promise<void>;
+type Reply = { requests?: StaffLodgingRequestsView; result?: { priceNeedsReview?: boolean; chargeDeltaCents?: number } };
+type Run = (action: () => Promise<Reply>, success: string) => Promise<void>;
 
-async function call(url: string, method: string, body: unknown): Promise<{ requests?: StaffLodgingRequestsView }> {
+async function call(url: string, method: string, body: unknown): Promise<Reply> {
   const response = await fetch(url, { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const json = await response.json();
   if (!response.ok) throw new Error(json.message ?? "That could not be saved.");
@@ -35,17 +36,19 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
   const [view, setView] = useState(initialView);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [chargeDeltaCents, setChargeDeltaCents] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [showAcknowledged, setShowAcknowledged] = useState(false);
   const base = `/api/events/${view.eventId}/lodging`;
 
   const run: Run = async (action, success) => {
-    setBusy(true); setError(""); setNotice("");
+    setBusy(true); setError(""); setNotice(""); setChargeDeltaCents(null);
     try {
       const result = await action();
       // The settings route sends the staff view only to someone who may read it; otherwise keep what is on screen.
       if (result.requests) setView(result.requests);
       setNotice(success);
+      if (result.result?.priceNeedsReview) setChargeDeltaCents(result.result.chargeDeltaCents ?? 0);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That could not be saved.");
     } finally { setBusy(false); }
@@ -63,6 +66,10 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
     </div></div>
     {error ? <p className="form-error" role="alert">{error}</p> : null}
     {notice ? <p className="usage-note" role="status">{notice}</p> : null}
+    {chargeDeltaCents !== null ? <p className="form-error" role="status">
+      This change alters the lodging charge ({chargeDeltaCents < 0 ? "-" : "+"}${(Math.abs(chargeDeltaCents) / 100).toFixed(2)}), but the registration&apos;s total was not changed. Record the difference as an adjustment in{" "}
+      <a href={`/finance?event=${encodeURIComponent(view.eventId)}`}>Payments</a>; nothing is charged or refunded automatically.
+    </p> : null}
 
     <section className="panel" aria-labelledby="lodging-settings">
       <h3 id="lodging-settings">Preference settings</h3>

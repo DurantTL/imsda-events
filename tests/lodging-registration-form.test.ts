@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { lodgingRateBases, quoteStay, rateSchema, type LodgingRate } from "@/modules/lodging/domain";
-import { calculationWithLine, registrationFormDefinitionSchema, type FormCalculation } from "@/modules/forms/definition";
+import { addUndiscountedLine, calculationWithLine, registrationFormDefinitionSchema, type FormCalculation } from "@/modules/forms/definition";
 import { getPublicRegistrationStepPlan } from "@/modules/forms/public-registration-steps";
 import { publicRegistrationInputSchema } from "@/modules/forms/public-domain";
 import { applyPromoCodeToCalculation, attendeeShareCents, evaluatePromoCode, type PromoCodeRule } from "@/modules/promo-codes/domain";
@@ -15,7 +15,7 @@ import {
   type LodgingChoice,
   type LodgingStepOffer,
 } from "@/modules/lodging/form-step";
-import { LODGING_LINE_KEY, lodgingCharge } from "@/modules/lodging/pricing";
+import { LODGING_LINE_KEY, lodgingCharge, unitsForParty } from "@/modules/lodging/pricing";
 
 /** Synthetic rates and people only. */
 const rate = (basis: LodgingRate["basis"], amountCents: number, minimumNights: number | null = null): LodgingRate => ({ amountCents, basis, minimumNights });
@@ -119,21 +119,62 @@ describe("the lodging line in the registration total", () => {
     expect(calculationWithLine(formDefinition, {}, second, line.key, null)).toMatchObject({ subtotalCents: 5000, lineItems: [{ key: "registration_fee" }] });
   });
 
-  it("is discounted by a registration-level promo code like any other priced line, but not by a per-person one", () => {
-    const withLodging = calculationWithLine(formDefinition, {}, formCalculation(), line.key, line);
+  it("is never discounted by a promo code: the discount is decided on the form's own lines and the line joins afterwards", () => {
     const rule: PromoCodeRule = {
       isActive: true, normalizedCode: "TENOFF", discountType: "PERCENT_BPS", discountValue: 1000, maximumDiscountCents: null,
       minimumSubtotalCents: null, startsAt: null, endsAt: null, maximumUses: null, redeemedCount: 0,
     } as unknown as PromoCodeRule;
-    const evaluation = evaluatePromoCode(rule, { submittedCode: "tenoff", eligibleSubtotalCents: withLodging.subtotalCents, pricingDate: "2027-05-20", hideAmounts: false });
+    const evaluation = evaluatePromoCode(rule, { submittedCode: "tenoff", eligibleSubtotalCents: formCalculation().subtotalCents, pricingDate: "2027-05-20", hideAmounts: false });
     expect(evaluation.valid).toBe(true);
     if (!evaluation.valid) return;
-    const discounted = applyPromoCodeToCalculation(formDefinition, {}, withLodging, evaluation);
-    expect(discounted.discountAmountCents).toBe(1250);
-    expect(discounted.lineItems.some((item) => item.key === "lodging")).toBe(true);
-    // A per-person code is limited to that person's own lines: the lodging line has no attendee.
+    const discounted = applyPromoCodeToCalculation(formDefinition, {}, formCalculation(), evaluation);
+    expect(discounted.discountAmountCents).toBe(500);
+    const total = addUndiscountedLine(formDefinition, {}, discounted, line);
+    expect(total.lineItems.map((item) => item.key)).toEqual(["registration_fee", "lodging"]);
+    expect(total.discountAmountCents).toBe(500);
+    expect(total.subtotalCents).toBe(discounted.subtotalCents + 7500);
+    expect(total.totalCents).toBe(5000 - 500 + 7500);
+    // Adding it again replaces it and never counts it twice.
+    expect(addUndiscountedLine(formDefinition, {}, total, { ...line, amountCents: 2000 }).totalCents).toBe(5000 - 500 + 2000);
+  });
+
+  it("adds the line after a full sponsorship and the processing fee follows the final subtotal", () => {
+    const sponsored = { ...formCalculation(), subtotalCents: 0, totalCents: 0, discountAmountCents: 5000, preDiscountSubtotalCents: 5000, lineItems: formCalculation().lineItems };
+    const total = addUndiscountedLine(formDefinition, { payment_method: "Card" }, sponsored, line);
+    expect(total.subtotalCents).toBe(7500);
+    expect(total.preDiscountSubtotalCents).toBe(12_500);
+    expect(total.processingFeeCents).toBeGreaterThan(0);
+    expect(total.totalCents).toBe(total.subtotalCents + total.processingFeeCents);
+  });
+
+  it("has no attendee, so a per-person code never reaches it", () => {
+    const withLodging = calculationWithLine(formDefinition, {}, formCalculation(), line.key, line);
     const roster: FormCalculation = { ...withLodging, lineItems: [{ key: "meal", label: "Meal", amountCents: 1000, attendeeIndex: 0 }, ...withLodging.lineItems] };
     expect(attendeeShareCents(roster, 0)).toBe(1000);
+  });
+});
+
+describe("rooms for a party", () => {
+  it("is the party divided by the room size, rounded up, and never below one", () => {
+    expect(unitsForParty(6, 2)).toBe(3);
+    expect(unitsForParty(5, 2)).toBe(3);
+    expect(unitsForParty(1, 4)).toBe(1);
+    expect(unitsForParty(3, null)).toBe(1);
+    expect(unitsForParty(3, undefined)).toBe(1);
+  });
+
+  it("charges a per-room rate for each room and says how many in the label", () => {
+    const six = lodgingCharge({ category: "DORM_ROOM", nights: 2, partySize: 6, rates: { DORM_ROOM: rate("PER_UNIT_NIGHT", 2000) }, units: unitsForParty(6, 2) });
+    expect(six.kind === "CHARGE" && six.line).toMatchObject({ amountCents: 12_000, label: "Lodging: Dorm room (3 rooms)" });
+    const flat = lodgingCharge({ category: "DORM_ROOM", nights: 2, partySize: 6, rates: { DORM_ROOM: rate("PER_UNIT_PER_EVENT", 3000) }, units: 3 });
+    expect(flat.kind === "CHARGE" && flat.line.amountCents).toBe(9000);
+    const one = lodgingCharge({ category: "DORM_ROOM", nights: 2, partySize: 2, rates: { DORM_ROOM: rate("PER_UNIT_NIGHT", 2000) }, units: 1 });
+    expect(one.kind === "CHARGE" && one.line.label).toBe("Lodging: Dorm room");
+  });
+
+  it("does not multiply a per-person rate by rooms", () => {
+    const person = lodgingCharge({ category: "DORM_ROOM", nights: 2, partySize: 6, rates: { DORM_ROOM: rate("PER_PERSON_NIGHT", 1000) }, units: 3 });
+    expect(person.kind === "CHARGE" && person.line.amountCents).toBe(12_000);
   });
 });
 

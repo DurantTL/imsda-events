@@ -12,7 +12,7 @@ import {
   type HouseholdPreference,
   type RegistrationLodgingInput,
 } from "@/modules/lodging/preferences-domain";
-import { lodgingCharge, type LodgingPriceLine } from "@/modules/lodging/pricing";
+import { lodgingCharge, unitsForParty, type LodgingPriceLine } from "@/modules/lodging/pricing";
 import {
   demandExcluding,
   findRoommateTarget,
@@ -21,7 +21,7 @@ import {
   loadRates,
   type Tx,
 } from "@/modules/lodging/preferences-service";
-import { lockEventLodgingUnits } from "@/modules/lodging/service";
+import { lockEventLodgingUnits, touchEventLodgingCapacity } from "@/modules/lodging/service";
 
 /**
  * The lodging step of the public registration form (#199). It is not a parallel form: it is a step of the registration
@@ -48,6 +48,8 @@ export type PublicLodgingOffer = {
     /** People the type can still take each night; null is no fixed limit. */
     remaining: Record<string, number | null>;
     rate: LodgingRate | null;
+    /** People a typical room takes; a per-room charge divides the party by it (rounded up). Null for sites and tents. */
+    unitCapacity: number | null;
   }>;
 };
 
@@ -70,7 +72,9 @@ export async function getPublicLodgingOffer(eventId: string, client: PrismaClien
         const limit = capacity[category]!.perNight[night];
         return [night, limit === null || limit === undefined ? null : Math.max(0, limit - (demand.get(category)?.get(night) ?? 0))];
       })),
-      rate: rateForCategory(rates, category),
+      // A church-billed registrant is never shown a price.
+      rate: context.churchBilled ? null : rateForCategory(rates, category),
+      unitCapacity: capacity[category]!.unitCapacity ?? null,
     }));
   return { nights: context.nights, deadline: context.deadlineDay, fullBehavior: context.fullBehavior, categories };
 }
@@ -84,13 +88,11 @@ export async function lodgingQuoteLine(client: PrismaClient, eventId: string, lo
   const row = await client.eventLodging.findUnique({ where: { eventId }, select: { collectsPreferences: true } });
   if (!row?.collectsPreferences) return null;
   const context = await loadContext(client, eventId);
+  if (context.churchBilled) return null;
   const nights = requestNights({ firstNight: lodging.firstNight ?? null, lastNight: lodging.lastNight ?? null }, context.nights).length;
-  const charge = lodgingCharge({
-    category: lodging.category,
-    nights,
-    partySize: Math.min(lodging.partySize ?? Math.max(1, attendeeCount), Math.max(1, attendeeCount)),
-    rates: await loadRates(client, context.eventLodgingId),
-  });
+  const partySize = Math.min(lodging.partySize ?? Math.max(1, attendeeCount), Math.max(1, attendeeCount));
+  const [{ capacity }, rates] = await Promise.all([loadCategoryCapacity(client, context), loadRates(client, context.eventLodgingId)]);
+  const charge = lodgingCharge({ category: lodging.category, nights, partySize, rates, units: unitsForParty(partySize, capacity[lodging.category]?.unitCapacity) });
   return charge.kind === "CHARGE" ? charge.line : null;
 }
 
@@ -113,7 +115,7 @@ export type LodgingPlan = {
 
 export async function planRegistrationLodging(
   tx: Tx,
-  input: { eventId: string; lodging: RegistrationLodgingInput; attendeeCount: number; priced: boolean },
+  input: { eventId: string; lodging: RegistrationLodgingInput; attendeeCount: number; priced: boolean; waitlisted?: boolean },
 ): Promise<LodgingPlan> {
   const row = await tx.eventLodging.findUnique({ where: { eventId: input.eventId }, select: { collectsPreferences: true } });
   if (!row?.collectsPreferences) throw new LodgingError("PREFERENCES_NOT_COLLECTED", "This event does not collect lodging choices.");
@@ -141,10 +143,20 @@ export async function planRegistrationLodging(
     householdPreference: wanted.householdPreference ?? "TOGETHER",
   };
   let line: LodgingPriceLine | null = null;
-  if (next.category) {
-    // Every unit row is locked before any capacity is read; the lock is held until this registration commits.
+  if (next.category && input.waitlisted) {
+    // A registration the server is waitlisting keeps the choice as an unpriced request: no lock, no refusal for a full
+    // type (there is no place yet), no charge. The event team confirms it if a place opens.
+    const { capacity } = await loadCategoryCapacity(tx, context);
+    if (!capacity[next.category] || capacity[next.category]!.unitsInService === 0) {
+      throw new LodgingError("CATEGORY_NOT_OFFERED", `${lodgingCategoryLabels[next.category]} is not available for this event.`);
+    }
+  } else if (next.category) {
+    // Every unit row is locked before any capacity is read; the lock is held until this registration commits. Then
+    // the capacity version is bumped under the locks: if another writer committed since this Serializable transaction
+    // began, the update fails and the submission is retried, so a stale count can never overbook a type.
     const everyUnit = await tx.eventLodgingUnit.findMany({ where: { eventLodgingId: context.eventLodgingId }, select: { id: true } });
     await lockEventLodgingUnits(tx, input.eventId, everyUnit.map((unit) => unit.id));
+    await touchEventLodgingCapacity(tx, context.eventLodgingId);
     const { capacity } = await loadCategoryCapacity(tx, context);
     const categoryCapacity = capacity[next.category];
     if (!categoryCapacity || categoryCapacity.unitsInService === 0) {
@@ -154,11 +166,14 @@ export async function planRegistrationLodging(
     if (!categoryFits({ capacity: categoryCapacity, demand, nights, partySize }).fits) {
       throw new LodgingError("CATEGORY_FULL", `${lodgingCategoryLabels[next.category]} is full for those nights. Choose another type or other nights.`);
     }
-    const charge = lodgingCharge({ category: next.category, nights: nights.length, partySize, rates: await loadRates(tx, context.eventLodgingId) });
+    const charge = lodgingCharge({
+      category: next.category, nights: nights.length, partySize, rates: await loadRates(tx, context.eventLodgingId),
+      units: unitsForParty(partySize, categoryCapacity.unitCapacity),
+    });
     if (charge.kind === "BELOW_MINIMUM_NIGHTS") {
       throw new LodgingError("BELOW_MINIMUM_NIGHTS", `${lodgingCategoryLabels[next.category]} needs at least ${charge.minimumNights} nights.`);
     }
-    if (charge.kind === "CHARGE" && input.priced) line = charge.line;
+    if (charge.kind === "CHARGE" && input.priced && !context.churchBilled) line = charge.line;
   }
   return { eventLodgingId: context.eventLodgingId, next, nights, line };
 }
@@ -174,6 +189,8 @@ export async function recordRegistrationLodging(
     plan: LodgingPlan;
     lodging: RegistrationLodgingInput;
     attendees: ReadonlyArray<{ clientId: string; personId: string }>;
+    /** The registration was waitlisted: the request is kept unpriced. */
+    waitlisted?: boolean;
   },
 ) {
   const request = await tx.eventLodgingRequest.create({ data: { eventId: input.eventId, registrationId: input.registrationId, currentVersion: 1 } });
@@ -244,6 +261,7 @@ export async function recordRegistrationLodging(
       category: { from: null, to: next.category },
       roommateRequests: roommateCount,
       chargedCents: input.plan.line?.amountCents ?? 0,
+      waitlisted: input.waitlisted === true,
     },
   }, tx);
   return { requestId: request.id, roommateRequests: roommateCount };

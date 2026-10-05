@@ -340,6 +340,8 @@ export type CategoryCapacity = {
   unitsInService: number;
   /** Of those, how many are on the ground floor (an RV site or tent counts: nothing to climb). */
   groundLevelUnits: number;
+  /** People a typical room takes (the smallest default among its rooms); null for sites, tents and counted areas. */
+  unitCapacity?: number | null;
 };
 
 export type DemandRequest = { registrationId: string; category: LodgingCategory | null; nights: readonly string[]; partySize: number };
@@ -396,6 +398,7 @@ export const reviewKinds = [
   "ACCESSIBILITY_UNMET",
   "CHANGE_REQUESTED",
   "PRICE_DIFFERS",
+  "PARTY_EXCEEDS_ATTENDEES",
 ] as const;
 export type ReviewKind = (typeof reviewKinds)[number];
 
@@ -412,6 +415,7 @@ export const reviewKindLabels: Record<ReviewKind, string> = {
   ACCESSIBILITY_UNMET: "Accessibility need cannot be met",
   CHANGE_REQUESTED: "Change requested",
   PRICE_DIFFERS: "Lodging charge differs from the request",
+  PARTY_EXCEEDS_ATTENDEES: "Party is larger than the registration",
 };
 
 /** Kinds that disclose an accessibility flag: only staff with VIEW_SENSITIVE_DATA see them. */
@@ -447,7 +451,7 @@ export type ReviewFacts = {
   guardians: readonly GuardianLink[];
   capacity: Partial<Record<LodgingCategory, CategoryCapacity>>;
   /** Open registrant changes the edit policy kept from applying. */
-  changeRequests?: ReadonlyArray<{ id: string; registrationId: string; category: LodgingCategory | null }>;
+  changeRequests?: ReadonlyArray<{ id: string; registrationId: string; category: LodgingCategory | null; chargedCents?: number; requestedCents?: number }>;
   /** What each active registration was charged for lodging, against what its request costs at today's rates. */
   lodgingCharges?: ReadonlyArray<{ registrationId: string; chargedCents: number; currentCents: number }>;
 };
@@ -483,6 +487,10 @@ function pairKey(a: string, b: string) {
  * requests, requests changed after the deadline, and requests over capacity. Pure and deterministic.
  * Items that disclose an accessibility flag are marked `sensitive`; the caller drops them for staff who may not see them.
  */
+function signedDollars(cents: number) {
+  return `${cents < 0 ? "-" : "+"}$${(Math.abs(cents) / 100).toFixed(2)}`;
+}
+
 export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
   const items: ReviewItem[] = [];
   const active = (registrationId: string) => facts.registrations.get(registrationId)?.active === true;
@@ -589,6 +597,14 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
     const nights = requestNights(request, facts.nights);
     demandInput.push({ registrationId: request.registrationId, category: request.category, nights, partySize: request.partySize });
     const fingerprint = `${request.requestId}@${request.version}`;
+    const attendeeCount = facts.people.filter((person) => person.registrationId === request.registrationId).length;
+    if (attendeeCount > 0 && request.partySize > attendeeCount) {
+      push({
+        key: `party:${request.registrationId}`, kind: "PARTY_EXCEEDS_ATTENDEES", fingerprint: `${fingerprint}:${attendeeCount}`, registrationIds: [request.registrationId],
+        title: `${who} asked for lodging for ${request.partySize}, and has ${attendeeCount} attendee${attendeeCount === 1 ? "" : "s"}`,
+        detail: "People were removed from the registration after the request was made. Correct the party size.",
+      });
+    }
     if (request.afterDeadline) {
       push({
         key: `late:${request.registrationId}`, kind: "PAST_DEADLINE", fingerprint, registrationIds: [request.registrationId],
@@ -633,9 +649,9 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
   for (const change of facts.changeRequests ?? []) {
     if (!active(change.registrationId)) continue;
     push({
-      key: `change:${change.id}`, kind: "CHANGE_REQUESTED", fingerprint: change.id, registrationIds: [change.registrationId],
-      title: `${label(facts, change.registrationId)} asked to change lodging${change.category ? ` to ${lodgingCategoryLabels[change.category].toLowerCase()}` : ""}`,
-      detail: "Payment is already on this registration, so the change was not applied. Make the change for them if it is right, then acknowledge this.",
+      key: `change:${change.id}`, kind: "CHANGE_REQUESTED", fingerprint: `${change.id}:${change.chargedCents ?? ""}:${change.requestedCents ?? ""}`, registrationIds: [change.registrationId],
+      title: `${label(facts, change.registrationId)}: lodging charge change requested${change.chargedCents !== undefined && change.requestedCents !== undefined ? ` (${signedDollars(change.requestedCents - change.chargedCents)})` : ""}${change.category ? `, to ${lodgingCategoryLabels[change.category].toLowerCase()}` : ""}`,
+      detail: "A registrant's change that alters the lodging charge is never applied by itself. Make the change for them if it is right, then adjust the charge in Payments.",
     });
   }
 
@@ -646,7 +662,7 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
     push({
       key: `price:${charge.registrationId}`, kind: "PRICE_DIFFERS", fingerprint: `${charge.chargedCents}:${charge.currentCents}`, registrationIds: [charge.registrationId],
       title: `${label(facts, charge.registrationId)} was charged ${dollars(charge.chargedCents)} for lodging; the request costs ${dollars(charge.currentCents)}`,
-      detail: "Nothing is changed automatically after payment or on a registration with a promo code or amendments. Record any difference in Payments.",
+      detail: "The charge is never changed automatically after submission. If it should follow the request, adjust it in Payments.",
     });
   }
 

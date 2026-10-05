@@ -1,6 +1,6 @@
 import { addDays, stayNights, type LodgingCategory, type LodgingRate } from "@/modules/lodging/domain";
 import type { HouseholdPreference, RegistrationLodgingInput } from "@/modules/lodging/preferences-domain";
-import { lodgingCharge, type LodgingPriceLine } from "@/modules/lodging/pricing";
+import { lodgingCharge, unitsForParty, type LodgingPriceLine } from "@/modules/lodging/pricing";
 
 /**
  * The lodging step of the public registration form (#199), as pure helpers shared by the step's screen, the form's
@@ -13,7 +13,7 @@ export type LodgingStepOffer = {
   nights: string[];
   deadline: string;
   fullBehavior: "SHOW_FULL" | "WAITLIST";
-  categories: Array<{ category: LodgingCategory; label: string; remaining: Record<string, number | null>; rate: LodgingRate | null }>;
+  categories: Array<{ category: LodgingCategory; label: string; remaining: Record<string, number | null>; rate: LodgingRate | null; unitCapacity?: number | null }>;
 };
 
 export type LodgingChoice = {
@@ -60,16 +60,20 @@ export function categoryIsFull(offer: LodgingStepOffer, category: LodgingCategor
   });
 }
 
-export function lodgingStepProblem(offer: LodgingStepOffer, choice: LodgingChoice, attendeeCount: number): string | null {
+/**
+ * What cannot be submitted. `relaxed` is for a registration that is joining the waitlist: its lodging choice is kept as an
+ * unpriced request, so a full type or a stay under a minimum is not a problem yet.
+ */
+export function lodgingStepProblem(offer: LodgingStepOffer, choice: LodgingChoice, attendeeCount: number, relaxed = false): string | null {
   const nights = chosenNights(choice);
   if (nights.length === 0) return "Lodging step: the last night cannot be before the first night.";
   if (choice.partySize < 1 || choice.partySize > Math.max(1, attendeeCount)) return "Lodging step: choose how many of the people on this registration are staying.";
   if (choice.category === "") return null;
   const entry = offer.categories.find((candidate) => candidate.category === choice.category);
   if (!entry) return "Lodging step: that lodging type is not available.";
-  if (categoryIsFull(offer, choice.category, nights, choice.partySize)) return `Lodging step: ${entry.label} is full for those nights. Choose another type or other nights.`;
-  const charge = lodgingCharge({ category: choice.category, nights: nights.length, partySize: choice.partySize, rates: entry.rate ? { [choice.category]: entry.rate } : {} });
-  if (charge.kind === "BELOW_MINIMUM_NIGHTS") return `Lodging step: ${entry.label} needs at least ${charge.minimumNights} nights.`;
+  if (!relaxed && categoryIsFull(offer, choice.category, nights, choice.partySize)) return `Lodging step: ${entry.label} is full for those nights. Choose another type or other nights.`;
+  const charge = lodgingCharge({ category: choice.category, nights: nights.length, partySize: choice.partySize, rates: entry.rate ? { [choice.category]: entry.rate } : {}, units: unitsForParty(choice.partySize, entry.unitCapacity) });
+  if (!relaxed && charge.kind === "BELOW_MINIMUM_NIGHTS") return `Lodging step: ${entry.label} needs at least ${charge.minimumNights} nights.`;
   const incomplete = choice.roommates.some((row) => (row.name.trim() !== "") !== (row.confirmationCode.trim() !== ""));
   if (incomplete) return "Lodging step: enter both the name and the confirmation code to ask someone to room with you.";
   return null;
@@ -80,7 +84,7 @@ export function lodgingStepLine(offer: LodgingStepOffer, choice: LodgingChoice):
   if (choice.category === "") return null;
   const entry = offer.categories.find((candidate) => candidate.category === choice.category);
   if (!entry?.rate) return null;
-  const charge = lodgingCharge({ category: choice.category, nights: chosenNights(choice).length, partySize: choice.partySize, rates: { [choice.category]: entry.rate } });
+  const charge = lodgingCharge({ category: choice.category, nights: chosenNights(choice).length, partySize: choice.partySize, rates: { [choice.category]: entry.rate }, units: unitsForParty(choice.partySize, entry.unitCapacity) });
   return charge.kind === "CHARGE" ? charge.line : null;
 }
 

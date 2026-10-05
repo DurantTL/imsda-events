@@ -14,7 +14,7 @@ import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/backgro
 import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
 import {
-  calculationWithLine,
+  addUndiscountedLine,
   getAvailabilityMode,
   isChoiceFieldType,
   isFieldVisible,
@@ -1223,20 +1223,21 @@ async function prepareAmendment(
     throw error;
   }
 
-  // The lodging line (#199) is priced from the lodging request, not from the form's fields, so an amendment of the
-  // form's answers carries the stored line through unchanged instead of silently dropping it from the total.
+  // The lodging line (#199) is priced when the registration is submitted, not from the form's fields, so an amendment of
+  // the form's answers carries the stored line through unchanged instead of silently dropping it from the total.
   const storedLodgingLine = Array.isArray(pricingSnapshot.lineItems)
     ? pricingSnapshot.lineItems.map(recordFromJson).find((line) => line.key === LODGING_LINE_KEY && typeof line.amountCents === "number") ?? null
     : null;
-  const calculationWithLodging = storedLodgingLine
-    ? calculationWithLine(definition, prepared.registrationResponses, prepared.calculation, LODGING_LINE_KEY, storedLodgingLine as unknown as FormCalculation["lineItems"][number])
-    : prepared.calculation;
-  const pricedCalculation = applyStoredPromo(
+  const discountedCalculation = applyStoredPromo(
     definition,
     prepared.registrationResponses,
-    calculationWithLodging,
+    prepared.calculation,
     registration.promoCodeRedemption,
   );
+  // A promo code never discounts the lodging line, so it joins after the discount.
+  const pricedCalculation = storedLodgingLine
+    ? addUndiscountedLine(definition, prepared.registrationResponses, discountedCalculation, storedLodgingLine as unknown as FormCalculation["lineItems"][number])
+    : discountedCalculation;
   const netPaidCents = paidCents(registration);
   // Staff adjustments (#396) stay on top of whatever the new answers cost.
   const adjustmentsCents = await adjustmentTotalCents(tx, registration.id);

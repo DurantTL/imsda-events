@@ -14,7 +14,8 @@ CREATE TYPE "LodgingRoommateDecision" AS ENUM ('PENDING', 'APPROVED', 'DECLINED'
 CREATE TYPE "LodgingRuleKind" AS ENUM ('KEEP_TOGETHER', 'SPLIT_HOUSEHOLD', 'SEPARATE');
 
 -- AlterTable
-ALTER TABLE "EventLodging" ADD COLUMN     "collectsPreferences" BOOLEAN NOT NULL DEFAULT false,
+ALTER TABLE "EventLodging" ADD COLUMN     "capacityVersion" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "collectsPreferences" BOOLEAN NOT NULL DEFAULT false,
 ADD COLUMN     "fullBehavior" "LodgingFullBehavior" NOT NULL DEFAULT 'SHOW_FULL',
 ADD COLUMN     "preferencesDeadline" DATE,
 ADD COLUMN     "settingsUpdatedByUserId" TEXT;

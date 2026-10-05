@@ -46,9 +46,9 @@ import {
   type RoommateStatus,
   type RuleRow,
 } from "@/modules/lodging/preferences-domain";
-import { LODGING_LINE_KEY, lodgingCharge, type LodgingPriceLine } from "@/modules/lodging/pricing";
-import { calculationWithLine, registrationFormDefinitionSchema, type FormCalculation } from "@/modules/forms/definition";
-import { lockEventLodgingUnits, lodgingTransactionTimeoutMs, nightsFor } from "@/modules/lodging/service";
+import { LODGING_LINE_KEY, lodgingCharge, unitsForParty } from "@/modules/lodging/pricing";
+import { isChurchBilledBillingMode } from "@/modules/club-registrations/per-person-price";
+import { lockEventLodgingUnits, lodgingTransactionTimeoutMs, nightsFor, touchEventLodgingCapacity } from "@/modules/lodging/service";
 
 /**
  * Lodging preferences, roommate requests, household rules and the staff review (#199, slice 2).
@@ -69,86 +69,6 @@ const toDate = (night: string) => new Date(`${night}T00:00:00Z`);
 const toNight = (date: Date) => date.toISOString().slice(0, 10);
 const record = (value: unknown): Record<string, unknown> => (value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {});
 
-type LodgingBilling = {
-  submissionId: string;
-  formVersionId: string;
-  responses: Record<string, unknown>;
-  snapshot: Record<string, unknown>;
-  /** What the registration was charged for lodging (0 when it has no lodging line). */
-  storedCents: number;
-  /** Payments pending or succeeded on the registration. */
-  paid: number;
-  /** No promo code, amendment, adjustment, waitlist promotion or payment choice: the stored total is the form's lines and nothing else. */
-  simple: boolean;
-};
-
-/** The pricing the registration form stored, or null for a registration that never went through a form (imports, staff entry). */
-async function loadLodgingBilling(tx: Tx, registrationId: string): Promise<LodgingBilling | null> {
-  const submission = await tx.publicRegistrationSubmission.findUnique({
-    where: { registrationId },
-    select: { id: true, formVersionId: true, responses: true, pricingSnapshot: true },
-  });
-  if (!submission) return null;
-  const snapshot = record(submission.pricingSnapshot);
-  const lines = Array.isArray(snapshot.lineItems) ? snapshot.lineItems.map(record) : [];
-  const stored = lines.find((line) => line.key === LODGING_LINE_KEY);
-  const [paid, redemptions, operations, adjustments, waitlisted, paymentChoices] = await Promise.all([
-    tx.payment.count({ where: { registrationId, status: { in: ["PENDING", "SUCCEEDED"] } } }),
-    tx.promoCodeRedemption.count({ where: { registrationId } }),
-    tx.registrationOperation.count({ where: { registrationId } }),
-    tx.registrationAdjustment.count({ where: { registrationId } }),
-    tx.registrationWaitlistEntry.count({ where: { registrationId } }),
-    tx.registrationPaymentChoiceOperation.count({ where: { registrationId } }),
-  ]);
-  return {
-    submissionId: submission.id,
-    formVersionId: submission.formVersionId,
-    responses: record(submission.responses),
-    snapshot,
-    storedCents: typeof stored?.amountCents === "number" ? stored.amountCents : 0,
-    paid,
-    simple: redemptions === 0 && operations === 0 && adjustments === 0 && waitlisted === 0 && paymentChoices === 0,
-  };
-}
-
-/**
- * Replaces the lodging line in the stored pricing and the registration's total, through the form's own calculation so
- * the processing fee follows. Only for a registration with no payment, promo code, amendment or adjustment.
- */
-async function repriceLodging(tx: Tx, billing: LodgingBilling, registrationId: string, line: LodgingPriceLine | null, eventId: string, confirmationCode: string) {
-  const version = await tx.registrationFormVersion.findUniqueOrThrow({ where: { id: billing.formVersionId }, select: { definition: true } });
-  const definition = registrationFormDefinitionSchema.parse(version.definition);
-  const snapshot = billing.snapshot;
-  const current: FormCalculation = {
-    subtotalCents: Number(snapshot.subtotalCents ?? 0),
-    processingFeeCents: Number(snapshot.processingFeeCents ?? 0),
-    totalCents: Number(snapshot.totalCents ?? 0),
-    lineItems: (Array.isArray(snapshot.lineItems) ? snapshot.lineItems : []) as FormCalculation["lineItems"],
-  };
-  const next = calculationWithLine(definition, billing.responses, current, LODGING_LINE_KEY, line);
-  await tx.publicRegistrationSubmission.update({
-    where: { id: billing.submissionId },
-    data: {
-      pricingSnapshot: {
-        ...snapshot,
-        lineItems: next.lineItems,
-        preDiscountSubtotalCents: next.subtotalCents,
-        discountAmountCents: 0,
-        subtotalCents: next.subtotalCents,
-        processingFeeCents: next.processingFeeCents,
-        totalCents: next.totalCents,
-        lodgingRepricedAt: new Date().toISOString(),
-      } as unknown as Prisma.InputJsonValue,
-    },
-  });
-  await tx.registration.update({ where: { id: registrationId }, data: { totalAmount: next.totalCents / 100 } });
-  await writeAuditLog({
-    eventId, action: "LODGING_CHARGE_CHANGED", entityType: "Registration", entityId: registrationId,
-    summary: `The lodging charge on ${confirmationCode} changed with its lodging request.`,
-    metadata: { registrationId, lodgingCents: { from: billing.storedCents, to: line?.amountCents ?? 0 }, totalCents: { from: current.totalCents, to: next.totalCents } },
-  }, tx);
-}
-
 function verificationRequired() {
   return new LodgingError("EDIT_POLICY_REQUIRES_VERIFICATION", "This event requires verification before this change. To change this, contact the event team.");
 }
@@ -164,7 +84,7 @@ export type Actor =
 export async function loadContext(client: Client, eventId: string) {
   const lodging = await client.eventLodging.findUnique({
     where: { eventId },
-    include: { event: { select: { id: true, name: true, startsAt: true, endsAt: true, timezone: true, registrationClosesOn: true, attendeeEditPolicy: true } } },
+    include: { event: { select: { id: true, name: true, startsAt: true, endsAt: true, timezone: true, registrationClosesOn: true, attendeeEditPolicy: true, billingMode: true } } },
   });
   if (!lodging) throw new LodgingError("NO_PROPERTY", "This event has no lodging set up.");
   const nights = nightsFor(lodging);
@@ -181,6 +101,8 @@ export async function loadContext(client: Client, eventId: string) {
     nights,
     deadlineDay,
     editPolicy: lodging.event.attendeeEditPolicy,
+    /** A church-billed event bills through its invoice: the expected lodging charge on its registrations is always 0. */
+    churchBilled: isChurchBilledBillingMode(lodging.event.billingMode),
     collectsPreferences: lodging.collectsPreferences,
     fullBehavior: lodging.fullBehavior as FullBehavior,
     preferencesDeadline: lodging.preferencesDeadline ? toNight(lodging.preferencesDeadline) : null,
@@ -196,19 +118,21 @@ export async function loadCategoryCapacity(client: Client, context: Pick<Context
   });
   const capacity: Partial<Record<LodgingCategory, CategoryCapacity>> = {};
   const unitIdsByCategory = new Map<LodgingCategory, string[]>();
-  const states: Array<{ category: LodgingCategory; groundLevel: boolean; state: UnitNightState }> = [];
+  const states: Array<{ category: LodgingCategory; groundLevel: boolean; roomSleeps: number | null; state: UnitNightState }> = [];
   for (const row of rows) {
     const category = row.unit.category;
-    if (!category || row.unit.retiredAt) continue;
+    if (!category || row.retired) continue;
     unitIdsByCategory.set(category, [...(unitIdsByCategory.get(category) ?? []), row.id]);
     states.push({
       category,
       groundLevel: row.unit.groundLevel || row.unit.kind !== "ROOM",
+      // A room's own size (the smallest default among a category's rooms) is what a per-room charge divides by.
+      roomSleeps: row.unit.kind === "ROOM" && !row.unit.isArea && row.assignable && row.defaultCapacity !== null && row.defaultCapacity > 0 ? row.defaultCapacity : null,
       state: {
         unitId: row.id,
-        assignable: row.unit.assignable,
+        assignable: row.assignable,
         retired: false,
-        defaultCapacity: row.unit.defaultCapacity,
+        defaultCapacity: row.defaultCapacity,
         capacityOverride: row.capacityOverride,
         unavailable: row.unavailable,
         activeFrom: row.unit.activeFrom ? toNight(row.unit.activeFrom) : null,
@@ -221,7 +145,8 @@ export async function loadCategoryCapacity(client: Client, context: Pick<Context
   for (const entry of states) {
     const rowsForUnit = projection.get(entry.state.unitId) ?? [];
     const inService = rowsForUnit.some((night) => night.status === "AVAILABLE");
-    const current = capacity[entry.category] ?? { perNight: Object.fromEntries(context.nights.map((night) => [night, 0 as number | null])), unitsInService: 0, groundLevelUnits: 0 };
+    const current = capacity[entry.category] ?? { perNight: Object.fromEntries(context.nights.map((night) => [night, 0 as number | null])), unitsInService: 0, groundLevelUnits: 0, unitCapacity: null };
+    if (entry.roomSleeps !== null) current.unitCapacity = current.unitCapacity === null || current.unitCapacity === undefined ? entry.roomSleeps : Math.min(current.unitCapacity, entry.roomSleeps);
     if (inService) {
       current.unitsInService += 1;
       if (entry.groundLevel) current.groundLevelUnits += 1;
@@ -370,7 +295,17 @@ export async function updateLodgingSettings(eventId: string, actorUserId: string
 // ---------------------------------------------------------------------------
 
 export type SaveRequestResult =
-  | { requestId: string; version: number; changed: boolean; afterDeadline: boolean; changeRequested?: false; repriced?: boolean; priceNeedsReview?: boolean }
+  | {
+      requestId: string;
+      version: number;
+      changed: boolean;
+      afterDeadline: boolean;
+      changeRequested?: false;
+      /** A staff change that alters the lodging charge: the registration's total is NOT changed; staff adjust it in Payments. */
+      priceNeedsReview?: boolean;
+      /** The change in what the request costs at today's rates (signed cents), when `priceNeedsReview`. */
+      chargeDeltaCents?: number;
+    }
   /** The event's edit policy kept the change from applying itself; it waits in the staff review queue. */
   | { changeRequested: true; changeRequestId: string };
 
@@ -384,8 +319,15 @@ export type SaveRequestResult =
  * The event's edit policy (as for every private-link edit) applies to the registrant:
  * - VERIFY_EVERY_EDIT: refused with EDIT_POLICY_REQUIRES_VERIFICATION; the screen is read-only.
  * - TIERED: the accessibility flags may be set by the first saved version only; later changes are staff-only
- *   (FLAGS_STAFF_ONLY). A change to a priced type is applied only while no payment (pending or succeeded) exists
- *   on the registration; otherwise it is recorded as a change request for staff and nothing is applied.
+ *   (FLAGS_STAFF_ONLY).
+ *
+ * **The charge is never changed here.** The lodging line is priced once, when the registration is submitted. Once a
+ * registration exists, a registrant's change that would alter the lodging charge (the request at today's rates, before
+ * and after) is not applied: it becomes a change request for staff. A staff change is saved, the result says the charge
+ * needs adjusting (`priceNeedsReview`), and staff do that through the Payments adjustment flow. Neither touches the
+ * registration's total or its pricing snapshot, and nothing creates a payment or a refund. A church-billed event's
+ * expected lodging charge is always 0.
+ *
  * A registrant is also refused fewer nights than a rate's minimum (BELOW_MINIMUM_NIGHTS); staff may make the exception.
  */
 export async function saveLodgingRequest(
@@ -451,14 +393,30 @@ export async function saveLodgingRequest(
     if (!staff && rate?.minimumNights && nights.length < rate.minimumNights) {
       throw new LodgingError("BELOW_MINIMUM_NIGHTS", `${lodgingCategoryLabels[next.category!]} needs at least ${rate.minimumNights} nights.`);
     }
-    // What this request costs, against what the registration was charged for lodging.
-    const nextCharge = lodgingCharge({ category: next.category, nights: nights.length, partySize, rates, ignoreMinimum: true });
-    const nextChargeCents = nextCharge.kind === "CHARGE" ? nextCharge.line.amountCents : 0;
-    const billing = await loadLodgingBilling(tx, input.registrationId);
-    const chargeChanges = billing !== null && billing.storedCents !== nextChargeCents;
-    // Money already on the registration, a promo code, an amendment or an adjustment make a reprice something staff do:
-    // the registrant's change becomes a change request and nothing is applied (refunds and new charges are human gates).
-    if (!staff && chargeChanges && billing && (billing.paid > 0 || !billing.simple)) {
+
+    // Every unit row of the event's lodging is the lock a selection takes, before any capacity is read, so two
+    // registrants racing for the last places cannot both get them (#200 takes the same lock before it assigns).
+    // The capacity version is bumped under those locks, so a Serializable submission that read capacity earlier fails
+    // and is retried instead of overbooking.
+    let capacity: Awaited<ReturnType<typeof loadCategoryCapacity>>["capacity"] = {};
+    if (next.category || previous?.category) {
+      const everyUnit = await tx.eventLodgingUnit.findMany({ where: { eventLodgingId: context.eventLodgingId }, select: { id: true } });
+      await lockEventLodgingUnits(tx, input.eventId, everyUnit.map((row) => row.id));
+      if (next.category) await touchEventLodgingCapacity(tx, context.eventLodgingId);
+      capacity = (await loadCategoryCapacity(tx, context)).capacity;
+    }
+
+    // What the request costs, before and after, at today's rates: a rate change alone, or an edit that does not touch
+    // the price, is not a charge change.
+    const costOf = (category: LodgingCategory | null, nightCount: number, party: number) => {
+      if (context.churchBilled || !category) return 0;
+      const charge = lodgingCharge({ category, nights: nightCount, partySize: party, rates, ignoreMinimum: true, units: unitsForParty(party, capacity[category]?.unitCapacity) });
+      return charge.kind === "CHARGE" ? charge.line.amountCents : 0;
+    };
+    const previousCents = previous ? costOf(previous.category, requestNights(previous, context.nights).length, previous.partySize) : 0;
+    const nextCents = costOf(next.category, nights.length, partySize);
+    const chargeChanges = previousCents !== nextCents;
+    if (!staff && chargeChanges) {
       await tx.eventLodgingChangeRequest.updateMany({
         where: { registrationId: input.registrationId, resolvedAt: null },
         data: { resolvedAt: now, resolution: "Superseded by a newer request" },
@@ -474,17 +432,12 @@ export async function saveLodgingRequest(
       await writeAuditLog({
         eventId: input.eventId, action: "LODGING_CHANGE_REQUESTED", entityType: "EventLodgingChangeRequest", entityId: change.id,
         summary: `A change that alters the lodging charge was requested on ${registration.confirmationCode}.`,
-        metadata: { registrationId: input.registrationId, category: next.category, accessTokenId: change.accessTokenId, chargedCents: billing.storedCents, requestedCents: nextChargeCents },
+        metadata: { registrationId: input.registrationId, category: next.category, accessTokenId: change.accessTokenId, deltaCents: nextCents - previousCents },
       }, tx);
       return { changeRequested: true as const, changeRequestId: change.id };
     }
 
     if (next.category) {
-      // Every unit row of the event's lodging is the lock a selection takes, before any capacity is read, so two
-      // registrants racing for the last places cannot both get them (#200 takes the same lock before it assigns).
-      const everyUnit = await tx.eventLodgingUnit.findMany({ where: { eventLodgingId: context.eventLodgingId }, select: { id: true } });
-      await lockEventLodgingUnits(tx, input.eventId, everyUnit.map((row) => row.id));
-      const { capacity } = await loadCategoryCapacity(tx, context);
       const categoryCapacity = capacity[next.category];
       if (!categoryCapacity || categoryCapacity.unitsInService === 0) {
         throw new LodgingError("CATEGORY_NOT_OFFERED", `${lodgingCategoryLabels[next.category]} is not available for this event.`);
@@ -551,24 +504,13 @@ export async function saveLodgingRequest(
         ...(input.actor.kind === "REGISTRANT" ? { accessTokenId: input.actor.accessTokenId } : {}),
       },
     }, tx);
-    // The lodging charge follows the request while nothing else rides on the registration; otherwise it is left for staff.
-    let repriced = false;
-    let priceNeedsReview = false;
-    if (billing && chargeChanges) {
-      if (billing.paid === 0 && billing.simple) {
-        await repriceLodging(tx, billing, input.registrationId, nextCharge.kind === "CHARGE" ? nextCharge.line : null, input.eventId, registration.confirmationCode);
-        repriced = true;
-      } else {
-        priceNeedsReview = true;
-      }
-    }
     if (staff) {
       await tx.eventLodgingChangeRequest.updateMany({
         where: { registrationId: input.registrationId, resolvedAt: null },
         data: { resolvedAt: now, resolvedByUserId: input.actor.kind === "STAFF" ? input.actor.userId : null, resolution: "Handled by staff" },
       });
     }
-    return { requestId: request.id, version, changed: true, afterDeadline: staff && pastDeadline, repriced, priceNeedsReview };
+    return { requestId: request.id, version, changed: true, afterDeadline: staff && pastDeadline, ...(staff && chargeChanges ? { priceNeedsReview: true, chargeDeltaCents: nextCents - previousCents } : {}) };
   }, { timeout: lodgingTransactionTimeoutMs });
 }
 
@@ -832,7 +774,7 @@ async function loadReviewFacts(client: Client, context: Context) {
     client.guardianAuthority.findMany({ where: { eventId, state: "ACTIVE", adultPersonId: { not: null } }, select: { id: true, minorPersonId: true, adultPersonId: true, declaredAt: true } }),
     loadCurrentRequests(client, eventId),
     client.eventLodgingReviewAck.findMany({ where: { eventId }, select: { itemKey: true, fingerprint: true } }),
-    client.eventLodgingChangeRequest.findMany({ where: { eventId, resolvedAt: null }, select: { id: true, registrationId: true, category: true }, orderBy: { createdAt: "asc" } }),
+    client.eventLodgingChangeRequest.findMany({ where: { eventId, resolvedAt: null }, select: { id: true, registrationId: true, category: true, firstNight: true, lastNight: true, partySize: true }, orderBy: { createdAt: "asc" } }),
     client.publicRegistrationSubmission.findMany({ where: { eventId }, select: { registrationId: true, pricingSnapshot: true } }),
     loadRates(client, context.eventLodgingId),
   ]);
@@ -866,11 +808,25 @@ async function loadReviewFacts(client: Client, context: Context) {
     const stored = lines.find((line) => line.key === LODGING_LINE_KEY);
     return [submission.registrationId, typeof stored?.amountCents === "number" ? stored.amountCents : 0] as const;
   }));
-  const lodgingCharges = requestSnapshots.map((request) => {
-    const charge = lodgingCharge({ category: request.category, nights: requestNights(request, context.nights).length, partySize: request.partySize, rates, ignoreMinimum: true });
-    return { registrationId: request.registrationId, chargedCents: chargedByRegistration.get(request.registrationId) ?? 0, currentCents: charge.kind === "CHARGE" ? charge.line.amountCents : 0 };
-  });
-  const items = buildReviewItems({ nights: context.nights, registrations: registrationFacts, people, requests: requestSnapshots, roommates: roommateRows, rules: ruleRows, guardians, capacity, changeRequests, lodgingCharges });
+  // What a request costs at today's rates. A church-billed event is never charged lodging through its registrations.
+  const costOf = (category: LodgingCategory | null, nightCount: number, party: number) => {
+    if (context.churchBilled || !category) return 0;
+    const charge = lodgingCharge({ category, nights: nightCount, partySize: party, rates, ignoreMinimum: true, units: unitsForParty(party, capacity[category]?.unitCapacity) });
+    return charge.kind === "CHARGE" ? charge.line.amountCents : 0;
+  };
+  const lodgingCharges = requestSnapshots.map((request) => ({
+    registrationId: request.registrationId,
+    chargedCents: context.churchBilled ? 0 : chargedByRegistration.get(request.registrationId) ?? 0,
+    currentCents: costOf(request.category, requestNights(request, context.nights).length, request.partySize),
+  }));
+  const changeRequestFacts = changeRequests.map((change) => ({
+    id: change.id,
+    registrationId: change.registrationId,
+    category: change.category,
+    chargedCents: context.churchBilled ? 0 : chargedByRegistration.get(change.registrationId) ?? 0,
+    requestedCents: costOf(change.category, requestNights({ firstNight: change.firstNight ? toNight(change.firstNight) : null, lastNight: change.lastNight ? toNight(change.lastNight) : null }, context.nights).length, change.partySize),
+  }));
+  const items = buildReviewItems({ nights: context.nights, registrations: registrationFacts, people, requests: requestSnapshots, roommates: roommateRows, rules: ruleRows, guardians, capacity, changeRequests: changeRequestFacts, lodgingCharges });
   const acked = new Set(acks.map((ack) => `${ack.itemKey}\u0000${ack.fingerprint}`));
   return { registrations, registrationFacts, people, requestSnapshots, roommates, roommateRows, ruleRows, guardians, capacity, unitIdsByCategory, items, acked };
 }
@@ -1055,14 +1011,14 @@ export type RegistrantLodgingView = {
   closedReason: "NOT_COLLECTED" | "DEADLINE_PASSED" | "REGISTRATION_NOT_ACTIVE" | "VERIFICATION_REQUIRED" | null;
   /** TIERED events: accessibility needs can be set once; later changes go through the event team. */
   flagsLocked: boolean;
-  /** TIERED events: a change to a priced type is held for staff once money is on the registration. */
+  /** Once registered, a change that alters the lodging charge goes to the event team instead of applying (never on a church-billed event). */
   pricedChangeNeedsStaff: boolean;
   /** A change the registrant asked for that is waiting for the event team. */
   changeRequested: boolean;
   deadline: string;
   fullBehavior: FullBehavior;
   nights: string[];
-  offered: Array<{ category: LodgingCategory; label: string; full: boolean; rate: LodgingRate | null }>;
+  offered: Array<{ category: LodgingCategory; label: string; full: boolean; rate: LodgingRate | null; /** People a typical room takes; the per-room charge divides the party by it. */ unitCapacity: number | null }>;
   people: Array<{ personId: string; name: string }>;
   request: {
     version: number;
@@ -1096,7 +1052,7 @@ export async function getRegistrantLodgingView(input: { eventId: string; registr
   });
   if (!own) return emptyView({});
   const { capacity } = await loadCategoryCapacity(client, context);
-  const [requests, rates, roommateRows, versionCount, openChanges, payments] = await Promise.all([
+  const [requests, rates, roommateRows, versionCount, openChanges] = await Promise.all([
     loadCurrentRequests(client, input.eventId, { registrationId: input.registrationId }),
     loadRates(client, context.eventLodgingId),
     client.eventLodgingRoommateRequest.findMany({
@@ -1104,7 +1060,6 @@ export async function getRegistrantLodgingView(input: { eventId: string; registr
     }),
     client.eventLodgingRequestVersion.count({ where: { eventId: input.eventId, request: { registrationId: input.registrationId } } }),
     client.eventLodgingChangeRequest.count({ where: { registrationId: input.registrationId, resolvedAt: null } }),
-    client.payment.count({ where: { registrationId: input.registrationId, status: { in: ["PENDING", "SUCCEEDED"] } } }),
   ]);
   const current = requests[0] ?? null;
   const demand = demandByCategoryNight((await loadCurrentRequests(client, input.eventId, {
@@ -1119,7 +1074,9 @@ export async function getRegistrantLodgingView(input: { eventId: string; registr
       category,
       label: lodgingCategoryLabels[category],
       full: !categoryFits({ capacity: capacity[category]!, demand: demand.get(category), nights: stayNights, partySize }).fits,
-      rate: rateForCategory(rates, category),
+      // A church-billed registrant is never shown a price.
+      rate: context.churchBilled ? null : rateForCategory(rates, category),
+      unitCapacity: capacity[category]?.unitCapacity ?? null,
     }));
   const active = (lodgingActiveRegistrationStatuses as readonly string[]).includes(own.status);
   const pastDeadline = isPastLodgingDeadline(context.deadlineDay, now, context.timezone);
@@ -1156,7 +1113,7 @@ export async function getRegistrantLodgingView(input: { eventId: string; registr
     canEdit: closedReason === null,
     closedReason,
     flagsLocked: current !== null,
-    pricedChangeNeedsStaff: payments > 0,
+    pricedChangeNeedsStaff: !context.churchBilled,
     changeRequested: openChanges > 0,
     deadline: context.deadlineDay,
     fullBehavior: context.fullBehavior,

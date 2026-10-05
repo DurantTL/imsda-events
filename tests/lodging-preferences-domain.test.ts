@@ -368,6 +368,27 @@ describe("the staff review queue", () => {
     expect(items.map((item) => [item.kind, item.key])).toEqual([["CHANGE_REQUESTED", "change:c1"]]);
   });
 
+  it("names the charge change a registrant asked for, with its sign", () => {
+    const up = buildReviewItems(facts({ changeRequests: [{ id: "c1", registrationId: "r1", category: "DORM_ROOM", chargedCents: 4000, requestedCents: 6000 }] }));
+    expect(up[0]?.title).toContain("lodging charge change requested (+$20.00)");
+    const down = buildReviewItems(facts({ changeRequests: [{ id: "c1", registrationId: "r1", category: "TENT", chargedCents: 6000, requestedCents: 4000 }] }));
+    expect(down[0]?.title).toContain("-$20.00");
+    expect(up[0]?.fingerprint).not.toBe(down[0]?.fingerprint);
+  });
+
+  it("flags a party larger than the registration's active attendees, and only then", () => {
+    const larger = buildReviewItems(facts({ requests: [request({ registrationId: "r1", partySize: 5 })] }));
+    expect(kinds(larger)).toContain("PARTY_EXCEEDS_ATTENDEES");
+    const fits = buildReviewItems(facts({ requests: [request({ registrationId: "r1", partySize: 1 })] }));
+    expect(kinds(fits)).not.toContain("PARTY_EXCEEDS_ATTENDEES");
+  });
+
+  it("lists a charge that differs from the request, and nothing when they agree", () => {
+    const differs = buildReviewItems(facts({ lodgingCharges: [{ registrationId: "r1", chargedCents: 4000, currentCents: 6000 }] }));
+    expect(kinds(differs)).toEqual(["PRICE_DIFFERS"]);
+    expect(buildReviewItems(facts({ lodgingCharges: [{ registrationId: "r1", chargedCents: 4000, currentCents: 4000 }] }))).toEqual([]);
+  });
+
   it("changes an item's fingerprint when the request changes, so an acknowledged item returns", () => {
     const first = buildReviewItems(facts({ requests: [request({ registrationId: "r1", afterDeadline: true, version: 2 })] }));
     const later = buildReviewItems(facts({ requests: [request({ registrationId: "r1", afterDeadline: true, version: 3 })] }));

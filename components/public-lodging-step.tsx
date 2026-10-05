@@ -18,11 +18,13 @@ const money = (cents: number) => `$${(cents / 100).toFixed(2)}`;
  * are full for the chosen nights are shown as Full and cannot be picked. Accessibility is two yes/no boxes: please do
  * not enter medical detail here.
  */
-export function PublicLodgingStep({ offer, choice, attendees, issues, onChange }: {
+export function PublicLodgingStep({ offer, choice, attendees, issues, ignoreFull = false, onChange }: {
   offer: LodgingStepOffer;
   choice: LodgingChoice;
   attendees: ReadonlyArray<{ clientId: string; name: string }>;
   issues: ReadonlyArray<{ message: string }>;
+  /** The registration is joining the waitlist: a full type can still be named, as an unpriced request. */
+  ignoreFull?: boolean;
   onChange: (next: LodgingChoice) => void;
 }) {
   const nights = chosenNights(choice);
@@ -38,7 +40,7 @@ export function PublicLodgingStep({ offer, choice, attendees, issues, onChange }
           <input type="radio" name="lodging_category" checked={choice.category === ""} onChange={() => set({ category: "" })} /> No preference
         </label>
         {offer.categories.map((option) => {
-          const full = categoryIsFull(offer, option.category, nights.length > 0 ? nights : offer.nights, choice.partySize);
+          const full = !ignoreFull && categoryIsFull(offer, option.category, nights.length > 0 ? nights : offer.nights, choice.partySize);
           return (
             <label key={option.category}>
               <input type="radio" name="lodging_category" checked={choice.category === option.category} disabled={full && choice.category !== option.category} onChange={() => set({ category: option.category })} />
@@ -47,6 +49,7 @@ export function PublicLodgingStep({ offer, choice, attendees, issues, onChange }
             </label>
           );
         })}
+        {ignoreFull ? <p>This registration is joining the waitlist. Your lodging choice is saved with it; the event team will confirm it if a place opens, and nothing is charged for lodging now.</p> : null}
         {offer.fullBehavior === "WAITLIST" && offer.categories.some((option) => categoryIsFull(offer, option.category, offer.nights, choice.partySize)) ? <p>A waitlist for full types will open later.</p> : null}
       </fieldset>
 
@@ -117,7 +120,7 @@ export function PublicLodgingStep({ offer, choice, attendees, issues, onChange }
       </fieldset>
 
       <p role="status">
-        {line ? `Lodging: ${money(line.amountCents)} (${line.pricingLabel}). This is added to your registration total.` : choice.category === "" ? "No lodging type chosen." : "Lodging for this choice is included in your registration."}
+        {ignoreFull ? "Nothing is charged for lodging while this registration is on the waitlist." : line ? `Lodging: ${money(line.amountCents)} (${line.pricingLabel}). This is added to your registration total.` : choice.category === "" ? "No lodging type chosen." : "Lodging for this choice is included in your registration."}
       </p>
     </div>
   );

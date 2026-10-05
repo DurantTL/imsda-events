@@ -611,6 +611,26 @@ export async function checkPublicRoommateLookupRateLimit(request: Request, token
   ], configuration);
 }
 
+/**
+ * A registration form submission that asks to room with someone by name and confirmation code (#199) can be used to
+ * guess codes, so it gets its own, tighter budget on top of the registration budget: 10 per client and 5 per client
+ * and form every 15 minutes.
+ */
+export async function checkPublicFormRoommateLookupRateLimit(request: Request, eventSlug: string, formSlug: string) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const form = hashRateLimitIdentifier("public-event-form", `${eventSlug.trim().toLowerCase()}/${formSlug.trim().toLowerCase()}`, configuration);
+  return evaluate([
+    { policy: "public.registration.roommate-lookup.client", limit: 10, windowSeconds: fifteenMinutes, identifierHashes: [client] },
+    { policy: "public.registration.roommate-lookup.client-form", limit: 5, windowSeconds: fifteenMinutes, identifierHashes: [client, form] },
+  ], configuration);
+}
+
+/** The hashed client identity of a request (never the address itself), for an audit entry about a pattern of misses. */
+export function publicRequestClientHash(request: Request) {
+  return requestIdentities(request, getRateLimitConfiguration()).client;
+}
+
 export async function checkPublicPaymentRateLimit(
   request: Request,
   token: string,

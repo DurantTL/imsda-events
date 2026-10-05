@@ -8,9 +8,11 @@ import {
 } from "@/modules/forms/public-repository";
 import {
   applyRateLimitHeaders,
+  mergeRateLimitOutcomes,
   type RateLimitOutcome,
 } from "@/modules/rate-limit/domain";
-import { checkPublicRegistrationRateLimit } from "@/modules/rate-limit/service";
+import { checkPublicFormRoommateLookupRateLimit, checkPublicRegistrationRateLimit, publicRequestClientHash } from "@/modules/rate-limit/service";
+import { writeAuditLog } from "@/modules/audit/audit-service";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 
@@ -107,7 +109,35 @@ async function postHandler(request: Request, context: { params: Promise<{ eventS
       ), rateLimit);
     }
     const input = publicRegistrationInputSchema.parse(JSON.parse(body));
-    const confirmation = await submitPublicRegistration(eventSlug, formSlug, input);
+    // Asking to room with someone by name and confirmation code can be used to guess codes: it has a tighter budget.
+    if ((input.lodging?.roommates?.length ?? 0) > 0) {
+      const lookupLimit = await checkPublicFormRoommateLookupRateLimit(request, eventSlug, formSlug);
+      rateLimit = mergeRateLimitOutcomes(rateLimit, lookupLimit);
+      if (!lookupLimit.allowed) {
+        return applyRateLimitHeaders(Response.json(
+          { error: "RATE_LIMITED", message: "Too many roommate lookups. Remove the roommate requests, or try again later." },
+          { status: 429, headers: noStoreHeaders },
+        ), rateLimit);
+      }
+    }
+    let confirmation;
+    try {
+      confirmation = await submitPublicRegistration(eventSlug, formSlug, input);
+    } catch (error) {
+      // A roommate lookup that found nobody rolled the submission back, so it is audited here, by the hashed client and
+      // the form only: never the typed name or code.
+      if (error instanceof PublicRegistrationError && error.meta.roommateMiss && error.meta.eventId) {
+        await writeAuditLog({
+          eventId: error.meta.eventId,
+          action: "LODGING_ROOMMATE_LOOKUP_MISSED",
+          entityType: "RegistrationForm",
+          entityId: formSlug.slice(0, 100),
+          summary: "A roommate lookup on a registration form found no match.",
+          metadata: { clientHash: publicRequestClientHash(request), formSlug: formSlug.slice(0, 100) },
+        }).catch((auditError) => logError("Roommate lookup miss could not be audited", auditError));
+      }
+      throw error;
+    }
     return applyRateLimitHeaders(
       Response.json({ confirmation }, { status: 201, headers: noStoreHeaders }),
       rateLimit

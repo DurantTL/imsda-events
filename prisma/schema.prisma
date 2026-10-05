@@ -6175,6 +6175,10 @@ model EventLodging {
   /// What a full category shows: "Full" only, or "Full" with a waitlist (the waitlist itself is #200).
   fullBehavior    LodgingFullBehavior @default(SHOW_FULL)
   settingsUpdatedByUserId String?
+  /// Bumped by every writer that changes what the event's lodging can hold or has promised (holds, closures, capacity
+  /// overrides, requests, submissions), inside its transaction and under the unit locks. A Serializable reader that
+  /// read capacity before such a write fails on its own bump of this row and is retried.
+  capacityVersion Int @default(0)
   createdByUserId String?
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt

@@ -6,6 +6,7 @@ const repositoryMocks = vi.hoisted(() => {
       public readonly code: string,
       message: string,
       public readonly issues: unknown[] = [],
+      public readonly meta: { roommateMiss?: boolean; eventId?: string } = {},
     ) {
       super(message);
       this.name = "PublicRegistrationError";
@@ -23,9 +24,15 @@ vi.mock("@/modules/forms/public-repository", () => repositoryMocks);
 
 const rateLimitMocks = vi.hoisted(() => ({
   checkPublicRegistrationRateLimit: vi.fn(),
+  checkPublicFormRoommateLookupRateLimit: vi.fn(),
+  publicRequestClientHash: vi.fn(() => "client-hash-1"),
 }));
 
 vi.mock("@/modules/rate-limit/service", () => rateLimitMocks);
+
+const auditMocks = vi.hoisted(() => ({ writeAuditLog: vi.fn() }));
+
+vi.mock("@/modules/audit/audit-service", () => auditMocks);
 
 import { GET, POST } from "@/app/api/public/events/[eventSlug]/forms/[formSlug]/registrations/route";
 
@@ -39,7 +46,7 @@ const submission = {
   website: "",
 };
 
-function postRequest() {
+function postRequest(lodging?: unknown) {
   return new Request(
     "https://events.imsda.test/api/public/events/summer-retreat/forms/attendee/registrations",
     {
@@ -48,7 +55,7 @@ function postRequest() {
         "content-type": "application/json",
         origin: "https://events.imsda.test",
       },
-      body: JSON.stringify(submission),
+      body: JSON.stringify(lodging ? { ...submission, lodging } : submission),
     },
   );
 }
@@ -72,6 +79,11 @@ beforeEach(() => {
   rateLimitMocks.checkPublicRegistrationRateLimit.mockResolvedValue(
     rateLimitOutcome(true),
   );
+  rateLimitMocks.checkPublicFormRoommateLookupRateLimit.mockResolvedValue(
+    rateLimitOutcome(true),
+  );
+  rateLimitMocks.publicRequestClientHash.mockReturnValue("client-hash-1");
+  auditMocks.writeAuditLog.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -168,5 +180,39 @@ describe("public registration route", () => {
     expect(response.headers.get("ratelimit-remaining")).toBe("0");
     expect(repositoryMocks.submitPublicRegistration).not.toHaveBeenCalled();
     expect(await response.json()).toMatchObject({ error: "RATE_LIMITED" });
+  });
+
+  const roommateLodging = {
+    category: "DORM_ROOM",
+    firstNight: "2027-06-15",
+    lastNight: "2027-06-17",
+    partySize: 2,
+    roommates: [{ name: "Sam Example", confirmationCode: "ABCD-EFGH" }],
+  };
+
+  it("applies the tighter roommate lookup budget only to submissions that ask for a roommate by code", async () => {
+    repositoryMocks.submitPublicRegistration.mockResolvedValue({ confirmationCode: "REG-1", registrationStatus: "CONFIRMED" });
+    await POST(postRequest(), context);
+    expect(rateLimitMocks.checkPublicFormRoommateLookupRateLimit).not.toHaveBeenCalled();
+
+    rateLimitMocks.checkPublicFormRoommateLookupRateLimit.mockResolvedValue(rateLimitOutcome(false));
+    const response = await POST(postRequest(roommateLodging), context);
+    expect(rateLimitMocks.checkPublicFormRoommateLookupRateLimit).toHaveBeenCalledTimes(1);
+    expect(response.status).toBe(429);
+    expect(repositoryMocks.submitPublicRegistration).toHaveBeenCalledTimes(1);
+  });
+
+  it("audits a roommate lookup miss outside the transaction by client hash and form only", async () => {
+    repositoryMocks.submitPublicRegistration.mockRejectedValue(
+      new repositoryMocks.PublicRegistrationError("LODGING_ROOMMATE_NOT_FOUND", "No match.", [], { roommateMiss: true, eventId: "event-1" }),
+    );
+    const response = await POST(postRequest(roommateLodging), context);
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(auditMocks.writeAuditLog).toHaveBeenCalledTimes(1);
+    const entry = auditMocks.writeAuditLog.mock.calls[0][0];
+    expect(entry).toMatchObject({ eventId: "event-1", action: "LODGING_ROOMMATE_LOOKUP_MISSED", metadata: { clientHash: "client-hash-1", formSlug: "attendee" } });
+    const serialized = JSON.stringify(entry);
+    expect(serialized).not.toContain("Sam Example");
+    expect(serialized).not.toContain("ABCD-EFGH");
   });
 });

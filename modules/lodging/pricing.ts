@@ -27,6 +27,15 @@ export function isLodgingLine(line: { key: string }) {
   return line.key === LODGING_LINE_KEY;
 }
 
+/**
+ * How many rooms a party is charged for under a per-room rate: the party divided by the people a typical room of the
+ * category takes (the smallest default "sleeps up to" among its rooms), rounded up. A site or a tent is one unit for
+ * the registration: the caller passes no capacity for them, and the answer is 1.
+ */
+export function unitsForParty(partySize: number, unitCapacity: number | null | undefined) {
+  return unitCapacity && unitCapacity > 0 ? Math.max(1, Math.ceil(partySize / unitCapacity)) : 1;
+}
+
 export type LodgingChargeInput = {
   category: LodgingCategory | null;
   /** Nights slept. */
@@ -35,6 +44,8 @@ export type LodgingChargeInput = {
   rates: Partial<Record<LodgingCategory, LodgingRate | null>>;
   /** Price the stay at the normal rate even below a rate's minimum nights (a staff exception). */
   ignoreMinimum?: boolean;
+  /** Rooms (or sites) the party is charged for under a per-room rate; see `unitsForParty`. Defaults to 1. */
+  units?: number;
 };
 
 export type LodgingCharge =
@@ -47,7 +58,8 @@ export function lodgingCharge(input: LodgingChargeInput): LodgingCharge {
   const rate = rateForCategory(input.rates, input.category);
   if (!rate) return { kind: "NONE" };
   const rates: LodgingChargeInput["rates"] = input.ignoreMinimum ? { ...input.rates, [input.category]: { ...rate, minimumNights: null } } : input.rates;
-  const quote = quoteStay({ rates, category: input.category, nights: input.nights, partySize: input.partySize });
+  const units = Math.max(1, input.units ?? 1);
+  const quote = quoteStay({ rates, category: input.category, nights: input.nights, partySize: input.partySize, units });
   if (quote.kind === "BELOW_MINIMUM_NIGHTS") return { kind: "BELOW_MINIMUM_NIGHTS", minimumNights: quote.minimumNights };
   if (quote.kind !== "CHARGE" || quote.totalCents <= 0) return { kind: "NONE" };
   const perNight = rate.basis === "PER_UNIT_NIGHT" || rate.basis === "PER_PERSON_NIGHT";
@@ -55,7 +67,7 @@ export function lodgingCharge(input: LodgingChargeInput): LodgingCharge {
     kind: "CHARGE",
     line: {
       key: LODGING_LINE_KEY,
-      label: `Lodging: ${lodgingCategoryLabels[input.category]}`,
+      label: `Lodging: ${lodgingCategoryLabels[input.category]}${units > 1 && (rate.basis === "PER_UNIT_NIGHT" || rate.basis === "PER_UNIT_PER_EVENT") ? ` (${units} ${input.category === "RV_SITE" ? "sites" : "rooms"})` : ""}`,
       amountCents: quote.totalCents,
       pricingLabel: `${describeRate({ ...rate, minimumNights: null })}${perNight ? `, ${input.nights} night${input.nights === 1 ? "" : "s"}` : ""}${rate.basis === "PER_PERSON_NIGHT" || rate.basis === "PER_PERSON_PER_EVENT" ? `, ${input.partySize} ${input.partySize === 1 ? "person" : "people"}` : ""}`,
     },
