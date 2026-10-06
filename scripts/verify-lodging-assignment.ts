@@ -330,8 +330,10 @@ async function main() {
   assert((await current(eventId, { attendeeId: giver.people[0]!.attendeeId })).length === 0, "the giver no longer holds the room");
 
   // ---- Room closure after assignment ---------------------------------------
-  const lodger = await makeReg(eventId, [40, 40]);
-  for (const person of lodger.people) await placeAt(eventId, person, "girls-218", N[0], N[3]);
+  // Two separate parties (a party alone above its beds is only a warning, #803).
+  const lodgerA = await makeReg(eventId, [40]);
+  const lodgerB = await makeReg(eventId, [40]);
+  for (const person of [...lodgerA.people, ...lodgerB.people]) await placeAt(eventId, person, "girls-218", N[0], N[3]);
   assert(!(await exceptionKinds()).includes("UNIT_OUT_OF_SERVICE") && !(await exceptionKinds()).includes("OVER_CAPACITY"), "nothing is wrong before the closure");
   const room218 = await unitRow(eventId, "girls-218");
   await updateEventUnit(eventId, room218.id, userId, { unavailable: true, unavailableReason: "Burst pipe" }, prisma);
@@ -727,7 +729,7 @@ async function main() {
   await requestIn(capCEvent, crossMover, { category: "TENT_WITH_POWER", partySize: 2 });
   for (const person of crossMover.people) await applyAssignmentAction(capCEvent, userId, { action: "place", placements: [{ occupant: attendee(person), place: { kind: "UNIT", eventUnitId: dormUnit.id }, firstNight: N[0], lastNight: N[3] }] }, prisma);
   const dormAfter = await dormRemaining();
-  assert(dormAfter.every((value, index) => value === (dormBefore[index] as number) - 2), "a placement outside the request's type is counted in the type they were placed in");
+  assert(dormAfter.every((value, index) => value === (dormBefore[index] as number) - 1), "a placement outside the request's type is counted in the type they were placed in: two people in one dorm room take one room");
   assert((await tentRemaining(capCEvent)).every((value) => value === 4), "and the unchanged request still holds its places (conservative until staff update it)");
   assert((await exceptionKindsFor(capCEvent)).includes("REQUEST_CATEGORY_DIFFERS"), "staff are told the registration is placed in a different type than it asked for");
   await requestIn(capCEvent, crossMover, { category: dormCategory, partySize: 2 });
@@ -753,6 +755,55 @@ async function main() {
   await requestIn(capBEvent, backed, { category: "TENT_WITH_POWER", partySize: 1 });
   await applyAssignmentAction(capBEvent, userId, { action: "place", placements: [{ occupant: attendee(backed.people[0]!), place: { kind: "UNIT", eventUnitId: capBTent.id }, firstNight: N[0], lastNight: N[3] }] }, prisma);
   assert(Object.values(await remainingIn()).every((value) => value === 29), "a person who has a request and is placed is counted once");
+
+  // ---- Rooms, not people, for a room-type category (#803) ------------------------------------------
+  const roomsEvent = `${P}_ev_rooms`;
+  await createEvent(roomsEvent);
+  await selectEventProperty(roomsEvent, userId, { propertyKey: "sunnydale-academy" }, prisma);
+  await updateLodgingSettings(roomsEvent, userId, { collectsPreferences: true, fullBehavior: "WAITLIST" }, prisma);
+  const dormUnits = await prisma.eventLodgingUnit.findMany({ where: { eventLodging: { eventId: roomsEvent }, unit: { category: "DORM_ROOM" } }, include: { unit: true } });
+  const keep = new Set(["girls-101", "girls-102", "girls-103"]);
+  for (const row of dormUnits) if (!keep.has(row.unit.key)) await updateEventUnit(roomsEvent, row.id, userId, { capacityOverride: 0 }, prisma);
+  const roomsFree = async () => Object.values((await getPublicLodgingOffer(roomsEvent, prisma))!.categories.find((entry) => entry.category === "DORM_ROOM")!.remaining);
+  assert((await roomsFree()).every((value) => value === 3), `three dorm rooms are in service and counted in rooms: ${(await roomsFree()).join()}`);
+  const roomFamily = await makeReg(roomsEvent, [40, 38, 9]);
+  await requestIn(roomsEvent, roomFamily, { category: "DORM_ROOM", partySize: 3, roomCount: 1 });
+  assert((await roomsFree()).every((value) => value === 2), "a party of three that asked for one room takes one room, not three places");
+  const familyRoom = await unitRow(roomsEvent, "girls-101");
+  const placedFamily = await applyAssignmentAction(roomsEvent, userId, {
+    action: "place",
+    placements: roomFamily.people.map((person) => ({ occupant: attendee(person), place: { kind: "UNIT", eventUnitId: familyRoom.id }, firstNight: N[0], lastNight: N[3] })),
+  }, prisma);
+  assert(placedFamily.created === 3 && placedFamily.warnings?.length === 1 && placedFamily.warnings[0]!.beds === 2 && placedFamily.warnings[0]!.people === 3, `a party above the room's two beds is placed with a warning, not refused: ${JSON.stringify(placedFamily.warnings)}`);
+  assert((await roomsFree()).every((value) => value === 2), "the placement is the same one room as the request: counted once");
+  const roomsKinds = await exceptionKindsFor(roomsEvent);
+  assert(roomsKinds.includes("EXTRA_BEDDING") && !roomsKinds.includes("OVER_CAPACITY"), `the room is listed as extra bedding, not over capacity: ${roomsKinds.join()}`);
+  const roomsView = await getAssignmentWorkspace(roomsEvent, { canSeeSensitive: false }, prisma);
+  const familyCard = roomsView.buildings.flatMap((building) => building.floors.flatMap((floor) => floor.units)).find((card) => card.eventUnitId === familyRoom.id)!;
+  assert(familyCard.extraBedding && familyCard.status === "FULL", "the workspace shows the room as full with extra bedding");
+  const familyPerson = roomsView.people.find((person) => person.registrationId === roomFamily.id)!;
+  assert(familyPerson.roomCount === 1, "and the room count on the person");
+  // Unit capacity still stops two separate parties from overfilling a room.
+  const roomStranger = await makeReg(roomsEvent, [40]);
+  await expectLodgingError(placeAt(roomsEvent, roomStranger.people[0]!, "girls-101"), "UNIT_FULL", "a second party into a room that is above its beds");
+  const twoBeds = await makeReg(roomsEvent, [40, 40]);
+  await placeAt(roomsEvent, twoBeds.people[0]!, "girls-103");
+  await placeAt(roomsEvent, twoBeds.people[1]!, "girls-103");
+  await expectLodgingError(placeAt(roomsEvent, roomStranger.people[0]!, "girls-103"), "UNIT_FULL", "a second party into a full two-bed room");
+  // One party across two rooms is two rooms.
+  await placeAt(roomsEvent, roomFamily.people[2]!, "girls-102", N[0], N[3], { mode: "MOVE" }, "Child moved to the next room");
+  assert((await roomsFree()).every((value) => value === 0), `the party across two rooms counts two rooms, alongside the other party's room: ${(await roomsFree()).join()}`);
+  // A waitlist entry carries a room count, from the request when it joins, and the database keeps it.
+  const wants = await makeReg(roomsEvent, [40, 40, 40, 40]);
+  await requestIn(roomsEvent, wants, { category: "DORM_ROOM", partySize: 4, roomCount: 2 });
+  const joinedRooms = await applyWaitlistAction(roomsEvent, userId, { action: "join", registrationId: wants.id, category: "DORM_ROOM", partySize: 4 }, { now: new Date("2027-05-20T12:00:00Z") }, prisma);
+  if (joinedRooms.action !== "join") throw new Error("FAILED: the join shape");
+  const roomsEntry = await prisma.eventLodgingWaitlistEntry.findUniqueOrThrow({ where: { id: joinedRooms.entryId } });
+  assert(roomsEntry.roomCount === 2, "a waitlist entry takes its room count from the request when it joins");
+  const roomsPreview = await applyWaitlistAction(roomsEvent, userId, { action: "offer", entryIds: [roomsEntry.id] }, { now: new Date("2027-05-20T12:00:00Z") }, prisma);
+  assert(roomsPreview.action === "offer" && !roomsPreview.confirmed && !roomsPreview.rows[0]!.eligible && roomsPreview.rows[0]!.roomCount === 2 && /No place is free for 2 rooms/.test(roomsPreview.rows[0]!.reason ?? ""), "no offer while the rooms are not free, counted in rooms");
+  await expectDatabaseRefusal(prisma.eventLodgingWaitlistEntry.update({ where: { id: roomsEntry.id }, data: { roomCount: 1 } }), "changing the rooms an entry asked for");
+  await expectLodgingError(applyWaitlistAction(roomsEvent, userId, { action: "join", registrationId: (await makeReg(roomsEvent, [40])).id, category: "DORM_ROOM", partySize: 1, roomCount: 2 }, { now: new Date("2027-05-20T12:00:00Z") }, prisma), "ROOM_COUNT_INVALID", "more rooms than people on a waitlist entry");
 
   // A plan that releases one assignment twice (two moves out of one long stay) keeps every revision and history row in step.
   const dblEvent = `${P}_ev_dbl`;

@@ -265,7 +265,7 @@ async function main() {
   assert(first.changed && first.version === 1, "the first save is version 1");
   const same = await save(registrationA, { category: "DORM_ROOM", partySize: 2, privateRoomRequested: true });
   assert(!same.changed && same.version === 1, "an unchanged save adds no version");
-  const second = await save(registrationA, { category: "CONFERENCE_CENTER_ROOM", partySize: 2, firstNight: "2027-06-16", lastNight: "2027-06-17" });
+  const second = await save(registrationA, { category: "CONFERENCE_CENTER_ROOM", partySize: 2, bringsExtraBedding: true, firstNight: "2027-06-16", lastNight: "2027-06-17" });
   assert(second.changed && second.version === 2, "a change is version 2");
   const versions = await prisma.eventLodgingRequestVersion.findMany({ where: { eventId }, orderBy: { version: "asc" } });
   assert(versions.length === 2 && versions[0]!.category === "DORM_ROOM" && versions[0]!.firstNight === null && versions[0]!.privateRoomRequested, "the earlier version is kept exactly as it was");
@@ -492,23 +492,43 @@ async function main() {
   const stranger = await caught(submitPublicRegistration(slugOf(otherEventId), formSlug, formInput(`${ids.formVersion}_o`, 1, { category: "TENT" }), before));
   assert(stranger instanceof PublicRegistrationError && stranger.issues[0]?.key === "lodging" && await prisma.registration.count({ where: { eventId: otherEventId } }) === strangerBefore, "an event that does not collect lodging refuses it and leaves nothing behind");
 
-  // A full type is refused at submit, and five racing for the last place leave exactly one winner.
-  const ccRows = (await getLodgingView(eventId, prisma)).buildings.flatMap((building) => building.units).filter((unit) => unit.category === "CONFERENCE_CENTER_ROOM");
-  for (const [index, unit] of ccRows.entries()) await updateEventUnit(eventId, unit.eventUnitId, userId, { capacityOverride: index === 0 ? 2 : 0 }, prisma);
-  // The conference center now takes 2 people a night; one is already there (the no-rate registration).
+  // A room-type category is counted in ROOMS (#803). A full type is refused at submit, and five racing for the last ROOM
+  // leave exactly one winner.
+  const unitsOf = async (category: string) => (await getLodgingView(eventId, prisma)).buildings.flatMap((building) => building.units).filter((unit) => unit.category === category && unit.assignable && !unit.unavailable && !unit.retired);
+  const ccRows = await unitsOf("CONFERENCE_CENTER_ROOM");
+  const dormRows = await unitsOf("DORM_ROOM");
+  /** Leaves exactly `free` rooms of a category free: only the rooms already asked for, plus `free`, stay in service. */
+  const roomsLeft = async (category: "CONFERENCE_CENTER_ROOM" | "DORM_ROOM", free: number) => {
+    const rows = category === "DORM_ROOM" ? dormRows : ccRows;
+    const requested = (await staffView()).offered.find((entry) => entry.category === category)!.requested;
+    assert(rows.length >= requested + free, `enough ${category} rooms to leave ${free} free (${requested} asked for, ${rows.length} exist)`);
+    for (const [index, row] of rows.entries()) await updateEventUnit(eventId, row.eventUnitId, userId, { capacityOverride: index < requested + free ? 2 : 0 }, prisma);
+  };
+  const restoreRooms = async (rows: typeof ccRows) => { for (const row of rows) await updateEventUnit(eventId, row.eventUnitId, userId, { capacityOverride: null }, prisma); };
+  await roomsLeft("CONFERENCE_CENTER_ROOM", 1);
   const cc2 = await submitForm({ people: 1, lodging: { category: "CONFERENCE_CENTER_ROOM", partySize: 1 } });
-  assert(cc2.snapshot.totalCents === 0, "the last place is taken at submit");
+  assert(cc2.snapshot.totalCents === 0, "the last room is taken at submit");
   const full = await caught(submitForm({ people: 1, lodging: { category: "CONFERENCE_CENTER_ROOM", partySize: 1 } }));
   assert(full instanceof PublicRegistrationError && full.issues[0]?.key === "lodging" && /Lodging step: .*full/.test(full.message), "a full type is refused at submit with a field error naming the step");
-  // Raise to exactly one place left, then race.
-  await updateEventUnit(eventId, ccRows[0]!.eventUnitId, userId, { capacityOverride: 3 }, prisma);
+  // Exactly one room left, then race.
+  await roomsLeft("CONFERENCE_CENTER_ROOM", 1);
   const racersBefore = await prisma.registration.count({ where: { eventId } });
   const racedSubmits = await Promise.all([1, 2, 3, 4, 5].map(() => caught(submitForm({ people: 1, lodging: { category: "CONFERENCE_CENTER_ROOM", partySize: 1 } }))));
   const winners = racedSubmits.filter((outcome) => !(outcome instanceof Error));
-  assert(winners.length === 1, `exactly one of five racing submissions gets the last place, got ${winners.length}: ${racedSubmits.map((outcome) => (outcome instanceof Error ? outcome.message.slice(0, 60) : "ok")).join(" | ")}`);
+  assert(winners.length === 1, `exactly one of five racing submissions gets the last room, got ${winners.length}: ${racedSubmits.map((outcome) => (outcome instanceof Error ? outcome.message.slice(0, 60) : "ok")).join(" | ")}`);
   assert(racedSubmits.filter((outcome) => outcome instanceof PublicRegistrationError && outcome.issues[0]?.key === "lodging").length === 4, "the other four are told the lodging step is full");
   assert(await prisma.registration.count({ where: { eventId } }) === racersBefore + 1, "and only the winner has a registration");
-  for (const unit of ccRows) await updateEventUnit(eventId, unit.eventUnitId, userId, { capacityOverride: null }, prisma);
+  await restoreRooms(ccRows);
+
+  // Rooms, not people, are what runs out: a party of six in one room takes one room, so the last room still goes to one
+  // winner when two parties race for it, however many people each brings. (A party needing two rooms with one left is refused.)
+  await roomsLeft("DORM_ROOM", 1);
+  const bigParty = (ack = true) => submitForm({ people: 6, lodging: { category: "DORM_ROOM", partySize: 6, roomCount: 1, ...(ack ? { bringsExtraBedding: true } : {}), firstNight: "2027-06-15", lastNight: "2027-06-16" } });
+  const twoRooms = await caught(submitForm({ people: 4, lodging: { category: "DORM_ROOM", partySize: 4, roomCount: 2, firstNight: "2027-06-15", lastNight: "2027-06-16" } }));
+  assert(twoRooms instanceof PublicRegistrationError && /Only 1 room is free/.test(twoRooms.message), `two rooms with one left is refused and says how many are free, got ${String(twoRooms instanceof Error ? twoRooms.message : twoRooms)}`);
+  const raceOutcomes = await Promise.all([bigParty(), bigParty(), submitForm({ people: 1, lodging: { category: "DORM_ROOM", partySize: 1, firstNight: "2027-06-15", lastNight: "2027-06-16" } })].map((promise) => caught(promise)));
+  assert(raceOutcomes.filter((outcome) => !(outcome instanceof Error)).length === 1, `exactly one of three parties gets the last dorm room, got ${raceOutcomes.filter((outcome) => !(outcome instanceof Error)).length}: ${raceOutcomes.map((outcome) => (outcome instanceof Error ? outcome.message.slice(0, 50) : "ok")).join(" | ")}`);
+  await restoreRooms(dormRows);
 
   // After submission, a lodging edit never changes the registration's total or its pricing. The charge was set once, when
   // the registration was submitted; staff adjust it through Payments.
@@ -535,16 +555,37 @@ async function main() {
   assert((await save(dorm.reg, { category: "DORM_ROOM", firstNight: "2027-06-15", lastNight: "2027-06-18", partySize: 2, privateRoomRequested: false })).changed, "a rate change alone does not turn a non-pricing edit into a change request");
   await setEventRate(eventId, userId, { category: "DORM_ROOM", rate: { amountCents: 2000, basis: "PER_UNIT_NIGHT", minimumNights: 2 } }, prisma);
 
-  // Rooms: a per-room rate charges for the rooms the party needs (the party over a room's size, rounded up).
-  const dormSleeps = offer.categories.find((entry) => entry.category === "DORM_ROOM")?.unitCapacity;
-  assert(dormSleeps === 2, `a dorm room sleeps 2, got ${dormSleeps}`);
-  const six = await submitForm({ people: 6, lodging: { category: "DORM_ROOM", partySize: 6, firstNight: "2027-06-15", lastNight: "2027-06-16" } });
+  // Rooms (#803): the registrant chooses how many; a per-room rate charges that many, never a party divided by a room size.
+  const dormOffer = offer.categories.find((entry) => entry.category === "DORM_ROOM");
+  assert(dormOffer?.unitCapacity === 2 && dormOffer.roomBased === true, `a dorm room sleeps 2 and the form asks how many rooms, got ${JSON.stringify(dormOffer)}`);
+  assert(offer.categories.filter((entry) => entry.category === "RV_SITE" || entry.category === "TENT" || entry.category === "TENT_WITH_POWER").every((entry) => entry.roomBased === false), "a site or a tent is one unit: no room question");
+  const dormNights = { firstNight: "2027-06-15", lastNight: "2027-06-16" };
+  const noAck = await caught(submitForm({ people: 6, lodging: { category: "DORM_ROOM", partySize: 6, roomCount: 1, ...dormNights } }));
+  assert(noAck instanceof PublicRegistrationError && noAck.issues[0]?.key === "lodging" && /extra bedding/.test(noAck.message), "a party above the beds needs the extra-bedding acknowledgement");
+  const six = await submitForm({ people: 6, lodging: { category: "DORM_ROOM", partySize: 6, roomCount: 1, bringsExtraBedding: true, ...dormNights } });
   const sixLine = lodgingLineOf(six.snapshot);
-  assert(sixLine?.amountCents === 2000 * 2 * 3 && sixLine.label === "Lodging: Dorm room (3 rooms)", `a party of 6 in 2-person rooms pays for 3 rooms, got ${JSON.stringify(sixLine)}`);
-  const sevenInTwo = await submitForm({ people: 3, lodging: { category: "DORM_ROOM", partySize: 3, firstNight: "2027-06-15", lastNight: "2027-06-16" } });
-  assert(lodgingLineOf(sevenInTwo.snapshot)?.amountCents === 2000 * 2 * 2, "a party of 3 pays for 2 rooms");
-  const siteParty = await submitForm({ people: 4, lodging: { category: "RV_SITE", partySize: 4 } });
-  assert(lodgingLineOf(siteParty.snapshot)?.amountCents === 15000 && lodgingLineOf(siteParty.snapshot)?.label === "Lodging: RV site", "a party at an RV site is one site");
+  assert(sixLine?.amountCents === 2000 * 2 * 1 && sixLine.label === "Lodging: Dorm room", `a party of 6 in one room pays for one room, got ${JSON.stringify(sixLine)}`);
+  const sixVersion = await prisma.eventLodgingRequestVersion.findFirstOrThrow({ where: { request: { registrationId: six.reg.id } } });
+  assert(sixVersion.roomCount === 1 && sixVersion.bringsExtraBedding === true && sixVersion.partySize === 6, "the room count and the extra-bedding acknowledgement are stored on the request version");
+  const sixStaff = (await staffView()).requests.find((request) => request.registrationId === six.reg.id);
+  assert(sixStaff?.roomCount === 1 && sixStaff.bringsExtraBedding === true, "and staff see them on the request");
+  assert((await staffView()).queue.some((item) => item.kind === "EXTRA_BEDDING" && item.registrationIds.includes(six.reg.id) && /party of 6 in 1 room, bringing extra bedding/.test(item.title)), "and in the review queue");
+  assert((await getLodgingRequestExportRows(eventId, prisma)).find((row) => row.confirmationCode === six.reg.code)?.bringsExtraBedding === true, "and in the export");
+  const threeRooms = await submitForm({ people: 6, lodging: { category: "DORM_ROOM", partySize: 6, roomCount: 3, ...dormNights } });
+  const threeLine = lodgingLineOf(threeRooms.snapshot);
+  assert(threeLine?.amountCents === 2000 * 2 * 3 && threeLine.label === "Lodging: Dorm room (3 rooms)", `three rooms are charged as three, got ${JSON.stringify(threeLine)}`);
+  assert((await prisma.eventLodgingRequestVersion.findFirstOrThrow({ where: { request: { registrationId: threeRooms.reg.id } } })).bringsExtraBedding === false, "and a party that fits its rooms stores no extra-bedding flag");
+  const tooManyRooms = await caught(submitForm({ people: 2, lodging: { category: "DORM_ROOM", partySize: 2, roomCount: 3, ...dormNights } }));
+  assert(tooManyRooms instanceof PublicRegistrationError && tooManyRooms.issues[0]?.key === "lodging" && /between 1 and 2 rooms/.test(tooManyRooms.message), "more rooms than people is refused");
+  const siteRooms = await submitForm({ people: 4, lodging: { category: "RV_SITE", partySize: 4, roomCount: 3 } });
+  assert(lodgingLineOf(siteRooms.snapshot)?.amountCents === 15000 && lodgingLineOf(siteRooms.snapshot)?.label === "Lodging: RV site", "a party at an RV site is one site, whatever room count is sent");
+  assert((await prisma.eventLodgingRequestVersion.findFirstOrThrow({ where: { request: { registrationId: siteRooms.reg.id } } })).roomCount === 1, "and stores one unit");
+  // A registrant's later change of room count that alters the charge goes to staff like any other priced change.
+  const moreRooms = await saveAny(six.reg, { category: "DORM_ROOM", ...dormNights, partySize: 6, roomCount: 2, bringsExtraBedding: true });
+  assert(moreRooms.changeRequested === true, "asking for more rooms after submitting is a change request, never an automatic charge");
+  assert((await prisma.eventLodgingChangeRequest.findFirstOrThrow({ where: { registrationId: six.reg.id, resolvedAt: null } })).roomCount === 2, "that carries the room count");
+  // Tidy up: these registrations are done with, so the queue checks below see only their own items.
+  await prisma.registration.updateMany({ where: { id: { in: [six.reg.id, threeRooms.reg.id, siteRooms.reg.id] } }, data: { status: "CANCELLED" } });
 
   // Money on the registration: the registrant's change goes to staff; nothing is charged or refunded by itself.
   await prisma.payment.create({ data: { eventId, registrationId: rv.reg.id, amount: 150, status: "SUCCEEDED", method: "CARD_REFERENCE", receivedAt: before } });
@@ -564,18 +605,37 @@ async function main() {
   assert((await staffView()).queue.some((item) => item.kind === "PRICE_DIFFERS" && item.registrationIds.includes(tent.reg.id)), "but the difference is listed");
   await setEventRate(eventId, userId, { category: "TENT", rate: { amountCents: 4000, basis: "PER_PERSON_PER_EVENT", minimumNights: null } }, prisma);
 
-  // Promo codes do not discount the lodging line (until the event team decides otherwise), church-sponsored or not.
+  // Promo codes discount the lodging line (#803): a registration-level code (church-sponsored or not) covers the whole
+  // subtotal, and the quote, the submission and an amendment agree. The processing fee follows the final subtotal.
   const sponsor = `${P}_church`;
   await prisma.organization.create({ data: { id: sponsor, type: "CHURCH", name: `Lodging Check Church ${P}`, normalizedName: `lodging check church ${P}` } });
   await prisma.promoCode.create({ data: { eventId, code: "HALFOFF", normalizedCode: "HALFOFF", discountType: "PERCENT_BPS", discountValue: 5000, sponsoringOrganizationId: sponsor } });
   await prisma.promoCode.create({ data: { eventId, code: "BIGFIXED", normalizedCode: "BIGFIXED", discountType: "FIXED_CENTS", discountValue: 100_000 } });
-  const promoted = await submitForm({ people: 1, responses: { registration_fee: true, promo_code: "HALFOFF" }, lodging: { category: "TENT", partySize: 1 } });
-  assert(promoted.snapshot.discountAmountCents === 2500 && lodgingLineOf(promoted.snapshot)?.amountCents === 4000 && promoted.snapshot.totalCents === 2500 + 4000, `a church-sponsored 50% code discounts the form's lines, not lodging: ${JSON.stringify({ d: promoted.snapshot.discountAmountCents, t: promoted.snapshot.totalCents })}`);
-  assert(promoted.snapshot.preDiscountSubtotalCents === 9000 && promoted.snapshot.subtotalCents === 6500, "the pre-discount subtotal holds the lodging line too");
-  const capped = await submitForm({ people: 1, responses: { registration_fee: true, promo_code: "BIGFIXED" }, lodging: { category: "TENT", partySize: 1 } });
-  assert(capped.snapshot.discountAmountCents === 5000 && capped.snapshot.totalCents === 4000, "a large fixed code is capped at the form's own subtotal and never eats the lodging line");
+  await prisma.promoCode.create({ data: { eventId, code: "MINLODGE", normalizedCode: "MINLODGE", discountType: "PERCENT_BPS", discountValue: 1000, minimumSubtotalCents: 8000 } });
   const quote = await getPublicPromoCodeQuote(slugOf(eventId), formSlug, { versionId: ids.formVersion, code: "HALFOFF", responses: { registration_fee: true }, attendees: [{ clientId: "p0", responses: { first_name: "Quote", last_name: surname } }], lodging: { category: "TENT", partySize: 1 } }, before);
-  assert("totalCents" in quote && quote.totalCents === 6500 && quote.discountAmountCents === 2500 && quote.lineItems.some((line) => line.key === "lodging"), "the promo quote shows the same total, with the lodging line undiscounted");
+  const promoted = await submitForm({ people: 1, responses: { registration_fee: true, promo_code: "HALFOFF" }, lodging: { category: "TENT", partySize: 1 } });
+  assert(promoted.snapshot.discountAmountCents === 4500 && lodgingLineOf(promoted.snapshot)?.amountCents === 4000 && promoted.snapshot.totalCents === 4500, `a church-sponsored 50% code covers lodging too: ${JSON.stringify({ d: promoted.snapshot.discountAmountCents, t: promoted.snapshot.totalCents })}`);
+  assert(promoted.snapshot.preDiscountSubtotalCents === 9000 && promoted.snapshot.subtotalCents === 4500, "the pre-discount subtotal holds the lodging line too");
+  const redemption = await prisma.promoCodeRedemption.findUniqueOrThrow({ where: { registrationId: promoted.reg.id } });
+  assert(redemption.eligibleSubtotalCents === 9000 && redemption.discountAmountCents === 4500, "and the redemption records the discount on that subtotal");
+  assert("totalCents" in quote && quote.totalCents === promoted.snapshot.totalCents && quote.discountAmountCents === promoted.snapshot.discountAmountCents && quote.subtotalCents === promoted.snapshot.subtotalCents && quote.lineItems.some((line) => line.key === "lodging" && line.amountCents === 4000), "the promo quote shows the same lines, discount and total as the submission");
+  const capped = await submitForm({ people: 1, responses: { registration_fee: true, promo_code: "BIGFIXED" }, lodging: { category: "TENT", partySize: 1 } });
+  assert(capped.snapshot.discountAmountCents === 9000 && capped.snapshot.totalCents === 0, "a large fixed code is capped at the whole subtotal, lodging included");
+  // A code's minimum is checked on the subtotal including lodging: the $50 fee alone is under it.
+  const minimum = await submitForm({ people: 1, responses: { registration_fee: true, promo_code: "MINLODGE" }, lodging: { category: "TENT", partySize: 1 } });
+  assert(minimum.snapshot.discountAmountCents === 900 && minimum.snapshot.totalCents === 8100, "a code with a minimum counts the lodging line toward it");
+  const minimumRefused = await caught(submitForm({ people: 1, responses: { registration_fee: true, promo_code: "MINLODGE" } }));
+  assert(minimumRefused instanceof PublicRegistrationError, "and without the lodging line the same code's minimum is not met");
+  // An amendment of the answers carries the stored lodging line and the stored code through to the same total.
+  const { currentRegistrationAnswers, previewRegistrationAmendment } = await import("../modules/registrations/amendments-repository");
+  const answers = await currentRegistrationAnswers(eventId, promoted.reg.id);
+  assert(answers, "the registration's answers load");
+  const attendeeRow = promoted.registration.attendees[0]!;
+  const amendmentPreview = await previewRegistrationAmendment(eventId, promoted.reg.id, {
+    clientRequestId: randomUUID(), expectedUpdatedAt: answers.updatedAt, reason: "Pricing check", responses: answers.responses, previewOnly: true,
+    attendees: [{ attendeeId: attendeeRow.id, clientId: "amend-0", responses: { first_name: attendeeRow.person.firstName, last_name: attendeeRow.person.lastName } }],
+  });
+  assert(amendmentPreview.totalCents === promoted.snapshot.totalCents && amendmentPreview.deltaCents === 0 && amendmentPreview.lineItems.some((line) => line.key === "lodging" && line.amountCents === 4000), `an amendment keeps the lodging line and its discount: ${JSON.stringify({ t: amendmentPreview.totalCents, d: amendmentPreview.deltaCents })}`);
 
   // A church-billed event: lodging is recorded and never charged, at submit and after a save.
   const billed = await submitTo(churchTarget, { people: 2, lodging: { category: "DORM_ROOM", partySize: 2 } });
@@ -619,9 +679,15 @@ async function main() {
 
   // A request for more people than the registration now has is listed.
   const partyReg = await makeRegistration(eventId, "pp", 2);
-  await save(partyReg, { category: "CONFERENCE_CENTER_ROOM", partySize: 2 });
+  await save(partyReg, { category: "CONFERENCE_CENTER_ROOM", partySize: 2, bringsExtraBedding: true });
   await prisma.registrationAttendee.deleteMany({ where: { registrationId: partyReg.id, personId: partyReg.people[1]!.id } });
   assert((await staffView()).queue.some((item) => item.kind === "PARTY_EXCEEDS_ATTENDEES" && item.registrationIds.includes(partyReg.id)), "a party larger than the registration's attendees is listed for review");
+
+  // The conference center has four rooms: the registrations that hold them are done with, so the version checks below
+  // can take one.
+  for (const request of await prisma.eventLodgingRequest.findMany({ where: { eventId }, include: { versions: { orderBy: { version: "desc" }, take: 1 } } })) {
+    if (request.versions[0]?.category === "CONFERENCE_CENTER_ROOM") await prisma.registration.update({ where: { id: request.registrationId }, data: { status: "CANCELLED" } });
+  }
 
   // Every capacity writer bumps the capacity version, under the unit locks.
   const versionOf = async () => (await prisma.eventLodging.findUniqueOrThrow({ where: { eventId } })).capacityVersion;
@@ -642,21 +708,22 @@ async function main() {
   await submitForm({ people: 1, lodging: { category: "CONFERENCE_CENTER_ROOM", partySize: 1 } });
   assert(await versionOf() === beforeSubmit + 1, "and so does a submission");
 
-  // A public submission racing a private-page save for the last place: exactly one of them gets it.
+  // A public submission racing a private-page save for the last room: exactly one of them gets it. (Dorm rooms, with the
+  // rate off so the private-page save is not held for staff as a priced change.)
+  await setEventRate(eventId, userId, { category: "DORM_ROOM", rate: null }, prisma);
   for (const round of [1, 2, 3]) {
-    const requested = (await staffView()).offered.find((entry) => entry.category === "CONFERENCE_CENTER_ROOM")!.requested;
-    for (const [index, unit] of ccRows.entries()) await updateEventUnit(eventId, unit.eventUnitId, userId, { capacityOverride: index === 0 ? requested + 1 : 0 }, prisma);
+    await roomsLeft("DORM_ROOM", 1);
     const saver = await makeRegistration(eventId, `rc${round}`, 1);
     const [savedRace, submittedRace] = await Promise.all([
-      caught(save(saver, { category: "CONFERENCE_CENTER_ROOM", partySize: 1 })),
-      caught(submitForm({ people: 1, lodging: { category: "CONFERENCE_CENTER_ROOM", partySize: 1 } })),
+      caught(save(saver, { category: "DORM_ROOM", partySize: 1 })),
+      caught(submitForm({ people: 1, lodging: { category: "DORM_ROOM", partySize: 1 } })),
     ]);
     const winnersInRound = [savedRace, submittedRace].filter((outcome) => !(outcome instanceof Error));
-    assert(winnersInRound.length === 1, `round ${round}: exactly one of a public submission and a private-page save gets the last place, got ${winnersInRound.length}: ${[savedRace, submittedRace].map((outcome) => (outcome instanceof Error ? outcome.message.slice(0, 50) : "ok")).join(" | ")}`);
+    assert(winnersInRound.length === 1, `round ${round}: exactly one of a public submission and a private-page save gets the last room, got ${winnersInRound.length}: ${[savedRace, submittedRace].map((outcome) => (outcome instanceof Error ? outcome.message.slice(0, 50) : "ok")).join(" | ")}`);
     const loser = [savedRace, submittedRace].find((outcome) => outcome instanceof Error);
     assert((loser instanceof LodgingError && loser.code === "CATEGORY_FULL") || (loser instanceof PublicRegistrationError && loser.issues[0]?.key === "lodging"), "and the other is told the type is full");
   }
-  for (const unit of ccRows) await updateEventUnit(eventId, unit.eventUnitId, userId, { capacityOverride: null }, prisma);
+  await restoreRooms(dormRows);
   await setEventRate(eventId, userId, { category: "TENT", rate: null }, prisma);
   await setEventRate(eventId, userId, { category: "RV_SITE", rate: null }, prisma);
   await setEventRate(eventId, userId, { category: "DORM_ROOM", rate: null }, prisma);
