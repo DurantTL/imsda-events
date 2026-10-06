@@ -1,15 +1,17 @@
-# Lodging inventory, availability and preferences (#198 slice 1, #199 slice 2)
+# Lodging inventory, availability, preferences and assignment (#198 slice 1, #199 slice 2, #200 slice 3)
 
 Reusable lodging inventory for on-site properties, with per-event state and
 night-by-night availability computed on the server. The inventory tables hold
-**facility data only**: no person, assignment or waitlist (assignment is #200),
-and no occupant names from the source sheets. What guests *asked for* lives in
-separate tables (see "Preferences and roommate requests (#199)" below) and is
-never an assignment.
+**facility data only**: no person, assignment or waitlist, and no occupant names
+from the source sheets. What guests *asked for* lives in separate tables (see
+"Preferences and roommate requests (#199)" below) and is never an assignment;
+assignments, moves, the waitlist and the attendee display are in "Assignment,
+moves, waitlist and attendee display (#200)" below.
 
 Code lives in `modules/lodging/`; the staff screens are **More > Lodging**
-(`/more/lodging`, inventory) and **More > Lodging requests**
-(`/more/lodging/requests`, preferences and the review queue).
+(`/more/lodging`, inventory), **More > Lodging requests**
+(`/more/lodging/requests`, preferences and the review queue) and **More > Lodging
+assignments** (`/more/lodging/assignments`, placing guests).
 
 ## Setup
 
@@ -139,7 +141,7 @@ For each unit and night, the first match wins:
 5. otherwise **AVAILABLE** with `capacity = override ?? default` (null: no fixed limit).
 
 Out-of-service nights have capacity 0. `available = capacity - occupied`;
-`occupied` is zero in this slice and is the input #200 supplies. `stayFit`
+`occupied` (the people assigned to the unit that night, zero before any assignment) is the input #200 supplies. `stayFit`
 answers a partial stay (arrival and departure inside the window): every slept
 night must be in service with room for the party.
 
@@ -157,9 +159,9 @@ night must be in service with room for the party.
   an event's property, a unit's property or a unit's building changes), and children carry
   the event id in composite foreign keys, so they cannot cross events.
 - Every change to a unit takes the `EventLodgingUnit` row lock (`FOR UPDATE`,
-  in id order) through `lockEventLodgingUnits`. **#200 must take the same lock
-  before it counts occupancy and allocates an exclusive unit**, and should add a
-  similar exclusion constraint on its assignment table for night ranges.
+  in id order) through `lockEventLodgingUnits`. The assignment writers (#200) take
+  the same lock before they count occupancy, and the assignment table has an
+  exclusion constraint on night ranges per occupant.
 - **Lock order** is always: unit rows (id order), then `EventLodging`
   (`touchEventLodgingCapacity`). That includes `selectEventProperty` when it
   applies a new window, and waitlist promotion and reinstatement of a registration
@@ -176,8 +178,8 @@ night must be in service with room for the party.
   request save). The submission locks the units and then reads and bumps that row
   (`FOR UPDATE`), so a submission that raced a save for the last place either
   waits and then sees the place gone, or fails its Serializable check and is retried
-  (and told the type is full). **#200 and any new capacity writer must do the
-  same**: lock the units, then `touchEventLodgingCapacity`.
+  (and told the type is full). Every assignment writer (#200) does the same, and
+  any new capacity writer must: lock the units, then `touchEventLodgingCapacity`.
 - Actor columns are plain user ids with no foreign key, so history never has to
   be rewritten when a user is deleted.
 
@@ -226,7 +228,8 @@ Server-side on every route and on the page:
 
 Cloning an event copies configuration only, from an explicit list of domains,
 and lodging is not on it: a clone starts with no property, holds, overrides or
-rates, and never carries assignments (there are none yet). The cloned event
+rates, and never carries assignments, expected guests, housing choices or waitlist
+entries (those belong to the event and are not on the list). The cloned event
 picks a property again. `npm run test:event-cloning` checks that a clone of an
 event that uses a property carries none of it.
 
@@ -234,8 +237,8 @@ event that uses a property carries none of it.
 
 A **request** is what a guest asked for. It is separate from an assignment:
 nothing in this slice places anyone in a unit, moves them, or starts a
-waitlist (that is #200). The rules below come from the "Build scope for slice
-2" comment on #199.
+waitlist (that is #200, below). The rules below come from the "Build scope for
+slice 2" comment on #199.
 
 ### Who chooses lodging
 
@@ -253,8 +256,9 @@ waitlist (that is #200). The rules below come from the "Build scope for slice
   - `preferencesDeadline`: the last day a registrant can change a choice,
     inclusive, in the event's time zone. Blank follows the event's registration
     close date, and with neither it is the day the event starts;
-  - `fullBehavior`: `SHOW_FULL` (default) or `WAITLIST`. Both show "Full" in
-    this slice; the waitlist itself is #200.
+  - `fullBehavior`: `SHOW_FULL` (default) or `WAITLIST`. Both show "Full" at
+    selection; with `WAITLIST` a guest can join the lodging waitlist from their
+    private page (#200).
 - The price shown at selection is `quoteStay` over the event's lodging rates
   (see "Optional lodging rates"); it is added to the registration total (see
   "Charging").
@@ -516,7 +520,7 @@ different type, a bigger party, or a night the earlier request did not cover
 (so a registrant can still adjust a request that is already inside a type that
 has since filled). Selection takes the `EventLodgingUnit` row locks for **every
 unit of the event's lodging**, before any capacity is read
-(`lockEventLodgingUnits`, the same lock #200 must take before it assigns), so
+(`lockEventLodgingUnits`, the same lock the assignment writers take), so
 five registrants racing for the last place produce exactly one winner. Staff
 are not stopped by "full"; the queue then shows the type as over capacity.
 
@@ -562,6 +566,154 @@ roommate counts (mutual and waiting), and last changed. It has **no names,
 contact details, free text or restricted evidence**. The two accessibility
 columns are present only for staff with VIEW_SENSITIVE_DATA.
 
+## Assignment, moves, waitlist and attendee display (#200, slice 3)
+
+Staff place guests in rooms, sites and alternate housing; every placement, move and cancellation is kept; a full type can
+have a waitlist; attendees see their approved room once staff publish it; and staff get rooming lists and occupancy by
+night. The rules below come from the "Build scope for slice 3" comment on #200. **Nothing here ever changes a
+registration's charge, sends a bulk message, or refunds anything.** Code: `modules/lodging/assignment-*.ts`,
+`waitlist-service.ts`, `notices.ts`; the staff screen is **More > Lodging assignments**
+(`/more/lodging/assignments`).
+
+### Data model
+
+| Table | What it is |
+| --- | --- |
+| `EventLodgingAssignment` | The **current** placement of one occupant for a range of nights (both ends inclusive): in an on-site unit (`eventLodgingUnitId`) or an alternate-housing bucket (`bucketId`), with `people` (1 for an attendee, the head count for an expected guest), `source` (`STAFF`, `PROPOSAL`, `CSV_IMPORT`, `WAITLIST`), a `revision` that every change raises, and who/why. Cancelled rows stay (`cancelledAt`, `cancelReason`) and never change again. |
+| `EventLodgingAssignmentHistory` | **Append-only**: one row per assignment event (`ASSIGNED`, `MOVED_IN`, `MOVED_OUT`, `SPLIT_REMAINDER`, `CANCELLED`, `TRANSFERRED_IN`, `TRANSFERRED_OUT`, `LATE_ARRIVAL`, `EARLY_DEPARTURE`, `LINKED`), with actor, reason, source, the place and nights before and after, whether capacity was deliberately kept, and the paired row of a move or transfer. |
+| `EventLodgingBucket` | The five alternate-housing choices (Hotel, Airbnb, Home, Offsite, Other; staff rename the label). They count as placed and use no inventory. Created when an event chooses its property (and backfilled by the migration). |
+| `EventLodgingPlaceholder` | An expected guest or group (staff, a pastor, a club) not registered yet, with a head count. It can be assigned, and a single guest can later be **linked** to a registration attendee (once). |
+| `EventLodgingWaitlistEntry` / `EventLodgingWaitlistHistory` | The lodging waitlist (below) and its append-only history. |
+| `EventLodgingAssignmentNotice` | A room notice staff sent one registration, with the assignment version it described. |
+
+`EventLodging` gains `showAssignmentsToAttendees` (default **off**), `showRoommateFirstNames` (default **off**) and
+`attendeeInstructions`. The `MessageTemplateKey` enum gains `LODGING_WAITLIST_OFFER` and `LODGING_ASSIGNMENT_NOTICE`
+(not editable event templates, like the invoice email).
+
+The database enforces what can be enforced there, following the hold and request patterns:
+
+- an **exclusion constraint** (`btree_gist`) on the occupant and the night range: one person is never in two places on
+  one night, even for a writer that skipped the service;
+- exactly one place and at least one occupant; ordered nights; a reason once cancelled; an attendee must be on the
+  assignment's event (and the unit and bucket, by composite foreign keys);
+- every change to an assignment must raise `revision` **and append its history row in the same transaction** (a deferred
+  constraint trigger refuses the commit otherwise); a cancelled assignment never changes again;
+- history, notices and waitlist history cannot be rewritten; **no row in these tables can be deleted while its event
+  exists**. They go only with the event: the foreign-key cascade once the event is gone, or the event deletion
+  service's own explicit deletes (it sets the transaction-local `imsda.event_deletion` setting, as for the registration
+  ledgers). The keys to registrations and attendees are `NO ACTION`, so a registration that holds a room, a waitlist
+  entry or a notice cannot be deleted on its own: its history is kept;
+- a waitlist entry moves only along the lifecycle (below), its ask never changes, there is one open entry per
+  registration (partial unique index), and each state change appends its history row.
+
+### Capacity and concurrency (night by night)
+
+Every assignment writer takes the `EventLodgingUnit` row locks for the event's whole lodging (id order, through
+`lockEventLodgingUnits`), then bumps `capacityVersion` (`touchEventLodgingCapacity`), then reads the current assignments
+and plans against them. `planPlacements` (`assignment-domain.ts`, pure) works on an in-memory copy, so a batch cannot
+overbook a unit with itself and a refused batch writes nothing. Capacity counts **people per unit per night** against the
+event's override or default; a held, unavailable, retired or not-assignable unit blocks assignment on those nights; a
+special-use room needs the staff member's confirmation. `npm run test:lodging-assignment` races five placements for the
+last bed (one wins), one person into two rooms (one room), and a closure against an assignment, and it **fails when the
+locks and the version bump are removed**.
+
+- **Partial stays**: two people can share one bed on different nights.
+- **Moves**: a move takes over a range of nights. The old row keeps the nights before, a `SPLIT_REMAINDER` row keeps the
+  nights after (same place), and a `MOVED_IN` row holds the new place; capacity follows night by night.
+- **Late arrival / early departure**: the nights given up are released, or kept held (`keepCapacity`), which only the
+  history records. **Cancellation** releases the whole stay or some nights.
+- **Transfer**: the place passes to another occupant (a substitute attendee, or a placeholder group), the old row ends
+  and a new one starts with the capacity effect checked. A **placeholder link** carries the placement to the attendee.
+- **A room closed, held or lowered after people were placed** is never changed silently: the assignments stay, and the
+  workspace and reports list the conflict (night by night, drilling to the assignments). A **cancelled registration's
+  room stays counted** until staff press "Release rooms of inactive registrations" (with a reason and history): capacity
+  is only ever released on purpose.
+- Registrant choices (#199) are still counted against *requests*, not assignments: staff assignment is the authority for
+  rooms, and a registrant's "Full" reflects what guests asked for. (Counting assignments there is a later change.)
+
+### The staff workspace
+
+Rebuilt from the legacy CM26 housing tool, on the server: building and floor choices and a **hall layout** (odd rooms
+left, even rooms right of the corridor), room status in words (available, partly filled, full, over capacity, held,
+unavailable, not assignable), **drag and drop plus select-then-"Assign here" for keyboards and touch**, "Assign the next
+unplaced person", "Fill this room", "Place the whole household here", move, cancel, late arrival and early departure,
+transfer, a colour per household (with the confirmation code beside it), split-household and keep-apart warnings, a
+warning before a special-use room, expected guests, alternate housing, search, and Not placed / Placed filters. Related
+household members are the keep-together groups of #199 (registration, responsible adult, staff rules).
+
+### Proposal and CSV import (preview first)
+
+Both go through `POST .../lodging/assignments/plan`. `mode: "preview"` writes, locks and queues nothing and returns the
+outcome of every row and a fingerprint of exactly what would happen. `mode: "apply"` needs that fingerprint and, under
+the same locks as every writer, rebuilds the plan from scratch: if anything differs (someone placed a person, a room was
+held, the file changed) it refuses with `PLAN_CHANGED` and writes nothing. A CSV with any problem row is refused whole
+(`IMPORT_HAS_PROBLEMS`).
+
+- **Proposal** (`proposeAssignments`, deterministic): households first (largest and accessibility-needing first), the
+  requested category honoured (no request: a room, never a site or tent), ground-level units for ground-floor needs, the
+  smallest unit that fits, keep-apart people never together, held, unavailable and special-use rooms never proposed, a
+  household never split to make it fit (it is reported as not placed). It reads accessibility flags **only for staff
+  with VIEW_SENSITIVE_DATA**; for others it runs without them. A proposal is never applied by itself.
+- **CSV**: the assignments export is the file the import reads (Occupant ID, Place key `unit:<key>` or
+  `bucket:<kind>`, First night, Last night; names are ignored). Anyone listed is *moved* there for those nights.
+
+### The lodging waitlist
+
+For events set to **Show "Full" and let guests join a waitlist**. Lifecycle (the database enforces the same moves):
+`JOINED` → `OFFERED` (with an expiry) → `ACCEPTED` / `DECLINED` / `EXPIRED`; `EXPIRED` → `OFFERED` again (the next offer
+number); `ACCEPTED` → `PROMOTED` (staff place the party in a unit); any open state → `REMOVED`.
+
+- **Joining**: staff add a registration, or a registrant joins from the private page when the type is full for their
+  nights (not when it still has room, not under "verify every edit", not after the lodging deadline).
+- **Offers are explicit and idempotent.** An offer (MANAGE_REGISTRATION plus CONFIGURE_EVENT) is a **preview** until
+  `confirm` is true; the preview names who would be emailed (masked address) and why an entry is not eligible. A confirmed
+  offer queues **one email per entry** through the existing outbox (`LODGING_WAITLIST_OFFER`, the event's sender and
+  delivery mode, the private-link sentinel, no price), a batch is capped at 25, and offering an entry that already holds
+  a live offer returns it without another email. Nothing offers or promotes on its own, and a freed room never promotes
+  anyone by itself.
+- **A live offer reserves its places** (and so does an accepted entry) against the room that is free in its category, night
+  by night, so one place cannot be offered twice; an expired offer holds nothing. An answer after the expiry records the
+  expiry and is refused ("expired"); accepting, declining and promoting twice return the first outcome.
+- **Promotion** is the placement: staff choose the unit and the party's attendees, and the normal capacity checks run
+  under the unit locks. The history shows joined, offered, expired, offered, accepted, promoted.
+
+### What attendees see
+
+On the private registration page, **only after staff publish assignments** (the event switch, off by default): the
+approved building (or area), room, nights and the event's instructions for each person on that registration; a person in
+alternate housing sees its label ("Hotel, arranged outside the property"). **Roommates are shown by first name only, only
+when staff turn that on, only adults of other registrations** (a child, an unknown age, an expected guest and members of
+the same registration are counted, never named), and **never a last name, email, phone or confirmation code**. A
+cancelled registration sees nothing. The same page shows the waitlist state and lets a guest accept or decline a live
+offer. Staff can send one registration its **room notice** (MANAGE_REGISTRATION plus CONFIGURE_EVENT, one at a time, only
+when assignments are published): it is **versioned** (the registration's assignment version is the count of its history
+rows), sending again at an unchanged version queues nothing new, a later change makes it **obsolete** (listed for
+closeout and sendable again), and a notice not yet delivered is **cancelled** by the change.
+
+### Reports
+
+All built from the same facts as the workspace, so a number on one screen is the number on the others
+(`getRoomingReports`): the **rooming list**; **occupancy by night** (capacity, placed, free, rooms in service, people in
+housing elsewhere) drilling to the assignments behind each unit-night; **not placed** and **conflicts** (over capacity,
+room closed after assignment, split household, keep-apart sharing, ground floor needed but placed upstairs); **key hand-off
+inputs** (room, people, arrival, departure, the name on the registration, never a contact detail; key issuance itself is #80);
+and **closeout exceptions** (rooms held by inactive registrations, open waitlist entries, obsolete notices, expected
+guests not yet linked). Each has a CSV (`/api/events/<id>/exports/lodging-assignments?report=assignments|occupancy|unassigned|conflicts|closeout|keys`),
+written by the shared CSV writer, so spreadsheet formulas are defused.
+
+### Access (#200)
+
+| Action | Permission |
+| --- | --- |
+| The workspace, place, move, cancel, stay changes, transfer, release inactive, expected guests, housing choices, proposal and CSV preview and apply, waitlist join, accept, decline, remove, record lapsed offers | **MANAGE_REGISTRATION** |
+| Show assignments to attendees, roommates, instructions; send a room notice; **offer** waitlist places (even the preview); **promote** from the waitlist | **MANAGE_REGISTRATION** plus **CONFIGURE_EVENT** |
+| The reports view | MANAGE_REGISTRATION or VIEW_REPORTS |
+| CSV exports | **VIEW_REPORTS** |
+| Accessibility flags and "ground floor needed" conflicts, on screen, in reports and in the CSV | plus **VIEW_SENSITIVE_DATA** (without it no flag field is sent at all) |
+| Registrant waitlist route (`/api/public/manage/<token>/lodging/waitlist`): join, accept, decline | a valid private registration link, for that registration only; rate limited like the other private-link edits |
+
+Every audit entry carries counts and ids, no names, and never an accessibility value.
+
 ## Checks
 
 - Unit tests: `tests/lodging-domain.test.ts`, `tests/lodging-templates.test.ts`,
@@ -574,6 +726,34 @@ columns are present only for staff with VIEW_SENSITIVE_DATA.
   night-by-night availability with partial stays and closures, overrides, hold
   history, racing holds, the direct-delete refusals, hotel details, rates, audit
   rows, and cascade on event deletion.
+- Unit tests for slice 3: `tests/lodging-assignment-domain.test.ts` (the planner:
+  assign, move and split, cancel, late arrival and early departure, transfer, held,
+  unavailable and special-use rooms, partial stays, a batch that cannot overbook
+  itself, warnings, conflicts, occupancy by night, the proposal, the CSV import and
+  the waitlist rules), `tests/lodging-assignment-routes.test.ts` (every staff route's
+  permission, the publish/offer/promote pair, sensitive-flag scoping, the registrant
+  waitlist route) and `tests/lodging-assignments-workspace.test.ts` (the workspace and
+  the attendee display: keyboard and touch alternatives to dragging, status in words,
+  no restricted flag or contact detail).
+- Real database: `npm run test:lodging-assignment`
+  (`scripts/verify-lodging-assignment.ts`, local database only, wired into CI). It
+  covers placement with history, audit and the capacity version; five staff racing
+  for the last bed, one person raced into two rooms and a closure raced against an
+  assignment (and it fails when the locks are removed); partial stays; held,
+  unavailable, storage and special-use rooms; moves that split a stay and follow
+  capacity night by night; cancellation, late arrival and early departure that
+  release or keep capacity; transfer; a room closed or lowered after assignment;
+  alternate housing and expected guests (head count, link, archive); keep-together
+  and keep-apart warnings; accessibility flags on screen, in the reports and in the
+  CSV; the proposal and the CSV import (preview writes nothing, apply only what was
+  previewed, a changed plan or a bad file refused); occupancy by night reproduced
+  and drilled to assignments; the waitlist (join, preview then one email per offer
+  through the outbox, idempotent offers, reserved places, expired offers, accept,
+  decline, promote, remove, every other move refused by the database); the
+  attendee display and roommates by first name; room notices that become obsolete
+  and are cancelled when not yet sent; no change to any registration's charge; the
+  database refusing rewrites, deletes and cross-event rows; and every row going
+  with its event, including through the event deletion service.
 - Real database: `npm run test:lodging-preferences`
   (`scripts/verify-lodging-preferences.ts`, local database only, wired into
   CI). It covers versioned requests and partial stays, the deadline (and the
@@ -607,8 +787,16 @@ columns are present only for staff with VIEW_SENSITIVE_DATA.
   request** when the requested type no longer fits for those nights or the type has
   a rate but the registration carries no lodging line. Staff confirm the lodging and
   add any charge in Payments.
-- Assignments, moves, the waitlist for full types and the attendee room display
-  (#200); the interactive site map (#779); staff editing of the property
-  templates themselves (templates are code data).
+- The interactive site map (#779); staff editing of the property templates
+  themselves (templates are code data).
+- From slice 3 (#200): club and group registrations have rosters placed outside this
+  screen (use an expected guest for a club that has no individual attendees yet); a
+  minor linked to a responsible adult is kept with them as a *warning*, and the
+  Man Camp "top bunk above the guardian's bottom bunk" rule (`top_guardian_child`,
+  which does not reduce public capacity) is not modelled; registrant "Full" at
+  selection still counts requests, not assignments; the lodging emails are written to
+  the outbox and delivered like every other message but are not editable templates
+  and do not appear in the Communications delivery log (the workspace shows each room
+  notice's status); the waitlist and the event's registration waitlist are separate.
 - The protected-records projection of an accommodation action (#192, ADR 0005
   still Proposed): the two flags are the only accommodation data held.
