@@ -192,13 +192,26 @@ describe("enforceTeamRegistrationRules (#809)", () => {
   });
 
   it("remembers staff's confirmation on the attendee, so a later save by anyone is not refused for the same name again", async () => {
-    const confirmedBefore = { ...attendee("b", "Pat Visitor", { age: 15, temporary: true }), profileSnapshot: { firstName: "Pat", lastName: "Visitor", ageOnEventDate: 15, teamRole: "MEMBER", temporary: true, differentPersonConfirmed: true } };
+    const kept = { personId: "person-b", nameKey: "pat visitor" };
+    const confirmedBefore = { ...attendee("b", "Pat Visitor", { age: 15, temporary: true }), profileSnapshot: { firstName: "Pat", lastName: "Visitor", ageOnEventDate: 15, teamRole: "MEMBER", temporary: true, differentPersonConfirmed: kept } };
     const later = transaction({ attendees: [attendee("a", "Alex One", { age: 14 }), confirmedBefore], others: [{ personId: "person-z", name: "Pat Visitor", temporary: true }], roster: rosterOf("a") });
     await enforceTeamRegistrationRules(later, "reg-1");
+    // A kept confirmation is not audited again on a later save.
+    expect(mocks.writeAuditLog).not.toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_TEAM_DIFFERENT_PERSON_CONFIRMED" }), later);
     const first = transaction({ attendees: [attendee("a", "Alex One", { age: 14 }), attendee("b", "Pat Visitor", { age: 15, temporary: true })], others: [{ personId: "person-z", name: "Pat Visitor", temporary: true }], roster: rosterOf("a") });
     await enforceTeamRegistrationRules(first, "reg-1", { actorUserId: "staff-1", differentPersonAttendeeIds: new Set(["b"]) });
     const saved = first.registrationAttendee.update.mock.calls.map(([call]) => (call as { data: { profileSnapshot: Record<string, unknown> } }).data.profileSnapshot);
-    expect(saved.some((snapshot) => snapshot.differentPersonConfirmed === true)).toBe(true);
+    expect(saved.some((snapshot) => JSON.stringify(snapshot.differentPersonConfirmed) === JSON.stringify(kept))).toBe(true);
+  });
+
+  it("drops a kept confirmation once the attendee row is renamed to someone else, so the name check applies again", async () => {
+    const renamed = { ...attendee("b", "Jo Other", { age: 15, temporary: true }), profileSnapshot: { firstName: "Jo", lastName: "Other", ageOnEventDate: 15, teamRole: "MEMBER", temporary: true, differentPersonConfirmed: { personId: "person-b", nameKey: "pat visitor" } } };
+    const tx = transaction({ attendees: [attendee("a", "Alex One", { age: 14 }), renamed], others: [{ personId: "person-z", name: "Jo Other", temporary: true }], roster: rosterOf("a") });
+    await expect(enforceTeamRegistrationRules(tx, "reg-1")).rejects.toMatchObject({ code: "TEAM_RULES" });
+    // An old boolean confirmation (from before it recorded the person) no longer counts either.
+    const legacy = { ...attendee("b", "Pat Visitor", { age: 15, temporary: true }), profileSnapshot: { firstName: "Pat", lastName: "Visitor", ageOnEventDate: 15, teamRole: "MEMBER", temporary: true, differentPersonConfirmed: true } };
+    const legacyTx = transaction({ attendees: [attendee("a", "Alex One", { age: 14 }), legacy], others: [{ personId: "person-z", name: "Pat Visitor", temporary: true }], roster: rosterOf("a") });
+    await expect(enforceTeamRegistrationRules(legacyTx, "reg-1")).rejects.toMatchObject({ code: "TEAM_RULES" });
   });
 
   it("lets staff confirm a name-only match as a different person, and audits it, but never a person-record match", async () => {

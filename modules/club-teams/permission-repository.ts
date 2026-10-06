@@ -52,6 +52,28 @@ export async function syncTeamMemberPermissions(
   const byPerson = new Map(existing.map((row) => [row.personId, row]));
   const nameOfPerson = new Map(input.people.map((person) => [person.personId, person.name]));
 
+  for (const row of existing) {
+    if (needingPersons.has(row.personId)) continue;
+    // Only a pending flag is deleted; a decision is kept, inactive, in case the person is a team member of 18 or older here again.
+    if (row.status !== "PENDING" && !row.active) continue;
+    if (row.status === "PENDING") await tx.clubTeamMemberPermission.delete({ where: { id: row.id } });
+    else await tx.clubTeamMemberPermission.update({ where: { id: row.id }, data: { active: false, registrationAttendeeId: null } });
+    await writeAuditLog({
+      eventId: input.eventId, actorUserId: actor.userId, action: "CLUB_TEAM_PERMISSION_CLEARED", entityType: "ClubTeamMemberPermission", entityId: row.id,
+      summary: `${nameOfPerson.get(row.personId) ?? "A person"} no longer needs the Area Coordinator's permission (no longer a team member of 18 or older).`,
+      metadata: { registrationId: input.registrationId, attendeeId: row.registrationAttendeeId, status: row.status, kept: row.status !== "PENDING", ...actorMetadata(actor) },
+    }, tx);
+  }
+  // An attendee row can change hands (a substitution or a rename keeps the row and points it at another person), and the
+  // attendee link is unique: release the people who no longer need a flag first, then free any link a kept row still holds
+  // for an attendee row that now belongs to someone else, before anything is created or reattached.
+  const targetAttendee = new Map(needing.map((person) => [person.personId, person.attendeeId]));
+  const staleLinks = existing.filter((row) => needingPersons.has(row.personId) && row.registrationAttendeeId !== null && row.registrationAttendeeId !== targetAttendee.get(row.personId));
+  if (staleLinks.length > 0) {
+    await tx.clubTeamMemberPermission.updateMany({ where: { id: { in: staleLinks.map((row) => row.id) } }, data: { registrationAttendeeId: null } });
+    for (const row of staleLinks) row.registrationAttendeeId = null;
+  }
+
   const declined: PermissionSyncResult["declined"] = [];
   const created: Array<PermissionCandidate & { rowId: string }> = [];
   for (const person of needing) {
@@ -73,18 +95,6 @@ export async function syncTeamMemberPermissions(
       await tx.clubTeamMemberPermission.update({ where: { id: row.id }, data: { active: true, registrationAttendeeId: person.attendeeId, ageOnAgeDate: person.age as number } });
     }
     if (row.status === "DECLINED") declined.push({ name: person.name, tlt: person.tlt === true, attendeeId: person.attendeeId });
-  }
-  for (const row of existing) {
-    if (needingPersons.has(row.personId)) continue;
-    // Only a pending flag is deleted; a decision is kept, inactive, in case the person is a team member of 18 or older here again.
-    if (row.status !== "PENDING" && !row.active) continue;
-    if (row.status === "PENDING") await tx.clubTeamMemberPermission.delete({ where: { id: row.id } });
-    else await tx.clubTeamMemberPermission.update({ where: { id: row.id }, data: { active: false, registrationAttendeeId: null } });
-    await writeAuditLog({
-      eventId: input.eventId, actorUserId: actor.userId, action: "CLUB_TEAM_PERMISSION_CLEARED", entityType: "ClubTeamMemberPermission", entityId: row.id,
-      summary: `${nameOfPerson.get(row.personId) ?? "A person"} no longer needs the Area Coordinator's permission (no longer a team member of 18 or older).`,
-      metadata: { registrationId: input.registrationId, attendeeId: row.registrationAttendeeId, status: row.status, kept: row.status !== "PENDING", ...actorMetadata(actor) },
-    }, tx);
   }
   const queuedMessageIds = created.length > 0 ? await queuePermissionRequest(tx, { eventId: input.eventId, registrationId: input.registrationId, people: created }) : [];
   return { declined, queuedMessageIds };

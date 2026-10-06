@@ -830,9 +830,12 @@ export async function substituteRegistrationAttendee(
     // A replacement who is not on the club's roster has no birth date to count an age from, so staff give their age on the age
     // date (or the event date), where the event has an age limit or an age date; the age rules and the 18-and-over flag follow.
     if (teamEvent && teamRules && (teamRules.maxMemberAge !== null || teamRules.ageAsOf !== null) && input.age === undefined) {
-      const onRoster = await tx.clubRosterMember.findFirst({ where: { organizationId: teamEvent.organizationId, personId: newPerson.id, status: "ACTIVE" }, select: { id: true } });
-      if (!onRoster) {
-        throw new RegistrationOperationError("TEAM_AGE_REQUIRED", "Enter the replacement's age on the team's age date. They are not on the club's roster, so it can't be worked out from a birth date.");
+      // Only a roster birth date lets the age be worked out; a roster member without one needs the age entered too.
+      const onRoster = await tx.clubRosterMember.findFirst({ where: { organizationId: teamEvent.organizationId, personId: newPerson.id, status: "ACTIVE" }, select: { sealedBirthDate: true } });
+      if (!onRoster?.sealedBirthDate) {
+        throw new RegistrationOperationError("TEAM_AGE_REQUIRED", onRoster
+          ? "Enter the replacement's age on the team's age date. Their roster entry has no birth date, so it can't be worked out."
+          : "Enter the replacement's age on the team's age date. They are not on the club's roster, so it can't be worked out from a birth date.");
       }
     }
     const { ageOnEventDate: _priorAge, teamRole: _priorRole, differentPersonConfirmed: _priorConfirmed, ...snapshotWithoutTeamFields } = jsonRecord(attendee.profileSnapshot);

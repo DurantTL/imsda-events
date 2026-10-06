@@ -583,9 +583,17 @@ async function main() {
   await substitution("PbeFresh", "Replacement", 19);
   const freshFlag = await prisma.clubTeamMemberPermission.findFirstOrThrow({ where: { registrationAttendeeId: gammaMember.id } });
   assert(freshFlag.status === "PENDING" && freshFlag.ageOnAgeDate === 19, "the 19-year-old replacement is flagged");
+  // One 18-or-older team member swapped for another on the same attendee row: the old person's decision is kept (inactive,
+  // unlinked) and the new person gets their own pending flag on that row. This used to collide on the unique attendee link.
+  await prisma.clubTeamMemberPermission.update({ where: { id: freshFlag.id }, data: { status: "GRANTED", decidedAt: now } });
+  await substitution("PbeSecond", "Replacement", 18);
+  const keptGrant = await prisma.clubTeamMemberPermission.findUniqueOrThrow({ where: { id: freshFlag.id } });
+  assert(keptGrant.status === "GRANTED" && !keptGrant.active && keptGrant.registrationAttendeeId === null, "the replaced person's decision is kept, inactive and unlinked");
+  const swapFlag = await prisma.clubTeamMemberPermission.findFirstOrThrow({ where: { registrationAttendeeId: gammaMember.id } });
+  assert(swapFlag.id !== freshFlag.id && swapFlag.status === "PENDING" && swapFlag.active && swapFlag.ageOnAgeDate === 18, "the 18-year-old replacement gets a new pending flag on the same row");
   await substitution("PbeOther", "Replacement", 14);
-  assert(await prisma.clubTeamMemberPermission.count({ where: { id: freshFlag.id } }) === 0, "substituting them away deletes the pending flag");
-  assert(await prisma.auditLog.count({ where: { eventId, action: "CLUB_TEAM_PERMISSION_CLEARED", entityId: freshFlag.id, actorUserId: staffUserId } }) === 1, "and audits it, with who did it");
+  assert(await prisma.clubTeamMemberPermission.count({ where: { id: swapFlag.id } }) === 0, "substituting them away deletes the pending flag");
+  assert(await prisma.auditLog.count({ where: { eventId, action: "CLUB_TEAM_PERMISSION_CLEARED", entityId: swapFlag.id, actorUserId: staffUserId } }) === 1, "and audits it, with who did it");
   console.log("ok  a substitution keeps the team rules: someone on another team is refused, and nothing is carried over from the old person");
 
   // 15g. A team member of 18 or older is flagged for the Area Coordinator's permission (a flag, not a block); a 17-year-old

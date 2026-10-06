@@ -47,7 +47,7 @@ export async function peopleOnOtherTeams(
   input: {
     eventId: string;
     organizationId: string;
-    people: ReadonlyArray<{ personId: string | null; name: string; onRoster: boolean; skipNameMatch?: boolean }>;
+    people: ReadonlyArray<{ personId: string | null; name: string; onRoster: boolean; skipNameMatch?: boolean; confirmedNow?: boolean }>;
     excludeRegistrationId?: string;
   },
 ): Promise<{ conflicts: TeamConflict[]; confirmed: string[] }> {
@@ -81,8 +81,10 @@ export async function peopleOnOtherTeams(
     }
     const key = personKey(person.name);
     if (!key || !others.some((other) => other.key === key && (!person.onRoster || other.extra))) continue;
-    if (person.skipNameMatch) confirmed.push(person.name);
-    else conflicts.push({ name: person.name, kind: "NAME" });
+    // Only a confirmation made in this save is reported for the audit; a kept one was audited when staff made it.
+    if (person.skipNameMatch) {
+      if (person.confirmedNow) confirmed.push(person.name);
+    } else conflicts.push({ name: person.name, kind: "NAME" });
   }
   return { conflicts, confirmed };
 }
@@ -145,7 +147,7 @@ export async function enforceTeamRegistrationRules(
   const ageDate = teamAgeDate(settings, eventDate);
   const people: TeamPerson[] = [];
   const flagCandidates: Array<{ attendeeId: string; personId: string; name: string; age: number | null; role: "MEMBER" | "COACH"; tlt: boolean }> = [];
-  const checked: Array<{ personId: string; name: string; onRoster: boolean; skipNameMatch: boolean }> = [];
+  const checked: Array<{ personId: string; name: string; onRoster: boolean; skipNameMatch: boolean; confirmedNow: boolean }> = [];
   for (const attendee of attendees) {
     const snapshot = record(attendee.profileSnapshot);
     const responses = record(attendee.formResponses);
@@ -166,11 +168,19 @@ export async function enforceTeamRegistrationRules(
     });
     // Staff's confirmation that this is a different person from someone with the same name on another team is kept on the
     // attendee, so a later save of the team (by anyone) does not refuse them again.
-    const staffConfirmsNow = snapshot.differentPersonConfirmed !== true && options.actorUserId !== undefined && options.differentPersonAttendeeIds?.has(attendee.id) === true;
-    if (snapshot.teamRole !== role || (snapshot.ageOnEventDate ?? null) !== age || staffConfirmsNow) {
+    // The confirmation records who was confirmed (person and normalized name), so it lapses as soon as the attendee row is
+    // renamed or pointed at another person; it can never carry over to someone else.
+    const confirmation = { personId: attendee.personId, nameKey: personKey(name) };
+    const stored = snapshot.differentPersonConfirmed as { personId?: unknown; nameKey?: unknown } | true | undefined;
+    const stillConfirmed = typeof stored === "object" && stored !== null && stored.personId === confirmation.personId && stored.nameKey === confirmation.nameKey;
+    const staffConfirmsNow = !stillConfirmed && options.actorUserId !== undefined && options.differentPersonAttendeeIds?.has(attendee.id) === true;
+    const dropConfirmation = stored !== undefined && !stillConfirmed && !staffConfirmsNow;
+    if (snapshot.teamRole !== role || (snapshot.ageOnEventDate ?? null) !== age || staffConfirmsNow || dropConfirmation) {
+      const { differentPersonConfirmed: _previous, ...rest } = snapshot;
+      void _previous;
       await tx.registrationAttendee.update({
         where: { id: attendee.id },
-        data: { profileSnapshot: { ...snapshot, teamRole: role, ageOnEventDate: age, ...(staffConfirmsNow ? { differentPersonConfirmed: true } : {}) } as Prisma.InputJsonValue },
+        data: { profileSnapshot: { ...rest, teamRole: role, ageOnEventDate: age, ...(staffConfirmsNow ? { differentPersonConfirmed: confirmation } : stillConfirmed ? { differentPersonConfirmed: stored } : {}) } as Prisma.InputJsonValue },
       });
     }
     const answeredRole = typeof responses[ROLE_FIELD_KEY] === "string" ? (responses[ROLE_FIELD_KEY] as string).trim().toLowerCase() : "";
@@ -182,7 +192,8 @@ export async function enforceTeamRegistrationRules(
       name,
       onRoster: snapshot.temporary !== true && rosterByPerson.has(attendee.personId),
       // Staff's confirmation of a different person lasts (it is kept on the attendee), so a later edit by anyone does not ask again.
-      skipNameMatch: snapshot.differentPersonConfirmed === true || (options.actorUserId !== undefined && options.differentPersonAttendeeIds?.has(attendee.id) === true),
+      skipNameMatch: stillConfirmed || staffConfirmsNow,
+      confirmedNow: staffConfirmsNow,
 
     });
   }
