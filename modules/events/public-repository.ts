@@ -42,6 +42,7 @@ async function loadPublicEventLanding(
       registrationClosesOn: true,
       waitlistEnabled: true,
       billingMode: true,
+      teamSettings: { select: { eventId: true } },
       announcements: {
         where: {
           status: "PUBLISHED",
@@ -155,7 +156,7 @@ async function loadPublicEventLanding(
   // The club's own form (the first one created, as club registration picks it) is the one a group uses.
   const primaryForm = portal ? event.registrationForms.find((form) => form.id === portal.form.id) : undefined;
   const primaryDefinition = registrationFormDefinitionSchema.safeParse(primaryForm?.versions[0]?.definition);
-  const groupForm = event.audience === "CLUB" && event.billingMode === "DEFERRED_ORGANIZATION_INVOICE"
+  const groupForm = event.audience === "CLUB" && !event.teamSettings && event.billingMode === "DEFERRED_ORGANIZATION_INVOICE"
     && primaryDefinition.success && groupFormProblem(groupFormDefinition(primaryDefinition.data)) === null
     ? primaryForm
     : undefined;

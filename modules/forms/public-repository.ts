@@ -720,6 +720,10 @@ async function createPublicRegistrationTransaction(
           : "This event isn't set up for club registration billed to the church.",
       );
     }
+    if (group && (await tx.eventTeamSettings.findUnique({ where: { eventId: form.eventId }, select: { eventId: true } }))) {
+      // An event with team rules takes club teams only (#809); a group would skip every team rule.
+      throw new PublicRegistrationError("GROUP_REGISTRATION_UNAVAILABLE", "This event takes registrations from club teams only.");
+    }
     const bulkPrepared = await bulk.prepareAttendees(tx, { definition, event: form.event, input });
     input = bulkPrepared.input;
     clubAttendees = bulkPrepared.attendees;
