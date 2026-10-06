@@ -681,6 +681,7 @@ model User {
   uploadedEventAssets       EventAsset[]              @relation("EventAssetUploadedBy")
   appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
   clubAssignmentUpdates     ClubEventAssignment[]     @relation("ClubEventAssignmentUpdatedBy")
+  teamResultUpdates         ClubTeamResult[]          @relation("ClubTeamResultUpdatedBy")
   registrationOperations    RegistrationOperation[]   @relation("RegistrationOperationActor")
   accountMessages           MessageOutbox[]           @relation("AccountMessageRecipient")
   mfaEnrollment             UserMfaEnrollment?
@@ -4481,6 +4482,7 @@ model ClubEventRegistration {
   submittedBy     AttendeeAccount? @relation("ClubEventRegistrationSubmittedBy", fields: [submittedByAccountId], references: [id], onDelete: SetNull)
   submittedByUser User?            @relation("ClubEventRegistrationSubmittedByUser", fields: [submittedByUserId], references: [id], onDelete: SetNull)
   assignment      ClubEventAssignment?
+  teamResults     ClubTeamResult[]
 
   @@unique([eventId, organizationId, teamKey])
   @@index([organizationId])
@@ -6775,4 +6777,31 @@ model EventTeamSettings {
   updatedAt          DateTime @updatedAt
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+enum TeamResultLevel {
+  AREA
+  CONFERENCE
+  UNION
+}
+
+/// How a team did at one level of a multi-level event (#809): a free-text placement or score and whether it qualified
+/// for the next level. The Conference and Union levels are not registrations of their own, so their results live here,
+/// beside the one registration the team made for the Area level. Entered by staff; the club's director reads them.
+model ClubTeamResult {
+  id                      String          @id @default(cuid())
+  clubEventRegistrationId String
+  level                   TeamResultLevel
+  /// Free text, e.g. "2nd place" or "412 points".
+  placement               String          @default("")
+  qualified               Boolean         @default(false)
+  notes                   String          @default("")
+  updatedByUserId         String?
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+
+  clubEventRegistration ClubEventRegistration @relation(fields: [clubEventRegistrationId], references: [id], onDelete: Cascade)
+  updatedBy             User?                 @relation("ClubTeamResultUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([clubEventRegistrationId, level])
 }

@@ -988,19 +988,25 @@ describe("team rules on submit (#809)", () => {
     expect(tx.registrationAttendee.create.mock.calls[0]![0].data.profileSnapshot).not.toHaveProperty("teamRole");
   });
 
-  it("refuses a team member who is already on another team of the club, by name, but lets a coach be on both", async () => {
+  it("refuses anyone already on another team of the club, by name: a team member and a coach alike", async () => {
     const tx = fixture();
     rules(tx, { minTeamMembers: 1, maxMemberAge: null });
-    tx.registrationAttendee.findMany.mockResolvedValue([{ personId: "person-m1", profileSnapshot: { teamRole: "MEMBER" } }]);
+    tx.registrationAttendee.findMany.mockResolvedValue([{ personId: "person-m1" }]);
     const refused = await submit(people("member:m1"), clubTeam("Second Team")).catch((error: unknown) => error);
-    expect((refused as Error).message).toBe("Alex Sample is already on another team from your club for this event. A team member can be on one team only: remove them here, or from the other team.");
+    expect((refused as Error).message).toBe("Alex Sample is already on another team from your club for this event. Everyone is on one team only: remove them here, or from the other team.");
     expect(tx.registrationAttendee.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ registration: { status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED"] }, clubRegistration: { is: { organizationId: "club-1" } } } }),
     }));
     expect(tx.registration.create).not.toHaveBeenCalled();
 
-    // The coach (m2, staff) is on the other team too, and registers here without complaint.
-    tx.registrationAttendee.findMany.mockResolvedValue([{ personId: "person-m2", profileSnapshot: { teamRole: "COACH" } }]);
+    // m2 is staff: a coach. A coach on another team is refused the same way.
+    tx.registrationAttendee.findMany.mockResolvedValue([{ personId: "person-m2" }]);
+    const coachRefused = await submit(people("member:m1", "member:m2"), clubTeam("Second Team")).catch((error: unknown) => error);
+    expect((coachRefused as Error).message).toContain("Jordan Example is already on another team from your club");
+    expect(tx.registration.create).not.toHaveBeenCalled();
+
+    // Nobody on another team: registers.
+    tx.registrationAttendee.findMany.mockResolvedValue([]);
     await submit(people("member:m1", "member:m2"), clubTeam("Second Team"));
     expect(tx.registration.create).toHaveBeenCalledTimes(1);
   });

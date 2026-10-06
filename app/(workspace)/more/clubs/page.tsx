@@ -5,6 +5,7 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { BackLink } from "@/components/back-link";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
+import { getTeamSettings } from "@/modules/club-teams/settings-repository";
 import { listRegisteredClubs, resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 import { staffPageTitles } from "@/components/staff-navigation";
 import { cardCell } from "@/components/table-card-labels";
@@ -26,7 +27,7 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
       />
     );
   }
-  const [clubs, backgroundFlags] = await Promise.all([listRegisteredClubs(event.id), listEventBackgroundFlags(event.id)]);
+  const [clubs, backgroundFlags, teamSettings] = await Promise.all([listRegisteredClubs(event.id), listEventBackgroundFlags(event.id), getTeamSettings(event.id)]);
   const neededByClub = new Map<string, number>();
   for (const person of backgroundFlags?.people ?? []) {
     if (person.organizationId) neededByClub.set(person.organizationId, (neededByClub.get(person.organizationId) ?? 0) + 1);
@@ -38,6 +39,7 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
         <Link className="secondary-button" href={`/more/clubs/reports?event=${event.id}`}>
           <FileText aria-hidden="true" size={14} /> All clubs&apos; monthly reports
         </Link>
+        {teamSettings && <Link className="secondary-button" href={`/more/team-results?event=${event.id}`}>Team results</Link>}
       </div>
       <div className="page-intro">
         <div>

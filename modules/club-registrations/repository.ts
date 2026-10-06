@@ -657,6 +657,8 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         teamKey: true,
         createdAt: true,
         registrationId: true,
+        // Staff's results for the team (#809), shown to the director read only.
+        teamResults: { select: { level: true, placement: true, qualified: true, notes: true, updatedAt: true } },
         registration: {
           select: {
             confirmationCode: true,
@@ -803,6 +805,9 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
       ? {
         teamKey: clubRegistration.teamKey,
         teamName: clubRegistration.teamName ?? "",
+        results: clubRegistration.teamResults.map((result) => ({
+          level: result.level, placement: result.placement, qualified: result.qualified, notes: result.notes,
+        })),
         confirmationCode: clubRegistration.registration.confirmationCode,
         status: clubRegistration.registration.status,
         submittedAt: clubRegistration.createdAt.toISOString(),
@@ -922,8 +927,8 @@ export type ClubRegistrationActor = { accountId: string } | { userId: string; ac
  * page picked for the team, and one without has only the empty key, so a stray id can never start a second draft there.
  */
 /**
- * Team members of this club already on another of its teams for the event (#809): a team member is on one team only, while
- * a coach may be on several. Reads the club's other registrations that still hold a place (submitted, confirmed or on the
+ * People of this club already on another of its teams for the event (#809): everyone is on one team only, team members,
+ * the alternate and coaches alike. Reads the club's other registrations that still hold a place (submitted, confirmed or on the
  * waitlist); `excludeRegistrationId` leaves out the one being edited. Returns each such person's name, or an empty list.
  */
 async function membersOnOtherTeams(
@@ -940,15 +945,14 @@ async function membersOnOtherTeams(
         clubRegistration: { is: { organizationId: input.organizationId, ...(input.excludeRegistrationId ? { registrationId: { not: input.excludeRegistrationId } } : {}) } },
       },
     },
-    select: { personId: true, profileSnapshot: true },
+    select: { personId: true },
   });
-  // A coach on the other team does not hold a team member's place there.
-  const taken = new Set(rows.filter((row) => recordFromJson(row.profileSnapshot).teamRole !== "COACH").map((row) => row.personId));
+  const taken = new Set(rows.map((row) => row.personId));
   return input.members.filter((member) => taken.has(member.personId)).map((member) => member.name);
 }
 
 const onOtherTeamMessage = (name: string) =>
-  `${name || "Someone"} is already on another team from your club for this event. A team member can be on one team only: remove them here, or from the other team.`;
+  `${name || "Someone"} is already on another team from your club for this event. Everyone is on one team only: remove them here, or from the other team.`;
 
 export function clubDraftKey(settings: Pick<TeamSettings, "allowMultipleTeams"> | null, requested: string | undefined): string {
   if (!settings?.allowMultipleTeams) {
@@ -1158,7 +1162,7 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
       const person = effectiveAge === undefined ? rosterOnly : { ...rosterOnly, ageOnEventDate: effectiveAge };
       if (typedAge !== undefined && typedAge !== (member.reportedAge ?? undefined) && actor && !saveOff.has(member.id)) saveBack.push({ memberId: member.id, age: typedAge });
       const memberRole = teamRoleFor({ responses: attendee.responses, rosterAttendeeType: member.attendeeType, age: person.ageOnEventDate });
-      if (memberRole === "MEMBER") teamMemberPersons.push({ personId: member.personId, name: `${person.firstName} ${person.lastName}`.trim() });
+      teamMemberPersons.push({ personId: member.personId, name: `${person.firstName} ${person.lastName}`.trim() });
       resolved.set(attendee.clientId, { personId: member.personId, rosterMemberId: member.id, ageOnEventDate: person.ageOnEventDate, ...(teamSettings ? { teamRole: memberRole } : {}) });
       teamPeople.push({
         name: `${person.firstName} ${person.lastName}`.trim(),
@@ -1499,7 +1503,7 @@ export async function amendClubRegistration(
     if (current) assertSeminarPicksUnchanged(current, responses);
     amendmentAttendees.push({ attendeeId: current?.id ?? null, clientId, responses });
     const memberRole = teamRoleFor({ responses, rosterAttendeeType: member.attendeeType, age: person.ageOnEventDate });
-    if (memberRole === "MEMBER" && member.personId) teamMemberPersons.push({ personId: member.personId, name: `${person.firstName} ${person.lastName}`.trim() });
+    if (member.personId) teamMemberPersons.push({ personId: member.personId, name: `${person.firstName} ${person.lastName}`.trim() });
     teamPeople.push({
       name: `${person.firstName} ${person.lastName}`.trim(),
       role: memberRole,

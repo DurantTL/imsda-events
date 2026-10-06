@@ -5,6 +5,7 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { PrintReportButton } from "@/components/print-report-button";
 import { LocationFilter } from "@/components/location-filter";
 import { resolveLocationFilter } from "@/modules/event-locations/filter";
+import { getTeamSettings } from "@/modules/club-teams/settings-repository";
 import { getClubEventReports } from "@/modules/reporting/club-event-reports-repository";
 import { resolveClubReportsAccess } from "@/modules/reporting/club-reports-access";
 import { staffPageTitles } from "@/components/staff-navigation";
@@ -36,6 +37,7 @@ export default async function ClubEventReportsPage({
   // Each location on its own, or all of them combined with the location named (#413).
   const { locations, locationId } = await resolveLocationFilter(event.id, requestedLocation);
   const reports = await getClubEventReports(event.id, { locationId });
+  const usesTeams = (await getTeamSettings(event.id)) !== null;
   const showLocation = locations.length > 0;
 
   return (
@@ -49,6 +51,7 @@ export default async function ClubEventReportsPage({
         <div className="intro-actions report-actions">
           <Link className="secondary-button" href={`/more/reports?${eventQuery}`}>Back to reports</Link>
           <Link className="secondary-button" href={`/more/reports/clubs/check-in-book?${eventQuery}`}>Check-in book</Link>
+          {usesTeams && <Link className="secondary-button" href={`/more/team-results?${eventQuery}`}>Team results</Link>}
           <PrintReportButton />
         </div>
       </div>

@@ -22,7 +22,7 @@ import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registratio
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { activeRegistrationStatuses, registrationClosedMessage } from "@/modules/events/lifecycle";
 import { getClassSelectionWorkspaceIfRegistered, getRegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
-import { draftKeySchema, singleSearchParam } from "@/modules/club-teams/domain";
+import { TEAM_LEVELS, teamLevelLabels, draftKeySchema, singleSearchParam } from "@/modules/club-teams/domain";
 
 export const metadata: Metadata = { title: "Club registration" };
 export const dynamic = "force-dynamic";
@@ -160,6 +160,9 @@ export default async function ClubEventRegistrationPage({
               </li>
             ))}
           </ul>
+          {workspace.teams.settings && (
+            <p><Link className="text-button" href={`${eventBase}/team-form/blank`}>Blank team form to mail or email</Link></p>
+          )}
           {canStartTeam ? (
             <Link className="primary-button club-event-action" href={`${eventBase}?draft=${crypto.randomUUID().replaceAll("-", "")}`}>
               <Plus size={14} aria-hidden="true" /> Register {workspace.teams.registered.length > 0 ? "another" : "a"} team
@@ -250,6 +253,35 @@ export default async function ClubEventRegistrationPage({
             <Link className="secondary-button club-event-action" href={`/account/clubs/${organizationId}/events/${eventId}/packet${teamQuery}`}>
               <Printer aria-hidden="true" size={14} /> Print club packet
             </Link>
+          )}
+          {workspace.teams.settings && (
+            <p>
+              <Link className="secondary-button club-event-action" href={`${eventBase}/team-form${teamQuery}`}>
+                <Printer aria-hidden="true" size={14} /> Print team form
+              </Link>{" "}
+              <Link className="text-button" href={`${eventBase}/team-form/blank`}>Blank form to mail or email</Link>
+            </p>
+          )}
+          {workspace.registration.results.length > 0 && (
+            <div className="public-manage-card team-results-block" aria-labelledby="team-results-heading">
+              <h3 id="team-results-heading">Results</h3>
+              <ul className="public-manage-club-list">
+                {TEAM_LEVELS.flatMap((level) => {
+                  const result = workspace.registration!.results.find((entry) => entry.level === level);
+                  return result ? [(
+                    <li key={level}>
+                      <span>
+                        <strong>{teamLevelLabels[level]}</strong>
+                        <small>
+                          {result.placement || "No placement entered"} · {result.qualified ? "Qualified for the next level" : "Did not qualify for the next level"}
+                          {result.notes ? ` · ${result.notes}` : ""}
+                        </small>
+                      </span>
+                    </li>
+                  )] : [];
+                })}
+              </ul>
+            </div>
           )}
           {assignment && (
             <div className="public-manage-card club-assignments-block">

@@ -69,6 +69,7 @@ describe("staff page names (#685)", () => {
       clubForms: "more/club-forms", eventHealth: "more/event-health", clubAssignments: "more/club-assignments", eventContent: "more/event-content",
       eventPatches: "more/event-patches", operationalHealth: "more/health", merchandise: "more/merchandise", lodging: "more/lodging", lodgingRequests: "more/lodging/requests", lodgingAssignments: "more/lodging/assignments",
       assignmentRoster: "more/program-assignments/[runId]", programAssignments: "more/program-assignments",
+      teamResults: "more/team-results", teamForm: "more/reports/clubs/team-form",
     };
     expect(Object.keys(pages).sort()).toEqual(Object.keys(staffPageTitles).sort());
     for (const [key, path] of Object.entries(pages)) {
