@@ -410,8 +410,15 @@ export async function applyEventTemplate(
           publicInfoUrl: payload.brandingDefaults.publicInfoUrl,
           supportContact: payload.brandingDefaults.supportContact,
           calendarCategory: payload.brandingDefaults.calendarCategory,
+          ...(payload.registrationClosesOn ? { registrationClosesOn: payload.registrationClosesOn } : {}),
         },
       });
+      // Team rules (#809): their own row, set before any club can register.
+      if (payload.teamSettings) {
+        await tx.eventTeamSettings.create({
+          data: { eventId: event.id, ...payload.teamSettings, levelInfo: payload.teamSettings.levelInfo as unknown as Prisma.InputJsonValue },
+        });
+      }
 
       await tx.eventMembership.create({
         data: { eventId: event.id, userId: actorUserId, role: "EVENT_ADMIN", status: "ACTIVE" },

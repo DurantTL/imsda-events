@@ -106,7 +106,7 @@ describe("the printed sheet", () => {
 describe("loading the form", () => {
   const event = { name: "Synthetic PBE", startsAt: new Date("2027-01-16T16:00:00Z"), timezone: "America/Chicago", registrationClosesOn: "2026-12-18", isPublished: true, audience: "CLUB" };
   const teamRow = {
-    teamName: "Bible Bees", registrationId: "reg-1",
+    teamName: "Bible Bees", registrationId: "reg-1", createdAt: new Date("2026-11-03T02:30:00Z"),
     organization: { name: "Test Pathfinders", parentOrganization: { name: "Test SDA Church" } },
     registration: {
       confirmationCode: "PBE-1", status: "CONFIRMED", location: { name: "Iowa" },
@@ -131,7 +131,7 @@ describe("loading the form", () => {
     vi.clearAllMocks();
     mocks.currentRegistrationAnswers.mockResolvedValue({ responses: {
       coordinator_name: "Pat Coordinator", coordinator_address: "1 Example Road", coordinator_city: "Testville", coordinator_state: "IA", coordinator_zip: "50000",
-      coordinator_phone: "515-555-0100", coordinator_email: "pat@example.test", partner_club: "", director_confirmation: true, confirmation_date: "2026-11-02",
+      coordinator_phone: "515-555-0100", coordinator_email: "pat@example.test", partner_club: "", director_confirmation: true,
       medical_notes: "PRIVATE",
     } });
   });

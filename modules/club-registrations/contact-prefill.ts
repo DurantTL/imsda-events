@@ -41,6 +41,10 @@ const KEY_SOURCES: Record<string, Source> = {
   cell_phone: "mobile",
   contact_phone: "mobile",
   director_phone: "mobile",
+  // The PBE team coordinator starts as the club director (#809).
+  coordinator_name: "fullName",
+  coordinator_email: "email",
+  coordinator_phone: "mobile",
   director_mobile: "mobile",
 };
 

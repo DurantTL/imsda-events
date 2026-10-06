@@ -1,6 +1,7 @@
 import { getFormTemplate, isBlankFormTemplateKey } from "@/modules/forms/definition";
 import { unpricedFeeFieldLabels } from "@/modules/events/readiness";
 import { eventTemplatePayloadSchema, type EventTemplatePayload, type TemplateLocation } from "@/modules/event-templates/domain";
+import type { TeamSettingsInputValues } from "@/modules/club-teams/domain";
 
 /**
  * The starter event templates (#546): one per real IMSDA event that already
@@ -28,6 +29,11 @@ export type StarterEventTemplate = {
   locations?: readonly TemplateLocation[];
   /** Extra sentence for the starter's description: what staff must check on the draft (#606). */
   note?: string;
+  /** Team rules for the new event (#809), and its registration deadline: for the one-year Pathfinder Bible Experience starter. */
+  teamSettings?: TeamSettingsInputValues;
+  registrationClosesOn?: string;
+  /** Replaces the generated description, for a starter whose form carries no prices and whose set-up the generic text does not describe. */
+  description?: string;
 };
 
 
@@ -43,6 +49,29 @@ const fallCamporeeLocations: readonly TemplateLocation[] = [
   { name: "Missouri", address: null, capacity: null, firstDayOffset: null, lastDayOffset: null, registrationClosesOffset: null },
 ];
 
+/**
+ * The Pathfinder Bible Experience (#809) runs at two Area sites on the same day; the venues are announced later, so both
+ * start with no address or dates, active so every team must pick one. The 2026–27 rules and dates are Caleb's (Oct 6, 2026).
+ */
+const pbeLocations: readonly TemplateLocation[] = [
+  { name: "Missouri", address: null, capacity: null, firstDayOffset: null, lastDayOffset: null, registrationClosesOffset: null },
+  { name: "Iowa", address: null, capacity: null, firstDayOffset: null, lastDayOffset: null, registrationClosesOffset: null },
+];
+
+const pbeTeamSettings: TeamSettingsInputValues = {
+  allowMultipleTeams: true,
+  minTeamMembers: 2,
+  maxTeamMembers: 7,
+  maxAlternates: 1,
+  ageAsOf: "2026-01-01",
+  maxMemberAge: 19,
+  booksLine: "The Book of Mark, 1-2 Peter, 1-3 John & Commentary",
+  levelInfo: [
+    { level: "CONFERENCE", date: "2027-02-20", place: "TBA" },
+    { level: "UNION", date: "2027-03-27", place: "Lincoln, NE" },
+  ],
+};
+
 export const starterEventTemplates: readonly StarterEventTemplate[] = [
   { starterKey: "blank_event", name: "Blank event", formTemplateKey: "blank_form", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: false, checksAdultBackgrounds: false },
   { starterKey: "blank_club_event", name: "Blank club event", formTemplateKey: "blank_club_form", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true },
@@ -51,6 +80,12 @@ export const starterEventTemplates: readonly StarterEventTemplate[] = [
   { starterKey: "spring_camporee", name: "Spring Camporee", formTemplateKey: "spring_camporee_export", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true },
   { starterKey: "fall_camporee", name: "Fall Camporee", formTemplateKey: "fall_camporee", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true, locations: fallCamporeeLocations },
   { starterKey: "camp_meeting", name: "Camp Meeting", formTemplateKey: "camp_meeting_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: false, checksAdultBackgrounds: false },
+  {
+    starterKey: "pathfinder_bible_experience", name: "Pathfinder Bible Experience", formTemplateKey: "pbe_registration", audience: "CLUB",
+    billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true,
+    locations: pbeLocations, teamSettings: pbeTeamSettings, registrationClosesOn: "2026-12-18",
+    description: "Starter set: created from the built-in \"Pathfinder Bible Experience\" form (pbe_registration) for the 2026–27 Pathfinder Bible Experience (IA-MO), a free club event where a club registers more than one named team, each with 2 to 7 team members (the 7th is the alternate), adults listed as coaches, and no team member older than 19 on January 1, 2026. It creates the Missouri and Iowa Area sites with no venue or dates, sets registration to close December 18, 2026, and carries the books line and the Conference (February 20, 2027) and Union (March 27, 2027, Lincoln, NE) dates for the printed form. Choose January 16, 2027 as the event date when you create the event. Staff create the live event from this template; nothing is created until they do. No prices or capacity are set.",
+  },
   { starterKey: "honors_weekend", name: "Honors Weekend", formTemplateKey: "honors_weekend", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true },
   // #606. Individuals register (GENERAL) and the church or school is billed later: the platform allows
   // church billing on a GENERAL event, and only the club portal needs CLUB. These forms take no online payment.
@@ -93,6 +128,7 @@ function formCarriesPrices(formTemplateKey: string) {
 }
 
 export function starterDescription(starter: StarterEventTemplate) {
+  if (starter.description) return starter.description;
   const form = getFormTemplate(starter.formTemplateKey);
   if (isBlankFormTemplateKey(starter.formTemplateKey)) {
     return `Starter set: a blank ${starter.audience === "CLUB" ? "club " : ""}event created from the built-in "${form?.name ?? "Blank form"}" form (${starter.formTemplateKey}). It has a contact${starter.audience === "CLUB" ? " and club roster" : ""} section and no prices or capacity. Add your own questions on the draft event.`;
@@ -126,5 +162,7 @@ export function starterPayload(starter: StarterEventTemplate): EventTemplatePayl
       checksAdultBackgrounds: starter.checksAdultBackgrounds,
     },
     ...(starter.locations ? { locations: starter.locations.map((location) => ({ ...location })) } : {}),
+    ...(starter.teamSettings ? { teamSettings: starter.teamSettings } : {}),
+    ...(starter.registrationClosesOn ? { registrationClosesOn: starter.registrationClosesOn } : {}),
   });
 }

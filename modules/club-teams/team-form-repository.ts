@@ -33,6 +33,7 @@ async function eventContext(eventId: string, options: { publishedClubOnly?: bool
   if (options.publishedClubOnly && (!event.isPublished || event.audience !== "CLUB")) return null;
   return {
     eventName: event.name,
+    timezone: event.timezone,
     input: {
       areaDate: calendarDateInEventTimeZone(event.startsAt, event.timezone),
       areaPlaces: locations,
@@ -66,6 +67,8 @@ export async function loadFilledTeamForm(which: Which): Promise<TeamFormPage | n
     select: {
       teamName: true,
       registrationId: true,
+      // The director's confirmation is made when the team is registered; its date is the date it was submitted.
+      createdAt: true,
       organization: { select: { name: true, parentOrganization: { select: { name: true } } } },
       registration: {
         select: {
@@ -113,7 +116,7 @@ export async function loadFilledTeamForm(which: Which): Promise<TeamFormPage | n
     alternate,
     coaches,
     confirmed: responses.director_confirmation === true,
-    confirmedOn: text(responses.confirmation_date) || null,
+    confirmedOn: responses.director_confirmation === true ? calendarDateInEventTimeZone(row.createdAt, context.timezone) : null,
   };
   return {
     eventName: context.eventName,
