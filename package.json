@@ -48,6 +48,7 @@
     "test:lodging": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-lodging-inventory.ts",
     "test:lodging-preferences": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-lodging-preferences.ts",
     "test:lodging-assignment": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-lodging-assignment.ts",
+    "test:single-account-dry-run": "tsx scripts/verify-single-account-dry-run.ts",
     "test:lodging-assignment-http": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-lodging-assignment-http.ts",
     "imports:build": "tsx scripts/build-import-files.ts",
     "test:watch": "vitest",
@@ -71,6 +72,7 @@
     "event-modules:backfill": "tsx --require ./scripts/support/allow-server-only.cjs scripts/backfill-event-modules.ts",
     "event-audience:backfill": "tsx --require ./scripts/support/allow-server-only.cjs scripts/backfill-event-audience.ts",
     "issue:from-spec": "tsx scripts/spec-to-issue.ts",
+    "accounts:dry-run": "tsx scripts/single-account-dry-run.ts",
     "background-checks:migration-dry-run": "tsx scripts/background-check-migration-dry-run.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"

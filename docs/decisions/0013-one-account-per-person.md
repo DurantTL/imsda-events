@@ -1,6 +1,6 @@
 # ADR 0013: One account and one sign-in per person
 
-Status: Proposed. The direction was decided by the Communication Director on 2026-09-30 (#554); this design awaits approval.
+Status: Proposed. The direction was decided by the Communication Director on 2026-09-30 (#554); this design awaits approval. The implementation plan and slices are at the end; table-by-table detail is in [docs/SINGLE-ACCOUNT-MIGRATION.md](../SINGLE-ACCOUNT-MIGRATION.md).
 Date: 2026-09-30
 Supersedes: the "attendee accounts live in their own table" and "staff can switch to attendee mode" parts of [ADR 0003](0003-attendee-accounts.md). Everything else in ADR 0003 stands.
 
@@ -133,3 +133,175 @@ existing attendee accounts, which keep working.
   account unable to use act-as.
 - **Let any attendee sign-in method open the staff workspace.** Rejected: it would bypass
   staff MFA.
+
+---
+
+# Implementation plan
+
+This part turns the decision above into reviewable slices. It adds no product decision except
+where it says **Open question**. The table-by-table inventory, backfill, rollback and
+verification queries are in [docs/SINGLE-ACCOUNT-MIGRATION.md](../SINGLE-ACCOUNT-MIGRATION.md).
+The read-only dry run is `npm run accounts:dry-run`.
+
+## Decisions on record (#554 comments)
+
+| Date | Who | Decision |
+| --- | --- | --- |
+| Sept 28 | Caleb | Reversing ADR 0003's separate-accounts rule is approved. |
+| Sept 28 | Caleb | **Guest registration stays.** After registering, people are clearly offered an account so their details are saved for next time. |
+| Sept 28 | Caleb | **Two-step is optional for accounts with no staff role.** |
+| Sept 28 | Caleb | **People with both accounts under different emails stay separate.** It only affects the two system administrators; no linking tool is built. |
+| Sept 30 | Communication Director | One account, one sign-in per person. Staff, coordinator, director and attendee are roles on the person. Every staff member automatically has the attendee side. |
+| Sept 30 | Communication Director | Carried over from ADR 0003: event-scoped permissions; **two-step required for staff and for any scope that reaches rosters or medical data**; verified-email claiming; private registration links. |
+| Sept 30 | Communication Director | Cutover after the Women's Retreat (Oct 9-11). Merging existing accounts in production runs only after a dry-run preview and the director's approval. |
+| Oct 1 | Director | The work is **on hold and lowest priority**; the director says when to start. |
+
+Where the comments disagree on timing, the later one should win: the Sept 29 note ("slices b
+to e wait until after Camp Meeting 2027") is older than the Sept 30 cutover date and the Oct 1
+hold. See **Open questions**.
+
+## Target model
+
+As decided above: two tables stay, and a unique nullable `User.attendeeAccountId` links the
+staff `User` to that person's `AttendeeAccount`. The attendee account is the person's
+profile, registrations, club roles and coordinator grant. The `User` row holds staff
+credentials and event roles. Nothing is moved, deleted or copied between tables.
+
+Two rules make the link safe:
+
+1. **Same verified email.** A link is only created between a `User` and an `AttendeeAccount`
+   whose normalised emails are equal and whose attendee email is verified. Different-email
+   people stay separate (Sept 28), so there is no manual "link these two" tool.
+2. **Emails stay in step.** While linked, the two emails must be equal. An email change on
+   either side is one transaction that changes both and re-verifies, or is refused. (Open
+   question: whether to allow it at all while linked.)
+
+## Sessions and authorization
+
+- Staff and attendee sessions stay separate tables and cookies. Nothing grants an
+  `EventPermission` to an attendee account, and an `AttendeeSession` is never resolved as a
+  staff session.
+- One helper, `resolvePerson()`, answers "who is this and which roles do they hold" from
+  whichever sessions the browser carries. New code uses it instead of reading both cookies.
+- Staff authorization is unchanged: `getCurrentSession()`, event memberships, system admin,
+  MFA, step-up.
+- **A weaker sign-in never opens staff.** Google alone, or an attendee password without the
+  staff second factor, yields the attendee session only. A person holding a staff role who
+  signs in that way sees their attendee side and a prompt to finish staff verification.
+- Second step by scope, not by page: required for any staff role, and for any scope that
+  reaches rosters or medical information (ADR 0003, 0005). It stays **optional** for an
+  account with no staff role and no club or coordinator role. The club and coordinator
+  gate (`accountNeedsSecondStep`) is unchanged.
+- Sign-out ends both sessions. Revoking staff access ends the staff session only.
+  Suspending a person's attendee side ends both.
+
+## The single sign-in page, with no account enumeration
+
+`/sign-in` replaces `/login` and `/account/sign-in`, which redirect to it. The flow "ask for
+the email, then show the staff or attendee method" described under Decision **must not** be
+built literally: a page that changes after the email is entered tells a stranger whether that
+email holds a staff account.
+
+The requirement is therefore:
+
+- **One form, one submit.** Email and password go together. The response for an unknown
+  email, a wrong password, a locked account and a disabled account has the same shape and
+  status and the same timing (a dummy password hash is verified when no account exists).
+- **The second step appears only after the password is right**, and only for people who need
+  it. Someone who already knows the password learns nothing new.
+- **Passkeys use the discoverable-credential flow** (no email typed), and Google is its own
+  button. Neither reveals whether an address has an account.
+- Rate limits stay per address and per source, and count identically for known and unknown
+  addresses. The staff lockout and step-up rules are unchanged.
+- Support text never says "this address has a staff account".
+
+## Act as (#442) and the club second step (#484)
+
+- **Act as** already runs entirely inside the staff session (a `StaffActAs` row tied to the
+  `UserSession`), so it works for staff with no attendee account today. What the link fixes
+  is the *attendee mode* switch (`findSwitchableAttendeeAccountForStaff`), which returns
+  nothing for staff without an attendee account. After slice (b) it uses the link. Act-as
+  keeps its attribution to the staff user and never widens the attendee side.
+- **The club second step** (`accountNeedsSecondStep`, `AttendeeSession.secondFactorVerifiedAt`)
+  stays on the attendee session. A person who signs in with the staff factor gets both
+  sessions with `secondFactorVerifiedAt` set on the attendee one, so a staff director is not
+  asked twice. Google-only sign-in does not set it, so club pages still ask.
+
+## Risks
+
+- **Sign-in and permissions everywhere.** Each slice needs its own security review.
+- **Enumeration** through response shape, status, timing or rate-limit messages (above).
+- **A weaker method issuing staff access.** Tests must prove every non-staff-grade method
+  yields the attendee session only.
+- **Wrong link.** Equal email is not proof of one person (a shared family or office
+  mailbox). The dry run flags duplicates and unverified emails, and a human approves each link.
+- **Irreversible loss** if tables were merged rather than linked. The link model avoids it:
+  rollback is clearing the column.
+- **Email drift** between linked rows (rule 2).
+- **Actor columns.** There are 170 actor and owner columns on 109 models (the "about forty"
+  above undercounted), 48 of them plain strings with no foreign key. Linking does not touch
+  them, but any later physical merge must repoint every one.
+- **Cutover with live sessions.** Existing sessions stay valid, and the switch is read per
+  request, not a data change.
+- **Support load** from "why does Google not open the staff workspace".
+
+## Slices
+
+Each slice is its own PR with its own review. Production data steps (backfill and apply) are
+human-gated and never run from CI.
+
+**(a) Link column, plan and read-only tooling. No behaviour change.**
+- The plan, the dry run, its tests and `docs/SINGLE-ACCOUNT-MIGRATION.md` ship first (this PR).
+- Then an additive migration: `User.attendeeAccountId`, nullable, unique, `ON DELETE SET NULL`.
+  No backfill in the migration; every row starts `NULL`. No code reads or writes it yet.
+- Acceptance: CI migrates and seeds a clean database; the schema-drift check is clean; all
+  existing tests pass unchanged; `SELECT count(*) FROM "User" WHERE "attendeeAccountId" IS NOT NULL`
+  is 0 after deploy; dropping the column is tested on a copy.
+
+**(b) One resolver and authorization.**
+- `resolvePerson()`; new staff users get a verified linked attendee account at activation;
+  granting a staff role to an existing attendee creates the `User` linked to their account;
+  attendee mode, act-as and the profile page use the link.
+- Acceptance: a staff user without an attendee account gets one at activation; no path issues
+  a staff session from an attendee-grade method (a test per method); the existing permission
+  suite is green; act-as and club second-step tests are green; behind a switch, off by default.
+
+**(c) The single sign-in page.**
+- `/sign-in`, with `/login` and `/account/sign-in` redirecting when the switch is on.
+- Acceptance: identical status, body shape and timing for unknown, wrong-password, locked
+  and disabled cases (tests, including a timing-equalisation check); staff MFA, passkey and
+  rate-limit tests unchanged; a staff person gets both sessions, an attendee-only person
+  gets one; guest registration still works with no account; the post-registration offer to
+  create an account is shown.
+
+**(d) Link tooling (preview and apply).**
+- The slice (a) dry run feeds a preview and apply tool: one person per transaction, audited,
+  re-runnable, refusing pairs the dry run marks `blocked`.
+- Acceptance: apply refuses without a recorded director approval; preview and apply agree on
+  the pair list; applying twice changes nothing the second time; every conflict class has a
+  test; nothing applies automatically; the verification queries in the migration doc are
+  clean after a run on a copy of production.
+
+**(e) Remove the old paths.**
+- Delete the redirect shims, the "switch to attendee mode" flow and the duplicated recovery
+  code, after the two-week rollback window.
+- Acceptance: no references to the removed routes; the switch is gone; full verify is green.
+
+## Timing and gates
+
+- No sign-in change on the live site between Oct 6 and the end of the Women's Retreat
+  (Oct 9-11).
+- The cutover is slices (b) and (c) turned on after the retreat, and only when the director
+  says to start (Oct 1 hold).
+- **Production linking runs only after a dry-run preview and the director's approval.**
+  Merging, deployment and production migrations stay human-only (AGENTS.md).
+
+## Open questions
+
+1. **Timing.** The Sept 29 comment waits for Camp Meeting 2027; the Sept 30 comment cuts over
+   right after the retreat; the Oct 1 comment puts everything on hold. Which governs?
+2. **Link or merge.** This ADR keeps two tables. The issue text says "a single account model;
+   `User` is the likely base". Confirm the link model is the intent.
+3. **Email changes while linked** (rule 2): change both together, or forbid?
+4. **Staff at activation:** create a verified attendee account automatically (this ADR), or
+   only when they first use an attendee feature?
