@@ -24,14 +24,17 @@ event administrator and system administrator), visits the main pages at 360,
 It runs as its own workflow, not in `ci.yml` (CI minutes are tight):
 
 - **Pull requests, quick run** (360 and 1024 px, no screenshots), only when a
-  layout-wide file changes: `app/globals.css`, `app/**/*.css`,
-  `components/table-card-labels.tsx`, `components/list-sort.tsx`, the script,
-  `scripts/support/**` or the workflows (`mobile-layout.yml`).
+  the table-card or list-sort helpers (`components/table-card-labels.tsx`,
+  `components/list-sort.tsx`), the script, `scripts/support/**` or the workflows
+  change. The shared CSS is left out on purpose: it changes in most pull
+  requests, so it is covered by the label and the weekly run.
 - **Pull requests with the `mobile-check` label**, whatever they change: the
   same quick run, started by `mobile-layout-label.yml`. Put the label on a PR
   that changes a page's layout. A workflow cannot OR a `paths` filter with a
   label, so the label trigger is a small second workflow that calls the first
-  (`workflow_call`); a PR that matches both runs twice, which is rare and cheap.
+  (`workflow_call`). A PR that matches both shares one concurrency group, so one
+  of the two runs is cancelled (it shows as a cancelled check). Adding a
+  different label does not start a run.
 - **Weekly (Monday) and by hand** (`workflow_dispatch`): the full run, all four
   widths, with screenshots (the `mobile-layout-screenshots` artifact, 14 days).
 

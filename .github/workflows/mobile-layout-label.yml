@@ -19,7 +19,8 @@ concurrency:
 
 jobs:
   mobile-layout:
-    if: contains(github.event.pull_request.labels.*.name, 'mobile-check')
+    # Only when the label is present, and not again when some other label is added.
+    if: contains(github.event.pull_request.labels.*.name, 'mobile-check') && (github.event.action != 'labeled' || github.event.label.name == 'mobile-check')
     permissions:
       contents: read
     uses: ./.github/workflows/mobile-layout.yml

@@ -75,7 +75,9 @@ export default async function AttendeeListingPage({ searchParams }: { searchPara
         </ul>
       </section>
 
-      <form action="/people/attendees" method="get" className="panel choice-filter-form" aria-label="Filter attendees">
+      {/* Keyed on the current query: a header sort link or Reset is a client navigation that keeps this
+          form mounted, and uncontrolled fields would otherwise submit the previous values. */}
+      <form key={JSON.stringify([query.sort, query.direction, query.search, query.meal, query.dietaryOnly, query.statuses])} action="/people/attendees" method="get" className="panel choice-filter-form" aria-label="Filter attendees">
         <input type="hidden" name="event" value={event.id} />
         {/* Sort and Direction: on a phone the card list has no header row to click (docs/RESPONSIVE.md),
             so these are shown at 600px and under. They always submit, which also keeps the current sort

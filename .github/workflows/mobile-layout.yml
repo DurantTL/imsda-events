@@ -4,8 +4,9 @@ name: Mobile layout
 # Actions minutes. See docs/RESPONSIVE.md.
 #
 # When it runs:
-#  - a pull request that changes a layout-wide file (the shared CSS, the
-#    table-card and list-sort helpers, the audit itself): a quick run;
+#  - a pull request that changes the table-card or list-sort helpers or the
+#    audit itself: a quick run (the shared CSS changes in most pull requests,
+#    so it is covered by the label and the weekly run instead);
 #  - a pull request carrying the `mobile-check` label: a quick run, started by
 #    mobile-layout-label.yml, which calls this workflow (a `paths` filter and a
 #    label cannot be OR'd in one workflow, so there are two small triggers
@@ -18,8 +19,6 @@ name: Mobile layout
 on:
   pull_request:
     paths:
-      - "app/globals.css"
-      - "app/**/*.css"
       - "components/table-card-labels.tsx"
       - "components/list-sort.tsx"
       - "scripts/verify-mobile-layout.ts"

@@ -857,8 +857,11 @@ async function main() {
   const tokens: { staff: string[]; attendee: string[] } = { staff: [], attendee: [] };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let browser: any;
+  // Cleanup only touches a database that passed the seeded-database check.
+  let seeded = false;
   try {
     await assertSeededDatabase(prisma);
+    seeded = true;
     await seedSynthetic(prisma);
     const cookies = await mintSessions(prisma, tokens);
     console.log(`Auditing ${pages.length} pages at ${widths.join(", ")} px; output in ${outDir}`);
@@ -904,7 +907,7 @@ async function main() {
     const { revokeAttendeeSession } = await import("../modules/attendee-accounts/session-store");
     for (const token of tokens.staff) await revokeDatabaseSession(token).catch(() => undefined);
     for (const token of tokens.attendee) await revokeAttendeeSession(token).catch(() => undefined);
-    if (process.env.MOBILE_LAYOUT_CLEANUP === "1") {
+    if (seeded && process.env.MOBILE_LAYOUT_CLEANUP === "1") {
       await cleanupSynthetic(prisma).catch((error: Error) => console.error(`Cleanup failed: ${error.message}`));
     }
     await prisma.$disconnect();
