@@ -2,7 +2,7 @@
 
 Status: Proposed. The direction was decided by the Communication Director on 2026-09-30 (#554); this design awaits approval. The implementation plan and slices are at the end; table-by-table detail is in [docs/SINGLE-ACCOUNT-MIGRATION.md](../SINGLE-ACCOUNT-MIGRATION.md).
 Date: 2026-09-30
-Supersedes: the "attendee accounts live in their own table" and "staff can switch to attendee mode" parts of [ADR 0003](0003-attendee-accounts.md). Everything else in ADR 0003 stands.
+Supersedes: the "staff can switch to attendee mode" part of [ADR 0003](0003-attendee-accounts.md), and the "two separate accounts per person" outcome of its "attendee accounts live in their own table" part. **Proposed, pending Caleb's answer to Open question 2:** under the link model below the two tables are kept (one `User`, one `AttendeeAccount`, linked 1:1), so ADR 0003's table separation itself is not undone; if the answer is a physical single table, this ADR is revised. Everything else in ADR 0003 stands.
 
 ## Context
 
@@ -46,12 +46,13 @@ Instead:
    - Giving an existing attendee a staff role creates the `User` linked to *their* account.
      No second person is ever created.
 2. **One sign-in page** (`/sign-in`; the old `/login` and `/account/sign-in` redirect to it).
-   It asks for the email once and then:
-   - **Person has staff access:** requires the staff password and the staff second factor
-     (or a staff passkey), exactly as today. On success it issues **both** sessions: the staff
-     session and the linked attendee session.
-   - **Attendee only:** attendee password, Google or passkey, exactly as today, and it issues
-     the attendee session only.
+   It is **one form with one submit** (see "The single sign-in page, with no account
+   enumeration" below); it must not change shape after the email is typed. What it grants:
+   - **Staff access:** requires a staff credential (the staff password, or a staff passkey)
+     and the staff second factor, exactly as today. On success it issues **both** sessions:
+     the staff session and the linked attendee session.
+   - **Attendee access only:** attendee password, Google or passkey, exactly as today, and it
+     issues the attendee session only.
    - A sign-in method that is weaker than the staff rules (such as Google alone) **never**
      issues a staff session. The person gets their attendee side and a prompt to finish
      staff verification. **This keeps ADR 0003's core security property: staff permissions
@@ -138,8 +139,16 @@ existing attendee accounts, which keep working.
 
 # Implementation plan
 
-This part turns the decision above into reviewable slices. It adds no product decision except
-where it says **Open question**. The table-by-table inventory, backfill, rollback and
+This part turns the decision above into reviewable slices. It adds no product decision
+except where it says **Open question**, and these new proposed rules, which **need sign-off**
+before they are built:
+
+- suspending a person's attendee side ends both sessions;
+- slice (d) disables the attendee password (`disabledAt`) for people with staff access;
+- an attendee account is auto-created for staff at activation.
+
+The read-only dry run moved into slice (a) (it only reads, so it can ship now); merging and
+linking stay in slice (d). The table-by-table inventory, backfill, rollback and
 verification queries are in [docs/SINGLE-ACCOUNT-MIGRATION.md](../SINGLE-ACCOUNT-MIGRATION.md).
 The read-only dry run is `npm run accounts:dry-run`.
 
@@ -155,6 +164,7 @@ The read-only dry run is `npm run accounts:dry-run`.
 | Sept 30 | Communication Director | Carried over from ADR 0003: event-scoped permissions; **two-step required for staff and for any scope that reaches rosters or medical data**; verified-email claiming; private registration links. |
 | Sept 30 | Communication Director | Cutover after the Women's Retreat (Oct 9-11). Merging existing accounts in production runs only after a dry-run preview and the director's approval. |
 | Oct 1 | Director | The work is **on hold and lowest priority**; the director says when to start. |
+| Oct 6 | Director | Approved writing the plan and the read-only dry run. The cutover still waits for his go-ahead. |
 
 Where the comments disagree on timing, the later one should win: the Sept 29 note ("slices b
 to e wait until after Camp Meeting 2027") is older than the Sept 30 cutover date and the Oct 1
@@ -185,9 +195,16 @@ Two rules make the link safe:
   whichever sessions the browser carries. New code uses it instead of reading both cookies.
 - Staff authorization is unchanged: `getCurrentSession()`, event memberships, system admin,
   MFA, step-up.
-- **A weaker sign-in never opens staff.** Google alone, or an attendee password without the
-  staff second factor, yields the attendee session only. A person holding a staff role who
-  signs in that way sees their attendee side and a prompt to finish staff verification.
+- **What a staff session requires, exactly:** a staff credential (an `AuthCredential`
+  password, or a `UserPasskey`) **plus** a `UserMfaEnrollment` second factor (or a staff
+  passkey as the second factor, where staff passkeys already count), and nothing else.
+- **An `AttendeeCredential` password, an attendee passkey or Google can only ever yield the
+  attendee session**, whatever second factor follows. An attendee password followed by a staff
+  authenticator code is still not a staff sign-in. A person holding a staff role who signs in
+  that way sees their attendee side and a prompt to finish staff verification.
+- **When an email has both rows,** the single form checks the staff credential for staff
+  access and the attendee credential for attendee access, **independently**: the same typed
+  password may satisfy one, both or neither, and each outcome is decided on its own.
 - Second step by scope, not by page: required for any staff role, and for any scope that
   reaches rosters or medical information (ADR 0003, 0005). It stays **optional** for an
   account with no staff role and no club or coordinator role. The club and coordinator
@@ -214,6 +231,13 @@ The requirement is therefore:
 - Rate limits stay per address and per source, and count identically for known and unknown
   addresses. The staff lockout and step-up rules are unchanged.
 - Support text never says "this address has a staff account".
+- The same rule covers every other place an address is typed, each answering identically
+  whether or not the address exists, and whether or not it belongs to staff: **password
+  reset** (always "if an account exists, we sent a link"), **attendee sign-up for an
+  existing email** (same confirmation, no "already registered"), the **post-registration
+  "create an account" offer** (shown the same way; it never reveals an existing account),
+  and the **Google callback for a staff email** (lands on the attendee side with the same
+  neutral prompt as any other address, never an error naming staff).
 
 ## Act as (#442) and the club second step (#484)
 
@@ -271,8 +295,13 @@ human-gated and never run from CI.
 - Acceptance: identical status, body shape and timing for unknown, wrong-password, locked
   and disabled cases (tests, including a timing-equalisation check); staff MFA, passkey and
   rate-limit tests unchanged; a staff person gets both sessions, an attendee-only person
-  gets one; guest registration still works with no account; the post-registration offer to
-  create an account is shown.
+  gets one; **attendee password plus a valid staff TOTP code yields no staff session**
+  (likewise attendee passkey and Google); with both rows present, the staff and attendee
+  credentials are checked independently; password reset, attendee sign-up for an existing
+  email, the post-registration "create an account" offer and the Google callback for a staff
+  email each respond identically for existing, unknown and staff addresses (tests);
+  guest registration still works with no account; the post-registration offer to create an
+  account is shown.
 
 **(d) Link tooling (preview and apply).**
 - The slice (a) dry run feeds a preview and apply tool: one person per transaction, audited,
@@ -303,5 +332,7 @@ human-gated and never run from CI.
 2. **Link or merge.** This ADR keeps two tables. The issue text says "a single account model;
    `User` is the likely base". Confirm the link model is the intent.
 3. **Email changes while linked** (rule 2): change both together, or forbid?
-4. **Staff at activation:** create a verified attendee account automatically (this ADR), or
+4. **Attendee passkey as a staff factor (D2).** Can an attendee passkey count as a staff
+   second factor? **Default: no.** It stays attendee-grade; only `UserPasskey` counts for staff.
+5. **Staff at activation:** create a verified attendee account automatically (this ADR), or
    only when they first use an attendee feature?

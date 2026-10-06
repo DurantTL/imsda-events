@@ -14,11 +14,11 @@ export type MfaState = "NONE" | "PENDING" | "ACTIVE";
 export type StaffAccountRow = {
   id: string;
   email: string;
-  displayName: string;
   accountStatus: "PENDING_ACTIVATION" | "ACTIVE";
   globalRole: "SYSTEM_ADMIN" | null;
   credential: { disabledAt: Date | null; lockedUntil: Date | null } | null;
   mfa: MfaState;
+  mfaLockedUntil: Date | null;
   personLinkPersonId: string | null;
   counts: {
     memberships: number;
@@ -26,19 +26,21 @@ export type StaffAccountRow = {
     passkeys: number;
     sessions: number;
     auditRows: number;
+    /** Every other row this user authored, across all actor relations in the schema. */
+    actorRows: number;
   };
 };
 
 export type AttendeeAccountRow = {
   id: string;
   email: string;
-  displayName: string;
   status: "PENDING_VERIFICATION" | "ACTIVE";
   emailVerifiedAt: Date | null;
   disabledAt: Date | null;
   credential: { disabledAt: Date | null; lockedUntil: Date | null } | null;
   hasGoogleIdentity: boolean;
   mfa: MfaState;
+  mfaLockedUntil: Date | null;
   personLinkPersonId: string | null;
   counts: {
     registrations: number;
@@ -62,6 +64,8 @@ export type ConflictCode =
   | "CREDENTIAL_LOCKED"
   | "MFA_BOTH_ENROLLED"
   | "MFA_ATTENDEE_ONLY"
+  | "MFA_LOCKED"
+  | "STAFF_NO_SECOND_FACTOR"
   | "NAME_MISMATCH"
   | "PASSKEYS_ON_BOTH"
   | "ATTENDEE_GOOGLE_IDENTITY";
@@ -89,21 +93,33 @@ export function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();
 }
 
-/** `j***@example.org`. Never returns more than the first character of the local part. */
+/** Providers common enough that their domain identifies nobody. */
+const COMMON_PROVIDERS = new Set([
+  "gmail.com",
+  "yahoo.com",
+  "outlook.com",
+  "hotmail.com",
+  "icloud.com",
+  "aol.com",
+]);
+
+function maskDomain(domain: string): string {
+  if (COMMON_PROVIDERS.has(domain)) return domain;
+  const dot = domain.lastIndexOf(".");
+  if (dot < 1) return `${domain[0]}***`;
+  return `${domain[0]}***${domain.slice(dot)}`;
+}
+
+/**
+ * `j***@d***.org`: one character of the local part, one of the domain and the
+ * top-level domain. A short list of common providers keeps its domain
+ * (`j***@gmail.com`). Never returns more than that for any address.
+ */
 export function maskEmail(value: string): string {
   const email = normalizeEmail(value);
   const at = email.lastIndexOf("@");
   if (at < 1 || at === email.length - 1) return "***";
-  return `${email[0]}***${email.slice(at)}`;
-}
-
-/** Case, spacing, punctuation and diacritics do not make two names different. */
-export function nameKey(value: string): string {
-  return value
-    .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "");
+  return `${email[0]}***@${maskDomain(email.slice(at + 1))}`;
 }
 
 function groupByEmail<T extends { email: string }>(rows: readonly T[]) {
@@ -127,27 +143,35 @@ export function pairAccounts(
   const attendeeOnly: AttendeeAccountRow[] = [];
   const ambiguous: AmbiguousGroup[] = [];
 
-  for (const [key, staffRows] of staffByEmail) {
+  // More than one row on a side for one normalised email is ambiguous even with
+  // no counterpart: it is a duplicate a person must resolve before any linking.
+  const keys = new Set([...staffByEmail.keys(), ...attendeesByEmail.keys()]);
+  for (const key of keys) {
+    const staffRows = staffByEmail.get(key) ?? [];
     const attendeeRows = attendeesByEmail.get(key) ?? [];
-    if (attendeeRows.length === 0) {
-      staffOnly.push(...staffRows);
-    } else if (staffRows.length === 1 && attendeeRows.length === 1) {
-      pairs.push({ staff: staffRows[0], attendee: attendeeRows[0] });
-    } else {
+    if (staffRows.length > 1 || attendeeRows.length > 1) {
       ambiguous.push({
         emailKey: key,
         staffIds: staffRows.map((row) => row.id).sort(),
         attendeeIds: attendeeRows.map((row) => row.id).sort(),
       });
+    } else if (staffRows.length === 1 && attendeeRows.length === 1) {
+      pairs.push({ staff: staffRows[0], attendee: attendeeRows[0] });
+    } else if (staffRows.length === 1) {
+      staffOnly.push(staffRows[0]);
+    } else {
+      attendeeOnly.push(attendeeRows[0]);
     }
-  }
-  for (const [key, attendeeRows] of attendeesByEmail) {
-    if (!staffByEmail.has(key)) attendeeOnly.push(...attendeeRows);
   }
 
   pairs.sort((a, b) => a.staff.id.localeCompare(b.staff.id));
   ambiguous.sort((a, b) => a.emailKey.localeCompare(b.emailKey));
   return { pairs, staffOnly, attendeeOnly, ambiguous };
+}
+
+/** Key for the set of pairs whose display names differ (computed in SQL, never selected). */
+export function pairKey(staffId: string, attendeeId: string): string {
+  return `${staffId}|${attendeeId}`;
 }
 
 function credentialUsable(credential: { disabledAt: Date | null } | null) {
@@ -160,7 +184,11 @@ function credentialUsable(credential: { disabledAt: Date | null } | null) {
  * `review` = merge is possible but a person chooses what survives; `info` =
  * worth knowing, nothing to decide.
  */
-export function detectConflicts(pair: AccountPair, now: Date): Conflict[] {
+export function detectConflicts(
+  pair: AccountPair,
+  now: Date,
+  nameDiffers: ReadonlySet<string> = new Set(),
+): Conflict[] {
   const { staff, attendee } = pair;
   const conflicts: Conflict[] = [];
 
@@ -237,11 +265,27 @@ export function detectConflicts(pair: AccountPair, now: Date): Conflict[] {
     });
   }
 
-  if (nameKey(staff.displayName) !== nameKey(attendee.displayName)) {
+  if (nameDiffers.has(pairKey(staff.id, attendee.id))) {
     conflicts.push({
       code: "NAME_MISMATCH",
       severity: "review",
       detail: "The display names differ after ignoring case, spacing and accents. A person chooses the surviving name.",
+    });
+  }
+
+  if (locked({ lockedUntil: staff.mfaLockedUntil }) || locked({ lockedUntil: attendee.mfaLockedUntil })) {
+    conflicts.push({
+      code: "MFA_LOCKED",
+      severity: "review",
+      detail: "An authenticator lockout is active on at least one side. Wait for it to clear or reset it deliberately.",
+    });
+  }
+  const hasStaffRole = staff.globalRole !== null || staff.counts.activeMemberships > 0;
+  if (hasStaffRole && staff.mfa !== "ACTIVE" && staff.counts.passkeys === 0) {
+    conflicts.push({
+      code: "STAFF_NO_SECOND_FACTOR",
+      severity: "blocking",
+      detail: "The staff account holds a role but has no confirmed authenticator and no passkey. Staff access requires a second factor; fix that before linking.",
     });
   }
 
@@ -303,7 +347,7 @@ export type DryRunReport = {
 export function buildReport(
   staff: readonly StaffAccountRow[],
   attendees: readonly AttendeeAccountRow[],
-  options: { showEmails: boolean; now: Date },
+  options: { showEmails: boolean; now: Date; nameDiffers?: ReadonlySet<string> },
 ): DryRunReport {
   const pairing = pairAccounts(staff, attendees);
   const render = (email: string) => (options.showEmails ? normalizeEmail(email) : maskEmail(email));
@@ -311,7 +355,7 @@ export function buildReport(
   const conflictCounts: Partial<Record<ConflictCode, number>> = {};
   const pairsByStatus: Record<PairStatus, number> = { clean: 0, "needs-review": 0, blocked: 0 };
   const pairs: PairReport[] = pairing.pairs.map((pair) => {
-    const conflicts = detectConflicts(pair, options.now);
+    const conflicts = detectConflicts(pair, options.now, options.nameDiffers);
     for (const conflict of conflicts) {
       conflictCounts[conflict.code] = (conflictCounts[conflict.code] ?? 0) + 1;
     }
@@ -386,7 +430,7 @@ export function formatReportText(report: DryRunReport): string {
       `Pair ${pair.email}  [${pair.status}]  user=${pair.staffUserId}  attendee=${pair.attendeeAccountId}`,
       `  staff:    memberships=${pair.staff.activeMemberships}/${pair.staff.memberships} active/total, `
         + `globalRole=${pair.staff.globalRole ?? "none"}, passkeys=${pair.staff.passkeys}, `
-        + `sessions=${pair.staff.sessions}, auditRows=${pair.staff.auditRows}`,
+        + `sessions=${pair.staff.sessions}, auditRows=${pair.staff.auditRows}, actorRows=${pair.staff.actorRows}`,
       `  attendee: registrations=${pair.attendee.registrations}, clubRoles=${pair.attendee.clubRoles}, `
         + `areaCoordinator=${pair.attendee.areaCoordinator}, passkeys=${pair.attendee.passkeys}, `
         + `sessions=${pair.attendee.sessions}, actorRows=${pair.attendee.actorRows}`,

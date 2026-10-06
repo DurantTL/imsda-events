@@ -286,7 +286,7 @@ Under the link model, **no row moves** in any slice. The only data written, in o
 | **Passkeys** | Both tables stay. `UserPasskey` signs in with staff grade; `AttendeePasskey` signs in with attendee grade (attendee session only). WebAuthn credential ids are unique per registration, so the two sets cannot collide. Passkeys are **moved or merged for nobody**. | A passkey is bound to a relying party and key; copying one is not possible. Whether an attendee passkey may count as a staff second factor is a separate decision (open). |
 | **MFA secrets** | Never copied or merged. Staff sign-in uses `UserMfaEnrollment`. `AttendeeMfaEnrollment` stays for attendee-grade sign-in and is retired in (e). If only the attendee side is enrolled, the person enrols on the staff side before staff access (required). | Two secrets cannot be reconciled, and the staff one is the one the staff rules protect. |
 | **Recovery codes** | Stay with their enrollment. Staff codes are the ones that count. Attendee codes are deleted only when the attendee enrollment is retired in (e). | They are hashed and enrollment-bound. |
-| **Passwords** | Both hashes are salted and cannot be compared, so "different passwords" is assumed. Staff password is the one for staff-grade sign-in. The attendee credential is **disabled, not deleted** (`disabledAt`), so it can be re-enabled. | Reversible, and one password per person from the person's view. |
+| **Passwords** | Both hashes are salted and cannot be compared, so "different passwords" is assumed. A staff session requires a staff credential (`AuthCredential` password or `UserPasskey`) plus the staff second factor, and nothing else; an attendee password, attendee passkey or Google only ever yields the attendee session, whatever second factor follows. The attendee credential is **disabled, not deleted** (`disabledAt`), so it can be re-enabled. | Reversible, and one password per person from the person's view. |
 | **Sessions** | Not merged and not revoked at link time. Existing staff and attendee sessions stay valid so nobody is signed out mid-task. New sign-ins through the single page create both. Revoking staff ends the staff session only. | ADR 0013. |
 | **Audit actor ids** | Never rewritten. `AuditLog.actorUserId` and every `...ByUserId` / `...ByAccountId` keep their original value. Reports union both columns through the link. One new `account.linked` row records the pair's ids. | History must stay true to who acted at the time; a rewrite is irreversible. |
 
@@ -377,6 +377,8 @@ nothing to decide.
 | A password is locked out on either side | `CREDENTIAL_LOCKED` | review | Wait for the lockout to clear, or reset it deliberately. |
 | **Different MFA**: both sides enrolled | `MFA_BOTH_ENROLLED` | review | Staff secret survives; the attendee secret and recovery codes are retired in (e). |
 | **Different MFA**: only the attendee side enrolled | `MFA_ATTENDEE_ONLY` | review | The person enrols on the staff side before staff access (required). |
+| Authenticator lockout in force on either side | `MFA_LOCKED` | review | Wait for the lockout to clear, or reset it deliberately. |
+| Staff role (global role or active membership) but **no confirmed authenticator and no passkey** | `STAFF_NO_SECOND_FACTOR` | blocking | Staff access requires a second factor; the person enrols before any link. |
 | **Different names** (ignoring case, spacing, accents) | `NAME_MISMATCH` | review | A person picks the surviving display name. Nobody is renamed automatically. |
 | **Disabled** attendee account | `ATTENDEE_DISABLED` | blocking | Find out whether it was deliberate (abuse, request). Do not link a person someone shut out. |
 | **Disabled** staff password sign-in | `STAFF_CREDENTIAL_DISABLED` | blocking | Same question; re-enable only by a human. |
@@ -385,13 +387,13 @@ nothing to decide.
 | Accounts linked to different `Person` records | `PERSON_LINK_MISMATCH` | blocking | A person decides which `Person` is right. |
 | Passkeys on both sides | `PASSKEYS_ON_BOTH` | info | Kept as two sets; never merged. |
 | Attendee side signs in with Google | `ATTENDEE_GOOGLE_IDENTITY` | info | Opens the attendee side only, never staff. |
-| Several rows share one normalised email on a side (for example two `User` rows differing only by case) | listed under "ambiguous" | blocking | Not paired. A person resolves the duplicates first. |
+| Several rows share one normalised email on a side (for example two `User` rows, or two `AttendeeAccount` rows, differing only by case), **even with no row on the other side** | listed under "ambiguous" | blocking | Not paired and not counted as staff-only or attendee-only. A person resolves the duplicates first. |
 | **Different emails** for the same person | not detected | n/a | Left separate by decision (Sept 28); only the two system administrators are affected. No linking tool. |
 
 ## 9. The dry run
 
 ```
-npm run accounts:dry-run                    # counts, masked emails (j***@example.org), internal ids
+npm run accounts:dry-run                    # counts, masked emails (j***@d***.org), internal ids
 npm run accounts:dry-run -- --json
 npm run accounts:dry-run -- --show-emails   # full emails; prints a personal-data warning on stderr
 ```
@@ -400,14 +402,24 @@ It pairs a staff `User` and an `AttendeeAccount` by normalised email (trim, lowe
 same rule sign-in uses), and for each pair reports the conflicts above plus counts on each side:
 
 - staff: event memberships (active and total), global role, active passkeys, active
-  sessions, audit rows (`AuditLog.actorUserId`);
-- attendee: registrations reachable by that email, active club roles, Area Coordinator,
-  active passkeys, active sessions, and "actor rows" (rows the account authored: club role
-  grants and revocations, registration amendments, transfers, club form entries and links,
-  club registration submissions; `AuditLog` has no attendee actor column);
+  sessions, audit rows (`AuditLog.actorUserId`), and `actorRows`: every other row the user
+  authored;
+- attendee: registrations reachable by that email (counted in SQL per account, so guest
+  emails are never loaded), active club roles, Area Coordinator, active passkeys, active
+  sessions, and `actorRows`: every row the account authored (`AuditLog` has no attendee
+  actor column);
+- `actorRows` on both sides is **complete by construction**: the list relations of `User`
+  and `AttendeeAccount` are read from the Prisma schema at run time (everything except
+  sign-in material, role grants, sessions and recipient rows), so a column added later is
+  counted without editing the script. It covers the authored ones among the 122 columns of
+  section 1 that have a Prisma relation field. The plain-string columns without a relation (the 48 "no FK" rows)
+  cannot be counted this way; query 6.8 covers them;
 - totals for staff-only and attendee-only accounts, and for ambiguous groups.
 
-Names, phone numbers, hashes and secrets are never selected into the report. It is read-only
+Emails are masked in the local part and the domain (`j***@d***.org`); only gmail.com,
+yahoo.com, outlook.com, hotmail.com, icloud.com and aol.com keep their domain. Names, phone
+numbers, hashes and secrets are never selected: display names are compared inside PostgreSQL
+and only "the names differ" comes back. It is read-only
 by construction: every query runs in one `SET TRANSACTION READ ONLY` transaction
 (REPEATABLE READ), so PostgreSQL itself rejects a write; a unit test asserts that statement
 comes first and the source holds no write call, and the real-database verify proves the

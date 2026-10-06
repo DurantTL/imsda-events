@@ -5,7 +5,7 @@ import {
   detectConflicts,
   formatReportText,
   maskEmail,
-  nameKey,
+  pairKey,
   pairAccounts,
   pairStatus,
   type AttendeeAccountRow,
@@ -18,38 +18,46 @@ const VERIFIED = new Date("2026-01-01T00:00:00Z");
 
 function staff(over: Partial<StaffAccountRow> & { id: string; email: string }): StaffAccountRow {
   return {
-    displayName: "Pat Example",
     accountStatus: "ACTIVE",
     globalRole: null,
     credential: { disabledAt: null, lockedUntil: null },
     mfa: "ACTIVE",
+    mfaLockedUntil: null,
     personLinkPersonId: null,
-    counts: { memberships: 1, activeMemberships: 1, passkeys: 0, sessions: 0, auditRows: 3 },
+    counts: { memberships: 1, activeMemberships: 1, passkeys: 0, sessions: 0, auditRows: 3, actorRows: 5 },
     ...over,
   };
 }
 
 function attendee(over: Partial<AttendeeAccountRow> & { id: string; email: string }): AttendeeAccountRow {
   return {
-    displayName: "Pat Example",
     status: "ACTIVE",
     emailVerifiedAt: VERIFIED,
     disabledAt: null,
     credential: null,
     hasGoogleIdentity: false,
     mfa: "NONE",
+    mfaLockedUntil: null,
     personLinkPersonId: null,
     counts: { registrations: 2, clubRoles: 0, areaCoordinator: 0, passkeys: 0, sessions: 0, actorRows: 0 },
     ...over,
   };
 }
 
-const codes = (s: StaffAccountRow, a: AttendeeAccountRow) =>
-  detectConflicts({ staff: s, attendee: a }, NOW).map((conflict) => conflict.code);
+const codes = (s: StaffAccountRow, a: AttendeeAccountRow, nameDiffers?: Set<string>) =>
+  detectConflicts({ staff: s, attendee: a }, NOW, nameDiffers).map((conflict) => conflict.code);
 
 describe("maskEmail", () => {
-  it("keeps one character of the local part and the domain", () => {
-    expect(maskEmail("Jordan.Example@Example.test")).toBe("j***@example.test");
+  it("keeps one character of the local part, one of the domain and the top-level domain", () => {
+    expect(maskEmail("Jordan.Example@Example.test")).toBe("j***@e***.test");
+    expect(maskEmail("a.b@mail.church.example.org")).toBe("a***@m***.org");
+    expect(maskEmail("x@localhost")).toBe("x***@l***");
+  });
+  it("keeps the domain of a short list of common providers", () => {
+    for (const domain of ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com", "aol.com"]) {
+      expect(maskEmail(`Jordan@${domain.toUpperCase()}`)).toBe(`j***@${domain}`);
+    }
+    expect(maskEmail("jordan@gmail.com.example.org")).toBe("j***@g***.org");
   });
   it("never reveals a malformed value", () => {
     expect(maskEmail("not-an-email")).toBe("***");
@@ -79,8 +87,8 @@ describe("pairAccounts", () => {
 
   it("keeps different-email people separate (no fuzzy matching on name)", () => {
     const result = pairAccounts(
-      [staff({ id: "u1", email: "pat.work@example.test", displayName: "Pat Example" })],
-      [attendee({ id: "a1", email: "pat.home@example.test", displayName: "Pat Example" })],
+      [staff({ id: "u1", email: "pat.work@example.test" })],
+      [attendee({ id: "a1", email: "pat.home@example.test" })],
     );
     expect(result.pairs).toEqual([]);
     expect(result.staffOnly).toHaveLength(1);
@@ -96,6 +104,20 @@ describe("pairAccounts", () => {
     expect(result.ambiguous).toEqual([{ emailKey: "dup@example.test", staffIds: ["u1", "u2"], attendeeIds: ["a1"] }]);
     expect(result.staffOnly).toEqual([]);
     expect(result.attendeeOnly).toEqual([]);
+  });
+
+  it("reports same-side duplicates as ambiguous even with no counterpart", () => {
+    const result = pairAccounts(
+      [staff({ id: "u1", email: "solo@example.test" }), staff({ id: "u2", email: "SOLO@example.test" })],
+      [attendee({ id: "a1", email: "twin@example.test" }), attendee({ id: "a2", email: "Twin@example.test" })],
+    );
+    expect(result.pairs).toEqual([]);
+    expect(result.staffOnly).toEqual([]);
+    expect(result.attendeeOnly).toEqual([]);
+    expect(result.ambiguous).toEqual([
+      { emailKey: "solo@example.test", staffIds: ["u1", "u2"], attendeeIds: [] },
+      { emailKey: "twin@example.test", staffIds: [], attendeeIds: ["a1", "a2"] },
+    ]);
   });
 });
 
@@ -125,10 +147,30 @@ describe("detectConflicts", () => {
     expect(codes(s, attendee({ ...a, mfa: "PENDING" }))).toEqual([]);
   });
 
-  it("flags names that differ, but not case, spacing or accents", () => {
-    expect(codes(s, attendee({ ...a, displayName: "Patricia Sample" }))).toContain("NAME_MISMATCH");
-    expect(codes(s, attendee({ ...a, displayName: "  PAT   example " }))).not.toContain("NAME_MISMATCH");
-    expect(nameKey("José Núñez")).toBe(nameKey("jose nunez"));
+  it("flags names the database reports as different, for that pair only", () => {
+    expect(codes(s, a, new Set([pairKey("u1", "a1")]))).toContain("NAME_MISMATCH");
+    expect(codes(s, a, new Set([pairKey("u1", "other")]))).not.toContain("NAME_MISMATCH");
+    expect(codes(s, a)).not.toContain("NAME_MISMATCH");
+  });
+
+  it("flags an authenticator lockout that is still in force", () => {
+    const future = new Date(NOW.getTime() + 60_000);
+    const past = new Date(NOW.getTime() - 60_000);
+    expect(codes(staff({ ...s, mfaLockedUntil: future }), a)).toContain("MFA_LOCKED");
+    expect(codes(s, attendee({ ...a, mfaLockedUntil: future }))).toContain("MFA_LOCKED");
+    expect(codes(staff({ ...s, mfaLockedUntil: past }), a)).not.toContain("MFA_LOCKED");
+  });
+
+  it("blocks a staff role with no confirmed authenticator and no passkey", () => {
+    const bare = staff({ ...s, mfa: "NONE" });
+    const found = detectConflicts({ staff: bare, attendee: a }, NOW);
+    expect(found.map((c) => c.code)).toContain("STAFF_NO_SECOND_FACTOR");
+    expect(pairStatus(found)).toBe("blocked");
+    // A pending enrolment is not a factor; a passkey, or no role at all, is fine.
+    expect(codes(staff({ ...s, mfa: "PENDING" }), a)).toContain("STAFF_NO_SECOND_FACTOR");
+    expect(codes(staff({ ...bare, counts: { ...bare.counts, passkeys: 1 } }), a)).not.toContain("STAFF_NO_SECOND_FACTOR");
+    expect(codes(staff({ ...bare, counts: { ...bare.counts, activeMemberships: 0 } }), a)).not.toContain("STAFF_NO_SECOND_FACTOR");
+    expect(codes(staff({ ...bare, globalRole: "SYSTEM_ADMIN", counts: { ...bare.counts, activeMemberships: 0 } }), a)).toContain("STAFF_NO_SECOND_FACTOR");
   });
 
   it("blocks a disabled attendee account", () => {
@@ -177,17 +219,16 @@ describe("buildReport", () => {
     staff({ id: "u2", email: "staffonly@example.test" }),
   ];
   const attendeeRows = [
-    attendee({ id: "a1", email: "pat@example.test", displayName: "Someone Else" }),
+    attendee({ id: "a1", email: "pat@example.test" }),
     attendee({ id: "a2", email: "guest@example.test" }),
   ];
 
   it("masks emails and omits names by default", () => {
-    const report = buildReport(staffRows, attendeeRows, { showEmails: false, now: NOW });
+    const report = buildReport(staffRows, attendeeRows, { showEmails: false, now: NOW, nameDiffers: new Set([pairKey("u1", "a1")]) });
     const serialized = JSON.stringify(report);
-    expect(report.pairs[0].email).toBe("p***@example.test");
+    expect(report.pairs[0].email).toBe("p***@e***.test");
     expect(serialized).not.toContain("pat@example.test");
-    expect(serialized).not.toContain("Someone Else");
-    expect(serialized).not.toContain("Pat Example");
+    expect(serialized).not.toContain("example.test");
     expect(formatReportText(report)).not.toContain("pat@example.test");
     expect(report.summary).toMatchObject({
       staffAccounts: 2,
@@ -202,7 +243,7 @@ describe("buildReport", () => {
     expect(report.pairs[0]).toMatchObject({
       staffUserId: "u1",
       attendeeAccountId: "a1",
-      staff: { globalRole: "SYSTEM_ADMIN", auditRows: 3 },
+      staff: { globalRole: "SYSTEM_ADMIN", auditRows: 3, actorRows: 5 },
       attendee: { registrations: 2 },
     });
     expect(report.readOnly).toBe(true);
@@ -214,7 +255,7 @@ describe("buildReport", () => {
       [attendee({ id: "a1", email: "dup@example.test" })],
       { showEmails: false, now: NOW },
     );
-    expect(report.ambiguous).toEqual([{ email: "d***@example.test", staffIds: ["u1", "u2"], attendeeIds: ["a1"] }]);
+    expect(report.ambiguous).toEqual([{ email: "d***@e***.test", staffIds: ["u1", "u2"], attendeeIds: ["a1"] }]);
     expect(JSON.stringify(report)).not.toContain("dup@example.test");
     expect(formatReportText(report)).not.toContain("dup@example.test");
   });

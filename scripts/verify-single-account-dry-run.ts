@@ -29,8 +29,8 @@ const PAST = new Date("2026-01-01T00:00:00Z");
 const FUTURE = new Date(Date.now() + 86_400_000);
 const HASH = "synthetic-not-a-real-hash";
 
-const userIds = ["clean", "conflict", "disabled", "unverified", "staffonly", "dupa", "dupb", "pending"].map(id);
-const accountIds = ["clean", "conflict", "disabled", "unverified", "attonly", "dup", "pending"].map(id);
+const userIds = ["clean", "conflict", "disabled", "unverified", "staffonly", "dupa", "dupb", "pending", "solo1", "solo2"].map(id);
+const accountIds = ["clean", "conflict", "disabled", "unverified", "attonly", "dup", "pending", "twin1", "twin2"].map(id);
 
 async function cleanup() {
   await prisma.registration.deleteMany({ where: { id: { startsWith: P } } });
@@ -99,7 +99,7 @@ async function seed() {
     data: {
       id: id("conflict"), email: email("conflict"), displayName: "Robin Staff",
       credential: { create: { passwordHash: HASH } },
-      mfaEnrollment: { create: { sealedSecret: "synthetic", status: "ACTIVE" } },
+      mfaEnrollment: { create: { sealedSecret: "synthetic", status: "ACTIVE", lockedUntil: FUTURE } },
       passkeys: { create: { credentialId: `${P}_pk_staff`, publicKey: Buffer.from("x"), deviceType: "singleDevice", name: "Synthetic" } },
     },
   });
@@ -115,7 +115,8 @@ async function seed() {
   });
 
   // A pair where the attendee account is disabled.
-  await prisma.user.create({ data: { id: id("disabled"), email: email("disabled"), displayName: "Dana Disabled" } });
+  // A staff role with no authenticator and no passkey.
+  await prisma.user.create({ data: { id: id("disabled"), email: email("disabled"), displayName: "Dana Disabled", globalRole: "SYSTEM_ADMIN" } });
   await prisma.attendeeAccount.create({
     data: { id: id("disabled"), email: email("disabled"), displayName: "Dana Disabled", status: "ACTIVE", emailVerifiedAt: PAST, disabledAt: PAST },
   });
@@ -146,6 +147,12 @@ async function seed() {
   await prisma.attendeeAccount.create({
     data: { id: id("dup"), email: `${P}.dup@example.test`, displayName: "Dup One", status: "ACTIVE", emailVerifiedAt: PAST },
   });
+
+  // Same-side duplicates with no counterpart on the other side: ambiguous, never staff-only/attendee-only.
+  await prisma.user.create({ data: { id: id("solo1"), email: `${P}.solo@example.test`, displayName: "Solo One" } });
+  await prisma.user.create({ data: { id: id("solo2"), email: `${P}.SOLO@example.test`, displayName: "Solo Two" } });
+  await prisma.attendeeAccount.create({ data: { id: id("twin1"), email: `${P}.twin@example.test`, displayName: "Twin One", status: "ACTIVE", emailVerifiedAt: PAST } });
+  await prisma.attendeeAccount.create({ data: { id: id("twin2"), email: `${P}.TWIN@example.test`, displayName: "Twin Two", status: "ACTIVE", emailVerifiedAt: PAST } });
 
   // Audit rows on the staff side, and registrations reachable by the clean pair's email.
   await prisma.auditLog.createMany({
@@ -193,7 +200,11 @@ async function main() {
   assert(report.summary.ambiguousGroups >= 1 && report.ambiguous.some((group) => group.staffIds.includes(id("dupa"))), "case-duplicate staff rows are ambiguous, not paired");
   assert(!report.pairs.some((pair) => pair.staffUserId === id("dupa") || pair.staffUserId === id("dupb")), "ambiguous rows are never paired");
   assert(!report.pairs.some((pair) => pair.staffUserId === id("staffonly")), "staff-only is not a pair");
-  console.log("ok  pairs by normalised email; staff-only, attendee-only and ambiguous counted apart");
+  const ambiguousIds = report.ambiguous.map((group) => [...group.staffIds, ...group.attendeeIds]).flat();
+  for (const name of ["solo1", "solo2", "twin1", "twin2"]) {
+    assert(ambiguousIds.includes(id(name)), `${name} is ambiguous even with no counterpart`);
+  }
+  console.log("ok  pairs by normalised email; staff-only, attendee-only and ambiguous (including same-side duplicates) counted apart");
 
   // 2. Conflicts.
   assert(pairFor(report, "clean").status === "clean", "clean pair is clean");
@@ -201,7 +212,9 @@ async function main() {
   for (const code of ["BOTH_HAVE_PASSWORD", "MFA_BOTH_ENROLLED", "NAME_MISMATCH", "PASSKEYS_ON_BOTH", "ATTENDEE_GOOGLE_IDENTITY"]) {
     assert(conflict.includes(code as never), `conflict pair reports ${code}, got ${conflict.join(",")}`);
   }
+  assert(conflict.includes("MFA_LOCKED" as never), "authenticator lockout reported");
   assert(pairFor(report, "conflict").status === "needs-review", "conflict pair needs review");
+  assert(codesOf(report, "disabled").includes("STAFF_NO_SECOND_FACTOR" as never), "staff role without a second factor blocks");
   assert(codesOf(report, "disabled").includes("ATTENDEE_DISABLED") && pairFor(report, "disabled").status === "blocked", "disabled attendee blocks");
   assert(codesOf(report, "unverified").includes("ATTENDEE_EMAIL_UNVERIFIED") && pairFor(report, "unverified").status === "blocked", "unverified email blocks");
   assert(codesOf(report, "pending").includes("STAFF_NOT_ACTIVATED"), "never-activated staff blocks");
@@ -222,7 +235,7 @@ async function main() {
   // 4. Masking, and the flag that lifts it.
   const json = JSON.stringify(report);
   assert(!json.includes(`${P}.clean@example.test`) && !json.includes("Casey Clean"), "default output holds no full email or name");
-  assert(clean.email === "s***@example.test", `masked email, got ${clean.email}`);
+  assert(clean.email === "s***@e***.test", `masked email, got ${clean.email}`);
   const shown = await runSingleAccountDryRun(prisma, { showEmails: true });
   assert(pairFor(shown, "clean").email === email("clean"), "--show-emails shows the full address");
   const cli = (...args: string[]) =>
