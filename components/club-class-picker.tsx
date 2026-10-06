@@ -3,6 +3,9 @@
 import { useMemo, useState } from "react";
 import { Award, Save } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
+import { NeedsAttention, StatusComplete } from "@/components/needs-attention";
+import { ClassStatus } from "@/components/class-status";
+import { classChoiceReadiness, readinessSummaryText } from "@/modules/honors/class-readiness";
 import { attendeeTypeLabel as typeLabel, seatsNote, unavailableReason } from "@/modules/honors/class-picker-view";
 import { honorsNoteKey } from "@/modules/honors/registration-picks";
 import { sortHonorSessions } from "@/modules/honors/session-order";
@@ -48,6 +51,13 @@ export function ClubClassPicker({
   const sessions = useMemo(() => sortHonorSessions(workspace.sessions), [workspace.sessions]);
   const allSessionOfferings = workspace.offerings.filter((offering) => offering.span === "ALL_SESSIONS");
   const offeringById = useMemo(() => new Map(workspace.offerings.map((offering) => [offering.id, offering])), [workspace.offerings]);
+
+  // Who still owes a class choice, from the picks on screen (#799 G3): nobody shows as done until every session they can take has one.
+  const readiness = useMemo(
+    () => classChoiceReadiness({ attendees: workspace.attendees, sessions, offerings: workspace.offerings, selections, saved: workspace.selections }),
+    [workspace.attendees, sessions, workspace.offerings, selections, workspace.selections],
+  );
+  const readinessById = useMemo(() => new Map(readiness.people.map((person) => [person.attendeeId, person])), [readiness]);
 
   // With sites on the event, classes are per site: no site picked, nothing to choose (#589).
   if (workspace.locationRequired) {
@@ -134,6 +144,11 @@ export function ClubClassPicker({
         {noun === "club" ? "clubs" : "registrations"} to save. Only youth use a seat; {noun === "club" ? "staff, adults, and underage children join" : "adults join"} without one.
         {workspace.registrationClosesOn ? ` You can change classes until ${formatCalendarDate(workspace.registrationClosesOn)}.` : ""}
       </p>
+      {workspace.open && (
+        <p className="class-readiness-summary" role="status">
+          {readiness.complete ? <StatusComplete label={readinessSummaryText(readiness)} /> : <NeedsAttention label={readinessSummaryText(readiness)} />}
+        </p>
+      )}
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
       {error && <div className="inline-notice error" role="alert">{error}</div>}
       {!workspace.open && <p className="public-manage-empty">Class choices are closed.</p>}
@@ -149,6 +164,7 @@ export function ClubClassPicker({
                   {attendee.ageOnEventDate !== null ? <>Age <span translate="no">{attendee.ageOnEventDate}</span> · </> : null}
                   {typeLabel(attendee)}{attendee.consumesSeat ? "" : " · no seat needed"}
                 </small>
+                {readinessById.get(attendee.id) && <small><ClassStatus open={workspace.open} person={readinessById.get(attendee.id)!} /></small>}
               </legend>
               {allSessionOfferings.length > 0 && (
                 <label>

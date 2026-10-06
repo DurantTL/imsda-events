@@ -7,6 +7,7 @@ import styles from "@/components/club-orders.module.css";
 import { clubClassLevelLabels, clubClassLevels, type ClubClassLevel } from "@/modules/club-rosters/domain";
 import { awardEntryTooLarge, awardStatusLabels, MAX_AWARD_NEEDS_PER_ENTRY } from "@/modules/earned-awards/domain";
 import type { EarnedAwardsWorkspaceData } from "@/modules/earned-awards/order-source";
+import { effectiveChoice, makeSearchMatcher, matchesSearch } from "@/lib/search-match";
 
 export type ClubEarnedAwardsData = EarnedAwardsWorkspaceData;
 
@@ -30,16 +31,16 @@ const BULK_LIMIT = 500;
 
 /** Every word typed appears in the member's name or class, ignoring case. A blank search matches everyone. */
 export function memberMatchesSearch(member: { firstName: string; lastName: string; classLabel?: string | null }, query: string) {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  const haystack = `${member.firstName} ${member.lastName} ${member.classLabel ?? ""}`.toLowerCase();
-  return words.every((word) => haystack.includes(word));
+  // "Last, First" works too, and accents and punctuation never get in the way (#799).
+  return matchesSearch([member.firstName, member.lastName, member.classLabel], query);
 }
 
 type SearchableMember = { personId: string; firstName: string; lastName: string; classLabel?: string | null };
 
 /** Members the search currently shows. */
 export function shownMembers<T extends SearchableMember>(members: readonly T[], query: string): T[] {
-  return members.filter((member) => memberMatchesSearch(member, query));
+  const matches = makeSearchMatcher(query);
+  return members.filter((member) => matches([member.firstName, member.lastName, member.classLabel]));
 }
 
 /**
@@ -118,6 +119,7 @@ export function ClubEarnedAwardsWorkspace({
   const [completedOn, setCompletedOn] = useState(today);
   // Add by hand.
   const [itemId, setItemId] = useState("");
+  const [itemQuery, setItemQuery] = useState("");
   const [chosen, setChosen] = useState<Array<{ itemId: string; label: string }>>([]);
   const [handMembers, setHandMembers] = useState<Set<string>>(new Set());
   const [alreadyHasIt, setAlreadyHasIt] = useState(false);
@@ -206,21 +208,29 @@ export function ClubEarnedAwardsWorkspace({
   }
 
   // ---- add by hand
-  const group = data.catalog.find((entry) => entry.itemId === itemId);
+  const matchingCatalog = useMemo(() => (() => {
+    const matches = makeSearchMatcher(itemQuery);
+    // An item already chosen to record is not offered again.
+    return data.catalog.filter((row) => matches([row.name]) && !chosen.some((entry) => entry.itemId === row.itemId));
+  })(), [data.catalog, itemQuery, chosen]);
+  // One match needs no second click, and a search never leaves a hidden item chosen (#799).
+  const chosenItemId = effectiveChoice(itemId, matchingCatalog.map((row) => ({ id: row.itemId })), itemQuery);
+  const group = data.catalog.find((entry) => entry.itemId === chosenItemId);
   const sections = useMemo(() => {
     const bySection = new Map<string, { label: string; items: ClubEarnedAwardsData["catalog"] }>();
-    for (const row of data.catalog) {
+    for (const row of matchingCatalog) {
       const section = bySection.get(row.section) ?? { label: row.sectionLabel, items: [] };
       section.items.push(row);
       bySection.set(row.section, section);
     }
     return [...bySection.entries()];
-  }, [data.catalog]);
+  }, [matchingCatalog]);
 
   function addItem() {
     if (!group || chosen.some((entry) => entry.itemId === group.itemId)) return;
     setChosen((current) => [...current, { itemId: group.itemId, label: group.name }]);
     setItemId("");
+    setItemQuery("");
   }
 
   async function record() {
@@ -494,9 +504,15 @@ export function ClubEarnedAwardsWorkspace({
           ) : (
             <div className={styles.group}>
               <div className={styles.pickerRow}>
+                {data.catalog.length > 8 && (
+                  <span className={styles.pickerField}>
+                    <label htmlFor="earned-item-search">Find an item</label>
+                    <input autoComplete="off" className={styles.select} id="earned-item-search" onChange={(event) => { setItemQuery(event.target.value); setItemId(""); }} placeholder="Item name" type="search" value={itemQuery} />
+                  </span>
+                )}
                 <span className={styles.pickerField}>
                   <label htmlFor="earned-item">Item</label>
-                  <select className={styles.select} id="earned-item" onChange={(event) => setItemId(event.target.value)} value={itemId}>
+                  <select className={styles.select} id="earned-item" onChange={(event) => setItemId(event.target.value)} value={chosenItemId}>
                     <option value="">Choose an item</option>
                     {sections.map(([section, { label, items }]) => (
                       <optgroup key={section} label={label}>
@@ -505,7 +521,7 @@ export function ClubEarnedAwardsWorkspace({
                     ))}
                   </select>
                 </span>
-                <button className="secondary-button" disabled={!itemId} onClick={addItem} type="button">
+                <button className="secondary-button" disabled={!chosenItemId} onClick={addItem} type="button">
                   <Plus aria-hidden="true" size={14} /> Add item
                 </button>
               </div>

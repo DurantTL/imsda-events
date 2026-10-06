@@ -15,6 +15,10 @@ import { createDraftSender, DRAFT_CONFLICT_MESSAGE, draftBlockedReason } from "@
 import { restoreDraftLocation } from "@/modules/club-registrations/draft-location";
 import { rosterHrefFromRegistration } from "@/modules/club-registrations/roster-return";
 import { ClubRosterAgeField } from "@/components/club-roster-age-field";
+import { sortHonorSessions } from "@/modules/honors/session-order";
+import { ClassStatus } from "@/components/class-status";
+import { classChoiceReadiness } from "@/modules/honors/class-readiness";
+import { MissingAgeSummary } from "@/components/missing-age-summary";
 import { ageFieldId, ageInputProblem, ageInputValue, effectiveRosterAges, parseTypedAge, peopleMissingAges, withRosterAge } from "@/modules/club-registrations/roster-ages";
 import { continueButtonLabel, focusFirstMissingAge, leaveAfterSave } from "@/modules/club-registrations/roster-age-flow";
 import { ClubLocationPicker } from "@/components/club-location-picker";
@@ -252,6 +256,19 @@ export function ClubRegistrationWorkspace({
     setStep("form");
   }
 
+  // Who still owes a class for a session they can take (#799 G3): said next to their name, never shown as done early.
+  const classReadiness = useMemo(
+    () => (hasHonors && honorsCatalog
+      ? classChoiceReadiness({
+        attendees: honorAttendees.map((person) => ({ ...person, id: person.clientId })),
+        sessions: sortHonorSessions(honorsCatalog.sessions),
+        offerings: honorOfferings,
+        selections: honorPicks,
+      })
+      : null),
+    [hasHonors, honorsCatalog, honorAttendees, honorOfferings, honorPicks],
+  );
+
   // The same age, session and all-sessions rules the server applies on save, checked before anything is sent.
   const honorsProblem = hasHonors ? firstPickProblem(honorPicks, honorAttendees, honorOfferings) : null;
 
@@ -271,6 +288,9 @@ export function ClubRegistrationWorkspace({
                 {attendeeTypeLabel(person)}{person.consumesSeat ? "" : " · no seat needed"}
               </small>
             </legend>
+            {classReadiness?.people.find((entry) => entry.attendeeId === person.clientId) && (
+              <p className="class-person-status"><ClassStatus person={classReadiness.people.find((entry) => entry.attendeeId === person.clientId)!} /></p>
+            )}
             <ClassPickFields
               attendee={person}
               offerings={honorOfferings}
@@ -450,9 +470,7 @@ export function ClubRegistrationWorkspace({
             <span className="field-help" role="status">{saveLabel}{saveAction && <> {saveAction}</>}</span>
           </div>
           {agesAttempted && missingAges.length > 0 && (
-            <div className="inline-notice error club-age-summary" role="alert">
-              {missingAges.length === 1 ? "1 person still needs an age on the event date." : `${missingAges.length} people still need an age on the event date.`}
-            </div>
+            <MissingAgeSummary missing={missingAges} />
           )}
           <ul className="club-going-list">
             {workspace.roster.map((person) => (

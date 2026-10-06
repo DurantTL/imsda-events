@@ -4,6 +4,8 @@ import { notFound } from "next/navigation";
 import { ArrowRight, CalendarDays, CheckCircle2, MapPin, Printer, QrCode } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { BackLink } from "@/components/back-link";
+import { NeedsAttention, StatusComplete } from "@/components/needs-attention";
+import { classChoiceReadiness, readinessSummaryText } from "@/modules/honors/class-readiness";
 import { ClubHonorsNote } from "@/components/club-honors-note";
 import { ClubClassPicker } from "@/components/club-class-picker";
 import { ClubPassQr } from "@/components/club-pass-qr";
@@ -51,6 +53,10 @@ export default async function ClubEventRegistrationPage({
     // Known without asking the browser: no locations, or exactly one.
     workspace.locations.length === 0 ? null : workspace.locations.length === 1 ? workspace.locations[0]!.id : undefined,
   ) : null;
+  // A registered club is not "complete" until every person has a class for each session they can take (#799 G3).
+  const classReadiness = classes && classes.open && !classes.locationRequired && classes.offerings.length > 0
+    ? classChoiceReadiness({ attendees: classes.attendees, sessions: classes.sessions, offerings: classes.offerings, selections: classes.selections, saved: classes.selections })
+    : null;
   // #410: only shown once staff have set something — an empty section would
   // tell a director less than nothing. The loader re-checks this club's
   // roster access itself rather than trusting the check above.
@@ -93,6 +99,13 @@ export default async function ClubEventRegistrationPage({
             <h2><CheckCircle2 size={20} aria-hidden="true" /> Your club is registered</h2>
           </div>
           <ClubHonorsNote eventId={eventId} organizationId={organizationId} />
+          {classReadiness && (
+            <p className="class-readiness-summary" role="status">
+              {classReadiness.complete
+                ? <StatusComplete label={readinessSummaryText(classReadiness)} />
+                : <><NeedsAttention label={readinessSummaryText(classReadiness)} /> Choose them under Classes below.</>}
+            </p>
+          )}
           <p>
             Confirmation <strong translate="no">{workspace.registration.confirmationCode}</strong> ·{" "}
             {workspace.registration.attendees.length} going. {workspace.registration.confirmationEmail.registrationSaved}

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, MapPinned } from "lucide-react";
+import { NeedsAttention } from "@/components/needs-attention";
 import { areaCardLinks } from "@/modules/club-reports/area-card-domain";
 import { logError } from "@/lib/logger";
 import { getAreaCoordinatorCard, type AreaCardEvent, type AreaCoordinatorCard } from "@/modules/club-reports/area-card-repository";
@@ -68,6 +69,7 @@ export function AreaCoordinatorCardView({ card }: { card: AreaCoordinatorCard })
       <h2>Upcoming club events</h2>
       <EventList events={card.clubEvents} empty="No upcoming club events." />
       <h2>Clubs needing attention</h2>
+      {needingAttention.either > 0 && <p><NeedsAttention label={`${needingAttention.either} ${needingAttention.either === 1 ? "club needs" : "clubs need"} attention`} /></p>}
       <p className="field-help">
         {needingAttention.either === 0
           ? `No clubs need attention for ${needingAttention.clubYear}.`
