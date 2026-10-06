@@ -675,10 +675,22 @@ number); `ACCEPTED` → `PROMOTED` (staff place the party in a unit); any open s
   anyone by itself. The **preview is read-only** (no locks, no capacity version bump); only a confirmed offer locks. If
   email delivery is turned off for the event, nothing is offered (the entry is skipped with the reason), so the offer
   clock never runs without an email. The workspace shows the **offer email's outbox status**; a live offer whose email
-  failed, was suppressed or cancelled is flagged and can be offered again. Re-offering an expired entry while a newer
-  open entry exists for the registration is refused as `WAITLIST_ALREADY_OPEN`.
-- **A live offer reserves its places** (and so does an accepted entry) against the room that is free in its category, night
-  by night, so one place cannot be offered twice; an expired offer holds nothing. An answer after the expiry records the
+  failed, was suppressed or cancelled is flagged and can be offered again (recorded as "Offered again: the offer email
+  did not reach the guest."). A confirmed offer takes each entry's row lock before reading it, so an acceptance that
+  committed first is never overwritten. Re-offering an expired entry while a newer open entry exists for the
+  registration is skipped by the offer with that reason (the assessment); only a race that slips past it and hits the
+  database's one-open-entry index is mapped to `WAITLIST_ALREADY_OPEN` (any other unique violation is not).
+- **One counting rule for free space** (`demandExcluding` + `categoryFits`, shared by the registration form, the waitlist
+  join, request changes and offers). A category's people on a night are: the requests of active registrations; plus people
+  placed in a unit of the category who are **not backed by an active request** (expected guests, anyone placed without a
+  request); plus live offers (OFFERED, not expired) and accepted entries that no request already counts. Free space is the
+  category's capacity less that. A placed person whose registration has an active request is counted once, as the request;
+  a promoted entry is counted once (as the request if there is one, otherwise as an unbacked placement). So a dorm of 40
+  with 40 requests is full for offers even though nobody is placed yet, and an expected group of 10 placed in it leaves
+  30 for the form. The function takes a `countsTowardPublicCapacity` filter so a kind of registration (staff invitations,
+  #804) can be left out later; nothing uses it yet.
+- **A live offer reserves its places** (and so does an accepted entry), so one place cannot be offered twice; an expired
+  offer holds nothing. An answer after the expiry records the
   expiry and is refused ("expired"); accepting, declining and promoting twice return the first outcome.
 - **Promotion** is the placement: staff choose the unit and the party's attendees, and the normal capacity checks run
   under the unit locks. The history shows joined, offered, expired, offered, accepted, promoted.
@@ -703,13 +715,16 @@ open, is cancelled instead of delivered. The private page and the notice load on
 other occupants of its rooms when roommates are on), never the event's whole picture.
 
 An amendment that **removes an attendee** with any room assignment history (even a cancelled assignment or an expected
-guest linked to them) is refused with `ATTENDEE_HAS_HISTORY`; staff release or cancel the room from Lodging first.
+guest linked to them) is refused with `ATTENDEE_HAS_HISTORY`: the history is kept (the foreign keys do not cascade), so an
+attendee cannot be removed once they have room history; cancel the registration instead if they are not coming. A race
+that reaches the delete (foreign-key error P2003) gets the same answer.
 
 ### Reports
 
 All built from the same facts as the workspace, so a number on one screen is the number on the others
 (`getRoomingReports`): the **rooming list**; **occupancy by night** (capacity, placed, free, rooms in service, people in
-housing elsewhere, and people still placed in a room closed or held after they were placed, flagged) drilling to the assignments behind each unit-night; **not placed** and **conflicts** (over capacity,
+housing elsewhere, and people still placed in a room closed or held after they were placed, flagged; Places and Free leave
+out closed rooms while Placed includes the people in them, which the screen and the CSV headers say) drilling to the assignments behind each unit-night; **not placed** and **conflicts** (over capacity,
 room closed after assignment, split household, keep-apart sharing, ground floor needed but placed upstairs); **key hand-off
 inputs** (room, people, arrival, departure, the name on the registration, never a contact detail; key issuance itself is #80);
 and **closeout exceptions** (rooms held by inactive registrations, open waitlist entries, obsolete notices, expected

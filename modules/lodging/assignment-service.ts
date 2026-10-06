@@ -230,7 +230,7 @@ export async function writePlan(tx: Tx, plan: Plan, meta: PlanMeta): Promise<Pla
       previousUnitId: create.previous?.unitId ?? null, previousBucketId: create.previous?.bucketId ?? null,
       previousFirstNight: create.previous ? toDate(create.previous.firstNight) : null,
       previousLastNight: create.previous ? toDate(create.previous.lastNight) : null,
-      revision: 1, relatedAssignmentId: create.relatedId ?? null,
+      revision: 1, relatedAssignmentId: create.relatedId ? (create.relatedId.startsWith("new:") ? keyToId.get(create.relatedId) ?? null : create.relatedId) : null,
     });
   }
 

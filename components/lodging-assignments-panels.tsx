@@ -280,6 +280,7 @@ export function ReportsPanel({ eventId }: { eventId: string }) {
           <td><button type="button" className="secondary-button" aria-pressed={night === row.night} onClick={() => setNight(night === row.night ? null : row.night)}>{night === row.night ? "Hide" : "Show"}</button></td>
         </tr>)}</tbody>
       </table></div>
+      <p className="field-hint">Places and Free count only rooms in service. Placed includes people still placed in a room that was closed or held after they were placed (shown in the In closed rooms column), so Placed can exceed Places less Free.</p>
       {night ? <div>
         <h4>{shortNight(night)}: rooms with people or out of service</h4>
         {drill.length === 0 ? <p>Nobody is placed on this night.</p> : <ul>{drill.map(({ unit, row }) => <li key={unit.unitId}><strong>{unit.building} {unit.name}</strong>: {row.occupied}{row.capacity === null ? "" : ` of ${row.capacity}`}{row.status !== "AVAILABLE" ? ` (${row.status.toLowerCase().replace("_", " ")})` : ""}

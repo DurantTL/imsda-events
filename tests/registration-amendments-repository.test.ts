@@ -705,7 +705,26 @@ describe("registration amendments repository", () => {
       responses: { ...registrationResponses },
       attendees: [{ attendeeId: "attendee-1", clientId: "attendee-row-1", responses: { ...attendeeResponses } }],
       previewOnly: true as const,
-    })).rejects.toMatchObject({ code: "ATTENDEE_HAS_HISTORY", message: expect.stringContaining("room assignment") });
+    })).rejects.toMatchObject({ code: "ATTENDEE_HAS_HISTORY", message: expect.stringContaining("Cancel the registration instead") });
+  });
+
+  it("also refuses to remove an attendee linked from an expected-guest placeholder", async () => {
+    const { registration } = repositoryFixture();
+    const kept = registration.attendees[0]!;
+    registration.attendees.push({
+      ...structuredClone(kept),
+      id: "attendee-2",
+      person: { ...kept.person, id: "person-attendee-2", firstName: "Riley", lastName: "Sample" },
+      lodgingPlaceholderLinks: [{ id: "placeholder-1" }],
+    } as typeof kept);
+    await expect(previewRegistrationAmendment("event-1", "registration-1", {
+      clientRequestId: "6e2a8b3f-4c5d-4e7f-9a01-b2c3d4e5f607",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses },
+      attendees: [{ attendeeId: "attendee-1", clientId: "attendee-row-1", responses: { ...attendeeResponses } }],
+      previewOnly: true as const,
+    })).rejects.toMatchObject({ code: "ATTENDEE_HAS_HISTORY" });
   });
 
   it("still requires seminar ranks for a newly added attendee", async () => {

@@ -254,6 +254,30 @@ class Planner {
   release(segment: Segment, cut: NightRange | null, type: ReleaseOp["type"], relatedKey?: string) {
     const pieces = cut ? subtractRange(segment, cut) : [];
     const index = this.working.findIndex((candidate) => candidate.id === segment.id);
+    // A segment this plan created (an earlier placement of the same batch) is not a row yet: edit its create instead of
+    // releasing it, so a batch can move two separate nights out of one stay.
+    const createdIndex = this.creates.findIndex((candidate) => candidate.key === segment.id);
+    if (createdIndex >= 0) {
+      const created = this.creates[createdIndex]!;
+      if (pieces.length === 0) {
+        this.creates.splice(createdIndex, 1);
+        if (index >= 0) this.working.splice(index, 1);
+        return;
+      }
+      const [keptPiece, remainderPiece] = pieces;
+      created.segment = { ...created.segment, ...keptPiece! };
+      if (index >= 0) this.working[index] = { ...segment, ...keptPiece! };
+      if (remainderPiece) {
+        const key = this.nextKey();
+        this.creates.push({
+          kind: "CREATE", key, type: "SPLIT_REMAINDER",
+          segment: { occupantKey: segment.occupantKey, unitId: segment.unitId, bucketId: segment.bucketId, people: segment.people, ...remainderPiece },
+          occupant: created.occupant, source: created.source, relatedId: segment.id,
+        });
+        this.working.push({ ...segment, id: key, ...remainderPiece });
+      }
+      return;
+    }
     if (pieces.length === 0) {
       this.releases.push({ kind: "RELEASE", id: segment.id, type, before: { ...segment }, after: null, relatedKey });
       if (index >= 0) this.working.splice(index, 1);
@@ -282,7 +306,7 @@ class Planner {
     const snapshot = {
       working: this.working.map((segment) => ({ ...segment })),
       releases: this.releases.length,
-      creates: this.creates.length,
+      creates: this.creates.map((create) => ({ ...create, segment: { ...create.segment } })),
       notes: this.notes.length,
       unchanged: this.unchanged,
     };
@@ -290,7 +314,7 @@ class Planner {
     if (problem) {
       this.working = snapshot.working;
       this.releases.length = snapshot.releases;
-      this.creates.length = snapshot.creates;
+      this.creates = snapshot.creates;
       this.notes.length = snapshot.notes;
       this.unchanged = snapshot.unchanged;
     }

@@ -43,7 +43,7 @@ export function lodgingReportCsv(kind: LodgingReportKind, reports: RoomingReport
       ]);
     case "occupancy":
       return toCsv([
-        ["Night", "Capacity", "Occupied", "Available", "Units in service", "People in housing elsewhere", "Placed in a closed or held room", "Includes a unit with no fixed limit"],
+        ["Night", "Capacity (rooms in service only)", "Occupied (includes people in closed or held rooms)", "Available (rooms in service only)", "Units in service", "People in housing elsewhere", "Placed in a closed or held room", "Includes a unit with no fixed limit"],
         ...reports.occupancy.map((row) => [row.night, row.capacity, row.occupied, row.available, row.unitsInService, row.offsite, row.inClosedRooms, row.unlimited ? "Yes" : "No"]),
       ]);
     case "unassigned":

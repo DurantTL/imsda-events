@@ -42,6 +42,7 @@ import {
 import { getAssignmentWorkspace, getRegistrantAssignmentView, getRoomingReports } from "@/modules/lodging/assignment-view";
 import { sendRoomNotice } from "@/modules/lodging/notices";
 import { createLodgingRule, saveLodgingRequest, updateLodgingSettings, type Actor } from "@/modules/lodging/preferences-service";
+import { getPublicLodgingOffer } from "@/modules/lodging/registration-form";
 import { createHold, selectEventProperty, updateEventUnit } from "@/modules/lodging/service";
 import { syncLodgingTemplates } from "@/modules/lodging/sync";
 import { applyRegistrantWaitlistAction, applyWaitlistAction, getRegistrantWaitlistView } from "@/modules/lodging/waitlist-service";
@@ -160,6 +161,7 @@ const capacityVersion = async () => (await prisma.eventLodging.findUniqueOrThrow
 const reports = (sensitive = true, forEvent = eventId) => getRoomingReports(forEvent, { canSeeSensitive: sensitive }, prisma);
 const workspace = (sensitive = true) => getAssignmentWorkspace(eventId, { canSeeSensitive: sensitive }, prisma);
 const exceptionKinds = async (sensitive = true) => (await workspace(sensitive)).exceptions.map((row) => row.kind).sort();
+const regActorFor = (forEvent: string, reg: Reg, raw: unknown, now = new Date("2027-05-20T12:00:00Z")) => applyRegistrantWaitlistAction({ eventId: forEvent, registrationId: reg.id, accessTokenId: `${P}_tok_${reg.code}`, raw, now }, prisma);
 const registrant = (reg: Reg, now?: Date) => getRegistrantAssignmentView({ eventId, registrationId: reg.id, now }, prisma);
 const requestFor = (reg: Reg, raw: Record<string, unknown>) => saveLodgingRequest({ eventId, registrationId: reg.id, actor: { kind: "STAFF", userId, canSeeSensitive: true } as Actor, raw: { reason: "Seeded for the check", ...raw }, now: new Date("2027-05-20T12:00:00Z") }, prisma);
 
@@ -525,7 +527,6 @@ async function main() {
   const wa = await makeReg(eventId, [40]);
   const wb = await makeReg(eventId, [40]);
   const wc = await makeReg(eventId, [40]);
-  await requestFor(wa, { category: "TENT_WITH_POWER" });
   const waitlistNow = new Date("2027-05-20T12:00:00Z");
   const staffActor = (raw: unknown, now = waitlistNow) => applyWaitlistAction(eventId, userId, raw, { now }, prisma);
   const regActor = (reg: Reg, raw: unknown, now = waitlistNow) => applyRegistrantWaitlistAction({ eventId, registrationId: reg.id, accessTokenId: `${P}_tok_${reg.code}`, raw, now }, prisma);
@@ -549,7 +550,9 @@ async function main() {
   const entryB = await prisma.eventLodgingWaitlistEntry.findFirstOrThrow({ where: { registrationId: wb.id } });
   assert(entryA.status === "JOINED" && entryA.createdVia === "STAFF" && entryB.createdVia === "REGISTRANT", "entries record how they joined");
 
-  // Make room for exactly one more person on every night: the tent area takes 4, the club of 3 sits on two nights only.
+  // Make room for exactly one more person on every night: the tent area takes 4, the club of 3 sits on two nights only
+  // (the filler's request, which counted as demand, is withdrawn by cancelling that registration).
+  await prisma.registration.update({ where: { id: filler.id }, data: { status: "CANCELLED" } });
   await prisma.eventLodgingAssignment.findMany({ where: { eventLodgingUnitId: tentRow.id, cancelledAt: null } });
   const outboxBefore = await prisma.messageOutbox.count({ where: { eventId, templateKey: "LODGING_WAITLIST_OFFER" } });
   const versionBeforePreview = await capacityVersion();
@@ -632,6 +635,90 @@ async function main() {
   await expectDatabaseRefusal(prisma.eventLodgingWaitlistHistory.delete({ where: { id: expiredHistory[0]!.id } }), "deleting waitlist history");
   await expectDatabaseRefusal(prisma.eventLodgingWaitlistEntry.delete({ where: { id: offeredEntry.id } }), "deleting an entry");
   await expectDatabaseRefusal(prisma.eventLodgingWaitlistEntry.create({ data: { eventId, registrationId: wc.id, category: "TENT", partySize: 1, createdVia: "STAFF" } }), "a waitlist entry with no history row")
+
+  // ---- One counting rule for free space (requests, unbacked placements, live offers) -------------------
+  const staffStaff = { kind: "STAFF", userId, canSeeSensitive: true } as Actor;
+  const requestIn = (forEvent: string, reg: Reg, raw: Record<string, unknown>) => saveLodgingRequest({ eventId: forEvent, registrationId: reg.id, actor: staffStaff, raw: { reason: "Seeded for the check", ...raw }, now: new Date("2027-05-20T12:00:00Z") }, prisma);
+  const capAEvent = `${P}_ev_capa`;
+  await createEvent(capAEvent);
+  await selectEventProperty(capAEvent, userId, { propertyKey: "sunnydale-academy" }, prisma);
+  await updateLodgingSettings(capAEvent, userId, { collectsPreferences: true, fullBehavior: "WAITLIST" }, prisma);
+  const capATent = await unitRow(capAEvent, "tents-with-power");
+  await updateEventUnit(capAEvent, capATent.id, userId, { capacityOverride: 6 }, prisma);
+  const requesters: Reg[] = [];
+  for (let index = 0; index < 3; index += 1) {
+    const reg = await makeReg(capAEvent, [40, 40]);
+    await requestIn(capAEvent, reg, { category: "TENT_WITH_POWER", partySize: 2 });
+    requesters.push(reg);
+  }
+  const waiter = await makeReg(capAEvent, [40]);
+  const capNow = new Date("2027-05-20T12:00:00Z");
+  const capStaff = (raw: unknown, now = capNow) => applyWaitlistAction(capAEvent, userId, raw, { now }, prisma);
+  await capStaff({ action: "join", registrationId: waiter.id, category: "TENT_WITH_POWER", partySize: 1, reason: "Phoned the office" });
+  const waiterEntry = await prisma.eventLodgingWaitlistEntry.findFirstOrThrow({ where: { registrationId: waiter.id } });
+  const fullPreview = await capStaff({ action: "offer", entryIds: [waiterEntry.id] });
+  if (fullPreview.action !== "offer" || fullPreview.confirmed) throw new Error("FAILED: the preview shape");
+  assert(!fullPreview.rows[0]!.eligible && /No place is free/.test(fullPreview.rows[0]!.reason ?? ""), `scenario A: six requests for six places and nobody placed leave no place to offer (${fullPreview.rows[0]!.reason})`);
+  await expectLodgingError(regActorFor(capAEvent, waiter, { action: "join", category: "TENT_WITH_POWER", partySize: 1 }), "WAITLIST_ALREADY_OPEN", "joining twice");
+  // One of the requesting registrations cancels: two places are free again, and an offer is possible.
+  await prisma.registration.update({ where: { id: requesters[0]!.id }, data: { status: "CANCELLED" } });
+  const freePreview = await capStaff({ action: "offer", entryIds: [waiterEntry.id] });
+  assert(freePreview.action === "offer" && !freePreview.confirmed && freePreview.rows[0]!.eligible, "a cancelled request frees its places for an offer");
+
+  // An offer whose email never reached the guest can be offered again; an accepted entry is never overwritten.
+  const firstOffer = await capStaff({ action: "offer", entryIds: [waiterEntry.id], confirm: true, expiresInHours: 24 });
+  assert(firstOffer.action === "offer" && firstOffer.confirmed && firstOffer.offered[0]!.offerNumber === 1, "the first offer is number 1");
+  if (firstOffer.action !== "offer" || !firstOffer.confirmed) throw new Error("FAILED: the offer shape");
+  await prisma.messageOutbox.update({ where: { id: firstOffer.offered[0]!.messageId! }, data: { status: "FAILED" } });
+  const secondOffer = await capStaff({ action: "offer", entryIds: [waiterEntry.id], confirm: true, expiresInHours: 24 }, new Date("2027-05-20T13:00:00Z"));
+  assert(secondOffer.action === "offer" && secondOffer.confirmed && secondOffer.offered[0]!.offerNumber === 2 && !secondOffer.offered[0]!.alreadyOffered, "an offer whose email failed is offered again as the next number");
+  const reofferHistory = await prisma.eventLodgingWaitlistHistory.findMany({ where: { entryId: waiterEntry.id }, orderBy: { at: "asc" } });
+  assert(reofferHistory.map((row) => row.status).join() === "JOINED,OFFERED,EXPIRED,OFFERED" && reofferHistory[2]!.reason === "Offered again: the offer email did not reach the guest.", `the history says why it was offered again: ${JSON.stringify(reofferHistory.map((row) => [row.status, row.reason]))}`);
+  await applyRegistrantWaitlistAction({ eventId: capAEvent, registrationId: waiter.id, accessTokenId: `${P}_tok_cap`, raw: { action: "accept" }, now: new Date("2027-05-20T14:00:00Z") }, prisma);
+  const afterAccept = await capStaff({ action: "offer", entryIds: [waiterEntry.id], confirm: true, expiresInHours: 24 }, new Date("2027-05-20T14:05:00Z"));
+  assert(afterAccept.action === "offer" && afterAccept.confirmed && afterAccept.offered.length === 0 && afterAccept.skipped.length === 1 && /accepted/.test(afterAccept.skipped[0]!.reason), "offering an accepted entry is skipped");
+  assert((await prisma.eventLodgingWaitlistEntry.findUniqueOrThrow({ where: { id: waiterEntry.id } })).status === "ACCEPTED", "an accepted entry is never overwritten by an offer");
+  const versionBeforeIdle = (await prisma.eventLodging.findUniqueOrThrow({ where: { eventId: capAEvent } })).capacityVersion;
+  await capStaff({ action: "offer", entryIds: [waiterEntry.id] });
+  assert((await prisma.eventLodging.findUniqueOrThrow({ where: { eventId: capAEvent } })).capacityVersion === versionBeforeIdle, "a preview still does not touch the capacity version");
+
+  // Scenario B: an expected group placed in a type takes its places from the form; a placed person with a request counts once.
+  const capBEvent = `${P}_ev_capb`;
+  await createEvent(capBEvent);
+  await selectEventProperty(capBEvent, userId, { propertyKey: "sunnydale-academy" }, prisma);
+  await updateLodgingSettings(capBEvent, userId, { collectsPreferences: true, fullBehavior: "WAITLIST" }, prisma);
+  const capBTent = await unitRow(capBEvent, "tents-with-power");
+  await updateEventUnit(capBEvent, capBTent.id, userId, { capacityOverride: 40 }, prisma);
+  const remainingIn = async () => {
+    const offer = await getPublicLodgingOffer(capBEvent, prisma);
+    return offer!.categories.find((entry) => entry.category === "TENT_WITH_POWER")!.remaining;
+  };
+  assert(Object.values(await remainingIn()).every((value) => value === 40), "the form starts with all forty places");
+  const group = await applyPlaceholderAction(capBEvent, userId, { action: "create", displayName: "Expected choir", headcount: 10 }, prisma);
+  await applyAssignmentAction(capBEvent, userId, { action: "place", placements: [{ occupant: { kind: "PLACEHOLDER", id: group.id }, place: { kind: "UNIT", eventUnitId: capBTent.id }, firstNight: N[0], lastNight: N[3] }] }, prisma);
+  assert(Object.values(await remainingIn()).every((value) => value === 30), `scenario B: a placed expected group of ten leaves thirty on the form (${JSON.stringify(await remainingIn())})`);
+  const backed = await makeReg(capBEvent, [40]);
+  await requestIn(capBEvent, backed, { category: "TENT_WITH_POWER", partySize: 1 });
+  await applyAssignmentAction(capBEvent, userId, { action: "place", placements: [{ occupant: attendee(backed.people[0]!), place: { kind: "UNIT", eventUnitId: capBTent.id }, firstNight: N[0], lastNight: N[3] }] }, prisma);
+  assert(Object.values(await remainingIn()).every((value) => value === 29), "a person who has a request and is placed is counted once");
+
+  // A plan that releases one assignment twice (two moves out of one long stay) keeps every revision and history row in step.
+  const dblEvent = `${P}_ev_dbl`;
+  await createEvent(dblEvent);
+  await selectEventProperty(dblEvent, userId, { propertyKey: "sunnydale-academy" }, prisma);
+  const dbl = await makeReg(dblEvent, [40]);
+  await placeAt(dblEvent, dbl.people[0]!, "girls-101");
+  await applyAssignmentAction(dblEvent, userId, { action: "place", reason: "Three separate nights elsewhere", placements: [
+    { occupant: attendee(dbl.people[0]!), place: { kind: "UNIT", eventUnitId: (await unitRow(dblEvent, "girls-102")).id }, firstNight: N[1], lastNight: N[1], mode: "MOVE" },
+    { occupant: attendee(dbl.people[0]!), place: { kind: "UNIT", eventUnitId: (await unitRow(dblEvent, "girls-104")).id }, firstNight: N[2], lastNight: N[2], mode: "MOVE" },
+    { occupant: attendee(dbl.people[0]!), place: { kind: "UNIT", eventUnitId: (await unitRow(dblEvent, "girls-108")).id }, firstNight: N[0], lastNight: N[0], mode: "MOVE" },
+  ] }, prisma);
+  const dblRows = await prisma.eventLodgingAssignment.findMany({ where: { eventId: dblEvent, attendeeId: dbl.people[0]!.attendeeId } });
+  for (const row of dblRows) {
+    const rowHistory = await prisma.eventLodgingAssignmentHistory.findMany({ where: { assignmentId: row.id }, orderBy: { revision: "asc" } });
+    assert(rowHistory.length === row.revision && rowHistory.every((entry, index) => entry.revision === index + 1), `every revision of an assignment released twice has its own history row (${row.id}: revision ${row.revision}, ${rowHistory.length} rows)`);
+  }
+  assert(dblRows.filter((row) => !row.cancelledAt).map((row) => `${night(row.firstNight)}..${night(row.lastNight)}`).sort().join() === `${N[0]}..${N[0]},${N[1]}..${N[1]},${N[2]}..${N[2]},${N[3]}..${N[3]}`, "the stay is split into one row per night, in the right rooms");
 
   // ---- What attendees see ------------------------------------------------------
   const host = await makeReg(eventId, [40]);

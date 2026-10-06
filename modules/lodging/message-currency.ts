@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
+import type { Client } from "@/modules/lodging/preferences-service";
 import { isOfferLapsed, type WaitlistStatus } from "@/modules/lodging/assignment-domain";
 import { loadRegistrantStays, registrationAssignmentVersion } from "@/modules/lodging/registrant-stays";
 import { noticeContentHash } from "@/modules/lodging/stays";
@@ -10,9 +11,9 @@ import { noticeContentHash } from "@/modules/lodging/stays";
  * a room notice that a later change made wrong, or a waitlist offer that is no longer open, is cancelled, never sent.
  * Returns the reason to cancel, or null when the message is still right.
  */
-export async function lodgingMessageStaleReason(messageId: string, templateKey: string, now = new Date()): Promise<string | null> {
+export async function lodgingMessageStaleReason(messageId: string, templateKey: string, now = new Date(), client: Client = getPrisma()): Promise<string | null> {
   if (templateKey !== "LODGING_ASSIGNMENT_NOTICE" && templateKey !== "LODGING_WAITLIST_OFFER") return null;
-  const prisma = getPrisma();
+  const prisma = client;
   if (templateKey === "LODGING_ASSIGNMENT_NOTICE") {
     const notice = await prisma.eventLodgingAssignmentNotice.findFirst({ where: { outboxMessageId: messageId } });
     if (!notice) return null;

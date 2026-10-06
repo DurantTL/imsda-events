@@ -1026,20 +1026,22 @@ async function captureOneMessageLocally(messageId: string, eventId?: string) {
     // A lodging notice or offer that a later change made wrong is cancelled, never captured (#200).
     if (message.templateKey === "LODGING_ASSIGNMENT_NOTICE" || message.templateKey === "LODGING_WAITLIST_OFFER") {
       const { lodgingMessageStaleReason } = await import("@/modules/lodging/message-currency");
-      const reason = await lodgingMessageStaleReason(message.id, message.templateKey);
+      const reason = await lodgingMessageStaleReason(message.id, message.templateKey, new Date(), tx);
       if (reason) {
-        await tx.messageOutbox.update({ where: { id: message.id }, data: { status: "CANCELLED", lastError: reason } });
-        await tx.auditLog.create({
-          data: {
-            eventId: message.eventId,
-            action: "LODGING_MESSAGE_CANCELLED",
-            entityType: "MessageOutbox",
-            entityId: message.id,
-            correlationId: randomUUID(),
-            summary: "Cancelled a lodging email because it was out of date before it was sent.",
-            metadata: { messageId: message.id, templateKey: message.templateKey },
-          },
-        });
+        const cancelled = await tx.messageOutbox.updateMany({ where: { id: message.id, status: "PENDING" }, data: { status: "CANCELLED", lastError: reason } });
+        if (cancelled.count === 1) {
+          await tx.auditLog.create({
+            data: {
+              eventId: message.eventId,
+              action: "LODGING_MESSAGE_CANCELLED",
+              entityType: "MessageOutbox",
+              entityId: message.id,
+              correlationId: randomUUID(),
+              summary: "Cancelled a lodging email because it was out of date before it was sent.",
+              metadata: { messageId: message.id, templateKey: message.templateKey },
+            },
+          });
+        }
         return false;
       }
     }

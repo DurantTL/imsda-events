@@ -113,6 +113,23 @@ describe("planPlacements", () => {
     expect(conflict).toMatchObject({ ok: false, problem: { code: "ALREADY_ASSIGNED", night: nights[1] } });
   });
 
+  it("moves two separate nights out of one stay in one batch, editing the remainder the first move created", () => {
+    const result = planPlacements({
+      ...base, segments: [segment("s1", "p1", "a")], units: units(unit("a", 2), unit("b", 2), unit("c", 2)),
+      placements: [place("p1", "b", nights[1], nights[1], { mode: "MOVE" }), place("p1", "c", nights[2], nights[2], { mode: "MOVE" })],
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Only the real row is released (once: it keeps the first night); nothing releases a row that does not exist yet.
+    expect(result.plan.releases.map((release) => release.id)).toEqual(["s1"]);
+    expect(result.plan.releases.every((release) => !release.id.startsWith("new:"))).toBe(true);
+    const ranges = result.plan.after.map((entry) => `${entry.unitId}:${entry.firstNight}..${entry.lastNight}`).sort();
+    expect(ranges).toEqual([`a:${nights[0]}..${nights[0]}`, `a:${nights[3]}..${nights[3]}`, `b:${nights[1]}..${nights[1]}`, `c:${nights[2]}..${nights[2]}`]);
+    // Every create is a row to write, and the one that is a remainder of a created row names no key that will not exist.
+    const keys = new Set(result.plan.creates.map((create) => create.key));
+    expect(result.plan.creates.every((create) => !create.relatedId || !create.relatedId.startsWith("new:") || keys.has(create.relatedId))).toBe(true);
+  });
+
   it("never overbooks a batch with itself: the last bed goes to one person", () => {
     const result = planPlacements({ ...base, segments: [], units: units(unit("a", 1)), placements: [place("p1", "a"), place("p2", "a")] });
     expect(result).toMatchObject({ ok: false, index: 1, problem: { code: "UNIT_FULL" } });

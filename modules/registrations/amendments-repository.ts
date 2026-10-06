@@ -1054,7 +1054,7 @@ async function prepareAmendment(
   if (blockedRemoval) {
     throw new RegistrationAmendmentError(
       "ATTENDEE_HAS_HISTORY",
-      `${blockedRemoval.person.firstName} ${blockedRemoval.person.lastName} cannot be removed because check-in, substitution or room assignment history is attached. Release or cancel the room assignment from Lodging first.`,
+      `${blockedRemoval.person.firstName} ${blockedRemoval.person.lastName} cannot be removed because check-in, substitution or room assignment history is attached. Cancel the registration instead if they are not coming.`,
       [],
       {
         attendeeId: blockedRemoval.id,
@@ -1482,12 +1482,23 @@ export async function amendRegistration(
           data: { releasedAt: now },
         });
         if (prepared.removedAttendees.length > 0) {
-          await tx.registrationAttendee.deleteMany({
-            where: {
-              registrationId,
-              id: { in: prepared.removedAttendees.map((attendee) => attendee.id) },
-            },
-          });
+          try {
+            await tx.registrationAttendee.deleteMany({
+              where: {
+                registrationId,
+                id: { in: prepared.removedAttendees.map((attendee) => attendee.id) },
+              },
+            });
+          } catch (error) {
+            // A room assignment (or check-in) was recorded for the attendee after the guard read them: history is kept.
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+              throw new RegistrationAmendmentError(
+                "ATTENDEE_HAS_HISTORY",
+                "An attendee cannot be removed once they have room assignment, check-in or substitution history. Cancel the registration instead if they are not coming.",
+              );
+            }
+            throw error;
+          }
         }
 
         for (const [position, attendee] of prepared.prepared.attendees.entries()) {

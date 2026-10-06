@@ -3,7 +3,7 @@ import "server-only";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { lodgingCategoryLabels, nightsInclusive, unitNight, type LodgingCategory } from "@/modules/lodging/domain";
+import { lodgingCategoryLabels, nightsInclusive, type LodgingCategory } from "@/modules/lodging/domain";
 import {
   assignableRegistrationStatuses,
   isOfferLapsed,
@@ -69,8 +69,12 @@ async function record(tx: Tx, entry: { id: string; eventId: string }, status: Wa
   });
 }
 
-function isOpenEntryViolation(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
+/** The one-open-entry-per-registration index (a partial unique index): its name, or its column, in the error's target. */
+export function isOpenEntryViolation(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") return false;
+  const target = (error.meta as { target?: unknown } | undefined)?.target;
+  const names = Array.isArray(target) ? target.map(String) : typeof target === "string" ? [target] : [];
+  return names.some((name) => name === "EventLodgingWaitlistEntry_open_key" || name === "registrationId");
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +110,7 @@ async function joinInTransaction(tx: Tx, eventId: string, actor: Actor, input: J
     if (context.fullBehavior !== "WAITLIST") throw new LodgingError("WAITLIST_NOT_ENABLED", "This event does not have a lodging waitlist.");
     if (context.editPolicy === "VERIFY_EVERY_EDIT") throw new LodgingError("EDIT_POLICY_REQUIRES_VERIFICATION", "This event requires verification before this change. To change this, contact the event team.");
     if (isPastLodgingDeadline(context.deadlineDay, now, context.timezone)) throw new LodgingError("DEADLINE_PASSED", "The deadline to change lodging has passed. Contact the event team.");
-    const demand = await demandExcluding(tx, eventId, context.nights, input.registrationId);
+    const demand = await demandExcluding(tx, eventId, context.nights, input.registrationId, { now });
     const fit = categoryFits({ capacity: capacity[input.category]!, demand: demand.get(input.category), nights, partySize: input.partySize });
     if (fit.fits) throw new LodgingError("CATEGORY_NOT_FULL", "A place is available in that type. Choose it instead of joining the waitlist.");
   }
@@ -134,48 +138,6 @@ async function joinInTransaction(tx: Tx, eventId: string, actor: Actor, input: J
 // ---------------------------------------------------------------------------
 // Room for an offer (soft reservation, night by night)
 // ---------------------------------------------------------------------------
-
-/** People of live offers and accepted entries per category and night (the entry being offered is excluded). */
-async function reservedByCategory(tx: Client, eventId: string, nights: readonly string[], excludeEntryId: string | null, now: Date) {
-  const entries = await tx.eventLodgingWaitlistEntry.findMany({ where: { eventId, status: { in: ["OFFERED", "ACCEPTED"] }, ...(excludeEntryId ? { id: { not: excludeEntryId } } : {}) } });
-  const reserved = new Map<LodgingCategory, Map<string, number>>();
-  for (const entry of entries) {
-    if (isOfferLapsed({ status: entry.status as WaitlistStatus, offerExpiresAt: entry.offerExpiresAt }, now)) continue;
-    const entryNights = entry.firstNight && entry.lastNight ? nightsInclusive(toNight(entry.firstNight), toNight(entry.lastNight)) : [...nights];
-    const byNight = reserved.get(entry.category) ?? new Map<string, number>();
-    for (const night of entryNights) byNight.set(night, (byNight.get(night) ?? 0) + entry.partySize);
-    reserved.set(entry.category, byNight);
-  }
-  return reserved;
-}
-
-/** Free places in a category on each night of a stay, from the real units and assignments, less other live offers. */
-function roomForEntry(state: PlanningState, entry: { category: LodgingCategory; partySize: number; firstNight: Date | null; lastNight: Date | null }, reserved: ReadonlyMap<LodgingCategory, ReadonlyMap<string, number>>) {
-  const nights = entry.firstNight && entry.lastNight ? nightsInclusive(toNight(entry.firstNight), toNight(entry.lastNight)) : [...state.context.nights];
-  const occupied = new Map<string, Map<string, number>>();
-  for (const segment of state.segments) {
-    if (!segment.unitId) continue;
-    const byNight = occupied.get(segment.unitId) ?? new Map<string, number>();
-    for (const night of nightsInclusive(segment.firstNight, segment.lastNight)) byNight.set(night, (byNight.get(night) ?? 0) + segment.people);
-    occupied.set(segment.unitId, byNight);
-  }
-  const units = state.unitRows.filter((row) => row.unit.category === entry.category);
-  for (const night of nights) {
-    let free = 0;
-    let unlimited = false;
-    for (const row of units) {
-      const unit = state.units.get(row.id)!;
-      const state_ = unitNight(unit, night, occupied.get(row.id)?.get(night) ?? 0);
-      if (state_.status !== "AVAILABLE") continue;
-      if (state_.available === null) unlimited = true;
-      else free += state_.available;
-    }
-    if (unlimited) continue;
-    const needed = entry.partySize + (reserved.get(entry.category)?.get(night) ?? 0);
-    if (free < needed) return { fits: false as const, night, free };
-  }
-  return { fits: true as const, night: null, free: null };
-}
 
 const nightWords = (first: string | null, last: string | null, all: readonly string[]) => {
   const from = first ?? all[0];
@@ -243,16 +205,15 @@ async function assessOffer(tx: Client, state: PlanningState, eventId: string, en
   }
   const newer = await tx.eventLodgingWaitlistEntry.findFirst({ where: { eventId, registrationId: entry.registrationId, id: { not: entry.id }, status: { in: ["JOINED", "OFFERED", "ACCEPTED"] } }, select: { id: true } });
   if (newer) return { eligible: false, alreadyOffered: false, reason: "That registration has a newer open waitlist entry. Answer or remove it first." };
-  const reserved = await reservedByCategory(tx, eventId, state.context.nights, entry.id, now);
-  if (previewReserved) {
-    for (const [category, byNight] of previewReserved) {
-      const merged = reserved.get(category) ?? new Map<string, number>();
-      for (const [night, people] of byNight) merged.set(night, (merged.get(night) ?? 0) + people);
-      reserved.set(category, merged);
-    }
-  }
-  const room = roomForEntry(state, entry, reserved);
-  if (!room.fits) return { eligible: false, alreadyOffered: false, reason: `No place is free for ${entry.partySize} ${entry.partySize === 1 ? "person" : "people"} in ${lodgingCategoryLabels[entry.category]} on ${room.night}.` };
+  // The shared counting rule (requests, unbacked placements, live offers), less this entry's own registration.
+  const demand = await demandExcluding(tx, eventId, state.context.nights, entry.registrationId, { now, excludeEntryId: entry.id });
+  const byNight = new Map(demand.get(entry.category) ?? []);
+  for (const [night, people] of previewReserved?.get(entry.category) ?? []) byNight.set(night, (byNight.get(night) ?? 0) + people);
+  const nights = entry.firstNight && entry.lastNight ? nightsInclusive(toNight(entry.firstNight), toNight(entry.lastNight)) : [...state.context.nights];
+  const { capacity } = await loadCategoryCapacity(tx, state.context);
+  const categoryCapacity = capacity[entry.category];
+  const fit = categoryCapacity ? categoryFits({ capacity: categoryCapacity, demand: byNight, nights, partySize: entry.partySize }) : null;
+  if (!fit || !fit.fits) return { eligible: false, alreadyOffered: false, reason: `No place is free for ${entry.partySize} ${entry.partySize === 1 ? "person" : "people"} in ${lodgingCategoryLabels[entry.category]} on ${fit?.firstFullNight ?? nights[0]}.` };
   return { eligible: true, alreadyOffered: false, reason: null as string | null };
 }
 
@@ -279,7 +240,11 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
       const deliveryDisabled = (await tx.eventMessageSettings.findUnique({ where: { eventId }, select: { deliveryMode: true } }))?.deliveryMode === "DISABLED";
       const disabledReason = "Email delivery is disabled for this event, so the guest would never receive the offer. Turn delivery on in the event's communication settings first.";
       const entries: EntryRow[] = [];
-      for (const entryId of [...new Set(input.entryIds)]) entries.push(await loadEntry(tx, eventId, entryId));
+      // A confirmed offer takes each entry's row lock (in a fixed order) before it reads the entry, so a guest's answer that
+      // committed first is seen here (an ACCEPTED entry is never overwritten) and two offers cannot both write.
+      const entryIds = [...new Set(input.entryIds)];
+      if (input.confirm) for (const entryId of [...entryIds].sort()) await lockEntry(tx, entryId);
+      for (const entryId of entryIds) entries.push(await loadEntry(tx, eventId, entryId));
       if (!input.confirm) {
         const rows: OfferPreviewRow[] = [];
         const previewReserved: Reservations = new Map();
@@ -306,10 +271,10 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
         }
         if (!assessed.eligible) { skipped.push({ entryId: entry.id, reason: assessed.reason ?? "Not eligible." }); continue; }
         if (deliveryDisabled) { skipped.push({ entryId: entry.id, reason: disabledReason }); continue; }
-        const lapsed = entry.status === "OFFERED";
-        if (lapsed) {
+        if (entry.status === "OFFERED") {
+          const expired = isOfferLapsed({ status: "OFFERED", offerExpiresAt: entry.offerExpiresAt }, now);
           await tx.eventLodgingWaitlistEntry.update({ where: { id: entry.id }, data: { status: "EXPIRED" } });
-          await record(tx, entry, "EXPIRED", null, { reason: "The offer expired before it was answered.", offerNumber: entry.offerNumber, offerExpiresAt: entry.offerExpiresAt }, now);
+          await record(tx, entry, "EXPIRED", expired ? null : actor, { reason: expired ? "The offer expired before it was answered." : "Offered again: the offer email did not reach the guest.", offerNumber: entry.offerNumber, offerExpiresAt: entry.offerExpiresAt }, now);
         }
         const offerNumber = entry.offerNumber + 1;
         const expiresAt = offerExpiry(now, input.expiresInHours);

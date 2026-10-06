@@ -241,8 +241,19 @@ async function cancelIfLodgingStale(
   message: { id: string; eventId: string | null; templateKey: string; lockToken: string },
 ) {
   if (message.templateKey !== "LODGING_ASSIGNMENT_NOTICE" && message.templateKey !== "LODGING_WAITLIST_OFFER") return false;
-  const { lodgingMessageStaleReason } = await import("@/modules/lodging/message-currency");
-  const reason = await lodgingMessageStaleReason(message.id, message.templateKey);
+  let reason: string | null;
+  try {
+    const { lodgingMessageStaleReason } = await import("@/modules/lodging/message-currency");
+    reason = await lodgingMessageStaleReason(message.id, message.templateKey);
+  } catch (error) {
+    // The check itself failed: leave this message for a later run (released, retried after the base delay) and carry on with the rest.
+    logError("Unable to check whether a lodging email is still current; it will be retried.", error);
+    await prisma.messageOutbox.updateMany({
+      where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
+      data: { status: "PENDING", lockedAt: null, lockToken: null, availableAt: new Date(Date.now() + EMAIL_RETRY_BASE_MS) },
+    });
+    return true;
+  }
   if (!reason) return false;
   const updated = await prisma.messageOutbox.updateMany({
     where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
