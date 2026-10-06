@@ -95,7 +95,7 @@ async function assertIndividualActive(tx: Client, eventId: string, registrationI
   }
 }
 
-type JoinInput = { registrationId: string; category: LodgingCategory; firstNight?: string | null; lastNight?: string | null; partySize: number; reason?: string };
+type JoinInput = { registrationId: string; category: LodgingCategory; firstNight?: string | null; lastNight?: string | null; partySize: number; roomCount?: number; reason?: string };
 
 async function joinInTransaction(tx: Tx, eventId: string, actor: Actor, input: JoinInput, now: Date) {
   const context = await loadContext(tx, eventId);
@@ -106,12 +106,27 @@ async function joinInTransaction(tx: Tx, eventId: string, actor: Actor, input: J
   }
   const { capacity } = await loadCategoryCapacity(tx, context);
   if ((capacity[input.category]?.unitsInService ?? 0) === 0) throw new LodgingError("CATEGORY_NOT_OFFERED", "That lodging type is not offered at this event.");
+  // The rooms the entry wants (room-type categories only; 1 otherwise): what the guest named, else what their request asked
+  // for in this type, else one. It is counted in rooms against the rooms free, like the request it came from.
+  const roomBased = capacity[input.category]?.roomBased === true;
+  const request = roomBased && input.roomCount === undefined
+    ? await tx.eventLodgingRequest.findUnique({ where: { eventId_registrationId: { eventId, registrationId: input.registrationId } }, select: { versions: { orderBy: { version: "desc" }, take: 1, select: { category: true, roomCount: true } } } })
+    : null;
+  const requestRooms = request?.versions[0]?.category === input.category ? request.versions[0].roomCount : null;
+  let askedRooms = input.roomCount ?? requestRooms ?? 1;
+  // A registrant's count is capped at the party size (the request is usually for another type, so its own room count says
+  // nothing about this one); staff naming more rooms than people are refused below.
+  if (actor.kind === "REGISTRANT") askedRooms = Math.min(askedRooms, input.partySize);
+  if (roomBased && (!Number.isInteger(askedRooms) || askedRooms < 1 || askedRooms > input.partySize)) {
+    throw new LodgingError("ROOM_COUNT_INVALID", `Choose between 1 and ${input.partySize} room${input.partySize === 1 ? "" : "s"}: at least one room, and no more rooms than people.`);
+  }
+  const roomCount = roomBased ? askedRooms : 1;
   if (actor.kind === "REGISTRANT") {
     if (context.fullBehavior !== "WAITLIST") throw new LodgingError("WAITLIST_NOT_ENABLED", "This event does not have a lodging waitlist.");
     if (context.editPolicy === "VERIFY_EVERY_EDIT") throw new LodgingError("EDIT_POLICY_REQUIRES_VERIFICATION", "This event requires verification before this change. To change this, contact the event team.");
     if (isPastLodgingDeadline(context.deadlineDay, now, context.timezone)) throw new LodgingError("DEADLINE_PASSED", "The deadline to change lodging has passed. Contact the event team.");
     const demand = demandFromGroups(await loadDemandGroups(tx, eventId, context.nights, { now }), input.registrationId);
-    const fit = categoryFits({ capacity: capacity[input.category]!, demand: demand.get(input.category), nights, partySize: input.partySize });
+    const fit = categoryFits({ capacity: capacity[input.category]!, demand: demand.get(input.category), nights, partySize: input.partySize, roomCount });
     if (fit.fits) throw new LodgingError("CATEGORY_NOT_FULL", "A place is available in that type. Choose it instead of joining the waitlist.");
   }
   try {
@@ -119,14 +134,14 @@ async function joinInTransaction(tx: Tx, eventId: string, actor: Actor, input: J
       data: {
         eventId, registrationId: input.registrationId, category: input.category,
         firstNight: input.firstNight ? toDate(input.firstNight) : null, lastNight: input.lastNight ? toDate(input.lastNight) : null,
-        partySize: input.partySize, createdVia: actor.kind === "STAFF" ? "STAFF" : "REGISTRANT", joinedAt: now,
+        partySize: input.partySize, roomCount, createdVia: actor.kind === "STAFF" ? "STAFF" : "REGISTRANT", joinedAt: now,
       },
     });
     await record(tx, entry, "JOINED", actor, { reason: "reason" in input ? input.reason : null, offerNumber: 0 }, now);
     await writeAuditLog({
       eventId, actorUserId: actor.kind === "STAFF" ? actor.userId : undefined, action: "LODGING_WAITLIST_JOINED", entityType: "EventLodgingWaitlistEntry", entityId: entry.id,
       summary: `Joined the lodging waitlist (${lodgingCategoryLabels[input.category]}).`,
-      metadata: { category: input.category, partySize: input.partySize, via: actor.kind },
+      metadata: { category: input.category, partySize: input.partySize, roomCount, via: actor.kind },
     }, tx);
     return entry;
   } catch (error) {
@@ -155,6 +170,8 @@ export type OfferPreviewRow = {
   holder: string;
   category: LodgingCategory;
   partySize: number;
+  /** Rooms the entry wants (counted in rooms for a room-type category). */
+  roomCount: number;
   eligible: boolean;
   /** Why not, or null. */
   reason: string | null;
@@ -193,8 +210,8 @@ const entryNightsOf = (entry: { firstNight: Date | null; lastNight: Date | null 
 const isCounted = (entry: { status: string; offerExpiresAt: Date | null }, now: Date) => entry.status === "OFFERED" && !isOfferLapsed({ status: "OFFERED", offerExpiresAt: entry.offerExpiresAt }, now);
 
 /** Counts a newly offered entry against the entries assessed after it in the same batch. */
-function reserveEntry(shared: Shared, entry: { registrationId: string; category: LodgingCategory; partySize: number; firstNight: Date | null; lastNight: Date | null }, eventNights: readonly string[]) {
-  addWaitingDemand(shared.groups, entry.registrationId, entry.category, entryNightsOf(entry, eventNights), entry.partySize);
+function reserveEntry(shared: Shared, entry: { registrationId: string; category: LodgingCategory; partySize: number; roomCount: number; firstNight: Date | null; lastNight: Date | null }, eventNights: readonly string[]) {
+  addWaitingDemand(shared.groups, entry.registrationId, entry.category, entryNightsOf(entry, eventNights), entry);
 }
 
 async function assessOffer(tx: Client, state: PlanningState, eventId: string, entry: EntryRow, now: Date, shared: Shared) {
@@ -218,8 +235,11 @@ async function assessOffer(tx: Client, state: PlanningState, eventId: string, en
   const byNight = demandFromGroups(shared.groups, entry.registrationId).get(entry.category);
   const nights = entryNightsOf(entry, state.context.nights);
   const categoryCapacity = shared.capacity[entry.category];
-  const fit = categoryCapacity ? categoryFits({ capacity: categoryCapacity, demand: byNight, nights, partySize: entry.partySize }) : null;
-  if (!fit || !fit.fits) return { eligible: false, alreadyOffered: false, reason: `No place is free for ${entry.partySize} ${entry.partySize === 1 ? "person" : "people"} in ${lodgingCategoryLabels[entry.category]} on ${fit?.firstFullNight ?? nights[0]}.` };
+  const fit = categoryCapacity ? categoryFits({ capacity: categoryCapacity, demand: byNight, nights, partySize: entry.partySize, roomCount: entry.roomCount }) : null;
+  if (!fit || !fit.fits) {
+    const asked = categoryCapacity?.roomBased ? `${entry.roomCount} ${entry.roomCount === 1 ? "room" : "rooms"}` : `${entry.partySize} ${entry.partySize === 1 ? "person" : "people"}`;
+    return { eligible: false, alreadyOffered: false, reason: `No place is free for ${asked} in ${lodgingCategoryLabels[entry.category]} on ${fit?.firstFullNight ?? nights[0]}.` };
+  }
   return { eligible: true, alreadyOffered: false, reason: null as string | null };
 }
 
@@ -261,11 +281,11 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
           // The same demand steps as the confirm, in the same order: a re-offer's old live offer leaves the shared demand
           // (it is expired even when it is then skipped), and only an entry the confirm would really offer is counted again.
           if (assessed.eligible && !assessed.alreadyOffered && !deliveryDisabled && entry.status === "OFFERED" && isCounted(entry, now)) {
-            addWaitingDemand(shared.groups, entry.registrationId, entry.category, entryNightsOf(entry, state.context.nights), -entry.partySize);
+            addWaitingDemand(shared.groups, entry.registrationId, entry.category, entryNightsOf(entry, state.context.nights), entry, -1);
           }
           if (eligible && !assessed.alreadyOffered) reserveEntry(shared, entry, state.context.nights);
           rows.push({
-            entryId: entry.id, registrationCode: entry.registration.confirmationCode, holder: recipient?.name ?? "", category: entry.category, partySize: entry.partySize,
+            entryId: entry.id, registrationCode: entry.registration.confirmationCode, holder: recipient?.name ?? "", category: entry.category, partySize: entry.partySize, roomCount: entry.roomCount,
             eligible,
             reason: assessed.reason ?? (!recipient?.email ? "The registration has no email address to send the offer to." : deliveryDisabled && !assessed.alreadyOffered ? disabledReason : null),
             alreadyOffered: assessed.alreadyOffered, recipientMasked: recipient?.email ? `${recipient.email.slice(0, 1)}***@${recipient.email.split("@")[1] ?? ""}` : null,
@@ -286,7 +306,7 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
         if (deliveryDisabled) { skipped.push({ entryId: entry.id, reason: disabledReason }); continue; }
         if (entry.status === "OFFERED") {
           // Its old live offer leaves the shared demand now (a re-offer that is then skipped must not keep holding it).
-          if (isCounted(entry, now)) addWaitingDemand(shared.groups, entry.registrationId, entry.category, entryNightsOf(entry, state.context.nights), -entry.partySize);
+          if (isCounted(entry, now)) addWaitingDemand(shared.groups, entry.registrationId, entry.category, entryNightsOf(entry, state.context.nights), entry, -1);
           const expired = isOfferLapsed({ status: "OFFERED", offerExpiresAt: entry.offerExpiresAt }, now);
           await tx.eventLodgingWaitlistEntry.update({ where: { id: entry.id }, data: { status: "EXPIRED" } });
           await record(tx, entry, "EXPIRED", expired ? null : actor, { reason: expired ? "The offer expired before it was answered." : "Offered again: the offer email did not reach the guest.", offerNumber: entry.offerNumber, offerExpiresAt: entry.offerExpiresAt }, now);
@@ -369,6 +389,7 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
       placements: input.attendeeIds.map((id) => ({
         occupantKey: id, occupant: { attendeeId: id, placeholderId: null }, people: 1, place: { unitId: input.eventUnitId },
         firstNight: nights[0]!, lastNight: nights[nights.length - 1]!, mode: "ASSIGN" as const, confirmSpecialUse: input.confirmSpecialUse, source: "WAITLIST" as const,
+        groupKey: entry.registrationId,
       })),
     });
     if (!planned.ok) throw new LodgingError(planned.problem.code === "UNIT_FULL" ? "UNIT_FULL" : planned.problem.code === "UNIT_OUT_OF_SERVICE" ? "UNIT_OUT_OF_SERVICE" : planned.problem.code === "SPECIAL_USE_UNCONFIRMED" ? "SPECIAL_USE_UNCONFIRMED" : planned.problem.code === "ALREADY_ASSIGNED" ? "ALREADY_ASSIGNED" : "UNKNOWN_PLACE", planned.problem.message);
@@ -420,6 +441,7 @@ export type RegistrantWaitlistView = {
     firstNight: string | null;
     lastNight: string | null;
     partySize: number;
+    roomCount: number;
     offerExpiresAt: string | null;
     lapsed: boolean;
   };
@@ -437,7 +459,7 @@ export async function getRegistrantWaitlistView(input: { eventId: string; regist
     entry: entry ? {
       id: entry.id, status: entry.status as WaitlistStatus, category: entry.category,
       firstNight: entry.firstNight ? toNight(entry.firstNight) : null, lastNight: entry.lastNight ? toNight(entry.lastNight) : null,
-      partySize: entry.partySize, offerExpiresAt: entry.offerExpiresAt?.toISOString() ?? null,
+      partySize: entry.partySize, roomCount: entry.roomCount, offerExpiresAt: entry.offerExpiresAt?.toISOString() ?? null,
       lapsed: isOfferLapsed({ status: entry.status as WaitlistStatus, offerExpiresAt: entry.offerExpiresAt }, now),
     } : null,
   };

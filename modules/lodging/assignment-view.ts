@@ -7,6 +7,7 @@ import {
   householdColorIndex,
   occupancyByNight,
   occupancyOf,
+  overBedsByNight,
   type OccupancyNight,
 } from "@/modules/lodging/assignment-domain";
 import {
@@ -74,6 +75,8 @@ export type UnitCard = {
   nightOccupied: number[];
   holdReasons: string[];
   unavailableReason: string | null;
+  /** One party is in the room above its beds (bringing extra bedding): a warning, not an over-capacity conflict. */
+  extraBedding: boolean;
   occupants: OccupantCard[];
 };
 
@@ -89,6 +92,9 @@ export type PersonCard = {
   colorIndex: number;
   people: number;
   category: LodgingCategory | null;
+  /** Rooms the registrant chose, and whether they will bring extra bedding (the party is larger than the beds in those rooms). */
+  roomCount: number;
+  bringsExtraBedding: boolean;
   asksForLodging: boolean;
   wantedFirstNight: string | null;
   wantedLastNight: string | null;
@@ -189,10 +195,18 @@ export async function getAssignmentWorkspace(eventId: string, options: { canSeeS
     const capacities = inService.map((entry) => entry.capacity);
     const capacity = capacities.length === 0 ? 0 : capacities.includes(null) ? null : Math.max(...(capacities as number[]));
     let status: UnitStatusWord;
+    let extraBedding = false;
+    const overNights = overBedsByNight(unitState, segments, nights);
     if (!row.assignable || row.retired) status = "NOT_ASSIGNABLE";
     else if (nightRows.length > 0 && nightRows.every((entry) => entry.status === "UNAVAILABLE")) status = "UNAVAILABLE";
     else if (nightRows.length > 0 && nightRows.every((entry) => entry.status === "HELD" || entry.status === "UNAVAILABLE")) status = "HELD";
-    else if (nightRows.some((entry) => entry.status === "AVAILABLE" && entry.capacity !== null && entry.occupied > entry.capacity)) status = "OVER";
+    else if (overNights.length > 0) {
+      // Night by night, as the closeout report does: a night above the beds with one party in the room is that party bringing
+      // sleeping bags or air mattresses (shown as full, with a warning); a night with anyone else in it is over capacity.
+      const overParties = overNights.filter((over) => !over.oneParty);
+      extraBedding = overParties.length < overNights.length;
+      status = overParties.length > 0 ? "OVER" : "FULL";
+    }
     else if (inService.length > 0 && inService.every((entry) => entry.capacity !== null && entry.capacity > 0 && entry.occupied >= entry.capacity)) status = "FULL";
     else if (nightRows.some((entry) => entry.occupied > 0)) status = "PARTIAL";
     else status = "AVAILABLE";
@@ -215,6 +229,7 @@ export async function getAssignmentWorkspace(eventId: string, options: { canSeeS
       nightOccupied: nightRows.map((entry) => entry.occupied),
       holdReasons: holdReasons.get(row.id) ?? [],
       unavailableReason: row.unavailable ? row.unavailableReason : null,
+      extraBedding,
       occupants: segments.map(occupantCard),
     };
     const building = buildings.get(row.unit.buildingId) ?? { sort: row.unit.building.sortOrder, key: row.unit.building.key, name: row.unit.building.name, floors: new Map() };
@@ -246,6 +261,8 @@ export async function getAssignmentWorkspace(eventId: string, options: { canSeeS
       colorIndex: colorOf(person.occupantKey),
       people: person.people,
       category: person.category,
+      roomCount: person.roomCount,
+      bringsExtraBedding: person.bringsExtraBedding,
       asksForLodging: person.asksForLodging,
       wantedFirstNight: wanted[0] ?? null,
       wantedLastNight: wanted[wanted.length - 1] ?? null,

@@ -18,12 +18,12 @@ const nights = ["2027-06-15", "2027-06-16", "2027-06-17"];
 const unit = (id: string, name: string, extra: Partial<UnitCard> = {}): UnitCard => ({
   eventUnitId: id, key: `k-${id}`, name, kind: "ROOM", isArea: false, floor: 1, groundLevel: true, bathroom: "SHARED", specialUse: false, category: "DORM_ROOM",
   beds: "2 twin", status: "AVAILABLE", capacity: 2, nightStatuses: nights.map(() => "AVAILABLE" as const), nightCapacities: [2, 2, 2], nightOccupied: [0, 0, 0],
-  holdReasons: [], unavailableReason: null, occupants: [], ...extra,
+  holdReasons: [], unavailableReason: null, extraBedding: false, occupants: [], ...extra,
 });
 
 const person = (key: string, name: string, extra: Partial<PersonCard> = {}): PersonCard => ({
   occupantKey: key, occupantId: key, kind: "ATTENDEE", name, registrationId: `reg-${key}`, registrationCode: `CODE-${key}`, registrationStatus: "CONFIRMED", active: true, colorIndex: 1, people: 1,
-  category: "DORM_ROOM", asksForLodging: true, wantedFirstNight: nights[0]!, wantedLastNight: nights[2]!, wantedNights: 3, placements: [], uncoveredNights: 3, waitlistStatus: null, householdKeys: [], ...extra,
+  category: "DORM_ROOM", roomCount: 1, bringsExtraBedding: false, asksForLodging: true, wantedFirstNight: nights[0]!, wantedLastNight: nights[2]!, wantedNights: 3, placements: [], uncoveredNights: 3, waitlistStatus: null, householdKeys: [], ...extra,
 });
 
 const view = (extra: Partial<AssignmentWorkspaceView> = {}): AssignmentWorkspaceView => ({
@@ -82,6 +82,30 @@ describe("the staff assignment workspace", () => {
     expect(sensitive).toMatch(/needs ground floor/i);
   });
 
+  it("shows the room count and the extra-bedding flag on the person, and a party above a room's beds as a warning", () => {
+    const html = render({
+      initialView: view({
+        buildings: [{ key: "boys", name: "Boys Dorm", floors: [{ floor: 1, label: "1st floor", units: [unit("u101", "101", { status: "FULL", extraBedding: true, nightOccupied: [5, 5, 5] })] }] }],
+        people: [person("p2", "Sam Sample", { people: 1, roomCount: 2, bringsExtraBedding: true }), person("p3", "Alex Sample", { roomCount: 1 })],
+      }),
+    });
+    expect(html).toContain("2 rooms");
+    expect(html).toContain("bringing extra bedding");
+    expect(html).toContain("1 room");
+    // A room holding one party above its beds reads as full with extra bedding, never as an over-capacity conflict.
+    expect(html).toContain("(extra bedding)");
+    expect(html).not.toContain("Over capacity");
+  });
+
+  it("lists the rooms a waitlist entry wants", () => {
+    const html = renderToStaticMarkup(createElement(WaitlistPanel, {
+      view: view({ waitlist: [{ id: "w1", registrationId: "reg-p2", registrationCode: "CODE-p2", holder: "Sam Sample", category: "DORM_ROOM", firstNight: null, lastNight: null, partySize: 6, roomCount: 3, status: "JOINED", offerNumber: 0, offeredAt: null, offerExpiresAt: null, offerMessageStatus: null, lapsed: false, joinedAt: "2027-05-01T00:00:00.000Z", createdVia: "STAFF" }] }),
+      base: "/api/events/ev1/lodging", run: async () => true, busy: false, canConfigure: true,
+    }));
+    expect(html).toContain("<th scope=\"col\">Rooms</th>");
+    expect(html).toContain("<td>3</td>");
+  });
+
   it("holds no contact detail", () => {
     expect(render().toLowerCase()).not.toMatch(/@|phone|email address/);
   });
@@ -106,7 +130,7 @@ describe("the other panels", () => {
 
   it("previews offers before anything is sent and says nothing offers on its own", () => {
     const html = renderToStaticMarkup(createElement(WaitlistPanel, {
-      view: view({ waitlist: [{ id: "w1", registrationId: "reg-p2", registrationCode: "CODE-p2", holder: "Sam Sample", category: "DORM_ROOM", firstNight: null, lastNight: null, partySize: 2, status: "JOINED", offerNumber: 0, offeredAt: null, offerExpiresAt: null, offerMessageStatus: null, lapsed: false, joinedAt: "2027-05-01T00:00:00.000Z", createdVia: "STAFF" }] }),
+      view: view({ waitlist: [{ id: "w1", registrationId: "reg-p2", registrationCode: "CODE-p2", holder: "Sam Sample", category: "DORM_ROOM", firstNight: null, lastNight: null, partySize: 2, roomCount: 2, status: "JOINED", offerNumber: 0, offeredAt: null, offerExpiresAt: null, offerMessageStatus: null, lapsed: false, joinedAt: "2027-05-01T00:00:00.000Z", createdVia: "STAFF" }] }),
       base, run, busy: false, canConfigure: true,
     }));
     expect(html).toContain("one email per entry, only when you confirm here");
@@ -119,7 +143,7 @@ describe("the other panels", () => {
   });
 
   it("shows the offer email's status and warns when an open offer never reached the guest", () => {
-    const entry = { id: "w1", registrationId: "reg-p2", registrationCode: "CODE-p2", holder: "Sam Sample", category: "DORM_ROOM" as const, firstNight: null, lastNight: null, partySize: 1, status: "OFFERED" as const, offerNumber: 1, offeredAt: "2027-05-20T12:00:00.000Z", offerExpiresAt: "2027-05-22T12:00:00.000Z", offerMessageStatus: "SUPPRESSED", lapsed: false, joinedAt: "2027-05-01T00:00:00.000Z", createdVia: "STAFF" };
+    const entry = { id: "w1", registrationId: "reg-p2", registrationCode: "CODE-p2", holder: "Sam Sample", category: "DORM_ROOM" as const, firstNight: null, lastNight: null, partySize: 1, roomCount: 1, status: "OFFERED" as const, offerNumber: 1, offeredAt: "2027-05-20T12:00:00.000Z", offerExpiresAt: "2027-05-22T12:00:00.000Z", offerMessageStatus: "SUPPRESSED", lapsed: false, joinedAt: "2027-05-01T00:00:00.000Z", createdVia: "STAFF" };
     const html = renderToStaticMarkup(createElement(WaitlistPanel, { view: view({ waitlist: [entry] }), base, run, busy: false, canConfigure: true }));
     expect(html).toContain("Offer email: suppressed");
     expect(html).toContain("did not reach the guest");
@@ -176,7 +200,7 @@ describe("what an attendee sees", () => {
   });
 
   it("shows a live offer with accept and decline, an expired one without, and joining only when a type is full", () => {
-    const entry = { id: "e1", status: "OFFERED" as const, category: "TENT" as const, firstNight: null, lastNight: null, partySize: 2, offerExpiresAt: "2027-05-21T12:00:00.000Z", lapsed: false };
+    const entry = { id: "e1", status: "OFFERED" as const, category: "TENT" as const, firstNight: null, lastNight: null, partySize: 2, roomCount: 1, offerExpiresAt: "2027-05-21T12:00:00.000Z", lapsed: false };
     const offered = renderToStaticMarkup(createElement(PublicLodgingAssignment, { token: "t", lodging: null, initialAssignments: { published: false, instructions: null, stays: [] }, initialWaitlist: { enabled: true, entry } }));
     expect(offered).toContain("Accept the place");
     expect(offered).toContain("Decline");

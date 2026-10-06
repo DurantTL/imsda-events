@@ -1,21 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The amendment path is exercised through its pure promo step; nothing here touches a database.
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/prisma", () => ({ getPrisma: () => { throw new Error("not used"); } }));
+vi.mock("@/modules/registrations/repository", () => ({ getRegistrationByIdWithClient: vi.fn() }));
+vi.mock("@/modules/communications/transactional-messages", () => ({ enqueueRegistrationUpdatedMessage: vi.fn() }));
 import { lodgingRateBases, quoteStay, rateSchema, type LodgingRate } from "@/modules/lodging/domain";
-import { addUndiscountedLine, calculationWithLine, registrationFormDefinitionSchema, type FormCalculation } from "@/modules/forms/definition";
+import { calculationWithLine, registrationFormDefinitionSchema, type FormCalculation } from "@/modules/forms/definition";
+import { applyStoredPromo } from "@/modules/registrations/amendments-repository";
 import { getPublicRegistrationStepPlan } from "@/modules/forms/public-registration-steps";
 import { publicRegistrationInputSchema } from "@/modules/forms/public-domain";
-import { applyPromoCodeToCalculation, attendeeShareCents, evaluatePromoCode, type PromoCodeRule } from "@/modules/promo-codes/domain";
+import { applyAttendeePromoCodes, applyPromoCodeToCalculation, attendeeShareCents, evaluatePromoCode, type PromoCodeRule } from "@/modules/promo-codes/domain";
 import { publicPromoCodeQuoteInputSchema } from "@/modules/promo-codes/schemas";
 import {
   categoryIsFull,
   chosenNights,
+  clampedRoomCount,
   defaultLodgingChoice,
   lodgingStepInput,
   lodgingStepLine,
   lodgingStepProblem,
+  roomQuestion,
   type LodgingChoice,
   type LodgingStepOffer,
 } from "@/modules/lodging/form-step";
-import { LODGING_LINE_KEY, lodgingCharge, unitsForParty } from "@/modules/lodging/pricing";
+import { LODGING_LINE_KEY, lodgingCharge } from "@/modules/lodging/pricing";
+import { bestCaseBeds, beddingNote, extraBeddingNote, partyExceedsBeds, resolveRoomChoice } from "@/modules/lodging/preferences-domain";
 
 /** Synthetic rates and people only. */
 const rate = (basis: LodgingRate["basis"], amountCents: number, minimumNights: number | null = null): LodgingRate => ({ amountCents, basis, minimumNights });
@@ -119,32 +129,98 @@ describe("the lodging line in the registration total", () => {
     expect(calculationWithLine(formDefinition, {}, second, line.key, null)).toMatchObject({ subtotalCents: 5000, lineItems: [{ key: "registration_fee" }] });
   });
 
-  it("is never discounted by a promo code: the discount is decided on the form's own lines and the line joins afterwards", () => {
-    const rule: PromoCodeRule = {
-      isActive: true, normalizedCode: "TENOFF", discountType: "PERCENT_BPS", discountValue: 1000, maximumDiscountCents: null,
-      minimumSubtotalCents: null, startsAt: null, endsAt: null, maximumUses: null, redeemedCount: 0,
-    } as unknown as PromoCodeRule;
-    const evaluation = evaluatePromoCode(rule, { submittedCode: "tenoff", eligibleSubtotalCents: formCalculation().subtotalCents, pricingDate: "2027-05-20", hideAmounts: false });
-    expect(evaluation.valid).toBe(true);
-    if (!evaluation.valid) return;
-    const discounted = applyPromoCodeToCalculation(formDefinition, {}, formCalculation(), evaluation);
-    expect(discounted.discountAmountCents).toBe(500);
-    const total = addUndiscountedLine(formDefinition, {}, discounted, line);
-    expect(total.lineItems.map((item) => item.key)).toEqual(["registration_fee", "lodging"]);
-    expect(total.discountAmountCents).toBe(500);
-    expect(total.subtotalCents).toBe(discounted.subtotalCents + 7500);
-    expect(total.totalCents).toBe(5000 - 500 + 7500);
-    // Adding it again replaces it and never counts it twice.
-    expect(addUndiscountedLine(formDefinition, {}, total, { ...line, amountCents: 2000 }).totalCents).toBe(5000 - 500 + 2000);
+  // Promo codes discount the lodging line (#803): the line joins the registration's lines first, then the code is decided.
+  const promo = (overrides: Partial<Record<string, unknown>> = {}) => ({
+    isActive: true, normalizedCode: "TENOFF", discountType: "PERCENT_BPS", discountValue: 1000, maximumDiscountCents: null,
+    minimumSubtotalCents: null, startsAt: null, endsAt: null, maximumUses: null, redeemedCount: 0, ...overrides,
+  }) as unknown as PromoCodeRule;
+  const evaluate = (rule: PromoCodeRule, subtotalCents: number) => {
+    const evaluation = evaluatePromoCode(rule, { submittedCode: "tenoff", eligibleSubtotalCents: subtotalCents, pricingDate: "2027-05-20", hideAmounts: false });
+    if (!evaluation.valid) throw new Error(`expected a valid code: ${evaluation.reason}`);
+    return evaluation;
+  };
+  const withLodging = (responses: Record<string, unknown> = {}) => calculationWithLine(formDefinition, responses, formCalculation(), line.key, line);
+
+  it("is discounted by a registration-level percent code, and the discount is worked out on the subtotal including it", () => {
+    const calculation = withLodging();
+    const discounted = applyPromoCodeToCalculation(formDefinition, {}, calculation, evaluate(promo(), calculation.subtotalCents));
+    expect(discounted.preDiscountSubtotalCents).toBe(5000 + 7500);
+    expect(discounted.discountAmountCents).toBe(1250);
+    expect(discounted.subtotalCents).toBe(12_500 - 1250);
+    expect(discounted.totalCents).toBe(11_250);
+    expect(discounted.lineItems.map((item) => item.key)).toEqual(["registration_fee", "lodging"]);
   });
 
-  it("adds the line after a full sponsorship and the processing fee follows the final subtotal", () => {
-    const sponsored = { ...formCalculation(), subtotalCents: 0, totalCents: 0, discountAmountCents: 5000, preDiscountSubtotalCents: 5000, lineItems: formCalculation().lineItems };
-    const total = addUndiscountedLine(formDefinition, { payment_method: "Card" }, sponsored, line);
-    expect(total.subtotalCents).toBe(7500);
-    expect(total.preDiscountSubtotalCents).toBe(12_500);
-    expect(total.processingFeeCents).toBeGreaterThan(0);
-    expect(total.totalCents).toBe(total.subtotalCents + total.processingFeeCents);
+  it("is discounted by a registration-level fixed code, never below zero", () => {
+    const calculation = withLodging();
+    const fixed = applyPromoCodeToCalculation(formDefinition, {}, calculation, evaluate(promo({ discountType: "FIXED_CENTS", discountValue: 3000 }), calculation.subtotalCents));
+    expect(fixed.discountAmountCents).toBe(3000);
+    expect(fixed.totalCents).toBe(9500);
+    const huge = applyPromoCodeToCalculation(formDefinition, {}, calculation, evaluate(promo({ discountType: "FIXED_CENTS", discountValue: 99_000 }), calculation.subtotalCents));
+    expect(huge.discountAmountCents).toBe(12_500);
+    expect(huge.totalCents).toBe(0);
+  });
+
+  it("checks a code's minimum against the subtotal including lodging", () => {
+    const rule = promo({ minimumSubtotalCents: 10_000 });
+    expect(evaluatePromoCode(rule, { submittedCode: "tenoff", eligibleSubtotalCents: formCalculation().subtotalCents, pricingDate: "2027-05-20", hideAmounts: false }).valid).toBe(false);
+    expect(evaluatePromoCode(rule, { submittedCode: "tenoff", eligibleSubtotalCents: withLodging().subtotalCents, pricingDate: "2027-05-20", hideAmounts: false }).valid).toBe(true);
+  });
+
+  it("makes the processing fee follow the final, discounted subtotal", () => {
+    const card = { payment_method: "Card" };
+    const calculation = withLodging(card);
+    const discounted = applyPromoCodeToCalculation(formDefinition, card, calculation, evaluate(promo(), calculation.subtotalCents));
+    // Fee on 11,250 (the discounted subtotal), not on 12,500.
+    expect(discounted.processingFeeCents).toBe(Math.ceil((11_250 + 30) / (1 - 0.029)) - 11_250);
+    expect(discounted.processingFeeCents).toBeLessThan(calculation.processingFeeCents);
+    expect(discounted.totalCents).toBe(discounted.subtotalCents + discounted.processingFeeCents);
+  });
+
+  it("a church-sponsored code (a full sponsorship) covers the lodging line too, and the fee follows the zero subtotal", () => {
+    const card = { payment_method: "Card" };
+    const calculation = withLodging(card);
+    const sponsored = applyPromoCodeToCalculation(formDefinition, card, calculation, evaluate(promo({ discountType: "PERCENT_BPS", discountValue: 10_000 }), calculation.subtotalCents));
+    expect(sponsored.discountAmountCents).toBe(12_500);
+    expect(sponsored.subtotalCents).toBe(0);
+    expect(sponsored.processingFeeCents).toBe(0);
+    expect(sponsored.totalCents).toBe(0);
+    // The line itself stays in the snapshot: staff can see what the church covered.
+    expect(sponsored.lineItems.find((item) => item.key === "lodging")?.amountCents).toBe(7500);
+  });
+
+  it("quote, submission and amendment agree: the same lines in, the same discount and total out", () => {
+    const card = { payment_method: "Card" };
+    const redemption = {
+      codeSnapshot: "TENOFF", discountTypeSnapshot: "PERCENT_BPS", discountValueSnapshot: 1000, minimumSubtotalCentsSnapshot: 10_000, maximumDiscountCentsSnapshot: null,
+    } as unknown as Parameters<typeof applyStoredPromo>[3];
+    // Quote and submission: the lodging line joins first, then the code is evaluated on that subtotal.
+    const quoteLines = withLodging(card);
+    const quote = applyPromoCodeToCalculation(formDefinition, card, quoteLines, evaluate(promo({ minimumSubtotalCents: 10_000 }), quoteLines.subtotalCents));
+    const submission = applyPromoCodeToCalculation(formDefinition, card, withLodging(card), evaluate(promo({ minimumSubtotalCents: 10_000 }), withLodging(card).subtotalCents));
+    // Amendment: the stored lodging line is carried into the new calculation, then the stored code is applied.
+    const amended = applyStoredPromo(formDefinition, card, calculationWithLine(formDefinition, card, formCalculation(), line.key, line), redemption);
+    for (const priced of [submission, amended]) {
+      expect(priced).toMatchObject({ preDiscountSubtotalCents: quote.preDiscountSubtotalCents, discountAmountCents: quote.discountAmountCents, subtotalCents: quote.subtotalCents, processingFeeCents: quote.processingFeeCents, totalCents: quote.totalCents });
+      expect(priced.lineItems).toEqual(quote.lineItems);
+    }
+    // An amendment that drops the form's own fee below the code's minimum still counts the lodging in the subtotal it checks.
+    const feeRemoved: FormCalculation = { subtotalCents: 0, processingFeeCents: 0, totalCents: 0, lineItems: [] };
+    expect(applyStoredPromo(formDefinition, card, calculationWithLine(formDefinition, card, feeRemoved, line.key, { ...line, amountCents: 10_000 }), redemption)).toMatchObject({ discountAmountCents: 1000 });
+  });
+
+  it("keeps a per-person code on its own person's lines: the lodging line has no attendee", () => {
+    const calculation: FormCalculation = calculationWithLine(formDefinition, {}, {
+      subtotalCents: 3000, processingFeeCents: 0, totalCents: 3000,
+      lineItems: [{ key: "meal", label: "Meal", amountCents: 1000, attendeeIndex: 0 }, { key: "meal", label: "Meal", amountCents: 2000, attendeeIndex: 1 }],
+    }, line.key, line);
+    expect(attendeeShareCents(calculation, 0)).toBe(1000);
+    expect(attendeeShareCents(calculation, 1)).toBe(2000);
+    const discounted = applyAttendeePromoCodes(formDefinition, {}, calculation, [{ attendeeIndex: 0, code: "KID", discountAmountCents: 400 }]);
+    // Only the person's own 400 comes off; the 7,500 lodging line is untouched.
+    expect(discounted.discountAmountCents).toBe(400);
+    expect(discounted.subtotalCents).toBe(3000 + 7500 - 400);
+    expect(discounted.lineItems.find((item) => item.key === "lodging")?.amountCents).toBe(7500);
   });
 
   it("has no attendee, so a per-person code never reaches it", () => {
@@ -154,27 +230,102 @@ describe("the lodging line in the registration total", () => {
   });
 });
 
-describe("rooms for a party", () => {
-  it("is the party divided by the room size, rounded up, and never below one", () => {
-    expect(unitsForParty(6, 2)).toBe(3);
-    expect(unitsForParty(5, 2)).toBe(3);
-    expect(unitsForParty(1, 4)).toBe(1);
-    expect(unitsForParty(3, null)).toBe(1);
-    expect(unitsForParty(3, undefined)).toBe(1);
-  });
-
-  it("charges a per-room rate for each room and says how many in the label", () => {
-    const six = lodgingCharge({ category: "DORM_ROOM", nights: 2, partySize: 6, rates: { DORM_ROOM: rate("PER_UNIT_NIGHT", 2000) }, units: unitsForParty(6, 2) });
-    expect(six.kind === "CHARGE" && six.line).toMatchObject({ amountCents: 12_000, label: "Lodging: Dorm room (3 rooms)" });
-    const flat = lodgingCharge({ category: "DORM_ROOM", nights: 2, partySize: 6, rates: { DORM_ROOM: rate("PER_UNIT_PER_EVENT", 3000) }, units: 3 });
-    expect(flat.kind === "CHARGE" && flat.line.amountCents).toBe(9000);
-    const one = lodgingCharge({ category: "DORM_ROOM", nights: 2, partySize: 2, rates: { DORM_ROOM: rate("PER_UNIT_NIGHT", 2000) }, units: 1 });
-    expect(one.kind === "CHARGE" && one.line.label).toBe("Lodging: Dorm room");
+describe("charging by the rooms the registrant chose (#803)", () => {
+  it("charges a per-room rate for the chosen rooms, whatever the party size, and says how many in the label", () => {
+    const rates = { DORM_ROOM: rate("PER_UNIT_NIGHT", 2000) };
+    const oneRoomForSix = lodgingCharge({ category: "DORM_ROOM", nights: 2, partySize: 6, rates, units: 1 });
+    expect(oneRoomForSix.kind === "CHARGE" && oneRoomForSix.line).toMatchObject({ amountCents: 4000, label: "Lodging: Dorm room" });
+    const three = lodgingCharge({ category: "DORM_ROOM", nights: 2, partySize: 6, rates, units: 3 });
+    expect(three.kind === "CHARGE" && three.line).toMatchObject({ amountCents: 12_000, label: "Lodging: Dorm room (3 rooms)" });
+    const flat = lodgingCharge({ category: "DORM_ROOM", nights: 2, partySize: 6, rates: { DORM_ROOM: rate("PER_UNIT_PER_EVENT", 3000) }, units: 2 });
+    expect(flat.kind === "CHARGE" && flat.line.amountCents).toBe(6000);
   });
 
   it("does not multiply a per-person rate by rooms", () => {
     const person = lodgingCharge({ category: "DORM_ROOM", nights: 2, partySize: 6, rates: { DORM_ROOM: rate("PER_PERSON_NIGHT", 1000) }, units: 3 });
     expect(person.kind === "CHARGE" && person.line.amountCents).toBe(12_000);
+  });
+
+  it("keeps an RV site or a tent at one unit in the form's line", () => {
+    const rvOffer: LodgingStepOffer = { ...offer, categories: [{ category: "RV_SITE", label: "RV site", remaining: Object.fromEntries(offer.nights.map((night) => [night, 3])), rate: rate("PER_UNIT_NIGHT", 3000), unitCapacity: null, roomBased: false }] };
+    const line = lodgingStepLine(rvOffer, { ...defaultLodgingChoice(rvOffer, 4), category: "RV_SITE", roomCount: 3 });
+    expect(line).toMatchObject({ amountCents: 3000 * 4, label: "Lodging: RV site" });
+  });
+});
+
+describe("the room count rules (#803)", () => {
+  const N = ["2027-06-15", "2027-06-16"];
+  // Rooms in service on both nights, largest first: 4, 2, 2, 2 and 1 beds.
+  const rooms = { roomBased: true, unitCapacity: 1, roomBeds: { "2027-06-15": [4, 2, 2, 2, 1], "2027-06-16": [4, 2, 2, 2, 1] } };
+  const choose = (extra: Partial<Parameters<typeof resolveRoomChoice>[0]>) => resolveRoomChoice({ capacity: rooms, partySize: 2, nights: N, requireAcknowledgement: true, ...extra });
+
+  it("is one unit for a site, a tent or a counted area: nothing is asked", () => {
+    expect(resolveRoomChoice({ capacity: { roomBased: false, unitCapacity: null }, partySize: 5, roomCount: 4, requireAcknowledgement: true })).toEqual({ ok: true, roomCount: 1, bringsExtraBedding: false, extraBeddingNeeded: false });
+    expect(resolveRoomChoice({ capacity: undefined, partySize: 5, requireAcknowledgement: true })).toMatchObject({ ok: true, roomCount: 1 });
+  });
+
+  it("defaults to one room and allows one up to the party size", () => {
+    expect(choose({})).toMatchObject({ ok: true, roomCount: 1 });
+    expect(choose({ partySize: 4, roomCount: 4 })).toMatchObject({ ok: true, roomCount: 4, extraBeddingNeeded: false });
+    for (const roomCount of [5, 0, 1.5]) expect(choose({ partySize: 4, roomCount })).toMatchObject({ ok: false, code: "ROOM_COUNT_INVALID" });
+  });
+
+  it("allows no more rooms than are available, and says how many are", () => {
+    const refused = choose({ partySize: 6, roomCount: 3, roomsAvailable: 2 });
+    expect(refused).toMatchObject({ ok: false, code: "ROOM_COUNT_INVALID" });
+    expect(!refused.ok && refused.message).toMatch(/Only 2 rooms are free/);
+    expect(choose({ partySize: 6, roomCount: 2, roomsAvailable: 2 })).toMatchObject({ ok: true, roomCount: 2 });
+    expect(choose({ partySize: 6, roomCount: 3, roomsAvailable: null })).toMatchObject({ ok: true, roomCount: 3 });
+  });
+
+  it("works the over-beds threshold out as the best case: the largest rooms in service on every chosen night", () => {
+    expect(bestCaseBeds(rooms, 1, N)).toBe(4);
+    expect(bestCaseBeds(rooms, 2, N)).toBe(6);
+    expect(bestCaseBeds(rooms, 3, N)).toBe(8);
+    expect(bestCaseBeds(rooms, 9, N)).toBe(11);
+    // The night with fewer or smaller rooms sets the limit; a night that is not chosen does not.
+    const thin = { ...rooms, roomBeds: { "2027-06-15": [4, 2, 2], "2027-06-16": [2, 1], "2027-06-17": [9] } };
+    expect(bestCaseBeds(thin, 2, ["2027-06-15", "2027-06-16"])).toBe(3);
+    expect(bestCaseBeds(thin, 2, ["2027-06-15"])).toBe(6);
+    expect(bestCaseBeds({ unitCapacity: 2 }, 3, N)).toBe(6);
+    expect(bestCaseBeds({ unitCapacity: null }, 3, N)).toBeNull();
+    // A party of four fits the best single room, so it is not asked, even though the smallest room sleeps one.
+    expect(partyExceedsBeds(rooms, 4, 1, N)).toBe(false);
+    expect(partyExceedsBeds(rooms, 5, 1, N)).toBe(true);
+    expect(partyExceedsBeds(rooms, 6, 2, N)).toBe(false);
+    expect(partyExceedsBeds(rooms, 7, 2, N)).toBe(true);
+    expect(partyExceedsBeds({ roomBased: false, unitCapacity: 2 }, 9, 1, N)).toBe(false);
+  });
+
+  it("allows a party above the beds once the registrant acknowledges bringing sleeping bags or air mattresses", () => {
+    const needs = choose({ partySize: 5, roomCount: 1 });
+    expect(needs).toMatchObject({ ok: false, code: "EXTRA_BEDDING_NOT_ACKNOWLEDGED" });
+    expect(!needs.ok && needs.message).toBe("Your party is larger than the beds in the rooms you picked. Confirm that you will bring sleeping bags or air mattresses for the extra people.");
+    expect(!needs.ok && needs.message).not.toMatch(/choose more rooms/i);
+    expect(choose({ partySize: 5, roomCount: 1, bringsExtraBedding: true })).toEqual({ ok: true, roomCount: 1, bringsExtraBedding: true, extraBeddingNeeded: true });
+    // The flag is never stored when it does not apply.
+    expect(choose({ partySize: 4, roomCount: 1, bringsExtraBedding: true })).toMatchObject({ ok: true, bringsExtraBedding: false });
+  });
+
+  it("asks for the acknowledgement only when it is required, and otherwise keeps what was acknowledged: a staff edit never invents one", () => {
+    // A staff edit (or an unrelated edit) of a party above its beds is not refused, and is not recorded as acknowledged.
+    expect(choose({ partySize: 5, roomCount: 1, requireAcknowledgement: false })).toMatchObject({ ok: true, bringsExtraBedding: false, extraBeddingNeeded: true });
+    expect(choose({ partySize: 5, roomCount: 1, requireAcknowledgement: false, carriedAcknowledgement: true })).toMatchObject({ ok: true, bringsExtraBedding: true });
+    // What the registrant ticked is stored when they tick it.
+    expect(choose({ partySize: 5, roomCount: 1, requireAcknowledgement: false, bringsExtraBedding: true })).toMatchObject({ bringsExtraBedding: true });
+    // A carried acknowledgement is dropped when the party no longer exceeds the beds.
+    expect(choose({ partySize: 3, roomCount: 1, requireAcknowledgement: false, carriedAcknowledgement: true })).toMatchObject({ bringsExtraBedding: false });
+  });
+
+  it("words the general bedding note from the type's linens, treating an unknown as not provided", () => {
+    expect(beddingNote("NONE")).toBe("Bring your own bedding (sheets, pillow, blanket)");
+    expect(beddingNote(undefined)).toBe("Bring your own bedding (sheets, pillow, blanket)");
+    expect(beddingNote("SOME")).toBe("Most rooms: bring your own bedding");
+    expect(beddingNote("ALL")).toBeNull();
+  });
+
+  it("words the over-beds note as Caleb asked", () => {
+    expect(extraBeddingNote).toBe("Your party is larger than the beds in the rooms you picked; bring sleeping bags or air mattresses for the extra people.");
   });
 });
 
@@ -183,9 +334,9 @@ const offer: LodgingStepOffer = {
   deadline: "2027-06-01",
   fullBehavior: "SHOW_FULL",
   categories: [
-    { category: "DORM_ROOM", label: "Dorm room", remaining: { "2027-06-15": 5, "2027-06-16": 1, "2027-06-17": 5, "2027-06-18": 5 }, rate: rate("PER_UNIT_NIGHT", 2000, 2) },
+    { category: "DORM_ROOM", label: "Dorm room", remaining: { "2027-06-15": 5, "2027-06-16": 0, "2027-06-17": 5, "2027-06-18": 5 }, rate: rate("PER_UNIT_NIGHT", 2000, 2), unitCapacity: 2, roomBased: true, linens: "NONE", roomBeds: { "2027-06-15": [2, 2, 2, 2, 2], "2027-06-16": [], "2027-06-17": [2, 2, 2, 2, 2], "2027-06-18": [2, 2, 2, 2, 2] } },
     { category: "TENT", label: "Tent", remaining: { "2027-06-15": null, "2027-06-16": null, "2027-06-17": null, "2027-06-18": null }, rate: rate("PER_PERSON_PER_EVENT", 4000) },
-    { category: "CONFERENCE_CENTER_ROOM", label: "Conference center room", remaining: { "2027-06-15": 2, "2027-06-16": 2, "2027-06-17": 2, "2027-06-18": 2 }, rate: null },
+    { category: "CONFERENCE_CENTER_ROOM", label: "Conference center room", remaining: { "2027-06-15": 2, "2027-06-16": 2, "2027-06-17": 2, "2027-06-18": 2 }, rate: null, unitCapacity: 2, roomBased: true, linens: "SOME", roomBeds: { "2027-06-15": [2, 2], "2027-06-16": [2, 2], "2027-06-17": [2, 2], "2027-06-18": [2, 2] } },
   ],
 };
 const choice = (overrides: Partial<LodgingChoice> = {}): LodgingChoice => ({ ...defaultLodgingChoice(offer, 2), ...overrides });
@@ -205,13 +356,53 @@ describe("the lodging step of the form", () => {
     expect(chosenNights(choice({ firstNight: "2027-06-17", lastNight: "2027-06-16" }))).toEqual([]);
   });
 
-  it("shows a type as full for the nights and party chosen", () => {
+  it("shows a type as full for the nights chosen: no free room on a night for a room-type category, too few places for any other", () => {
     const all = chosenNights(choice());
     expect(categoryIsFull(offer, "DORM_ROOM", all, 2)).toBe(true);
-    expect(categoryIsFull(offer, "DORM_ROOM", all, 1)).toBe(false);
-    expect(categoryIsFull(offer, "DORM_ROOM", ["2027-06-17", "2027-06-18"], 2)).toBe(false);
+    expect(categoryIsFull(offer, "DORM_ROOM", all, 1)).toBe(true);
+    expect(categoryIsFull(offer, "DORM_ROOM", ["2027-06-17", "2027-06-18"], 9)).toBe(false); // the party is not the count: rooms are
+    expect(categoryIsFull(offer, "DORM_ROOM", ["2027-06-17", "2027-06-18"], 9, 6)).toBe(true); // six rooms asked, five free
+    expect(categoryIsFull(offer, "DORM_ROOM", ["2027-06-17", "2027-06-18"], 2, 2)).toBe(false);
     expect(categoryIsFull(offer, "TENT", all, 40)).toBe(false);
     expect(categoryIsFull(offer, "RV_SITE", all, 1)).toBe(true);
+  });
+
+  it("asks how many rooms for a room-type category only, from one up to the party and the rooms free", () => {
+    const nights = { firstNight: "2027-06-17", lastNight: "2027-06-18" };
+    expect(roomQuestion(offer, choice({ category: "TENT" }))).toMatchObject({ asked: false, highest: 1 });
+    expect(roomQuestion(offer, choice({ category: "" }))).toMatchObject({ asked: false });
+    expect(roomQuestion(offer, choice({ category: "DORM_ROOM", partySize: 4, roomCount: 2, ...nights }))).toMatchObject({ asked: true, highest: 4, extraBeddingNeeded: false, problem: null });
+    // Five rooms are free on those nights, so a party of eight may ask for at most five.
+    expect(roomQuestion(offer, choice({ category: "DORM_ROOM", partySize: 8, roomCount: 5, bringsExtraBedding: true, ...nights }))).toMatchObject({ asked: true, highest: 5, extraBeddingNeeded: false });
+    expect(clampedRoomCount(offer, choice({ category: "DORM_ROOM", partySize: 8, roomCount: 7, ...nights }))).toBe(5);
+    expect(clampedRoomCount(offer, choice({ category: "DORM_ROOM", partySize: 2, roomCount: 7, ...nights }))).toBe(2);
+    expect(clampedRoomCount(offer, choice({ category: "TENT", roomCount: 3 }))).toBe(1);
+  });
+
+  it("shows the extra-bedding note, and needs the acknowledgement, when the party is larger than the beds in the chosen rooms", () => {
+    const nights = { firstNight: "2027-06-17", lastNight: "2027-06-18" };
+    const party = choice({ category: "DORM_ROOM", partySize: 5, roomCount: 2, ...nights }); // 2 rooms of 2 beds, 5 people
+    expect(roomQuestion(offer, party)).toMatchObject({ asked: true, extraBeddingNeeded: true });
+    expect(lodgingStepProblem(offer, party, 5)).toMatch(/^Lodging step: Your party is larger than the beds in the rooms you picked/);
+    const acknowledged = { ...party, bringsExtraBedding: true };
+    expect(lodgingStepProblem(offer, acknowledged, 5)).toBeNull();
+    expect(lodgingStepInput(offer, acknowledged)).toMatchObject({ category: "DORM_ROOM", partySize: 5, roomCount: 2, bringsExtraBedding: true });
+    // More rooms remove the note, and the flag is not sent.
+    const enough = choice({ category: "DORM_ROOM", partySize: 5, roomCount: 3, bringsExtraBedding: true, ...nights });
+    expect(roomQuestion(offer, enough).extraBeddingNeeded).toBe(false);
+    expect(lodgingStepInput(offer, enough)).toMatchObject({ roomCount: 3 });
+    expect(lodgingStepInput(offer, { ...enough, partySize: 5 })).toHaveProperty("bringsExtraBedding", true); // the server drops a flag that does not apply
+  });
+
+  it("prices the rooms chosen, not a party divided by a room size", () => {
+    const nights = { firstNight: "2027-06-17", lastNight: "2027-06-18" };
+    expect(lodgingStepLine(offer, choice({ category: "DORM_ROOM", partySize: 6, roomCount: 1, bringsExtraBedding: true, ...nights }))).toMatchObject({ amountCents: 2000 * 2 * 1, label: "Lodging: Dorm room" });
+    expect(lodgingStepLine(offer, choice({ category: "DORM_ROOM", partySize: 6, roomCount: 3, ...nights }))).toMatchObject({ amountCents: 2000 * 2 * 3, label: "Lodging: Dorm room (3 rooms)" });
+  });
+
+  it("refuses a room count above the rooms free", () => {
+    const nights = { firstNight: "2027-06-17", lastNight: "2027-06-18" };
+    expect(lodgingStepProblem(offer, choice({ category: "DORM_ROOM", partySize: 8, roomCount: 6, bringsExtraBedding: true, ...nights }), 8)).toMatch(/Only 5 rooms are free/);
   });
 
   it("reports what cannot be submitted, naming the step", () => {

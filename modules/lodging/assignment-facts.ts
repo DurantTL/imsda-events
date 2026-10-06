@@ -45,6 +45,9 @@ export type PersonFact = {
   asksForLodging: boolean;
   hasRequest: boolean;
   category: LodgingCategory | null;
+  /** Rooms the registrant chose and whether they will bring extra bedding (#803); one room and no for an expected guest. */
+  roomCount: number;
+  bringsExtraBedding: boolean;
   wantedNights: string[];
   /** Raw yes/no flags: only for staff with VIEW_SENSITIVE_DATA. */
   groundFloorNeeded: boolean;
@@ -61,6 +64,8 @@ export type WaitlistFact = {
   firstNight: string | null;
   lastNight: string | null;
   partySize: number;
+  /** Rooms the entry wants (counted in rooms for a room-type category). */
+  roomCount: number;
   status: WaitlistStatus;
   offerNumber: number;
   offeredAt: string | null;
@@ -136,6 +141,8 @@ export async function loadAssignmentFacts(client: Client, eventId: string, optio
         asksForLodging: request ? request.category !== null : true,
         hasRequest: Boolean(request),
         category: request?.category ?? null,
+        roomCount: request?.roomCount ?? 1,
+        bringsExtraBedding: Boolean(request?.bringsExtraBedding),
         wantedNights: request && request.category === null ? [] : request ? requestNights(request, state.context.nights) : [...state.context.nights],
         groundFloorNeeded: Boolean(request?.groundFloorNeeded),
         accessibleRoomNeeded: Boolean(request?.accessibleRoomNeeded),
@@ -161,6 +168,8 @@ export async function loadAssignmentFacts(client: Client, eventId: string, optio
       asksForLodging: true,
       hasRequest: false,
       category: null,
+      roomCount: 1,
+      bringsExtraBedding: false,
       wantedNights: [...state.context.nights],
       groundFloorNeeded: false,
       accessibleRoomNeeded: false,
@@ -222,6 +231,7 @@ export async function loadAssignmentFacts(client: Client, eventId: string, optio
     firstNight: entry.firstNight ? toNight(entry.firstNight) : null,
     lastNight: entry.lastNight ? toNight(entry.lastNight) : null,
     partySize: entry.partySize,
+    roomCount: entry.roomCount,
     status: entry.status as WaitlistStatus,
     offerNumber: entry.offerNumber,
     offeredAt: entry.offeredAt?.toISOString() ?? null,

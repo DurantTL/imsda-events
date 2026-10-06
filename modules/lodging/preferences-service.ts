@@ -18,7 +18,8 @@ import { LodgingError } from "@/modules/lodging/errors";
 import {
   buildReviewItems,
   categoryFits,
-  demandByCategoryNight,
+  requestedQuantity,
+  resolveRoomChoice,
   isPastLodgingDeadline,
   lodgingActiveRegistrationStatuses,
   lodgingDeadlineDay,
@@ -48,7 +49,7 @@ import {
   type RoommateStatus,
   type RuleRow,
 } from "@/modules/lodging/preferences-domain";
-import { LODGING_LINE_KEY, lodgingCharge, unitsForParty } from "@/modules/lodging/pricing";
+import { LODGING_LINE_KEY, lodgingCharge, lodgingChargeImpact, promoContextOf, type RedemptionFact } from "@/modules/lodging/pricing";
 import { isChurchBilledBillingMode } from "@/modules/club-registrations/per-person-price";
 import { lockEventLodgingUnits, lodgingTransactionTimeoutMs, nightsFor, touchEventLodgingCapacity } from "@/modules/lodging/service";
 
@@ -112,21 +113,41 @@ export async function loadContext(client: Client, eventId: string) {
 }
 export type Context = Awaited<ReturnType<typeof loadContext>>;
 
-/** Per category: people the in-service units take each night, how many units are in service, and how many are ground level. */
+/**
+ * The room-type categories (#803): those whose every unit is a numbered room. The registrant chooses how many rooms for
+ * these and their capacity is counted in rooms. A category with a site, a tent or a counted area among its units is
+ * person-based (people against the places it takes), as is any category with no unit at all.
+ */
+export function roomBasedFromUnits(rows: ReadonlyArray<{ retired: boolean; unit: { category: LodgingCategory | null; kind: string; isArea: boolean } }>): Set<LodgingCategory> {
+  const result = new Map<LodgingCategory, boolean>();
+  for (const row of rows) {
+    const category = row.unit.category;
+    if (!category || row.retired) continue;
+    result.set(category, (result.get(category) ?? true) && row.unit.kind === "ROOM" && !row.unit.isArea);
+  }
+  return new Set([...result].filter(([, roomBased]) => roomBased).map(([category]) => category));
+}
+
+/**
+ * Per category: what the in-service units take each night, how many units are in service, and how many are ground level.
+ * A room-type category counts **rooms** per night (the rooms in service that night); every other category counts people.
+ */
 export async function loadCategoryCapacity(client: Client, context: Pick<Context, "eventLodgingId" | "nights">) {
   const rows = await client.eventLodgingUnit.findMany({
     where: { eventLodgingId: context.eventLodgingId },
     include: { unit: true, holds: { where: { releasedAt: null }, select: { id: true, firstNight: true, lastNight: true } } },
   });
   const capacity: Partial<Record<LodgingCategory, CategoryCapacity>> = {};
+  const roomBased = roomBasedFromUnits(rows);
   const unitIdsByCategory = new Map<LodgingCategory, string[]>();
-  const states: Array<{ category: LodgingCategory; groundLevel: boolean; roomSleeps: number | null; state: UnitNightState }> = [];
+  const states: Array<{ category: LodgingCategory; groundLevel: boolean; roomSleeps: number | null; linens: boolean | null; state: UnitNightState }> = [];
   for (const row of rows) {
     const category = row.unit.category;
     if (!category || row.retired) continue;
     unitIdsByCategory.set(category, [...(unitIdsByCategory.get(category) ?? []), row.id]);
     states.push({
       category,
+      linens: row.unit.linensProvided,
       groundLevel: row.unit.groundLevel || row.unit.kind !== "ROOM",
       // A room's own size (the smallest default among a category's rooms) is what a per-room charge divides by.
       roomSleeps: row.unit.kind === "ROOM" && !row.unit.isArea && row.assignable && row.defaultCapacity !== null && row.defaultCapacity > 0 ? row.defaultCapacity : null,
@@ -147,7 +168,8 @@ export async function loadCategoryCapacity(client: Client, context: Pick<Context
   for (const entry of states) {
     const rowsForUnit = projection.get(entry.state.unitId) ?? [];
     const inService = rowsForUnit.some((night) => night.status === "AVAILABLE");
-    const current = capacity[entry.category] ?? { perNight: Object.fromEntries(context.nights.map((night) => [night, 0 as number | null])), unitsInService: 0, groundLevelUnits: 0, unitCapacity: null };
+    const inRooms = roomBased.has(entry.category);
+    const current = capacity[entry.category] ?? { perNight: Object.fromEntries(context.nights.map((night) => [night, 0 as number | null])), unitsInService: 0, groundLevelUnits: 0, unitCapacity: null, roomBased: inRooms, ...(inRooms ? { roomBeds: Object.fromEntries(context.nights.map((night) => [night, [] as number[]])) } : {}) };
     if (entry.roomSleeps !== null) current.unitCapacity = current.unitCapacity === null || current.unitCapacity === undefined ? entry.roomSleeps : Math.min(current.unitCapacity, entry.roomSleeps);
     if (inService) {
       current.unitsInService += 1;
@@ -156,9 +178,24 @@ export async function loadCategoryCapacity(client: Client, context: Pick<Context
     for (const night of rowsForUnit) {
       if (night.status !== "AVAILABLE") continue;
       const before = current.perNight[night.night];
+      if (inRooms) {
+        // A room is one room whatever its beds; a room lowered to no places is not a room anyone can have.
+        if (night.capacity !== null && night.capacity < 1) continue;
+        current.perNight[night.night] = before === null ? null : (before ?? 0) + 1;
+        // Its effective beds that night (an unlimited room counts as very large), for the best-case bed count.
+        current.roomBeds?.[night.night]?.push(night.capacity ?? 999);
+        continue;
+      }
       current.perNight[night.night] = night.capacity === null || before === null ? null : (before ?? 0) + night.capacity;
     }
     capacity[entry.category] = current;
+  }
+  for (const category of Object.keys(capacity) as LodgingCategory[]) {
+    const entry = capacity[category]!;
+    for (const night of Object.keys(entry.roomBeds ?? {})) entry.roomBeds![night]!.sort((a, b) => b - a);
+    // Linens: every unit of the type provides them (ALL), some do (SOME) or none do; an unknown counts as not provided.
+    const provided = states.filter((unit) => unit.category === category).map((unit) => unit.linens === true);
+    entry.linens = provided.length > 0 && provided.every(Boolean) ? "ALL" : provided.some(Boolean) ? "SOME" : "NONE";
   }
   return { capacity, unitIdsByCategory };
 }
@@ -171,6 +208,8 @@ export type RequestRow = {
   firstNight: string | null;
   lastNight: string | null;
   partySize: number;
+  roomCount: number;
+  bringsExtraBedding: boolean;
   groundFloorNeeded: boolean;
   accessibleRoomNeeded: boolean;
   privateRoomRequested: boolean;
@@ -204,6 +243,8 @@ export async function loadCurrentRequests(client: Client, eventId: string, where
       firstNight: version.firstNight ? toNight(version.firstNight) : null,
       lastNight: version.lastNight ? toNight(version.lastNight) : null,
       partySize: version.partySize,
+      roomCount: version.roomCount,
+      bringsExtraBedding: version.bringsExtraBedding,
       groundFloorNeeded: version.groundFloorNeeded,
       accessibleRoomNeeded: version.accessibleRoomNeeded,
       privateRoomRequested: version.privateRoomRequested,
@@ -216,17 +257,22 @@ export async function loadCurrentRequests(client: Client, eventId: string, where
 }
 
 /**
- * The one counting rule for a category's free space (slices 2 and 3 share it). For each category C and night N, the
- * people counted are the sum over registrations g of the largest of
+ * The one counting rule for a category's free space (slices 2 and 3 share it, and #803 counts rooms). For each category C
+ * and night N, the demand counted is the sum over registrations g of the largest of
  *
- * - `request`: g's active request party, when the request is for C and covers N;
- * - `placed`: the people of g actually placed in units of C on N (an expected guest or an assignment with no registration
- *   is its own group and has only this term, with its headcount);
- * - `waiting`: the party of g's live offers (OFFERED, not expired) and accepted entries for C covering N.
+ * - `request`: g's active request, when the request is for C and covers N;
+ * - `placed`: what g actually has placed in units of C on N (an expected guest or an assignment with no registration is its
+ *   own group and has only this term);
+ * - `waiting`: g's live offers (OFFERED, not expired) and accepted entries for C covering N.
+ *
+ * The unit of the count depends on the category. **A room-type category counts rooms**: `request` is the rooms the
+ * registrant chose, `placed` is the number of distinct units of C the group occupies on N (one party spread across two rooms
+ * is two), and `waiting` is the room count on the entry; free space is rooms available per night. **Any other category
+ * counts people** (the request's party, the people placed, the entry's party), against the places it takes.
  *
  * Only active registrations count requests and entries; a placement counts until staff release it. Taking the largest of
- * the three means a person who asked, was offered and was placed in one category is counted once, while a placement in
- * another category, more people than asked, nights outside the request, or a larger entry are all still counted. It is
+ * the three means a registration that asked, was offered and was placed in one category is counted once, while a placement
+ * in another category, more than asked, nights outside the request, or a larger entry are all still counted. It is
  * deliberately conservative: a registration promoted into another category holds both its request and its placement
  * until staff update the request. A registration is left out by name (the one being checked stands in for itself).
  * Free space is `categoryFits({ capacity, demand })` on the result.
@@ -236,21 +282,29 @@ export async function loadCurrentRequests(client: Client, eventId: string, where
  */
 type DemandTerms = { request: number; placed: number; waiting: number };
 /** Per group (a registration, or one expected-guest row), category and night: the three terms of the counting rule. */
-export type DemandGroups = Map<string, Map<LodgingCategory, Map<string, DemandTerms>>>;
+export type DemandGroups = {
+  terms: Map<string, Map<LodgingCategory, Map<string, DemandTerms>>>;
+  /** The categories counted in rooms. */
+  roomBased: ReadonlySet<LodgingCategory>;
+};
 
 function termsFor(groups: DemandGroups, group: string, category: LodgingCategory, night: string) {
-  const byCategory = groups.get(group) ?? new Map<LodgingCategory, Map<string, DemandTerms>>();
-  groups.set(group, byCategory);
+  const byCategory = groups.terms.get(group) ?? new Map<LodgingCategory, Map<string, DemandTerms>>();
+  groups.terms.set(group, byCategory);
   const byNight = byCategory.get(category) ?? new Map<string, DemandTerms>();
   byCategory.set(category, byNight);
-  const terms = byNight.get(night) ?? { request: 0, placed: 0, waiting: 0 };
-  byNight.set(night, terms);
-  return terms;
+  const entry = byNight.get(night) ?? { request: 0, placed: 0, waiting: 0 };
+  byNight.set(night, entry);
+  return entry;
 }
 
-/** Adds a live offer's people to a registration's group (so the next entry of a batch counts it). */
-export function addWaitingDemand(groups: DemandGroups, registrationId: string, category: LodgingCategory, entryNights: readonly string[], partySize: number) {
-  for (const night of entryNights) termsFor(groups, registrationId, category, night).waiting += partySize;
+/**
+ * Adds a live offer's demand to a registration's group (so the next entry of a batch counts it): its rooms in a room-type
+ * category, its people in any other. `sign` -1 takes an offer back out.
+ */
+export function addWaitingDemand(groups: DemandGroups, registrationId: string, category: LodgingCategory, entryNights: readonly string[], entry: { partySize: number; roomCount?: number | null }, sign: 1 | -1 = 1) {
+  const quantity = requestedQuantity(entry, groups.roomBased.has(category));
+  for (const night of entryNights) termsFor(groups, registrationId, category, night).waiting += sign * quantity;
 }
 
 /** Loads every group's terms once, for the nights given (nobody left out). */
@@ -262,25 +316,38 @@ export async function loadDemandGroups(
 ): Promise<DemandGroups> {
   const now = options.now ?? new Date();
   const counts = options.countsTowardPublicCapacity ?? (() => true);
-  const groups: DemandGroups = new Map();
+  const unitRows = await client.eventLodgingUnit.findMany({ where: { eventLodging: { eventId } }, select: { retired: true, unit: { select: { category: true, kind: true, isArea: true } } } });
+  const groups: DemandGroups = { terms: new Map(), roomBased: roomBasedFromUnits(unitRows) };
   const inWindow = (list: readonly string[]) => list.filter((night) => nights.includes(night));
   const requests = await loadCurrentRequests(client, eventId, { registration: { status: { in: [...lodgingActiveRegistrationStatuses] } } });
   for (const row of requests) {
     if (!row.category || !counts(row.registrationId)) continue;
-    for (const night of inWindow(requestNights(row, nights))) termsFor(groups, row.registrationId, row.category, night).request += row.partySize;
+    const quantity = requestedQuantity(row, groups.roomBased.has(row.category));
+    for (const night of inWindow(requestNights(row, nights))) termsFor(groups, row.registrationId, row.category, night).request += quantity;
   }
-  // People placed in a unit, by the registration they belong to (an expected guest or an unlinked row is its own group).
+  // What is placed in a unit, by the registration it belongs to (an expected guest or an unlinked row is its own group):
+  // people in a person-based category, the distinct units the group occupies in a room-type one.
   const placed = await client.eventLodgingAssignment.findMany({
     where: { eventId, cancelledAt: null, eventLodgingUnitId: { not: null } },
-    select: { id: true, people: true, firstNight: true, lastNight: true, eventUnit: { select: { unit: { select: { category: true } } } }, attendee: { select: { registrationId: true } } },
+    select: { id: true, people: true, eventLodgingUnitId: true, firstNight: true, lastNight: true, eventUnit: { select: { unit: { select: { category: true } } } }, attendee: { select: { registrationId: true } } },
   });
+  const unitsOccupied = new Map<string, { group: string; category: LodgingCategory; night: string; units: Set<string> }>();
   for (const row of placed) {
     const category = row.eventUnit?.unit.category;
     if (!category) continue;
     const owner = row.attendee?.registrationId ?? null;
     if (owner !== null && !counts(owner)) continue;
-    for (const night of inWindow(nightsInclusive(toNight(row.firstNight), toNight(row.lastNight)))) termsFor(groups, owner ?? `row:${row.id}`, category, night).placed += row.people;
+    const group = owner ?? `row:${row.id}`;
+    const inRooms = groups.roomBased.has(category);
+    for (const night of inWindow(nightsInclusive(toNight(row.firstNight), toNight(row.lastNight)))) {
+      if (!inRooms) { termsFor(groups, group, category, night).placed += row.people; continue; }
+      const key = `${group}|${category}|${night}`;
+      const occupied = unitsOccupied.get(key) ?? { group, category, night, units: new Set<string>() };
+      occupied.units.add(row.eventLodgingUnitId!);
+      unitsOccupied.set(key, occupied);
+    }
   }
+  for (const occupied of unitsOccupied.values()) termsFor(groups, occupied.group, occupied.category, occupied.night).placed = occupied.units.size;
   // Live offers and accepted entries of active registrations.
   const entries = await client.eventLodgingWaitlistEntry.findMany({
     where: { eventId, status: { in: ["OFFERED", "ACCEPTED"] }, registration: { status: { in: [...lodgingActiveRegistrationStatuses] } } },
@@ -289,15 +356,15 @@ export async function loadDemandGroups(
     if (isOfferLapsed({ status: entry.status as "OFFERED" | "ACCEPTED", offerExpiresAt: entry.offerExpiresAt } as Parameters<typeof isOfferLapsed>[0], now)) continue;
     if (!counts(entry.registrationId)) continue;
     const entryNights = entry.firstNight && entry.lastNight ? nightsInclusive(toNight(entry.firstNight), toNight(entry.lastNight)) : [...nights];
-    addWaitingDemand(groups, entry.registrationId, entry.category, inWindow(entryNights), entry.partySize);
+    addWaitingDemand(groups, entry.registrationId, entry.category, inWindow(entryNights), entry);
   }
   return groups;
 }
 
-/** The people counted per category and night, leaving one registration's group out. */
+/** What is counted per category and night (rooms or people, by category), leaving one registration's group out. */
 export function demandFromGroups(groups: DemandGroups, excludeRegistrationId: string | null = null) {
   const demand = new Map<LodgingCategory, Map<string, number>>();
-  for (const [group, byCategory] of groups) {
+  for (const [group, byCategory] of groups.terms) {
     if (group === excludeRegistrationId) continue;
     for (const [category, byNight] of byCategory) {
       const total = demand.get(category) ?? new Map<string, number>();
@@ -399,8 +466,22 @@ export type SaveRequestResult =
       changeRequested?: false;
       /** A staff change that alters the lodging charge: the registration's total is NOT changed; staff adjust it in Payments. */
       priceNeedsReview?: boolean;
-      /** The change in what the request costs at today's rates (signed cents), when `priceNeedsReview`. */
+      /** The change THIS edit makes to what the request costs at today's rates (signed cents, at list price), when `priceNeedsReview`. */
       chargeDeltaCents?: number;
+      /**
+       * The same change after the registration's saved promo code (#803): what the registrant pays differently, and for a
+       * church-sponsored code the sponsor's share. For a church-sponsored code the church's bill does not follow a lodging edit: see CHURCH_SPONSOR_WARNING.
+       */
+      registrantDeltaCents?: number;
+      sponsorDeltaCents?: number;
+      /** Context only, never the figure to record: what was charged at submission (the stored line) and what the request now costs. */
+      originallyChargedCents?: number;
+      requestNowCostsCents?: number;
+      /** After the change the registration would be under its saved code's minimum (an amendment would refuse it). */
+      belowMinimumAfter?: boolean;
+      /** A church-sponsored code whose share would move: the church's bill does not follow a lodging edit; contact the finance office. */
+      churchSponsorReview?: boolean;
+      promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null;
     }
   /** The event's edit policy kept the change from applying itself; it waits in the staff review queue. */
   | { changeRequested: true; changeRequestId: string };
@@ -471,16 +552,23 @@ export async function saveLodgingRequest(
       firstNight: parsed.firstNight ?? null,
       lastNight: parsed.lastNight ?? null,
       partySize,
+      // Settled below, once the category's capacity is known (a room-type category takes the registrant's room count).
+      roomCount: 1,
+      bringsExtraBedding: false,
       groundFloorNeeded: parsed.groundFloorNeeded ?? previous?.groundFloorNeeded ?? false,
       accessibleRoomNeeded: parsed.accessibleRoomNeeded ?? previous?.accessibleRoomNeeded ?? false,
       privateRoomRequested: parsed.privateRoomRequested ?? previous?.privateRoomRequested ?? false,
       householdPreference: (parsed.householdPreference ?? previous?.householdPreference ?? "TOGETHER") as HouseholdPreference,
     };
+
+    // An identical request adds nothing (and takes no lock): the room fields count only when the edit names them.
     if (previous
       && previous.category === next.category && previous.firstNight === next.firstNight && previous.lastNight === next.lastNight
       && previous.partySize === next.partySize && previous.groundFloorNeeded === next.groundFloorNeeded
       && previous.accessibleRoomNeeded === next.accessibleRoomNeeded && previous.privateRoomRequested === next.privateRoomRequested
-      && previous.householdPreference === next.householdPreference) {
+      && previous.householdPreference === next.householdPreference
+      && (parsed.roomCount === undefined || parsed.roomCount === previous.roomCount)
+      && (parsed.bringsExtraBedding === undefined || parsed.bringsExtraBedding === previous.bringsExtraBedding)) {
       return { requestId: previous.requestId, version: previous.version, changed: false, afterDeadline: previous.afterDeadline };
     }
 
@@ -502,16 +590,79 @@ export async function saveLodgingRequest(
       capacity = (await loadCategoryCapacity(tx, context)).capacity;
     }
 
+    // The rooms (#803). A request keeps its earlier room count when the edit does not name one and the type is the same;
+    // a room-type category is validated against the party and, for a registrant, the rooms free on those nights
+    // (what the registration holds already is left out, so keeping the same rooms is never refused).
+    if (next.category) {
+      const categoryCapacity = capacity[next.category];
+      const sameType = Boolean(previous && previous.category === next.category);
+      // A kept room count never exceeds a smaller party (nobody asked for more rooms than people).
+      const keptRooms = sameType ? Math.min(previous!.roomCount, partySize) : 1;
+      const wantedRooms = parsed.roomCount ?? keptRooms;
+      // The rooms free are checked only when the request asks for more than the one it replaces (a bigger room count,
+      // party, type or a new night), so an unchanged edit on an overbooked type is never refused for being overbooked.
+      const growing = requestGrew(previous ? { category: previous.category, partySize: previous.partySize, roomCount: previous.roomCount, nights: requestNights(previous, context.nights) } : null, { category: next.category, partySize, roomCount: wantedRooms, nights });
+      let roomsAvailable: number | null = null;
+      if (categoryCapacity?.roomBased && categoryCapacity.unitsInService > 0 && !staff && growing) {
+        const demand = (await demandExcluding(tx, input.eventId, context.nights, input.registrationId)).get(next.category);
+        const free = categoryFits({ capacity: categoryCapacity, demand, nights, partySize, roomCount: 1 });
+        // Nothing free is "full", said the same way whether one room or several were asked for.
+        if (!free.fits) throw new LodgingError("CATEGORY_FULL", fullMessage(next.category));
+        roomsAvailable = free.minimumAvailable;
+      }
+      // The acknowledgement is the registrant's own and is asked for only when they set or change the rooms, the party or
+      // the type. An unrelated edit, and every staff edit, keeps what was acknowledged before and never invents one.
+      const roomsChange = !sameType || wantedRooms !== previous!.roomCount || partySize !== previous!.partySize;
+      const choice = resolveRoomChoice({
+        capacity: categoryCapacity, partySize, nights, roomCount: wantedRooms,
+        bringsExtraBedding: staff ? undefined : parsed.bringsExtraBedding,
+        requireAcknowledgement: !staff && roomsChange,
+        carriedAcknowledgement: sameType && !roomsChange ? previous!.bringsExtraBedding : false,
+        roomsAvailable,
+      });
+      if (!choice.ok) throw new LodgingError(choice.code, choice.message);
+      // A type that is not counted in rooms (a tent, or a category that has become person-based) keeps the room count it
+      // had, within the party: an unrelated edit never silently resets what the registrant chose.
+      next.roomCount = categoryCapacity?.roomBased ? choice.roomCount : (sameType ? Math.min(previous!.roomCount, partySize) : 1);
+      next.bringsExtraBedding = choice.bringsExtraBedding;
+    }
+    if (previous
+      && previous.category === next.category && previous.firstNight === next.firstNight && previous.lastNight === next.lastNight
+      && previous.partySize === next.partySize && previous.roomCount === next.roomCount && previous.bringsExtraBedding === next.bringsExtraBedding
+      && previous.groundFloorNeeded === next.groundFloorNeeded
+      && previous.accessibleRoomNeeded === next.accessibleRoomNeeded && previous.privateRoomRequested === next.privateRoomRequested
+      && previous.householdPreference === next.householdPreference) {
+      return { requestId: previous.requestId, version: previous.version, changed: false, afterDeadline: previous.afterDeadline };
+    }
+
+    function fullMessage(category: LodgingCategory) {
+      return context.fullBehavior === "WAITLIST"
+        ? `${lodgingCategoryLabels[category]} is full for those nights. A waitlist will open soon; for now choose another type.`
+        : `${lodgingCategoryLabels[category]} is full for those nights.`;
+    }
+
     // What the request costs, before and after, at today's rates: a rate change alone, or an edit that does not touch
     // the price, is not a charge change.
-    const costOf = (category: LodgingCategory | null, nightCount: number, party: number) => {
+    const costOf = (category: LodgingCategory | null, nightCount: number, party: number, rooms: number) => {
       if (context.churchBilled || !category) return 0;
-      const charge = lodgingCharge({ category, nights: nightCount, partySize: party, rates, ignoreMinimum: true, units: unitsForParty(party, capacity[category]?.unitCapacity) });
+      const charge = lodgingCharge({ category, nights: nightCount, partySize: party, rates, ignoreMinimum: true, units: capacity[category]?.roomBased ? rooms : 1 });
       return charge.kind === "CHARGE" ? charge.line.amountCents : 0;
     };
-    const previousCents = previous ? costOf(previous.category, requestNights(previous, context.nights).length, previous.partySize) : 0;
-    const nextCents = costOf(next.category, nights.length, partySize);
+    const previousCents = previous ? costOf(previous.category, requestNights(previous, context.nights).length, previous.partySize, previous.roomCount) : 0;
+    const nextCents = costOf(next.category, nights.length, partySize, next.roomCount);
     const chargeChanges = previousCents !== nextCents;
+    // THIS edit, after the registration's saved promo code (#803): previous and next at today's rates, each against the same
+    // other lines, so the figure staff are told to record is the change this edit makes and nothing from earlier edits (two
+    // edits in a row report their own changes, and a revert reports the reverse). The cumulative picture, from the stored
+    // line (what was charged at submission) to what the request now costs, is context only, and decides whether the church
+    // warning stays up after an edit that returns the sponsor's share to where it started.
+    const promoContext = staff || chargeChanges ? await loadPromoContext(tx, input.eventId, input.registrationId) : null;
+    const impact = chargeChanges && promoContext
+      ? lodgingChargeImpact({ otherCents: promoContext.otherCents, promo: promoContext.promo, fromCents: previousCents, toCents: nextCents })
+      : null;
+    const cumulative = promoContext
+      ? lodgingChargeImpact({ otherCents: promoContext.otherCents, promo: promoContext.promo, fromCents: promoContext.lodgingCents, toCents: nextCents })
+      : null;
     if (!staff && chargeChanges) {
       await tx.eventLodgingChangeRequest.updateMany({
         where: { registrationId: input.registrationId, resolvedAt: null },
@@ -521,14 +672,15 @@ export async function saveLodgingRequest(
         data: {
           eventId: input.eventId, registrationId: input.registrationId, category: next.category,
           firstNight: next.firstNight ? toDate(next.firstNight) : null, lastNight: next.lastNight ? toDate(next.lastNight) : null,
-          partySize: next.partySize, privateRoomRequested: next.privateRoomRequested, householdPreference: next.householdPreference,
+          partySize: next.partySize, roomCount: next.roomCount, bringsExtraBedding: next.bringsExtraBedding,
+          privateRoomRequested: next.privateRoomRequested, householdPreference: next.householdPreference,
           accessTokenId: input.actor.kind === "REGISTRANT" ? input.actor.accessTokenId : null,
         },
       });
       await writeAuditLog({
         eventId: input.eventId, action: "LODGING_CHANGE_REQUESTED", entityType: "EventLodgingChangeRequest", entityId: change.id,
         summary: `A change that alters the lodging charge was requested on ${registration.confirmationCode}.`,
-        metadata: { registrationId: input.registrationId, category: next.category, accessTokenId: change.accessTokenId, deltaCents: nextCents - previousCents },
+        metadata: { registrationId: input.registrationId, category: next.category, accessTokenId: change.accessTokenId, deltaCents: impact?.listDeltaCents ?? nextCents - previousCents, ...(impact?.promo ? { registrantDeltaCents: impact.registrantDeltaCents } : {}) },
       }, tx);
       return { changeRequested: true as const, changeRequestId: change.id };
     }
@@ -539,15 +691,11 @@ export async function saveLodgingRequest(
         throw new LodgingError("CATEGORY_NOT_OFFERED", `${lodgingCategoryLabels[next.category]} is not available for this event.`);
       }
       // Only a request that asks for more than it replaces needs room: the type, a bigger party, or a new night.
-      const grew = requestGrew(previous ? { category: previous.category, partySize: previous.partySize, nights: requestNights(previous, context.nights) } : null, { category: next.category, partySize, nights });
+      const grew = requestGrew(previous ? { category: previous.category, partySize: previous.partySize, roomCount: previous.roomCount, nights: requestNights(previous, context.nights) } : null, { category: next.category, partySize, roomCount: next.roomCount, nights });
       if (!staff && grew) {
         const demand = (await demandExcluding(tx, input.eventId, context.nights, input.registrationId)).get(next.category);
-        const fit = categoryFits({ capacity: categoryCapacity, demand, nights, partySize });
-        if (!fit.fits) {
-          throw new LodgingError("CATEGORY_FULL", context.fullBehavior === "WAITLIST"
-            ? `${lodgingCategoryLabels[next.category]} is full for those nights. A waitlist will open soon; for now choose another type.`
-            : `${lodgingCategoryLabels[next.category]} is full for those nights.`);
-        }
+        const fit = categoryFits({ capacity: categoryCapacity, demand, nights, partySize, roomCount: next.roomCount });
+        if (!fit.fits) throw new LodgingError("CATEGORY_FULL", fullMessage(next.category));
       }
     }
 
@@ -564,6 +712,8 @@ export async function saveLodgingRequest(
         firstNight: next.firstNight ? toDate(next.firstNight) : null,
         lastNight: next.lastNight ? toDate(next.lastNight) : null,
         partySize: next.partySize,
+        roomCount: next.roomCount,
+        bringsExtraBedding: next.bringsExtraBedding,
         groundFloorNeeded: next.groundFloorNeeded,
         accessibleRoomNeeded: next.accessibleRoomNeeded,
         privateRoomRequested: next.privateRoomRequested,
@@ -576,7 +726,7 @@ export async function saveLodgingRequest(
         afterDeadline: staff && pastDeadline,
       },
     });
-    const changedFields = (["category", "firstNight", "lastNight", "partySize", "privateRoomRequested", "householdPreference"] as const).filter((field) => !previous || previous[field] !== next[field]);
+    const changedFields = (["category", "firstNight", "lastNight", "partySize", "roomCount", "bringsExtraBedding", "privateRoomRequested", "householdPreference"] as const).filter((field) => !previous || previous[field] !== next[field]);
     // Said only when an existing request's flags change; a first request never records whether they were set.
     const accessibilityChanged = previous
       ? previous.groundFloorNeeded !== next.groundFloorNeeded || previous.accessibleRoomNeeded !== next.accessibleRoomNeeded
@@ -606,7 +756,18 @@ export async function saveLodgingRequest(
         data: { resolvedAt: now, resolvedByUserId: input.actor.kind === "STAFF" ? input.actor.userId : null, resolution: "Handled by staff" },
       });
     }
-    return { requestId: request.id, version, changed: true, afterDeadline: staff && pastDeadline, ...(staff && chargeChanges ? { priceNeedsReview: true, chargeDeltaCents: nextCents - previousCents } : {}) };
+    // The church's bill does not follow a lodging edit, so the warning stays up while this edit moves the sponsor's share OR the
+    // cumulative share differs from the original (a return to the start after an earlier change still needs the finance office).
+    const sponsorMoved = Boolean(impact?.promo?.sponsored && impact.discountDeltaCents !== 0);
+    const sponsorDiffers = Boolean(cumulative?.promo?.sponsored && cumulative.discountDeltaCents !== 0);
+    const costContext = promoContext && cumulative ? { originallyChargedCents: promoContext.lodgingCents, requestNowCostsCents: nextCents } : {};
+    return { requestId: request.id, version, changed: true, afterDeadline: staff && pastDeadline, ...(staff && chargeChanges && impact
+      ? {
+          priceNeedsReview: true, chargeDeltaCents: impact.listDeltaCents, registrantDeltaCents: impact.registrantDeltaCents,
+          sponsorDeltaCents: impact.promo?.sponsored ? impact.discountDeltaCents : 0, belowMinimumAfter: cumulative?.belowMinimumAfter ?? false,
+          churchSponsorReview: sponsorMoved || sponsorDiffers, promo: impact.promo, ...costContext,
+        }
+      : staff && sponsorDiffers ? { churchSponsorReview: true, promo: cumulative!.promo, ...costContext } : {}) };
   }, { timeout: lodgingTransactionTimeoutMs });
 }
 
@@ -850,12 +1011,56 @@ export async function endLodgingRule(eventId: string, actorUserId: string, ruleI
 }
 
 // ---------------------------------------------------------------------------
+// What a registration's saved promo code does to a lodging change (#803)
+// ---------------------------------------------------------------------------
+
+const redemptionSelect = {
+  registrationId: true, codeSnapshot: true, discountTypeSnapshot: true, discountValueSnapshot: true,
+  maximumDiscountCentsSnapshot: true, minimumSubtotalCentsSnapshot: true, promoCode: { select: { sponsoringOrganizationId: true } },
+} as const;
+const asRedemptionFact = (row: { codeSnapshot: string; discountTypeSnapshot: RedemptionFact["discountTypeSnapshot"]; discountValueSnapshot: number; maximumDiscountCentsSnapshot: number | null; minimumSubtotalCentsSnapshot: number | null; promoCode: { sponsoringOrganizationId: string | null } }): RedemptionFact => ({
+  codeSnapshot: row.codeSnapshot, discountTypeSnapshot: row.discountTypeSnapshot, discountValueSnapshot: row.discountValueSnapshot,
+  maximumDiscountCentsSnapshot: row.maximumDiscountCentsSnapshot, minimumSubtotalCentsSnapshot: row.minimumSubtotalCentsSnapshot,
+  sponsored: row.promoCode.sponsoringOrganizationId !== null,
+});
+
+/** The pricing snapshot a registration is at now: the latest amendment's, else the submission's. */
+const currentSnapshot = (amendedPricing: unknown, submitted: unknown) => {
+  const latest = record(amendedPricing);
+  return Object.keys(latest).length > 0 && Array.isArray(latest.lineItems) ? latest : record(submitted);
+};
+
+/**
+ * The latest amendment's pricing fields per registration (just the lines and the code marker, not the whole snapshot of the
+ * attendees and answers the amendment also stores). One registration when `registrationId` is given, else the event's.
+ */
+async function latestAmendmentPricing(client: Client, eventId: string, registrationId?: string) {
+  const rows = await client.$queryRaw<Array<{ registrationId: string; pricing: unknown }>>`
+    SELECT DISTINCT ON ("registrationId") "registrationId",
+      jsonb_build_object('lineItems', "afterSnapshot" -> 'pricingSnapshot' -> 'lineItems', 'promoCoversLodging', "afterSnapshot" -> 'pricingSnapshot' -> 'promoCoversLodging') AS "pricing"
+    FROM "RegistrationOperation"
+    WHERE "eventId" = ${eventId} AND "type" = 'AMENDMENT' AND "afterSnapshot" -> 'pricingSnapshot' IS NOT NULL
+      AND (${registrationId ?? null}::text IS NULL OR "registrationId" = ${registrationId ?? null})
+    ORDER BY "registrationId", "createdAt" DESC`;
+  return new Map(rows.map((row) => [row.registrationId, record(row.pricing)] as const));
+}
+
+async function loadPromoContext(client: Client, eventId: string, registrationId: string) {
+  const [submission, amended, redemption] = await Promise.all([
+    client.publicRegistrationSubmission.findFirst({ where: { eventId, registrationId }, select: { pricingSnapshot: true } }),
+    latestAmendmentPricing(client, eventId, registrationId),
+    client.promoCodeRedemption.findUnique({ where: { registrationId }, select: redemptionSelect }),
+  ]);
+  return promoContextOf(currentSnapshot(amended.get(registrationId), submission?.pricingSnapshot), redemption ? asRedemptionFact(redemption) : null);
+}
+
+// ---------------------------------------------------------------------------
 // The staff review queue
 // ---------------------------------------------------------------------------
 
 async function loadReviewFacts(client: Client, context: Context) {
   const eventId = context.eventId;
-  const [registrations, roommates, rules, authorities, requests, acks, changeRequests, submissions, rates] = await Promise.all([
+  const [registrations, roommates, rules, authorities, requests, acks, changeRequests, submissions, rates, amendments, redemptions] = await Promise.all([
     client.registration.findMany({
       where: { eventId, status: { not: "DRAFT" }, clubRegistration: { is: null }, groupRegistration: { is: null } },
       select: {
@@ -871,9 +1076,11 @@ async function loadReviewFacts(client: Client, context: Context) {
     client.guardianAuthority.findMany({ where: { eventId, state: "ACTIVE", adultPersonId: { not: null } }, select: { id: true, minorPersonId: true, adultPersonId: true, declaredAt: true } }),
     loadCurrentRequests(client, eventId),
     client.eventLodgingReviewAck.findMany({ where: { eventId }, select: { itemKey: true, fingerprint: true } }),
-    client.eventLodgingChangeRequest.findMany({ where: { eventId, resolvedAt: null }, select: { id: true, registrationId: true, category: true, firstNight: true, lastNight: true, partySize: true }, orderBy: { createdAt: "asc" } }),
+    client.eventLodgingChangeRequest.findMany({ where: { eventId, resolvedAt: null }, select: { id: true, registrationId: true, category: true, firstNight: true, lastNight: true, partySize: true, roomCount: true, bringsExtraBedding: true }, orderBy: { createdAt: "asc" } }),
     client.publicRegistrationSubmission.findMany({ where: { eventId }, select: { registrationId: true, pricingSnapshot: true } }),
     loadRates(client, context.eventLodgingId),
+    latestAmendmentPricing(client, eventId),
+    client.promoCodeRedemption.findMany({ where: { eventId }, select: redemptionSelect }),
   ]);
   const { capacity, unitIdsByCategory } = await loadCategoryCapacity(client, context);
   const registrationFacts = new Map<string, RegistrationFact>(registrations.map((registration) => [registration.id, {
@@ -896,6 +1103,7 @@ async function loadReviewFacts(client: Client, context: Context) {
   const requestSnapshots: RequestSnapshot[] = requests.map((request) => ({
     requestId: request.requestId, version: request.version, registrationId: request.registrationId,
     category: request.category, firstNight: request.firstNight, lastNight: request.lastNight, partySize: request.partySize,
+    roomCount: request.roomCount, bringsExtraBedding: request.bringsExtraBedding,
     groundFloorNeeded: request.groundFloorNeeded, accessibleRoomNeeded: request.accessibleRoomNeeded, privateRoomRequested: request.privateRoomRequested,
     householdPreference: request.householdPreference, afterDeadline: request.afterDeadline, source: request.source, updatedAt: request.createdAt.toISOString(),
   }));
@@ -905,27 +1113,36 @@ async function loadReviewFacts(client: Client, context: Context) {
     const stored = lines.find((line) => line.key === LODGING_LINE_KEY);
     return [submission.registrationId, typeof stored?.amountCents === "number" ? stored.amountCents : 0] as const;
   }));
+  // What a registration's saved promo code makes of a lodging change: the registrant's real change, not the list change.
+  const snapshotOf = new Map(submissions.map((submission) => [submission.registrationId, currentSnapshot(amendments.get(submission.registrationId), submission.pricingSnapshot)] as const));
+  const redemptionOf = new Map(redemptions.map((row) => [row.registrationId, asRedemptionFact(row)] as const));
+  const impactOf = (registrationId: string, fromCents: number, toCents: number) => {
+    const impact = lodgingChargeImpact({ ...promoContextOf(snapshotOf.get(registrationId) ?? null, redemptionOf.get(registrationId) ?? null), fromCents, toCents });
+    return impact.promo ? { promoCode: impact.promo.code, coversLodging: impact.promo.coversLodging, sponsored: impact.promo.sponsored, registrantDeltaCents: impact.registrantDeltaCents, discountDeltaCents: impact.discountDeltaCents, belowMinimumAfter: impact.belowMinimumAfter } : undefined;
+  };
   // What a request costs at today's rates. A church-billed event is never charged lodging through its registrations.
-  const costOf = (category: LodgingCategory | null, nightCount: number, party: number) => {
+  const costOf = (category: LodgingCategory | null, nightCount: number, party: number, rooms: number) => {
     if (context.churchBilled || !category) return 0;
-    const charge = lodgingCharge({ category, nights: nightCount, partySize: party, rates, ignoreMinimum: true, units: unitsForParty(party, capacity[category]?.unitCapacity) });
+    const charge = lodgingCharge({ category, nights: nightCount, partySize: party, rates, ignoreMinimum: true, units: capacity[category]?.roomBased ? rooms : 1 });
     return charge.kind === "CHARGE" ? charge.line.amountCents : 0;
   };
-  const lodgingCharges = requestSnapshots.map((request) => ({
-    registrationId: request.registrationId,
-    chargedCents: context.churchBilled ? 0 : chargedByRegistration.get(request.registrationId) ?? 0,
-    currentCents: costOf(request.category, requestNights(request, context.nights).length, request.partySize),
-  }));
-  const changeRequestFacts = changeRequests.map((change) => ({
-    id: change.id,
-    registrationId: change.registrationId,
-    category: change.category,
-    chargedCents: context.churchBilled ? 0 : chargedByRegistration.get(change.registrationId) ?? 0,
-    requestedCents: costOf(change.category, requestNights({ firstNight: change.firstNight ? toNight(change.firstNight) : null, lastNight: change.lastNight ? toNight(change.lastNight) : null }, context.nights).length, change.partySize),
-  }));
+  const lodgingCharges = requestSnapshots.map((request) => {
+    const chargedCents = context.churchBilled ? 0 : chargedByRegistration.get(request.registrationId) ?? 0;
+    const currentCents = costOf(request.category, requestNights(request, context.nights).length, request.partySize, request.roomCount);
+    return { registrationId: request.registrationId, chargedCents, currentCents, impact: chargedCents === currentCents ? undefined : impactOf(request.registrationId, chargedCents, currentCents) };
+  });
+  const changeRequestFacts = changeRequests.map((change) => {
+    const chargedCents = context.churchBilled ? 0 : chargedByRegistration.get(change.registrationId) ?? 0;
+    const requestedCents = costOf(change.category, requestNights({ firstNight: change.firstNight ? toNight(change.firstNight) : null, lastNight: change.lastNight ? toNight(change.lastNight) : null }, context.nights).length, change.partySize, change.roomCount);
+    return {
+      id: change.id, registrationId: change.registrationId, category: change.category, chargedCents, requestedCents,
+      partySize: change.partySize, roomCount: change.roomCount, bringsExtraBedding: change.bringsExtraBedding,
+      impact: impactOf(change.registrationId, chargedCents, requestedCents),
+    };
+  });
   const items = buildReviewItems({ nights: context.nights, registrations: registrationFacts, people, requests: requestSnapshots, roommates: roommateRows, rules: ruleRows, guardians, capacity, changeRequests: changeRequestFacts, lodgingCharges, promotedRegistrationIds: registrations.filter((registration) => registration.waitlistEntry?.status === "PROMOTED").map((registration) => registration.id) });
   const acked = new Set(acks.map((ack) => `${ack.itemKey}\u0000${ack.fingerprint}`));
-  return { registrations, registrationFacts, people, requestSnapshots, roommates, roommateRows, ruleRows, guardians, capacity, unitIdsByCategory, items, acked };
+  return { registrations, registrationFacts, people, requestSnapshots, roommates, roommateRows, ruleRows, guardians, capacity, unitIdsByCategory, items, acked, openChanges: changeRequests, sponsoredRegistrationIds: new Set(redemptions.filter((row) => row.promoCode.sponsoringOrganizationId !== null).map((row) => row.registrationId)) };
 }
 
 function visibleItems(items: readonly ReviewItem[], canSeeSensitive: boolean) {
@@ -970,6 +1187,13 @@ export type StaffLodgingRequestView = {
   firstNight: string | null;
   lastNight: string | null;
   partySize: number;
+  /** Rooms the registrant chose (1 for a site, a tent or no type) and whether they acknowledged bringing sleeping bags or air mattresses (#803). */
+  roomCount: number;
+  bringsExtraBedding: boolean;
+  /** The registration holds a church-sponsored promo code: a lodging edit does not change what the church is billed. */
+  churchSponsored: boolean;
+  /** What the registrant asked for that the edit policy held for staff (the open change request), if any. */
+  openChange: { category: LodgingCategory | null; firstNight: string | null; lastNight: string | null; partySize: number; roomCount: number; bringsExtraBedding: boolean } | null;
   privateRoomRequested: boolean;
   householdPreference: HouseholdPreference;
   source: LodgingRequestSource;
@@ -986,7 +1210,8 @@ export type StaffLodgingRequestsView = {
   eventId: string;
   settings: { collectsPreferences: boolean; preferencesDeadline: string | null; effectiveDeadline: string; deadlinePassed: boolean; fullBehavior: FullBehavior };
   nights: string[];
-  offered: Array<{ category: LodgingCategory; label: string; unitsInService: number; requested: number; rate: LodgingRate | null }>;
+  /** `requested` is rooms for a room-type category (`inRooms`) and people for any other. */
+  offered: Array<{ category: LodgingCategory; label: string; unitsInService: number; requested: number; inRooms: boolean; rate: LodgingRate | null }>;
   requests: StaffLodgingRequestView[];
   queue: Array<ReviewItem & { acknowledged: boolean }>;
   rules: Array<{ id: string; kind: LodgingRuleKind; personA: string; personB: string | null; reason: string; effectiveFrom: string | null; effectiveUntil: string | null; createdAt: string; ended: boolean; endReason: string | null; actorUserId: string | null }>;
@@ -1015,6 +1240,7 @@ export async function getStaffLodgingRequestsView(eventId: string, options: { ca
     const before = lastShown.get(version.requestId);
     const sameButFlags = before !== undefined
       && before.category === version.category && before.partySize === version.partySize
+      && before.roomCount === version.roomCount && before.bringsExtraBedding === version.bringsExtraBedding
       && before.firstNight?.getTime() === version.firstNight?.getTime() && before.lastNight?.getTime() === version.lastNight?.getTime()
       && before.privateRoomRequested === version.privateRoomRequested && before.householdPreference === version.householdPreference
       && !version.afterDeadline;
@@ -1036,6 +1262,13 @@ export async function getStaffLodgingRequestsView(eventId: string, options: { ca
       firstNight: request.firstNight,
       lastNight: request.lastNight,
       partySize: request.partySize,
+      roomCount: request.roomCount,
+      bringsExtraBedding: request.bringsExtraBedding,
+      churchSponsored: facts.sponsoredRegistrationIds.has(request.registrationId),
+      openChange: (() => {
+        const change = facts.openChanges.filter((row) => row.registrationId === request.registrationId).at(-1);
+        return change ? { category: change.category, firstNight: change.firstNight ? toNight(change.firstNight) : null, lastNight: change.lastNight ? toNight(change.lastNight) : null, partySize: change.partySize, roomCount: change.roomCount, bringsExtraBedding: change.bringsExtraBedding } : null;
+      })(),
       privateRoomRequested: request.privateRoomRequested,
       householdPreference: request.householdPreference,
       source: request.source,
@@ -1066,7 +1299,10 @@ export async function getStaffLodgingRequestsView(eventId: string, options: { ca
       category,
       label: lodgingCategoryLabels[category],
       unitsInService: facts.capacity[category]!.unitsInService,
-      requested: requests.filter((request) => request.category === category).reduce((total, request) => total + request.partySize, 0),
+      requested: facts.requestSnapshots
+        .filter((request) => request.category === category && facts.registrationFacts.get(request.registrationId)?.active)
+        .reduce((total, request) => total + requestedQuantity(request, facts.capacity[category]?.roomBased === true), 0),
+      inRooms: facts.capacity[category]?.roomBased === true,
       rate: rateForCategory(rates, category),
     }));
   const queue = visibleItems(facts.items, options.canSeeSensitive).map((item) => ({ ...item, acknowledged: facts.acked.has(`${item.key}\u0000${item.fingerprint}`) }));
@@ -1115,7 +1351,22 @@ export type RegistrantLodgingView = {
   deadline: string;
   fullBehavior: FullBehavior;
   nights: string[];
-  offered: Array<{ category: LodgingCategory; label: string; full: boolean; rate: LodgingRate | null; /** People a typical room takes; the per-room charge divides the party by it. */ unitCapacity: number | null }>;
+  offered: Array<{
+    category: LodgingCategory;
+    label: string;
+    full: boolean;
+    rate: LodgingRate | null;
+    /** People a typical room takes (the smallest "sleeps up to" among its rooms): the beds the extra-bedding note compares the party with. */
+    unitCapacity: number | null;
+    /** A room-type category: the registrant chooses how many rooms (#803). A site or a tent is one unit. */
+    roomBased: boolean;
+    /** Rooms free on every night of the stay, leaving this registration's own request out; null is no fixed limit. */
+    roomsFree: number | null;
+    /** Per night, the beds of the rooms in service, largest first (room-type types): what the over-beds note is worked out from. */
+    roomBeds: Record<string, number[]> | null;
+    /** Whether the type's units provide linens, for the bring-your-own-bedding note. */
+    linens: "ALL" | "SOME" | "NONE";
+  }>;
   people: Array<{ personId: string; name: string }>;
   request: {
     version: number;
@@ -1123,6 +1374,8 @@ export type RegistrantLodgingView = {
     firstNight: string | null;
     lastNight: string | null;
     partySize: number;
+    roomCount: number;
+    bringsExtraBedding: boolean;
     groundFloorNeeded: boolean;
     accessibleRoomNeeded: boolean;
     privateRoomRequested: boolean;
@@ -1159,10 +1412,8 @@ export async function getRegistrantLodgingView(input: { eventId: string; registr
     client.eventLodgingChangeRequest.count({ where: { registrationId: input.registrationId, resolvedAt: null } }),
   ]);
   const current = requests[0] ?? null;
-  const demand = demandByCategoryNight((await loadCurrentRequests(client, input.eventId, {
-    registrationId: { not: input.registrationId },
-    registration: { status: { in: [...lodgingActiveRegistrationStatuses] } },
-  })).map((row) => ({ registrationId: row.registrationId, category: row.category, nights: requestNights(row, context.nights), partySize: row.partySize })));
+  // The shared counting rule (rooms for a room-type category, people for any other), less this registration's own group.
+  const demand = await demandExcluding(client, input.eventId, context.nights, input.registrationId);
   const partySize = current?.partySize ?? Math.max(1, own.people.length);
   const stayNights = current ? requestNights(current, context.nights) : context.nights;
   const offered = (Object.keys(capacity) as LodgingCategory[])
@@ -1170,10 +1421,14 @@ export async function getRegistrantLodgingView(input: { eventId: string; registr
     .map((category) => ({
       category,
       label: lodgingCategoryLabels[category],
-      full: !categoryFits({ capacity: capacity[category]!, demand: demand.get(category), nights: stayNights, partySize }).fits,
+      full: !categoryFits({ capacity: capacity[category]!, demand: demand.get(category), nights: stayNights, partySize, roomCount: current && current.category === category ? current.roomCount : 1 }).fits,
       // A church-billed registrant is never shown a price.
       rate: context.churchBilled ? null : rateForCategory(rates, category),
       unitCapacity: capacity[category]?.unitCapacity ?? null,
+      roomBased: capacity[category]?.roomBased === true,
+      roomsFree: capacity[category]?.roomBased === true ? categoryFits({ capacity: capacity[category]!, demand: demand.get(category), nights: stayNights, partySize, roomCount: 1 }).minimumAvailable : null,
+      roomBeds: capacity[category]?.roomBeds ?? null,
+      linens: capacity[category]?.linens ?? "NONE",
     }));
   const active = (lodgingActiveRegistrationStatuses as readonly string[]).includes(own.status);
   const pastDeadline = isPastLodgingDeadline(context.deadlineDay, now, context.timezone);
@@ -1220,6 +1475,7 @@ export async function getRegistrantLodgingView(input: { eventId: string; registr
     request: current
       ? {
           version: current.version, category: current.category, firstNight: current.firstNight, lastNight: current.lastNight, partySize: current.partySize,
+          roomCount: current.roomCount, bringsExtraBedding: current.bringsExtraBedding,
           groundFloorNeeded: current.groundFloorNeeded, accessibleRoomNeeded: current.accessibleRoomNeeded, privateRoomRequested: current.privateRoomRequested,
           householdPreference: current.householdPreference, updatedAt: current.createdAt.toISOString(),
         }
@@ -1259,6 +1515,8 @@ export async function getLodgingRequestExportRows(eventId: string, client: Prism
         firstNight: request.firstNight,
         lastNight: request.lastNight,
         partySize: request.partySize,
+        roomCount: request.roomCount,
+        bringsExtraBedding: request.bringsExtraBedding,
         privateRoomRequested: request.privateRoomRequested,
         householdPreference: request.householdPreference,
         mutualRoommates: mutual,

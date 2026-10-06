@@ -87,7 +87,9 @@ export function LodgingAssignmentsWorkspace({ eventName, initialView, canConfigu
     try {
       const result = await action();
       if (result.workspace) setView(result.workspace);
-      setNotice(success);
+      // A party placed above a room's beds is allowed, with a warning: they are bringing extra bedding (#803).
+      const warnings = (result.result as { warnings?: Array<{ unitName: string; beds: number; people: number }> } | undefined)?.warnings ?? [];
+      setNotice(warnings.length === 0 ? success : `${success} Warning: ${warnings.map((warning) => `${warning.unitName} has ${warning.people} people for ${warning.beds} bed${warning.beds === 1 ? "" : "s"}; the party is bringing extra bedding`).join("; ")}.`);
       return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That could not be saved.");
@@ -225,7 +227,7 @@ export function LodgingAssignmentsWorkspace({ eventName, initialView, canConfigu
       onDragOver={(event) => { if (!blocked) event.preventDefault(); }} onDrop={(event) => onDrop(event, { kind: "UNIT", unit })}>
       <header>
         <h4 id={headingId}>{unit.name}</h4>
-        <span className="lodging-assign-status">{statusLabels[unit.status]}</span>
+        <span className="lodging-assign-status">{statusLabels[unit.status]}{unit.extraBedding ? " (extra bedding)" : ""}</span>
       </header>
       <p className="lodging-assign-meta">
         {unit.beds || (unit.isArea ? "Counted area" : "No beds listed")}
@@ -388,6 +390,8 @@ export function LodgingAssignmentsWorkspace({ eventName, initialView, canConfigu
               <span className="lodging-assign-chip-meta">
                 {person.registrationCode ?? "not registered yet"}
                 {person.category ? `, wants ${lodgingCategoryLabels[person.category]}` : ""}
+                {person.category && person.roomCount > 0 && person.kind === "ATTENDEE" ? `, ${person.roomCount} ${person.roomCount === 1 ? "room" : "rooms"}` : ""}
+                {person.bringsExtraBedding ? ", bringing extra bedding" : ""}
                 {person.asksForLodging ? "" : ", not asking for lodging"}
                 {person.wantedFirstNight && person.wantedLastNight && person.wantedFirstNight !== nights[0] ? `, ${range(person.wantedFirstNight, person.wantedLastNight)}` : ""}
                 {!person.active ? ", registration not active" : ""}

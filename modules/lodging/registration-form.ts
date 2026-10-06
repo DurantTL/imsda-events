@@ -8,11 +8,12 @@ import { LodgingError } from "@/modules/lodging/errors";
 import {
   categoryFits,
   requestNights,
+  resolveRoomChoice,
   type FullBehavior,
   type HouseholdPreference,
   type RegistrationLodgingInput,
 } from "@/modules/lodging/preferences-domain";
-import { lodgingCharge, unitsForParty, type LodgingPriceLine } from "@/modules/lodging/pricing";
+import { lodgingCharge, type LodgingPriceLine } from "@/modules/lodging/pricing";
 import {
   demandExcluding,
   findRoommateTarget,
@@ -45,11 +46,17 @@ export type PublicLodgingOffer = {
   categories: Array<{
     category: LodgingCategory;
     label: string;
-    /** People the type can still take each night; null is no fixed limit. */
+    /** What the type can still take each night, in rooms for a room-type category and people for any other; null is no fixed limit. */
     remaining: Record<string, number | null>;
     rate: LodgingRate | null;
-    /** People a typical room takes; a per-room charge divides the party by it (rounded up). Null for sites and tents. */
+    /** People a typical room takes (the smallest "sleeps up to" among its rooms): the beds the extra-bedding note compares the party with. Null for sites and tents. */
     unitCapacity: number | null;
+    /** A room-type category: the registrant chooses how many rooms ("How many rooms?"), and `remaining` counts rooms. */
+    roomBased: boolean;
+    /** Per night, the beds of the rooms in service, largest first (room-type types): what the over-beds note is worked out from. */
+    roomBeds: Record<string, number[]> | null;
+    /** Whether the type's units provide linens, for the bring-your-own-bedding note. */
+    linens: "ALL" | "SOME" | "NONE";
   }>;
 };
 
@@ -75,6 +82,9 @@ export async function getPublicLodgingOffer(eventId: string, client: PrismaClien
       // A church-billed registrant is never shown a price.
       rate: context.churchBilled ? null : rateForCategory(rates, category),
       unitCapacity: capacity[category]!.unitCapacity ?? null,
+      roomBased: capacity[category]!.roomBased === true,
+      roomBeds: capacity[category]!.roomBeds ?? null,
+      linens: capacity[category]!.linens ?? "NONE",
     }));
   return { nights: context.nights, deadline: context.deadlineDay, fullBehavior: context.fullBehavior, categories };
 }
@@ -92,7 +102,9 @@ export async function lodgingQuoteLine(client: PrismaClient, eventId: string, lo
   const nights = requestNights({ firstNight: lodging.firstNight ?? null, lastNight: lodging.lastNight ?? null }, context.nights).length;
   const partySize = Math.min(lodging.partySize ?? Math.max(1, attendeeCount), Math.max(1, attendeeCount));
   const [{ capacity }, rates] = await Promise.all([loadCategoryCapacity(client, context), loadRates(client, context.eventLodgingId)]);
-  const charge = lodgingCharge({ category: lodging.category, nights, partySize, rates, units: unitsForParty(partySize, capacity[lodging.category]?.unitCapacity) });
+  // The rooms the registrant chose price the line (a quote never refuses: the submission decides what is allowed).
+  const rooms = capacity[lodging.category]?.roomBased ? Math.min(Math.max(1, lodging.roomCount ?? 1), partySize) : 1;
+  const charge = lodgingCharge({ category: lodging.category, nights, partySize, rates, units: rooms });
   return charge.kind === "CHARGE" ? charge.line : null;
 }
 
@@ -103,6 +115,9 @@ export type LodgingPlan = {
     firstNight: string | null;
     lastNight: string | null;
     partySize: number;
+    /** Rooms chosen (1 unless the category is a room-type one) and the extra-bedding acknowledgement (#803). */
+    roomCount: number;
+    bringsExtraBedding: boolean;
     groundFloorNeeded: boolean;
     accessibleRoomNeeded: boolean;
     privateRoomRequested: boolean;
@@ -137,6 +152,9 @@ export async function planRegistrationLodging(
     firstNight: wanted.firstNight ?? null,
     lastNight: wanted.lastNight ?? null,
     partySize,
+    // Settled below, once the category's capacity is known.
+    roomCount: 1,
+    bringsExtraBedding: false,
     groundFloorNeeded: wanted.groundFloorNeeded ?? false,
     accessibleRoomNeeded: wanted.accessibleRoomNeeded ?? false,
     privateRoomRequested: wanted.privateRoomRequested ?? false,
@@ -150,6 +168,11 @@ export async function planRegistrationLodging(
     if (!capacity[next.category] || capacity[next.category]!.unitsInService === 0) {
       throw new LodgingError("CATEGORY_NOT_OFFERED", `${lodgingCategoryLabels[next.category]} is not available for this event.`);
     }
+    // The choice is kept as asked (rooms between 1 and the party; extra bedding acknowledged), with no availability check.
+    const choice = resolveRoomChoice({ capacity: capacity[next.category], partySize, nights, roomCount: wanted.roomCount, bringsExtraBedding: wanted.bringsExtraBedding, requireAcknowledgement: true });
+    if (!choice.ok) throw new LodgingError(choice.code, choice.message);
+    next.roomCount = choice.roomCount;
+    next.bringsExtraBedding = choice.bringsExtraBedding;
   } else if (next.category) {
     // Every unit row is locked before any capacity is read; the lock is held until this registration commits. Then
     // the capacity version is bumped under the locks: if another writer committed since this Serializable transaction
@@ -163,12 +186,22 @@ export async function planRegistrationLodging(
       throw new LodgingError("CATEGORY_NOT_OFFERED", `${lodgingCategoryLabels[next.category]} is not available for this event.`);
     }
     const demand = (await demandExcluding(tx, input.eventId, context.nights, "__no_registration__")).get(next.category);
-    if (!categoryFits({ capacity: categoryCapacity, demand, nights, partySize }).fits) {
+    // The rooms chosen, against the rooms free on every night (what a room-type category is counted in); a party larger
+    // than the beds in those rooms is allowed once the registrant acknowledges bringing extra bedding.
+    const free = categoryFits({ capacity: categoryCapacity, demand, nights, partySize, roomCount: 1 });
+    if (!free.fits) {
       throw new LodgingError("CATEGORY_FULL", `${lodgingCategoryLabels[next.category]} is full for those nights. Choose another type or other nights.`);
     }
+    const choice = resolveRoomChoice({
+      capacity: categoryCapacity, partySize, nights, roomCount: wanted.roomCount, bringsExtraBedding: wanted.bringsExtraBedding, requireAcknowledgement: true,
+      roomsAvailable: free.minimumAvailable,
+    });
+    if (!choice.ok) throw new LodgingError(choice.code, choice.message);
+    next.roomCount = choice.roomCount;
+    next.bringsExtraBedding = choice.bringsExtraBedding;
     const charge = lodgingCharge({
       category: next.category, nights: nights.length, partySize, rates: await loadRates(tx, context.eventLodgingId),
-      units: unitsForParty(partySize, categoryCapacity.unitCapacity),
+      units: next.roomCount,
     });
     if (charge.kind === "BELOW_MINIMUM_NIGHTS") {
       throw new LodgingError("BELOW_MINIMUM_NIGHTS", `${lodgingCategoryLabels[next.category]} needs at least ${charge.minimumNights} nights.`);
@@ -204,6 +237,8 @@ export async function recordRegistrationLodging(
       firstNight: next.firstNight ? new Date(`${next.firstNight}T00:00:00Z`) : null,
       lastNight: next.lastNight ? new Date(`${next.lastNight}T00:00:00Z`) : null,
       partySize: next.partySize,
+      roomCount: next.roomCount,
+      bringsExtraBedding: next.bringsExtraBedding,
       groundFloorNeeded: next.groundFloorNeeded,
       accessibleRoomNeeded: next.accessibleRoomNeeded,
       privateRoomRequested: next.privateRoomRequested,

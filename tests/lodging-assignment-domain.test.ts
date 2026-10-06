@@ -11,6 +11,7 @@ import {
   noticeIsObsolete,
   occupancyByNight,
   occupancyOf,
+  overBedsByNight,
   offerExpiry,
   parseAssignmentCsv,
   placementSchema,
@@ -590,5 +591,93 @@ describe("report CSVs", () => {
 
   it("assignment cells match the headers", () => {
     expect(assignmentCsvCells({ occupantId: "a", kind: "Attendee", registrationCode: "R", name: "N", building: "B", place: "P", placeKey: "unit:p", firstNight: "x", lastNight: "y", people: 1 }, false)).toHaveLength(10);
+  });
+});
+
+describe("a party above a room's beds is a warning; two parties still cannot overfill a room (#803)", () => {
+  const room = (id: string, beds = 2, extra: Partial<PlanUnit> = {}) => unit(id, beds, { roomLike: true, ...extra });
+  const member = (key: string, group: string | null, unitId: string, first = nights[0]!, last = nights[0]!): PlanPlacement => place(key, unitId, first, last, { groupKey: group });
+  const seg = (id: string, key: string, group: string | null, unitId: string): Segment => ({ ...segment(id, key, unitId, nights[0], nights[0]), groupKey: group });
+
+  it("places a party of five in a two-bed room with a warning, not a refusal", () => {
+    const result = planPlacements({ ...base, segments: [], units: units(room("r1")), placements: ["a", "b", "c", "d", "e"].map((key) => member(key, "reg-1", "r1")) });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.plan.creates).toHaveLength(5);
+    expect(result.plan.warnings).toEqual([{ kind: "OVER_BEDS", unitId: "r1", unitName: "Room r1", beds: 2, people: 5, night: nights[0] }]);
+  });
+
+  it("is still refused when the placement would be above the beds without being one party", () => {
+    // An unlinked expected guest has no registration: it never gets the allowance.
+    const guest = planPlacements({ ...base, segments: [], units: units(room("r1")), placements: ["a", "b", "c"].map((key) => member(key, null, "r1")) });
+    expect(guest).toMatchObject({ ok: false, index: 2, problem: { code: "UNIT_FULL" } });
+    // A tent area is not a numbered room: its capacity always holds.
+    const area = planPlacements({ ...base, segments: [], units: units(unit("t", 2, { roomLike: false })), placements: ["a", "b", "c"].map((key) => member(key, "reg-1", "t")) });
+    expect(area).toMatchObject({ ok: false, index: 2, problem: { code: "UNIT_FULL" } });
+  });
+
+  it("stops a second party from overfilling a room another party already holds", () => {
+    const second = planPlacements({ ...base, segments: [seg("s1", "a", "reg-1", "r1"), seg("s2", "b", "reg-1", "r1")], units: units(room("r1")), placements: [member("x", "reg-2", "r1")] });
+    expect(second).toMatchObject({ ok: false, problem: { code: "UNIT_FULL" } });
+    // A third person of party 1 may not go over the beds while someone from party 2 is in the room.
+    const mixed = planPlacements({ ...base, segments: [seg("s1", "a", "reg-1", "r1"), seg("s3", "x", "reg-2", "r1")], units: units(room("r1")), placements: [member("c", "reg-1", "r1")] });
+    expect(mixed).toMatchObject({ ok: false, problem: { code: "UNIT_FULL" } });
+    const overMixed = planPlacements({ ...base, segments: [seg("s1", "a", "reg-1", "r1"), seg("s2", "b", "reg-1", "r1"), seg("s3", "x", "reg-2", "r1")], units: units(room("r1", 3)), placements: [member("c", "reg-1", "r1")] });
+    expect(overMixed).toMatchObject({ ok: false, problem: { code: "UNIT_FULL" } });
+    // Within the beds two parties still share a room as before.
+    const shared = planPlacements({ ...base, segments: [seg("s1", "a", "reg-1", "r1")], units: units(room("r1", 3)), placements: [member("x", "reg-2", "r1")] });
+    expect(shared.ok).toBe(true);
+    // In one batch the same holds: party 1's third person goes over the beds only while nobody else is in the room.
+    const batch = planPlacements({ ...base, segments: [], units: units(room("r1")), placements: [member("a", "reg-1", "r1"), member("x", "reg-2", "r1"), member("b", "reg-1", "r1"), member("c", "reg-1", "r1")] });
+    expect(batch).toMatchObject({ ok: false, index: 2, problem: { code: "UNIT_FULL" } });
+  });
+
+  it("does not turn the room into a conflict while one party holds it, and does the moment someone else is in it", () => {
+    const rows = (segments: Segment[]) => unitConflicts({ nights: [nights[0]!], units: units(room("r1")), segments: segments.map((entry) => ({ ...entry, assignmentId: entry.id })) });
+    const oneParty = rows(["a", "b", "c", "d"].map((key, index) => seg(`s${index}`, key, "reg-1", "r1")));
+    expect(oneParty.map((row) => row.kind)).toEqual(["EXTRA_BEDDING"]);
+    const twoParties = rows([seg("s1", "a", "reg-1", "r1"), seg("s2", "b", "reg-1", "r1"), seg("s3", "x", "reg-2", "r1")]);
+    expect(twoParties.map((row) => row.kind)).toEqual(["OVER_CAPACITY"]);
+    // An unlinked group never gets it either.
+    expect(rows(["a", "b", "c"].map((key, index) => seg(`s${index}`, key, null, "r1"))).map((row) => row.kind)).toEqual(["OVER_CAPACITY"]);
+  });
+
+  it("keeps the allowance through a move and a transfer", () => {
+    const moved = planPlacements({
+      ...base, segments: [seg("s1", "a", "reg-1", "r2")], units: units(room("r1"), room("r2")),
+      placements: [{ ...member("a", "reg-1", "r1"), mode: "MOVE" as const }, member("b", "reg-1", "r1"), member("c", "reg-1", "r1")],
+    });
+    expect(moved.ok && moved.plan.warnings).toHaveLength(1);
+    const transferred = planTransfer({
+      segments: [seg("s1", "a", "reg-1", "r1"), seg("s2", "b", "reg-1", "r1"), seg("s3", "c", null, "r1")], segmentId: "s3",
+      to: { occupantKey: "d", attendeeId: "d", placeholderId: null, people: 1, groupKey: "reg-1" }, units: units(room("r1")), buckets: base.buckets, eventNights: nights, confirmSpecialUse: true,
+    });
+    expect(transferred.ok).toBe(true);
+  });
+});
+
+describe("over-beds nights are classified night by night, the same way for the workspace and the closeout report (#803)", () => {
+  const room = unit("r1", 2, { roomLike: true });
+  const seg = (id: string, key: string, group: string, first: string, last: string): Segment => ({ ...segment(id, key, "r1", first, last), groupKey: group });
+
+  it("calls a night above the beds one party when only that registration is in the room, and an overfill when anyone else is", () => {
+    // Party 1 (three people) holds the room on the 15th and 16th; on the 17th a second party shares it above the beds.
+    const segments = [
+      seg("a", "a1", "reg-1", nights[0]!, nights[1]!), seg("b", "a2", "reg-1", nights[0]!, nights[1]!), seg("c", "a3", "reg-1", nights[0]!, nights[1]!),
+      seg("d", "a4", "reg-1", nights[2]!, nights[2]!), seg("e", "x1", "reg-2", nights[2]!, nights[2]!), seg("f", "x2", "reg-2", nights[2]!, nights[2]!),
+    ];
+    const over = overBedsByNight(room, segments, nights);
+    expect(over.map((entry) => [entry.night, entry.oneParty])).toEqual([[nights[0], true], [nights[1], true], [nights[2], false]]);
+    // The closeout report lists both, the workspace reads the room as over capacity because one night is an overfill.
+    const rows = unitConflicts({ nights, units: units(room), segments: segments.map((entry) => ({ ...entry, assignmentId: entry.id })) });
+    expect(rows.map((row) => row.kind).sort()).toEqual(["EXTRA_BEDDING", "OVER_CAPACITY"]);
+    expect(over.some((entry) => !entry.oneParty)).toBe(true);
+  });
+
+  it("is a warning only when every night above the beds holds one party", () => {
+    const segments = ["a", "b", "c"].map((id) => seg(id, id, "reg-1", nights[0]!, nights[1]!));
+    expect(overBedsByNight(room, segments, nights).every((entry) => entry.oneParty)).toBe(true);
+    expect(overBedsByNight(unit("r1", 2), segments, nights).every((entry) => !entry.oneParty)).toBe(true); // not a numbered room
+    expect(overBedsByNight(room, [seg("a", "a", "reg-1", nights[0]!, nights[1]!)], nights)).toEqual([]); // within the beds
   });
 });

@@ -28,6 +28,7 @@ import {
   type PlanPlacement,
   type ProposalPerson,
   type ProposalUnit,
+  type PlacementWarning,
   type Segment,
 } from "@/modules/lodging/assignment-domain";
 import { LodgingError, type LodgingErrorCode } from "@/modules/lodging/errors";
@@ -279,7 +280,8 @@ export async function supersedePendingNotices(tx: Tx, eventId: string, attendeeI
   return result.count;
 }
 
-export type AssignmentResult = PlanOutcome & { cancelledNotices: number };
+/** `warnings` are placements that were allowed but deserve a look: a party above a room's beds, bringing extra bedding (#803). */
+export type AssignmentResult = PlanOutcome & { cancelledNotices: number; warnings?: PlacementWarning[] };
 
 export async function finishPlan(tx: Tx, meta: PlanMeta, plan: Plan, summary: string, auditAction: string, extra: Record<string, unknown> = {}): Promise<AssignmentResult> {
   const outcome = await writePlan(tx, plan, meta);
@@ -291,7 +293,7 @@ export async function finishPlan(tx: Tx, meta: PlanMeta, plan: Plan, summary: st
       metadata: { created: outcome.created, released: outcome.released, noted: outcome.noted, unchanged: outcome.unchanged, source: meta.source, assignmentIds: outcome.assignmentIds.slice(0, 50), cancelledNotices, ...extra },
     }, tx);
   }
-  return { ...outcome, cancelledNotices };
+  return { ...outcome, cancelledNotices, ...(plan.warnings && plan.warnings.length > 0 ? { warnings: plan.warnings } : {}) };
 }
 
 function wrapOverlap<T>(promise: Promise<T>) {
@@ -322,6 +324,7 @@ function toPlanPlacements(
       mode: placement.mode,
       confirmSpecialUse: placement.confirmSpecialUse,
       source,
+      groupKey: occupant.registrationId,
     };
   });
 }
@@ -384,7 +387,7 @@ export async function applyAssignmentAction(eventId: string, actorUserId: string
       assertCanBePlaced(target, await archivedPlaceholders(tx, eventId));
       const result = planTransfer({
         segments: state.segments, segmentId: input.assignmentId,
-        to: { occupantKey: target.occupantKey, attendeeId: target.attendeeId, placeholderId: target.ref.kind === "PLACEHOLDER" ? target.placeholderId : null, people: target.people },
+        to: { occupantKey: target.occupantKey, attendeeId: target.attendeeId, placeholderId: target.ref.kind === "PLACEHOLDER" ? target.placeholderId : null, people: target.people, groupKey: target.registrationId },
         units: state.units, buckets: state.bucketIds, eventNights, confirmSpecialUse: true,
       });
       if (!result.ok) throw problemError(result.problem);

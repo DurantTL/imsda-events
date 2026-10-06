@@ -3,6 +3,8 @@
 import { useState, type FormEvent } from "react";
 import { describeRate, lodgingCategories, lodgingCategoryLabels } from "@/modules/lodging/domain";
 import {
+  CHURCH_SPONSOR_WARNING,
+  chargeChangeSentence,
   fullBehaviors,
   lodgingRuleKindLabels,
   lodgingRuleKinds,
@@ -10,7 +12,8 @@ import {
 } from "@/modules/lodging/preferences-domain";
 import type { StaffLodgingRequestView, StaffLodgingRequestsView } from "@/modules/lodging/preferences-service";
 
-type Reply = { requests?: StaffLodgingRequestsView; result?: { priceNeedsReview?: boolean; chargeDeltaCents?: number } };
+type ChargeResult = { priceNeedsReview?: boolean; belowMinimumAfter?: boolean; churchSponsorReview?: boolean; chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; originallyChargedCents?: number; requestNowCostsCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null };
+type Reply = { requests?: StaffLodgingRequestsView; result?: ChargeResult };
 type Run = (action: () => Promise<Reply>, success: string) => Promise<void>;
 
 async function call(url: string, method: string, body: unknown): Promise<Reply> {
@@ -36,19 +39,19 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
   const [view, setView] = useState(initialView);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [chargeDeltaCents, setChargeDeltaCents] = useState<number | null>(null);
+  const [chargeChange, setChargeChange] = useState<ChargeResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [showAcknowledged, setShowAcknowledged] = useState(false);
   const base = `/api/events/${view.eventId}/lodging`;
 
   const run: Run = async (action, success) => {
-    setBusy(true); setError(""); setNotice(""); setChargeDeltaCents(null);
+    setBusy(true); setError(""); setNotice(""); setChargeChange(null);
     try {
       const result = await action();
       // The settings route sends the staff view only to someone who may read it; otherwise keep what is on screen.
       if (result.requests) setView(result.requests);
       setNotice(success);
-      if (result.result?.priceNeedsReview) setChargeDeltaCents(result.result.chargeDeltaCents ?? 0);
+      if (result.result?.priceNeedsReview || result.result?.churchSponsorReview) setChargeChange(result.result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That could not be saved.");
     } finally { setBusy(false); }
@@ -66,9 +69,10 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
     </div></div>
     {error ? <p className="form-error" role="alert">{error}</p> : null}
     {notice ? <p className="usage-note" role="status">{notice}</p> : null}
-    {chargeDeltaCents !== null ? <p className="form-error" role="status">
-      This change alters the lodging charge ({chargeDeltaCents < 0 ? "-" : "+"}${(Math.abs(chargeDeltaCents) / 100).toFixed(2)}), but the registration&apos;s total was not changed. Record the difference as an adjustment in{" "}
-      <a href={`/finance?event=${encodeURIComponent(view.eventId)}`}>Payments</a>; nothing is charged or refunded automatically.
+    {chargeChange !== null ? <p className="form-error" role="status" data-testid="charge-change">
+      {chargeChangeSentence(chargeChange)}{" "}
+      {chargeChange.churchSponsorReview ? "Nothing is charged or refunded automatically." : <>Record the difference as an adjustment in{" "}
+      <a href={`/finance?event=${encodeURIComponent(view.eventId)}`}>Payments</a>; nothing is charged or refunded automatically.</>}
     </p> : null}
 
     <section className="panel" aria-labelledby="lodging-settings">
@@ -93,8 +97,8 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
       </form> : <p>{view.settings.collectsPreferences ? "Registrants choose a lodging type" : "Registrants do not choose lodging (staff assign)"}; changes close after {view.settings.effectiveDeadline}; a full type shows {view.settings.fullBehavior === "WAITLIST" ? "\"Full\" and guests can join a lodging waitlist" : "\"Full\""}. Event administrators change these.</p>}
       <table>
         <caption>Lodging types offered</caption>
-        <thead><tr><th scope="col">Type</th><th scope="col">Units in service</th><th scope="col">People asking</th><th scope="col">Rate</th></tr></thead>
-        <tbody>{view.offered.map((row) => <tr key={row.category}><th scope="row">{row.label}</th><td>{row.unitsInService}</td><td>{row.requested}</td><td>{row.rate ? formatRate(row.rate) : "Included or free"}</td></tr>)}</tbody>
+        <thead><tr><th scope="col">Type</th><th scope="col">Units in service</th><th scope="col">Asking (rooms or people)</th><th scope="col">Rate</th></tr></thead>
+        <tbody>{view.offered.map((row) => <tr key={row.category}><th scope="row">{row.label}</th><td>{row.unitsInService}</td><td>{row.requested} {row.inRooms ? (row.requested === 1 ? "room" : "rooms") : (row.requested === 1 ? "person" : "people")}</td><td>{row.rate ? formatRate(row.rate) : "Included or free"}</td></tr>)}</tbody>
       </table>
     </section>
 
@@ -104,6 +108,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
       {queue.length === 0 ? <p>Nothing needs review.</p> : <ul>{queue.map((item) => <li key={`${item.key}:${item.fingerprint}`}>
         <strong>{reviewKindLabels[item.kind]}</strong>{item.sensitive ? " (restricted)" : ""}{item.acknowledged ? " (acknowledged)" : ""}
         <p>{item.title}. {item.detail}</p>
+        {item.flags?.includes("CHURCH_SPONSOR_REVIEW") ? <p role="note"><strong>Church sponsorship needs review.</strong> {CHURCH_SPONSOR_WARNING}</p> : null}
         {item.roommateRequestId && !item.acknowledged ? <form onSubmit={(event: FormEvent<HTMLFormElement>) => {
           event.preventDefault();
           const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
@@ -131,7 +136,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
       <h3 id="lodging-requests-table">Requests ({view.requests.length})</h3>
       {view.requests.length === 0 ? <p>No one has asked for lodging yet.</p> : <div className="table-wrap"><table>
         <thead><tr>
-          <th scope="col">Registration</th><th scope="col">Type</th><th scope="col">Nights</th><th scope="col">People</th>
+          <th scope="col">Registration</th><th scope="col">Type</th><th scope="col">Nights</th><th scope="col">People</th><th scope="col">Rooms</th>
           {view.canSeeSensitive ? <th scope="col">Ground floor</th> : null}{view.canSeeSensitive ? <th scope="col">Accessible room</th> : null}
           <th scope="col">Private room</th><th scope="col">Household</th><th scope="col">Roommates</th><th scope="col">Version</th><th scope="col">Change</th>
         </tr></thead>
@@ -193,6 +198,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
       <td>{request.category ? lodgingCategoryLabels[request.category] : "No preference"}</td>
       <td>{request.firstNight ? `${request.firstNight} to ${request.lastNight}` : "Whole event"}</td>
       <td>{request.partySize}</td>
+      <td>{request.category ? request.roomCount : "—"}{request.bringsExtraBedding ? " (bringing sleeping bags or air mattresses)" : ""}</td>
       {view.canSeeSensitive ? <td>{request.groundFloorNeeded ? "Yes" : "No"}</td> : null}
       {view.canSeeSensitive ? <td>{request.accessibleRoomNeeded ? "Yes" : "No"}</td> : null}
       <td>{request.privateRoomRequested ? "Yes" : "No"}</td>
@@ -201,7 +207,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
       <td>{request.version}</td>
       <td><button type="button" className="secondary-button" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Close" : "Details"}</button></td>
     </tr>
-    {open ? <tr><td colSpan={view.canSeeSensitive ? 11 : 9}>
+    {open ? <tr><td colSpan={view.canSeeSensitive ? 12 : 10}>
       <h4>History ({request.history.length} version{request.history.length === 1 ? "" : "s"})</h4>
       <ul>{request.history.map((entry) => <li key={entry.version}>Version {entry.version}, {entry.at.slice(0, 10)}, by {entry.source.toLowerCase().replace("_", " ")}: {entry.category ? lodgingCategoryLabels[entry.category] : "no preference"}{entry.reason ? `. Reason: ${entry.reason}` : ""}{entry.afterDeadline ? " (after the deadline)" : ""}</li>)}</ul>
       {request.roommates.length > 0 ? <>
@@ -218,6 +224,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
           </form> : null}
         </li>)}</ul>
       </> : null}
+      {request.churchSponsored ? <p role="note" className="form-error"><strong>Church-sponsored registration.</strong> {CHURCH_SPONSOR_WARNING}</p> : null}
       <h4>Change this request (staff)</h4>
       <form onSubmit={(event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -228,6 +235,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
           firstNight: text("firstNight"),
           lastNight: text("lastNight"),
           partySize: Number(form.get("partySize")),
+          ...(Number(form.get("roomCount")) ? { roomCount: Number(form.get("roomCount")) } : {}),
           privateRoomRequested: form.get("privateRoomRequested") === "on",
           householdPreference: form.get("householdPreference"),
           ...(view.canSeeSensitive ? { groundFloorNeeded: form.get("groundFloorNeeded") === "on", accessibleRoomNeeded: form.get("accessibleRoomNeeded") === "on" } : {}),
@@ -238,6 +246,8 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
         <label>First night <input type="date" name="firstNight" defaultValue={request.firstNight ?? ""} /></label>
         <label>Last night <input type="date" name="lastNight" defaultValue={request.lastNight ?? ""} /></label>
         <label>People <input type="number" name="partySize" min={1} max={100} defaultValue={request.partySize} required /></label>
+        <label>Rooms <input type="number" name="roomCount" min={1} max={100} defaultValue={request.roomCount} /></label>
+        {request.openChange ? <p className="field-hint" role="note">The registrant asked for: {request.openChange.category ? lodgingCategoryLabels[request.openChange.category] : "no preference"}, {request.openChange.partySize} {request.openChange.partySize === 1 ? "person" : "people"}{request.openChange.category ? `, ${request.openChange.roomCount} ${request.openChange.roomCount === 1 ? "room" : "rooms"}` : ""}{request.openChange.bringsExtraBedding ? ", bringing sleeping bags or air mattresses" : ""}. The fields below start from the current request.</p> : null}
         <label><input type="checkbox" name="privateRoomRequested" defaultChecked={request.privateRoomRequested} /> Private room</label>
         <label>Household <select name="householdPreference" defaultValue={request.householdPreference}><option value="TOGETHER">Together</option><option value="FLEXIBLE">Flexible</option></select></label>
         {view.canSeeSensitive ? <>

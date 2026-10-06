@@ -4,6 +4,7 @@ import {
   LODGING_REQUEST_CSV_HEADERS,
   buildReviewItems,
   categoryFits,
+  heldRoomsFor,
   demandByCategoryNight,
   isPastLodgingDeadline,
   lodgingDeadlineDay,
@@ -13,6 +14,7 @@ import {
   normalizeName,
   registrantRoommateSchema,
   requestGrew,
+  roomBasedCategories,
   roommateStatus,
   ruleCreateSchema,
   separationViolations,
@@ -227,6 +229,10 @@ describe("when a changed request needs room again", () => {
     expect(requestGrew(before, { ...before, nights: ["2027-06-15", "2027-06-16", "2027-06-17"] })).toBe(true);
     expect(requestGrew(before, { ...before, nights: ["2027-06-16", "2027-06-17"] })).toBe(true);
   });
+  it("does for more rooms, and not for fewer", () => {
+    expect(requestGrew({ ...before, roomCount: 1 }, { ...before, roomCount: 2 })).toBe(true);
+    expect(requestGrew({ ...before, roomCount: 2 }, { ...before, roomCount: 1 })).toBe(false);
+  });
   it("does not for the same, fewer people or fewer nights", () => {
     expect(requestGrew(before, before)).toBe(false);
     expect(requestGrew(before, { ...before, partySize: 1 })).toBe(false);
@@ -249,6 +255,24 @@ describe("the capacity at selection", () => {
     expect(categoryFits({ capacity: capacity(5), demand, nights: ["2027-06-17", "2027-06-18"], partySize: 5 }).fits).toBe(true);
   });
 
+  it("counts rooms, not people, for a room-type category, and people for any other", () => {
+    const requests = [
+      { registrationId: "r1", category: "DORM_ROOM" as const, nights: ["2027-06-15"], partySize: 8, roomCount: 2 },
+      { registrationId: "r2", category: "DORM_ROOM" as const, nights: ["2027-06-15"], partySize: 3, roomCount: 1 },
+      { registrationId: "r3", category: "TENT" as const, nights: ["2027-06-15"], partySize: 4, roomCount: 1 },
+    ];
+    const rooms = demandByCategoryNight(requests, new Set(["DORM_ROOM"]));
+    expect(rooms.get("DORM_ROOM")?.get("2027-06-15")).toBe(3);
+    expect(rooms.get("TENT")?.get("2027-06-15")).toBe(4);
+    // Without the room-type set everything counts people (the earlier rule).
+    expect(demandByCategoryNight(requests).get("DORM_ROOM")?.get("2027-06-15")).toBe(11);
+    expect(roomBasedCategories({ DORM_ROOM: capacity(4, { roomBased: true }), TENT: capacity(4) })).toEqual(new Set(["DORM_ROOM"]));
+    // Four rooms available: three are asked for, so one more fits and two do not.
+    const roomCapacity = capacity(4, { roomBased: true });
+    expect(categoryFits({ capacity: roomCapacity, demand: rooms.get("DORM_ROOM"), nights: ["2027-06-15"], partySize: 9, roomCount: 1 })).toMatchObject({ fits: true, minimumAvailable: 1 });
+    expect(categoryFits({ capacity: roomCapacity, demand: rooms.get("DORM_ROOM"), nights: ["2027-06-15"], partySize: 9, roomCount: 2 })).toMatchObject({ fits: false, firstFullNight: "2027-06-15" });
+  });
+
   it("never fills a category with no fixed limit and never fits one with nothing in service", () => {
     expect(categoryFits({ capacity: capacity(null), demand: new Map([["2027-06-15", 500]]), nights, partySize: 40 }).fits).toBe(true);
     expect(categoryFits({ capacity: capacity(10, { unitsInService: 0 }), demand: undefined, nights, partySize: 1 }).fits).toBe(false);
@@ -262,7 +286,7 @@ const registrations: ReviewFacts["registrations"] = new Map([
   ["r4", { confirmationCode: "REG-4", label: "REG-4 (Drew Example)", active: false }],
 ]);
 const request = (overrides: Partial<RequestSnapshot> & Pick<RequestSnapshot, "registrationId">): RequestSnapshot => ({
-  requestId: `q-${overrides.registrationId}`, version: 1, category: "DORM_ROOM", firstNight: null, lastNight: null, partySize: 2,
+  requestId: `q-${overrides.registrationId}`, version: 1, category: "DORM_ROOM", firstNight: null, lastNight: null, partySize: 2, roomCount: 1, bringsExtraBedding: false,
   groundFloorNeeded: false, accessibleRoomNeeded: false, privateRoomRequested: false, householdPreference: "TOGETHER",
   afterDeadline: false, source: "REGISTRANT", updatedAt: "2027-02-01T00:00:00.000Z", ...overrides,
 });
@@ -348,6 +372,33 @@ describe("the staff review queue", () => {
     expect(kinds(cancelled)).toEqual([]);
   });
 
+  it("counts a room-type category in rooms: requests are over when the rooms asked exceed the rooms available", () => {
+    const rooms = { DORM_ROOM: capacity(3, { roomBased: true, unitCapacity: 2 }) };
+    // Ten people in three rooms is fine; the people are not the count.
+    const fine = buildReviewItems(facts({
+      capacity: rooms,
+      requests: [request({ registrationId: "r1", partySize: 6, roomCount: 2, bringsExtraBedding: true }), request({ registrationId: "r2", partySize: 4, roomCount: 1, bringsExtraBedding: true })],
+    }));
+    expect(kinds(fine).filter((kind) => kind === "OVER_CAPACITY")).toEqual([]);
+    const over = buildReviewItems(facts({
+      capacity: rooms,
+      requests: [request({ registrationId: "r1", partySize: 6, roomCount: 3 }), request({ registrationId: "r2", partySize: 2, roomCount: 1 })],
+    }));
+    expect(over.filter((item) => item.kind === "OVER_CAPACITY")).toHaveLength(1);
+    expect(over.find((item) => item.kind === "OVER_CAPACITY")?.title).toContain("4 rooms asked");
+  });
+
+  it("lists a party bringing extra bedding with its room count, so staff see the flag in the queue", () => {
+    const items = buildReviewItems(facts({
+      capacity: { DORM_ROOM: capacity(10, { roomBased: true, unitCapacity: 2 }) },
+      requests: [request({ registrationId: "r1", partySize: 5, roomCount: 2, bringsExtraBedding: true }), request({ registrationId: "r2", partySize: 2, roomCount: 1 })],
+    }));
+    const bedding = items.filter((item) => item.kind === "EXTRA_BEDDING");
+    expect(bedding).toHaveLength(1);
+    expect(bedding[0]).toMatchObject({ registrationIds: ["r1"], sensitive: false });
+    expect(bedding[0]?.title).toContain("party of 5 in 2 rooms, bringing sleeping bags or air mattresses");
+  });
+
   it("marks accessibility items sensitive, and reports a ground floor need that a type cannot meet", () => {
     const items = buildReviewItems(facts({
       capacity: { DORM_ROOM: capacity(100, { groundLevelUnits: 0 }) },
@@ -370,7 +421,7 @@ describe("the staff review queue", () => {
 
   it("names the charge change a registrant asked for, with its sign", () => {
     const up = buildReviewItems(facts({ changeRequests: [{ id: "c1", registrationId: "r1", category: "DORM_ROOM", chargedCents: 4000, requestedCents: 6000 }] }));
-    expect(up[0]?.title).toContain("lodging charge change requested (+$20.00)");
+    expect(up[0]?.title).toContain("lodging charge change requested (list +$20.00)");
     const down = buildReviewItems(facts({ changeRequests: [{ id: "c1", registrationId: "r1", category: "TENT", chargedCents: 6000, requestedCents: 4000 }] }));
     expect(down[0]?.title).toContain("-$20.00");
     expect(up[0]?.fingerprint).not.toBe(down[0]?.fingerprint);
@@ -409,7 +460,7 @@ describe("the staff review queue", () => {
 
 describe("the general export", () => {
   const exportRow = {
-    confirmationCode: "REG-1", category: "DORM_ROOM" as const, firstNight: "2027-06-16", lastNight: "2027-06-17", partySize: 2,
+    confirmationCode: "REG-1", category: "DORM_ROOM" as const, firstNight: "2027-06-16", lastNight: "2027-06-17", partySize: 2, roomCount: 2, bringsExtraBedding: false,
     privateRoomRequested: true, householdPreference: "TOGETHER" as const, mutualRoommates: 1, waitingRoommates: 2,
     updatedAt: "2027-02-01T00:00:00.000Z", groundFloorNeeded: true, accessibleRoomNeeded: false,
   };
@@ -428,5 +479,17 @@ describe("the general export", () => {
   it("has no name, email, phone or address column", () => {
     const headers = [...LODGING_REQUEST_CSV_HEADERS, ...LODGING_REQUEST_ACCESSIBILITY_HEADERS].join(" ").toLowerCase();
     for (const forbidden of ["name", "email", "phone", "address", "note", "medical"]) expect(headers).not.toContain(forbidden);
+  });
+});
+
+describe("heldRoomsFor (the room picker's floor, #803 round 3)", () => {
+  it("follows the rooms in the current view and never exceeds the party", () => {
+    expect(heldRoomsFor({ category: "CONFERENCE_CENTER_ROOM", roomCount: 3 }, "CONFERENCE_CENTER_ROOM", 4)).toBe(3);
+    expect(heldRoomsFor({ category: "CONFERENCE_CENTER_ROOM", roomCount: 3 }, "CONFERENCE_CENTER_ROOM", 2)).toBe(2);
+  });
+  it("is one for another type or no request, so a saved change moves the floor with the view", () => {
+    expect(heldRoomsFor({ category: "CONFERENCE_CENTER_ROOM", roomCount: 3 }, "DORM_ROOM", 4)).toBe(1);
+    expect(heldRoomsFor(null, "DORM_ROOM", 4)).toBe(1);
+    expect(heldRoomsFor(undefined, "DORM_ROOM", 4)).toBe(1);
   });
 });

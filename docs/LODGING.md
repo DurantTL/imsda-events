@@ -1,4 +1,4 @@
-# Lodging inventory, availability, preferences and assignment (#198 slice 1, #199 slice 2, #200 slice 3)
+# Lodging inventory, availability, preferences and assignment (#198 slice 1, #199 slice 2, #200 slice 3, #803 pricing follow-ups)
 
 Reusable lodging inventory for on-site properties, with per-event state and
 night-by-night availability computed on the server. The inventory tables hold
@@ -281,9 +281,10 @@ submission, and the server decides them inside the registration's transaction.
   `REGISTRATION_FORM`, no capacity check, no line) and the confirmation says "Your
   lodging choice is saved; the event team will confirm it if a place opens". The
   charge is added later, in Payments, if a place opens.
-- **What it asks**: type (a type that is full for the chosen nights and people is
+- **What it asks**: type (a type that is full for the chosen nights is
   shown as Full and cannot be picked), first and last night, how many of the
-  registration's attendees are staying, private room, whether the party can be
+  registration's attendees are staying, **"How many rooms?"** for a room-type type
+  (see "Rooms" below), private room, whether the party can be
   split, the two yes/no accessibility boxes ("No medical details" is stated),
   and roommate requests (by name plus confirmation code, or between two people on
   the registration).
@@ -319,14 +320,11 @@ night, 3 nights"):
   the event's rates into the line. **No rate means no line**: a type without a
   rate adds nothing (Camp Heritage club events, or any unpriced type). Nothing is
   seeded; staff enter every amount, and only MANAGE_FINANCE can.
-- **Rooms for a party.** A per-room (or per-site) rate is charged for
-  `ceil(partySize / the type's room size)` rooms, where the room size is the
-  smallest capacity among the event's rooms of that type (a party of 6 in 2-person
-  dorm rooms pays for 3 rooms, and the line reads "Lodging: Dorm room (3 rooms)").
-  Only ROOM-kind units count this way; an RV site or a tent is one unit. A
-  per-person rate counts people, never rooms. *Caleb: this is the rule as built;
-  tell us if the group should pay for one room instead.*
-- `calculationWithLine` and `addUndiscountedLine` (in the form definition module) add the line to the form's
+- **Rooms (#803).** A per-room (or per-site) rate is charged for the **rooms the registrant chose**
+  (`roomCount` on the request version), never for the party divided by a room size (that interim rule is gone). The line
+  reads "Lodging: Dorm room (3 rooms)" for more than one. An RV site or a tent is one unit whatever room count is sent.
+  A per-person rate counts people, never rooms. Nothing is seeded; staff enter every amount.
+- `calculationWithLine` (in the form definition module) adds the line to the form's
   own calculation, so the **processing fee follows the new subtotal** exactly as
   it does for the form's own lines. The browser prices the same way for the running
   total and the review step; the server prices again and its numbers win.
@@ -335,15 +333,53 @@ night, 3 nights"):
   payment amount (all read the snapshot or the registration total) with no other
   wiring. An **amendment** of the form's answers carries the stored lodging line
   through unchanged instead of repricing it away.
-- **Promo codes do not discount lodging** (until the event team decides
-  otherwise). The discount and a code's minimum are worked out on the form's own
-  lines; the lodging line is added afterwards (`addUndiscountedLine`), and the
-  processing fee follows the final subtotal. This holds for the quote endpoint
-  (given the same `lodging` choice), the submission and amendments, for a
-  registration-level and a per-person code alike, including a church-sponsored code.
-  A church-billed event (deferred organization invoice) bills through its invoice:
-  lodging is recorded but never priced into the registration, and its expected
-  lodging charge is 0 everywhere, including the review queue.
+- **Promo codes discount lodging (#803).** Caleb's decision reversed the interim "promo codes never discount lodging"
+  rule. The lodging line joins the registration's own lines **before** a promo code is decided
+  (`calculationWithLine`), so a **registration-level** code, percent or fixed, **church-sponsored or not**, discounts the
+  whole subtotal, lodging included, and a code's minimum is checked against it. A **per-person** code stays on that
+  person's own lines: the lodging line has no attendee, so it never touches it. The quote endpoint (given the same `lodging`
+  choice), the submission and an amendment of the answers (which carries the stored line through, then applies the stored
+  code) all work on the same lines and agree to the cent, and the processing fee follows the final, discounted subtotal.
+  The line itself stays in the pricing snapshot at its full amount, with the discount recorded beside it. A church-billed
+  event (deferred organization invoice) bills through its invoice: lodging is recorded but never priced into the registration,
+  and its expected lodging charge is 0 everywhere, including the review queue. Attendance reconciliation already applies the
+  recorded code to the registration's charges, lodging included.
+  - **Registrations submitted before this keep the old math.** A new submission writes `promoCoversLodging: true` on its
+    pricing snapshot; an older snapshot has no such field, which reads as false. An amendment of an older registration decides
+    its saved code on the form's own lines and adds the stored lodging line afterwards, undiscounted (the old rule), so an
+    unrelated answer change never lowers its total. Only a new submission's amendment discounts lodging. This holds for
+    **every** registration without the marker, with a saved code or without one (`priceAmendedRegistration`): the stored
+    lodging line is added after the form's own calculation, with no second pass at credits. (A new registration's amendment does
+    put the stored line among the lines first, so credits are clamped to the lines as they stand; a credit that an earlier
+    clamp already reduced is not "unclamped" by the added line.)
+  - **A lodging change shows what the registrant really pays, not the list figure.** With a saved registration-level code, the
+    staff screen after a charge-changing save, and the **Change requested** and **Lodging charge differs** queue items, show the
+    list change **and** the change after the code (`lodgingChargeImpact`, using the same `storedPromoDiscount` formula as an
+    amendment: the code on the other lines plus the lodging line when it covers lodging, with the code's minimum and cap), say
+    that a code applies, and for a church-sponsored code split it into the registrant's share and the sponsor's.
+    **After a save, the figure staff are told to record is the change THIS edit made**: the previous request and the new one,
+    both priced at today's rates against the same other lines (the same previous and next versions that decide whether the
+    edit changes the charge). Two staff edits in a row ($40 to $80, then $80 to $100) report +$40 then +$20; a revert ($80 back
+    to $40) reports -$40; with a 50% code each edit is split into its own registrant and sponsor shares. The registrant-request
+    audit entry (`LODGING_CHANGE_REQUESTED`, `deltaCents`) records the same per-request figure. The cumulative picture is
+    context only, worded "Originally charged $X at submission; the request now costs $Y." (X is the stored lodging line). The
+    queue items are different on purpose: they compare the stored charge with what the request costs now, so they stay
+    correct however many edits happened. Example: a 50% church code on an $80 line cut to $40 is -$40 at list price, -$20 for the registrant and -$20 for the
+    sponsor; a 100% church code is $0 for the registrant and the whole list change for the sponsor. The figures are on the
+    subtotal (before any card fee), and an older registration (above) shows its list change as the registrant's. When the
+    change would drop the subtotal under the code's minimum, the screen says an amendment would refuse it and the code would no
+    longer apply.
+  - **Interim, until the finance rule is settled: nothing here changes a church's bill.** What a church owes is computed from
+    the redemption's recorded discount (`PromoCodeRedemption.discountAmountCents`) and negative `PROMO_CODE` adjustments; a
+    lodging edit or a manual Payments adjustment moves neither. This applies to **church-flagged results only** (a
+    church-sponsored code): the save result is flagged when THIS edit moves the sponsor's share **or** when the cumulative
+    sponsor share differs from the original, so a return to zero after an earlier change still warns, and an unrelated edit
+    keeps the warning while the share differs. A flagged save result, queue item and staff screen lead with "Contact the
+    finance office before changing anything in Payments." and carry "This registration's church sponsorship does not change
+    automatically. The church's bill still reflects the original lodging. Contact the finance office before adjusting."; none
+    of them says to adjust the charge in Payments. The queue item carries the flag `CHURCH_SPONSOR_REVIEW`, and the
+    per-request staff card shows a church-sponsored note before anything is saved. No automatic billing change is built. For
+    every other result (no code, or a code that is not church-sponsored) the Payments guidance below applies unchanged.
 - **After submission the charge is never changed by a lodging edit.** Nothing
   reprices, and nothing creates a payment, a refund or a new charge by itself.
   Whether an edit "changes the charge" is decided by pricing the previous and the
@@ -353,20 +389,88 @@ night, 3 nights"):
     request ("Lodging charge change requested: +$X / -$Y") and the total stays
     as it was. A staff member makes the change if it is right.
   - A **staff** change is saved and marked `priceNeedsReview` with the charge
-    difference; the screen says so and links to Payments (`/finance?event=<id>`),
-    where the charge is adjusted with the existing adjustment flow.
+    difference **this edit made**; the screen says so and, except for a church-flagged result (above), links to Payments
+    (`/finance?event=<id>`), where the charge is adjusted with the existing adjustment flow.
   - The review queue lists **Lodging charge differs from the request** when the
     charge on the registration no longer matches the request at today's rates
     (for example after a rate change). It is a queue item only.
   - A registration that never went through a form (an import) has no stored
     pricing: its request is applied unpriced and listed the same way.
 
+### Rooms: the registrant's choice (#803)
+
+For a **room-type category** (every unit of the type is a numbered room: dorm and conference center rooms) the lodging step,
+the private page and staff edits ask **"How many rooms?"**, defaulting to 1.
+
+- **Allowed**: 1 up to the party size and up to the rooms available on every chosen night (`resolveRoomChoice`, shared by the
+  form, the server and the tests). The server checks it again under the locks and says how many rooms are free.
+- **A person-based type** (a tent, a counted tent area, an RV site) is one unit: no question, room count 1.
+- **Bedding, in two notes (Caleb).** Nearly every room is bring-your-own-bedding. The lodging step and the private page show a
+  general **"Bring your own bedding (sheets, pillow, blanket)"** for any chosen type unless **every** unit of that type has
+  `LodgingUnit.linensProvided === true`; an unknown (`null`) counts as not provided. If only **some** units provide linens it
+  reads **"Most rooms: bring your own bedding"**. It is data-driven: fixing the template data changes the note, nothing in the
+  code. The separate **over-beds note** is "Your party is larger than the beds in the rooms you picked; bring sleeping bags
+  or air mattresses for the extra people", with a tick box ("We will bring sleeping bags or air mattresses"), and only for
+  that case.
+- **The over-beds threshold is the best case.** The beds of the chosen rooms are the sum of the `roomCount` **largest**
+  effective bed counts (`capacityOverride ?? defaultCapacity`) among the type's rooms in service on **every chosen night**
+  (the smallest such sum over the nights), so the note and the acknowledgement appear only when even the most generous
+  placement cannot hold the party (`bestCaseBeds`, `partyExceedsBeds`). A party of four in one room is not asked when the
+  type has a four-bed room, even though most rooms sleep two. The refusal text asks for the acknowledgement only; it never
+  pushes more rooms.
+- **The acknowledgement is the registrant's own.** It is stored as `bringsExtraBedding` on the version, and only when the
+  registrant ticks it, and only while it applies. It is **asked for only when the registrant sets or changes the rooms, the
+  party or the type** (and at submission). An unrelated edit (a private-room tick, the household choice), and every **staff**
+  edit, **keep what was acknowledged before** and never invent one: a staff edit of a party above its beds is saved with the
+  flag false (the version's source says STAFF), and an old request above its beds is never refused for it. A
+  carried acknowledgement is dropped once the party no longer exceeds the beds.
+- **The rooms free are checked only when the request grows.** A registrant's edit asks for room only when it changes the
+  type, grows the party or the room count, or adds a night (`requestGrew`); then "full" (nothing free) and "only N rooms are
+  free" are said the same way whether one room or several were asked for. An unchanged edit on an overbooked type is
+  accepted.
+- **Two registrations that share a room count as two rooms.** Each registration's own groups count in the shared rule
+  (distinct units per registration), so a room shared by two parties takes two rooms of headroom. This is the safe direction
+  (never overbooks); sharing is rare and the cost is one room.
+- **Room-type versus person-based is decided by the units.** A category counts rooms only while **every** non-retired unit of
+  it is a numbered room (not a site, a tent or a counted area). Add a tent or an area to a category, or retire the last non-room
+  unit, and the category **flips** between counting rooms and counting people, along with its demand (a request for 4
+  people in 2 rooms is 2 while it counts rooms and 4 while it counts people). It is derived from the data each time, not
+  pinned in a setting, so check the type's units before changing them while requests exist (`roomBasedFromUnits`). A request
+  keeps its room count (within the party) while its type is not counted in rooms, so flipping back, or an unrelated edit in
+  between, never resets it. A mixed category (rooms with a tent or area among them) is **priced at one unit** and counted in
+  people, whatever room count a request carries.
+- **Stored** on `EventLodgingRequestVersion` (`roomCount`, `bringsExtraBedding`, and the same two on a held change request,
+  and `roomCount` on a waitlist entry), so every change is a new version as before. **Nothing reprices after
+  submission** (the #199 rule stays): a registrant who changes the room count after submitting creates a change request
+  carrying it (shown to staff with its rooms and bedding, and the staff request screen shows it beside the current
+  request), and staff adjust the charge in Payments.
+- **Rows that existed before are backfilled, not reinterpreted.** The migration (`20261006300000_lodging_room_count`) gives each
+  existing request version, held change request and waitlist entry the room count it was priced and counted under,
+  deterministically from stored data, in this order: (1) a request's first version from the registration form whose stored
+  lodging line was priced **per room or site** takes the room count the line names ("Lodging: Dorm room (3 rooms)"), or **one**
+  room when it names none (a line names a count only above one, so none means it was charged for one room, whatever the old
+  rule would say now); (2) otherwise, when there is no per-room stored line (no line, or a per-person one), the interim rule
+  `ceil(party / smallest default capacity of the event's assignable ROOM units of that category)` for a category whose every
+  unit is a numbered room; anything else stays one unit. A backfilled party gets no extra-bedding acknowledgement. The SQL
+  sits between `BACKFILL START` and `BACKFILL END` in the migration, runs in the migration's single transaction (a failing
+  statement leaves nothing behind: no column, no disabled trigger, the migration recorded as failed), and
+  `npm run test:lodging-preferences` runs that very block on rows it creates (honouring a transaction-local
+  `imsda.backfill_event` setting that is unset when the migration runs), including the stored-label, unlabelled-per-room and rule
+  paths, the change request and the waitlist entry, and running it twice.
+- **A registrant's waitlist join is capped at the party size** (their request is usually for another type, so its room count
+  says nothing about this one); with no count named it takes the request's room count when the request is for that type, else
+  one. Staff naming more rooms than people are refused.
+- **Staff** see the room count and the extra-bedding flag in the requests table, the export ("Rooms", "Extra bedding"), the
+  review queue ("Party is larger than the beds; bringing extra bedding") and the assignment workspace (on the person, and on
+  a room that holds a party above its beds, night by night, the same way the closeout report decides it: a night above the
+  beds with one party in the room is a warning, a night with anyone else in it is an overfill).
+
 ### Data model
 
 | Table | What it is |
 | --- | --- |
 | `EventLodgingRequest` | One per registration; points at its current version. |
-| `EventLodgingRequestVersion` | Immutable snapshot: type, nights (both null is the whole event), party size, `groundFloorNeeded`, `accessibleRoomNeeded`, `privateRoomRequested`, household preference, source (`REGISTRANT`, `STAFF`, `REGISTRATION_FORM`), the form version, actor user or access token, change reason, and `afterDeadline`. |
+| `EventLodgingRequestVersion` | Immutable snapshot: type, nights (both null is the whole event), party size, `groundFloorNeeded`, `accessibleRoomNeeded`, `privateRoomRequested`, household preference, **`roomCount` and `bringsExtraBedding` (#803)**, source (`REGISTRANT`, `STAFF`, `REGISTRATION_FORM`), the form version, actor user or access token, change reason, and `afterDeadline`. |
 | `EventLodgingRoommateRequest` | A directional "I would like to room with ...", from one registration to another (and optionally a person on each side), with the staff decision and the withdrawal. |
 | `EventLodgingRule` | A staff keep-together, split or keep-apart rule with reason, actor, effective nights and an end (never a delete). |
 | `EventLodgingReviewAck` | A staff acknowledgement of a review item. |
@@ -540,7 +644,8 @@ stored but the acknowledgements). It lists:
 - nights outside the event's bookable nights, and a type with nothing in
   service;
 - requests changed after the deadline;
-- types with more people asking on some night than the type takes;
+- types with more asked on some night than the type takes (rooms for a room-type type, people for any other);
+- a party bringing extra bedding, with its room count (#803);
 - changes a registrant asked for that the edit policy held for staff;
 - accessibility items (hidden without VIEW_SENSITIVE_DATA), including a ground
   floor need in a type with no ground-level unit.
@@ -628,8 +733,16 @@ locks and the version bump are removed**.
   workspace and reports list the conflict (night by night, drilling to the assignments). A **cancelled registration's
   room stays counted** until staff press "Release rooms of inactive registrations" (with a reason and history): capacity
   is only ever released on purpose.
-- Registrant choices (#199) are still counted against *requests*, not assignments: staff assignment is the authority for
-  rooms, and a registrant's "Full" reflects what guests asked for. (Counting assignments there is a later change.)
+- **A party above a room's beds is a warning, not a refusal (#803)**, but only when nobody from another party is in the
+  room on those nights: placing a registration's people (a "party") in a numbered room above its beds succeeds and the
+  result carries a warning ("Room 101 has 5 people for 2 beds; the party is bringing sleeping bags or air mattresses"), the room reads "full
+  (extra bedding)" in the workspace, and the report lists it as "Party above the room's beds (extra bedding)" (closeout, not a
+  conflict). **Unit capacity still stops two separate parties from overfilling a room**: the moment a second party is in the
+  room, or for a counted tent area, an expected guest not yet linked to a registration, a proposal or an import row, the
+  people simply must fit the beds, and a room with two parties above its beds is the "Over capacity" conflict as before. The
+  rule and the allowance are in `checkUnitPlacement` / the planner (`groupKey` on a placement and a segment).
+- Registrant choices (#199) are counted against the one shared rule below, which also counts what staff placed and what
+  waits on the lodging waitlist.
 
 ### The staff workspace
 
@@ -681,13 +794,21 @@ number); `ACCEPTED` → `PROMOTED` (staff place the party in a unit); any open s
   registration is skipped by the offer with that reason (the assessment); only a race that slips past it and hits the
   database's one-open-entry index is mapped to `WAITLIST_ALREADY_OPEN` (any other unique violation is not).
 - **One counting rule for free space** (`demandExcluding` / `loadDemandGroups` + `categoryFits`, shared by the registration
-  form, the waitlist join, request changes and offers). For each category C and night N, the people counted are the sum over
-  registrations g of the **largest of**: g's active request party (when the request is for C and covers N); the people of g
-  actually placed in units of C on N; and the party of g's live offers (OFFERED, not expired) and accepted entries for C
-  covering N. An expected guest, or a placement with no registration, is its own group (placed only, with its headcount).
-  Only active registrations count requests and entries (an accepted entry of a cancelled registration frees its places); a
-  placement counts until staff release it. The checked registration is left out (it stands in for itself). Free space is
-  the category's capacity less that, so a party fits when `capacity - demand >= party` on every night asked for.
+  form, the waitlist join, request changes and offers). For each category C and night N, the demand counted is the sum over
+  registrations g of the **largest of**: g's active request (when it is for C and covers N); what g actually has placed in
+  units of C on N; and g's live offers (OFFERED, not expired) and accepted entries for C covering N. An expected guest, or a
+  placement with no registration, is its own group (placed only).
+  - **The unit depends on the category (#803).** A **room-type category counts rooms** against the rooms available per night:
+    `request` is the rooms the registrant chose, `placed` is the number of **distinct units** of C the group occupies on N (one
+    party spread across two rooms is two; a whole party in one room is one), and `waiting` is the **room count on the entry**.
+    **Any other category counts people** (the request's party, the people placed, the entry's party) against the places it
+    takes. A room lowered to no places is not a room anyone can have.
+  - Only active registrations count requests and entries (an accepted entry of a cancelled registration frees its places); a
+    placement counts until staff release it. The checked registration is left out (it stands in for itself). Free space is
+    the category's capacity less that, so a request fits when `capacity - demand >= rooms (or people)` on every night asked for.
+  - **Waitlist entries carry a room count** (`EventLodgingWaitlistEntry.roomCount`, default 1, immutable like the rest of the
+    ask): a staff or registrant join takes it from the named count, else from the registration's request for that type. Offers
+    and the join check count it in rooms; the offer preview says "No place is free for 2 rooms".
   - The same people asked, offered and placed in one category are counted once (the largest term), but a placement in
     **another** category, more people than asked, nights outside the request, or an entry larger than the request are all
     still counted: a dorm of 40 with 40 requests is full for offers even though nobody is placed, and an expected group of
@@ -762,7 +883,11 @@ Every audit entry carries counts and ids, no names, and never an accessibility v
 - Unit tests: `tests/lodging-domain.test.ts`, `tests/lodging-templates.test.ts`,
   `tests/lodging-routes.test.ts`, `tests/lodging-preferences-domain.test.ts`,
   `tests/lodging-preferences-routes.test.ts`, `tests/lodging-registration-form.test.ts`
-  (every rate basis, the lodging line, rooms for a party, lodging never discounted by a promo code, the form's step and submission).
+  (every rate basis, the lodging line, charging by the rooms chosen, the room-count rules and the extra-bedding acknowledgement,
+  promo codes across quote, submission and amendment including a church-sponsored code, the form's step and submission),
+  `tests/lodging-shared-capacity.test.ts` (the counting rule in rooms: several rooms, one party across two units, a waitlist
+  entry with a room count), `tests/lodging-assignment-domain.test.ts` (a party above the beds is a warning; two parties cannot
+  overfill), `tests/lodging-charge-impact.test.ts` (what a lodging change costs the registrant after a saved code: percent, fixed, church-sponsored 100%, an older registration), `tests/class-readiness-803.test.ts`.
 - Real database: `npm run test:lodging` (`scripts/verify-lodging-inventory.ts`,
   local database only, wired into CI). It covers template sync idempotency and
   parallel runs, versioned retirement, event property choice, default holds,
@@ -816,11 +941,11 @@ Every audit entry carries counts and ids, no names, and never an accessibility v
   the database refusing cross-event rows and rewrites, and cascade on
   registration and event deletion; and, through the real public submission, the
   lodging step: the first version from the form, a charge for each rate basis,
-  no line for an unpriced type, rooms for a party, a full type refused at submit
-  (and five racing submissions leaving one winner, and a submit racing a
-  private-page save for the last place), a church-billed event never charged at submit or
-  after a save, a waitlisted submission keeping an unpriced request, lodging never
-  discounted by a promo code (including a church-sponsored one), a registrant's
+  no line for an unpriced type, the rooms chosen (charged, stored with the extra-bedding acknowledgement, refused above the
+  party or the rooms free), a full type refused at submit (five racing submissions leaving one winner for the last **room**,
+  parties of different sizes racing for it, and a submit racing a private-page save for the last room), a church-billed event
+  never charged at submit or after a save, a waitlisted submission keeping an unpriced request, promo codes discounting
+  lodging (a church-sponsored one too) with the quote, the submission and an amendment preview agreeing, a registrant's
   charge change becoming a change request with the total unchanged, staff changes
   flagged for Payments, a rate change alone not being a charge change, and a party
   larger than the registration reaching the queue.

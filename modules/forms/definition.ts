@@ -1680,7 +1680,8 @@ function finalizeCalculation(
 /**
  * The same calculation with a registration-level line added, replaced (same key) or, with `null`, removed: a line the
  * form's own fields do not price, such as lodging (#199). The processing fee follows the new subtotal exactly as it
- * does for the form's own lines.
+ * does for the form's own lines. Add the line **before** any promo code is applied (#803): a registration-level code
+ * discounts the whole subtotal, lodging included.
  */
 export function calculationWithLine(
   definition: RegistrationFormDefinition,
@@ -1694,9 +1695,10 @@ export function calculationWithLine(
 }
 
 /**
- * Adds a registration-level line that no promo code touches (lodging, #199) to a calculation that may already carry a
- * discount: the discount was worked out on the form's own lines, so the line is added after it, to the subtotal, the
- * pre-discount subtotal and the lines, and the processing fee follows the new subtotal.
+ * Adds a registration-level line that no promo code touches to a calculation that may already carry a discount: the
+ * discount was worked out on the other lines, so the line is added after it (subtotal, pre-discount subtotal and lines) and
+ * the processing fee follows the new subtotal. Only an amendment of a registration submitted before promo codes covered
+ * lodging (#803) uses it; every new calculation adds the line first (`calculationWithLine`).
  */
 export function addUndiscountedLine<T extends FormCalculation & { preDiscountSubtotalCents?: number }>(
   definition: RegistrationFormDefinition,
@@ -1706,8 +1708,9 @@ export function addUndiscountedLine<T extends FormCalculation & { preDiscountSub
 ): T {
   const payment = definition.payment;
   const cardSelected = Boolean(payment?.enabled && registrationResponses[payment.paymentMethodFieldKey] === payment.cardOptionValue);
+  const before = calculation.lineItems.find((item) => item.key === line.key)?.amountCents ?? 0;
   const lineItems = [...calculation.lineItems.filter((item) => item.key !== line.key), line];
-  const subtotalCents = calculation.subtotalCents - (calculation.lineItems.find((item) => item.key === line.key)?.amountCents ?? 0) + line.amountCents;
+  const subtotalCents = calculation.subtotalCents - before + line.amountCents;
   const processingFeeCents = processingFeeForSubtotal(payment, subtotalCents, cardSelected);
   return {
     ...calculation,
@@ -1715,9 +1718,7 @@ export function addUndiscountedLine<T extends FormCalculation & { preDiscountSub
     subtotalCents,
     processingFeeCents,
     totalCents: subtotalCents + processingFeeCents,
-    ...(calculation.preDiscountSubtotalCents !== undefined
-      ? { preDiscountSubtotalCents: calculation.preDiscountSubtotalCents - (calculation.lineItems.find((item) => item.key === line.key)?.amountCents ?? 0) + line.amountCents }
-      : {}),
+    ...(calculation.preDiscountSubtotalCents !== undefined ? { preDiscountSubtotalCents: calculation.preDiscountSubtotalCents - before + line.amountCents } : {}),
   };
 }
 
