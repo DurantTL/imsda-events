@@ -48,6 +48,7 @@
     "test:lodging": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-lodging-inventory.ts",
     "test:lodging-preferences": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-lodging-preferences.ts",
     "test:lodging-assignment": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-lodging-assignment.ts",
+    "test:lodging-assignment-http": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-lodging-assignment-http.ts",
     "imports:build": "tsx scripts/build-import-files.ts",
     "test:watch": "vitest",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run build",

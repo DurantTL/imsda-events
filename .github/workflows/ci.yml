@@ -219,6 +219,8 @@ jobs:
       - run: npm run test:public-messaging
       # Roster registrations: attendee limits and per-attendee capacity.
       - run: npm run test:public-roster
+      # Lodging assignment through the built app (#200): the private page shows a published room and roommates by first name only, nothing before publishing, the registrant waitlist route needs a private link and the same origin, and every staff route refuses a signed-out caller.
+      - run: npm run test:lodging-assignment-http
 
       - name: Show the app log when a suite failed
         if: failure()

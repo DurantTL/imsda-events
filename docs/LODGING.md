@@ -754,6 +754,13 @@ Every audit entry carries counts and ids, no names, and never an accessibility v
   and are cancelled when not yet sent; no change to any registration's charge; the
   database refusing rewrites, deletes and cross-event rows; and every row going
   with its event, including through the event deletion service.
+- Built app: `npm run test:lodging-assignment-http` (`scripts/verify-lodging-assignment-http.ts`,
+  local only, run in CI beside the other public HTTP suites). Through the real
+  routes and the real private page it checks that a published room and a roommate's
+  first name are shown, that nothing is shown before publishing, that no surname,
+  email, phone or confirmation code of the roommate reaches the page, that the
+  registrant waitlist route needs a private link and the same origin and cannot
+  offer or promote, and that every staff route and page refuses a signed-out caller.
 - Real database: `npm run test:lodging-preferences`
   (`scripts/verify-lodging-preferences.ts`, local database only, wired into
   CI). It covers versioned requests and partial stays, the deadline (and the
