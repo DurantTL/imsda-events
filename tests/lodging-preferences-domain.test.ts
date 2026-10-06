@@ -4,6 +4,7 @@ import {
   LODGING_REQUEST_CSV_HEADERS,
   buildReviewItems,
   categoryFits,
+  heldRoomsFor,
   demandByCategoryNight,
   isPastLodgingDeadline,
   lodgingDeadlineDay,
@@ -478,5 +479,17 @@ describe("the general export", () => {
   it("has no name, email, phone or address column", () => {
     const headers = [...LODGING_REQUEST_CSV_HEADERS, ...LODGING_REQUEST_ACCESSIBILITY_HEADERS].join(" ").toLowerCase();
     for (const forbidden of ["name", "email", "phone", "address", "note", "medical"]) expect(headers).not.toContain(forbidden);
+  });
+});
+
+describe("heldRoomsFor (the room picker's floor, #803 round 3)", () => {
+  it("follows the rooms in the current view and never exceeds the party", () => {
+    expect(heldRoomsFor({ category: "CONFERENCE_CENTER_ROOM", roomCount: 3 }, "CONFERENCE_CENTER_ROOM", 4)).toBe(3);
+    expect(heldRoomsFor({ category: "CONFERENCE_CENTER_ROOM", roomCount: 3 }, "CONFERENCE_CENTER_ROOM", 2)).toBe(2);
+  });
+  it("is one for another type or no request, so a saved change moves the floor with the view", () => {
+    expect(heldRoomsFor({ category: "CONFERENCE_CENTER_ROOM", roomCount: 3 }, "DORM_ROOM", 4)).toBe(1);
+    expect(heldRoomsFor(null, "DORM_ROOM", 4)).toBe(1);
+    expect(heldRoomsFor(undefined, "DORM_ROOM", 4)).toBe(1);
   });
 });

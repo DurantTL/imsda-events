@@ -49,7 +49,7 @@ import {
 import { changeHold, createHold, selectEventProperty, setEventRate, updateEventUnit, getLodgingView } from "@/modules/lodging/service";
 import { getPublicPromoCodeQuote } from "@/modules/promo-codes/repository";
 import { syncLodgingTemplates } from "@/modules/lodging/sync";
-import { CHURCH_SPONSOR_WARNING, chargeChangeSentence } from "@/modules/lodging/preferences-domain";
+import { CHURCH_SPONSOR_CONTACT_LEAD, CHURCH_SPONSOR_WARNING, chargeChangeSentence } from "@/modules/lodging/preferences-domain";
 import { readFileSync } from "node:fs";
 
 loadEnvConfig(process.cwd());
@@ -628,11 +628,15 @@ async function main() {
   const flipReg = await makeRegistration(eventId, "fl", 3);
   await saveAny(flipReg, { category: "CONFERENCE_CENTER_ROOM", partySize: 3, roomCount: 2, reason: "Phoned the office" }, staff);
   assert((await latestVersion(flipReg.id)).roomCount === 2, "the conference center counts rooms: two rooms are stored");
-  await prisma.lodgingUnit.updateMany({ where: { category: "CONFERENCE_CENTER_ROOM", key: "cc-1a" }, data: { kind: "TENT" } });
-  assert((await getPublicLodgingOffer(eventId, prisma))!.categories.find((entry) => entry.category === "CONFERENCE_CENTER_ROOM")!.roomBased === false, "with a tent among its units the type counts people");
-  assert((await save(flipReg, { category: "CONFERENCE_CENTER_ROOM", partySize: 3, privateRoomRequested: true })).changed, "an unrelated registrant edit still applies");
-  assert((await latestVersion(flipReg.id)).roomCount === 2, "and keeps the two rooms, rather than resetting them to one");
-  await prisma.lodgingUnit.updateMany({ where: { category: "CONFERENCE_CENTER_ROOM", key: "cc-1a" }, data: { kind: "ROOM" } });
+  const flipUnit = await prisma.lodgingUnit.findFirstOrThrow({ where: { category: "CONFERENCE_CENTER_ROOM", key: "cc-1a" }, select: { id: true, kind: true } });
+  try {
+    await prisma.lodgingUnit.update({ where: { id: flipUnit.id }, data: { kind: "TENT" } });
+    assert((await getPublicLodgingOffer(eventId, prisma))!.categories.find((entry) => entry.category === "CONFERENCE_CENTER_ROOM")!.roomBased === false, "with a tent among its units the type counts people");
+    assert((await save(flipReg, { category: "CONFERENCE_CENTER_ROOM", partySize: 3, privateRoomRequested: true })).changed, "an unrelated registrant edit still applies");
+    assert((await latestVersion(flipReg.id)).roomCount === 2, "and keeps the two rooms, rather than resetting them to one");
+  } finally {
+    await prisma.lodgingUnit.update({ where: { id: flipUnit.id }, data: { kind: flipUnit.kind } });
+  }
   assert((await save(flipReg, { category: "CONFERENCE_CENTER_ROOM", partySize: 3, privateRoomRequested: false })).changed && (await latestVersion(flipReg.id)).roomCount === 2, "and flipping back keeps them too");
   await prisma.registration.update({ where: { id: flipReg.id }, data: { status: "CANCELLED" } });
   // Tidy up: these registrations are done with, so the queue checks below see only their own items.
@@ -735,6 +739,40 @@ async function main() {
   await prisma.registration.update({ where: { id: minimum.reg.id }, data: { status: "CANCELLED" } }); // it no longer holds a conference center room
   // A registrant's own change request carries the same figures into the queue.
   await saveAny(promoted.reg, { category: "TENT", partySize: 1, reason: "Back to a tent" }, staff);
+
+  // The figure staff are told to record is THIS edit's change (previous to next at today's rates), never the running total
+  // since submission (#803 round 3): two edits in a row report their own changes and a revert reports the reverse. Tents are
+  // $40 a person, so the party size moves the line by $40 a step.
+  const stepReg = await submitForm({ people: 1, responses: { registration_fee: true, promo_code: "HALFOFF" }, lodging: { category: "TENT", partySize: 1 } });
+  const staffSaved = async (reg: Reg, raw: unknown) => { const result = await saveAny(reg, raw, staff); if (result.changeRequested) throw new Error("FAILED: a staff change was held for staff"); return result; };
+  const stepTo = (party: number) => staffSaved(stepReg.reg, { category: "TENT", partySize: party, reason: `Party of ${party}` });
+  const step1 = await stepTo(2);
+  assert(step1.chargeDeltaCents === 4000 && step1.registrantDeltaCents === 2000 && step1.sponsorDeltaCents === 2000 && step1.originallyChargedCents === 4000 && step1.requestNowCostsCents === 8000 && step1.churchSponsorReview === true, `first edit (+$40, split 50/50): ${JSON.stringify(step1)}`);
+  const step2 = await stepTo(3);
+  assert(step2.chargeDeltaCents === 4000 && step2.registrantDeltaCents === 2000 && step2.sponsorDeltaCents === 2000 && step2.originallyChargedCents === 4000 && step2.requestNowCostsCents === 12000, `second edit reports its own +$40, not the +$80 since submission: ${JSON.stringify(step2)}`);
+  const step3 = await stepTo(2);
+  assert(step3.chargeDeltaCents === -4000 && step3.registrantDeltaCents === -2000 && step3.sponsorDeltaCents === -2000 && step3.requestNowCostsCents === 8000 && step3.churchSponsorReview === true, `a revert reports the reverse: ${JSON.stringify(step3)}`);
+  const step4 = await stepTo(1);
+  assert(step4.chargeDeltaCents === -4000 && step4.sponsorDeltaCents === -2000 && step4.requestNowCostsCents === 4000 && step4.churchSponsorReview === true, `a return to the original still moves the sponsor's share this edit, so it warns: ${JSON.stringify(step4)}`);
+  assert(chargeChangeSentence(step4).startsWith(CHURCH_SPONSOR_CONTACT_LEAD) && !/adjust the charge in Payments/i.test(chargeChangeSentence(step4)), "and leads with the finance-office line");
+  // A registrant's own change request records this request's list change in the audit trail (previous to next).
+  const askReg = await submitForm({ people: 1, responses: { registration_fee: true, promo_code: "HALFOFF" }, lodging: { category: "TENT", partySize: 1 } });
+  const askedChange = await saveAny(askReg.reg, { category: "TENT", partySize: 2 });
+  assert(askedChange.changeRequested === true, "a registrant's priced change is held for staff");
+  const askedAudit = await prisma.auditLog.findFirstOrThrow({ where: { action: "LODGING_CHANGE_REQUESTED", metadata: { path: ["registrationId"], equals: askReg.reg.id } } });
+  assert((askedAudit.metadata as { deltaCents?: number }).deltaCents === 4000 && (askedAudit.metadata as { registrantDeltaCents?: number }).registrantDeltaCents === 2000, `the audit delta is this request's change: ${JSON.stringify(askedAudit.metadata)}`);
+  // An edit that changes nothing about the price, after a change that moved the sponsor's share, still warns (cumulative differs).
+  await stepTo(2);
+  const quiet = await staffSaved(stepReg.reg, { category: "TENT", partySize: 2, privateRoomRequested: true, reason: "Wants privacy" });
+  assert(quiet.priceNeedsReview !== true && quiet.churchSponsorReview === true && quiet.originallyChargedCents === 4000 && quiet.requestNowCostsCents === 8000 && chargeChangeSentence(quiet).startsWith(CHURCH_SPONSOR_CONTACT_LEAD), `an unrelated edit keeps the church warning while the cumulative share differs: ${JSON.stringify(quiet)}`);
+  await stepTo(1);
+  const plainReg = await submitForm({ people: 1, responses: { registration_fee: true }, lodging: { category: "TENT", partySize: 1 } });
+  const plainTo = (party: number) => staffSaved(plainReg.reg, { category: "TENT", partySize: party, reason: `Party of ${party}` });
+  const plain1 = await plainTo(2);
+  const plain2 = await plainTo(3);
+  const plain3 = await plainTo(2);
+  assert(plain1.chargeDeltaCents === 4000 && plain2.chargeDeltaCents === 4000 && plain3.chargeDeltaCents === -4000 && [plain1, plain2, plain3].every((entry) => entry.churchSponsorReview === false && entry.promo === null), `with no code each edit is its own list change: ${JSON.stringify([plain1.chargeDeltaCents, plain2.chargeDeltaCents, plain3.chargeDeltaCents])}`);
+  await prisma.registration.updateMany({ where: { id: { in: [stepReg.reg.id, plainReg.reg.id, askReg.reg.id] } }, data: { status: "CANCELLED" } });
 
   // A church-billed event: lodging is recorded and never charged, at submit and after a save.
   const billed = await submitTo(churchTarget, { people: 2, lodging: { category: "DORM_ROOM", partySize: 2 } });

@@ -436,6 +436,14 @@ export function bestCaseBeds(capacity: Pick<CategoryCapacity, "roomBeds" | "unit
 }
 
 /** Whether the party is larger than the beds of the rooms chosen, even in the best case (see `bestCaseBeds`). */
+/**
+ * The rooms the registrant already holds for the chosen type, as the room picker's floor (#803): taken from the CURRENT view
+ * (so after a save the picker follows what was saved), never above the party, and 1 when the type is not the saved one.
+ */
+export function heldRoomsFor(request: { category: string | null; roomCount: number } | null | undefined, category: string, partySize: number) {
+  return request && request.category === category ? Math.max(1, Math.min(request.roomCount, partySize)) : 1;
+}
+
 export function partyExceedsBeds(capacity: Pick<CategoryCapacity, "roomBased" | "unitCapacity" | "roomBeds"> | undefined, partySize: number, roomCount: number, nights: readonly string[] = []) {
   if (!capacity?.roomBased) return false;
   const beds = bestCaseBeds(capacity, roomCount, nights);
@@ -577,6 +585,7 @@ export type ChargeImpactFact = { promoCode: string | null; coversLodging: boolea
  * sponsor share would change needs the finance office before anyone adjusts anything. Interim guidance (#803): nothing here
  * changes a church's bill.
  */
+export const CHURCH_SPONSOR_CONTACT_LEAD = "Contact the finance office before changing anything in Payments.";
 export const CHURCH_SPONSOR_WARNING = "This registration's church sponsorship does not change automatically. The church's bill still reflects the original lodging. Contact the finance office before adjusting.";
 
 /** A church-sponsored code whose sponsor share the change would move. */
@@ -648,17 +657,24 @@ function signedDollars(cents: number) {
 /**
  * What staff are told after saving a lodging change that alters the charge (#803): the list change and, when the
  * registration holds a saved promo code, what the registrant really pays differently (and the sponsor's share for a
- * church-sponsored code), and, for a sponsored code whose share would move, the finance-office warning. It does not tell staff
- * what to enter in Payments: the church's bill does not follow a lodging edit (see `CHURCH_SPONSOR_WARNING`).
+ * church-sponsored code), and, for a sponsored code whose share is in play, the finance-office warning. The figures are the
+ * change THIS edit makes; the cumulative picture ("originally charged X, now costs Y") is context, never the figure to record.
+ * For a church-flagged result nothing says to adjust Payments: the church's bill does not follow a lodging edit (see
+ * `CHURCH_SPONSOR_WARNING`).
  */
-export function chargeChangeSentence(result: { chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; belowMinimumAfter?: boolean; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null }) {
+export function chargeChangeSentence(result: { chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; belowMinimumAfter?: boolean; churchSponsorReview?: boolean; originallyChargedCents?: number; requestNowCostsCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null }) {
+  const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
   const list = signedDollars(result.chargeDeltaCents ?? 0);
   const promo = result.promo;
-  if (!promo) return `This change alters the lodging charge (${list}), but the registration's total was not changed.`;
-  if (!promo.coversLodging) return `This change alters the lodging charge (${list} at list price). Code ${promo.code} does not apply to the lodging line on this registration (it was submitted before codes covered lodging), so the registrant's change is ${list}. The registration's total was not changed.`;
-  const minimum = result.belowMinimumAfter ? ` After this change the registration would be under code ${promo.code}'s minimum, so an amendment would refuse it and the code would no longer apply.` : "";
-  const warning = churchSponsorNeedsReview({ sponsored: promo.sponsored, discountDeltaCents: result.sponsorDeltaCents ?? 0 }) ? ` ${CHURCH_SPONSOR_WARNING}` : "";
-  return `This change alters the lodging charge (${list} at list price). A promo code applies: after ${promo.code} the registrant's change is ${signedDollars(result.registrantDeltaCents ?? 0)}${promo.sponsored ? ` and the sponsor's share is ${signedDollars(result.sponsorDeltaCents ?? 0)}` : ""}.${minimum}${warning} The registration's total was not changed.`;
+  const context = result.originallyChargedCents !== undefined && result.requestNowCostsCents !== undefined ? ` Originally charged ${dollars(result.originallyChargedCents)} at submission; the request now costs ${dollars(result.requestNowCostsCents)}.` : "";
+  const review = result.churchSponsorReview === true && promo?.sponsored === true;
+  const lead = review ? `${CHURCH_SPONSOR_CONTACT_LEAD} ` : "";
+  const warning = review ? ` ${CHURCH_SPONSOR_WARNING}` : "";
+  if (!promo) return `This edit changes the lodging charge by ${list}, but the registration's total was not changed.${context}`;
+  if (!promo.coversLodging) return `This edit changes the lodging charge by ${list} at list price. Code ${promo.code} does not apply to the lodging line on this registration (it was submitted before codes covered lodging), so the registrant's change is ${list}. The registration's total was not changed.${context}`;
+  const minimum = result.belowMinimumAfter ? ` After this edit the registration would be under code ${promo.code}'s minimum, so an amendment would refuse it and the code would no longer apply.` : "";
+  const figures = result.chargeDeltaCents === undefined ? "" : `This edit changes the lodging charge by ${list} at list price. A promo code applies: after ${promo.code} the registrant's change is ${signedDollars(result.registrantDeltaCents ?? 0)}${promo.sponsored ? ` and the sponsor's share is ${signedDollars(result.sponsorDeltaCents ?? 0)}` : ""}.`;
+  return `${lead}${figures}${minimum}${warning}${figures ? " The registration's total was not changed." : ""}${context}`.trim();
 }
 
 /** The list change, and the change after the registration's promo code, in words. Empty when no code is involved. */
@@ -835,7 +851,7 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
     push({
       key: `change:${change.id}`, kind: "CHANGE_REQUESTED", fingerprint: `${change.id}:${change.chargedCents ?? ""}:${change.requestedCents ?? ""}:${change.impact?.registrantDeltaCents ?? ""}`, registrationIds: [change.registrationId],
       title: `${label(facts, change.registrationId)}: lodging charge change requested${change.chargedCents !== undefined && change.requestedCents !== undefined ? ` (list ${signedDollars(change.requestedCents - change.chargedCents)})` : ""}${change.category ? `, to ${lodgingCategoryLabels[change.category].toLowerCase()}` : ""}${change.partySize !== undefined ? `: ${change.partySize} ${change.partySize === 1 ? "person" : "people"}${change.category && change.roomCount !== undefined ? `, ${change.roomCount} ${change.roomCount === 1 ? "room" : "rooms"}` : ""}${change.bringsExtraBedding ? ", bringing sleeping bags or air mattresses" : ""}` : ""}`,
-      detail: `A registrant's change that alters the lodging charge is never applied by itself. Make the change for them if it is right, then adjust the charge in Payments.${impactWords(change.impact)}`,
+      detail: `A registrant's change that alters the lodging charge is never applied by itself. ${churchSponsorNeedsReview(change.impact) ? `${CHURCH_SPONSOR_CONTACT_LEAD} Make the change for them only if it is right.` : "Make the change for them if it is right, then adjust the charge in Payments."}${impactWords(change.impact)}`,
       ...(churchSponsorNeedsReview(change.impact) ? { flags: ["CHURCH_SPONSOR_REVIEW" as const] } : {}),
     });
   }
@@ -847,7 +863,7 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
     push({
       key: `price:${charge.registrationId}`, kind: "PRICE_DIFFERS", fingerprint: `${charge.chargedCents}:${charge.currentCents}:${charge.impact?.registrantDeltaCents ?? ""}`, registrationIds: [charge.registrationId],
       title: `${label(facts, charge.registrationId)} was charged ${dollars(charge.chargedCents)} for lodging; the request costs ${dollars(charge.currentCents)}`,
-      detail: `The charge is never changed automatically after submission. If it should follow the request, adjust it in Payments.${impactWords(charge.impact)}`,
+      detail: `The charge is never changed automatically after submission. ${churchSponsorNeedsReview(charge.impact) ? CHURCH_SPONSOR_CONTACT_LEAD : "If it should follow the request, adjust it in Payments."}${impactWords(charge.impact)}`,
       ...(churchSponsorNeedsReview(charge.impact) ? { flags: ["CHURCH_SPONSOR_REVIEW" as const] } : {}),
     });
   }

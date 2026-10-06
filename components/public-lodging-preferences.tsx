@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import { AlertCircle, BedDouble, CheckCircle2 } from "lucide-react";
-import { beddingNote, extraBeddingNote, partyExceedsBeds } from "@/modules/lodging/preferences-domain";
+import { beddingNote, extraBeddingNote, heldRoomsFor, partyExceedsBeds } from "@/modules/lodging/preferences-domain";
 import { describeRate, quoteStay, stayNights, addDays, type LodgingCategory } from "@/modules/lodging/domain";
 import type { RegistrantLodgingView } from "@/modules/lodging/preferences-service";
 
@@ -42,7 +42,7 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
   const roomBased = chosenOffer?.roomBased === true;
   // For the type already saved, the rooms already held are always allowed (an overbooked type may show fewer free), so an
   // edit that is not about rooms never lowers them.
-  const heldRooms = initialView.request && initialView.request.category === category ? Math.min(initialView.request.roomCount, partySize) : 1;
+  const heldRooms = heldRoomsFor(view.request, category, partySize);
   const highestRooms = Math.max(1, heldRooms, Math.min(partySize, chosenOffer?.roomsFree ?? partySize));
   const rooms = roomBased ? Math.min(Math.max(1, roomCount), highestRooms) : 1;
   const extraBeddingNeeded = roomBased && partyExceedsBeds({ roomBased: true, unitCapacity: chosenOffer?.unitCapacity ?? null, ...(chosenOffer?.roomBeds ? { roomBeds: chosenOffer.roomBeds } : {}) }, partySize, rooms, nightCount > 0 ? stayNights(firstNight, addDays(lastNight, 1)) : []);

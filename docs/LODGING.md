@@ -356,20 +356,30 @@ night, 3 nights"):
     staff screen after a charge-changing save, and the **Change requested** and **Lodging charge differs** queue items, show the
     list change **and** the change after the code (`lodgingChargeImpact`, using the same `storedPromoDiscount` formula as an
     amendment: the code on the other lines plus the lodging line when it covers lodging, with the code's minimum and cap), say
-    that a code applies, and for a church-sponsored code split it into the registrant's share and the sponsor's. The base is
-    what the registration was actually charged (the stored lodging line), after a save and in the queue alike, so the two
-    agree. Example: a 50% church code on an $80 line cut to $40 is -$40 at list price, -$20 for the registrant and -$20 for the
+    that a code applies, and for a church-sponsored code split it into the registrant's share and the sponsor's.
+    **After a save, the figure staff are told to record is the change THIS edit made**: the previous request and the new one,
+    both priced at today's rates against the same other lines (the same previous and next versions that decide whether the
+    edit changes the charge). Two staff edits in a row ($40 to $80, then $80 to $100) report +$40 then +$20; a revert ($80 back
+    to $40) reports -$40; with a 50% code each edit is split into its own registrant and sponsor shares. The registrant-request
+    audit entry (`LODGING_CHANGE_REQUESTED`, `deltaCents`) records the same per-request figure. The cumulative picture is
+    context only, worded "Originally charged $X at submission; the request now costs $Y." (X is the stored lodging line). The
+    queue items are different on purpose: they compare the stored charge with what the request costs now, so they stay
+    correct however many edits happened. Example: a 50% church code on an $80 line cut to $40 is -$40 at list price, -$20 for the registrant and -$20 for the
     sponsor; a 100% church code is $0 for the registrant and the whole list change for the sponsor. The figures are on the
     subtotal (before any card fee), and an older registration (above) shows its list change as the registrant's. When the
     change would drop the subtotal under the code's minimum, the screen says an amendment would refuse it and the code would no
     longer apply.
-  - **Interim, until the finance rule is settled: nothing here changes a church's bill, and the screens do not tell staff what
-    to enter in Payments.** What a church owes is computed from the redemption's recorded discount
-    (`PromoCodeRedemption.discountAmountCents`) and negative `PROMO_CODE` adjustments; a lodging edit or a manual Payments
-    adjustment moves neither. So for a **church-sponsored** code whose sponsor share would change, the save result, the queue
-    item and the staff screen show: "This registration's church sponsorship does not change automatically. The church's bill
-    still reflects the original lodging. Contact the finance office before adjusting." The queue item carries the flag
-    `CHURCH_SPONSOR_REVIEW`. No automatic billing change is built.
+  - **Interim, until the finance rule is settled: nothing here changes a church's bill.** What a church owes is computed from
+    the redemption's recorded discount (`PromoCodeRedemption.discountAmountCents`) and negative `PROMO_CODE` adjustments; a
+    lodging edit or a manual Payments adjustment moves neither. This applies to **church-flagged results only** (a
+    church-sponsored code): the save result is flagged when THIS edit moves the sponsor's share **or** when the cumulative
+    sponsor share differs from the original, so a return to zero after an earlier change still warns, and an unrelated edit
+    keeps the warning while the share differs. A flagged save result, queue item and staff screen lead with "Contact the
+    finance office before changing anything in Payments." and carry "This registration's church sponsorship does not change
+    automatically. The church's bill still reflects the original lodging. Contact the finance office before adjusting."; none
+    of them says to adjust the charge in Payments. The queue item carries the flag `CHURCH_SPONSOR_REVIEW`, and the
+    per-request staff card shows a church-sponsored note before anything is saved. No automatic billing change is built. For
+    every other result (no code, or a code that is not church-sponsored) the Payments guidance below applies unchanged.
 - **After submission the charge is never changed by a lodging edit.** Nothing
   reprices, and nothing creates a payment, a refund or a new charge by itself.
   Whether an edit "changes the charge" is decided by pricing the previous and the
@@ -379,8 +389,8 @@ night, 3 nights"):
     request ("Lodging charge change requested: +$X / -$Y") and the total stays
     as it was. A staff member makes the change if it is right.
   - A **staff** change is saved and marked `priceNeedsReview` with the charge
-    difference; the screen says so and links to Payments (`/finance?event=<id>`),
-    where the charge is adjusted with the existing adjustment flow.
+    difference **this edit made**; the screen says so and, except for a church-flagged result (above), links to Payments
+    (`/finance?event=<id>`), where the charge is adjusted with the existing adjustment flow.
   - The review queue lists **Lodging charge differs from the request** when the
     charge on the registration no longer matches the request at today's rates
     (for example after a rate change). It is a queue item only.

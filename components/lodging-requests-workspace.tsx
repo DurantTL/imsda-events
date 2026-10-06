@@ -69,7 +69,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
     </div></div>
     {error ? <p className="form-error" role="alert">{error}</p> : null}
     {notice ? <p className="usage-note" role="status">{notice}</p> : null}
-    {chargeChange !== null ? <p className="form-error" role="status">
+    {chargeChange !== null ? <p className="form-error" role="status" data-testid="charge-change">
       {chargeChangeSentence(chargeChange)}{" "}
       {chargeChange.churchSponsorReview ? "Nothing is charged or refunded automatically." : <>Record the difference as an adjustment in{" "}
       <a href={`/finance?event=${encodeURIComponent(view.eventId)}`}>Payments</a>; nothing is charged or refunded automatically.</>}
@@ -224,6 +224,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
           </form> : null}
         </li>)}</ul>
       </> : null}
+      {request.churchSponsored ? <p role="note" className="form-error"><strong>Church-sponsored registration.</strong> {CHURCH_SPONSOR_WARNING}</p> : null}
       <h4>Change this request (staff)</h4>
       <form onSubmit={(event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();

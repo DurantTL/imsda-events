@@ -466,7 +466,7 @@ export type SaveRequestResult =
       changeRequested?: false;
       /** A staff change that alters the lodging charge: the registration's total is NOT changed; staff adjust it in Payments. */
       priceNeedsReview?: boolean;
-      /** The change in what the request costs at today's rates (signed cents, at list price), when `priceNeedsReview`. */
+      /** The change THIS edit makes to what the request costs at today's rates (signed cents, at list price), when `priceNeedsReview`. */
       chargeDeltaCents?: number;
       /**
        * The same change after the registration's saved promo code (#803): what the registrant pays differently, and for a
@@ -474,6 +474,9 @@ export type SaveRequestResult =
        */
       registrantDeltaCents?: number;
       sponsorDeltaCents?: number;
+      /** Context only, never the figure to record: what was charged at submission (the stored line) and what the request now costs. */
+      originallyChargedCents?: number;
+      requestNowCostsCents?: number;
       /** After the change the registration would be under its saved code's minimum (an amendment would refuse it). */
       belowMinimumAfter?: boolean;
       /** A church-sponsored code whose share would move: the church's bill does not follow a lodging edit; contact the finance office. */
@@ -648,14 +651,17 @@ export async function saveLodgingRequest(
     const previousCents = previous ? costOf(previous.category, requestNights(previous, context.nights).length, previous.partySize, previous.roomCount) : 0;
     const nextCents = costOf(next.category, nights.length, partySize, next.roomCount);
     const chargeChanges = previousCents !== nextCents;
-    // The same change after the registration's saved promo code: what the registrant would really pay differently.
-    // The base is what the registration was actually charged (the stored line), the same as the review queue, so what staff
-    // are told here is what the queue shows afterwards.
-    const impact = chargeChanges
-      ? await (async () => {
-          const context = await loadPromoContext(tx, input.eventId, input.registrationId);
-          return lodgingChargeImpact({ otherCents: context.otherCents, promo: context.promo, fromCents: context.lodgingCents, toCents: nextCents });
-        })()
+    // THIS edit, after the registration's saved promo code (#803): previous and next at today's rates, each against the same
+    // other lines, so the figure staff are told to record is the change this edit makes and nothing from earlier edits (two
+    // edits in a row report their own changes, and a revert reports the reverse). The cumulative picture, from the stored
+    // line (what was charged at submission) to what the request now costs, is context only, and decides whether the church
+    // warning stays up after an edit that returns the sponsor's share to where it started.
+    const promoContext = staff || chargeChanges ? await loadPromoContext(tx, input.eventId, input.registrationId) : null;
+    const impact = chargeChanges && promoContext
+      ? lodgingChargeImpact({ otherCents: promoContext.otherCents, promo: promoContext.promo, fromCents: previousCents, toCents: nextCents })
+      : null;
+    const cumulative = promoContext
+      ? lodgingChargeImpact({ otherCents: promoContext.otherCents, promo: promoContext.promo, fromCents: promoContext.lodgingCents, toCents: nextCents })
       : null;
     if (!staff && chargeChanges) {
       await tx.eventLodgingChangeRequest.updateMany({
@@ -750,13 +756,18 @@ export async function saveLodgingRequest(
         data: { resolvedAt: now, resolvedByUserId: input.actor.kind === "STAFF" ? input.actor.userId : null, resolution: "Handled by staff" },
       });
     }
+    // The church's bill does not follow a lodging edit, so the warning stays up while this edit moves the sponsor's share OR the
+    // cumulative share differs from the original (a return to the start after an earlier change still needs the finance office).
+    const sponsorMoved = Boolean(impact?.promo?.sponsored && impact.discountDeltaCents !== 0);
+    const sponsorDiffers = Boolean(cumulative?.promo?.sponsored && cumulative.discountDeltaCents !== 0);
+    const costContext = promoContext && cumulative ? { originallyChargedCents: promoContext.lodgingCents, requestNowCostsCents: nextCents } : {};
     return { requestId: request.id, version, changed: true, afterDeadline: staff && pastDeadline, ...(staff && chargeChanges && impact
       ? {
           priceNeedsReview: true, chargeDeltaCents: impact.listDeltaCents, registrantDeltaCents: impact.registrantDeltaCents,
-          sponsorDeltaCents: impact.promo?.sponsored ? impact.discountDeltaCents : 0, belowMinimumAfter: impact.belowMinimumAfter,
-          churchSponsorReview: Boolean(impact.promo?.sponsored && impact.discountDeltaCents !== 0), promo: impact.promo,
+          sponsorDeltaCents: impact.promo?.sponsored ? impact.discountDeltaCents : 0, belowMinimumAfter: cumulative?.belowMinimumAfter ?? false,
+          churchSponsorReview: sponsorMoved || sponsorDiffers, promo: impact.promo, ...costContext,
         }
-      : {}) };
+      : staff && sponsorDiffers ? { churchSponsorReview: true, promo: cumulative!.promo, ...costContext } : {}) };
   }, { timeout: lodgingTransactionTimeoutMs });
 }
 
@@ -1131,7 +1142,7 @@ async function loadReviewFacts(client: Client, context: Context) {
   });
   const items = buildReviewItems({ nights: context.nights, registrations: registrationFacts, people, requests: requestSnapshots, roommates: roommateRows, rules: ruleRows, guardians, capacity, changeRequests: changeRequestFacts, lodgingCharges, promotedRegistrationIds: registrations.filter((registration) => registration.waitlistEntry?.status === "PROMOTED").map((registration) => registration.id) });
   const acked = new Set(acks.map((ack) => `${ack.itemKey}\u0000${ack.fingerprint}`));
-  return { registrations, registrationFacts, people, requestSnapshots, roommates, roommateRows, ruleRows, guardians, capacity, unitIdsByCategory, items, acked, openChanges: changeRequests };
+  return { registrations, registrationFacts, people, requestSnapshots, roommates, roommateRows, ruleRows, guardians, capacity, unitIdsByCategory, items, acked, openChanges: changeRequests, sponsoredRegistrationIds: new Set(redemptions.filter((row) => row.promoCode.sponsoringOrganizationId !== null).map((row) => row.registrationId)) };
 }
 
 function visibleItems(items: readonly ReviewItem[], canSeeSensitive: boolean) {
@@ -1179,6 +1190,8 @@ export type StaffLodgingRequestView = {
   /** Rooms the registrant chose (1 for a site, a tent or no type) and whether they acknowledged bringing sleeping bags or air mattresses (#803). */
   roomCount: number;
   bringsExtraBedding: boolean;
+  /** The registration holds a church-sponsored promo code: a lodging edit does not change what the church is billed. */
+  churchSponsored: boolean;
   /** What the registrant asked for that the edit policy held for staff (the open change request), if any. */
   openChange: { category: LodgingCategory | null; firstNight: string | null; lastNight: string | null; partySize: number; roomCount: number; bringsExtraBedding: boolean } | null;
   privateRoomRequested: boolean;
@@ -1251,6 +1264,7 @@ export async function getStaffLodgingRequestsView(eventId: string, options: { ca
       partySize: request.partySize,
       roomCount: request.roomCount,
       bringsExtraBedding: request.bringsExtraBedding,
+      churchSponsored: facts.sponsoredRegistrationIds.has(request.registrationId),
       openChange: (() => {
         const change = facts.openChanges.filter((row) => row.registrationId === request.registrationId).at(-1);
         return change ? { category: change.category, firstNight: change.firstNight ? toNight(change.firstNight) : null, lastNight: change.lastNight ? toNight(change.lastNight) : null, partySize: change.partySize, roomCount: change.roomCount, bringsExtraBedding: change.bringsExtraBedding } : null;
