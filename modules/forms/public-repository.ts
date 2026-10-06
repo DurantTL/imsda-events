@@ -253,6 +253,8 @@ export type PublicRegistrationExperience = {
     registrationClosesOn: string | null;
     waitlistEnabled: boolean;
     billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE";
+    /** A CLUB event's public pages carry the club-director sign-in notice (#799). */
+    audience: "GENERAL" | "CLUB";
     /** A person under this age on the event's start date is a minor (#131). */
     ageOfMajority: number;
   };
@@ -578,6 +580,7 @@ export async function getPublicRegistrationExperience(eventSlug: string, formSlu
       registrationClosesOn: form.event.registrationClosesOn,
       waitlistEnabled: form.event.waitlistEnabled,
       billingMode: form.event.billingMode,
+      audience: form.event.audience,
       ageOfMajority: form.event.ageOfMajority,
     },
     form: { slug: form.slug, versionId: version.id, versionNumber: version.versionNumber, definition },

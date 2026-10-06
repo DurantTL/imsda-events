@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { EventInfoCards } from "@/components/event-info-cards";
+import { ClubDirectorSignInNotice } from "@/components/club-director-sign-in-notice";
 import { TranslateHint } from "@/components/translate-hint";
 import { AutoEventHeader, AutoEventInfoCards } from "@/components/auto-event-info-cards";
 import { CLUB_REGISTRATION_CARD_NOTE } from "@/modules/club-registrations/entry-path";
@@ -123,6 +124,15 @@ export default async function PublicEventPage({
           </div>
         </section>
       )}
+
+      <ClubDirectorSignInNotice
+        event={{
+          audience: landing.event.audience,
+          slug: landing.event.slug,
+          registrationOpen: landing.lifecycle.ctaEnabled,
+          hasClubPortalForm: landing.forms.some((form) => form.registrationPath === "CLUB_PORTAL"),
+        }}
+      />
 
       {landing.announcements.length > 0 && (
         <section

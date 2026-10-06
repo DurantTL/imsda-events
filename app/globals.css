@@ -9135,8 +9135,9 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .event-modules-health p { flex: 1 1 220px; margin: 0; font-weight: 600; }
 .event-modules-health[data-state="clear"] { border-left-color: var(--green); }
 .event-modules-health[data-state="clear"] svg { color: var(--green); }
-.event-modules-health[data-state="attention"] { border-left-color: var(--coral); }
-.event-modules-health[data-state="attention"] svg { color: var(--coral); }
+.event-modules-health[data-state="attention"] { border-left-width: 5px; border-left-color: var(--danger, #8f3a30); background: var(--danger-soft, #fdf4f2); }
+.event-modules-health[data-state="attention"] svg { color: var(--danger, #8f3a30); }
+.event-modules-health[data-state="attention"] p { color: var(--danger, #8f3a30); font-weight: 800; }
 .event-module-card { display: flex; flex-direction: column; }
 .event-module-card-link { display: block; flex: 1 1 auto; color: inherit; text-decoration: none; }
 .event-module-card-link > span:first-child { display: grid; width: 39px; height: 39px; place-items: center; border-radius: 12px; background: var(--imsda-navy-soft); color: var(--imsda-navy); }
@@ -9413,8 +9414,10 @@ button[aria-busy="true"] { cursor: progress; }
 .empty-state.public-manage-empty { min-height: 0; }
 
 /* --- Status clarity ----------------------------------------------------------- */
-.needs-attention { display: inline-flex; align-items: center; gap: 5px; color: var(--danger, #8f3a30); font-weight: 800; }
+/* "Needs attention" is urgent (#799 G4): a bold red pill with an icon and text, never colour alone. */
+.needs-attention { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px 2px 8px; border: 1.5px solid var(--danger, #8f3a30); border-radius: 999px; background: var(--danger-soft, #fdf4f2); color: var(--danger, #8f3a30); font-weight: 800; line-height: 1.4; }
 .needs-attention > svg { flex: none; }
+.needs-attention > strong { font-weight: 800; }
 .status-complete { display: inline-flex; align-items: center; gap: 5px; color: #2f6b45; font-weight: 600; }
 .sort-order-note { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; color: var(--muted); font-size: max(var(--type-helper-min, 0px), 0.8rem); }
 .sort-order-note > svg { flex: none; }
@@ -9799,3 +9802,18 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 .roster-class-history-link { display: block; margin-top: 2px; padding: 0; font-size: 0.8rem; }
 .area-club-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .area-club-search .search-field { max-width: 360px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+
+/* Club-director sign-in callout on a club event's public pages (#799 G8). */
+.club-director-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 18px; margin: 0 0 18px; padding: 16px 18px; border: 2px solid #9a6a00; border-left-width: 8px; border-radius: 12px; background: #fff7e0; color: #3d2b00; }
+.club-director-notice-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; background: #9a6a00; color: #fff; }
+.club-director-notice-copy { flex: 1 1 260px; min-width: 0; }
+.club-director-notice-copy > * { margin: 0; }
+.club-director-notice-copy > * + * { margin-top: 4px; }
+.club-director-notice-eyebrow { font-size: 0.8rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+.club-director-notice h2 { font-size: 1.2rem; line-height: 1.25; }
+.club-director-notice-button { flex: none; min-height: var(--target-cta, 48px); text-decoration: none; }
+@media (max-width: 560px) { .club-director-notice-button { width: 100%; justify-content: center; } }
+
+/* Class-choice status next to a person name (#799 G3). */
+.class-readiness-summary { margin: 8px 0; font-size: 0.95rem; }
+.class-person-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 2px 0 6px; }

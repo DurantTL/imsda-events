@@ -3,6 +3,7 @@ import { logError } from "@/lib/logger";
 import { isBusyDatabaseError, logExpiredTransaction } from "@/modules/event-locations/api-errors";
 import { EventLocationError, eventLocationErrorStatus, locationBusyMessage } from "@/modules/event-locations/errors";
 import { RosterAccessError } from "@/modules/club-rosters/access";
+import { namedSchemaIssueMessage } from "@/modules/club-registrations/domain";
 import { ClubRegistrationError } from "@/modules/club-registrations/repository";
 import { PublicRegistrationError } from "@/modules/forms/public-repository";
 import { ClassSelectionError } from "@/modules/honors/enrollment-repository";
@@ -12,8 +13,9 @@ const noStore = { "Cache-Control": "no-store" };
 
 export function clubRegistrationApiError(error: unknown, action: string) {
   if (error instanceof z.ZodError) {
+    const named = error.issues.map((issue) => ({ ...issue, message: namedSchemaIssueMessage(issue) }));
     return Response.json(
-      { error: "INVALID_REQUEST", message: error.issues[0]?.message ?? "The request is invalid.", issues: error.issues },
+      { error: "INVALID_REQUEST", message: named[0]?.message ?? "The request is invalid.", issues: named },
       { status: 400, headers: noStore },
     );
   }
