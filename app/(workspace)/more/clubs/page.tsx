@@ -53,14 +53,14 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
           <div className="report-table-wrap">
             <table role="table" className="report-table table-cards">
               <caption className="sr-only">Registered clubs</caption>
-              <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Club</th><th role="columnheader" scope="col">Going</th>{backgroundFlags && <th role="columnheader" scope="col">Background checks</th>}<th role="columnheader" scope="col">Registration</th><th role="columnheader" scope="col"><span className="sr-only">Open</span></th></tr></thead>
+              <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Club</th><th role="columnheader" scope="col">Going</th>{backgroundFlags && <th role="columnheader" scope="col">Sterling Volunteers</th>}<th role="columnheader" scope="col">Registration</th><th role="columnheader" scope="col"><span className="sr-only">Open</span></th></tr></thead>
               <tbody role="rowgroup">
                 {clubs.map((club) => (
                   <tr role="row" key={club.organizationId}>
                     <th role="rowheader" scope="row" translate="no">{club.name}{club.sponsoringChurch && <small> · {club.sponsoringChurch}</small>}</th>
                     <td {...cardCell("Going")}>{club.attendeeCount}</td>
                     {backgroundFlags && (
-                      <td {...cardCell("Background checks")}>
+                      <td {...cardCell("Sterling Volunteers")}>
                         {neededByClub.get(club.organizationId)
                           ? <><BackgroundCheckBadge /> <small className="quiet-copy">{neededByClub.get(club.organizationId)}</small></>
                           : <small className="quiet-copy">All current</small>}

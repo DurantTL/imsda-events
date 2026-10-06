@@ -23,7 +23,7 @@ export {
 };
 
 /**
- * Sterling Volunteers background checks (#388). Pure: reading the CSV a system
+ * Sterling Volunteers (#388). Pure: reading the CSV a system
  * administrator uploads, and deciding who at a youth or children's event is an
  * adult who needs a current check. Flags only; nothing here blocks anyone.
  */
@@ -220,7 +220,7 @@ export const ADULT_AGE = 18;
 const ADULT_TYPE_PATTERN = /\b(adults?|staff|parents?|chaperones?|sponsors?|counsell?ors?|volunteers?|directors?|deputy|leaders?|pastors?|drivers?|guardians?)\b/i;
 
 /**
- * Whether a registered person is an adult for background checks. A known age
+ * Whether a registered person is an adult for Sterling Volunteers. A known age
  * decides (so an under-18 TLT registered as staff isn't flagged); without one,
  * the club roster type or the attendee type does.
  */
@@ -610,21 +610,21 @@ export function complianceReminders(counts: ComplianceReminderCounts, rosterHref
   if (counts.missing > 0) {
     items.push({
       key: "background-check-missing",
-      text: `${counts.missing} adult${counts.missing === 1 ? "" : "s"} missing a current background check.`,
+      text: `${counts.missing} adult${counts.missing === 1 ? " has" : "s have"} no Sterling Volunteers record.`,
       href: `${rosterHref}?compliance=missing`,
     });
   }
   if (counts.notInCompliance > 0) {
     items.push({
       key: "background-check-not-compliant",
-      text: `${counts.notInCompliance} background check${counts.notInCompliance === 1 ? "" : "s"} expired or not in compliance.`,
+      text: `${counts.notInCompliance} adult${counts.notInCompliance === 1 ? " is" : "s are"} not in compliance with Sterling Volunteers.`,
       href: `${rosterHref}?compliance=expired`,
     });
   }
   if (counts.expiringSoon > 0) {
     items.push({
       key: "background-check-expiring",
-      text: `${counts.expiringSoon} background check${counts.expiringSoon === 1 ? " expires" : "s expire"} within 60 days.`,
+      text: `${counts.expiringSoon} adult${counts.expiringSoon === 1 ? " has" : "s have"} Sterling Volunteers expiring within 60 days.`,
       href: `${rosterHref}?compliance=expiring`,
     });
   }
@@ -773,7 +773,7 @@ export function rosterRowToListRow(row: RosterBackgroundCsvRow): BackgroundCheck
   };
 }
 
-/** The "Background check needed" list as CSV, for staff and event managers. */
+/** The Sterling Volunteers list as CSV, for staff and event managers. */
 export function backgroundFlagsCsv(people: Array<{
   lastName: string;
   firstName: string;
@@ -784,7 +784,7 @@ export function backgroundFlagsCsv(people: Array<{
   expiresOn: string | null;
 }>) {
   return toCsv([
-    ["Last name", "First name", "Attendee type", "Club", "Confirmation code", "Background check", "Expired on"],
+    ["Last name", "First name", "Attendee type", "Club", "Confirmation code", "Sterling Volunteers", "Expired on"],
     ...people.map((person) => [
       person.lastName,
       person.firstName,

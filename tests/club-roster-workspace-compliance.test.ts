@@ -54,15 +54,15 @@ function markup(props: Partial<Parameters<typeof ClubRosterWorkspace>[0]>) {
 }
 
 describe("club roster background-check column visibility (#427, #479)", () => {
-  it("shows the Background check column for a role that gets compliance statuses (director)", () => {
+  it("shows the Sterling Volunteers column for a role that gets compliance statuses (director)", () => {
     const html = markup({ complianceStatuses });
-    expect(html).toContain("Background check");
+    expect(html).toContain("Sterling Volunteers");
     expect(html).toContain("Not in compliance");
   });
 
-  it("shows no Background check column at all for a role without it (a registrar)", () => {
+  it("shows no Sterling Volunteers column at all for a role without it (a registrar)", () => {
     const html = markup({ complianceStatuses: undefined });
-    expect(html).not.toContain("Background check");
+    expect(html).not.toContain("Sterling Volunteers");
     expect(html).not.toContain("Not in compliance");
   });
 });
@@ -91,9 +91,9 @@ describe("the issues text and readable reasons on the roster (#427, #544)", () =
 });
 
 describe("roster ?compliance= filter from a What's next / club overview reminder link (#479)", () => {
-  it("narrows the roster to only people missing a current background check", () => {
+  it("narrows the roster to only people with no Sterling Volunteers record", () => {
     const html = markup({ complianceStatuses, complianceFilter: "missing" });
-    expect(html).toContain("Showing only people missing a current background check.");
+    expect(html).toContain("Showing only people with no Sterling Volunteers record.");
     expect(html).toContain("Pathfinder-missing-check");
     expect(html).not.toContain("Pathfinder-expired-check");
     expect(html).not.toContain("Pathfinder-current-check");

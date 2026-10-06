@@ -134,7 +134,7 @@ export const eventSettingsInputSchema = z.object({
   // shirts off has something to do with closing registration.
   collectsShirtSizes: z.boolean(),
   // Youth or children's event (#388): every adult registered is checked for a
-  // current Sterling Volunteers background check, and flagged when missing.
+  // current Sterling Volunteers, and flagged when missing.
   checksAdultBackgrounds: z.boolean().default(false),
   // A person under this age on the event's first day is a minor (#131). Absent keeps the stored value (18 for a
   // new event); the registration form asks for a responsible adult for each minor.

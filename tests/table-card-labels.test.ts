@@ -44,10 +44,10 @@ describe("phone table cards render their labels and roles on the server (#686)",
     expect(body[0]!.attrs).toContain('role="rowheader"');
     expect(body[0]!.attrs).not.toContain("data-label");
     expect(body.slice(1).map((cell) => label(cell.attrs))).toEqual([
-      "Director", "Church", "Roster", "Reports submitted", "Total points", "Last report", "Background checks",
+      "Director", "Church", "Roster", "Reports submitted", "Total points", "Last report", "Sterling Volunteers",
     ]);
     const long = body.filter((cell) => cell.attrs.includes("data-label-long")).map((cell) => label(cell.attrs));
-    expect(long).toEqual(["Reports submitted", "Background checks"]);
+    expect(long).toEqual(["Reports submitted", "Sterling Volunteers"]);
     // Column headers keep their roles even though the stacked layout hides them.
     expect(html.match(/role="columnheader"/g)).toHaveLength(8);
   });
@@ -76,7 +76,7 @@ describe("card cell helpers", () => {
   it("cardCell gives the role always, the label when present and the long flag by length", () => {
     expect(cardCell(null)).toEqual({ role: "cell" });
     expect(cardCell("Church")).toEqual({ role: "cell", "data-label": "Church" });
-    expect(cardCell("Background checks")).toEqual({ role: "cell", "data-label": "Background checks", "data-label-long": "" });
+    expect(cardCell("Sterling Volunteers")).toEqual({ role: "cell", "data-label": "Sterling Volunteers", "data-label-long": "" });
     expect(isLongCardLabel("Church")).toBe(false);
   });
 });

@@ -20,7 +20,7 @@ async function deleteHandler(request: Request, context: RouteContext) {
     await undoManualBackgroundCheckMatch(matchId, actor.id);
     return Response.json({ matches: await listManualBackgroundCheckMatches() });
   } catch (error) {
-    return backgroundCheckApiError(error, "Undoing a background check match");
+    return backgroundCheckApiError(error, "Undoing a Sterling Volunteers match");
   }
 }
 

@@ -135,8 +135,8 @@ export function BackgroundCheckImport({ onImported }: { onImported: (result: Imp
           <section aria-labelledby="background-check-import-title" aria-modal="true" className="modal-card roster-csv-dialog" ref={dialogRef} role="dialog" tabIndex={-1}>
             <div className="modal-head">
               <div>
-                <p className="eyebrow">Background checks</p>
-                <h2 id="background-check-import-title">{done ? "Saved" : "Upload background checks"}</h2>
+                <p className="eyebrow">Sterling Volunteers</p>
+                <h2 id="background-check-import-title">{done ? "Saved" : "Upload Sterling Volunteers"}</h2>
               </div>
               <button aria-label="Close" className="icon-button modal-close-button" onClick={close} type="button"><X aria-hidden="true" size={18} /></button>
             </div>

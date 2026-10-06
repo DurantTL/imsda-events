@@ -44,7 +44,7 @@ export const cloneDomainLabels: Record<CloneDomainKey, { label: string; descript
   },
   moduleToggles: {
     label: "Module settings",
-    description: "Waitlist, shirt sizes, adult background checks, and event community settings, exactly as configured on the source.",
+    description: "Waitlist, shirt sizes, adult Sterling Volunteers, and event community settings, exactly as configured on the source.",
   },
   contentSections: {
     label: "Public page content",

@@ -5,7 +5,7 @@ import type { RosterYearSummary } from "@/modules/club-rosters/domain";
 import type { HonorYearSummary } from "@/modules/honors/member-honor-domain";
 
 /**
- * The club-year dashboard (#488): roster, honors, background checks, events,
+ * The club-year dashboard (#488): roster, honors, Sterling Volunteers, events,
  * and monthly reports at a glance, each tile linking to where the work is
  * done. Every tile is built from data its caller already loaded — no new
  * queries and no new data entry. Each `href` is the caller's own choice: a
@@ -81,7 +81,7 @@ export function ClubYearTiles({
 
       {compliance && (
         <div className="club-year-tile">
-          <Heading className="club-year-tile-heading"><ShieldCheck size={16} aria-hidden="true" /> Background checks</Heading>
+          <Heading className="club-year-tile-heading"><ShieldCheck size={16} aria-hidden="true" /> Sterling Volunteers</Heading>
           {complianceTotal === 0 ? (
             <p className="club-year-tile-detail"><CheckCircle2 size={15} aria-hidden="true" /> All current.</p>
           ) : (
@@ -91,7 +91,7 @@ export function ClubYearTiles({
               {compliance.expiringSoon > 0 && <li><CircleAlert size={13} aria-hidden="true" /> {compliance.expiringSoon} expiring soon</li>}
             </ul>
           )}
-          <Link className="secondary-button club-year-tile-link" href={complianceHref}>Review background checks</Link>
+          <Link className="secondary-button club-year-tile-link" href={complianceHref}>Review Sterling Volunteers</Link>
         </div>
       )}
 

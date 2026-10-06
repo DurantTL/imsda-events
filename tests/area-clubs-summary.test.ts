@@ -167,7 +167,7 @@ describe("area club summary repository (#657)", () => {
     ]));
   });
 
-  it("builds one row per active club from the stored reports, with counts-only background checks", async () => {
+  it("builds one row per active club from the stored reports, with counts-only Sterling Volunteers", async () => {
     const clubs = await getAreaClubsSummary("2026-27", now);
     expect(clubs.map((club) => club.name)).toEqual(["Alpha Pathfinders", "Bravo Adventurers"]);
     const [alpha, bravo] = clubs;

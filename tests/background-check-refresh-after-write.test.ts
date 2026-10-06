@@ -39,7 +39,7 @@ describe("refreshing background-check matches after a save (#527)", () => {
   it("never throws when the refresh fails, and logs it without names", async () => {
     mocks.refreshBackgroundCheckMatches.mockRejectedValueOnce(new Error("database unavailable"));
     await expect(refreshBackgroundCheckMatchesSafely(["p-1"])).resolves.toBeUndefined();
-    expect(mocks.logError).toHaveBeenCalledWith("Background check match refresh failed after a save", expect.any(Error), { people: 1 });
+    expect(mocks.logError).toHaveBeenCalledWith("Sterling Volunteers match refresh failed after a save", expect.any(Error), { people: 1 });
   });
 
   it("refreshes a registration's account holder and every attendee", async () => {
@@ -82,6 +82,6 @@ describe("refreshing background-check matches after a save (#527)", () => {
     await refreshBackgroundCheckMatchesSafely(["p-2"]);
     expect(mocks.refreshBackgroundCheckMatches).toHaveBeenLastCalledWith(["p-2"]);
     expect(mocks.logInfo).toHaveBeenCalledTimes(1);
-    expect(mocks.logInfo).toHaveBeenCalledWith("Background check refresh ran inline: after() was unavailable", { reason: "TypeError" });
+    expect(mocks.logInfo).toHaveBeenCalledWith("Sterling Volunteers refresh ran inline: after() was unavailable", { reason: "TypeError" });
   });
 });

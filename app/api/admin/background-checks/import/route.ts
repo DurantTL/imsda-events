@@ -54,7 +54,7 @@ async function previewOrApply(
 }
 
 /**
- * Background check CSV upload (#388, #427, #527): preview the counts an
+ * Sterling Volunteers CSV upload (#388, #427, #527): preview the counts an
  * upload would change, then replace the list on confirm. Accepts the real
  * roster export (`user_id,user_last,user_first,roles,sites,user_active,
  * compliance,issues`) and the older Sterling Volunteers export, detected
@@ -94,7 +94,7 @@ async function postHandler(request: Request) {
     const listRows = rows.filter((row) => row.problems.length === 0).map(sterlingRowToListRow);
     return await previewOrApply(format, listRows, problems, { confirm, fingerprint }, actor.id);
   } catch (error) {
-    return backgroundCheckApiError(error, "Uploading background checks");
+    return backgroundCheckApiError(error, "Uploading Sterling Volunteers");
   }
 }
 

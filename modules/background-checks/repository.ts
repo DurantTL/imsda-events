@@ -32,7 +32,7 @@ import {
 } from "@/modules/background-checks/domain";
 
 /**
- * Background checks (#388, #427, #527): one stored list, fed by either CSV
+ * Sterling Volunteers (#388, #427, #527): one stored list, fed by either CSV
  * format, replaced wholesale on every upload. Matching a person to a list
  * entry happens at lookup:
  *
@@ -1045,7 +1045,7 @@ export async function refreshBackgroundCheckMatches(personIds: Iterable<string>,
       return true;
     }, { timeout: 30_000, maxWait: 10_000 });
     if (!refreshed) {
-      logInfo("Background check match refresh skipped while a list upload is in progress", { people: ids.length });
+      logInfo("Sterling Volunteers match refresh skipped while a list upload is in progress", { people: ids.length });
       return;
     }
   }
@@ -1406,7 +1406,7 @@ export async function undoManualBackgroundCheckMatch(matchId: string, actorUserI
   try {
     await refreshBackgroundCheckMatches([personId]);
   } catch (error) {
-    logError("Background check match refresh after undo failed", error);
+    logError("Sterling Volunteers match refresh after undo failed", error);
   }
 }
 
@@ -2141,7 +2141,8 @@ export async function uncachedChecksForRosterMembers(members: RosterMemberForChe
  * A club page's compliance status per adult roster member (#427): Clear,
  * Expiring soon, Not in compliance, or No record, keyed by roster member id.
  * `includeNotes` must be decided by the caller from who is asking — the note
- * is staff only, and a club director never receives it, not even a blank one
+ * is for system administrators and, for a club in their scope, an Area
+ * Coordinator (#443), and a club director never receives it, not even a blank one
  * to hide.
  */
 export async function clubRosterComplianceStatuses(

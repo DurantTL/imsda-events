@@ -56,7 +56,7 @@ stays the canonical roadmap. Nothing here changes #98 until a human approves it.
   - **Encrypted birth dates** on club rosters, with the database security that
     implies (Section 6.5).
 - **Decisions:** billing (church), locations, rosters kept on file, birth dates,
-  first-come classes, sessions, minimum age, and background checks are settled.
+  first-come classes, sessions, minimum age, and Sterling Volunteers are settled.
   Spanish comes through browser translation. Still open: sign-off on the
   birth-date security design (Section 9).
 
@@ -145,7 +145,7 @@ models:
 | Placement | The system **suggests** each attendee's highest-ranked eligible choice with an open seat. The director assigns individually or in bulk. **Live seat checks** run in serializable transactions, and an attendee can hold only one class per period |
 | Waitlist | `EventClassWaitlist` per offering with position, and promotion when seats open |
 | Teaching | Teacher sees only their offerings, marks **class attendance**, and **signs off requirements**. A completed honor is recorded (`MemberRequirement`) and feeds later prerequisites |
-| Also | Camporee scoring, campsite assignment, medical/dietary manifests, monthly and year-end club reports, TLT applications and recommendations, nominations, compliance (background check) sync |
+| Also | Camporee scoring, campsite assignment, medical/dietary manifests, monthly and year-end club reports, TLT applications and recommendations, nominations, compliance (Sterling Volunteers) sync |
 
 CMMS-1's own build review (`docs/build-plan-review.md` §2.3) concluded Honors Weekend
 needs **no separate system**. It is an event with honor offerings plus an honor
@@ -224,7 +224,7 @@ A further 15 people were never assigned a site.
 - **Lodging (cabin) assignments** at Camp Heritage.
 - Class rosters per class, and site rosters with youth, staff, and adult totals.
 
-**Background checks:**
+**Sterling Volunteers:**
 - A "Sterling Check" sheet listed each staff member and adult with a check
   result: **Good**, **Not Found**, **Not Compliant**, or **Error**.
 - About 100 people were checked by hand; 93 were recorded as Good.

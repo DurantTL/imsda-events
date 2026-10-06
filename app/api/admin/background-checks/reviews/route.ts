@@ -14,7 +14,7 @@ async function getHandler() {
     const reviews = await listBackgroundCheckReviews();
     return Response.json({ reviews });
   } catch (error) {
-    return backgroundCheckApiError(error, "Loading the background check review list");
+    return backgroundCheckApiError(error, "Loading the Sterling Volunteers review list");
   }
 }
 

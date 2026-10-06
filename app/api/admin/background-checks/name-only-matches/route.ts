@@ -12,7 +12,7 @@ async function getHandler() {
     await requireSystemAdministrator();
     return Response.json({ matches: await listNameOnlyBackgroundCheckMatches() });
   } catch (error) {
-    return backgroundCheckApiError(error, "Loading background check matches made on the name alone");
+    return backgroundCheckApiError(error, "Loading Sterling Volunteers matches made on the name alone");
   }
 }
 

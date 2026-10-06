@@ -19,7 +19,7 @@ import { SortOrderNote } from "@/components/list-sort";
  * Read-only cross-club report views shared by the Area Coordinator's Clubs
  * section and the conference office. `clubHref` / `reportHref` let each
  * workspace link to its own view-only club and report pages. Counts and
- * points only: background checks are counts, never names or notes.
+ * points only: Sterling Volunteers are counts, never names or notes.
  */
 
 const shortMonth = (month: string) => new Date(`${month}-15T12:00:00Z`).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
@@ -70,7 +70,7 @@ export function AreaClubsOverview({ clubs, clubYear, links, query }: { clubs: Ar
             <th role="columnheader" scope="col">Reports submitted</th>
             <th role="columnheader" scope="col">Total points</th>
             <th role="columnheader" scope="col">Last report</th>
-            <th role="columnheader" scope="col">Background checks</th>
+            <th role="columnheader" scope="col">Sterling Volunteers</th>
           </tr>
         </thead>
         <tbody role="rowgroup">
@@ -83,7 +83,7 @@ export function AreaClubsOverview({ clubs, clubYear, links, query }: { clubs: Ar
               <td {...cardCell("Reports submitted")}>{club.submitted}{club.late > 0 && <small> ({club.late} late)</small>}</td>
               <td {...cardCell("Total points")}><strong>{formatNumber(club.totalPoints)}</strong></td>
               <td {...cardCell("Last report")}>{club.lastReportMonth ? reportMonthLabel(club.lastReportMonth) : "None yet"}</td>
-              <td {...cardCell("Background checks")}>
+              <td {...cardCell("Sterling Volunteers")}>
                 {/* Counts only: who and why stay with the club (#479). */}
                 {club.backgroundChecks.notInCompliance} not in compliance · {club.backgroundChecks.expiringSoon} expiring soon · {club.backgroundChecks.missing} missing
               </td>

@@ -32,7 +32,7 @@ async function postHandler(request: Request, context: RouteContext) {
     await resolveBackgroundCheckReview(reviewId, decision, actor.id);
     return Response.json({ reviews: await listBackgroundCheckReviews() });
   } catch (error) {
-    return backgroundCheckApiError(error, "Resolving a background check review");
+    return backgroundCheckApiError(error, "Resolving a Sterling Volunteers review");
   }
 }
 
@@ -49,7 +49,7 @@ async function deleteHandler(request: Request, context: RouteContext) {
     await restoreDismissedBackgroundCheckReview(reviewId, actor.id);
     return Response.json({ reviews: await listBackgroundCheckReviews() });
   } catch (error) {
-    return backgroundCheckApiError(error, "Undoing a background check dismissal");
+    return backgroundCheckApiError(error, "Undoing a Sterling Volunteers dismissal");
   }
 }
 

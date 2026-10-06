@@ -704,7 +704,7 @@ async function resolveNewAttendeePerson(
 /**
  * Whether a Person is used by this one registration attendee and nothing else
  * (#650): not a contact or billing person, not on another registration, not
- * linked to an account, household, roster, background check, transfer, honor
+ * linked to an account, household, roster, Sterling Volunteers, transfer, honor
  * record, or anything else that holds a Person id. Anything that might hold the
  * person makes the answer no, so a shared identity is never edited.
  */

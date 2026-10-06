@@ -133,7 +133,7 @@ control is not usable on cards**. Say how the list is ordered with a
 If a list cannot give up its sort header, keep the table in its scroll box and
 record the exception in `acceptedFindings`. Used by: roster
 (`.roster-card-table`), club reports, honors, area overview and points,
-invites, background checks, team, accounts, club forms, attendee listing.
+invites, Sterling Volunteers, team, accounts, club forms, attendee listing.
 
 ### 44px tap targets
 

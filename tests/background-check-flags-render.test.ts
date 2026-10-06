@@ -5,7 +5,7 @@ import { BackgroundCheckList } from "@/components/background-check-flags";
 import type { BackgroundFlag } from "@/modules/background-checks/repository";
 
 /**
- * The "Background check needed" list (#388, #544): a system administrator's
+ * The "Sterling Volunteers" list (#388, #544): a system administrator's
  * flags carry the issues text and readable reasons; anyone else's carry
  * neither (null and empty), and nothing about them is rendered.
  */
@@ -31,9 +31,9 @@ const render = (people: BackgroundFlag[]) => renderToStaticMarkup(createElement(
 
 describe("the background-check-needed list renders the issues text and reasons only when given them (#544)", () => {
   it("shows the text as written and each reason for an administrator", () => {
-    const html = render([flag({ issuesNote: "Synthetic issue, Non-Driver, BGC", issueReasons: ["Marked Non-Driver", "Background check expired"] })]);
+    const html = render([flag({ issuesNote: "Synthetic issue, Non-Driver, BGC", issueReasons: ["Marked Non-Driver", "Sterling Volunteers expired"] })]);
     expect(html).toContain("Issues: Synthetic issue, Non-Driver, BGC");
-    expect(html).toContain("Marked Non-Driver; Background check expired");
+    expect(html).toContain("Marked Non-Driver; Sterling Volunteers expired");
   });
 
   it("renders no text and no reasons when the note is null and the reasons are empty", () => {

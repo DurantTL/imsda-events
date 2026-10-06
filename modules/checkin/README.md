@@ -62,7 +62,7 @@ search, or by scanning any member's QR pass or the confirmation code — both
 paths open the same club view (`components/club-check-in-panel.tsx`), listing
 every attendee with the amount estimated billed to the church
 (`modules/club-registrations/church-owed.ts`, read-only, never a door
-payment) and any flags, including a missing background check (#405/#388).
+payment) and any flags, including a missing Sterling Volunteers record (#405/#388).
 Only an active (submitted or confirmed) club registration is offered, the
 same eligibility single-attendee check-in already enforces
 (`modules/club-registrations/repository.ts`'s `listClubCheckInInfo`); a

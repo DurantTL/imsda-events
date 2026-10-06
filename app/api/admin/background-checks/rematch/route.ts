@@ -17,7 +17,7 @@ async function postHandler(request: Request) {
     await rematchBackgroundCheckList(new Date(), admin.id);
     return Response.json({ ok: true });
   } catch (error) {
-    return backgroundCheckApiError(error, "Re-matching the background check list");
+    return backgroundCheckApiError(error, "Re-matching the Sterling Volunteers list");
   }
 }
 

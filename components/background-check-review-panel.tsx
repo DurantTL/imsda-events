@@ -252,7 +252,7 @@ export function BackgroundCheckReviewPanel() {
       <section aria-busy="true" className="panel">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Background checks</p>
+            <p className="eyebrow">Sterling Volunteers</p>
             <h2>Needs a look</h2>
           </div>
         </div>
@@ -267,7 +267,7 @@ export function BackgroundCheckReviewPanel() {
     <section className="panel">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Background checks</p>
+          <p className="eyebrow">Sterling Volunteers</p>
           <h2>Needs a look</h2>
           <p>Rows an upload couldn&apos;t match with confidence, waiting on a staff decision. Nothing is guessed.</p>
         </div>
@@ -295,7 +295,7 @@ export function BackgroundCheckReviewPanel() {
       {reviews && reviews.length > 0 && (
         <div className="report-table-wrap">
           <table className="report-table">
-            <caption className="sr-only">Background checks needing review</caption>
+            <caption className="sr-only">Sterling Volunteers needing review</caption>
             <thead><tr><th>Row</th><th>Site</th><th>Why</th><th>Candidates</th></tr></thead>
             <tbody>
               {reviews.map((review) => (
@@ -337,7 +337,7 @@ export function BackgroundCheckReviewPanel() {
       {nameOnlyMatches && nameOnlyMatches.length > 0 && (
         <div className="report-table-wrap">
           <table className="report-table">
-            <caption className="sr-only">Background check rows matched on the name alone</caption>
+            <caption className="sr-only">Sterling Volunteers rows matched on the name alone</caption>
             <thead><tr><th>Row</th><th>Row&apos;s site</th><th>Matched to</th><th>Their club or church</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
               {nameOnlyMatches.map((match) => (
@@ -363,7 +363,7 @@ export function BackgroundCheckReviewPanel() {
       {manualMatches && manualMatches.length > 0 && (
         <div className="report-table-wrap">
           <table className="report-table">
-            <caption className="sr-only">Background check rows matched to a person by hand</caption>
+            <caption className="sr-only">Sterling Volunteers rows matched to a person by hand</caption>
             <thead><tr><th>Row</th><th>Site</th><th>Matched to</th><th><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
               {manualMatches.map((match) => (
@@ -486,7 +486,7 @@ export function BackgroundCheckReviewPanel() {
       {unmatched && unmatched.length > 0 && (
         <div className="report-table-wrap">
           <table className="report-table">
-            <caption className="sr-only">Background check list entries not matched to anyone</caption>
+            <caption className="sr-only">Sterling Volunteers list entries not matched to anyone</caption>
             <thead><tr><th>Name</th><th>Site</th></tr></thead>
             <tbody>
               {unmatchedSlice.items.map((entry) => (

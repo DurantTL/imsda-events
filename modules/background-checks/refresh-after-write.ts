@@ -21,7 +21,7 @@ import { describeError, logError, logInfo } from "@/lib/logger";
  * recomputes everyone.
  *
  * The matching engine is loaded lazily: many write paths are imported by
- * modules and tests that never touch background checks, and the engine is
+ * modules and tests that never touch Sterling Volunteers, and the engine is
  * `server-only`.
  */
 function runAfterResponse(work: () => Promise<void>): Promise<void> {
@@ -32,7 +32,7 @@ function runAfterResponse(work: () => Promise<void>): Promise<void> {
     // Expected outside a request (a script, a test): nothing to defer past.
     // Anything else is unexpected, so say so once — then still do the work.
     const outsideRequest = error instanceof Error && error.message.includes("outside a request scope");
-    if (!outsideRequest) logInfo("Background check refresh ran inline: after() was unavailable", { reason: describeError(error).name });
+    if (!outsideRequest) logInfo("Sterling Volunteers refresh ran inline: after() was unavailable", { reason: describeError(error).name });
     return work();
   }
 }
@@ -46,7 +46,7 @@ async function refreshNow(ids: string[]) {
     const { refreshBackgroundCheckMatches } = await import("@/modules/background-checks/repository");
     await refreshBackgroundCheckMatches(ids);
   } catch (error) {
-    logError("Background check match refresh failed after a save", error, { people: ids.length });
+    logError("Sterling Volunteers match refresh failed after a save", error, { people: ids.length });
   }
 }
 
@@ -72,7 +72,7 @@ export async function refreshBackgroundCheckMatchesForRegistrations(registration
       ]));
       if (personIds.length > 0) await refreshNow(personIds);
     } catch (error) {
-      logError("Background check match refresh failed after a save", error, { registrations: ids.length });
+      logError("Sterling Volunteers match refresh failed after a save", error, { registrations: ids.length });
     }
   });
 }

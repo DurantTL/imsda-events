@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /**
  * The club-year dashboard (#488): the director's own club home and the
  * shared staff/Area Coordinator overview both build the same at-a-glance
- * tiles (roster, honors, background checks, events, monthly reports) from
+ * tiles (roster, honors, Sterling Volunteers, events, monthly reports) from
  * data they already load — no new queries. These tests walk each server
  * page's returned tree (the same walk the roster page tests use)
  * and check the `ClubYearTiles` props each role gets, without rendering to DOM.

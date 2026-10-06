@@ -78,7 +78,7 @@ describe("Fall Camporee form template", () => {
 });
 
 describe("Fall Camporee starter", () => {
-  it("is a CLUB, church-billed starter with adult background checks on and two undated locations", () => {
+  it("is a CLUB, church-billed starter with adult Sterling Volunteers on and two undated locations", () => {
     expect(starter).toMatchObject({ name: "Fall Camporee", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", checksAdultBackgrounds: true, formTemplateKey: "fall_camporee" });
     const payload = parseEventTemplatePayload(starterPayload(starter));
     expect(() => validateEventTemplatePayloadReferences(payload)).not.toThrow();

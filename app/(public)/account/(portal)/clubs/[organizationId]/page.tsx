@@ -152,7 +152,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
               <li className={step.danger ? "club-step-danger" : undefined} key={step.key}>
                 <CircleAlert size={17} aria-hidden="true" />
                 <span>
-                  {step.danger && <small className="club-step-flag">Background check</small>}
+                  {step.danger && <small className="club-step-flag">Sterling Volunteers</small>}
                   <strong>{step.text}</strong>
                 </span>
                 <Link className="secondary-button club-event-action" href={step.href}>

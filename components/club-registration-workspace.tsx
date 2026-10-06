@@ -551,7 +551,7 @@ export function ClubRegistrationWorkspace({
               <label>
                 Email (optional)
                 <input autoComplete="off" maxLength={254} name="email" type="email" />
-                <small className="field-help">Adults at youth events need a background check; an email helps match it.</small>
+                <small className="field-help">Adults at youth events need to be in compliance with Sterling Volunteers; an email helps match it.</small>
               </label>
             </div>
             <div className="club-registration-toolbar">

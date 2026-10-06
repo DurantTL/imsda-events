@@ -1100,9 +1100,9 @@ function buildFallCamporeeTemplate(spring: FormTemplate): FormTemplate {
             ? templateField(field.id, "registration_fee", "Fall Camporee fee", "CALCULATED", false, [], { scope: "ATTENDEE" })
             : field),
         },
-        { id: "fc_acknowledgments", title: "Release & background checks", description: "The director confirms both before submitting.", fields: [
+        { id: "fc_acknowledgments", title: "Release & Sterling Volunteers", description: "The director confirms both before submitting.", fields: [
           templateField("fc_photo_release", "photo_video_release", "Photo and video release", "CHECKBOX", true, [], { placeholder: "I give permission for photos and video of our club's members to be taken and used by the Camporee organizers." }),
-          templateField("fc_background_ack", "background_check_acknowledgment", "Adult background checks", "CHECKBOX", true, [], { placeholder: "I understand every adult attending with our club must have a background check on file." }),
+          templateField("fc_background_ack", "background_check_acknowledgment", "Adult Sterling Volunteers", "CHECKBOX", true, [], { placeholder: "I understand every adult attending with our club must have a Sterling Volunteers on file." }),
         ] },
       ],
     },

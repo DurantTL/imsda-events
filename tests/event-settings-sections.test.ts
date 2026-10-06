@@ -264,7 +264,7 @@ describe("event settings render by event type (#624)", () => {
   it("shows the club-applicable sections in view and keeps Danger zone (system admins) and Save visible", () => {
     const markup = render({}, true);
     const more = moreSettings(markup);
-    for (const label of ["Attendee edit verification", "Collect a shirt size", "background checks", "Hotel name"]) {
+    for (const label of ["Attendee edit verification", "Collect a shirt size", "Sterling Volunteers", "Hotel name"]) {
       expect(markup).toContain(label);
       expect(more).not.toContain(label);
     }
