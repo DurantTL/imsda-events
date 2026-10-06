@@ -313,7 +313,7 @@ describe("external email queue", () => {
     expect(result.sentIds).toEqual([]);
     expect(store.message).toMatchObject({ status: "PENDING", lockToken: null, lockedAt: null, attemptCount: 1 });
     expect(store.message.availableAt.getTime()).toBe(dependencies.now().getTime() + emailRetryDelayMs(1));
-    expect(store.attempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "FAILED", errorCode: "LODGING_CURRENCY_CHECK_FAILED" })]);
+    expect(store.attempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "FAILED", errorCode: "LODGING_CURRENCY_CHECK_FAILED", provider: "INTERNAL", providerMetadata: expect.objectContaining({ realDelivery: false }) })]);
     // The last allowed attempt ends as FAILED rather than retrying forever.
     const last = fakeDeliveryStore({ templateKey: "LODGING_WAITLIST_OFFER", attemptCount: 4 });
     await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: last.prisma as never, sendEmail: sendEmail as never } });

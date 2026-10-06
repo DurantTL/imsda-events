@@ -695,6 +695,8 @@ number); `ACCEPTED` → `PROMOTED` (staff place the party in a unit); any open s
   - **It is deliberately conservative.** A registration promoted into another type (or placed there by staff) whose request
     still names the first type holds both until staff update the request. The assignment screen lists such a registration
     under conflicts ("Placed in a different type than requested") so staff know to update it.
+  - The offer preview reserves an entry against the next one only when that row would really be offered (same order as the
+    confirm); an expired offer that is re-offered and then skipped stops holding its places for the rest of the batch.
   - A batch of offers reads the demand and the capacity once after the locks and counts each newly offered entry against
     the next one in memory.
   - The function takes a `countsTowardPublicCapacity` filter so a kind of registration (staff invitations, #804) can be
@@ -722,7 +724,7 @@ arrival instructions), so it goes obsolete when a roommate moves in or out, a ro
 instructions are edited, not only when the registration's own assignments change. The notice is **checked again just
 before it is sent** (like an invoice email): one that a later change made wrong, or a waitlist offer that is no longer
 open, is cancelled instead of delivered. If the check itself fails, that counts as a failed delivery attempt and is retried
-with the normal backoff, ending as failed after the usual number of tries (staff can then offer again). The private page and the notice load only that registration's own rows (and the
+with the normal backoff, ending as failed after the usual number of tries (staff can then offer again); the attempt row is marked internal and not a real delivery, since no provider was called. The private page and the notice load only that registration's own rows (and the
 other occupants of its rooms when roommates are on), never the event's whole picture.
 
 An amendment that **removes an attendee** with any room assignment history (even a cancelled assignment or an expected

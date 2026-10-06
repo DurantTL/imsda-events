@@ -693,6 +693,25 @@ async function main() {
   // The database's one-open-entry index raises the error the service maps; check the mapping against Prisma's real target.
   const duplicate = await caught(prisma.eventLodgingWaitlistEntry.create({ data: { eventId: capAEvent, registrationId: waiter.id, category: "TENT_WITH_POWER", partySize: 1, createdVia: "STAFF" } }));
   assert(duplicate && isOpenEntryViolation(duplicate), `a second open entry for a registration is recognised as the open-entry violation (${JSON.stringify((duplicate as { meta?: unknown } | undefined)?.meta)})`);
+  // A batch with a live offer whose email failed next to a fresh entry: the re-offer is not counted twice.
+  const capDEvent = `${P}_ev_capd`;
+  await createEvent(capDEvent);
+  await selectEventProperty(capDEvent, userId, { propertyKey: "sunnydale-academy" }, prisma);
+  await updateLodgingSettings(capDEvent, userId, { collectsPreferences: true, fullBehavior: "WAITLIST" }, prisma);
+  await updateEventUnit(capDEvent, (await unitRow(capDEvent, "tents-with-power")).id, userId, { capacityOverride: 4 }, prisma);
+  const staffD = (raw: unknown, now = capNow) => applyWaitlistAction(capDEvent, userId, raw, { now }, prisma);
+  const regU = await makeReg(capDEvent, [40]);
+  const regF = await makeReg(capDEvent, [40]);
+  await staffD({ action: "join", registrationId: regU.id, category: "TENT_WITH_POWER", partySize: 1 });
+  const entryU = await prisma.eventLodgingWaitlistEntry.findFirstOrThrow({ where: { registrationId: regU.id } });
+  const offerU = await staffD({ action: "offer", entryIds: [entryU.id], confirm: true, expiresInHours: 24 });
+  if (offerU.action !== "offer" || !offerU.confirmed) throw new Error("FAILED: the offer shape");
+  await prisma.messageOutbox.update({ where: { id: offerU.offered[0]!.messageId! }, data: { status: "SUPPRESSED" } });
+  await staffD({ action: "join", registrationId: regF.id, category: "TENT_WITH_POWER", partySize: 1 });
+  const entryF = await prisma.eventLodgingWaitlistEntry.findFirstOrThrow({ where: { registrationId: regF.id } });
+  const batch = await staffD({ action: "offer", entryIds: [entryU.id, entryF.id], confirm: true, expiresInHours: 24 }, new Date("2027-05-20T13:00:00Z"));
+  assert(batch.action === "offer" && batch.confirmed && batch.offered.length === 2 && batch.skipped.length === 0 && batch.offered.find((row) => row.entryId === entryU.id)!.offerNumber === 2 && batch.offered.find((row) => row.entryId === entryF.id)!.offerNumber === 1 && !batch.offered.some((row) => row.alreadyOffered), "a re-offer of an undelivered offer and a fresh entry are both offered in one batch");
+  assert((await tentRemaining(capDEvent)).every((value) => value === 2), `each of the two live offers holds one place, the re-offer is not counted twice (${(await tentRemaining(capDEvent)).join()})`);
   // A placement outside the request's type is still counted, and a request switched after placement keeps the room counted.
   const capCEvent = `${P}_ev_capc`;
   await createEvent(capCEvent);
@@ -752,6 +771,28 @@ async function main() {
     assert(rowHistory.length === row.revision && rowHistory.every((entry, index) => entry.revision === index + 1), `every revision of an assignment released twice has its own history row (${row.id}: revision ${row.revision}, ${rowHistory.length} rows)`);
   }
   assert(dblRows.filter((row) => !row.cancelledAt).map((row) => `${night(row.firstNight)}..${night(row.lastNight)}`).sort().join() === `${N[0]}..${N[0]},${N[1]}..${N[1]},${N[2]}..${N[2]},${N[3]}..${N[3]}`, "the stay is split into one row per night, in the right rooms");
+  // A remainder cut again in the same batch (nights 2 and 4 out of one stay) is written with its occupant from the real row.
+  const cut = await makeReg(dblEvent, [40]);
+  await placeAt(dblEvent, cut.people[0]!, "girls-101");
+  await applyAssignmentAction(dblEvent, userId, { action: "place", reason: "Two nights elsewhere", placements: [
+    { occupant: attendee(cut.people[0]!), place: { kind: "UNIT", eventUnitId: (await unitRow(dblEvent, "girls-102")).id }, firstNight: N[1], lastNight: N[1], mode: "MOVE" },
+    { occupant: attendee(cut.people[0]!), place: { kind: "UNIT", eventUnitId: (await unitRow(dblEvent, "girls-104")).id }, firstNight: N[3], lastNight: N[3], mode: "MOVE" },
+  ] }, prisma);
+  const cutRows = await prisma.eventLodgingAssignment.findMany({ where: { eventId: dblEvent, attendeeId: cut.people[0]!.attendeeId } });
+  for (const row of cutRows) {
+    const rowHistory = await prisma.eventLodgingAssignmentHistory.count({ where: { assignmentId: row.id } });
+    assert(rowHistory === row.revision, `each row of the twice-cut stay has its revisions in its history (${row.id}: revision ${row.revision}, ${rowHistory} rows)`);
+  }
+  assert(cutRows.filter((row) => !row.cancelledAt).map((row) => `${night(row.firstNight)}..${night(row.lastNight)}`).sort().join() === `${N[0]}..${N[0]},${N[1]}..${N[1]},${N[2]}..${N[2]},${N[3]}..${N[3]}`, "the twice-cut stay covers every night exactly once");
+  // Assign then move in one batch is recorded as an assignment to the final room, linked to nothing that never existed.
+  const quick = await makeReg(dblEvent, [40]);
+  await applyAssignmentAction(dblEvent, userId, { action: "place", reason: "Assign then move", placements: [
+    { occupant: attendee(quick.people[0]!), place: { kind: "UNIT", eventUnitId: (await unitRow(dblEvent, "girls-203")).id }, firstNight: N[0], lastNight: N[1] },
+    { occupant: attendee(quick.people[0]!), place: { kind: "UNIT", eventUnitId: (await unitRow(dblEvent, "girls-205")).id }, firstNight: N[0], lastNight: N[1], mode: "MOVE" },
+  ] }, prisma);
+  const [quickRow] = await current(dblEvent, { attendeeId: quick.people[0]!.attendeeId });
+  const quickHistory = await history([quickRow!.id]);
+  assert(quickHistory.length === 1 && quickHistory[0]!.type === "ASSIGNED" && quickHistory[0]!.previousUnitId === null && quickHistory[0]!.relatedAssignmentId === null, `assign then move in one batch is recorded as one assignment to the final room (${JSON.stringify(quickHistory.map((entry) => [entry.type, entry.previousUnitId]))})`);
 
   // ---- What attendees see ------------------------------------------------------
   const host = await makeReg(eventId, [40]);

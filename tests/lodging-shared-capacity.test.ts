@@ -115,6 +115,19 @@ describe("one counting rule for a category's free space (#200)", () => {
     expect(at(demand, "DORM_ROOM")).toBe(2 + 4);
   });
 
+  it("follows per-night capacity differences, such as a hold on one night", async () => {
+    const held: CategoryCapacity = { ...capacity(40), perNight: { [NIGHTS[0]!]: 40, [NIGHTS[1]!]: 5, [NIGHTS[2]!]: 40 } };
+    const demand = await demandFor({ requests: [{ registrationId: "r", category: "DORM_ROOM", partySize: 3 }] });
+    expect(categoryFits({ capacity: held, demand: demand.get("DORM_ROOM" as never), nights: NIGHTS, partySize: 2 }).fits).toBe(true);
+    expect(categoryFits({ capacity: held, demand: demand.get("DORM_ROOM" as never), nights: NIGHTS, partySize: 3 })).toMatchObject({ fits: false, firstFullNight: NIGHTS[1] });
+    expect(categoryFits({ capacity: held, demand: demand.get("DORM_ROOM" as never), nights: [NIGHTS[0]!, NIGHTS[2]!], partySize: 37 }).fits).toBe(true);
+  });
+
+  it("adds an expected-guest group to a registration in the same category", async () => {
+    const demand = await demandFor({ requests: [{ registrationId: "r", category: "DORM_ROOM", partySize: 2 }], placed: [{ registrationId: null, people: 10, category: "DORM_ROOM" }] });
+    expect(at(demand, "DORM_ROOM")).toBe(12);
+  });
+
   it("keeps a cancelled registration's request out but still counts its placement until staff release it", async () => {
     const demand = await demandFor({ placed: [{ registrationId: "gone", people: 2, category: "DORM_ROOM" }] });
     expect(at(demand, "DORM_ROOM")).toBe(2);

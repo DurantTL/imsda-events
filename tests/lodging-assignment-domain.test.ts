@@ -148,6 +148,48 @@ describe("planPlacements", () => {
     expect(chained.plan.creates[0]).toMatchObject({ type: "MOVED_IN", relatedId: "s1", segment: { unitId: "c" }, previous: { unitId: "a" } });
   });
 
+  describe("a stay cut several times in one batch", () => {
+    const week = Array.from({ length: 7 }, (_, index) => `2027-06-${String(15 + index).padStart(2, "0")}`);
+    const weekBase = { ...base, eventNights: week };
+    const cuts = (indexes: number[]) => indexes.map((index, order) => place("p1", ["b", "c", "d"][order]!, week[index]!, week[index]!, { mode: "MOVE" }));
+    const allUnits = units(unit("a", 2), unit("b", 2), unit("c", 2), unit("d", 2));
+
+    function check(first: number, last: number, cutIndexes: number[]) {
+      const result = planPlacements({ ...weekBase, segments: [segment("s1", "p1", "a", week[first]!, week[last]!)], units: allUnits, placements: cuts(cutIndexes) });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      // Every create can be written: it names its occupant, or a real row (never a key of this plan) to take it from.
+      for (const create of result.plan.creates) {
+        const resolvable = Boolean(create.occupant.attendeeId || create.occupant.placeholderId) || Boolean(create.relatedId && !create.relatedId.startsWith("new:"));
+        expect(resolvable, `${create.type} ${create.key} relatedId ${create.relatedId}`).toBe(true);
+      }
+      expect(result.plan.releases.every((release) => !release.id.startsWith("new:"))).toBe(true);
+      // Exact coverage: every night of the stay, once, in the right room.
+      const covered = new Map<string, string>();
+      for (const entry of result.plan.after) {
+        for (let index = week.indexOf(entry.firstNight); index <= week.indexOf(entry.lastNight); index += 1) {
+          expect(covered.has(week[index]!)).toBe(false);
+          covered.set(week[index]!, entry.unitId!);
+        }
+      }
+      expect([...covered.keys()].sort()).toEqual(week.slice(first, last + 1));
+      cutIndexes.forEach((index, order) => expect(covered.get(week[index]!)).toBe(["b", "c", "d"][order]));
+      week.slice(first, last + 1).forEach((night, offset) => { if (!cutIndexes.includes(first + offset)) expect(covered.get(night)).toBe("a"); });
+    }
+
+    it("takes the occupant of a remainder cut again from the real row", () => check(0, 4, [1, 3]));
+    it("does the same for three cuts out of seven nights", () => check(0, 6, [1, 3, 5]));
+  });
+
+  it("points a release at the placement that replaced the one it was linked to", () => {
+    const chained = planPlacements({ ...base, segments: [segment("s1", "p1", "a")], units: units(unit("a", 2), unit("b", 2), unit("c", 2)), placements: [place("p1", "b", nights[0]!, nights[3]!, { mode: "MOVE" }), place("p1", "c", nights[0]!, nights[3]!, { mode: "MOVE" })] });
+    expect(chained.ok).toBe(true);
+    if (!chained.ok) return;
+    expect(chained.plan.creates).toHaveLength(1);
+    expect(chained.plan.releases).toHaveLength(1);
+    expect(chained.plan.releases[0]!.relatedKey).toBe(chained.plan.creates[0]!.key);
+  });
+
   it("never overbooks a batch with itself: the last bed goes to one person", () => {
     const result = planPlacements({ ...base, segments: [], units: units(unit("a", 1)), placements: [place("p1", "a"), place("p2", "a")] });
     expect(result).toMatchObject({ ok: false, index: 1, problem: { code: "UNIT_FULL" } });

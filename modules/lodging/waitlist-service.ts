@@ -256,11 +256,13 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
         const shared = await loadShared(tx, state, eventId, now);
         for (const entry of entries) {
           const assessed = await assessOffer(tx, state, eventId, entry, now, shared);
-          if (assessed.eligible && !assessed.alreadyOffered) { if (!isCounted(entry, now)) reserveEntry(shared, entry, state.context.nights); }
           const recipient = await lodgingRecipient(tx, eventId, entry.registrationId);
+          const eligible = assessed.eligible && Boolean(recipient?.email) && (!deliveryDisabled || assessed.alreadyOffered);
+          // Only an entry the confirm would really offer is counted against the next one, in the same order as confirm.
+          if (eligible && !assessed.alreadyOffered && !isCounted(entry, now)) reserveEntry(shared, entry, state.context.nights);
           rows.push({
             entryId: entry.id, registrationCode: entry.registration.confirmationCode, holder: recipient?.name ?? "", category: entry.category, partySize: entry.partySize,
-            eligible: assessed.eligible && Boolean(recipient?.email) && (!deliveryDisabled || assessed.alreadyOffered),
+            eligible,
             reason: assessed.reason ?? (!recipient?.email ? "The registration has no email address to send the offer to." : deliveryDisabled && !assessed.alreadyOffered ? disabledReason : null),
             alreadyOffered: assessed.alreadyOffered, recipientMasked: recipient?.email ? `${recipient.email.slice(0, 1)}***@${recipient.email.split("@")[1] ?? ""}` : null,
           });
@@ -279,6 +281,8 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
         if (!assessed.eligible) { skipped.push({ entryId: entry.id, reason: assessed.reason ?? "Not eligible." }); continue; }
         if (deliveryDisabled) { skipped.push({ entryId: entry.id, reason: disabledReason }); continue; }
         if (entry.status === "OFFERED") {
+          // Its old live offer leaves the shared demand now (a re-offer that is then skipped must not keep holding it).
+          if (isCounted(entry, now)) addWaitingDemand(shared.groups, entry.registrationId, entry.category, entryNightsOf(entry, state.context.nights), -entry.partySize);
           const expired = isOfferLapsed({ status: "OFFERED", offerExpiresAt: entry.offerExpiresAt }, now);
           await tx.eventLodgingWaitlistEntry.update({ where: { id: entry.id }, data: { status: "EXPIRED" } });
           await record(tx, entry, "EXPIRED", expired ? null : actor, { reason: expired ? "The offer expired before it was answered." : "Offered again: the offer email did not reach the guest.", offerNumber: entry.offerNumber, offerExpiresAt: entry.offerExpiresAt }, now);
@@ -304,7 +308,7 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
         if (message.skipped) { skipped.push({ entryId: entry.id, reason: "The registration has no email address to send the offer to." }); continue; }
         await tx.eventLodgingWaitlistEntry.update({ where: { id: entry.id }, data: { status: "OFFERED", offerNumber, offeredAt: now, offerExpiresAt: expiresAt, offerMessageId: message.messageId } });
         await record(tx, entry, "OFFERED", actor, { offerNumber, offerExpiresAt: expiresAt, messageId: message.messageId }, now);
-        if (!isCounted(entry, now)) reserveEntry(shared, entry, state.context.nights);
+        reserveEntry(shared, entry, state.context.nights);
         if (message.pending && message.messageId) deliver.push(message.messageId);
         offered.push({ entryId: entry.id, offerNumber, expiresAt: expiresAt.toISOString(), messageId: message.messageId, alreadyOffered: false });
       }

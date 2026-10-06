@@ -250,7 +250,7 @@ async function cancelIfLodgingStale(
     // The check itself failed: count it as a failed attempt and retry after the normal backoff (so it ends as FAILED after
     // the usual number of tries, and staff can offer again), and carry on with the rest of the run.
     logError("Unable to check whether a lodging email is still current; it will be retried.", error);
-    await finalizeFailedAttempt(prisma, message, { code: "LODGING_CURRENCY_CHECK_FAILED", message: "Could not confirm the lodging email was still current, so it was not sent.", retryable: true }, at);
+    await finalizeFailedAttempt(prisma, message, { code: "LODGING_CURRENCY_CHECK_FAILED", message: "Could not confirm the lodging email was still current, so it was not sent.", retryable: true }, at, true);
     return true;
   }
   if (!reason) return false;
@@ -546,6 +546,7 @@ async function finalizeFailedAttempt(
   message: ClaimedMessage,
   error: NormalizedEmailDeliveryError,
   completedAt: Date,
+  internal = false,
 ) {
   const attemptNumber = message.attemptCount + 1;
   const reschedule = error.retryable && attemptNumber < MAX_EMAIL_DELIVERY_ATTEMPTS;
@@ -564,8 +565,8 @@ async function finalizeFailedAttempt(
         lockedAt: null,
         lockToken: null,
         failedAt: reschedule ? null : completedAt,
-        provider: "RESEND",
-        providerDeliveryStatus: reschedule ? undefined : "FAILED",
+        provider: internal ? undefined : "RESEND",
+        providerDeliveryStatus: reschedule || internal ? undefined : "FAILED",
         providerStatusAt: reschedule ? undefined : completedAt,
         lastError: error.message,
       },
@@ -575,7 +576,7 @@ async function finalizeFailedAttempt(
       data: {
         messageOutboxId: message.id,
         attemptNumber,
-        provider: "RESEND",
+        provider: internal ? "INTERNAL" : "RESEND",
         status: "FAILED",
         errorCode: error.code,
         errorMessage: error.message,
@@ -584,7 +585,8 @@ async function finalizeFailedAttempt(
           rescheduled: reschedule,
           ...(reschedule ? { nextAvailableAt: availableAt.toISOString() } : {}),
           idempotencyKey: `outbox:${message.id}`,
-          realDelivery: true,
+          // A failed pre-send check (no provider was called) is not a real delivery attempt.
+          realDelivery: !internal,
         },
         startedAt: message.startedAt,
         completedAt,

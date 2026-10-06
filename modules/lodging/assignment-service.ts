@@ -211,6 +211,9 @@ export async function writePlan(tx: Tx, plan: Plan, meta: PlanMeta): Promise<Pla
       ? { attendeeId: origin.attendeeId, placeholderId: origin.placeholderId }
       : create.occupant;
     const source = create.type === "SPLIT_REMAINDER" && origin ? origin.source : create.source;
+    if (!occupant.attendeeId && !occupant.placeholderId) {
+      throw new Error(`Internal error: the planned ${create.type} row ${create.key} has no occupant (its source row ${create.relatedId ?? "none"} was not found).`);
+    }
     await tx.eventLodgingAssignment.create({
       data: {
         id, eventId,

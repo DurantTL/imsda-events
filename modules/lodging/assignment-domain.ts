@@ -274,7 +274,9 @@ class Planner {
         this.creates.push({
           kind: "CREATE", key, type: "SPLIT_REMAINDER",
           segment: { occupantKey: segment.occupantKey, unitId: segment.unitId, bucketId: segment.bucketId, people: segment.people, ...remainderPiece },
-          occupant: created.occupant, source: created.source, relatedId: segment.id,
+          // A remainder of a remainder still comes from the real row (the writer resolves its occupant and source from it);
+          // a remainder of a placement this plan made carries that placement's own occupant and source.
+          occupant: created.occupant, source: created.source, relatedId: created.type === "SPLIT_REMAINDER" ? created.relatedId : segment.id,
         });
         this.working.push({ ...segment, id: key, ...remainderPiece });
       }
@@ -346,8 +348,10 @@ class Planner {
     }
     const key = this.nextKey();
     let inherited: CreateOp | undefined;
+    const editedCreates: CreateOp[] = [];
     for (const segment of existing) {
       const edited = this.release(segment, range, "MOVED_OUT", key);
+      if (edited) editedCreates.push(edited);
       if (edited && !inherited) inherited = edited;
     }
     if (unit) {
@@ -389,6 +393,11 @@ class Planner {
       relatedId,
       previous,
     });
+    // A create this placement replaced entirely is gone: releases that pointed at it now point at its replacement.
+    for (const edited of editedCreates) {
+      if (this.creates.some((candidate) => candidate.key === edited.key)) continue;
+      for (const release of this.releases) if (release.relatedKey === edited.key) release.relatedKey = key;
+    }
     this.working.push({ id: key, occupantKey: placement.occupantKey, unitId, bucketId, people: placement.people, ...range });
     return null;
   }
