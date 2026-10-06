@@ -743,7 +743,7 @@ async function main() {
   // The figure staff are told to record is THIS edit's change (previous to next at today's rates), never the running total
   // since submission (#803 round 3): two edits in a row report their own changes and a revert reports the reverse. Tents are
   // $40 a person, so the party size moves the line by $40 a step.
-  const stepReg = await submitForm({ people: 1, responses: { registration_fee: true, promo_code: "HALFOFF" }, lodging: { category: "TENT", partySize: 1 } });
+  const stepReg = await submitForm({ people: 3, responses: { registration_fee: true, promo_code: "HALFOFF" }, lodging: { category: "TENT", partySize: 1 } });
   const staffSaved = async (reg: Reg, raw: unknown) => { const result = await saveAny(reg, raw, staff); if (result.changeRequested) throw new Error("FAILED: a staff change was held for staff"); return result; };
   const stepTo = (party: number) => staffSaved(stepReg.reg, { category: "TENT", partySize: party, reason: `Party of ${party}` });
   const step1 = await stepTo(2);
@@ -756,7 +756,7 @@ async function main() {
   assert(step4.chargeDeltaCents === -4000 && step4.sponsorDeltaCents === -2000 && step4.requestNowCostsCents === 4000 && step4.churchSponsorReview === true, `a return to the original still moves the sponsor's share this edit, so it warns: ${JSON.stringify(step4)}`);
   assert(chargeChangeSentence(step4).startsWith(CHURCH_SPONSOR_CONTACT_LEAD) && !/adjust the charge in Payments/i.test(chargeChangeSentence(step4)), "and leads with the finance-office line");
   // A registrant's own change request records this request's list change in the audit trail (previous to next).
-  const askReg = await submitForm({ people: 1, responses: { registration_fee: true, promo_code: "HALFOFF" }, lodging: { category: "TENT", partySize: 1 } });
+  const askReg = await submitForm({ people: 3, responses: { registration_fee: true, promo_code: "HALFOFF" }, lodging: { category: "TENT", partySize: 1 } });
   const askedChange = await saveAny(askReg.reg, { category: "TENT", partySize: 2 });
   assert(askedChange.changeRequested === true, "a registrant's priced change is held for staff");
   const askedAudit = await prisma.auditLog.findFirstOrThrow({ where: { action: "LODGING_CHANGE_REQUESTED", metadata: { path: ["registrationId"], equals: askReg.reg.id } } });
@@ -766,7 +766,7 @@ async function main() {
   const quiet = await staffSaved(stepReg.reg, { category: "TENT", partySize: 2, privateRoomRequested: true, reason: "Wants privacy" });
   assert(quiet.priceNeedsReview !== true && quiet.churchSponsorReview === true && quiet.originallyChargedCents === 4000 && quiet.requestNowCostsCents === 8000 && chargeChangeSentence(quiet).startsWith(CHURCH_SPONSOR_CONTACT_LEAD), `an unrelated edit keeps the church warning while the cumulative share differs: ${JSON.stringify(quiet)}`);
   await stepTo(1);
-  const plainReg = await submitForm({ people: 1, responses: { registration_fee: true }, lodging: { category: "TENT", partySize: 1 } });
+  const plainReg = await submitForm({ people: 3, responses: { registration_fee: true }, lodging: { category: "TENT", partySize: 1 } });
   const plainTo = (party: number) => staffSaved(plainReg.reg, { category: "TENT", partySize: party, reason: `Party of ${party}` });
   const plain1 = await plainTo(2);
   const plain2 = await plainTo(3);
