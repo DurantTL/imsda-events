@@ -63,6 +63,7 @@ export default async function EmbeddedRegistrationPage({
         choiceUsage={experience.choiceUsage}
         pricingDate={experience.pricingDate}
         lifecycle={experience.lifecycle}
+        lodging={experience.lodging}
         embedded
         disableDrafts={Boolean(account)}
       />

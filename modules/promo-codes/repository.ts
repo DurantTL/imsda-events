@@ -13,7 +13,9 @@ import {
 } from "@/modules/events/lifecycle";
 import { calendarDateInTimeZone } from "@/modules/forms/public-domain";
 import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
+import { lodgingQuoteLine } from "@/modules/lodging/registration-form";
 import {
+  addUndiscountedLine,
   getAttendeeRosterConfig,
   registrationFormDefinitionSchema,
   type FormCalculation,
@@ -655,6 +657,26 @@ function withoutQuoteTotals<T extends DiscountedFormCalculation>(
   return { ...copy, perPerson } as ChurchBilledPromoQuote<T>;
 }
 
+/**
+ * Adds the lodging line the submission will add (#199) to a quote that was worked out on the form's own lines, so the
+ * total the registrant sees is the one the registration is priced at. A promo code never discounts lodging (until the
+ * event team decides otherwise): the discount and the code's minimum are decided without it, and the line joins the
+ * quote afterwards. A church-billed event never prices lodging through the registration.
+ */
+async function withLodgingQuote<T extends DiscountedFormCalculation>(
+  client: PrismaClient,
+  eventId: string,
+  definition: RegistrationFormDefinition,
+  prepared: { registrationResponses: Record<string, unknown>; attendees: unknown[] },
+  input: PublicPromoCodeQuoteInput,
+  churchBilled: boolean,
+  quote: T,
+): Promise<T> {
+  if (!input.lodging || churchBilled) return quote;
+  const line = await lodgingQuoteLine(client, eventId, input.lodging, prepared.attendees.length);
+  return line ? addUndiscountedLine(definition, prepared.registrationResponses, quote, line) : quote;
+}
+
 export type PublicAttendeePromoQuote = DiscountedFormCalculation & {
   /** Sponsoring church name by normalized code, for the codes entered (#545). */
   sponsors?: Record<string, string>;
@@ -730,12 +752,12 @@ export async function getPublicPromoCodeQuote(
         where: { eventId: form.eventId, normalizedCode: { in: enteredCodes }, sponsoringOrganizationId: { not: null } },
         select: { normalizedCode: true, sponsoringOrganization: { select: { name: true } } },
       });
-    return withoutQuoteTotals({
+    return withoutQuoteTotals(await withLodgingQuote(prisma, form.eventId, definition, prepared, input, churchBilled, {
       ...applyAttendeePromoCodes(definition, prepared.registrationResponses, prepared.calculation, discounts),
       attendeeIssues: issues,
       sponsors: Object.fromEntries(sponsored.flatMap((promo) =>
         promo.sponsoringOrganization ? [[promo.normalizedCode, promo.sponsoringOrganization.name]] : [])),
-    } satisfies PublicAttendeePromoQuote, churchBilled, { roster: true, attendeeCount: prepared.attendees.length });
+    } satisfies PublicAttendeePromoQuote), churchBilled, { roster: true, attendeeCount: prepared.attendees.length });
   }
   const field = requirePromoField(definition);
   const responses = {
@@ -774,7 +796,7 @@ export async function getPublicPromoCodeQuote(
       select: { name: true },
     })
     : null;
-  return withoutQuoteTotals({
+  return withoutQuoteTotals(await withLodgingQuote(prisma, form.eventId, definition, prepared, input, churchBilled, {
     ...applyPromoCodeToCalculation(
       definition,
       prepared.registrationResponses,
@@ -782,7 +804,7 @@ export async function getPublicPromoCodeQuote(
       evaluation,
     ),
     sponsoredBy: sponsor?.name ?? null,
-  }, churchBilled, { roster: getAttendeeRosterConfig(definition).enabled, attendeeCount: prepared.attendees.length });
+  }), churchBilled, { roster: getAttendeeRosterConfig(definition).enabled, attendeeCount: prepared.attendees.length });
 }
 
 export async function claimPromoCode(

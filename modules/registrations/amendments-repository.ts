@@ -1,6 +1,7 @@
 import "server-only";
 
 import { checkLocationSeats } from "@/modules/event-locations/admission";
+import { LODGING_LINE_KEY } from "@/modules/lodging/pricing";
 import { promoteWaitlistAfterSeatsFreed } from "@/modules/registrations/lifecycle-repository";
 import { EventLocationError, locationTransactionTimeoutMs } from "@/modules/event-locations/errors";
 import { locationChangeBlock } from "@/modules/honors/locations";
@@ -13,6 +14,7 @@ import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/backgro
 import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
 import {
+  addUndiscountedLine,
   getAvailabilityMode,
   isChoiceFieldType,
   isFieldVisible,
@@ -1221,12 +1223,21 @@ async function prepareAmendment(
     throw error;
   }
 
-  const pricedCalculation = applyStoredPromo(
+  // The lodging line (#199) is priced when the registration is submitted, not from the form's fields, so an amendment of
+  // the form's answers carries the stored line through unchanged instead of silently dropping it from the total.
+  const storedLodgingLine = Array.isArray(pricingSnapshot.lineItems)
+    ? pricingSnapshot.lineItems.map(recordFromJson).find((line) => line.key === LODGING_LINE_KEY && typeof line.amountCents === "number") ?? null
+    : null;
+  const discountedCalculation = applyStoredPromo(
     definition,
     prepared.registrationResponses,
     prepared.calculation,
     registration.promoCodeRedemption,
   );
+  // A promo code never discounts the lodging line, so it joins after the discount.
+  const pricedCalculation = storedLodgingLine
+    ? addUndiscountedLine(definition, prepared.registrationResponses, discountedCalculation, storedLodgingLine as unknown as FormCalculation["lineItems"][number])
+    : discountedCalculation;
   const netPaidCents = paidCents(registration);
   // Staff adjustments (#396) stay on top of whatever the new answers cost.
   const adjustmentsCents = await adjustmentTotalCents(tx, registration.id);

@@ -15,6 +15,7 @@ import {
 } from "@/modules/communications/messaging-repository";
 import { enqueueWaitlistJoinedMessage } from "@/modules/communications/transactional-messages";
 import {
+  addUndiscountedLine,
   getAttendeeRosterConfig,
   getAvailabilityMode,
   isChoiceFieldType,
@@ -64,6 +65,9 @@ import {
 import { attendeeTypeSelector } from "@/modules/attendee-types/form-options";
 import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 import { recordRegistrationDeclarations } from "@/modules/guardian-authority/repository";
+import { LodgingError } from "@/modules/lodging/errors";
+import { lodgingTransactionTimeoutMs } from "@/modules/lodging/service";
+import { getPublicLodgingOffer, planRegistrationLodging, recordRegistrationLodging, type LodgingPlan, type PublicLodgingOffer } from "@/modules/lodging/registration-form";
 import { eventStartDate, planPublicResponsibleAdults } from "@/modules/guardian-authority/domain";
 
 export type PublicRegistrationErrorCode =
@@ -154,11 +158,23 @@ export type GroupSubmissionContext = {
 /** Either kind of bulk registration the submit transaction understands. */
 export type BulkSubmissionContext = ClubSubmissionContext | GroupSubmissionContext;
 
+function lodgingStepError(error: LodgingError, eventId: string) {
+  const message = `Lodging step: ${error.message}`;
+  return new PublicRegistrationError(
+    "INVALID_SUBMISSION",
+    message,
+    [{ kind: "validation", code: "INVALID_RESPONSE", fieldId: null, key: "lodging", path: "lodging", attendeeIndex: null, message }],
+    error.code === "ROOMMATE_NOT_FOUND" ? { roommateMiss: true, eventId } : {},
+  );
+}
+
 export class PublicRegistrationError extends Error {
   constructor(
     public readonly code: PublicRegistrationErrorCode,
     message: string,
     public readonly issues: PublicRegistrationIssue[] = [],
+    /** Set for a lodging roommate lookup that found nobody, so the route can audit it outside the rolled-back transaction. */
+    public readonly meta: { roommateMiss?: boolean; eventId?: string } = {},
   ) {
     super(message);
     this.name = "PublicRegistrationError";
@@ -186,6 +202,8 @@ type PricingSnapshot = {
   registrationStatus?: "SUBMITTED" | "WAITLISTED";
   paymentEligible?: boolean;
   waitlistPosition?: number | null;
+  /** The lodging choice was kept as an unpriced request on a waitlisted registration (#199). */
+  lodgingChoiceSaved?: boolean;
 };
 
 export type PublicRegistrationConfirmation = {
@@ -248,6 +266,8 @@ export type PublicRegistrationExperience = {
   };
   choiceUsage: ChoiceUsage;
   pricingDate: string;
+  /** The lodging step (#199): null when the event collects no lodging. Never offered to club or group registrations. */
+  lodging: PublicLodgingOffer | null;
   lifecycle: {
     phase: EventRegistrationPhase;
     capacityDecision: CapacityDecision | null;
@@ -359,6 +379,7 @@ function submissionHash(input: PublicRegistrationInput) {
         attendees: input.attendees.map((attendee) => attendee.responses),
         // Only present when the form asked for it (#131), so a hash stored before it existed still matches.
         ...(input.responsibleAdults && Object.keys(input.responsibleAdults).length > 0 ? { responsibleAdults: input.responsibleAdults } : {}),
+        ...(input.lodging ? { lodging: input.lodging } : {}),
       }
     : { versionId: input.versionId, responses: input.responses };
   return createHash("sha256").update(stableJson(semanticInput)).digest("hex");
@@ -483,7 +504,7 @@ function confirmationFromSnapshot(
   return {
     confirmationCode,
     message: isWaitlisted
-      ? "You have joined the event waitlist. This is not a confirmed registration, and no payment was collected."
+      ? `You have joined the event waitlist. This is not a confirmed registration, and no payment was collected.${snapshot.lodgingChoiceSaved ? " Your lodging choice is saved; the event team will confirm it if a place opens." : ""}`
       : definition.confirmationMessage,
     email,
     ...totals,
@@ -544,6 +565,7 @@ export async function getPublicRegistrationExperience(eventSlug: string, formSlu
     { occupied, requested: getAttendeeRosterConfig(definition).minAttendees },
     now
   );
+  const lodging = await getPublicLodgingOffer(form.eventId, prisma);
 
   return {
     event: {
@@ -564,6 +586,7 @@ export async function getPublicRegistrationExperience(eventSlug: string, formSlu
     form: { slug: form.slug, versionId: version.id, versionNumber: version.versionNumber, definition },
     choiceUsage: usageFromReservations(definition, reservations),
     pricingDate,
+    lodging,
     lifecycle: {
       ...admission,
       waitingRegistrations,
@@ -857,6 +880,31 @@ async function createPublicRegistrationTransaction(
     );
   }
 
+  // The lodging step (#199): decided here, under the unit locks, so a full type is refused and the price joins the total
+  // before promo codes and fees. Club and group registrations never carry it, and a waitlisted one chooses after promotion.
+  if (input.lodging && bulk) {
+    throw new PublicRegistrationError("INVALID_SUBMISSION", "Lodging step: Lodging is not chosen on this kind of registration.", [
+      { kind: "validation", code: "INVALID_RESPONSE", fieldId: null, key: "lodging", path: "lodging", attendeeIndex: null, message: "Lodging step: Lodging is not chosen on this kind of registration." },
+    ]);
+  }
+  let lodgingPlan: LodgingPlan | null = null;
+  if (input.lodging && !bulk) {
+    try {
+      lodgingPlan = await planRegistrationLodging(tx, {
+        eventId: form.eventId,
+        lodging: input.lodging,
+        attendeeCount: Math.max(1, prepared.attendees.length),
+        // A church-billed event bills through its invoice, not through the registration total.
+        priced: !churchBilledDisplay,
+        // A waitlisted registration keeps the choice as an unpriced request: nothing is locked, refused or charged.
+        waitlisted: isWaitlisted,
+      });
+    } catch (error) {
+      if (!(error instanceof LodgingError)) throw error;
+      throw lodgingStepError(error, form.eventId);
+    }
+  }
+
   const configuredPromoField = promoCodeField(definition);
   const submittedPromoCode = configuredPromoField
     && typeof prepared.registrationResponses[configuredPromoField.key]
@@ -945,7 +993,7 @@ async function createPublicRegistrationTransaction(
     }
   }
 
-  const admittedCalculation: FormCalculation & {
+  const admittedBeforeLodging: FormCalculation & {
     preDiscountSubtotalCents?: number;
     discountAmountCents?: number;
     promoCode?: string;
@@ -956,6 +1004,11 @@ async function createPublicRegistrationTransaction(
         totalCents: pricedCalculation.subtotalCents,
       }
     : pricedCalculation;
+  // The lodging line (#199) is added after promo codes: a promo code discounts the form's own lines, never lodging
+  // (until the event team decides otherwise), and the processing fee follows the final subtotal.
+  const admittedCalculation = lodgingPlan?.line && !isWaitlisted
+    ? addUndiscountedLine(definition, prepared.registrationResponses, admittedBeforeLodging, lodgingPlan.line)
+    : admittedBeforeLodging;
 
   const identity: PublicContactIdentity = prepared.identity;
   const accountHolder = await tx.person.upsert({
@@ -1098,6 +1151,23 @@ async function createPublicRegistrationTransaction(
       })),
     });
   }
+  if (input.lodging && lodgingPlan) {
+    try {
+      await recordRegistrationLodging(tx, {
+        eventId: form.eventId,
+        registrationId: registration.id,
+        confirmationCode,
+        formVersionId: version.id,
+        plan: lodgingPlan,
+        lodging: input.lodging,
+        attendees: createdAttendees.map((attendee) => ({ clientId: attendee.clientId, personId: attendee.personId })),
+        waitlisted: isWaitlisted,
+      });
+    } catch (error) {
+      if (!(error instanceof LodgingError)) throw error;
+      throw lodgingStepError(error, form.eventId);
+    }
+  }
   const registrationAttendeeType = createdAttendees.length > 0
     && createdAttendees.every((attendee) => attendee.attendeeType === "WORKER")
     ? "WORKER"
@@ -1167,6 +1237,7 @@ async function createPublicRegistrationTransaction(
     registrationStatus: isWaitlisted ? "WAITLISTED" : "SUBMITTED",
     paymentEligible: !isWaitlisted,
     waitlistPosition,
+    ...(lodgingPlan && isWaitlisted ? { lodgingChoiceSaved: true } : {}),
   };
   const attendeeResponseSnapshot = prepared.rosterEnabled
     ? prepared.attendees.map((attendee, position) => ({
@@ -1361,8 +1432,9 @@ export async function submitPublicRegistration(
         {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
           // A club or group may wait up to 5s on its location's row lock (#413); the
-          // default 5s transaction timeout would expire before that wait ends.
-          ...(bulk ? { timeout: locationTransactionTimeoutMs } : {}),
+          // default 5s transaction timeout would expire before that wait ends. A submission that carries lodging
+          // waits for the unit locks the same way (#199), so it gets the lodging transaction's room too.
+          ...(bulk ? { timeout: locationTransactionTimeoutMs } : input.lodging ? { timeout: lodgingTransactionTimeoutMs, maxWait: lodgingTransactionTimeoutMs } : {}),
         }
       );
       // #527: a registrant already on the background-check list is matched

@@ -112,6 +112,7 @@ export default async function PublicRegistrationPage({
       choiceUsage={experience.choiceUsage}
       pricingDate={experience.pricingDate}
       lifecycle={experience.lifecycle}
+      lodging={experience.lodging}
       initialResponses={scopedPrefill("REGISTRATION")}
       initialAttendeeResponses={scopedPrefill("ATTENDEE")}
       disableDrafts={Boolean(account)}

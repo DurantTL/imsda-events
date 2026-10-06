@@ -30,13 +30,24 @@ export const lodgingCategoryLabels: Record<LodgingCategory, string> = {
   TENT: "Tent",
 };
 
-export const lodgingRateBases = ["PER_UNIT_NIGHT", "PER_PERSON_NIGHT"] as const;
+/**
+ * How a rate is charged. The per-night bases are for Camp Meeting housing; the flat per-event bases are for Man Camp,
+ * where the registration price differs by housing choice but not by how many nights are slept.
+ */
+export const lodgingRateBases = ["PER_UNIT_NIGHT", "PER_PERSON_NIGHT", "PER_UNIT_PER_EVENT", "PER_PERSON_PER_EVENT"] as const;
 export type LodgingRateBasis = (typeof lodgingRateBases)[number];
 
 export const lodgingRateBasisLabels: Record<LodgingRateBasis, string> = {
   PER_UNIT_NIGHT: "per room or site per night",
   PER_PERSON_NIGHT: "per person per night",
+  PER_UNIT_PER_EVENT: "per room or site for the whole event",
+  PER_PERSON_PER_EVENT: "per person for the whole event",
 };
+
+/** A rate in words, for the staff screens, the registration form and the private page. */
+export function describeRate(rate: { amountCents: number; basis: LodgingRateBasis; minimumNights: number | null }) {
+  return `$${(rate.amountCents / 100).toFixed(2)} ${lodgingRateBasisLabels[rate.basis]}${rate.minimumNights ? `, ${rate.minimumNights}+ nights` : ""}`;
+}
 
 export const lodgingHoldKinds = ["STAFF", "MAINTENANCE"] as const;
 export type LodgingHoldKind = (typeof lodgingHoldKinds)[number];
@@ -212,8 +223,9 @@ export type LodgingQuote =
   | { kind: "BELOW_MINIMUM_NIGHTS"; totalCents: null; minimumNights: number; nights: number };
 
 /**
- * What a stay costs. Pure; charging at registration comes with #199/#200.
- * Per unit: amount x nights x units. Per person: amount x nights x people.
+ * What a stay costs. Pure; the registration form and the private page add the charge to the registration total.
+ * Per unit per night: amount x nights x units. Per person per night: amount x nights x people.
+ * Flat per unit for the event: amount x units. Flat per person for the event: amount x people.
  */
 export function quoteStay(input: {
   rates: Partial<Record<LodgingCategory, LodgingRate | null>>;
@@ -231,8 +243,10 @@ export function quoteStay(input: {
   if (rate.minimumNights !== null && input.nights < rate.minimumNights) {
     return { kind: "BELOW_MINIMUM_NIGHTS", totalCents: null, minimumNights: rate.minimumNights, nights: input.nights };
   }
-  const multiplier = rate.basis === "PER_UNIT_NIGHT" ? units : input.partySize;
-  return { kind: "CHARGE", totalCents: rate.amountCents * input.nights * multiplier, nights: input.nights, basis: rate.basis, amountCents: rate.amountCents };
+  const multiplier = rate.basis === "PER_UNIT_NIGHT" || rate.basis === "PER_UNIT_PER_EVENT" ? units : input.partySize;
+  // A flat-for-the-event rate does not grow with the nights slept.
+  const nightsFactor = rate.basis === "PER_UNIT_NIGHT" || rate.basis === "PER_PERSON_NIGHT" ? input.nights : 1;
+  return { kind: "CHARGE", totalCents: rate.amountCents * nightsFactor * multiplier, nights: input.nights, basis: rate.basis, amountCents: rate.amountCents };
 }
 
 // ---------------------------------------------------------------------------

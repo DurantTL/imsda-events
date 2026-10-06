@@ -29,6 +29,8 @@ import { getGroupRegistrationWorkspace } from "@/modules/group-registrations/rep
 import { authorizeRegistrationAccessToken, resolveRegistrationAccessToken } from "@/modules/public-access/repository";
 import { getRegistrationResponsibleAdultView } from "@/modules/guardian-authority/repository";
 import { PublicResponsibleAdult } from "@/components/public-responsible-adult";
+import { PublicLodgingPreferences } from "@/components/public-lodging-preferences";
+import { getRegistrantLodgingView } from "@/modules/lodging/preferences-service";
 
 export const dynamic = "force-dynamic";
 
@@ -96,6 +98,10 @@ export default async function PublicManagePage({
     || view.registration.status === "WAITLISTED"
   ) ? await authorizeRegistrationAccessToken(token) : null;
   const responsibleAdults = responsibleAdultAccess ? await getRegistrationResponsibleAdultView(responsibleAdultAccess.registrationId) : null;
+  // Lodging preferences (#199): only where the event collects them, for an active individual registration.
+  const lodging = responsibleAdultAccess && (view.registration.status === "SUBMITTED" || view.registration.status === "CONFIRMED")
+    ? await getRegistrantLodgingView({ eventId: responsibleAdultAccess.eventId, registrationId: responsibleAdultAccess.registrationId })
+    : null;
   const attendeePassesAvailable = (
     view.registration.status === "SUBMITTED"
     || view.registration.status === "CONFIRMED"
@@ -273,6 +279,8 @@ export default async function PublicManagePage({
               token={token}
             />
           )}
+
+          {lodging?.enabled && <PublicLodgingPreferences token={token} initialView={lodging} />}
 
           {responsibleAdults && <PublicResponsibleAdult token={token} view={responsibleAdults} readOnly={responsibleAdultAccess?.attendeeEditPolicy === "VERIFY_EVERY_EDIT"} />}
 

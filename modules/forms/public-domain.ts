@@ -14,6 +14,8 @@ import {
   type RegistrationFormField,
 } from "@/modules/forms/definition";
 
+import { registrationLodgingSchema } from "@/modules/lodging/preferences-domain";
+
 const publicAttendeeInputSchema = z.object({
   clientId: z.string().trim().min(1).max(80),
   responses: z.record(z.string(), z.unknown()),
@@ -31,6 +33,11 @@ export const publicRegistrationInputSchema = z.object({
    */
   responsibleAdults: z.record(z.string().trim().min(1).max(80), z.string().trim().min(1).max(80)).optional()
     .refine((value) => !value || Object.keys(value).length <= 50, "Too many responsible-adult choices."),
+  /**
+   * The lodging step (#199): category, nights, party, yes/no accessibility flags and roommate requests. Present only
+   * where the event collects lodging; decided on the server (full types refused, price added to the total).
+   */
+  lodging: registrationLodgingSchema.optional(),
   website: z.literal("").optional(),
 }).strict().superRefine((input, context) => {
   const clientIds = new Set<string>();

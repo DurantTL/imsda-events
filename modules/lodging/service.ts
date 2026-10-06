@@ -43,6 +43,18 @@ export async function lockEventLodgingUnits(tx: Tx, eventId: string, eventUnitId
   await tx.$queryRaw`SELECT "id" FROM "EventLodgingUnit" WHERE "eventId" = ${eventId} AND "id" = ANY(${ids}::text[]) ORDER BY "id" FOR UPDATE`;
 }
 
+/**
+ * Marks that something the event's lodging can hold, or has promised, just changed. Every capacity writer (holds,
+ * closures, capacity overrides, layout updates, property choice, lodging requests and registration submissions) calls
+ * this inside its transaction, **after taking the unit locks**. The update takes the `EventLodging` row lock and, in a
+ * Serializable transaction that read capacity before another writer committed, fails with a serialization error
+ * instead of writing: the stale reader is retried and counts again. A Read Committed writer simply waits and reads
+ * fresh data.
+ */
+export async function touchEventLodgingCapacity(tx: Tx, eventLodgingId: string) {
+  await tx.$executeRaw`UPDATE "EventLodging" SET "capacityVersion" = "capacityVersion" + 1 WHERE "id" = ${eventLodgingId}`;
+}
+
 function isOverlapViolation(error: unknown) {
   const message = error instanceof Error ? error.message : "";
   return message.includes("EventLodgingHold_no_overlap") || message.includes("23P01");
@@ -54,7 +66,7 @@ async function eventLodgingFor(tx: Tx, eventId: string) {
   return row;
 }
 
-function nightsFor(row: { firstNight: Date | null; lastNight: Date | null; event: { startsAt: Date; endsAt: Date; timezone: string } }) {
+export function nightsFor(row: { firstNight: Date | null; lastNight: Date | null; event: { startsAt: Date; endsAt: Date; timezone: string } }) {
   return eventNights({
     startDate: calendarDay(row.event.startsAt, row.event.timezone),
     endDate: calendarDay(row.event.endsAt, row.event.timezone),
@@ -149,6 +161,11 @@ export async function selectEventProperty(eventId: string, actorUserId: string, 
       });
       created = true;
     } else if (input.firstNight !== undefined || input.lastNight !== undefined) {
+      // Lock every unit and bump capacityVersion before the EventLodging row is written, in the order every other
+      // capacity writer uses (units, then the EventLodging row), so two writers cannot wait on each other.
+      const rows = await tx.eventLodgingUnit.findMany({ where: { eventLodgingId: eventLodging.id }, select: { id: true } });
+      await lockEventLodgingUnits(tx, eventId, rows.map((row) => row.id));
+      await touchEventLodgingCapacity(tx, eventLodging.id);
       // A window given on a re-pick is applied, never ignored.
       eventLodging = await tx.eventLodging.update({
         where: { id: eventLodging.id },
@@ -184,6 +201,7 @@ export async function selectEventProperty(eventId: string, actorUserId: string, 
       }
     }
     const holdsMoved = created ? 0 : await followEventNights(tx, eventId, nights, actorUserId);
+    if (created || holdsMoved > 0) await touchEventLodgingCapacity(tx, eventLodging.id);
     if (created || holdsMoved > 0 || input.firstNight !== undefined || input.lastNight !== undefined) {
       await writeAuditLog({
         eventId,
@@ -213,6 +231,7 @@ export async function updateEventLayout(eventId: string, actorUserId: string, cl
     const property = await tx.lodgingProperty.findUniqueOrThrow({ where: { id: lodging.propertyId } });
     const rows = await tx.eventLodgingUnit.findMany({ where: { eventLodgingId: lodging.id } });
     await lockEventLodgingUnits(tx, eventId, rows.map((row) => row.id));
+    await touchEventLodgingCapacity(tx, lodging.id);
     const units = await tx.lodgingUnit.findMany({ where: { propertyId: property.id }, include: { beds: { orderBy: { position: "asc" } } }, orderBy: { sortOrder: "asc" } });
     const nights = nightsFor(lodging);
     const byUnit = new Map(rows.map((row) => [row.unitId, row]));
@@ -257,6 +276,7 @@ export async function updateEventUnit(eventId: string, eventUnitId: string, acto
     await lockEventLodgingUnits(tx, eventId, [eventUnitId]);
     const before = await tx.eventLodgingUnit.findFirst({ where: { id: eventUnitId, eventId }, include: { unit: true } });
     if (!before) throw new LodgingError("UNIT_NOT_FOUND", "That lodging unit was not found for this event.");
+    await touchEventLodgingCapacity(tx, before.eventLodgingId);
     const unavailable = input.unavailable ?? before.unavailable;
     const updated = await tx.eventLodgingUnit.update({
       where: { id: eventUnitId },
@@ -319,6 +339,7 @@ export async function createHold(eventId: string, eventUnitId: string, actorUser
     await lockEventLodgingUnits(tx, eventId, [eventUnitId]);
     const unit = await tx.eventLodgingUnit.findFirst({ where: { id: eventUnitId, eventId }, include: { unit: { select: { key: true, name: true } } } });
     if (!unit) throw new LodgingError("UNIT_NOT_FOUND", "That lodging unit was not found for this event.");
+    await touchEventLodgingCapacity(tx, lodging.id);
     const hold = await insertHold(tx, eventId, eventUnitId, input, actorUserId);
     await writeAuditLog({
       eventId, actorUserId, action: "LODGING_HOLD_CREATED", entityType: "EventLodgingHold", entityId: hold.id,
@@ -337,6 +358,7 @@ export async function changeHold(eventId: string, holdId: string, actorUserId: s
     await lockEventLodgingUnits(tx, eventId, [found.eventLodgingUnitId]);
     const hold = await tx.eventLodgingHold.findUniqueOrThrow({ where: { id: holdId } });
     if (hold.releasedAt) throw new LodgingError("HOLD_RELEASED", "That hold was already released.");
+    await touchEventLodgingCapacity(tx, found.eventUnit.eventLodgingId);
     if (input.action === "release") {
       const now = new Date();
       await tx.eventLodgingHold.update({ where: { id: holdId }, data: { releasedAt: now, releasedByUserId: actorUserId, releaseReason: input.reason } });
