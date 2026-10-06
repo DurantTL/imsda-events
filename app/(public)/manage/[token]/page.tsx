@@ -31,6 +31,9 @@ import { getRegistrationResponsibleAdultView } from "@/modules/guardian-authorit
 import { PublicResponsibleAdult } from "@/components/public-responsible-adult";
 import { PublicLodgingPreferences } from "@/components/public-lodging-preferences";
 import { getRegistrantLodgingView } from "@/modules/lodging/preferences-service";
+import { PublicLodgingAssignment } from "@/components/public-lodging-assignment";
+import { getRegistrantAssignmentView } from "@/modules/lodging/assignment-view";
+import { getRegistrantWaitlistView } from "@/modules/lodging/waitlist-service";
 
 export const dynamic = "force-dynamic";
 
@@ -101,6 +104,14 @@ export default async function PublicManagePage({
   // Lodging preferences (#199): only where the event collects them, for an active individual registration.
   const lodging = responsibleAdultAccess && (view.registration.status === "SUBMITTED" || view.registration.status === "CONFIRMED")
     ? await getRegistrantLodgingView({ eventId: responsibleAdultAccess.eventId, registrationId: responsibleAdultAccess.registrationId })
+    : null;
+  // Room assignments (#200): shown only after staff publish them for the event, and the lodging waitlist.
+  const lodgingActive = responsibleAdultAccess && (view.registration.status === "SUBMITTED" || view.registration.status === "CONFIRMED");
+  const lodgingAssignments = lodgingActive
+    ? await getRegistrantAssignmentView({ eventId: responsibleAdultAccess.eventId, registrationId: responsibleAdultAccess.registrationId }).catch(() => null)
+    : null;
+  const lodgingWaitlist = lodgingActive
+    ? await getRegistrantWaitlistView({ eventId: responsibleAdultAccess.eventId, registrationId: responsibleAdultAccess.registrationId }).catch(() => null)
     : null;
   const attendeePassesAvailable = (
     view.registration.status === "SUBMITTED"
@@ -281,6 +292,8 @@ export default async function PublicManagePage({
           )}
 
           {lodging?.enabled && <PublicLodgingPreferences token={token} initialView={lodging} />}
+
+          {lodgingAssignments && lodgingWaitlist && <PublicLodgingAssignment token={token} initialAssignments={lodgingAssignments} initialWaitlist={lodgingWaitlist} lodging={lodging} />}
 
           {responsibleAdults && <PublicResponsibleAdult token={token} view={responsibleAdults} readOnly={responsibleAdultAccess?.attendeeEditPolicy === "VERIFY_EVERY_EDIT"} />}
 

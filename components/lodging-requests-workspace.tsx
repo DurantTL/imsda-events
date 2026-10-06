@@ -24,7 +24,7 @@ const formatRate = describeRate;
 
 /**
  * Staff review of lodging requests (#199): settings, the review queue, what each registration asked for, and the
- * keep-together and keep-apart rules. This screen assigns nobody (assignment is #200). The accessibility columns
+ * keep-together and keep-apart rules. This screen assigns nobody; rooms are assigned on the Lodging assignments page. The accessibility columns
  * appear only when the server sent them, which it does for staff holding VIEW_SENSITIVE_DATA.
  */
 export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure, canExport }: {
@@ -61,7 +61,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
     <div className="page-intro"><div>
       <p className="eyebrow">Registration</p>
       <h2 className="duplicate-page-title">Lodging requests</h2>
-      <p>What guests asked for at {eventName}. A request is a preference, never an assignment: nobody is placed in a room here. Roommate requests count as mutual only when both sides ask or staff approve, and no contact details are shown.</p>
+      <p>What guests asked for at {eventName}. A request is a preference, never an assignment: nobody is placed in a room here (use Lodging assignments for that). Roommate requests count as mutual only when both sides ask or staff approve, and no contact details are shown.</p>
       {canExport ? <p><a className="secondary-button" href={`/api/events/${view.eventId}/exports/lodging-requests`}>Download requests (CSV)</a></p> : null}
     </div></div>
     {error ? <p className="form-error" role="alert">{error}</p> : null}
@@ -87,10 +87,10 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
         <label>Last day to change <input type="date" name="deadline" defaultValue={view.settings.preferencesDeadline ?? ""} /></label>
         <p className="field-hint">Blank follows the registration close date. Right now registrants can change their choice through {view.settings.effectiveDeadline}{view.settings.deadlinePassed ? " (passed)" : ""}.</p>
         <label>When a type is full <select name="fullBehavior" defaultValue={view.settings.fullBehavior}>
-          {fullBehaviors.map((value) => <option key={value} value={value}>{value === "SHOW_FULL" ? "Show \"Full\"" : "Show \"Full\" and offer a waitlist (waitlist comes later)"}</option>)}
+          {fullBehaviors.map((value) => <option key={value} value={value}>{value === "SHOW_FULL" ? "Show \"Full\"" : "Show \"Full\" and let guests join a lodging waitlist"}</option>)}
         </select></label>
         <button className="primary-button" type="submit" disabled={busy}>Save settings</button>
-      </form> : <p>{view.settings.collectsPreferences ? "Registrants choose a lodging type" : "Registrants do not choose lodging (staff assign)"}; changes close after {view.settings.effectiveDeadline}; a full type shows {view.settings.fullBehavior === "WAITLIST" ? "\"Full\" with a waitlist to come" : "\"Full\""}. Event administrators change these.</p>}
+      </form> : <p>{view.settings.collectsPreferences ? "Registrants choose a lodging type" : "Registrants do not choose lodging (staff assign)"}; changes close after {view.settings.effectiveDeadline}; a full type shows {view.settings.fullBehavior === "WAITLIST" ? "\"Full\" and guests can join a lodging waitlist" : "\"Full\""}. Event administrators change these.</p>}
       <table>
         <caption>Lodging types offered</caption>
         <thead><tr><th scope="col">Type</th><th scope="col">Units in service</th><th scope="col">People asking</th><th scope="col">Rate</th></tr></thead>

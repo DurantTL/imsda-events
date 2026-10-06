@@ -9803,6 +9803,78 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 .area-club-search { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .area-club-search .search-field { max-width: 360px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 
+/* Lodging assignments (#200). Household colours come with a name in the text: colour is never the only cue. */
+.lodging-assign {
+  --la-h0: #1d5f9c; --la-h1: #a95549; --la-h2: #267357; --la-h3: #7b4fa6; --la-h4: #b45309; --la-h5: #0f766e;
+  --la-h6: #9a3a74; --la-h7: #5b6b00; --la-h8: #3b4cc0; --la-h9: #8a5a00; --la-h10: #a1261e; --la-h11: #4d5b64;
+  --la-ok: #e5f3ed; --la-ok-edge: #267357; --la-warn: #fff1e0; --la-warn-edge: #b45309;
+  --la-bad: #fdeceb; --la-bad-edge: #b3261e; --la-off: #e8eaed; --la-off-edge: #5b6b73;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lodging-assign {
+    --la-h0: #8ec1f0; --la-h1: #f0a094; --la-h2: #86d4ad; --la-h3: #cdb0ef; --la-h4: #f2b36b; --la-h5: #7fd6cc;
+    --la-h6: #eaa0cb; --la-h7: #c8d86b; --la-h8: #a7b2f2; --la-h9: #e6c36a; --la-h10: #ff9f98; --la-h11: #b8c6cf;
+    --la-ok: #12301f; --la-ok-edge: #86d4ad; --la-warn: #36230d; --la-warn-edge: #f2b36b;
+    --la-bad: #3a1917; --la-bad-edge: #ff9f98; --la-off: #232d33; --la-off-edge: #9fb0b8;
+  }
+}
+:root[data-theme="dark"] .lodging-assign {
+  --la-h0: #8ec1f0; --la-h1: #f0a094; --la-h2: #86d4ad; --la-h3: #cdb0ef; --la-h4: #f2b36b; --la-h5: #7fd6cc;
+  --la-h6: #eaa0cb; --la-h7: #c8d86b; --la-h8: #a7b2f2; --la-h9: #e6c36a; --la-h10: #ff9f98; --la-h11: #b8c6cf;
+  --la-ok: #12301f; --la-ok-edge: #86d4ad; --la-warn: #36230d; --la-warn-edge: #f2b36b;
+  --la-bad: #3a1917; --la-bad-edge: #ff9f98; --la-off: #232d33; --la-off-edge: #9fb0b8;
+}
+.lodging-assign-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+.lodging-assign-tabs button { min-height: 44px; }
+.lodging-assign-live { min-height: 1px; }
+.lodging-assign-board { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.lodging-assign-people { position: sticky; top: 8px; max-height: calc(100vh - 16px); overflow: auto; }
+.lodging-assign-main { display: grid; gap: 16px; min-width: 0; }
+.lodging-assign-controls { display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: end; margin-bottom: 8px; }
+.lodging-assign-controls select { min-height: 44px; }
+.lodging-assign-peoplelist { display: grid; gap: 6px; margin: 8px 0; padding: 0; list-style: none; }
+.lodging-assign-peoplelist li { border: 1px solid var(--line); border-left: 6px solid var(--household, var(--line)); border-radius: 10px; background: var(--card); }
+.lodging-assign-peoplelist li.is-selected { outline: 3px solid var(--imsda-navy); outline-offset: 1px; }
+.lodging-assign-peoplelist li button { display: grid; gap: 2px; width: 100%; min-height: 44px; padding: 8px 10px; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.lodging-assign-peoplelist li button:disabled { cursor: not-allowed; opacity: 0.65; }
+.lodging-assign-chip-name { font-weight: 700; overflow-wrap: anywhere; }
+.lodging-assign-chip-meta { color: var(--muted); font-size: max(var(--type-floor, 0px), 0.8rem); overflow-wrap: anywhere; }
+.lodging-assign-rooms, .lodging-assign-buckets { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+.lodging-assign-room { display: grid; gap: 8px; align-content: start; min-width: 0; padding: 12px; border: 1px solid var(--line); border-left: 6px solid var(--la-ok-edge); border-radius: 12px; background: var(--card); }
+.lodging-assign-room > header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px; }
+.lodging-assign-room h4 { margin: 0; font-size: 1rem; }
+.lodging-assign-room.is-partial { border-left-color: var(--imsda-navy); }
+.lodging-assign-room.is-full { border-left-color: var(--la-warn-edge); }
+.lodging-assign-room.is-over { border-left-color: var(--la-bad-edge); background: var(--la-bad); }
+.lodging-assign-room.is-held, .lodging-assign-room.is-unavailable, .lodging-assign-room.is-not-assignable { border-left-color: var(--la-off-edge); background: var(--la-off); }
+.lodging-assign-status { padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; font-size: max(var(--type-floor, 0px), 0.75rem); font-weight: 700; }
+.lodging-assign-meta { margin: 0; color: var(--muted); font-size: max(var(--type-floor, 0px), 0.82rem); }
+.lodging-assign-warning { margin: 0; padding: 6px 8px; border-radius: 8px; background: var(--la-warn); color: inherit; border: 1px solid var(--la-warn-edge); font-size: max(var(--type-floor, 0px), 0.82rem); }
+.lodging-assign-occupants { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.lodging-assign-chip { display: grid; gap: 2px; padding: 6px 8px; border: 1px solid var(--line); border-left: 6px solid var(--household, var(--line)); border-radius: 8px; background: var(--card); cursor: grab; }
+.lodging-assign-chip summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; font-size: max(var(--type-floor, 0px), 0.82rem); }
+.lodging-assign-chip-tools { display: grid; gap: 10px; padding-top: 6px; }
+.lodging-assign-chip-tools fieldset { display: grid; gap: 6px; margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+.lodging-assign-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.lodging-assign-actions button { min-height: 44px; }
+.lodging-assign-hall { display: grid; grid-template-columns: minmax(0, 1fr) 36px minmax(0, 1fr); gap: 10px; align-items: start; }
+.lodging-assign-hall-side { display: grid; gap: 10px; }
+.lodging-assign-corridor { align-self: stretch; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--la-off); color: var(--muted); writing-mode: vertical-rl; letter-spacing: 0.2em; font-size: 0.8rem; text-transform: uppercase; }
+.lodging-assign-confirm { border: 2px solid var(--la-warn-edge); background: var(--la-warn); }
+.lodging-assign-panels { display: grid; gap: 16px; }
+.lodging-assign-exceptions { display: grid; gap: 8px; margin: 0; padding-left: 18px; }
+.lodging-assign-exceptions p { margin: 2px 0 0; }
+.lodging-assign :focus-visible { outline: 3px solid var(--imsda-navy); outline-offset: 2px; }
+@media (max-width: 900px) {
+  .lodging-assign-board { grid-template-columns: minmax(0, 1fr); }
+  .lodging-assign-people { position: static; max-height: none; }
+}
+@media (max-width: 640px) {
+  .lodging-assign-rooms, .lodging-assign-buckets { grid-template-columns: minmax(0, 1fr); }
+  .lodging-assign-hall { grid-template-columns: minmax(0, 1fr); }
+  .lodging-assign-corridor { display: none; }
+}
+
 /* Club-director sign-in callout on a club event's public pages (#799 G8). */
 .club-director-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 14px 18px; margin: 0 0 18px; padding: 16px 18px; border: 2px solid #9a6a00; border-left-width: 8px; border-radius: 12px; background: #fff7e0; color: #3d2b00; }
 .club-director-notice-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%; background: #9a6a00; color: #fff; }

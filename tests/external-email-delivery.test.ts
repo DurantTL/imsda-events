@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+const lodgingStale = vi.hoisted(() => vi.fn());
+vi.mock("@/modules/lodging/message-currency", () => ({ lodgingMessageStaleReason: lodgingStale }));
+
 import { resetServerEnvCache } from "@/lib/env";
 import { EmailProviderRequestError } from "@/integrations/email/resend";
 import {
@@ -272,6 +275,49 @@ describe("external email queue", () => {
     await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: early.prisma as never, sendEmail: sendEmail as never } });
     expect(sendEmail).not.toHaveBeenCalled();
     expect(early.message.status).toBe("CANCELLED");
+  });
+
+  it("cancels, audits and never sends a stale lodging notice or offer, and leaves other messages alone (#200)", async () => {
+    for (const templateKey of ["LODGING_ASSIGNMENT_NOTICE", "LODGING_WAITLIST_OFFER"]) {
+      lodgingStale.mockReset();
+      lodgingStale.mockResolvedValue("A later room change made this notice out of date before it was sent.");
+      const stale = fakeDeliveryStore({ templateKey });
+      const sendEmail = vi.fn();
+      const result = await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: stale.prisma as never, sendEmail: sendEmail as never } });
+      expect(sendEmail).not.toHaveBeenCalled();
+      expect(result.sentIds).toEqual([]);
+      expect(stale.message.status).toBe("CANCELLED");
+      expect(stale.message.lastError).toContain("out of date");
+      expect(stale.prisma.auditLog.create).toHaveBeenCalledWith({ data: expect.objectContaining({ action: "LODGING_MESSAGE_CANCELLED", entityId: "message-1", metadata: { messageId: "message-1", templateKey } }) });
+    }
+    // A current lodging email is sent; a message of any other kind never even asks.
+    lodgingStale.mockReset();
+    lodgingStale.mockResolvedValue(null);
+    const current = fakeDeliveryStore({ templateKey: "LODGING_ASSIGNMENT_NOTICE" });
+    const sent = vi.fn(async () => ({ provider: "RESEND" as const, providerMessageId: "email-provider-lodging" }));
+    expect((await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: current.prisma as never, sendEmail: sent as never } })).sentIds).toEqual(["message-1"]);
+    lodgingStale.mockReset();
+    const other = fakeDeliveryStore();
+    const sentOther = vi.fn(async () => ({ provider: "RESEND" as const, providerMessageId: "email-provider-other" }));
+    expect((await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: other.prisma as never, sendEmail: sentOther as never } })).sentIds).toEqual(["message-1"]);
+    expect(lodgingStale).not.toHaveBeenCalled();
+  });
+
+  it("counts a failed lodging currency check as an attempt, retries with backoff, and ends as FAILED after the last one", async () => {
+    lodgingStale.mockReset();
+    lodgingStale.mockRejectedValue(new Error("database unavailable"));
+    const store = fakeDeliveryStore({ templateKey: "LODGING_WAITLIST_OFFER" });
+    const sendEmail = vi.fn();
+    const result = await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail: sendEmail as never } });
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(result.sentIds).toEqual([]);
+    expect(store.message).toMatchObject({ status: "PENDING", lockToken: null, lockedAt: null, attemptCount: 1 });
+    expect(store.message.availableAt.getTime()).toBe(dependencies.now().getTime() + emailRetryDelayMs(1));
+    expect(store.attempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "FAILED", errorCode: "LODGING_CURRENCY_CHECK_FAILED", provider: "INTERNAL", providerMetadata: expect.objectContaining({ realDelivery: false }) })]);
+    // The last allowed attempt ends as FAILED rather than retrying forever.
+    const last = fakeDeliveryStore({ templateKey: "LODGING_WAITLIST_OFFER", attemptCount: 4 });
+    await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: last.prisma as never, sendEmail: sendEmail as never } });
+    expect(last.message.status).toBe("FAILED");
   });
 
   it("sends a message with no attachment exactly as before", async () => {

@@ -538,6 +538,10 @@ enum MessageTemplateKey {
   /// A finalized invoice sent to its billing contact and club directors by conference staff (#168).
   /// One message per recipient, with the invoice PDF attached. Not an event template: staff write it per send.
   INVOICE_DELIVERY
+  /// A lodging waitlist offer (#200), sent to one registration by an explicit staff action. Not an event template.
+  LODGING_WAITLIST_OFFER
+  /// A room notice (#200), sent to one registration by an explicit staff action. Not an event template.
+  LODGING_ASSIGNMENT_NOTICE
 }
 
 enum MessageTemplateStatus {
@@ -1482,6 +1486,12 @@ model Event {
   lodgingRules                        EventLodgingRule[]
   lodgingReviewAcks                   EventLodgingReviewAck[]
   lodgingChangeRequests               EventLodgingChangeRequest[]
+  lodgingPlaceholders                 EventLodgingPlaceholder[]
+  lodgingAssignments                  EventLodgingAssignment[]
+  lodgingAssignmentHistory            EventLodgingAssignmentHistory[]
+  lodgingAssignmentNotices            EventLodgingAssignmentNotice[]
+  lodgingWaitlistEntries              EventLodgingWaitlistEntry[]
+  lodgingWaitlistHistory              EventLodgingWaitlistHistory[]
   notes                               StaffNote[]
   registrationTagAssignments          RegistrationTagAssignment[]
   attendeeTagAssignments              AttendeeTagAssignment[]
@@ -2533,6 +2543,8 @@ model Registration {
   guardianAuthorityConflicts GuardianAuthorityConflict[]
   lodgingRequests         EventLodgingRequest[]
   lodgingChangeRequests   EventLodgingChangeRequest[]
+  lodgingWaitlistEntries  EventLodgingWaitlistEntry[]
+  lodgingAssignmentNotices EventLodgingAssignmentNotice[]
   lodgingRoommateRequestsFrom EventLodgingRoommateRequest[] @relation("LodgingRoommateFrom")
   lodgingRoommateRequestsTo   EventLodgingRoommateRequest[] @relation("LodgingRoommateTarget")
   honorEnrollments        HonorEnrollment[]
@@ -2696,6 +2708,8 @@ model RegistrationAttendee {
   honorEnrollments       HonorEnrollment[]
   adjustments            RegistrationAdjustment[]
   memberTransferMoves    MemberTransferRegistrationMove[]
+  lodgingAssignments     EventLodgingAssignment[]
+  lodgingPlaceholderLinks EventLodgingPlaceholder[]
 
   @@unique([registrationId, personId])
   @@index([registrationId, position])
@@ -6175,6 +6189,14 @@ model EventLodging {
   /// What a full category shows: "Full" only, or "Full" with a waitlist (the waitlist itself is #200).
   fullBehavior    LodgingFullBehavior @default(SHOW_FULL)
   settingsUpdatedByUserId String?
+  /// Attendees see their approved building, room and instructions on the private registration page only after staff
+  /// publish assignments (#200). Off by default.
+  showAssignmentsToAttendees Boolean @default(false)
+  /// Roommates shown by first name only, and only when staff turn this on. Contact details are never shown.
+  showRoommateFirstNames Boolean @default(false)
+  /// Event-wide instructions shown beside a published assignment (no personal data).
+  attendeeInstructions String?
+  assignmentSettingsUpdatedByUserId String?
   /// Bumped by every writer that changes what the event's lodging can hold or has promised (holds, closures, capacity
   /// overrides, requests, submissions), inside its transaction and under the unit locks. A Serializable reader that
   /// read capacity before such a write fails on its own bump of this row and is retried.
@@ -6187,6 +6209,7 @@ model EventLodging {
   property LodgingProperty    @relation(fields: [propertyId], references: [id], onDelete: Restrict)
   units    EventLodgingUnit[]
   rates    EventLodgingRate[]
+  buckets  EventLodgingBucket[]
 
   @@unique([id, eventId])
 }
@@ -6215,6 +6238,7 @@ model EventLodgingUnit {
   eventLodging EventLodging       @relation(fields: [eventLodgingId, eventId], references: [id, eventId], onDelete: Cascade)
   unit         LodgingUnit        @relation(fields: [unitId], references: [id], onDelete: Restrict)
   holds        EventLodgingHold[]
+  assignments  EventLodgingAssignment[]
 
   @@unique([eventLodgingId, unitId])
   @@unique([id, eventId])
@@ -6468,4 +6492,236 @@ model EventLodgingChangeRequest {
 
   @@index([eventId, resolvedAt])
   @@index([registrationId])
+}
+
+// ---------------------------------------------------------------------------
+// Lodging assignment, moves, waitlist and attendee display (#200, slice 3).
+// Capacity and exclusivity are enforced night by night under the EventLodgingUnit row locks plus the capacityVersion
+// bump. The assignment history is append-only (database triggers); rows go only with their event. Actor columns are
+// plain user ids. Nothing here ever changes a registration's charge.
+// ---------------------------------------------------------------------------
+
+enum LodgingBucketKind {
+  HOTEL
+  AIRBNB
+  HOME
+  OFFSITE
+  OTHER
+}
+
+enum LodgingAssignmentSource {
+  STAFF
+  PROPOSAL
+  CSV_IMPORT
+  WAITLIST
+}
+
+enum LodgingAssignmentEventType {
+  ASSIGNED
+  MOVED_IN
+  MOVED_OUT
+  SPLIT_REMAINDER
+  CANCELLED
+  TRANSFERRED_IN
+  TRANSFERRED_OUT
+  LATE_ARRIVAL
+  EARLY_DEPARTURE
+  LINKED
+}
+
+enum LodgingWaitlistStatus {
+  JOINED
+  OFFERED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  REMOVED
+  PROMOTED
+}
+
+/// Alternate housing (hotel, Airbnb, home, offsite, other): counts as assigned, uses no on-site inventory. Staff rename the label.
+model EventLodgingBucket {
+  id              String            @id @default(cuid())
+  eventId         String
+  eventLodgingId  String
+  kind            LodgingBucketKind
+  label           String
+  updatedByUserId String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  eventLodging EventLodging             @relation(fields: [eventLodgingId, eventId], references: [id, eventId], onDelete: Cascade)
+  assignments  EventLodgingAssignment[]
+
+  @@unique([eventLodgingId, kind])
+  @@unique([id, eventId])
+}
+
+/// An expected guest or group (staff, a pastor, a club) not registered yet. It can be assigned and later linked to a registration attendee.
+model EventLodgingPlaceholder {
+  id               String    @id @default(cuid())
+  eventId          String
+  displayName      String
+  /// People this placeholder stands for (a club of 14 is one placeholder with headcount 14).
+  headcount        Int       @default(1)
+  note             String?
+  createdByUserId  String?
+  createdAt        DateTime  @default(now())
+  linkedAttendeeId String?
+  linkedAt         DateTime?
+  linkedByUserId   String?
+  archivedAt       DateTime?
+  archivedByUserId String?
+
+  event          Event                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  linkedAttendee RegistrationAttendee?    @relation(fields: [linkedAttendeeId], references: [id], onDelete: NoAction)
+  assignments    EventLodgingAssignment[]
+
+  @@unique([id, eventId])
+  @@index([eventId])
+  @@index([linkedAttendeeId])
+}
+
+/// The current placement of one occupant (a registration attendee or a placeholder) for a range of nights (both ends
+/// inclusive): in an on-site unit, or in an alternate-housing bucket. A move, trim or cancellation changes this row
+/// and always appends to EventLodgingAssignmentHistory, which is never rewritten.
+model EventLodgingAssignment {
+  id                 String                  @id @default(cuid())
+  eventId            String
+  eventLodgingUnitId String?
+  bucketId           String?
+  attendeeId         String?
+  placeholderId      String?
+  people             Int                     @default(1)
+  firstNight         DateTime                @db.Date
+  lastNight          DateTime                @db.Date
+  source             LodgingAssignmentSource
+  /// Bumped by every change to this row.
+  revision           Int                     @default(1)
+  reason             String?
+  actorUserId        String?
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+  cancelledAt        DateTime?
+  cancelledByUserId  String?
+  cancelReason       String?
+
+  event       Event                           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventUnit   EventLodgingUnit?               @relation(fields: [eventLodgingUnitId, eventId], references: [id, eventId], onDelete: Cascade)
+  bucket      EventLodgingBucket?             @relation(fields: [bucketId, eventId], references: [id, eventId], onDelete: Cascade)
+  attendee    RegistrationAttendee?           @relation(fields: [attendeeId], references: [id], onDelete: NoAction)
+  placeholder EventLodgingPlaceholder?        @relation(fields: [placeholderId, eventId], references: [id, eventId], onDelete: Cascade)
+  history     EventLodgingAssignmentHistory[]
+
+  /// Migration-level: a night-range exclusion per occupant and a CHECK that exactly one place and one occupant are set.
+  @@unique([id, eventId])
+  @@index([eventId, eventLodgingUnitId])
+  @@index([eventId, bucketId])
+  @@index([attendeeId])
+  @@index([placeholderId])
+}
+
+/// Append-only: one row per assignment event (assigned, moved, split, cancelled, transferred, late arrival, early departure).
+model EventLodgingAssignmentHistory {
+  id                  String                     @id @default(cuid())
+  eventId             String
+  assignmentId        String
+  type                LodgingAssignmentEventType
+  at                  DateTime                   @default(now())
+  actorUserId         String?
+  reason              String?
+  source              LodgingAssignmentSource?
+  /// Occupant at the time (plain ids: history never has to be rewritten).
+  attendeeId          String?
+  placeholderId       String?
+  people              Int                        @default(1)
+  eventLodgingUnitId  String?
+  bucketId            String?
+  firstNight          DateTime?                  @db.Date
+  lastNight           DateTime?                  @db.Date
+  previousUnitId      String?
+  previousBucketId    String?
+  previousFirstNight  DateTime?                  @db.Date
+  previousLastNight   DateTime?                  @db.Date
+  /// A late arrival or early departure that deliberately keeps the nights (capacity stays held).
+  preservedCapacity   Boolean                    @default(false)
+  revision            Int
+  /// The paired row of a move, split or transfer.
+  relatedAssignmentId String?
+
+  event      Event                  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  assignment EventLodgingAssignment @relation(fields: [assignmentId, eventId], references: [id, eventId], onDelete: Cascade)
+
+  @@index([eventId, at])
+  @@index([assignmentId, at])
+  @@index([attendeeId])
+}
+
+/// A room notice staff sent to one registration, with the assignment version it described. A later change makes it obsolete.
+model EventLodgingAssignmentNotice {
+  id                String   @id @default(cuid())
+  eventId           String
+  registrationId    String
+  outboxMessageId   String?
+  /// The registration's assignment version when the notice was written (history rows for its attendees).
+  assignmentVersion Int
+  /// Hash of what the notice said (stays, roommates, closed rooms, instructions): a later difference makes it obsolete.
+  contentHash       String
+  sentByUserId      String?
+  createdAt         DateTime @default(now())
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: NoAction)
+
+  @@index([eventId, registrationId])
+}
+
+/// Lodging waitlist: joined, offered (with expiry), accepted, declined, expired, removed, promoted. One open entry per registration.
+model EventLodgingWaitlistEntry {
+  id             String                @id @default(cuid())
+  eventId        String
+  registrationId String
+  category       LodgingCategory
+  /// Nights wanted, both ends inclusive; both null means the event's whole night window.
+  firstNight     DateTime?             @db.Date
+  lastNight      DateTime?             @db.Date
+  partySize      Int
+  status         LodgingWaitlistStatus @default(JOINED)
+  /// 0 until the first offer; each offer (including a re-offer after expiry) is the next number.
+  offerNumber    Int                   @default(0)
+  offeredAt      DateTime?
+  offerExpiresAt DateTime?
+  offerMessageId String?
+  createdVia     LodgingRequestSource
+  joinedAt       DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  event        Event                         @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration                  @relation(fields: [registrationId], references: [id], onDelete: NoAction)
+  history      EventLodgingWaitlistHistory[]
+
+  /// A migration-level partial unique index allows one open entry (JOINED, OFFERED or ACCEPTED) per registration.
+  @@unique([id, eventId])
+  @@index([eventId, status, joinedAt])
+  @@index([registrationId])
+}
+
+/// Append-only history of a waitlist entry.
+model EventLodgingWaitlistHistory {
+  id             String                @id @default(cuid())
+  eventId        String
+  entryId        String
+  status         LodgingWaitlistStatus
+  at             DateTime              @default(now())
+  actorUserId    String?
+  accessTokenId  String?
+  reason         String?
+  offerNumber    Int                   @default(0)
+  offerExpiresAt DateTime?
+  messageId      String?
+
+  event Event                     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  entry EventLodgingWaitlistEntry @relation(fields: [entryId, eventId], references: [id, eventId], onDelete: Cascade)
+
+  @@index([entryId, at])
 }

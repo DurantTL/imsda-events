@@ -315,6 +315,16 @@ async function removeEventOwnedRows(tx: Db, eventId: string) {
     UPDATE "ImportRecord" SET "matchedRegistrationId" = NULL
     WHERE "matchedRegistrationId" IN (SELECT "id" FROM "Registration" WHERE "eventId" = ${eventId})`;
 
+  // 9b. Lodging assignments, the lodging waitlist and room notices (#200) point at registrations and attendees with
+  //     NO ACTION keys, so they go first. Their delete triggers accept this transaction's deletes (see
+  //     `imsda.event_deletion` above) and refuse every other delete.
+  await tx.eventLodgingAssignmentNotice.deleteMany({ where: inEvent });
+  await tx.eventLodgingWaitlistHistory.deleteMany({ where: inEvent });
+  await tx.eventLodgingWaitlistEntry.deleteMany({ where: inEvent });
+  await tx.eventLodgingAssignmentHistory.deleteMany({ where: inEvent });
+  await tx.eventLodgingAssignment.deleteMany({ where: inEvent });
+  await tx.eventLodgingPlaceholder.deleteMany({ where: inEvent });
+
   // 10. Registrations: cascades attendees, check-ins, waitlist, club
   //     registrations and assignments, access tokens, transfer moves.
   await tx.clubEventAssignment.deleteMany({ where: inEvent });

@@ -265,6 +265,9 @@ const amendmentRegistrationInclude = {
       },
       checkIns: { select: { id: true } },
       substitutionOperations: { select: { id: true } },
+      // Room assignment history and an expected-guest link keep the attendee (#200): NO ACTION keys.
+      lodgingAssignments: { select: { id: true }, take: 1 },
+      lodgingPlaceholderLinks: { select: { id: true }, take: 1 },
       attendeeTypeDefinition: { select: { id: true, code: true, label: true } },
     },
   },
@@ -1046,11 +1049,12 @@ async function prepareAmendment(
   const removedAttendees = registration.attendees.filter((attendee) => !retainedIds.has(attendee.id));
   const blockedRemoval = removedAttendees.find((attendee) => (
     attendee.checkIns.length > 0 || attendee.substitutionOperations.length > 0
+    || attendee.lodgingAssignments.length > 0 || attendee.lodgingPlaceholderLinks.length > 0
   ));
   if (blockedRemoval) {
     throw new RegistrationAmendmentError(
       "ATTENDEE_HAS_HISTORY",
-      `${blockedRemoval.person.firstName} ${blockedRemoval.person.lastName} cannot be removed because check-in or substitution history is attached.`,
+      `${blockedRemoval.person.firstName} ${blockedRemoval.person.lastName} cannot be removed because check-in, substitution or room assignment history is attached. Cancel the registration instead if they are not coming.`,
       [],
       {
         attendeeId: blockedRemoval.id,
@@ -1478,12 +1482,23 @@ export async function amendRegistration(
           data: { releasedAt: now },
         });
         if (prepared.removedAttendees.length > 0) {
-          await tx.registrationAttendee.deleteMany({
-            where: {
-              registrationId,
-              id: { in: prepared.removedAttendees.map((attendee) => attendee.id) },
-            },
-          });
+          try {
+            await tx.registrationAttendee.deleteMany({
+              where: {
+                registrationId,
+                id: { in: prepared.removedAttendees.map((attendee) => attendee.id) },
+              },
+            });
+          } catch (error) {
+            // A room assignment (or check-in) was recorded for the attendee after the guard read them: history is kept.
+            if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2003") {
+              throw new RegistrationAmendmentError(
+                "ATTENDEE_HAS_HISTORY",
+                "An attendee cannot be removed once they have room assignment, check-in or substitution history. Cancel the registration instead if they are not coming.",
+              );
+            }
+            throw error;
+          }
         }
 
         for (const [position, attendee] of prepared.prepared.attendees.entries()) {

@@ -129,6 +129,8 @@ function attendee(id: string, memberId: string, firstName: string, lastName: str
     person: { id: `person-${memberId}`, firstName, lastName, normalizedEmail: null as string | null, phone: null },
     checkIns: [] as Array<{ id: string }>,
     substitutionOperations: [] as Array<{ id: string }>,
+    lodgingAssignments: [] as Array<{ id: string }>,
+    lodgingPlaceholderLinks: [] as Array<{ id: string }>,
     ...extra,
   };
 }
@@ -219,7 +221,7 @@ function fixture({
         return found;
       }),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
-        const created = { id: `attendee-${registration.attendees.length + 1}`, checkIns: [], substitutionOperations: [], person: { id: data.personId, firstName: "", lastName: "", normalizedEmail: null, phone: null }, ...data };
+        const created = { id: `attendee-${registration.attendees.length + 1}`, checkIns: [], substitutionOperations: [], lodgingAssignments: [], lodgingPlaceholderLinks: [], person: { id: data.personId, firstName: "", lastName: "", normalizedEmail: null, phone: null }, ...data };
         registration.attendees.push(created as never);
         return created;
       }),

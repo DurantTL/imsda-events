@@ -6,12 +6,14 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   calendarDay,
   lodgingCategoryLabels,
+  nightsInclusive,
   projectAvailability,
   rateForCategory,
   type LodgingCategory,
   type LodgingRate,
   type UnitNightState,
 } from "@/modules/lodging/domain";
+import { isOfferLapsed } from "@/modules/lodging/assignment-domain";
 import { LodgingError } from "@/modules/lodging/errors";
 import {
   buildReviewItems,
@@ -161,7 +163,7 @@ export async function loadCategoryCapacity(client: Client, context: Pick<Context
   return { capacity, unitIdsByCategory };
 }
 
-type RequestRow = {
+export type RequestRow = {
   requestId: string;
   registrationId: string;
   version: number;
@@ -185,7 +187,7 @@ export async function loadRates(client: Client, eventLodgingId: string) {
   return rates;
 }
 
-async function loadCurrentRequests(client: Client, eventId: string, where: Prisma.EventLodgingRequestWhereInput = {}): Promise<RequestRow[]> {
+export async function loadCurrentRequests(client: Client, eventId: string, where: Prisma.EventLodgingRequestWhereInput = {}): Promise<RequestRow[]> {
   const requests = await client.eventLodgingRequest.findMany({
     where: { eventId, ...where },
     include: { versions: { orderBy: { version: "desc" }, take: 1 } },
@@ -213,13 +215,107 @@ async function loadCurrentRequests(client: Client, eventId: string, where: Prism
   });
 }
 
-/** Demand from every other active registration's current request. */
-export async function demandExcluding(client: Client, eventId: string, nights: readonly string[], registrationId: string) {
-  const rows = await loadCurrentRequests(client, eventId, {
-    registrationId: { not: registrationId },
-    registration: { status: { in: [...lodgingActiveRegistrationStatuses] } },
+/**
+ * The one counting rule for a category's free space (slices 2 and 3 share it). For each category C and night N, the
+ * people counted are the sum over registrations g of the largest of
+ *
+ * - `request`: g's active request party, when the request is for C and covers N;
+ * - `placed`: the people of g actually placed in units of C on N (an expected guest or an assignment with no registration
+ *   is its own group and has only this term, with its headcount);
+ * - `waiting`: the party of g's live offers (OFFERED, not expired) and accepted entries for C covering N.
+ *
+ * Only active registrations count requests and entries; a placement counts until staff release it. Taking the largest of
+ * the three means a person who asked, was offered and was placed in one category is counted once, while a placement in
+ * another category, more people than asked, nights outside the request, or a larger entry are all still counted. It is
+ * deliberately conservative: a registration promoted into another category holds both its request and its placement
+ * until staff update the request. A registration is left out by name (the one being checked stands in for itself).
+ * Free space is `categoryFits({ capacity, demand })` on the result.
+ *
+ * `countsTowardPublicCapacity` is the single place to leave a kind of registration out of public capacity later (for
+ * example staff-invite registrations, #804): return false for the registrations that should not count.
+ */
+type DemandTerms = { request: number; placed: number; waiting: number };
+/** Per group (a registration, or one expected-guest row), category and night: the three terms of the counting rule. */
+export type DemandGroups = Map<string, Map<LodgingCategory, Map<string, DemandTerms>>>;
+
+function termsFor(groups: DemandGroups, group: string, category: LodgingCategory, night: string) {
+  const byCategory = groups.get(group) ?? new Map<LodgingCategory, Map<string, DemandTerms>>();
+  groups.set(group, byCategory);
+  const byNight = byCategory.get(category) ?? new Map<string, DemandTerms>();
+  byCategory.set(category, byNight);
+  const terms = byNight.get(night) ?? { request: 0, placed: 0, waiting: 0 };
+  byNight.set(night, terms);
+  return terms;
+}
+
+/** Adds a live offer's people to a registration's group (so the next entry of a batch counts it). */
+export function addWaitingDemand(groups: DemandGroups, registrationId: string, category: LodgingCategory, entryNights: readonly string[], partySize: number) {
+  for (const night of entryNights) termsFor(groups, registrationId, category, night).waiting += partySize;
+}
+
+/** Loads every group's terms once, for the nights given (nobody left out). */
+export async function loadDemandGroups(
+  client: Client,
+  eventId: string,
+  nights: readonly string[],
+  options: { now?: Date; countsTowardPublicCapacity?: (registrationId: string) => boolean } = {},
+): Promise<DemandGroups> {
+  const now = options.now ?? new Date();
+  const counts = options.countsTowardPublicCapacity ?? (() => true);
+  const groups: DemandGroups = new Map();
+  const inWindow = (list: readonly string[]) => list.filter((night) => nights.includes(night));
+  const requests = await loadCurrentRequests(client, eventId, { registration: { status: { in: [...lodgingActiveRegistrationStatuses] } } });
+  for (const row of requests) {
+    if (!row.category || !counts(row.registrationId)) continue;
+    for (const night of inWindow(requestNights(row, nights))) termsFor(groups, row.registrationId, row.category, night).request += row.partySize;
+  }
+  // People placed in a unit, by the registration they belong to (an expected guest or an unlinked row is its own group).
+  const placed = await client.eventLodgingAssignment.findMany({
+    where: { eventId, cancelledAt: null, eventLodgingUnitId: { not: null } },
+    select: { id: true, people: true, firstNight: true, lastNight: true, eventUnit: { select: { unit: { select: { category: true } } } }, attendee: { select: { registrationId: true } } },
   });
-  return demandByCategoryNight(rows.map((row) => ({ registrationId: row.registrationId, category: row.category, nights: requestNights(row, nights), partySize: row.partySize })));
+  for (const row of placed) {
+    const category = row.eventUnit?.unit.category;
+    if (!category) continue;
+    const owner = row.attendee?.registrationId ?? null;
+    if (owner !== null && !counts(owner)) continue;
+    for (const night of inWindow(nightsInclusive(toNight(row.firstNight), toNight(row.lastNight)))) termsFor(groups, owner ?? `row:${row.id}`, category, night).placed += row.people;
+  }
+  // Live offers and accepted entries of active registrations.
+  const entries = await client.eventLodgingWaitlistEntry.findMany({
+    where: { eventId, status: { in: ["OFFERED", "ACCEPTED"] }, registration: { status: { in: [...lodgingActiveRegistrationStatuses] } } },
+  });
+  for (const entry of entries) {
+    if (isOfferLapsed({ status: entry.status as "OFFERED" | "ACCEPTED", offerExpiresAt: entry.offerExpiresAt } as Parameters<typeof isOfferLapsed>[0], now)) continue;
+    if (!counts(entry.registrationId)) continue;
+    const entryNights = entry.firstNight && entry.lastNight ? nightsInclusive(toNight(entry.firstNight), toNight(entry.lastNight)) : [...nights];
+    addWaitingDemand(groups, entry.registrationId, entry.category, inWindow(entryNights), entry.partySize);
+  }
+  return groups;
+}
+
+/** The people counted per category and night, leaving one registration's group out. */
+export function demandFromGroups(groups: DemandGroups, excludeRegistrationId: string | null = null) {
+  const demand = new Map<LodgingCategory, Map<string, number>>();
+  for (const [group, byCategory] of groups) {
+    if (group === excludeRegistrationId) continue;
+    for (const [category, byNight] of byCategory) {
+      const total = demand.get(category) ?? new Map<string, number>();
+      for (const [night, terms] of byNight) total.set(night, (total.get(night) ?? 0) + Math.max(terms.request, terms.placed, terms.waiting));
+      demand.set(category, total);
+    }
+  }
+  return demand;
+}
+
+export async function demandExcluding(
+  client: Client,
+  eventId: string,
+  nights: readonly string[],
+  registrationId: string,
+  options: { now?: Date; countsTowardPublicCapacity?: (registrationId: string) => boolean } = {},
+) {
+  return demandFromGroups(await loadDemandGroups(client, eventId, nights, options), registrationId);
 }
 
 export function attendeeName(attendee: { profileSnapshot: unknown; person: { firstName: string; lastName: string } }) {

@@ -22,6 +22,7 @@ import {
   type UnitNightState,
 } from "@/modules/lodging/domain";
 import { LodgingError } from "@/modules/lodging/errors";
+import { defaultBucketLabels, lodgingBucketKinds } from "@/modules/lodging/assignment-domain";
 
 type Tx = Prisma.TransactionClient;
 
@@ -53,6 +54,14 @@ export async function lockEventLodgingUnits(tx: Tx, eventId: string, eventUnitId
  */
 export async function touchEventLodgingCapacity(tx: Tx, eventLodgingId: string) {
   await tx.$executeRaw`UPDATE "EventLodging" SET "capacityVersion" = "capacityVersion" + 1 WHERE "id" = ${eventLodgingId}`;
+}
+
+/** The five alternate-housing buckets (Hotel, Airbnb, Home, Offsite, Other) an event's lodging always has (#200). Idempotent. */
+export async function ensureLodgingBuckets(tx: Tx, eventId: string, eventLodgingId: string, actorUserId: string | null) {
+  await tx.eventLodgingBucket.createMany({
+    data: lodgingBucketKinds.map((kind) => ({ eventId, eventLodgingId, kind, label: defaultBucketLabels[kind], updatedByUserId: actorUserId })),
+    skipDuplicates: true,
+  });
 }
 
 function isOverlapViolation(error: unknown) {
@@ -160,6 +169,7 @@ export async function selectEventProperty(eventId: string, actorUserId: string, 
         include: eventInclude,
       });
       created = true;
+      await ensureLodgingBuckets(tx, eventId, eventLodging.id, actorUserId);
     } else if (input.firstNight !== undefined || input.lastNight !== undefined) {
       // Lock every unit and bump capacityVersion before the EventLodging row is written, in the order every other
       // capacity writer uses (units, then the EventLodging row), so two writers cannot wait on each other.

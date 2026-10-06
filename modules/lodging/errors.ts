@@ -31,7 +31,34 @@ export type LodgingErrorCode =
   | "EDIT_POLICY_REQUIRES_VERIFICATION"
   | "FLAGS_STAFF_ONLY"
   | "BELOW_MINIMUM_NIGHTS"
-  | "REGISTRATION_NOT_ELIGIBLE";
+  | "REGISTRATION_NOT_ELIGIBLE"
+  // Assignment, moves, waitlist and attendee display (#200)
+  | "ASSIGNMENT_NOT_FOUND"
+  | "OCCUPANT_NOT_FOUND"
+  | "PLACEHOLDER_NOT_FOUND"
+  | "PLACEHOLDER_LINKED"
+  | "PLACEHOLDER_NOT_LINKABLE"
+  | "PLACEHOLDER_IN_USE"
+  | "BUCKET_NOT_FOUND"
+  | "DATES_OUTSIDE_EVENT_NIGHTS"
+  | "ALREADY_ASSIGNED"
+  | "UNIT_OUT_OF_SERVICE"
+  | "UNIT_FULL"
+  | "SPECIAL_USE_UNCONFIRMED"
+  | "UNKNOWN_PLACE"
+  | "PLAN_CHANGED"
+  | "IMPORT_INVALID"
+  | "IMPORT_HAS_PROBLEMS"
+  | "NOT_PUBLISHED"
+  | "WAITLIST_ENTRY_NOT_FOUND"
+  | "WAITLIST_ALREADY_OPEN"
+  | "WAITLIST_NOT_ENABLED"
+  | "WAITLIST_TRANSITION_INVALID"
+  | "WAITLIST_OFFER_EXPIRED"
+  | "WAITLIST_OFFER_NO_ROOM"
+  | "WAITLIST_NO_RECIPIENT"
+  | "CATEGORY_NOT_FULL"
+  | "CONFIRMATION_REQUIRED";
 
 /** Every refusal the lodging module can make (#198). Free of server-only imports so any layer can catch it. */
 export class LodgingError extends Error {
@@ -54,6 +81,11 @@ export function lodgingErrorStatus(code: LodgingErrorCode) {
     case "ROOMMATE_NOT_FOUND":
     case "RULE_NOT_FOUND":
     case "ITEM_NOT_FOUND":
+    case "ASSIGNMENT_NOT_FOUND":
+    case "OCCUPANT_NOT_FOUND":
+    case "PLACEHOLDER_NOT_FOUND":
+    case "BUCKET_NOT_FOUND":
+    case "WAITLIST_ENTRY_NOT_FOUND":
       return 404;
     case "SENSITIVE_DATA_FORBIDDEN":
     case "EDIT_POLICY_REQUIRES_VERIFICATION":
@@ -70,6 +102,22 @@ export function lodgingErrorStatus(code: LodgingErrorCode) {
     case "ROOMMATE_DECIDED":
     case "RULE_ENDED":
     case "REGISTRATION_NOT_ELIGIBLE":
+    case "PLACEHOLDER_LINKED":
+    case "PLACEHOLDER_NOT_LINKABLE":
+    case "PLACEHOLDER_IN_USE":
+    case "ALREADY_ASSIGNED":
+    case "UNIT_OUT_OF_SERVICE":
+    case "UNIT_FULL":
+    case "SPECIAL_USE_UNCONFIRMED":
+    case "PLAN_CHANGED":
+    case "NOT_PUBLISHED":
+    case "WAITLIST_ALREADY_OPEN":
+    case "WAITLIST_NOT_ENABLED":
+    case "WAITLIST_TRANSITION_INVALID":
+    case "WAITLIST_OFFER_EXPIRED":
+    case "WAITLIST_OFFER_NO_ROOM":
+    case "WAITLIST_NO_RECIPIENT":
+    case "CATEGORY_NOT_FULL":
       return 409;
     default:
       return 400;

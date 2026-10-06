@@ -235,6 +235,45 @@ function resolveConfiguration(dependencies: ExternalEmailDeliveryDependencies) {
   }
 }
 
+/** Cancels (and audits, ids only) a lodging email that a later change made wrong before it went out (#200). */
+async function cancelIfLodgingStale(
+  prisma: DeliveryPrisma,
+  message: ClaimedMessage,
+  at: Date,
+) {
+  if (message.templateKey !== "LODGING_ASSIGNMENT_NOTICE" && message.templateKey !== "LODGING_WAITLIST_OFFER") return false;
+  let reason: string | null;
+  try {
+    const { lodgingMessageStaleReason } = await import("@/modules/lodging/message-currency");
+    reason = await lodgingMessageStaleReason(message.id, message.templateKey);
+  } catch (error) {
+    // The check itself failed: count it as a failed attempt and retry after the normal backoff (so it ends as FAILED after
+    // the usual number of tries, and staff can offer again), and carry on with the rest of the run.
+    logError("Unable to check whether a lodging email is still current; it will be retried.", error);
+    await finalizeFailedAttempt(prisma, message, { code: "LODGING_CURRENCY_CHECK_FAILED", message: "Could not confirm the lodging email was still current, so it was not sent.", retryable: true }, at, true);
+    return true;
+  }
+  if (!reason) return false;
+  const updated = await prisma.messageOutbox.updateMany({
+    where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
+    data: { status: "CANCELLED", lockedAt: null, lockToken: null, lastError: reason },
+  });
+  if (updated.count === 1) {
+    await prisma.auditLog.create({
+      data: {
+        eventId: message.eventId,
+        action: "LODGING_MESSAGE_CANCELLED",
+        entityType: "MessageOutbox",
+        entityId: message.id,
+        correlationId: randomUUID(),
+        summary: "Cancelled a lodging email because it was out of date before it was sent.",
+        metadata: { messageId: message.id, templateKey: message.templateKey },
+      },
+    });
+  }
+  return true;
+}
+
 const INVOICE_REPLACED_REASON = "Invoice version superseded";
 
 /** Cancels (and audits, ids only) an invoice message whose version is no longer FINALIZED. Returns true when it did. */
@@ -507,6 +546,7 @@ async function finalizeFailedAttempt(
   message: ClaimedMessage,
   error: NormalizedEmailDeliveryError,
   completedAt: Date,
+  internal = false,
 ) {
   const attemptNumber = message.attemptCount + 1;
   const reschedule = error.retryable && attemptNumber < MAX_EMAIL_DELIVERY_ATTEMPTS;
@@ -525,9 +565,9 @@ async function finalizeFailedAttempt(
         lockedAt: null,
         lockToken: null,
         failedAt: reschedule ? null : completedAt,
-        provider: "RESEND",
-        providerDeliveryStatus: reschedule ? undefined : "FAILED",
-        providerStatusAt: reschedule ? undefined : completedAt,
+        provider: internal ? undefined : "RESEND",
+        providerDeliveryStatus: reschedule || internal ? undefined : "FAILED",
+        providerStatusAt: reschedule || internal ? undefined : completedAt,
         lastError: error.message,
       },
     });
@@ -536,7 +576,7 @@ async function finalizeFailedAttempt(
       data: {
         messageOutboxId: message.id,
         attemptNumber,
-        provider: "RESEND",
+        provider: internal ? "INTERNAL" : "RESEND",
         status: "FAILED",
         errorCode: error.code,
         errorMessage: error.message,
@@ -545,7 +585,8 @@ async function finalizeFailedAttempt(
           rescheduled: reschedule,
           ...(reschedule ? { nextAvailableAt: availableAt.toISOString() } : {}),
           idempotencyKey: `outbox:${message.id}`,
-          realDelivery: true,
+          // A failed pre-send check (no provider was called) is not a real delivery attempt.
+          realDelivery: !internal,
         },
         startedAt: message.startedAt,
         completedAt,
@@ -599,6 +640,7 @@ async function runDeliveryLoop(
     if (!message) break;
     // An invoice email is sent only while its version is still FINALIZED (#168): one a revision replaced is cancelled, never sent.
     if (await cancelIfInvoiceReplaced(prisma, message)) continue;
+    if (await cancelIfLodgingStale(prisma, message, now())) continue;
     let preparedBody: PreparedEmailBody | null = null;
     try {
       const prepareBodyText = dependencies.prepareBodyText
@@ -621,6 +663,7 @@ async function runDeliveryLoop(
       }
       // Checked again immediately before the provider call, so a revision that committed while the body was prepared cannot slip one out.
       if (await cancelIfInvoiceReplaced(prisma, message)) continue;
+      if (await cancelIfLodgingStale(prisma, message, now())) continue;
       const delivery = await sendEmail({
         fromName: message.senderNameSnapshot,
         fromEmail: message.senderEmailSnapshot ?? "",

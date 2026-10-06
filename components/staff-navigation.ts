@@ -130,6 +130,7 @@ export const staffPageTitles = {
   programAssignments: "Seminar assignments",
   lodging: "Lodging",
   lodgingRequests: "Lodging requests",
+  lodgingAssignments: "Lodging assignments",
 } as const;
 
 type SubpageRule = readonly [path: string, match: "exact" | "prefix" | "under", title: string];
@@ -159,6 +160,7 @@ const subpageRules: readonly SubpageRule[] = [
   ["/more/event-patches", "prefix", staffPageTitles.eventPatches],
   ["/more/health", "prefix", staffPageTitles.operationalHealth],
   ["/more/merchandise", "prefix", staffPageTitles.merchandise],
+  ["/more/lodging/assignments", "prefix", staffPageTitles.lodgingAssignments],
   ["/more/lodging/requests", "prefix", staffPageTitles.lodgingRequests],
   ["/more/lodging", "prefix", staffPageTitles.lodging],
   ["/more/program-assignments/", "under", staffPageTitles.assignmentRoster],
@@ -471,6 +473,7 @@ export function buildMoreDirectoryCards({
     { key: "club-forms", group: "people-access", allowed: clubFormsAccess, href: `/more/club-forms${eventQuery}`, icon: FileText, title: "Club forms", description: "Membership applications, staff service forms, permission slips, and passenger lists clubs have filled in.", cta: "Open club forms" },
     // Health information for club events (#658): system administrators, plus staff a system administrator gave VIEW_HEALTH_INFORMATION. No role carries it.
     { key: "event-health", group: "people-access", allowed: clubEvent && has("VIEW_HEALTH_INFORMATION"), href: `/more/event-health${eventQuery}`, icon: HeartPulse, title: "Event health information", description: "Dietary notes as entered, the medical-need flag, and emergency contacts for this club event, with a printable confidential sheet.", cta: "Open health information" },
+    { key: "lodging-assignments", group: "people-access", allowed: has("MANAGE_REGISTRATION"), href: `/more/lodging/assignments${eventQuery}`, icon: BedDouble, title: "Lodging assignments", description: "Place guests in rooms and sites, move them, run the lodging waitlist, and print rooming lists and occupancy by night.", cta: "Assign lodging" },
     { key: "lodging-requests", group: "people-access", allowed: has("MANAGE_REGISTRATION"), href: `/more/lodging/requests${eventQuery}`, icon: BedDouble, title: "Lodging requests", description: "Review what guests asked for, roommate requests, keep-together rules and the review queue. Nobody is assigned here.", cta: "Review requests" },
     { key: "attendee-list", group: "people-access", allowed: has("VIEW_SENSITIVE_DATA"), href: `/people/attendees${eventQuery}`, icon: ListChecks, title: "Attendee list", description: "One row per attendee with meal, dietary, childcare and volunteer answers, filters, and a CSV download.", cta: "Open attendee list" },
     { key: "imports", group: "people-access", allowed: has("MANAGE_IMPORTS"), href: `/imports${eventQuery}`, icon: FileUp, title: "Import registrations", description: "Preview a CSV, review every change, then import approved records.", cta: "Open imports" },
