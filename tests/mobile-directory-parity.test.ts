@@ -167,6 +167,8 @@ const moreOnlyPages: Record<string, (scenario: Scenario) => boolean> = {
   "/more/event-content": (scenario) => has(scenario, "CONFIGURE_EVENT"),
   // app/(workspace)/more/merchandise/page.tsx
   "/more/merchandise": (scenario) => has(scenario, "CONFIGURE_EVENT"),
+  // app/(workspace)/more/lodging/page.tsx
+  "/more/lodging": (scenario) => has(scenario, "CONFIGURE_EVENT"),
   // app/(workspace)/more/program-assignments/page.tsx
   "/more/program-assignments": (scenario) => canManageProgramAssignments(scenario.permissions),
   // app/(workspace)/more/event-patches/page.tsx: CONFIGURE_EVENT, then a CLUB-audience event (#532)
@@ -253,7 +255,7 @@ function phoneDestinations(scenario: Scenario): Set<string> {
  * the navigation source, so a loosened card or tab rule fails for every role
  * (not only READ_ONLY_STAFF).
  */
-const configPages = ["/more/event-settings", "/more/attendee-configuration", "/more/tags", "/more/honors", "/more/event-content", "/more/merchandise"];
+const configPages = ["/more/event-settings", "/more/attendee-configuration", "/more/tags", "/more/honors", "/more/event-content", "/more/merchandise", "/more/lodging"];
 const clubPages = ["/more/clubs", "/admin/organizations", "/more/club-assignments"];
 const deniedOnPhone: Record<string, readonly string[]> = {
   EVENT_ADMIN: ["/admin/organizations", "/more/clubs", "/more/club-assignments", "/admin", "/more/event-health"],

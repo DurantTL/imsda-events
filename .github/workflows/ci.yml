@@ -62,6 +62,8 @@ jobs:
             --shadow-database-url "postgresql://imsda:imsda_ci@localhost:5432/imsda_events_shadow?schema=public" \
             --exit-code
       - run: npm run db:seed
+      # The lodging property templates are code data synced after migrations (#198).
+      - run: npm run lodging:sync
       - run: npm run verify
       # Real-database check that Honors Weekend class seats hold under concurrent saves (#359).
       - run: npm run test:honor-capacity
@@ -127,6 +129,8 @@ jobs:
       # timing out as a retryable busy, the location filters and CSV columns,
       # and cloning with shifted dates (#413).
       - run: npm run test:event-locations
+      # Real-database check of lodging inventory (#198): idempotent and concurrent template sync with no names or prices, night-by-night availability with partial stays, closures and unavailable units, per-event overrides, holds that keep append-only history and refuse overlapping active holds under a race, optional finance-only rates, and cascade on event deletion.
+      - run: npm run test:lodging
       # Real-database check of calendar bulk changes (#796): the feed's advisory lock is taken and rows are read again under it, a racing feed sync never leaves a removed entry published and a bulk hide survives it, the 500-entry cap, and a refresh keeping a bulk-set category with no local-edit mark.
       - run: npm run test:calendar-bulk
       # Real-database check of location waitlists: a full location waitlists the club there in per-location order, a freed seat promotes the next club at that location only and never overfills it under races, a busy location is skipped, and the daily digest reaches the active coordinator and event administrators once a day while an email failure changes nothing (#599).
