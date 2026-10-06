@@ -610,6 +610,29 @@ export function applyStoredPromo(
   );
 }
 
+/**
+ * The registration's priced calculation after an amendment: the form's own lines, the stored lodging line and the saved code.
+ * A registration whose snapshot says its code covers lodging (`coversLodging`) puts the stored line among the lines first, then
+ * applies the code to the whole subtotal. **Every other registration, with a code or without one, keeps the old math** (the
+ * code decided on the form's own lines and the lodging line added after, undiscounted, with no second pass at credits), so an
+ * answer change that is not about price never moves its total. Exported so the lodging screens' discount arithmetic can be
+ * checked against it.
+ */
+export function priceAmendedRegistration(input: {
+  definition: RegistrationFormDefinition;
+  responses: Record<string, unknown>;
+  calculation: FormCalculation;
+  storedLine: FormCalculation["lineItems"][number] | null;
+  redemption: AmendmentRegistration["promoCodeRedemption"];
+  coversLodging: boolean;
+}) {
+  const { definition, responses, calculation, storedLine, redemption } = input;
+  if (storedLine && !input.coversLodging) {
+    return addUndiscountedLine(definition, responses, applyStoredPromo(definition, responses, calculation, redemption), storedLine);
+  }
+  return applyStoredPromo(definition, responses, storedLine ? calculationWithLine(definition, responses, calculation, LODGING_LINE_KEY, storedLine) : calculation, redemption);
+}
+
 function sameName(
   attendee: NonNullable<PreparedPublicAttendee["identity"]>,
   current: AmendmentRegistration["attendees"][number],
@@ -1234,17 +1257,14 @@ async function prepareAmendment(
   // A registration submitted before promo codes covered lodging (its snapshot has no `promoCoversLodging`) keeps the old
   // math: the code was decided on the form's own lines and the lodging line joined afterwards, undiscounted, so an unrelated
   // answer change never lowers its total.
-  const storedLine = storedLodgingLine as unknown as FormCalculation["lineItems"][number] | null;
-  const pricedCalculation = storedLine && registration.promoCodeRedemption && pricingSnapshot.promoCoversLodging !== true
-    ? addUndiscountedLine(definition, prepared.registrationResponses, applyStoredPromo(definition, prepared.registrationResponses, prepared.calculation, registration.promoCodeRedemption), storedLine)
-    : applyStoredPromo(
-      definition,
-      prepared.registrationResponses,
-      storedLine
-        ? calculationWithLine(definition, prepared.registrationResponses, prepared.calculation, LODGING_LINE_KEY, storedLine)
-        : prepared.calculation,
-      registration.promoCodeRedemption,
-    );
+  const pricedCalculation = priceAmendedRegistration({
+    definition,
+    responses: prepared.registrationResponses,
+    calculation: prepared.calculation,
+    storedLine: storedLodgingLine as unknown as FormCalculation["lineItems"][number] | null,
+    redemption: registration.promoCodeRedemption,
+    coversLodging: pricingSnapshot.promoCoversLodging === true,
+  });
   const netPaidCents = paidCents(registration);
   // Staff adjustments (#396) stay on top of whatever the new answers cost.
   const adjustmentsCents = await adjustmentTotalCents(tx, registration.id);

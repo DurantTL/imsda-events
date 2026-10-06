@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { describeRate, lodgingCategories, lodgingCategoryLabels } from "@/modules/lodging/domain";
 import {
+  CHURCH_SPONSOR_WARNING,
   chargeChangeSentence,
   fullBehaviors,
   lodgingRuleKindLabels,
@@ -11,7 +12,7 @@ import {
 } from "@/modules/lodging/preferences-domain";
 import type { StaffLodgingRequestView, StaffLodgingRequestsView } from "@/modules/lodging/preferences-service";
 
-type ChargeResult = { priceNeedsReview?: boolean; chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null };
+type ChargeResult = { priceNeedsReview?: boolean; belowMinimumAfter?: boolean; churchSponsorReview?: boolean; chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null };
 type Reply = { requests?: StaffLodgingRequestsView; result?: ChargeResult };
 type Run = (action: () => Promise<Reply>, success: string) => Promise<void>;
 
@@ -69,8 +70,9 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
     {error ? <p className="form-error" role="alert">{error}</p> : null}
     {notice ? <p className="usage-note" role="status">{notice}</p> : null}
     {chargeChange !== null ? <p className="form-error" role="status">
-      {chargeChangeSentence(chargeChange)} Record the difference as an adjustment in{" "}
-      <a href={`/finance?event=${encodeURIComponent(view.eventId)}`}>Payments</a>; nothing is charged or refunded automatically.
+      {chargeChangeSentence(chargeChange)}{" "}
+      {chargeChange.churchSponsorReview ? "Nothing is charged or refunded automatically." : <>Record the difference as an adjustment in{" "}
+      <a href={`/finance?event=${encodeURIComponent(view.eventId)}`}>Payments</a>; nothing is charged or refunded automatically.</>}
     </p> : null}
 
     <section className="panel" aria-labelledby="lodging-settings">
@@ -106,6 +108,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
       {queue.length === 0 ? <p>Nothing needs review.</p> : <ul>{queue.map((item) => <li key={`${item.key}:${item.fingerprint}`}>
         <strong>{reviewKindLabels[item.kind]}</strong>{item.sensitive ? " (restricted)" : ""}{item.acknowledged ? " (acknowledged)" : ""}
         <p>{item.title}. {item.detail}</p>
+        {item.flags?.includes("CHURCH_SPONSOR_REVIEW") ? <p role="note"><strong>Church sponsorship needs review.</strong> {CHURCH_SPONSOR_WARNING}</p> : null}
         {item.roommateRequestId && !item.acknowledged ? <form onSubmit={(event: FormEvent<HTMLFormElement>) => {
           event.preventDefault();
           const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;

@@ -803,14 +803,14 @@ async function main() {
   const roomsPreview = await applyWaitlistAction(roomsEvent, userId, { action: "offer", entryIds: [roomsEntry.id] }, { now: new Date("2027-05-20T12:00:00Z") }, prisma);
   assert(roomsPreview.action === "offer" && !roomsPreview.confirmed && !roomsPreview.rows[0]!.eligible && roomsPreview.rows[0]!.roomCount === 2 && /No place is free for 2 rooms/.test(roomsPreview.rows[0]!.reason ?? ""), "no offer while the rooms are not free, counted in rooms");
   await expectDatabaseRefusal(prisma.eventLodgingWaitlistEntry.update({ where: { id: roomsEntry.id }, data: { roomCount: 1 } }), "changing the rooms an entry asked for");
-  // A registrant cannot ask the waitlist for more rooms than their own request asked for; staff can.
+  // A registrant's room count is capped at the party size, not at the room count of a request that is usually for another type.
   const capReg = await makeReg(roomsEvent, [40, 40, 40, 40]);
   await requestIn(roomsEvent, capReg, { category: "DORM_ROOM", partySize: 4, roomCount: 1 });
   const capJoin = await regActorFor(roomsEvent, capReg, { action: "join", category: "DORM_ROOM", partySize: 4, roomCount: 3 });
-  assert((await prisma.eventLodgingWaitlistEntry.findUniqueOrThrow({ where: { id: capJoin.entryId } })).roomCount === 1, "a registrant's join is capped at the rooms their own request asked for");
+  assert((await prisma.eventLodgingWaitlistEntry.findUniqueOrThrow({ where: { id: capJoin.entryId } })).roomCount === 3, "a registrant's join may name up to the party size (the request is usually for another type), here 3 of 4");
   const noRequestReg = await makeReg(roomsEvent, [40, 40]);
-  const noRequestJoin = await regActorFor(roomsEvent, noRequestReg, { action: "join", category: "DORM_ROOM", partySize: 2, roomCount: 2 });
-  assert((await prisma.eventLodgingWaitlistEntry.findUniqueOrThrow({ where: { id: noRequestJoin.entryId } })).roomCount === 1, "and with no request in that type it is one room");
+  const noRequestJoin = await regActorFor(roomsEvent, noRequestReg, { action: "join", category: "DORM_ROOM", partySize: 2, roomCount: 9 });
+  assert((await prisma.eventLodgingWaitlistEntry.findUniqueOrThrow({ where: { id: noRequestJoin.entryId } })).roomCount === 2, "and above the party size it is capped at the party, whether or not they have a request in that type");
   await expectLodgingError(applyWaitlistAction(roomsEvent, userId, { action: "join", registrationId: (await makeReg(roomsEvent, [40])).id, category: "DORM_ROOM", partySize: 1, roomCount: 2 }, { now: new Date("2027-05-20T12:00:00Z") }, prisma), "ROOM_COUNT_INVALID", "more rooms than people on a waitlist entry");
 
   // A plan that releases one assignment twice (two moves out of one long stay) keeps every revision and history row in step.

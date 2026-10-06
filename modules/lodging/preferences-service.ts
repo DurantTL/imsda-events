@@ -470,10 +470,14 @@ export type SaveRequestResult =
       chargeDeltaCents?: number;
       /**
        * The same change after the registration's saved promo code (#803): what the registrant pays differently, and for a
-       * church-sponsored code the sponsor's share. Adjust Payments by these, never by the list figure, when a code applies.
+       * church-sponsored code the sponsor's share. For a church-sponsored code the church's bill does not follow a lodging edit: see CHURCH_SPONSOR_WARNING.
        */
       registrantDeltaCents?: number;
       sponsorDeltaCents?: number;
+      /** After the change the registration would be under its saved code's minimum (an amendment would refuse it). */
+      belowMinimumAfter?: boolean;
+      /** A church-sponsored code whose share would move: the church's bill does not follow a lodging edit; contact the finance office. */
+      churchSponsorReview?: boolean;
       promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null;
     }
   /** The event's edit policy kept the change from applying itself; it waits in the staff review queue. */
@@ -614,7 +618,9 @@ export async function saveLodgingRequest(
         roomsAvailable,
       });
       if (!choice.ok) throw new LodgingError(choice.code, choice.message);
-      next.roomCount = choice.roomCount;
+      // A type that is not counted in rooms (a tent, or a category that has become person-based) keeps the room count it
+      // had, within the party: an unrelated edit never silently resets what the registrant chose.
+      next.roomCount = categoryCapacity?.roomBased ? choice.roomCount : (sameType ? Math.min(previous!.roomCount, partySize) : 1);
       next.bringsExtraBedding = choice.bringsExtraBedding;
     }
     if (previous
@@ -643,8 +649,13 @@ export async function saveLodgingRequest(
     const nextCents = costOf(next.category, nights.length, partySize, next.roomCount);
     const chargeChanges = previousCents !== nextCents;
     // The same change after the registration's saved promo code: what the registrant would really pay differently.
+    // The base is what the registration was actually charged (the stored line), the same as the review queue, so what staff
+    // are told here is what the queue shows afterwards.
     const impact = chargeChanges
-      ? lodgingChargeImpact({ ...(await loadPromoContext(tx, input.eventId, input.registrationId)), fromCents: previousCents, toCents: nextCents })
+      ? await (async () => {
+          const context = await loadPromoContext(tx, input.eventId, input.registrationId);
+          return lodgingChargeImpact({ otherCents: context.otherCents, promo: context.promo, fromCents: context.lodgingCents, toCents: nextCents });
+        })()
       : null;
     if (!staff && chargeChanges) {
       await tx.eventLodgingChangeRequest.updateMany({
@@ -663,7 +674,7 @@ export async function saveLodgingRequest(
       await writeAuditLog({
         eventId: input.eventId, action: "LODGING_CHANGE_REQUESTED", entityType: "EventLodgingChangeRequest", entityId: change.id,
         summary: `A change that alters the lodging charge was requested on ${registration.confirmationCode}.`,
-        metadata: { registrationId: input.registrationId, category: next.category, accessTokenId: change.accessTokenId, deltaCents: nextCents - previousCents, ...(impact?.promo ? { registrantDeltaCents: impact.registrantDeltaCents } : {}) },
+        metadata: { registrationId: input.registrationId, category: next.category, accessTokenId: change.accessTokenId, deltaCents: impact?.listDeltaCents ?? nextCents - previousCents, ...(impact?.promo ? { registrantDeltaCents: impact.registrantDeltaCents } : {}) },
       }, tx);
       return { changeRequested: true as const, changeRequestId: change.id };
     }
@@ -740,7 +751,11 @@ export async function saveLodgingRequest(
       });
     }
     return { requestId: request.id, version, changed: true, afterDeadline: staff && pastDeadline, ...(staff && chargeChanges && impact
-      ? { priceNeedsReview: true, chargeDeltaCents: nextCents - previousCents, registrantDeltaCents: impact.registrantDeltaCents, sponsorDeltaCents: impact.promo?.sponsored ? impact.discountDeltaCents : 0, promo: impact.promo }
+      ? {
+          priceNeedsReview: true, chargeDeltaCents: impact.listDeltaCents, registrantDeltaCents: impact.registrantDeltaCents,
+          sponsorDeltaCents: impact.promo?.sponsored ? impact.discountDeltaCents : 0, belowMinimumAfter: impact.belowMinimumAfter,
+          churchSponsorReview: Boolean(impact.promo?.sponsored && impact.discountDeltaCents !== 0), promo: impact.promo,
+        }
       : {}) };
   }, { timeout: lodgingTransactionTimeoutMs });
 }
@@ -999,18 +1014,33 @@ const asRedemptionFact = (row: { codeSnapshot: string; discountTypeSnapshot: Red
 });
 
 /** The pricing snapshot a registration is at now: the latest amendment's, else the submission's. */
-const currentSnapshot = (amended: unknown, submitted: unknown) => {
-  const latest = record(record(amended).pricingSnapshot);
-  return Object.keys(latest).length > 0 ? latest : record(submitted);
+const currentSnapshot = (amendedPricing: unknown, submitted: unknown) => {
+  const latest = record(amendedPricing);
+  return Object.keys(latest).length > 0 && Array.isArray(latest.lineItems) ? latest : record(submitted);
 };
 
+/**
+ * The latest amendment's pricing fields per registration (just the lines and the code marker, not the whole snapshot of the
+ * attendees and answers the amendment also stores). One registration when `registrationId` is given, else the event's.
+ */
+async function latestAmendmentPricing(client: Client, eventId: string, registrationId?: string) {
+  const rows = await client.$queryRaw<Array<{ registrationId: string; pricing: unknown }>>`
+    SELECT DISTINCT ON ("registrationId") "registrationId",
+      jsonb_build_object('lineItems', "afterSnapshot" -> 'pricingSnapshot' -> 'lineItems', 'promoCoversLodging', "afterSnapshot" -> 'pricingSnapshot' -> 'promoCoversLodging') AS "pricing"
+    FROM "RegistrationOperation"
+    WHERE "eventId" = ${eventId} AND "type" = 'AMENDMENT' AND "afterSnapshot" -> 'pricingSnapshot' IS NOT NULL
+      AND (${registrationId ?? null}::text IS NULL OR "registrationId" = ${registrationId ?? null})
+    ORDER BY "registrationId", "createdAt" DESC`;
+  return new Map(rows.map((row) => [row.registrationId, record(row.pricing)] as const));
+}
+
 async function loadPromoContext(client: Client, eventId: string, registrationId: string) {
-  const [submission, operation, redemption] = await Promise.all([
+  const [submission, amended, redemption] = await Promise.all([
     client.publicRegistrationSubmission.findFirst({ where: { eventId, registrationId }, select: { pricingSnapshot: true } }),
-    client.registrationOperation.findFirst({ where: { eventId, registrationId, type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, select: { afterSnapshot: true } }),
+    latestAmendmentPricing(client, eventId, registrationId),
     client.promoCodeRedemption.findUnique({ where: { registrationId }, select: redemptionSelect }),
   ]);
-  return promoContextOf(currentSnapshot(operation?.afterSnapshot, submission?.pricingSnapshot), redemption ? asRedemptionFact(redemption) : null);
+  return promoContextOf(currentSnapshot(amended.get(registrationId), submission?.pricingSnapshot), redemption ? asRedemptionFact(redemption) : null);
 }
 
 // ---------------------------------------------------------------------------
@@ -1038,7 +1068,7 @@ async function loadReviewFacts(client: Client, context: Context) {
     client.eventLodgingChangeRequest.findMany({ where: { eventId, resolvedAt: null }, select: { id: true, registrationId: true, category: true, firstNight: true, lastNight: true, partySize: true, roomCount: true, bringsExtraBedding: true }, orderBy: { createdAt: "asc" } }),
     client.publicRegistrationSubmission.findMany({ where: { eventId }, select: { registrationId: true, pricingSnapshot: true } }),
     loadRates(client, context.eventLodgingId),
-    client.registrationOperation.findMany({ where: { eventId, type: "AMENDMENT" }, orderBy: { createdAt: "asc" }, select: { registrationId: true, afterSnapshot: true } }),
+    latestAmendmentPricing(client, eventId),
     client.promoCodeRedemption.findMany({ where: { eventId }, select: redemptionSelect }),
   ]);
   const { capacity, unitIdsByCategory } = await loadCategoryCapacity(client, context);
@@ -1073,12 +1103,11 @@ async function loadReviewFacts(client: Client, context: Context) {
     return [submission.registrationId, typeof stored?.amountCents === "number" ? stored.amountCents : 0] as const;
   }));
   // What a registration's saved promo code makes of a lodging change: the registrant's real change, not the list change.
-  const latestAmendment = new Map(amendments.map((row) => [row.registrationId, row.afterSnapshot] as const));
-  const snapshotOf = new Map(submissions.map((submission) => [submission.registrationId, currentSnapshot(latestAmendment.get(submission.registrationId), submission.pricingSnapshot)] as const));
+  const snapshotOf = new Map(submissions.map((submission) => [submission.registrationId, currentSnapshot(amendments.get(submission.registrationId), submission.pricingSnapshot)] as const));
   const redemptionOf = new Map(redemptions.map((row) => [row.registrationId, asRedemptionFact(row)] as const));
   const impactOf = (registrationId: string, fromCents: number, toCents: number) => {
     const impact = lodgingChargeImpact({ ...promoContextOf(snapshotOf.get(registrationId) ?? null, redemptionOf.get(registrationId) ?? null), fromCents, toCents });
-    return impact.promo ? { promoCode: impact.promo.code, coversLodging: impact.promo.coversLodging, sponsored: impact.promo.sponsored, registrantDeltaCents: impact.registrantDeltaCents, discountDeltaCents: impact.discountDeltaCents } : undefined;
+    return impact.promo ? { promoCode: impact.promo.code, coversLodging: impact.promo.coversLodging, sponsored: impact.promo.sponsored, registrantDeltaCents: impact.registrantDeltaCents, discountDeltaCents: impact.discountDeltaCents, belowMinimumAfter: impact.belowMinimumAfter } : undefined;
   };
   // What a request costs at today's rates. A church-billed event is never charged lodging through its registrations.
   const costOf = (category: LodgingCategory | null, nightCount: number, party: number, rooms: number) => {

@@ -96,15 +96,20 @@ export type RedemptionFact = {
  * the code with whether it covers lodging (only a snapshot written when codes started covering lodging says so; an older
  * registration keeps the old math). A registration with no code has no promo.
  */
-export function promoContextOf(snapshot: Record<string, unknown> | null, redemption: RedemptionFact | null): { otherCents: number; promo: RegistrationPromo | null } {
+export function promoContextOf(snapshot: Record<string, unknown> | null, redemption: RedemptionFact | null): { otherCents: number; lodgingCents: number; promo: RegistrationPromo | null } {
   const lines = Array.isArray(snapshot?.lineItems) ? (snapshot!.lineItems as unknown[]) : [];
-  const otherCents = lines.reduce<number>((total, line) => {
+  let otherCents = 0;
+  let lodgingCents = 0;
+  for (const line of lines) {
     const row = line && typeof line === "object" ? line as Record<string, unknown> : {};
-    return row.key === LODGING_LINE_KEY || typeof row.amountCents !== "number" ? total : total + row.amountCents;
-  }, 0);
-  if (!redemption) return { otherCents, promo: null };
+    if (typeof row.amountCents !== "number") continue;
+    if (row.key === LODGING_LINE_KEY) lodgingCents += row.amountCents;
+    else otherCents += row.amountCents;
+  }
+  if (!redemption) return { otherCents, lodgingCents, promo: null };
   return {
     otherCents,
+    lodgingCents,
     promo: {
       code: redemption.codeSnapshot,
       discountType: redemption.discountTypeSnapshot,
@@ -124,6 +129,8 @@ export type LodgingChargeImpact = {
   registrantDeltaCents: number;
   /** The change in the discount: for a church-sponsored code, the sponsor's share of the change. */
   discountDeltaCents: number;
+  /** After the change the registration would be under the code's minimum: an amendment would refuse it, and the code would no longer apply. */
+  belowMinimumAfter: boolean;
   promo: { code: string; coversLodging: boolean; sponsored: boolean } | null;
 };
 
@@ -135,14 +142,15 @@ export type LodgingChargeImpact = {
  */
 export function lodgingChargeImpact(input: { otherCents: number; fromCents: number; toCents: number; promo: RegistrationPromo | null }): LodgingChargeImpact {
   const listDeltaCents = input.toCents - input.fromCents;
-  if (!input.promo) return { listDeltaCents, registrantDeltaCents: listDeltaCents, discountDeltaCents: 0, promo: null };
+  if (!input.promo) return { listDeltaCents, registrantDeltaCents: listDeltaCents, discountDeltaCents: 0, belowMinimumAfter: false, promo: null };
   const { promo } = input;
-  const discountOn = (lodgingCents: number) => storedPromoDiscount(promo, Math.max(0, input.otherCents + (promo.coversLodging ? lodgingCents : 0))).discountCents;
-  const discountDeltaCents = discountOn(input.toCents) - discountOn(input.fromCents);
+  const discountOf = (lodgingCents: number) => storedPromoDiscount(promo, Math.max(0, input.otherCents + (promo.coversLodging ? lodgingCents : 0)));
+  const discountDeltaCents = discountOf(input.toCents).discountCents - discountOf(input.fromCents).discountCents;
   return {
     listDeltaCents,
     registrantDeltaCents: listDeltaCents - discountDeltaCents,
     discountDeltaCents,
+    belowMinimumAfter: discountOf(input.toCents).belowMinimum && !discountOf(input.fromCents).belowMinimum,
     promo: { code: promo.code, coversLodging: promo.coversLodging, sponsored: promo.sponsored },
   };
 }

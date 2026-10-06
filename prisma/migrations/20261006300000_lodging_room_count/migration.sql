@@ -12,10 +12,13 @@ ALTER TABLE "EventLodgingWaitlistEntry" ADD COLUMN "roomCount" INTEGER NOT NULL 
 -- Rows that exist before this change were priced and counted under the interim rule: a party was charged for
 -- ceil(party / the smallest "sleeps up to" of the category's rooms) rooms. Reading them all as one room would silently
 -- change what they hold, so each takes that room count, deterministically, from data already stored:
---   1. the room count the stored lodging line itself names ("Lodging: Dorm room (3 rooms)"), for a request's first version
---      from the registration form (the only version that price was ever worked out for); else
+--   1. a request's first version from the registration form whose stored lodging line was priced **per room or site**: the room
+--      count the line itself names ("Lodging: Dorm room (3 rooms)"), or ONE room when it names none (the line only names a
+--      count above one, so none means it was charged for a single room, whatever the old rule would say now); else
 --   2. ceil(party / smallest default capacity of the event's assignable, non-retired ROOM units of that category), for a
---      category whose every non-retired unit is a numbered room. Any other category stays one unit.
+--      category whose every non-retired unit is a numbered room, when there is no per-room stored line (no line, or a
+--      per-person line, so the old rule is the only record of how many rooms the party was counted in). Any other category
+--      stays one unit.
 -- (Every UPDATE also honours the transaction-local setting imsda.backfill_event, which is unset when the migration runs, so it
 -- covers every row; the real-database check sets it to run exactly this SQL on rows of its own event.)
 -- A backfilled party that is larger than its beds gets no extra-bedding acknowledgement (nobody gave one); the application
@@ -41,10 +44,10 @@ GROUP BY el."eventId", u."category";
 UPDATE "EventLodgingRequestVersion" v SET "roomCount" = LEAST(v."partySize", GREATEST(1, CEIL(v."partySize"::numeric / s."sleeps")::int))
 FROM "_lodging_room_sleeps" s WHERE s."eventId" = v."eventId" AND s."category" = v."category" AND (current_setting('imsda.backfill_event', true) IS NULL OR current_setting('imsda.backfill_event', true) = '' OR v."eventId" = current_setting('imsda.backfill_event', true));
 
-UPDATE "EventLodgingRequestVersion" v SET "roomCount" = LEAST(v."partySize", GREATEST(1, (regexp_match(li.value ->> 'label', '\((\d+) rooms\)'))[1]::int))
+UPDATE "EventLodgingRequestVersion" v SET "roomCount" = LEAST(v."partySize", GREATEST(1, COALESCE((regexp_match(li.value ->> 'label', '\((\d+) rooms\)'))[1]::int, 1)))
 FROM "EventLodgingRequest" r, "PublicRegistrationSubmission" ps, jsonb_array_elements(CASE WHEN jsonb_typeof(ps."pricingSnapshot" -> 'lineItems') = 'array' THEN ps."pricingSnapshot" -> 'lineItems' ELSE '[]'::jsonb END) AS li(value)
 WHERE r."id" = v."requestId" AND ps."registrationId" = r."registrationId" AND v."version" = 1 AND v."source" = 'REGISTRATION_FORM'
-  AND li.value ->> 'key' = 'lodging' AND li.value ->> 'label' ~ '\(\d+ rooms\)' AND v."category" IN ('DORM_ROOM', 'CONFERENCE_CENTER_ROOM') AND (current_setting('imsda.backfill_event', true) IS NULL OR current_setting('imsda.backfill_event', true) = '' OR v."eventId" = current_setting('imsda.backfill_event', true));
+  AND li.value ->> 'key' = 'lodging' AND li.value ->> 'pricingLabel' LIKE '%per room or site%' AND v."category" IN ('DORM_ROOM', 'CONFERENCE_CENTER_ROOM') AND (current_setting('imsda.backfill_event', true) IS NULL OR current_setting('imsda.backfill_event', true) = '' OR v."eventId" = current_setting('imsda.backfill_event', true));
 
 UPDATE "EventLodgingChangeRequest" c SET "roomCount" = LEAST(c."partySize", GREATEST(1, CEIL(c."partySize"::numeric / s."sleeps")::int))
 FROM "_lodging_room_sleeps" s WHERE s."eventId" = c."eventId" AND s."category" = c."category" AND (current_setting('imsda.backfill_event', true) IS NULL OR current_setting('imsda.backfill_event', true) = '' OR c."eventId" = current_setting('imsda.backfill_event', true));

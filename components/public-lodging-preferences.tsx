@@ -40,7 +40,10 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
   // "How many rooms?" (#803): asked for a room-type category only, from 1 up to the party and the rooms free.
   const chosenOffer = view.offered.find((entry) => entry.category === category);
   const roomBased = chosenOffer?.roomBased === true;
-  const highestRooms = Math.max(1, Math.min(partySize, chosenOffer?.roomsFree ?? partySize));
+  // For the type already saved, the rooms already held are always allowed (an overbooked type may show fewer free), so an
+  // edit that is not about rooms never lowers them.
+  const heldRooms = initialView.request && initialView.request.category === category ? Math.min(initialView.request.roomCount, partySize) : 1;
+  const highestRooms = Math.max(1, heldRooms, Math.min(partySize, chosenOffer?.roomsFree ?? partySize));
   const rooms = roomBased ? Math.min(Math.max(1, roomCount), highestRooms) : 1;
   const extraBeddingNeeded = roomBased && partyExceedsBeds({ roomBased: true, unitCapacity: chosenOffer?.unitCapacity ?? null, ...(chosenOffer?.roomBeds ? { roomBeds: chosenOffer.roomBeds } : {}) }, partySize, rooms, nightCount > 0 ? stayNights(firstNight, addDays(lastNight, 1)) : []);
   const bedding = chosenOffer ? beddingNote(chosenOffer.linens) : null;

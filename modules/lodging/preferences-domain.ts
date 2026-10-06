@@ -569,7 +569,20 @@ export type RequestSnapshot = {
 export type RegistrationFact = { confirmationCode: string; label: string; active: boolean };
 
 /** A lodging charge change after the registration's saved promo code (#803): the list change and what the registrant pays. */
-export type ChargeImpactFact = { promoCode: string | null; coversLodging: boolean; sponsored: boolean; registrantDeltaCents: number; discountDeltaCents: number };
+export type ChargeImpactFact = { promoCode: string | null; coversLodging: boolean; sponsored: boolean; registrantDeltaCents: number; discountDeltaCents: number; belowMinimumAfter?: boolean };
+
+/**
+ * What a church owes is computed from the registration's redemption (the discount recorded when the code was used) and any
+ * promo-code adjustments, none of which a lodging edit or a manual Payments adjustment moves. So a sponsored registration whose
+ * sponsor share would change needs the finance office before anyone adjusts anything. Interim guidance (#803): nothing here
+ * changes a church's bill.
+ */
+export const CHURCH_SPONSOR_WARNING = "This registration's church sponsorship does not change automatically. The church's bill still reflects the original lodging. Contact the finance office before adjusting.";
+
+/** A church-sponsored code whose sponsor share the change would move. */
+export function churchSponsorNeedsReview(impact: { sponsored: boolean; discountDeltaCents: number } | null | undefined) {
+  return Boolean(impact?.sponsored && impact.discountDeltaCents !== 0);
+}
 
 export type ReviewFacts = {
   /** The event's bookable nights. */
@@ -606,6 +619,8 @@ export type ReviewItem = {
   sensitive: boolean;
   /** For a one-sided roommate request: the row staff approve or decline. */
   roommateRequestId: string | null;
+  /** Extra flags on the item. CHURCH_SPONSOR_REVIEW: a church-sponsored code's share would move; contact the finance office. */
+  flags?: Array<"CHURCH_SPONSOR_REVIEW">;
 };
 
 /** The nights a request covers: its own window, else every bookable night. */
@@ -633,21 +648,24 @@ function signedDollars(cents: number) {
 /**
  * What staff are told after saving a lodging change that alters the charge (#803): the list change and, when the
  * registration holds a saved promo code, what the registrant really pays differently (and the sponsor's share for a
- * church-sponsored code). The Payments adjustment follows the registrant figure, never the list one.
+ * church-sponsored code), and, for a sponsored code whose share would move, the finance-office warning. It does not tell staff
+ * what to enter in Payments: the church's bill does not follow a lodging edit (see `CHURCH_SPONSOR_WARNING`).
  */
-export function chargeChangeSentence(result: { chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null }) {
+export function chargeChangeSentence(result: { chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; belowMinimumAfter?: boolean; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null }) {
   const list = signedDollars(result.chargeDeltaCents ?? 0);
   const promo = result.promo;
   if (!promo) return `This change alters the lodging charge (${list}), but the registration's total was not changed.`;
   if (!promo.coversLodging) return `This change alters the lodging charge (${list} at list price). Code ${promo.code} does not apply to the lodging line on this registration (it was submitted before codes covered lodging), so the registrant's change is ${list}. The registration's total was not changed.`;
-  return `This change alters the lodging charge (${list} at list price). A promo code applies: after ${promo.code} the registrant's change is ${signedDollars(result.registrantDeltaCents ?? 0)}${promo.sponsored ? ` and the sponsor's share is ${signedDollars(result.sponsorDeltaCents ?? 0)}` : ""}. Adjust Payments by the registrant figure. The registration's total was not changed.`;
+  const minimum = result.belowMinimumAfter ? ` After this change the registration would be under code ${promo.code}'s minimum, so an amendment would refuse it and the code would no longer apply.` : "";
+  const warning = churchSponsorNeedsReview({ sponsored: promo.sponsored, discountDeltaCents: result.sponsorDeltaCents ?? 0 }) ? ` ${CHURCH_SPONSOR_WARNING}` : "";
+  return `This change alters the lodging charge (${list} at list price). A promo code applies: after ${promo.code} the registrant's change is ${signedDollars(result.registrantDeltaCents ?? 0)}${promo.sponsored ? ` and the sponsor's share is ${signedDollars(result.sponsorDeltaCents ?? 0)}` : ""}.${minimum}${warning} The registration's total was not changed.`;
 }
 
 /** The list change, and the change after the registration's promo code, in words. Empty when no code is involved. */
 function impactWords(impact: ChargeImpactFact | undefined) {
   if (!impact?.promoCode) return "";
   if (!impact.coversLodging) return ` Code ${impact.promoCode} does not apply to the lodging line on this registration (it was submitted before codes covered lodging), so the registrant's change is the list change.`;
-  return ` After code ${impact.promoCode} the registrant's change is ${signedDollars(impact.registrantDeltaCents)}${impact.sponsored ? `, and the sponsor's share ${signedDollars(impact.discountDeltaCents)}` : `, with ${signedDollars(impact.discountDeltaCents)} more or less discount`}. Adjust Payments by that amount, not the list figure.`;
+  return ` After code ${impact.promoCode} the registrant's change is ${signedDollars(impact.registrantDeltaCents)}${impact.sponsored ? `, and the sponsor's share ${signedDollars(impact.discountDeltaCents)}` : `, with ${signedDollars(impact.discountDeltaCents)} more or less discount`}.${impact.belowMinimumAfter ? ` The registration would then be under the code's minimum, so an amendment would refuse it and the code would no longer apply.` : ""}${churchSponsorNeedsReview(impact) ? ` ${CHURCH_SPONSOR_WARNING}` : ""}`;
 }
 
 export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
@@ -818,6 +836,7 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
       key: `change:${change.id}`, kind: "CHANGE_REQUESTED", fingerprint: `${change.id}:${change.chargedCents ?? ""}:${change.requestedCents ?? ""}:${change.impact?.registrantDeltaCents ?? ""}`, registrationIds: [change.registrationId],
       title: `${label(facts, change.registrationId)}: lodging charge change requested${change.chargedCents !== undefined && change.requestedCents !== undefined ? ` (list ${signedDollars(change.requestedCents - change.chargedCents)})` : ""}${change.category ? `, to ${lodgingCategoryLabels[change.category].toLowerCase()}` : ""}${change.partySize !== undefined ? `: ${change.partySize} ${change.partySize === 1 ? "person" : "people"}${change.category && change.roomCount !== undefined ? `, ${change.roomCount} ${change.roomCount === 1 ? "room" : "rooms"}` : ""}${change.bringsExtraBedding ? ", bringing sleeping bags or air mattresses" : ""}` : ""}`,
       detail: `A registrant's change that alters the lodging charge is never applied by itself. Make the change for them if it is right, then adjust the charge in Payments.${impactWords(change.impact)}`,
+      ...(churchSponsorNeedsReview(change.impact) ? { flags: ["CHURCH_SPONSOR_REVIEW" as const] } : {}),
     });
   }
 
@@ -829,6 +848,7 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
       key: `price:${charge.registrationId}`, kind: "PRICE_DIFFERS", fingerprint: `${charge.chargedCents}:${charge.currentCents}:${charge.impact?.registrantDeltaCents ?? ""}`, registrationIds: [charge.registrationId],
       title: `${label(facts, charge.registrationId)} was charged ${dollars(charge.chargedCents)} for lodging; the request costs ${dollars(charge.currentCents)}`,
       detail: `The charge is never changed automatically after submission. If it should follow the request, adjust it in Payments.${impactWords(charge.impact)}`,
+      ...(churchSponsorNeedsReview(charge.impact) ? { flags: ["CHURCH_SPONSOR_REVIEW" as const] } : {}),
     });
   }
 
