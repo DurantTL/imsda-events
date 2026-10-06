@@ -90,7 +90,7 @@ export function WaitlistPanel({ view, base, run, busy, canConfigure }: { view: A
         <caption className="sr-only">Lodging waitlist</caption>
         <thead><tr>
           {canConfigure ? <th scope="col"><span className="sr-only">Choose</span></th> : null}
-          <th scope="col">Registration</th><th scope="col">Type</th><th scope="col">Nights</th><th scope="col">People</th><th scope="col">Status</th><th scope="col">Actions</th>
+          <th scope="col">Registration</th><th scope="col">Type</th><th scope="col">Nights</th><th scope="col">People</th><th scope="col">Rooms</th><th scope="col">Status</th><th scope="col">Actions</th>
         </tr></thead>
         <tbody>{view.waitlist.map((entry) => {
           const open = openStatuses.includes(entry.status);
@@ -100,6 +100,7 @@ export function WaitlistPanel({ view, base, run, busy, canConfigure }: { view: A
             <td>{lodgingCategoryLabels[entry.category]}</td>
             <td>{nightRange(entry.firstNight, entry.lastNight)}</td>
             <td>{entry.partySize}</td>
+            <td>{entry.roomCount}</td>
             <td>{waitlistStatusLabels[entry.status]}{entry.lapsed ? " (expired)" : ""}{entry.offerExpiresAt && entry.status === "OFFERED" ? <><br /><small>until {new Date(entry.offerExpiresAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</small></> : null}
               {entry.offerMessageStatus ? <><br /><small>Offer email: {entry.offerMessageStatus.toLowerCase()}</small></> : null}
               {entry.status === "OFFERED" && entry.offerMessageStatus && ["FAILED", "SUPPRESSED", "CANCELLED"].includes(entry.offerMessageStatus)
@@ -170,11 +171,12 @@ export function WaitlistPanel({ view, base, run, busy, canConfigure }: { view: A
       <form onSubmit={(event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
-        void act({ action: "join", registrationId: String(form.get("registration")), category: String(form.get("category")), partySize: Number(form.get("party")) || 1, reason: String(form.get("reason") ?? "") }, "Added to the waitlist.");
+        void act({ action: "join", registrationId: String(form.get("registration")), category: String(form.get("category")), partySize: Number(form.get("party")) || 1, ...(Number(form.get("rooms")) ? { roomCount: Number(form.get("rooms")) } : {}), reason: String(form.get("reason") ?? "") }, "Added to the waitlist.");
       }}>
         <label>Registration <select name="registration" required>{registrations.map(([id, code]) => <option key={id} value={id}>{code}</option>)}</select></label>
         <label>Lodging type <select name="category">{categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <label>People <input type="number" name="party" min={1} max={50} defaultValue={1} /></label>
+        <label>Rooms <input type="number" name="rooms" min={1} max={50} placeholder="from the request" /></label>
         <label>Note <input name="reason" maxLength={300} /></label>
         <span className="field-hint">No medical details.</span>
         <button type="submit" className="secondary-button" disabled={busy}>Add to the waitlist</button>

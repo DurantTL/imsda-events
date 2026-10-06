@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import { AlertCircle, BedDouble, CheckCircle2 } from "lucide-react";
-import { unitsForParty } from "@/modules/lodging/pricing";
+import { extraBeddingNote, partyExceedsBeds } from "@/modules/lodging/preferences-domain";
 import { describeRate, quoteStay, stayNights, addDays, type LodgingCategory } from "@/modules/lodging/domain";
 import type { RegistrantLodgingView } from "@/modules/lodging/preferences-service";
 
@@ -31,15 +31,23 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
   const [firstNight, setFirstNight] = useState(initialView.request?.firstNight ?? initialView.nights[0] ?? "");
   const [lastNight, setLastNight] = useState(initialView.request?.lastNight ?? initialView.nights[initialView.nights.length - 1] ?? "");
   const [partySize, setPartySize] = useState(initialView.request?.partySize ?? Math.max(1, initialView.people.length));
+  const [roomCount, setRoomCount] = useState(initialView.request?.roomCount ?? 1);
+  const [bringsExtraBedding, setBringsExtraBedding] = useState(initialView.request?.bringsExtraBedding ?? false);
   const base = `/api/public/manage/${encodeURIComponent(token)}/lodging`;
   const disabled = !view.canEdit || status.kind === "saving";
 
   const nightCount = lastNight >= firstNight && firstNight ? stayNights(firstNight, addDays(lastNight, 1)).length : 0;
+  // "How many rooms?" (#803): asked for a room-type category only, from 1 up to the party and the rooms free.
+  const chosenOffer = view.offered.find((entry) => entry.category === category);
+  const roomBased = chosenOffer?.roomBased === true;
+  const highestRooms = Math.max(1, Math.min(partySize, chosenOffer?.roomsFree ?? partySize));
+  const rooms = roomBased ? Math.min(Math.max(1, roomCount), highestRooms) : 1;
+  const extraBeddingNeeded = roomBased && partyExceedsBeds({ roomBased: true, unitCapacity: chosenOffer?.unitCapacity ?? null }, partySize, rooms);
   const quote = useMemo(() => {
     const chosen = view.offered.find((entry) => entry.category === category);
     if (!chosen || nightCount < 1) return null;
-    return quoteStay({ rates: chosen.rate ? { [chosen.category]: chosen.rate } : {}, category: chosen.category, nights: nightCount, partySize, units: unitsForParty(partySize, chosen.unitCapacity) });
-  }, [view.offered, category, nightCount, partySize]);
+    return quoteStay({ rates: chosen.rate ? { [chosen.category]: chosen.rate } : {}, category: chosen.category, nights: nightCount, partySize, units: chosen.roomBased ? rooms : 1 });
+  }, [view.offered, category, nightCount, partySize, rooms]);
 
   async function run(action: () => Promise<Sent>, success: string) {
     setStatus({ kind: "saving", message: "Saving…" });
@@ -61,6 +69,7 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
       firstNight: wholeEvent ? null : firstNight,
       lastNight: wholeEvent ? null : lastNight,
       partySize,
+      ...(roomBased ? { roomCount: rooms, ...(extraBeddingNeeded ? { bringsExtraBedding } : {}) } : {}),
       privateRoomRequested: form.get("privateRoomRequested") === "on",
       householdPreference: form.get("householdPreference"),
       // After the first save these go through the event team, so a locked form does not send them.
@@ -115,6 +124,19 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
               {Array.from({ length: Math.max(1, view.people.length) }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count}</option>)}
             </select>
           </label>
+          {roomBased ? (
+            <label>How many rooms?
+              <select value={rooms} onChange={(event) => setRoomCount(Number(event.target.value))} data-testid="lodging-room-count">
+                {Array.from({ length: highestRooms }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count}</option>)}
+              </select>
+            </label>
+          ) : null}
+          {extraBeddingNeeded ? (
+            <p role="note" data-testid="lodging-extra-bedding">
+              {extraBeddingNote(rooms)}{" "}
+              <label><input type="checkbox" checked={bringsExtraBedding} onChange={(event) => setBringsExtraBedding(event.target.checked)} /> We will bring extra bedding</label>
+            </p>
+          ) : null}
           <label>Everyone on this registration
             <select name="householdPreference" defaultValue={request?.householdPreference ?? "TOGETHER"}>
               <option value="TOGETHER">stays together</option>

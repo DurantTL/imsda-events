@@ -2,10 +2,13 @@
 
 import { useState } from "react";
 import { describeRate, lodgingCategoryLabels } from "@/modules/lodging/domain";
+import { extraBeddingNote } from "@/modules/lodging/preferences-domain";
 import {
   categoryIsFull,
   chosenNights,
+  clampedRoomCount,
   lodgingStepLine,
+  roomQuestion,
   type LodgingChoice,
   type LodgingStepOffer,
 } from "@/modules/lodging/form-step";
@@ -29,7 +32,15 @@ export function PublicLodgingStep({ offer, choice, attendees, issues, ignoreFull
 }) {
   const nights = chosenNights(choice);
   const line = lodgingStepLine(offer, choice);
-  const set = (patch: Partial<LodgingChoice>) => onChange({ ...choice, ...patch });
+  // A change of type, nights or party keeps the room count within what is allowed, and the extra-bedding box only
+  // stays ticked while the note applies.
+  const set = (patch: Partial<LodgingChoice>) => {
+    const next = { ...choice, ...patch };
+    const rooms = clampedRoomCount(offer, next);
+    const question = roomQuestion(offer, { ...next, roomCount: rooms }, ignoreFull);
+    onChange({ ...next, roomCount: rooms, bringsExtraBedding: question.extraBeddingNeeded ? next.bringsExtraBedding : false });
+  };
+  const rooms = roomQuestion(offer, choice, ignoreFull);
   const maxParty = Math.max(1, attendees.length);
   return (
     <div className="public-registration-lodging" data-testid="lodging-step">
@@ -71,6 +82,19 @@ export function PublicLodgingStep({ offer, choice, attendees, issues, ignoreFull
             {Array.from({ length: maxParty }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count}</option>)}
           </select>
         </label>
+        {rooms.asked ? (
+          <label>How many rooms?
+            <select value={choice.roomCount} onChange={(event) => set({ roomCount: Number(event.target.value) })} data-testid="lodging-room-count">
+              {Array.from({ length: rooms.highest }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count}</option>)}
+            </select>
+          </label>
+        ) : null}
+        {rooms.asked && rooms.extraBeddingNeeded ? (
+          <p role="note" data-testid="lodging-extra-bedding">
+            {extraBeddingNote(choice.roomCount)}{" "}
+            <label><input type="checkbox" checked={choice.bringsExtraBedding} onChange={(event) => set({ bringsExtraBedding: event.target.checked })} /> We will bring extra bedding</label>
+          </p>
+        ) : null}
         <label>Everyone on this registration
           <select value={choice.householdPreference} onChange={(event) => set({ householdPreference: event.target.value as LodgingChoice["householdPreference"] })}>
             <option value="TOGETHER">stays together</option>

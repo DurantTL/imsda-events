@@ -57,6 +57,10 @@ const requestShape = {
   firstNight: nightSchema.nullish(),
   lastNight: nightSchema.nullish(),
   partySize: z.number().int().min(1).max(100).optional(),
+  /** Rooms the registrant wants (room-type categories only; a site or a tent is one unit). Defaults to 1 (#803). */
+  roomCount: z.number().int().min(1).max(100).optional(),
+  /** The registrant saw that the party is larger than the beds in the chosen rooms and will bring extra bedding (#803). */
+  bringsExtraBedding: z.boolean().optional(),
   groundFloorNeeded: z.boolean().optional(),
   accessibleRoomNeeded: z.boolean().optional(),
   privateRoomRequested: z.boolean().optional(),
@@ -334,8 +338,16 @@ export function separationViolations(nights: readonly string[], input: TogetherI
 // ---------------------------------------------------------------------------
 
 export type CategoryCapacity = {
-  /** People the category takes per night; null is no fixed limit. */
+  /**
+   * What the category takes per night, in the unit its demand is counted in: **rooms** for a room-type category
+   * (`roomBased`), **people** for a person-based one (tents, counted areas). Null is no fixed limit.
+   */
   perNight: Record<string, number | null>;
+  /**
+   * A room-type category: every unit of it is a numbered room, so the registrant chooses how many rooms and capacity is
+   * counted in rooms against the rooms available per night (#803). Absent or false counts people.
+   */
+  roomBased?: boolean;
   /** Assignable units in service on at least one night. */
   unitsInService: number;
   /** Of those, how many are on the ground floor (an RV site or tent counts: nothing to climb). */
@@ -344,31 +356,49 @@ export type CategoryCapacity = {
   unitCapacity?: number | null;
 };
 
-export type DemandRequest = { registrationId: string; category: LodgingCategory | null; nights: readonly string[]; partySize: number };
+export type DemandRequest = { registrationId: string; category: LodgingCategory | null; nights: readonly string[]; partySize: number; roomCount?: number };
 
-/** People asking for each category on each night. */
-export function demandByCategoryNight(requests: readonly DemandRequest[]) {
+/**
+ * What one request asks for in the unit its category is counted in: the rooms chosen for a room-type category, the people
+ * for any other (#803).
+ */
+export function requestedQuantity(request: { partySize: number; roomCount?: number | null }, roomBased: boolean) {
+  return roomBased ? Math.max(1, request.roomCount ?? 1) : request.partySize;
+}
+
+/** What each category's requests ask for on each night: rooms in a room-type category, people elsewhere. */
+export function demandByCategoryNight(requests: readonly DemandRequest[], roomBasedCategories: ReadonlySet<LodgingCategory> = new Set()) {
   const demand = new Map<LodgingCategory, Map<string, number>>();
   for (const request of requests) {
     if (!request.category) continue;
+    const quantity = requestedQuantity(request, roomBasedCategories.has(request.category));
     const byNight = demand.get(request.category) ?? new Map<string, number>();
-    for (const night of request.nights) byNight.set(night, (byNight.get(night) ?? 0) + request.partySize);
+    for (const night of request.nights) byNight.set(night, (byNight.get(night) ?? 0) + quantity);
     demand.set(request.category, byNight);
   }
   return demand;
 }
 
+/** The room-type categories of a capacity map (the ones whose demand is counted in rooms). */
+export function roomBasedCategories(capacity: Partial<Record<LodgingCategory, CategoryCapacity>>): Set<LodgingCategory> {
+  return new Set((Object.keys(capacity) as LodgingCategory[]).filter((category) => capacity[category]?.roomBased === true));
+}
+
 /**
- * Whether `partySize` more people fit a category on every night of a stay, given the people already asking.
- * `capacity` null means no fixed limit. Returns the first night that does not fit.
+ * Whether a request fits a category on every night of a stay, given what is already counted. For a room-type category
+ * `roomCount` rooms are needed and `perNight` is rooms available; otherwise `partySize` people are. `capacity` null means
+ * no fixed limit. Returns the first night that does not fit and the least free (rooms or people) on any night.
  */
 export function categoryFits(input: {
   capacity: CategoryCapacity;
   demand: ReadonlyMap<string, number> | undefined;
   nights: readonly string[];
   partySize: number;
+  /** Rooms asked for; only read for a room-type category. Defaults to 1. */
+  roomCount?: number;
 }) {
   if (input.capacity.unitsInService === 0) return { fits: false as const, firstFullNight: input.nights[0] ?? null, minimumAvailable: 0 };
+  const needed = requestedQuantity({ partySize: input.partySize, roomCount: input.roomCount }, input.capacity.roomBased === true);
   let minimumAvailable: number | null = null;
   for (const night of input.nights) {
     const capacity = input.capacity.perNight[night];
@@ -376,9 +406,57 @@ export function categoryFits(input: {
     if (capacity === null) continue;
     const available = Math.max(0, capacity - (input.demand?.get(night) ?? 0));
     minimumAvailable = minimumAvailable === null ? available : Math.min(minimumAvailable, available);
-    if (available < input.partySize) return { fits: false as const, firstFullNight: night, minimumAvailable: available };
+    if (available < needed) return { fits: false as const, firstFullNight: night, minimumAvailable: available };
   }
   return { fits: true as const, firstFullNight: null, minimumAvailable };
+}
+
+/** Whether the party is larger than the beds in the rooms chosen. A room's beds are the smallest "sleeps up to" among the category's rooms. */
+export function partyExceedsBeds(capacity: Pick<CategoryCapacity, "roomBased" | "unitCapacity"> | undefined, partySize: number, roomCount: number) {
+  if (!capacity?.roomBased || !capacity.unitCapacity || capacity.unitCapacity < 1) return false;
+  return partySize > Math.max(1, roomCount) * capacity.unitCapacity;
+}
+
+export type RoomChoiceResult =
+  | { ok: true; roomCount: number; bringsExtraBedding: boolean; extraBeddingNeeded: boolean }
+  | { ok: false; code: "ROOM_COUNT_INVALID" | "EXTRA_BEDDING_NOT_ACKNOWLEDGED"; message: string };
+
+/**
+ * The rooms a registrant may choose, and the extra-bedding acknowledgement (#803). Pure, shared by the form, the private
+ * page, the server and the tests.
+ *
+ * - A person-based category (a tent, a site, a counted area) is one unit: the room count is 1 and nothing is asked.
+ * - A room-type category takes 1 up to the party size, and no more than the rooms available on every chosen night
+ *   (`roomsAvailable`, from live capacity; null is no fixed limit).
+ * - A party larger than the beds in the chosen rooms is allowed, because families may bring their own bedding, but the
+ *   registrant must acknowledge it (`requireAcknowledgement`); the stored flag then records it. Staff edits do not require it.
+ */
+export function resolveRoomChoice(input: {
+  capacity: Pick<CategoryCapacity, "roomBased" | "unitCapacity"> | undefined;
+  partySize: number;
+  roomCount?: number | null;
+  bringsExtraBedding?: boolean | null;
+  requireAcknowledgement: boolean;
+  roomsAvailable?: number | null;
+}): RoomChoiceResult {
+  if (!input.capacity?.roomBased) return { ok: true, roomCount: 1, bringsExtraBedding: false, extraBeddingNeeded: false };
+  const roomCount = input.roomCount ?? 1;
+  if (!Number.isInteger(roomCount) || roomCount < 1 || roomCount > input.partySize) {
+    return { ok: false, code: "ROOM_COUNT_INVALID", message: `Choose between 1 and ${input.partySize} room${input.partySize === 1 ? "" : "s"}: at least one room, and no more rooms than people.` };
+  }
+  if (input.roomsAvailable !== null && input.roomsAvailable !== undefined && roomCount > input.roomsAvailable) {
+    return { ok: false, code: "ROOM_COUNT_INVALID", message: `Only ${input.roomsAvailable} room${input.roomsAvailable === 1 ? " is" : "s are"} free for those nights. Choose fewer rooms, other nights or another type.` };
+  }
+  const extraBeddingNeeded = partyExceedsBeds(input.capacity, input.partySize, roomCount);
+  if (extraBeddingNeeded && input.requireAcknowledgement && input.bringsExtraBedding !== true) {
+    return { ok: false, code: "EXTRA_BEDDING_NOT_ACKNOWLEDGED", message: `Your party is larger than the beds in ${roomCount} room${roomCount === 1 ? "" : "s"}. Confirm that you will bring extra bedding, or choose more rooms.` };
+  }
+  return { ok: true, roomCount, bringsExtraBedding: extraBeddingNeeded, extraBeddingNeeded };
+}
+
+/** The sentence the form and the private page show when the party is larger than the beds in the chosen rooms. */
+export function extraBeddingNote(roomCount: number) {
+  return `Your party is larger than the beds in ${roomCount} room${roomCount === 1 ? "" : "s"}; you're welcome to bring extra bedding.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +477,7 @@ export const reviewKinds = [
   "CHANGE_REQUESTED",
   "PRICE_DIFFERS",
   "PARTY_EXCEEDS_ATTENDEES",
+  "EXTRA_BEDDING",
   "PROMOTED_UNCONFIRMED",
 ] as const;
 export type ReviewKind = (typeof reviewKinds)[number];
@@ -417,6 +496,7 @@ export const reviewKindLabels: Record<ReviewKind, string> = {
   CHANGE_REQUESTED: "Change requested",
   PRICE_DIFFERS: "Lodging charge differs from the request",
   PARTY_EXCEEDS_ATTENDEES: "Party is larger than the registration",
+  EXTRA_BEDDING: "Party is larger than the beds; bringing extra bedding",
   PROMOTED_UNCONFIRMED: "Promoted from the waitlist with an unconfirmed lodging request",
 };
 
@@ -431,6 +511,10 @@ export type RequestSnapshot = {
   firstNight: string | null;
   lastNight: string | null;
   partySize: number;
+  /** Rooms the registrant chose (1 for anything that is not a room-type category). */
+  roomCount: number;
+  /** The registrant acknowledged that the party is larger than the beds in the chosen rooms. */
+  bringsExtraBedding: boolean;
   groundFloorNeeded: boolean;
   accessibleRoomNeeded: boolean;
   privateRoomRequested: boolean;
@@ -599,7 +683,7 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
     if (!active(request.registrationId)) continue;
     const who = label(facts, request.registrationId);
     const nights = requestNights(request, facts.nights);
-    demandInput.push({ registrationId: request.registrationId, category: request.category, nights, partySize: request.partySize });
+    demandInput.push({ registrationId: request.registrationId, category: request.category, nights, partySize: request.partySize, roomCount: request.roomCount });
     const fingerprint = `${request.requestId}@${request.version}`;
     const attendeeCount = facts.people.filter((person) => person.registrationId === request.registrationId).length;
     if (attendeeCount > 0 && request.partySize > attendeeCount) {
@@ -607,6 +691,13 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
         key: `party:${request.registrationId}`, kind: "PARTY_EXCEEDS_ATTENDEES", fingerprint: `${fingerprint}:${attendeeCount}`, registrationIds: [request.registrationId],
         title: `${who} asked for lodging for ${request.partySize}, and has ${attendeeCount} attendee${attendeeCount === 1 ? "" : "s"}`,
         detail: "People were removed from the registration after the request was made. Correct the party size.",
+      });
+    }
+    if (request.category && request.bringsExtraBedding) {
+      push({
+        key: `bedding:${request.registrationId}`, kind: "EXTRA_BEDDING", fingerprint, registrationIds: [request.registrationId],
+        title: `${who}: party of ${request.partySize} in ${request.roomCount} ${request.roomCount === 1 ? "room" : "rooms"}, bringing extra bedding`,
+        detail: `The party is larger than the beds in the rooms chosen, and the registrant acknowledged bringing extra bedding. Placing them is allowed with a warning; staff can offer more rooms instead.`,
       });
     }
     if (request.afterDeadline) {
@@ -671,10 +762,13 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
   }
 
   // --- Over capacity --------------------------------------------------------
-  const demand = demandByCategoryNight(demandInput);
+  // A room-type category is counted in rooms (the rooms each request chose against the rooms available that night); every
+  // other category is counted in people.
+  const demand = demandByCategoryNight(demandInput, roomBasedCategories(facts.capacity));
   for (const [category, byNight] of demand) {
     const capacity = facts.capacity[category];
     if (!capacity || capacity.unitsInService === 0) continue;
+    const inRooms = capacity.roomBased === true;
     for (const night of [...byNight.keys()].sort()) {
       const limit = capacity.perNight[night];
       const asked = byNight.get(night) ?? 0;
@@ -682,8 +776,12 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
       push({
         key: `over:${category}`, kind: "OVER_CAPACITY", fingerprint: `${category}:${night}:${asked}:${limit}`,
         registrationIds: demandInput.filter((request) => request.category === category).map((request) => request.registrationId),
-        title: `${lodgingCategoryLabels[category]}: ${asked} people asked on ${night}, room for ${limit}`,
-        detail: "Requests are counted by people, not by room. Move some requests, raise capacity, or hold the line at selection.",
+        title: inRooms
+          ? `${lodgingCategoryLabels[category]}: ${asked} ${asked === 1 ? "room" : "rooms"} asked on ${night}, ${limit} available`
+          : `${lodgingCategoryLabels[category]}: ${asked} people asked on ${night}, room for ${limit}`,
+        detail: inRooms
+          ? "Requests for this type are counted in rooms. Move some requests, raise capacity, or hold the line at selection."
+          : "Requests are counted by people, not by room. Move some requests, raise capacity, or hold the line at selection.",
       });
       break;
     }
@@ -725,6 +823,8 @@ export const LODGING_REQUEST_CSV_HEADERS = [
   "First night",
   "Last night",
   "People",
+  "Rooms",
+  "Extra bedding",
   "Private room requested",
   "Household preference",
   "Roommate requests (mutual)",
@@ -739,6 +839,8 @@ export type LodgingRequestExportRow = {
   firstNight: string | null;
   lastNight: string | null;
   partySize: number;
+  roomCount: number;
+  bringsExtraBedding: boolean;
   privateRoomRequested: boolean;
   householdPreference: HouseholdPreference;
   mutualRoommates: number;
@@ -761,6 +863,8 @@ export function lodgingRequestExportCells(row: LodgingRequestExportRow, includeA
     row.firstNight ?? "",
     row.lastNight ?? "",
     row.partySize,
+    row.roomCount,
+    yesNo(row.bringsExtraBedding),
     yesNo(row.privateRoomRequested),
     row.householdPreference === "TOGETHER" ? "Together" : "Flexible",
     row.mutualRoommates,
@@ -772,14 +876,15 @@ export function lodgingRequestExportCells(row: LodgingRequestExportRow, includeA
 }
 
 /**
- * Whether a changed request asks for more than the one it replaces: a different type, a larger party, or a night
- * the earlier request did not cover. Only then does the type's capacity need checking again.
+ * Whether a changed request asks for more than the one it replaces: a different type, a larger party, more rooms, or a
+ * night the earlier request did not cover. Only then does the type's capacity need checking again.
  */
 export function requestGrew(
-  previous: { category: LodgingCategory | null; partySize: number; nights: readonly string[] } | null,
-  next: { category: LodgingCategory | null; partySize: number; nights: readonly string[] },
+  previous: { category: LodgingCategory | null; partySize: number; roomCount?: number; nights: readonly string[] } | null,
+  next: { category: LodgingCategory | null; partySize: number; roomCount?: number; nights: readonly string[] },
 ) {
   if (!previous || previous.category !== next.category || next.partySize > previous.partySize) return true;
+  if ((next.roomCount ?? 1) > (previous.roomCount ?? 1)) return true;
   const had = new Set(previous.nights);
   return next.nights.some((night) => !had.has(night));
 }

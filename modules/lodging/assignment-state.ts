@@ -46,7 +46,7 @@ export async function loadPlanningState(client: Client, eventId: string) {
       activeUntil: row.unit.activeUntil ? toNight(row.unit.activeUntil) : null,
       holds: row.holds.map((hold) => ({ id: hold.id, firstNight: toNight(hold.firstNight), lastNight: toNight(hold.lastNight) })),
     };
-    units.set(row.id, { ...state, name: row.unit.name, specialUse: row.unit.specialUse });
+    units.set(row.id, { ...state, name: row.unit.name, specialUse: row.unit.specialUse, roomLike: row.unit.kind === "ROOM" && !row.unit.isArea });
     meta.set(row.id, {
       name: row.unit.name,
       key: row.unit.key,
@@ -57,8 +57,13 @@ export async function loadPlanningState(client: Client, eventId: string) {
       groundLevel: row.unit.groundLevel || row.unit.kind !== "ROOM",
     });
   }
+  // The registration each linked attendee belongs to: a party stays within its own registration.
+  const attendeeIds = [...new Set(assignments.flatMap((row) => (row.attendeeId ? [row.attendeeId] : [])))];
+  const attendeeRows = attendeeIds.length === 0 ? [] : await client.registrationAttendee.findMany({ where: { id: { in: attendeeIds } }, select: { id: true, registrationId: true } });
+  const registrationOfAttendee = new Map(attendeeRows.map((row) => [row.id, row.registrationId]));
   const segments: Segment[] = assignments.map((row) => ({
     id: row.id,
+    groupKey: row.attendeeId ? registrationOfAttendee.get(row.attendeeId) ?? null : null,
     occupantKey: (row.attendeeId ?? row.placeholderId)!,
     unitId: row.eventLodgingUnitId,
     bucketId: row.bucketId,

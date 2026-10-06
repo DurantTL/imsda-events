@@ -83,6 +83,11 @@ export type Segment = {
   people: number;
   firstNight: string;
   lastNight: string;
+  /**
+   * The registration the occupant belongs to (a linked attendee), or null/absent for an expected guest not yet linked. Two
+   * segments of one group are one party: a party may be placed above a room's beds (with a warning), two parties may not.
+   */
+  groupKey?: string | null;
 };
 
 export type NightRange = { firstNight: string; lastNight: string };
@@ -120,7 +125,15 @@ export function occupancyOf(segments: readonly Segment[]) {
 // Placement checks
 // ---------------------------------------------------------------------------
 
-export type PlanUnit = UnitNightState & { name: string; specialUse: boolean };
+export type PlanUnit = UnitNightState & {
+  name: string;
+  specialUse: boolean;
+  /** A numbered room (not a site, a tent or a counted area): the only kind a party may be placed in above its beds. */
+  roomLike?: boolean;
+};
+
+/** A party placed in a room above the room's beds (it is bringing extra bedding): a warning, never a refusal (#803). */
+export type PlacementWarning = { kind: "OVER_BEDS"; unitId: string; unitName: string; beds: number; people: number; night: string };
 
 export type PlacementProblemCode =
   | "DATES_OUTSIDE_EVENT"
@@ -149,11 +162,24 @@ export function checkUnitPlacement(input: {
   nights: readonly string[];
   people: number;
   confirmSpecialUse: boolean;
+  /**
+   * A party above the beds is a warning, not a refusal, but only when the room holds nobody from another party on those
+   * nights (the caller works that out). When it applies, `onOverBeds` is told the first night it did.
+   */
+  overBeds?: { allowed: boolean; onOverBeds: (warning: PlacementWarning) => void };
 }): PlacementProblem | null {
+  let warned = false;
   for (const night of input.nights) {
     const row = unitNight(input.unit, night, input.occupancy?.get(night) ?? 0);
     if (row.status !== "AVAILABLE") {
       return { code: "UNIT_OUT_OF_SERVICE", night, message: `${input.unit.name} is ${statusWords[row.status] ?? "out of service"} on ${night}.` };
+    }
+    if (row.available !== null && row.available < input.people && input.overBeds?.allowed && row.capacity !== null) {
+      if (!warned) {
+        warned = true;
+        input.overBeds.onOverBeds({ kind: "OVER_BEDS", unitId: input.unit.unitId, unitName: input.unit.name, beds: row.capacity, people: row.occupied + input.people, night });
+      }
+      continue;
     }
     if (row.available !== null && row.available < input.people) {
       return { code: "UNIT_FULL", night, message: `${input.unit.name} has ${row.available} place${row.available === 1 ? "" : "s"} left on ${night}, and ${input.people} ${input.people === 1 ? "is" : "are"} needed.` };
@@ -182,6 +208,8 @@ export type PlanPlacement = {
   mode: "ASSIGN" | "MOVE";
   confirmSpecialUse: boolean;
   source: AssignmentSource;
+  /** The occupant's registration (null for an expected guest not yet linked): a party stays within its own registration. */
+  groupKey?: string | null;
 };
 
 /** A segment that stops covering some of its nights, or is cancelled outright. */
@@ -220,6 +248,8 @@ export type Plan = {
   unchanged: number;
   /** The segments as they will be once the plan is written (created segments carry their key as id). */
   after: Segment[];
+  /** Placements that were allowed but deserve a look: a party above a room's beds (#803). */
+  warnings?: PlacementWarning[];
 };
 
 export type PlanResult = { ok: true; plan: Plan } | { ok: false; index: number; problem: PlacementProblem };
@@ -234,6 +264,7 @@ class Planner {
   releases: ReleaseOp[] = [];
   creates: CreateOp[] = [];
   notes: NoteOp[] = [];
+  warnings = new Map<string, PlacementWarning>();
   unchanged = 0;
   private counter = 0;
   working: Segment[];
@@ -276,7 +307,7 @@ class Planner {
         // plan made is that same placement (ASSIGNED stays ASSIGNED; MOVED_IN keeps the real row it moved from).
         this.creates.push({
           kind: "CREATE", key, type: created.type,
-          segment: { occupantKey: segment.occupantKey, unitId: segment.unitId, bucketId: segment.bucketId, people: segment.people, ...remainderPiece },
+          segment: { occupantKey: segment.occupantKey, unitId: segment.unitId, bucketId: segment.bucketId, people: segment.people, groupKey: segment.groupKey ?? null, ...remainderPiece },
           occupant: created.occupant, source: created.source, relatedId: created.relatedId, previous: created.previous,
         });
         this.working.push({ ...segment, id: key, ...remainderPiece });
@@ -297,7 +328,7 @@ class Planner {
         kind: "CREATE",
         key,
         type: "SPLIT_REMAINDER",
-        segment: { occupantKey: segment.occupantKey, unitId: segment.unitId, bucketId: segment.bucketId, people: segment.people, ...remainder },
+        segment: { occupantKey: segment.occupantKey, unitId: segment.unitId, bucketId: segment.bucketId, people: segment.people, groupKey: segment.groupKey ?? null, ...remainder },
         occupant: { attendeeId: null, placeholderId: null },
         source: "STAFF",
         relatedId: segment.id,
@@ -356,12 +387,17 @@ class Planner {
       if (edited && !inherited) inherited = edited;
     }
     if (unit) {
+      // A party is one registration: above the room's beds it is a warning, but only while nobody from another party is in
+      // the room on those nights, so unit capacity still stops two separate parties from overfilling a room.
+      const inRoom = this.working.filter((segment) => segment.unitId === unit.unitId && rangesOverlap(segment, range));
+      const sameParty = Boolean(unit.roomLike && placement.groupKey && inRoom.every((segment) => segment.groupKey === placement.groupKey));
       const problem = checkUnitPlacement({
         unit,
         occupancy: occupancyOf(this.working).get(unit.unitId),
         nights: nightsInclusive(range.firstNight, range.lastNight),
         people: placement.people,
         confirmSpecialUse: placement.confirmSpecialUse,
+        overBeds: { allowed: sameParty, onOverBeds: (warning) => this.warn(warning) },
       });
       if (problem) return problem;
     }
@@ -388,7 +424,7 @@ class Planner {
       kind: "CREATE",
       key,
       type,
-      segment: { occupantKey: placement.occupantKey, unitId, bucketId, people: placement.people, ...range },
+      segment: { occupantKey: placement.occupantKey, unitId, bucketId, people: placement.people, groupKey: placement.groupKey ?? null, ...range },
       occupant: placement.occupant,
       source: placement.source,
       relatedId,
@@ -399,12 +435,18 @@ class Planner {
       if (this.creates.some((candidate) => candidate.key === edited.key)) continue;
       for (const release of this.releases) if (release.relatedKey === edited.key) release.relatedKey = key;
     }
-    this.working.push({ id: key, occupantKey: placement.occupantKey, unitId, bucketId, people: placement.people, ...range });
+    this.working.push({ id: key, occupantKey: placement.occupantKey, unitId, bucketId, people: placement.people, groupKey: placement.groupKey ?? null, ...range });
     return null;
   }
 
+  /** One warning per room: the largest party it ends up holding above its beds. */
+  warn(warning: PlacementWarning) {
+    const before = this.warnings.get(warning.unitId);
+    this.warnings.set(warning.unitId, before && before.people > warning.people ? before : warning);
+  }
+
   plan(): Plan {
-    return { releases: this.releases, creates: this.creates, notes: this.notes, unchanged: this.unchanged, after: this.working };
+    return { releases: this.releases, creates: this.creates, notes: this.notes, unchanged: this.unchanged, after: this.working, warnings: [...this.warnings.values()] };
   }
 }
 
@@ -484,7 +526,7 @@ export function planStayChange(segments: readonly Segment[], kind: "LATE_ARRIVAL
 export function planTransfer(input: {
   segments: readonly Segment[];
   segmentId: string;
-  to: { occupantKey: string; attendeeId: string | null; placeholderId: string | null; people: number };
+  to: { occupantKey: string; attendeeId: string | null; placeholderId: string | null; people: number; groupKey?: string | null };
   units: ReadonlyMap<string, PlanUnit>;
   buckets: ReadonlySet<string>;
   eventNights: readonly string[];
@@ -511,6 +553,7 @@ export function planTransfer(input: {
       mode: "ASSIGN",
       confirmSpecialUse: true,
       source: "STAFF",
+      groupKey: input.to.groupKey ?? null,
     }],
   });
   if (!result.ok) return result;
@@ -865,6 +908,7 @@ export const exceptionKinds = [
   "OBSOLETE_NOTICE",
   "UNLINKED_PLACEHOLDER",
   "REQUEST_CATEGORY_DIFFERS",
+  "EXTRA_BEDDING",
 ] as const;
 export type ExceptionKind = (typeof exceptionKinds)[number];
 
@@ -880,6 +924,7 @@ export const exceptionKindLabels: Record<ExceptionKind, string> = {
   OBSOLETE_NOTICE: "Room notice is out of date",
   UNLINKED_PLACEHOLDER: "Expected guest not linked to a registration",
   REQUEST_CATEGORY_DIFFERS: "Placed in a different type than requested",
+  EXTRA_BEDDING: "Party above the room's beds (extra bedding)",
 };
 
 /** Restricted: only staff holding VIEW_SENSITIVE_DATA see these. */
@@ -898,6 +943,7 @@ export const exceptionSection: Record<ExceptionKind, ExceptionSection> = {
   OBSOLETE_NOTICE: "CLOSEOUT",
   UNLINKED_PLACEHOLDER: "CLOSEOUT",
   REQUEST_CATEGORY_DIFFERS: "CONFLICT",
+  EXTRA_BEDDING: "CLOSEOUT",
 };
 
 export type ExceptionRow = {
@@ -929,7 +975,9 @@ export function unitConflicts(input: {
     if (!unit) continue;
     let overNight: string | null = null;
     let closedNight: string | null = null;
+    let beddingNight: string | null = null;
     let overAssignments = new Set<string>();
+    const beddingAssignments = new Set<string>();
     const closedAssignments = new Set<string>();
     for (const night of input.nights) {
       const present = segments.filter((segment) => segment.firstNight <= night && night <= segment.lastNight);
@@ -940,11 +988,19 @@ export function unitConflicts(input: {
         closedNight ??= night;
         for (const segment of present) closedAssignments.add(segment.assignmentId);
       } else if (row.capacity !== null && total > row.capacity) {
-        overNight ??= night;
-        overAssignments = new Set([...overAssignments, ...present.map((segment) => segment.assignmentId)]);
+        // One party in a room above its beds is bringing extra bedding (a warning, #803); anyone else sharing it is overfilling.
+        const oneParty = Boolean(unit.roomLike && present[0]?.groupKey && present.every((segment) => segment.groupKey === present[0]!.groupKey));
+        if (oneParty) {
+          beddingNight ??= night;
+          for (const segment of present) beddingAssignments.add(segment.assignmentId);
+        } else {
+          overNight ??= night;
+          overAssignments = new Set([...overAssignments, ...present.map((segment) => segment.assignmentId)]);
+        }
       }
     }
     if (overNight) rows.push({ kind: "OVER_CAPACITY", key: `over:${unitId}`, title: `${unit.name} is over capacity`, detail: `More people are placed than the room takes, first on ${overNight}.`, assignmentIds: [...overAssignments], unitId, night: overNight });
+    if (beddingNight) rows.push({ kind: "EXTRA_BEDDING", key: `bedding:${unitId}`, title: `${unit.name} holds a party above its beds`, detail: `One party is placed above the room's beds, first on ${beddingNight}. The registrant brings extra bedding; check the room can take it.`, assignmentIds: [...beddingAssignments], unitId, night: beddingNight });
     if (closedNight) rows.push({ kind: "UNIT_OUT_OF_SERVICE", key: `closed:${unitId}`, title: `${unit.name} is out of service`, detail: `People are placed on nights when the room is unavailable or held, first on ${closedNight}. Move them or restore the room.`, assignmentIds: [...closedAssignments], unitId, night: closedNight });
   }
   return rows;
@@ -1154,6 +1210,8 @@ export const waitlistStaffActionSchema = z.discriminatedUnion("action", [
     firstNight: nightSchema.nullish(),
     lastNight: nightSchema.nullish(),
     partySize: z.number().int().min(1).max(50),
+    /** Rooms wanted (room-type categories); when omitted, what the registration's request asked for, else 1 (#803). */
+    roomCount: z.number().int().min(1).max(50).optional(),
     reason: z.string().trim().max(300).optional(),
   }).strict().refine((value) => (value.firstNight == null) === (value.lastNight == null), { message: "Give both nights or neither.", path: ["lastNight"] })
     .refine((value) => !value.firstNight || !value.lastNight || value.lastNight >= value.firstNight, { message: "The last night cannot be before the first night.", path: ["lastNight"] }),
@@ -1185,6 +1243,7 @@ export const waitlistRegistrantActionSchema = z.discriminatedUnion("action", [
     firstNight: nightSchema.nullish(),
     lastNight: nightSchema.nullish(),
     partySize: z.number().int().min(1).max(50),
+    roomCount: z.number().int().min(1).max(50).optional(),
   }).strict().refine((value) => (value.firstNight == null) === (value.lastNight == null), { message: "Give both nights or neither.", path: ["lastNight"] }),
   z.object({ action: z.literal("accept") }).strict(),
   z.object({ action: z.literal("decline") }).strict(),

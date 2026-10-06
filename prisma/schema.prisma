@@ -6377,6 +6377,10 @@ model EventLodgingRequestVersion {
   accessibleRoomNeeded Boolean                    @default(false)
   privateRoomRequested Boolean                    @default(false)
   householdPreference  LodgingHouseholdPreference @default(TOGETHER)
+  /// Rooms the registrant chose (room-type categories); 1 for a site, a tent or a request that names no category (#803).
+  roomCount            Int                        @default(1)
+  /// The registrant saw that the party is larger than the beds in the chosen rooms and will bring extra bedding (#803).
+  bringsExtraBedding   Boolean                    @default(false)
   source               LodgingRequestSource
   /// The registration form version the choice came from (plain id: forms are versioned elsewhere).
   sourceFormVersionId  String?
@@ -6481,6 +6485,8 @@ model EventLodgingChangeRequest {
   partySize            Int
   privateRoomRequested Boolean                    @default(false)
   householdPreference  LodgingHouseholdPreference @default(TOGETHER)
+  roomCount            Int                        @default(1)
+  bringsExtraBedding   Boolean                    @default(false)
   accessTokenId        String?
   createdAt            DateTime                   @default(now())
   resolvedAt           DateTime?
@@ -6686,6 +6692,8 @@ model EventLodgingWaitlistEntry {
   firstNight     DateTime?             @db.Date
   lastNight      DateTime?             @db.Date
   partySize      Int
+  /// Rooms wanted (room-type categories), set from the request when joining; counted in rooms against rooms available (#803).
+  roomCount      Int                   @default(1)
   status         LodgingWaitlistStatus @default(JOINED)
   /// 0 until the first offer; each offer (including a re-offer after expiry) is the next number.
   offerNumber    Int                   @default(0)

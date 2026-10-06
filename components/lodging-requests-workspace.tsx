@@ -93,8 +93,8 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
       </form> : <p>{view.settings.collectsPreferences ? "Registrants choose a lodging type" : "Registrants do not choose lodging (staff assign)"}; changes close after {view.settings.effectiveDeadline}; a full type shows {view.settings.fullBehavior === "WAITLIST" ? "\"Full\" and guests can join a lodging waitlist" : "\"Full\""}. Event administrators change these.</p>}
       <table>
         <caption>Lodging types offered</caption>
-        <thead><tr><th scope="col">Type</th><th scope="col">Units in service</th><th scope="col">People asking</th><th scope="col">Rate</th></tr></thead>
-        <tbody>{view.offered.map((row) => <tr key={row.category}><th scope="row">{row.label}</th><td>{row.unitsInService}</td><td>{row.requested}</td><td>{row.rate ? formatRate(row.rate) : "Included or free"}</td></tr>)}</tbody>
+        <thead><tr><th scope="col">Type</th><th scope="col">Units in service</th><th scope="col">Asking (rooms or people)</th><th scope="col">Rate</th></tr></thead>
+        <tbody>{view.offered.map((row) => <tr key={row.category}><th scope="row">{row.label}</th><td>{row.unitsInService}</td><td>{row.requested} {row.inRooms ? (row.requested === 1 ? "room" : "rooms") : (row.requested === 1 ? "person" : "people")}</td><td>{row.rate ? formatRate(row.rate) : "Included or free"}</td></tr>)}</tbody>
       </table>
     </section>
 
@@ -131,7 +131,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
       <h3 id="lodging-requests-table">Requests ({view.requests.length})</h3>
       {view.requests.length === 0 ? <p>No one has asked for lodging yet.</p> : <div className="table-wrap"><table>
         <thead><tr>
-          <th scope="col">Registration</th><th scope="col">Type</th><th scope="col">Nights</th><th scope="col">People</th>
+          <th scope="col">Registration</th><th scope="col">Type</th><th scope="col">Nights</th><th scope="col">People</th><th scope="col">Rooms</th>
           {view.canSeeSensitive ? <th scope="col">Ground floor</th> : null}{view.canSeeSensitive ? <th scope="col">Accessible room</th> : null}
           <th scope="col">Private room</th><th scope="col">Household</th><th scope="col">Roommates</th><th scope="col">Version</th><th scope="col">Change</th>
         </tr></thead>
@@ -193,6 +193,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
       <td>{request.category ? lodgingCategoryLabels[request.category] : "No preference"}</td>
       <td>{request.firstNight ? `${request.firstNight} to ${request.lastNight}` : "Whole event"}</td>
       <td>{request.partySize}</td>
+      <td>{request.category ? request.roomCount : "—"}{request.bringsExtraBedding ? " (bringing extra bedding)" : ""}</td>
       {view.canSeeSensitive ? <td>{request.groundFloorNeeded ? "Yes" : "No"}</td> : null}
       {view.canSeeSensitive ? <td>{request.accessibleRoomNeeded ? "Yes" : "No"}</td> : null}
       <td>{request.privateRoomRequested ? "Yes" : "No"}</td>
@@ -201,7 +202,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
       <td>{request.version}</td>
       <td><button type="button" className="secondary-button" aria-expanded={open} onClick={() => setOpen(!open)}>{open ? "Close" : "Details"}</button></td>
     </tr>
-    {open ? <tr><td colSpan={view.canSeeSensitive ? 11 : 9}>
+    {open ? <tr><td colSpan={view.canSeeSensitive ? 12 : 10}>
       <h4>History ({request.history.length} version{request.history.length === 1 ? "" : "s"})</h4>
       <ul>{request.history.map((entry) => <li key={entry.version}>Version {entry.version}, {entry.at.slice(0, 10)}, by {entry.source.toLowerCase().replace("_", " ")}: {entry.category ? lodgingCategoryLabels[entry.category] : "no preference"}{entry.reason ? `. Reason: ${entry.reason}` : ""}{entry.afterDeadline ? " (after the deadline)" : ""}</li>)}</ul>
       {request.roommates.length > 0 ? <>
@@ -228,6 +229,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
           firstNight: text("firstNight"),
           lastNight: text("lastNight"),
           partySize: Number(form.get("partySize")),
+          ...(Number(form.get("roomCount")) ? { roomCount: Number(form.get("roomCount")) } : {}),
           privateRoomRequested: form.get("privateRoomRequested") === "on",
           householdPreference: form.get("householdPreference"),
           ...(view.canSeeSensitive ? { groundFloorNeeded: form.get("groundFloorNeeded") === "on", accessibleRoomNeeded: form.get("accessibleRoomNeeded") === "on" } : {}),
@@ -238,6 +240,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
         <label>First night <input type="date" name="firstNight" defaultValue={request.firstNight ?? ""} /></label>
         <label>Last night <input type="date" name="lastNight" defaultValue={request.lastNight ?? ""} /></label>
         <label>People <input type="number" name="partySize" min={1} max={100} defaultValue={request.partySize} required /></label>
+        <label>Rooms <input type="number" name="roomCount" min={1} max={100} defaultValue={request.roomCount} /></label>
         <label><input type="checkbox" name="privateRoomRequested" defaultChecked={request.privateRoomRequested} /> Private room</label>
         <label>Household <select name="householdPreference" defaultValue={request.householdPreference}><option value="TOGETHER">Together</option><option value="FLEXIBLE">Flexible</option></select></label>
         {view.canSeeSensitive ? <>

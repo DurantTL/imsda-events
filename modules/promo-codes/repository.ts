@@ -15,7 +15,7 @@ import { calendarDateInTimeZone } from "@/modules/forms/public-domain";
 import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 import { lodgingQuoteLine } from "@/modules/lodging/registration-form";
 import {
-  addUndiscountedLine,
+  calculationWithLine,
   getAttendeeRosterConfig,
   registrationFormDefinitionSchema,
   type FormCalculation,
@@ -658,23 +658,23 @@ function withoutQuoteTotals<T extends DiscountedFormCalculation>(
 }
 
 /**
- * Adds the lodging line the submission will add (#199) to a quote that was worked out on the form's own lines, so the
- * total the registrant sees is the one the registration is priced at. A promo code never discounts lodging (until the
- * event team decides otherwise): the discount and the code's minimum are decided without it, and the line joins the
- * quote afterwards. A church-billed event never prices lodging through the registration.
+ * The calculation a quote starts from: the form's own lines plus the lodging line the submission will add (#199), so a
+ * registration-level promo code is worked out on the same subtotal the submission uses (#803): the code discounts the whole
+ * subtotal, lodging included, and its minimum is checked against it. A per-person code is limited to that person's lines
+ * and never touches the lodging line (it has no attendee). A church-billed event never prices lodging through the
+ * registration, so it has no line.
  */
-async function withLodgingQuote<T extends DiscountedFormCalculation>(
+async function quoteCalculation(
   client: PrismaClient,
   eventId: string,
   definition: RegistrationFormDefinition,
-  prepared: { registrationResponses: Record<string, unknown>; attendees: unknown[] },
+  prepared: { registrationResponses: Record<string, unknown>; attendees: unknown[]; calculation: FormCalculation },
   input: PublicPromoCodeQuoteInput,
   churchBilled: boolean,
-  quote: T,
-): Promise<T> {
-  if (!input.lodging || churchBilled) return quote;
+): Promise<FormCalculation> {
+  if (!input.lodging || churchBilled) return prepared.calculation;
   const line = await lodgingQuoteLine(client, eventId, input.lodging, prepared.attendees.length);
-  return line ? addUndiscountedLine(definition, prepared.registrationResponses, quote, line) : quote;
+  return line ? calculationWithLine(definition, prepared.registrationResponses, prepared.calculation, line.key, line) : prepared.calculation;
 }
 
 export type PublicAttendeePromoQuote = DiscountedFormCalculation & {
@@ -736,11 +736,12 @@ export async function getPublicPromoCodeQuote(
       attendees: input.attendees,
       website: "",
     }, { timeZone: form.event.timezone, now, ignoreAvailability: true });
+    const calculation = await quoteCalculation(prisma, form.eventId, definition, prepared, input, churchBilled);
     const { discounts, issues } = await evaluateAttendeePromoCodes(prisma, {
       eventId: form.eventId,
       field: attendeeField,
       attendees: prepared.attendees,
-      calculation: prepared.calculation,
+      calculation,
       pricingDate: prepared.pricingDate,
       claim: false,
       hideAmounts: churchBilled,
@@ -752,12 +753,12 @@ export async function getPublicPromoCodeQuote(
         where: { eventId: form.eventId, normalizedCode: { in: enteredCodes }, sponsoringOrganizationId: { not: null } },
         select: { normalizedCode: true, sponsoringOrganization: { select: { name: true } } },
       });
-    return withoutQuoteTotals(await withLodgingQuote(prisma, form.eventId, definition, prepared, input, churchBilled, {
-      ...applyAttendeePromoCodes(definition, prepared.registrationResponses, prepared.calculation, discounts),
+    return withoutQuoteTotals({
+      ...applyAttendeePromoCodes(definition, prepared.registrationResponses, calculation, discounts),
       attendeeIssues: issues,
       sponsors: Object.fromEntries(sponsored.flatMap((promo) =>
         promo.sponsoringOrganization ? [[promo.normalizedCode, promo.sponsoringOrganization.name]] : [])),
-    } satisfies PublicAttendeePromoQuote), churchBilled, { roster: true, attendeeCount: prepared.attendees.length });
+    } satisfies PublicAttendeePromoQuote, churchBilled, { roster: true, attendeeCount: prepared.attendees.length });
   }
   const field = requirePromoField(definition);
   const responses = {
@@ -775,6 +776,7 @@ export async function getPublicPromoCodeQuote(
     now,
     ignoreAvailability: true,
   });
+  const calculation = await quoteCalculation(prisma, form.eventId, definition, prepared, input, churchBilled);
   const promo = await findPromoForCode(
     prisma,
     form.eventId,
@@ -784,7 +786,7 @@ export async function getPublicPromoCodeQuote(
     promo ? storedPromoRule(promo) : null,
     {
       submittedCode: input.code,
-      eligibleSubtotalCents: prepared.calculation.subtotalCents,
+      eligibleSubtotalCents: calculation.subtotalCents,
       pricingDate: prepared.pricingDate,
       hideAmounts: churchBilled,
     },
@@ -796,15 +798,15 @@ export async function getPublicPromoCodeQuote(
       select: { name: true },
     })
     : null;
-  return withoutQuoteTotals(await withLodgingQuote(prisma, form.eventId, definition, prepared, input, churchBilled, {
+  return withoutQuoteTotals({
     ...applyPromoCodeToCalculation(
       definition,
       prepared.registrationResponses,
-      prepared.calculation,
+      calculation,
       evaluation,
     ),
     sponsoredBy: sponsor?.name ?? null,
-  }), churchBilled, { roster: getAttendeeRosterConfig(definition).enabled, attendeeCount: prepared.attendees.length });
+  }, churchBilled, { roster: getAttendeeRosterConfig(definition).enabled, attendeeCount: prepared.attendees.length });
 }
 
 export async function claimPromoCode(

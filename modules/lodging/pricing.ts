@@ -16,7 +16,9 @@ import {
  * - The line has its own key, `lodging`, and no attendee, so it is a registration-level line that confirmations,
  *   receipts, the private page and the payments page already show next to the form's own lines.
  * - A registration-level promo code discounts the whole subtotal, so it applies to this line like any other priced
- *   line; a per-person promo code is limited to that person's own lines and never touches it.
+ *   line (#803); a per-person promo code is limited to that person's own lines and never touches it.
+ * - A per-room rate is charged for the rooms the registrant chose (`roomCount`, #803). It is never derived from the
+ *   party size. A site or a tent is one unit.
  */
 
 export const LODGING_LINE_KEY = "lodging";
@@ -27,15 +29,6 @@ export function isLodgingLine(line: { key: string }) {
   return line.key === LODGING_LINE_KEY;
 }
 
-/**
- * How many rooms a party is charged for under a per-room rate: the party divided by the people a typical room of the
- * category takes (the smallest default "sleeps up to" among its rooms), rounded up. A site or a tent is one unit for
- * the registration: the caller passes no capacity for them, and the answer is 1.
- */
-export function unitsForParty(partySize: number, unitCapacity: number | null | undefined) {
-  return unitCapacity && unitCapacity > 0 ? Math.max(1, Math.ceil(partySize / unitCapacity)) : 1;
-}
-
 export type LodgingChargeInput = {
   category: LodgingCategory | null;
   /** Nights slept. */
@@ -44,7 +37,7 @@ export type LodgingChargeInput = {
   rates: Partial<Record<LodgingCategory, LodgingRate | null>>;
   /** Price the stay at the normal rate even below a rate's minimum nights (a staff exception). */
   ignoreMinimum?: boolean;
-  /** Rooms (or sites) the party is charged for under a per-room rate; see `unitsForParty`. Defaults to 1. */
+  /** Rooms (or sites) the registrant chose, charged under a per-room rate. Defaults to 1. */
   units?: number;
 };
 

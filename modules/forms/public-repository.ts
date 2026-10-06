@@ -15,7 +15,7 @@ import {
 } from "@/modules/communications/messaging-repository";
 import { enqueueWaitlistJoinedMessage } from "@/modules/communications/transactional-messages";
 import {
-  addUndiscountedLine,
+  calculationWithLine,
   getAttendeeRosterConfig,
   getAvailabilityMode,
   isChoiceFieldType,
@@ -905,6 +905,14 @@ async function createPublicRegistrationTransaction(
     }
   }
 
+  // The lodging line (#199) is one of the registration's own lines before any promo code is decided (#803): a
+  // registration-level code (percent or fixed, church-sponsored or not) discounts the whole subtotal, lodging included, and
+  // its minimum is checked against it. A per-person code is limited to that person's lines, and the lodging line has no
+  // attendee, so it never touches it. The processing fee follows the final subtotal. A waitlisted registration has no line.
+  const lodgingCalculation: FormCalculation = lodgingPlan?.line && !isWaitlisted
+    ? calculationWithLine(definition, prepared.registrationResponses, prepared.calculation, lodgingPlan.line.key, lodgingPlan.line)
+    : prepared.calculation;
+
   const configuredPromoField = promoCodeField(definition);
   const submittedPromoCode = configuredPromoField
     && typeof prepared.registrationResponses[configuredPromoField.key]
@@ -918,13 +926,13 @@ async function createPublicRegistrationTransaction(
     preDiscountSubtotalCents?: number;
     discountAmountCents?: number;
     promoCode?: string;
-  } = prepared.calculation;
+  } = lodgingCalculation;
   if (submittedPromoCode && configuredPromoField) {
     try {
       claimedPromo = await claimPromoCode(tx, {
         eventId: form.eventId,
         submittedCode: submittedPromoCode,
-        eligibleSubtotalCents: prepared.calculation.subtotalCents,
+        eligibleSubtotalCents: lodgingCalculation.subtotalCents,
         pricingDate: prepared.pricingDate,
         fieldId: configuredPromoField.id,
         hideAmounts: churchBilledDisplay,
@@ -932,7 +940,7 @@ async function createPublicRegistrationTransaction(
       pricedCalculation = applyPromoCodeToCalculation(
         definition,
         prepared.registrationResponses,
-        prepared.calculation,
+        lodgingCalculation,
         claimedPromo.evaluation
       );
     } catch (error) {
@@ -962,7 +970,7 @@ async function createPublicRegistrationTransaction(
       eventId: form.eventId,
       field: configuredAttendeePromoField,
       attendees: prepared.attendees,
-      calculation: prepared.calculation,
+      calculation: lodgingCalculation,
       pricingDate: prepared.pricingDate,
       claim: true,
       hideAmounts: churchBilledDisplay,
@@ -987,13 +995,13 @@ async function createPublicRegistrationTransaction(
       pricedCalculation = applyAttendeePromoCodes(
         definition,
         prepared.registrationResponses,
-        prepared.calculation,
+        lodgingCalculation,
         attendeeDiscounts,
       );
     }
   }
 
-  const admittedBeforeLodging: FormCalculation & {
+  const admittedCalculation: FormCalculation & {
     preDiscountSubtotalCents?: number;
     discountAmountCents?: number;
     promoCode?: string;
@@ -1004,11 +1012,6 @@ async function createPublicRegistrationTransaction(
         totalCents: pricedCalculation.subtotalCents,
       }
     : pricedCalculation;
-  // The lodging line (#199) is added after promo codes: a promo code discounts the form's own lines, never lodging
-  // (until the event team decides otherwise), and the processing fee follows the final subtotal.
-  const admittedCalculation = lodgingPlan?.line && !isWaitlisted
-    ? addUndiscountedLine(definition, prepared.registrationResponses, admittedBeforeLodging, lodgingPlan.line)
-    : admittedBeforeLodging;
 
   const identity: PublicContactIdentity = prepared.identity;
   const accountHolder = await tx.person.upsert({

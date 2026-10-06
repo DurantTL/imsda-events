@@ -31,6 +31,8 @@ export type LodgingErrorCode =
   | "EDIT_POLICY_REQUIRES_VERIFICATION"
   | "FLAGS_STAFF_ONLY"
   | "BELOW_MINIMUM_NIGHTS"
+  | "ROOM_COUNT_INVALID"
+  | "EXTRA_BEDDING_NOT_ACKNOWLEDGED"
   | "REGISTRATION_NOT_ELIGIBLE"
   // Assignment, moves, waitlist and attendee display (#200)
   | "ASSIGNMENT_NOT_FOUND"

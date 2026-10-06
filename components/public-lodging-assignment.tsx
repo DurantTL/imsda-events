@@ -65,9 +65,9 @@ export function PublicLodgingAssignment({ token, initialAssignments, initialWait
 
     {entry ? <div>
       <h3>Lodging waitlist</h3>
-      {entry.status === "JOINED" ? <p>You are on the lodging waitlist for {lodgingCategoryLabels[entry.category]} ({entry.partySize} {entry.partySize === 1 ? "person" : "people"}). The event team will contact you if a place opens. Nothing is charged by being on the list.</p> : null}
+      {entry.status === "JOINED" ? <p>You are on the lodging waitlist for {lodgingCategoryLabels[entry.category]} ({entry.partySize} {entry.partySize === 1 ? "person" : "people"}{entry.roomCount > 1 ? `, ${entry.roomCount} rooms` : ""}). The event team will contact you if a place opens. Nothing is charged by being on the list.</p> : null}
       {entry.status === "OFFERED" && !entry.lapsed ? <div role="status">
-        <p><strong>A place may be available in {lodgingCategoryLabels[entry.category]} for {entry.partySize} {entry.partySize === 1 ? "person" : "people"}.</strong> {entry.offerExpiresAt ? `Please answer by ${new Date(entry.offerExpiresAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}.` : ""} Accepting does not charge anything by itself; the event team confirms your room.</p>
+        <p><strong>A place may be available in {lodgingCategoryLabels[entry.category]} for {entry.partySize} {entry.partySize === 1 ? "person" : "people"}{entry.roomCount > 1 ? ` in ${entry.roomCount} rooms` : ""}.</strong> {entry.offerExpiresAt ? `Please answer by ${new Date(entry.offerExpiresAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}.` : ""} Accepting does not charge anything by itself; the event team confirms your room.</p>
         <button type="button" className="primary-button" disabled={status.kind === "saving"} onClick={() => void send({ action: "accept" }, "Thank you. The event team will confirm your room.")}>Accept the place</button>
         <button type="button" className="secondary-button" disabled={status.kind === "saving"} onClick={() => void send({ action: "decline" }, "Thank you. We have recorded that you do not need the place.")}>Decline</button>
       </div> : null}
