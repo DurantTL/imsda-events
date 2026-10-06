@@ -12,7 +12,7 @@ import {
 } from "@/modules/lodging/preferences-domain";
 import type { StaffLodgingRequestView, StaffLodgingRequestsView } from "@/modules/lodging/preferences-service";
 
-type ChargeResult = { priceNeedsReview?: boolean; belowMinimumAfter?: boolean; churchSponsorReview?: boolean; chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null };
+type ChargeResult = { priceNeedsReview?: boolean; belowMinimumAfter?: boolean; churchSponsorReview?: boolean; chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; originallyChargedCents?: number; requestNowCostsCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null };
 type Reply = { requests?: StaffLodgingRequestsView; result?: ChargeResult };
 type Run = (action: () => Promise<Reply>, success: string) => Promise<void>;
 
@@ -51,7 +51,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
       // The settings route sends the staff view only to someone who may read it; otherwise keep what is on screen.
       if (result.requests) setView(result.requests);
       setNotice(success);
-      if (result.result?.priceNeedsReview) setChargeChange(result.result);
+      if (result.result?.priceNeedsReview || result.result?.churchSponsorReview) setChargeChange(result.result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That could not be saved.");
     } finally { setBusy(false); }

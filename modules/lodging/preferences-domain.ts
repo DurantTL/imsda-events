@@ -435,7 +435,6 @@ export function bestCaseBeds(capacity: Pick<CategoryCapacity, "roomBeds" | "unit
   return beds;
 }
 
-/** Whether the party is larger than the beds of the rooms chosen, even in the best case (see `bestCaseBeds`). */
 /**
  * The rooms the registrant already holds for the chosen type, as the room picker's floor (#803): taken from the CURRENT view
  * (so after a save the picker follows what was saved), never above the party, and 1 when the type is not the saved one.
@@ -444,6 +443,7 @@ export function heldRoomsFor(request: { category: string | null; roomCount: numb
   return request && request.category === category ? Math.max(1, Math.min(request.roomCount, partySize)) : 1;
 }
 
+/** Whether the party is larger than the beds of the rooms chosen, even in the best case (see `bestCaseBeds`). */
 export function partyExceedsBeds(capacity: Pick<CategoryCapacity, "roomBased" | "unitCapacity" | "roomBeds"> | undefined, partySize: number, roomCount: number, nights: readonly string[] = []) {
   if (!capacity?.roomBased) return false;
   const beds = bestCaseBeds(capacity, roomCount, nights);
