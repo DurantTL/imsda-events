@@ -7,6 +7,7 @@ import {
   householdColorIndex,
   occupancyByNight,
   occupancyOf,
+  overBedsByNight,
   type OccupancyNight,
 } from "@/modules/lodging/assignment-domain";
 import {
@@ -195,13 +196,16 @@ export async function getAssignmentWorkspace(eventId: string, options: { canSeeS
     const capacity = capacities.length === 0 ? 0 : capacities.includes(null) ? null : Math.max(...(capacities as number[]));
     let status: UnitStatusWord;
     let extraBedding = false;
+    const overNights = overBedsByNight(unitState, segments, nights);
     if (!row.assignable || row.retired) status = "NOT_ASSIGNABLE";
     else if (nightRows.length > 0 && nightRows.every((entry) => entry.status === "UNAVAILABLE")) status = "UNAVAILABLE";
     else if (nightRows.length > 0 && nightRows.every((entry) => entry.status === "HELD" || entry.status === "UNAVAILABLE")) status = "HELD";
-    else if (nightRows.some((entry) => entry.status === "AVAILABLE" && entry.capacity !== null && entry.occupied > entry.capacity)) {
-      // A room holding only one party above its beds is bringing extra bedding: shown as full, with the warning below.
-      extraBedding = Boolean(unitState.roomLike && segments.every((segment) => segment.groupKey && segment.groupKey === segments[0]?.groupKey));
-      status = extraBedding ? "FULL" : "OVER";
+    else if (overNights.length > 0) {
+      // Night by night, as the closeout report does: a night above the beds with one party in the room is that party bringing
+      // sleeping bags or air mattresses (shown as full, with a warning); a night with anyone else in it is over capacity.
+      const overParties = overNights.filter((over) => !over.oneParty);
+      extraBedding = overParties.length < overNights.length;
+      status = overParties.length > 0 ? "OVER" : "FULL";
     }
     else if (inService.length > 0 && inService.every((entry) => entry.capacity !== null && entry.capacity > 0 && entry.occupied >= entry.capacity)) status = "FULL";
     else if (nightRows.some((entry) => entry.occupied > 0)) status = "PARTIAL";

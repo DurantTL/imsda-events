@@ -109,10 +109,13 @@ async function joinInTransaction(tx: Tx, eventId: string, actor: Actor, input: J
   // The rooms the entry wants (room-type categories only; 1 otherwise): what the guest named, else what their request asked
   // for in this type, else one. It is counted in rooms against the rooms free, like the request it came from.
   const roomBased = capacity[input.category]?.roomBased === true;
-  const request = roomBased && input.roomCount === undefined
+  const request = roomBased && (input.roomCount === undefined || actor.kind === "REGISTRANT")
     ? await tx.eventLodgingRequest.findUnique({ where: { eventId_registrationId: { eventId, registrationId: input.registrationId } }, select: { versions: { orderBy: { version: "desc" }, take: 1, select: { category: true, roomCount: true } } } })
     : null;
-  const askedRooms = input.roomCount ?? (request?.versions[0]?.category === input.category ? request.versions[0].roomCount : 1);
+  const requestRooms = request?.versions[0]?.category === input.category ? request.versions[0].roomCount : null;
+  let askedRooms = input.roomCount ?? requestRooms ?? 1;
+  // A registrant cannot ask the waitlist for more rooms than their own request asked for (staff can).
+  if (actor.kind === "REGISTRANT") askedRooms = Math.min(askedRooms, requestRooms ?? 1);
   if (roomBased && (!Number.isInteger(askedRooms) || askedRooms < 1 || askedRooms > input.partySize)) {
     throw new LodgingError("ROOM_COUNT_INVALID", `Choose between 1 and ${input.partySize} room${input.partySize === 1 ? "" : "s"}: at least one room, and no more rooms than people.`);
   }

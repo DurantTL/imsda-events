@@ -2,7 +2,7 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import { AlertCircle, BedDouble, CheckCircle2 } from "lucide-react";
-import { extraBeddingNote, partyExceedsBeds } from "@/modules/lodging/preferences-domain";
+import { beddingNote, extraBeddingNote, partyExceedsBeds } from "@/modules/lodging/preferences-domain";
 import { describeRate, quoteStay, stayNights, addDays, type LodgingCategory } from "@/modules/lodging/domain";
 import type { RegistrantLodgingView } from "@/modules/lodging/preferences-service";
 
@@ -42,7 +42,8 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
   const roomBased = chosenOffer?.roomBased === true;
   const highestRooms = Math.max(1, Math.min(partySize, chosenOffer?.roomsFree ?? partySize));
   const rooms = roomBased ? Math.min(Math.max(1, roomCount), highestRooms) : 1;
-  const extraBeddingNeeded = roomBased && partyExceedsBeds({ roomBased: true, unitCapacity: chosenOffer?.unitCapacity ?? null }, partySize, rooms);
+  const extraBeddingNeeded = roomBased && partyExceedsBeds({ roomBased: true, unitCapacity: chosenOffer?.unitCapacity ?? null, ...(chosenOffer?.roomBeds ? { roomBeds: chosenOffer.roomBeds } : {}) }, partySize, rooms, nightCount > 0 ? stayNights(firstNight, addDays(lastNight, 1)) : []);
+  const bedding = chosenOffer ? beddingNote(chosenOffer.linens) : null;
   const quote = useMemo(() => {
     const chosen = view.offered.find((entry) => entry.category === category);
     if (!chosen || nightCount < 1) return null;
@@ -124,6 +125,7 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
               {Array.from({ length: Math.max(1, view.people.length) }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count}</option>)}
             </select>
           </label>
+          {bedding ? <p data-testid="lodging-bedding">{bedding}</p> : null}
           {roomBased ? (
             <label>How many rooms?
               <select value={rooms} onChange={(event) => setRoomCount(Number(event.target.value))} data-testid="lodging-room-count">
@@ -133,8 +135,8 @@ export function PublicLodgingPreferences({ token, initialView }: { token: string
           ) : null}
           {extraBeddingNeeded ? (
             <p role="note" data-testid="lodging-extra-bedding">
-              {extraBeddingNote(rooms)}{" "}
-              <label><input type="checkbox" checked={bringsExtraBedding} onChange={(event) => setBringsExtraBedding(event.target.checked)} /> We will bring extra bedding</label>
+              {extraBeddingNote}{" "}
+              <label><input type="checkbox" checked={bringsExtraBedding} onChange={(event) => setBringsExtraBedding(event.target.checked)} /> We will bring sleeping bags or air mattresses</label>
             </p>
           ) : null}
           <label>Everyone on this registration

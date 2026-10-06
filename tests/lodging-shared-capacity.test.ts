@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => { throw new Error("not used"); } }));
 
-import { addWaitingDemand, demandExcluding, demandFromGroups, loadDemandGroups, type Client } from "@/modules/lodging/preferences-service";
+import { addWaitingDemand, demandExcluding, demandFromGroups, loadDemandGroups, roomBasedFromUnits, type Client } from "@/modules/lodging/preferences-service";
 import { categoryFits, type CategoryCapacity } from "@/modules/lodging/preferences-domain";
 
 const NIGHTS = ["2027-06-15", "2027-06-16", "2027-06-17"];
@@ -15,6 +15,8 @@ const day = (value: string) => new Date(`${value}T00:00:00Z`);
 type Fixture = {
   /** Categories whose units are all numbered rooms: counted in rooms. Any other category counts people. */
   roomCategories?: string[];
+  /** Categories that also hold a unit that is not a numbered room (a tent, a counted area): they count people. */
+  mixedCategories?: string[];
   requests?: Array<{ registrationId: string; category: string | null; partySize: number; roomCount?: number; firstNight?: string; lastNight?: string }>;
   placed?: Array<{ registrationId: string | null; people: number; category: string | null; unitId?: string; firstNight?: string; lastNight?: string }>;
   entries?: Array<{ registrationId: string; category: string; partySize: number; roomCount?: number; status: string; offerExpiresAt?: Date | null; registrationStatus?: string; firstNight?: string; lastNight?: string }>;
@@ -25,6 +27,7 @@ function client(fixture: Fixture) {
     eventLodgingUnit: {
       findMany: vi.fn(async () => [
         ...(fixture.roomCategories ?? []).map((category) => ({ retired: false, unit: { category, kind: "ROOM", isArea: false } })),
+        ...(fixture.mixedCategories ?? []).map((category) => ({ retired: false, unit: { category, kind: "TENT", isArea: false } })),
         // A counted tent area is person-based whatever else is around it.
         { retired: false, unit: { category: "TENT", kind: "TENT", isArea: true } },
       ]),
@@ -255,5 +258,32 @@ describe("capacity in rooms for a room-type category (#803)", () => {
     const demand = await demandFor({ roomCategories: ["DORM_ROOM"], requests: [{ registrationId: "r", category: "DORM_ROOM", partySize: 2, roomCount: 1 }] });
     expect(categoryFits({ capacity: held, demand: demand.get("DORM_ROOM" as never), nights: NIGHTS, partySize: 2, roomCount: 1 })).toMatchObject({ fits: false, firstFullNight: NIGHTS[1] });
     expect(categoryFits({ capacity: held, demand: demand.get("DORM_ROOM" as never), nights: [NIGHTS[0]!, NIGHTS[2]!], partySize: 6, roomCount: 3 }).fits).toBe(true);
+  });
+
+  it("counts two registrations sharing one room as two rooms: the safe direction", async () => {
+    // Capacity for each is the room they hold, so a room shared by two parties is not free for a third, and a registration
+    // that shares a room is never undercounted. Sharing is rare; the cost of the safe direction is one room of headroom.
+    const demand = await demandFor({
+      roomCategories: ["DORM_ROOM"],
+      placed: [
+        { registrationId: "a", people: 1, category: "DORM_ROOM", unitId: "shared" },
+        { registrationId: "b", people: 1, category: "DORM_ROOM", unitId: "shared" },
+      ],
+    });
+    expect(at(demand, "DORM_ROOM")).toBe(2);
+    expect(roomFits(demand, 3, 3, 4).fits).toBe(false);
+    expect(roomFits(demand, 2, 2, 4).fits).toBe(true);
+  });
+
+  it("counts a category that mixes numbered rooms with anything else in people, and flips when the units change", async () => {
+    const requests = [{ registrationId: "a", category: "DORM_ROOM", partySize: 4, roomCount: 2 }];
+    expect(at(await demandFor({ roomCategories: ["DORM_ROOM"], requests }), "DORM_ROOM")).toBe(2); // all rooms: counted in rooms
+    expect(at(await demandFor({ roomCategories: ["DORM_ROOM"], mixedCategories: ["DORM_ROOM"], requests }), "DORM_ROOM")).toBe(4); // a tent joins it: counted in people
+    const room = (kind: string, retired = false, isArea = false) => ({ retired, unit: { category: "DORM_ROOM" as const, kind, isArea } });
+    expect([...roomBasedFromUnits([room("ROOM"), room("ROOM")])]).toEqual(["DORM_ROOM"]);
+    expect([...roomBasedFromUnits([room("ROOM"), room("TENT")])]).toEqual([]);
+    expect([...roomBasedFromUnits([room("ROOM"), room("ROOM", false, true)])]).toEqual([]); // a counted area is not a room
+    expect([...roomBasedFromUnits([room("ROOM"), room("TENT", true)])]).toEqual(["DORM_ROOM"]); // a retired unit does not count
+    expect([...roomBasedFromUnits([])]).toEqual([]);
   });
 });

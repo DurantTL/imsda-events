@@ -395,7 +395,7 @@ describe("the staff review queue", () => {
     const bedding = items.filter((item) => item.kind === "EXTRA_BEDDING");
     expect(bedding).toHaveLength(1);
     expect(bedding[0]).toMatchObject({ registrationIds: ["r1"], sensitive: false });
-    expect(bedding[0]?.title).toContain("party of 5 in 2 rooms, bringing extra bedding");
+    expect(bedding[0]?.title).toContain("party of 5 in 2 rooms, bringing sleeping bags or air mattresses");
   });
 
   it("marks accessibility items sensitive, and reports a ground floor need that a type cannot meet", () => {
@@ -420,7 +420,7 @@ describe("the staff review queue", () => {
 
   it("names the charge change a registrant asked for, with its sign", () => {
     const up = buildReviewItems(facts({ changeRequests: [{ id: "c1", registrationId: "r1", category: "DORM_ROOM", chargedCents: 4000, requestedCents: 6000 }] }));
-    expect(up[0]?.title).toContain("lodging charge change requested (+$20.00)");
+    expect(up[0]?.title).toContain("lodging charge change requested (list +$20.00)");
     const down = buildReviewItems(facts({ changeRequests: [{ id: "c1", registrationId: "r1", category: "TENT", chargedCents: 6000, requestedCents: 4000 }] }));
     expect(down[0]?.title).toContain("-$20.00");
     expect(up[0]?.fingerprint).not.toBe(down[0]?.fingerprint);

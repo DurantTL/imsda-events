@@ -11,6 +11,7 @@ import {
   noticeIsObsolete,
   occupancyByNight,
   occupancyOf,
+  overBedsByNight,
   offerExpiry,
   parseAssignmentCsv,
   placementSchema,
@@ -652,5 +653,31 @@ describe("a party above a room's beds is a warning; two parties still cannot ove
       to: { occupantKey: "d", attendeeId: "d", placeholderId: null, people: 1, groupKey: "reg-1" }, units: units(room("r1")), buckets: base.buckets, eventNights: nights, confirmSpecialUse: true,
     });
     expect(transferred.ok).toBe(true);
+  });
+});
+
+describe("over-beds nights are classified night by night, the same way for the workspace and the closeout report (#803)", () => {
+  const room = unit("r1", 2, { roomLike: true });
+  const seg = (id: string, key: string, group: string, first: string, last: string): Segment => ({ ...segment(id, key, "r1", first, last), groupKey: group });
+
+  it("calls a night above the beds one party when only that registration is in the room, and an overfill when anyone else is", () => {
+    // Party 1 (three people) holds the room on the 15th and 16th; on the 17th a second party shares it above the beds.
+    const segments = [
+      seg("a", "a1", "reg-1", nights[0]!, nights[1]!), seg("b", "a2", "reg-1", nights[0]!, nights[1]!), seg("c", "a3", "reg-1", nights[0]!, nights[1]!),
+      seg("d", "a4", "reg-1", nights[2]!, nights[2]!), seg("e", "x1", "reg-2", nights[2]!, nights[2]!), seg("f", "x2", "reg-2", nights[2]!, nights[2]!),
+    ];
+    const over = overBedsByNight(room, segments, nights);
+    expect(over.map((entry) => [entry.night, entry.oneParty])).toEqual([[nights[0], true], [nights[1], true], [nights[2], false]]);
+    // The closeout report lists both, the workspace reads the room as over capacity because one night is an overfill.
+    const rows = unitConflicts({ nights, units: units(room), segments: segments.map((entry) => ({ ...entry, assignmentId: entry.id })) });
+    expect(rows.map((row) => row.kind).sort()).toEqual(["EXTRA_BEDDING", "OVER_CAPACITY"]);
+    expect(over.some((entry) => !entry.oneParty)).toBe(true);
+  });
+
+  it("is a warning only when every night above the beds holds one party", () => {
+    const segments = ["a", "b", "c"].map((id) => seg(id, id, "reg-1", nights[0]!, nights[1]!));
+    expect(overBedsByNight(room, segments, nights).every((entry) => entry.oneParty)).toBe(true);
+    expect(overBedsByNight(unit("r1", 2), segments, nights).every((entry) => !entry.oneParty)).toBe(true); // not a numbered room
+    expect(overBedsByNight(room, [seg("a", "a", "reg-1", nights[0]!, nights[1]!)], nights)).toEqual([]); // within the beds
   });
 });

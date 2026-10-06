@@ -25,7 +25,7 @@ import {
   type LodgingStepOffer,
 } from "@/modules/lodging/form-step";
 import { LODGING_LINE_KEY, lodgingCharge } from "@/modules/lodging/pricing";
-import { extraBeddingNote, partyExceedsBeds, resolveRoomChoice } from "@/modules/lodging/preferences-domain";
+import { bestCaseBeds, beddingNote, extraBeddingNote, partyExceedsBeds, resolveRoomChoice } from "@/modules/lodging/preferences-domain";
 
 /** Synthetic rates and people only. */
 const rate = (basis: LodgingRate["basis"], amountCents: number, minimumNights: number | null = null): LodgingRate => ({ amountCents, basis, minimumNights });
@@ -254,7 +254,10 @@ describe("charging by the rooms the registrant chose (#803)", () => {
 });
 
 describe("the room count rules (#803)", () => {
-  const rooms = { roomBased: true, unitCapacity: 2 };
+  const N = ["2027-06-15", "2027-06-16"];
+  // Rooms in service on both nights, largest first: 4, 2, 2, 2 and 1 beds.
+  const rooms = { roomBased: true, unitCapacity: 1, roomBeds: { "2027-06-15": [4, 2, 2, 2, 1], "2027-06-16": [4, 2, 2, 2, 1] } };
+  const choose = (extra: Partial<Parameters<typeof resolveRoomChoice>[0]>) => resolveRoomChoice({ capacity: rooms, partySize: 2, nights: N, requireAcknowledgement: true, ...extra });
 
   it("is one unit for a site, a tent or a counted area: nothing is asked", () => {
     expect(resolveRoomChoice({ capacity: { roomBased: false, unitCapacity: null }, partySize: 5, roomCount: 4, requireAcknowledgement: true })).toEqual({ ok: true, roomCount: 1, bringsExtraBedding: false, extraBeddingNeeded: false });
@@ -262,37 +265,67 @@ describe("the room count rules (#803)", () => {
   });
 
   it("defaults to one room and allows one up to the party size", () => {
-    expect(resolveRoomChoice({ capacity: rooms, partySize: 2, requireAcknowledgement: true })).toMatchObject({ ok: true, roomCount: 1 });
-    expect(resolveRoomChoice({ capacity: rooms, partySize: 4, roomCount: 4, requireAcknowledgement: true })).toMatchObject({ ok: true, roomCount: 4, extraBeddingNeeded: false });
-    expect(resolveRoomChoice({ capacity: rooms, partySize: 4, roomCount: 5, requireAcknowledgement: true })).toMatchObject({ ok: false, code: "ROOM_COUNT_INVALID" });
-    expect(resolveRoomChoice({ capacity: rooms, partySize: 4, roomCount: 0, requireAcknowledgement: true })).toMatchObject({ ok: false, code: "ROOM_COUNT_INVALID" });
-    expect(resolveRoomChoice({ capacity: rooms, partySize: 4, roomCount: 1.5, requireAcknowledgement: true })).toMatchObject({ ok: false, code: "ROOM_COUNT_INVALID" });
+    expect(choose({})).toMatchObject({ ok: true, roomCount: 1 });
+    expect(choose({ partySize: 4, roomCount: 4 })).toMatchObject({ ok: true, roomCount: 4, extraBeddingNeeded: false });
+    for (const roomCount of [5, 0, 1.5]) expect(choose({ partySize: 4, roomCount })).toMatchObject({ ok: false, code: "ROOM_COUNT_INVALID" });
   });
 
   it("allows no more rooms than are available, and says how many are", () => {
-    const refused = resolveRoomChoice({ capacity: rooms, partySize: 6, roomCount: 3, roomsAvailable: 2, requireAcknowledgement: true });
+    const refused = choose({ partySize: 6, roomCount: 3, roomsAvailable: 2 });
     expect(refused).toMatchObject({ ok: false, code: "ROOM_COUNT_INVALID" });
     expect(!refused.ok && refused.message).toMatch(/Only 2 rooms are free/);
-    expect(resolveRoomChoice({ capacity: rooms, partySize: 6, roomCount: 2, roomsAvailable: 2, bringsExtraBedding: true, requireAcknowledgement: true })).toMatchObject({ ok: true, roomCount: 2 });
-    expect(resolveRoomChoice({ capacity: rooms, partySize: 6, roomCount: 3, roomsAvailable: null, requireAcknowledgement: true })).toMatchObject({ ok: true, roomCount: 3 });
+    expect(choose({ partySize: 6, roomCount: 2, roomsAvailable: 2 })).toMatchObject({ ok: true, roomCount: 2 });
+    expect(choose({ partySize: 6, roomCount: 3, roomsAvailable: null })).toMatchObject({ ok: true, roomCount: 3 });
   });
 
-  it("allows a party larger than the beds, once the registrant acknowledges bringing extra bedding", () => {
-    expect(partyExceedsBeds(rooms, 5, 2)).toBe(true);
-    expect(partyExceedsBeds(rooms, 4, 2)).toBe(false);
-    expect(partyExceedsBeds({ roomBased: false, unitCapacity: 2 }, 9, 1)).toBe(false);
-    const needs = resolveRoomChoice({ capacity: rooms, partySize: 5, roomCount: 2, requireAcknowledgement: true });
+  it("works the over-beds threshold out as the best case: the largest rooms in service on every chosen night", () => {
+    expect(bestCaseBeds(rooms, 1, N)).toBe(4);
+    expect(bestCaseBeds(rooms, 2, N)).toBe(6);
+    expect(bestCaseBeds(rooms, 3, N)).toBe(8);
+    expect(bestCaseBeds(rooms, 9, N)).toBe(11);
+    // The night with fewer or smaller rooms sets the limit; a night that is not chosen does not.
+    const thin = { ...rooms, roomBeds: { "2027-06-15": [4, 2, 2], "2027-06-16": [2, 1], "2027-06-17": [9] } };
+    expect(bestCaseBeds(thin, 2, ["2027-06-15", "2027-06-16"])).toBe(3);
+    expect(bestCaseBeds(thin, 2, ["2027-06-15"])).toBe(6);
+    expect(bestCaseBeds({ unitCapacity: 2 }, 3, N)).toBe(6);
+    expect(bestCaseBeds({ unitCapacity: null }, 3, N)).toBeNull();
+    // A party of four fits the best single room, so it is not asked, even though the smallest room sleeps one.
+    expect(partyExceedsBeds(rooms, 4, 1, N)).toBe(false);
+    expect(partyExceedsBeds(rooms, 5, 1, N)).toBe(true);
+    expect(partyExceedsBeds(rooms, 6, 2, N)).toBe(false);
+    expect(partyExceedsBeds(rooms, 7, 2, N)).toBe(true);
+    expect(partyExceedsBeds({ roomBased: false, unitCapacity: 2 }, 9, 1, N)).toBe(false);
+  });
+
+  it("allows a party above the beds once the registrant acknowledges bringing sleeping bags or air mattresses", () => {
+    const needs = choose({ partySize: 5, roomCount: 1 });
     expect(needs).toMatchObject({ ok: false, code: "EXTRA_BEDDING_NOT_ACKNOWLEDGED" });
-    expect(resolveRoomChoice({ capacity: rooms, partySize: 5, roomCount: 2, bringsExtraBedding: true, requireAcknowledgement: true })).toEqual({ ok: true, roomCount: 2, bringsExtraBedding: true, extraBeddingNeeded: true });
-    // Staff do not have to acknowledge, and the flag still records it.
-    expect(resolveRoomChoice({ capacity: rooms, partySize: 5, roomCount: 2, requireAcknowledgement: false })).toMatchObject({ ok: true, bringsExtraBedding: true });
+    expect(!needs.ok && needs.message).toBe("Your party is larger than the beds in the rooms you picked. Confirm that you will bring sleeping bags or air mattresses for the extra people.");
+    expect(!needs.ok && needs.message).not.toMatch(/choose more rooms/i);
+    expect(choose({ partySize: 5, roomCount: 1, bringsExtraBedding: true })).toEqual({ ok: true, roomCount: 1, bringsExtraBedding: true, extraBeddingNeeded: true });
     // The flag is never stored when it does not apply.
-    expect(resolveRoomChoice({ capacity: rooms, partySize: 4, roomCount: 2, bringsExtraBedding: true, requireAcknowledgement: true })).toMatchObject({ ok: true, bringsExtraBedding: false });
+    expect(choose({ partySize: 4, roomCount: 1, bringsExtraBedding: true })).toMatchObject({ ok: true, bringsExtraBedding: false });
   });
 
-  it("words the note as the issue asks", () => {
-    expect(extraBeddingNote(1)).toBe("Your party is larger than the beds in 1 room; you're welcome to bring extra bedding.");
-    expect(extraBeddingNote(3)).toBe("Your party is larger than the beds in 3 rooms; you're welcome to bring extra bedding.");
+  it("asks for the acknowledgement only when it is required, and otherwise keeps what was acknowledged: a staff edit never invents one", () => {
+    // A staff edit (or an unrelated edit) of a party above its beds is not refused, and is not recorded as acknowledged.
+    expect(choose({ partySize: 5, roomCount: 1, requireAcknowledgement: false })).toMatchObject({ ok: true, bringsExtraBedding: false, extraBeddingNeeded: true });
+    expect(choose({ partySize: 5, roomCount: 1, requireAcknowledgement: false, carriedAcknowledgement: true })).toMatchObject({ ok: true, bringsExtraBedding: true });
+    // What the registrant ticked is stored when they tick it.
+    expect(choose({ partySize: 5, roomCount: 1, requireAcknowledgement: false, bringsExtraBedding: true })).toMatchObject({ bringsExtraBedding: true });
+    // A carried acknowledgement is dropped when the party no longer exceeds the beds.
+    expect(choose({ partySize: 3, roomCount: 1, requireAcknowledgement: false, carriedAcknowledgement: true })).toMatchObject({ bringsExtraBedding: false });
+  });
+
+  it("words the general bedding note from the type's linens, treating an unknown as not provided", () => {
+    expect(beddingNote("NONE")).toBe("Bring your own bedding (sheets, pillow, blanket)");
+    expect(beddingNote(undefined)).toBe("Bring your own bedding (sheets, pillow, blanket)");
+    expect(beddingNote("SOME")).toBe("Most rooms: bring your own bedding");
+    expect(beddingNote("ALL")).toBeNull();
+  });
+
+  it("words the over-beds note as Caleb asked", () => {
+    expect(extraBeddingNote).toBe("Your party is larger than the beds in the rooms you picked; bring sleeping bags or air mattresses for the extra people.");
   });
 });
 
@@ -301,9 +334,9 @@ const offer: LodgingStepOffer = {
   deadline: "2027-06-01",
   fullBehavior: "SHOW_FULL",
   categories: [
-    { category: "DORM_ROOM", label: "Dorm room", remaining: { "2027-06-15": 5, "2027-06-16": 0, "2027-06-17": 5, "2027-06-18": 5 }, rate: rate("PER_UNIT_NIGHT", 2000, 2), unitCapacity: 2, roomBased: true },
+    { category: "DORM_ROOM", label: "Dorm room", remaining: { "2027-06-15": 5, "2027-06-16": 0, "2027-06-17": 5, "2027-06-18": 5 }, rate: rate("PER_UNIT_NIGHT", 2000, 2), unitCapacity: 2, roomBased: true, linens: "NONE", roomBeds: { "2027-06-15": [2, 2, 2, 2, 2], "2027-06-16": [], "2027-06-17": [2, 2, 2, 2, 2], "2027-06-18": [2, 2, 2, 2, 2] } },
     { category: "TENT", label: "Tent", remaining: { "2027-06-15": null, "2027-06-16": null, "2027-06-17": null, "2027-06-18": null }, rate: rate("PER_PERSON_PER_EVENT", 4000) },
-    { category: "CONFERENCE_CENTER_ROOM", label: "Conference center room", remaining: { "2027-06-15": 2, "2027-06-16": 2, "2027-06-17": 2, "2027-06-18": 2 }, rate: null, unitCapacity: 2, roomBased: true },
+    { category: "CONFERENCE_CENTER_ROOM", label: "Conference center room", remaining: { "2027-06-15": 2, "2027-06-16": 2, "2027-06-17": 2, "2027-06-18": 2 }, rate: null, unitCapacity: 2, roomBased: true, linens: "SOME", roomBeds: { "2027-06-15": [2, 2], "2027-06-16": [2, 2], "2027-06-17": [2, 2], "2027-06-18": [2, 2] } },
   ],
 };
 const choice = (overrides: Partial<LodgingChoice> = {}): LodgingChoice => ({ ...defaultLodgingChoice(offer, 2), ...overrides });
@@ -350,7 +383,7 @@ describe("the lodging step of the form", () => {
     const nights = { firstNight: "2027-06-17", lastNight: "2027-06-18" };
     const party = choice({ category: "DORM_ROOM", partySize: 5, roomCount: 2, ...nights }); // 2 rooms of 2 beds, 5 people
     expect(roomQuestion(offer, party)).toMatchObject({ asked: true, extraBeddingNeeded: true });
-    expect(lodgingStepProblem(offer, party, 5)).toMatch(/^Lodging step: Your party is larger than the beds in 2 rooms/);
+    expect(lodgingStepProblem(offer, party, 5)).toMatch(/^Lodging step: Your party is larger than the beds in the rooms you picked/);
     const acknowledged = { ...party, bringsExtraBedding: true };
     expect(lodgingStepProblem(offer, acknowledged, 5)).toBeNull();
     expect(lodgingStepInput(offer, acknowledged)).toMatchObject({ category: "DORM_ROOM", partySize: 5, roomCount: 2, bringsExtraBedding: true });

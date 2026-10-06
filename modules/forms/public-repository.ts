@@ -204,6 +204,11 @@ type PricingSnapshot = {
   waitlistPosition?: number | null;
   /** The lodging choice was kept as an unpriced request on a waitlisted registration (#199). */
   lodgingChoiceSaved?: boolean;
+  /**
+   * A registration-level promo code was decided on a subtotal that includes the lodging line (#803). Absent on a registration
+   * submitted before that, whose amendments keep the old math (the code on the form's own lines, lodging undiscounted).
+   */
+  promoCoversLodging?: boolean;
 };
 
 export type PublicRegistrationConfirmation = {
@@ -1241,6 +1246,7 @@ async function createPublicRegistrationTransaction(
     paymentEligible: !isWaitlisted,
     waitlistPosition,
     ...(lodgingPlan && isWaitlisted ? { lodgingChoiceSaved: true } : {}),
+    promoCoversLodging: true,
   };
   const attendeeResponseSnapshot = prepared.rosterEnabled
     ? prepared.attendees.map((attendee, position) => ({

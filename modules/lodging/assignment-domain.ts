@@ -958,6 +958,25 @@ export type ExceptionRow = {
   night?: string;
 };
 
+/**
+ * The nights a unit holds more people than it takes, each classified: `oneParty` when a numbered room holds people of a single
+ * registration only (that party is bringing sleeping bags or air mattresses: a warning, #803), otherwise an overfill. The one
+ * rule the closeout report and the workspace share, night by night, so they cannot disagree.
+ */
+export function overBedsByNight(unit: PlanUnit, segments: readonly Segment[], nights: readonly string[]) {
+  const result: Array<{ night: string; people: number; beds: number; oneParty: boolean; present: Segment[] }> = [];
+  for (const night of nights) {
+    const present = segments.filter((segment) => segment.unitId === unit.unitId && segment.firstNight <= night && night <= segment.lastNight);
+    if (present.length === 0) continue;
+    const people = present.reduce((sum, segment) => sum + segment.people, 0);
+    const row = unitNight(unit, night, people);
+    if (row.status !== "AVAILABLE" || row.capacity === null || people <= row.capacity) continue;
+    const oneParty = Boolean(unit.roomLike && present[0]?.groupKey && present.every((segment) => segment.groupKey === present[0]!.groupKey));
+    result.push({ night, people, beds: row.capacity, oneParty, present });
+  }
+  return result;
+}
+
 /** Unit-nights over capacity, and assignments on nights when the unit is closed, held or retired. Night by night. */
 export function unitConflicts(input: {
   nights: readonly string[];
@@ -983,20 +1002,19 @@ export function unitConflicts(input: {
       const present = segments.filter((segment) => segment.firstNight <= night && night <= segment.lastNight);
       if (present.length === 0) continue;
       const total = present.reduce((sum, segment) => sum + segment.people, 0);
-      const row = unitNight(unit, night, total);
-      if (row.status !== "AVAILABLE") {
+      if (unitNight(unit, night, total).status !== "AVAILABLE") {
         closedNight ??= night;
         for (const segment of present) closedAssignments.add(segment.assignmentId);
-      } else if (row.capacity !== null && total > row.capacity) {
-        // One party in a room above its beds is bringing extra bedding (a warning, #803); anyone else sharing it is overfilling.
-        const oneParty = Boolean(unit.roomLike && present[0]?.groupKey && present.every((segment) => segment.groupKey === present[0]!.groupKey));
-        if (oneParty) {
-          beddingNight ??= night;
-          for (const segment of present) beddingAssignments.add(segment.assignmentId);
-        } else {
-          overNight ??= night;
-          overAssignments = new Set([...overAssignments, ...present.map((segment) => segment.assignmentId)]);
-        }
+      }
+    }
+    for (const over of overBedsByNight(unit, segments, input.nights)) {
+      const ids = over.present.map((segment) => (segment as Segment & { assignmentId: string }).assignmentId);
+      if (over.oneParty) {
+        beddingNight ??= over.night;
+        for (const id of ids) beddingAssignments.add(id);
+      } else {
+        overNight ??= over.night;
+        overAssignments = new Set([...overAssignments, ...ids]);
       }
     }
     if (overNight) rows.push({ kind: "OVER_CAPACITY", key: `over:${unitId}`, title: `${unit.name} is over capacity`, detail: `More people are placed than the room takes, first on ${overNight}.`, assignmentIds: [...overAssignments], unitId, night: overNight });

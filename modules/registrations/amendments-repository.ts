@@ -14,6 +14,7 @@ import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/backgro
 import { isSeminarPreferenceField } from "@/modules/attendee-accounts/registration-answer-policy";
 import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
 import {
+  addUndiscountedLine,
   calculationWithLine,
   getAvailabilityMode,
   isChoiceFieldType,
@@ -33,6 +34,7 @@ import {
   applyPromoCodeToCalculation,
   type PromoCodeEvaluation,
 } from "@/modules/promo-codes/domain";
+import { storedPromoDiscount } from "@/modules/promo-codes/stored-discount";
 import { adjustmentTotalCents } from "@/modules/registrations/adjustments";
 import { issuesOnChangedAnswers, sameAnswer, splitUnconfiguredAnswers } from "@/modules/registrations/amendment-answers";
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
@@ -581,31 +583,24 @@ export function applyStoredPromo(
 ) {
   if (!redemption) return calculation;
   const eligibleSubtotalCents = calculation.subtotalCents;
-  if (
-    redemption.minimumSubtotalCentsSnapshot !== null
-    && eligibleSubtotalCents < redemption.minimumSubtotalCentsSnapshot
-  ) {
+  const stored = storedPromoDiscount({
+    discountType: redemption.discountTypeSnapshot,
+    discountValue: redemption.discountValueSnapshot,
+    maximumDiscountCents: redemption.maximumDiscountCentsSnapshot,
+    minimumSubtotalCents: redemption.minimumSubtotalCentsSnapshot,
+  }, eligibleSubtotalCents);
+  if (stored.belowMinimum) {
     throw new RegistrationAmendmentError(
       "INVALID_AMENDMENT",
       "This change would make the registration ineligible for its saved promo code. Adjust the choices or handle the discount through Finance.",
     );
   }
-  const rawDiscount = redemption.discountTypeSnapshot === "FIXED_CENTS"
-    ? redemption.discountValueSnapshot
-    : Math.floor(eligibleSubtotalCents * redemption.discountValueSnapshot / 10_000);
-  const cappedDiscount = redemption.discountTypeSnapshot === "PERCENT_BPS"
-    && redemption.maximumDiscountCentsSnapshot !== null
-    ? Math.min(rawDiscount, redemption.maximumDiscountCentsSnapshot)
-    : rawDiscount;
   const evaluation: Extract<PromoCodeEvaluation, { valid: true }> = {
     valid: true,
     code: redemption.codeSnapshot,
     normalizedCode: redemption.codeSnapshot,
     eligibleSubtotalCents,
-    discountAmountCents: Math.min(
-      eligibleSubtotalCents,
-      Math.max(0, cappedDiscount),
-    ),
+    discountAmountCents: stored.discountCents,
   };
   return applyPromoCodeToCalculation(
     definition,
@@ -1235,15 +1230,21 @@ async function prepareAmendment(
   // The stored line is one of the registration's lines before the stored promo code is applied (#803), exactly as at
   // submission: a registration-level code discounts the whole subtotal, lodging included, and its minimum is checked against
   // it. The processing fee follows the final subtotal.
-  const calculationWithLodging = storedLodgingLine
-    ? calculationWithLine(definition, prepared.registrationResponses, prepared.calculation, LODGING_LINE_KEY, storedLodgingLine as unknown as FormCalculation["lineItems"][number])
-    : prepared.calculation;
-  const pricedCalculation = applyStoredPromo(
-    definition,
-    prepared.registrationResponses,
-    calculationWithLodging,
-    registration.promoCodeRedemption,
-  );
+  //
+  // A registration submitted before promo codes covered lodging (its snapshot has no `promoCoversLodging`) keeps the old
+  // math: the code was decided on the form's own lines and the lodging line joined afterwards, undiscounted, so an unrelated
+  // answer change never lowers its total.
+  const storedLine = storedLodgingLine as unknown as FormCalculation["lineItems"][number] | null;
+  const pricedCalculation = storedLine && registration.promoCodeRedemption && pricingSnapshot.promoCoversLodging !== true
+    ? addUndiscountedLine(definition, prepared.registrationResponses, applyStoredPromo(definition, prepared.registrationResponses, prepared.calculation, registration.promoCodeRedemption), storedLine)
+    : applyStoredPromo(
+      definition,
+      prepared.registrationResponses,
+      storedLine
+        ? calculationWithLine(definition, prepared.registrationResponses, prepared.calculation, LODGING_LINE_KEY, storedLine)
+        : prepared.calculation,
+      registration.promoCodeRedemption,
+    );
   const netPaidCents = paidCents(registration);
   // Staff adjustments (#396) stay on top of whatever the new answers cost.
   const adjustmentsCents = await adjustmentTotalCents(tx, registration.id);

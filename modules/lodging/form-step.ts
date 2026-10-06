@@ -23,6 +23,10 @@ export type LodgingStepOffer = {
     unitCapacity?: number | null;
     /** The registrant chooses how many rooms. */
     roomBased?: boolean;
+    /** Per night, the beds of the rooms in service, largest first: the over-beds note is worked out from the best case. */
+    roomBeds?: Record<string, number[]> | null;
+    /** Whether the type's units provide linens: ALL (no bedding note), SOME ("Most rooms: ..."), NONE. */
+    linens?: "ALL" | "SOME" | "NONE";
   }>;
 };
 
@@ -103,7 +107,8 @@ export function roomQuestion(offer: LodgingStepOffer, choice: Pick<LodgingChoice
   const free = relaxed ? null : roomsFreeOn(offer, choice.category, chosenNights(choice));
   const highest = Math.max(1, Math.min(choice.partySize, free === null ? choice.partySize : free));
   const result = resolveRoomChoice({
-    capacity: { roomBased: true, unitCapacity: entry.unitCapacity ?? null },
+    capacity: { roomBased: true, unitCapacity: entry.unitCapacity ?? null, ...(entry.roomBeds ? { roomBeds: entry.roomBeds } : {}) },
+    nights: chosenNights(choice),
     partySize: choice.partySize, roomCount: choice.roomCount, bringsExtraBedding: choice.bringsExtraBedding, requireAcknowledgement: true,
     roomsAvailable: free !== null && free > 0 ? free : null,
   });

@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { describeRate, lodgingCategories, lodgingCategoryLabels } from "@/modules/lodging/domain";
 import {
+  chargeChangeSentence,
   fullBehaviors,
   lodgingRuleKindLabels,
   lodgingRuleKinds,
@@ -10,7 +11,8 @@ import {
 } from "@/modules/lodging/preferences-domain";
 import type { StaffLodgingRequestView, StaffLodgingRequestsView } from "@/modules/lodging/preferences-service";
 
-type Reply = { requests?: StaffLodgingRequestsView; result?: { priceNeedsReview?: boolean; chargeDeltaCents?: number } };
+type ChargeResult = { priceNeedsReview?: boolean; chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null };
+type Reply = { requests?: StaffLodgingRequestsView; result?: ChargeResult };
 type Run = (action: () => Promise<Reply>, success: string) => Promise<void>;
 
 async function call(url: string, method: string, body: unknown): Promise<Reply> {
@@ -36,19 +38,19 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
   const [view, setView] = useState(initialView);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const [chargeDeltaCents, setChargeDeltaCents] = useState<number | null>(null);
+  const [chargeChange, setChargeChange] = useState<ChargeResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [showAcknowledged, setShowAcknowledged] = useState(false);
   const base = `/api/events/${view.eventId}/lodging`;
 
   const run: Run = async (action, success) => {
-    setBusy(true); setError(""); setNotice(""); setChargeDeltaCents(null);
+    setBusy(true); setError(""); setNotice(""); setChargeChange(null);
     try {
       const result = await action();
       // The settings route sends the staff view only to someone who may read it; otherwise keep what is on screen.
       if (result.requests) setView(result.requests);
       setNotice(success);
-      if (result.result?.priceNeedsReview) setChargeDeltaCents(result.result.chargeDeltaCents ?? 0);
+      if (result.result?.priceNeedsReview) setChargeChange(result.result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That could not be saved.");
     } finally { setBusy(false); }
@@ -66,8 +68,8 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
     </div></div>
     {error ? <p className="form-error" role="alert">{error}</p> : null}
     {notice ? <p className="usage-note" role="status">{notice}</p> : null}
-    {chargeDeltaCents !== null ? <p className="form-error" role="status">
-      This change alters the lodging charge ({chargeDeltaCents < 0 ? "-" : "+"}${(Math.abs(chargeDeltaCents) / 100).toFixed(2)}), but the registration&apos;s total was not changed. Record the difference as an adjustment in{" "}
+    {chargeChange !== null ? <p className="form-error" role="status">
+      {chargeChangeSentence(chargeChange)} Record the difference as an adjustment in{" "}
       <a href={`/finance?event=${encodeURIComponent(view.eventId)}`}>Payments</a>; nothing is charged or refunded automatically.
     </p> : null}
 
@@ -193,7 +195,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
       <td>{request.category ? lodgingCategoryLabels[request.category] : "No preference"}</td>
       <td>{request.firstNight ? `${request.firstNight} to ${request.lastNight}` : "Whole event"}</td>
       <td>{request.partySize}</td>
-      <td>{request.category ? request.roomCount : "—"}{request.bringsExtraBedding ? " (bringing extra bedding)" : ""}</td>
+      <td>{request.category ? request.roomCount : "—"}{request.bringsExtraBedding ? " (bringing sleeping bags or air mattresses)" : ""}</td>
       {view.canSeeSensitive ? <td>{request.groundFloorNeeded ? "Yes" : "No"}</td> : null}
       {view.canSeeSensitive ? <td>{request.accessibleRoomNeeded ? "Yes" : "No"}</td> : null}
       <td>{request.privateRoomRequested ? "Yes" : "No"}</td>
@@ -241,6 +243,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
         <label>Last night <input type="date" name="lastNight" defaultValue={request.lastNight ?? ""} /></label>
         <label>People <input type="number" name="partySize" min={1} max={100} defaultValue={request.partySize} required /></label>
         <label>Rooms <input type="number" name="roomCount" min={1} max={100} defaultValue={request.roomCount} /></label>
+        {request.openChange ? <p className="field-hint" role="note">The registrant asked for: {request.openChange.category ? lodgingCategoryLabels[request.openChange.category] : "no preference"}, {request.openChange.partySize} {request.openChange.partySize === 1 ? "person" : "people"}{request.openChange.category ? `, ${request.openChange.roomCount} ${request.openChange.roomCount === 1 ? "room" : "rooms"}` : ""}{request.openChange.bringsExtraBedding ? ", bringing sleeping bags or air mattresses" : ""}. The fields below start from the current request.</p> : null}
         <label><input type="checkbox" name="privateRoomRequested" defaultChecked={request.privateRoomRequested} /> Private room</label>
         <label>Household <select name="householdPreference" defaultValue={request.householdPreference}><option value="TOGETHER">Together</option><option value="FLEXIBLE">Flexible</option></select></label>
         {view.canSeeSensitive ? <>

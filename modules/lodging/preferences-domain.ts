@@ -354,6 +354,13 @@ export type CategoryCapacity = {
   groundLevelUnits: number;
   /** People a typical room takes (the smallest default among its rooms); null for sites, tents and counted areas. */
   unitCapacity?: number | null;
+  /**
+   * Room-type categories: per night, the effective bed counts (`capacityOverride ?? defaultCapacity`) of the rooms in service
+   * that night, largest first. It is what "the party is larger than the beds in the rooms you picked" is worked out from.
+   */
+  roomBeds?: Record<string, number[]>;
+  /** Whether the type's units provide linens: every unit (ALL), some (SOME) or none, null counting as not provided (NONE). */
+  linens?: "ALL" | "SOME" | "NONE";
 };
 
 export type DemandRequest = { registrationId: string; category: LodgingCategory | null; nights: readonly string[]; partySize: number; roomCount?: number };
@@ -411,10 +418,28 @@ export function categoryFits(input: {
   return { fits: true as const, firstFullNight: null, minimumAvailable };
 }
 
-/** Whether the party is larger than the beds in the rooms chosen. A room's beds are the smallest "sleeps up to" among the category's rooms. */
-export function partyExceedsBeds(capacity: Pick<CategoryCapacity, "roomBased" | "unitCapacity"> | undefined, partySize: number, roomCount: number) {
-  if (!capacity?.roomBased || !capacity.unitCapacity || capacity.unitCapacity < 1) return false;
-  return partySize > Math.max(1, roomCount) * capacity.unitCapacity;
+/**
+ * The most people the chosen number of rooms can hold on every one of the nights, **best case**: the `roomCount` rooms with
+ * the most beds among those in service each night (the most generous way staff could place the party). Null when the
+ * capacity carries no bed data (then nothing is asked).
+ */
+export function bestCaseBeds(capacity: Pick<CategoryCapacity, "roomBeds" | "unitCapacity"> | undefined, roomCount: number, nights: readonly string[]) {
+  if (!capacity) return null;
+  const rooms = Math.max(1, roomCount);
+  if (!capacity.roomBeds) return capacity.unitCapacity ? capacity.unitCapacity * rooms : null;
+  let beds: number | null = null;
+  for (const night of nights.length > 0 ? nights : Object.keys(capacity.roomBeds)) {
+    const total = (capacity.roomBeds[night] ?? []).slice(0, rooms).reduce((sum, value) => sum + value, 0);
+    beds = beds === null ? total : Math.min(beds, total);
+  }
+  return beds;
+}
+
+/** Whether the party is larger than the beds of the rooms chosen, even in the best case (see `bestCaseBeds`). */
+export function partyExceedsBeds(capacity: Pick<CategoryCapacity, "roomBased" | "unitCapacity" | "roomBeds"> | undefined, partySize: number, roomCount: number, nights: readonly string[] = []) {
+  if (!capacity?.roomBased) return false;
+  const beds = bestCaseBeds(capacity, roomCount, nights);
+  return beds !== null && beds > 0 && partySize > beds;
 }
 
 export type RoomChoiceResult =
@@ -422,21 +447,28 @@ export type RoomChoiceResult =
   | { ok: false; code: "ROOM_COUNT_INVALID" | "EXTRA_BEDDING_NOT_ACKNOWLEDGED"; message: string };
 
 /**
- * The rooms a registrant may choose, and the extra-bedding acknowledgement (#803). Pure, shared by the form, the private
- * page, the server and the tests.
+ * The rooms a registrant may choose, and the over-beds acknowledgement (#803). Pure, shared by the form, the private page,
+ * the server and the tests.
  *
  * - A person-based category (a tent, a site, a counted area) is one unit: the room count is 1 and nothing is asked.
  * - A room-type category takes 1 up to the party size, and no more than the rooms available on every chosen night
- *   (`roomsAvailable`, from live capacity; null is no fixed limit).
- * - A party larger than the beds in the chosen rooms is allowed, because families may bring their own bedding, but the
- *   registrant must acknowledge it (`requireAcknowledgement`); the stored flag then records it. Staff edits do not require it.
+ *   (`roomsAvailable`, from live capacity; null is no fixed limit, and the caller passes it only when the request grows).
+ * - A party larger than the beds of the chosen rooms, even in the best case, is allowed (families may bring sleeping bags or
+ *   air mattresses) but is acknowledged. `requireAcknowledgement` is the caller's: true when a registrant sets or changes the
+ *   rooms, the party or the type, false for staff and for an unrelated edit. When it is false the stored flag is whatever
+ *   was acknowledged before (`carriedAcknowledgement`), never recomputed: an edit that is not about rooms can never fail,
+ *   and a staff edit never records an acknowledgement the registrant did not give.
  */
 export function resolveRoomChoice(input: {
-  capacity: Pick<CategoryCapacity, "roomBased" | "unitCapacity"> | undefined;
+  capacity: Pick<CategoryCapacity, "roomBased" | "unitCapacity" | "roomBeds"> | undefined;
   partySize: number;
+  nights?: readonly string[];
   roomCount?: number | null;
+  /** What the registrant ticked. */
   bringsExtraBedding?: boolean | null;
   requireAcknowledgement: boolean;
+  /** The acknowledgement already on record, kept when none is required. */
+  carriedAcknowledgement?: boolean;
   roomsAvailable?: number | null;
 }): RoomChoiceResult {
   if (!input.capacity?.roomBased) return { ok: true, roomCount: 1, bringsExtraBedding: false, extraBeddingNeeded: false };
@@ -447,17 +479,27 @@ export function resolveRoomChoice(input: {
   if (input.roomsAvailable !== null && input.roomsAvailable !== undefined && roomCount > input.roomsAvailable) {
     return { ok: false, code: "ROOM_COUNT_INVALID", message: `Only ${input.roomsAvailable} room${input.roomsAvailable === 1 ? " is" : "s are"} free for those nights. Choose fewer rooms, other nights or another type.` };
   }
-  const extraBeddingNeeded = partyExceedsBeds(input.capacity, input.partySize, roomCount);
-  if (extraBeddingNeeded && input.requireAcknowledgement && input.bringsExtraBedding !== true) {
-    return { ok: false, code: "EXTRA_BEDDING_NOT_ACKNOWLEDGED", message: `Your party is larger than the beds in ${roomCount} room${roomCount === 1 ? "" : "s"}. Confirm that you will bring extra bedding, or choose more rooms.` };
+  const extraBeddingNeeded = partyExceedsBeds(input.capacity, input.partySize, roomCount, input.nights ?? []);
+  if (!extraBeddingNeeded) return { ok: true, roomCount, bringsExtraBedding: false, extraBeddingNeeded: false };
+  if (input.bringsExtraBedding === true) return { ok: true, roomCount, bringsExtraBedding: true, extraBeddingNeeded: true };
+  if (input.requireAcknowledgement) {
+    return { ok: false, code: "EXTRA_BEDDING_NOT_ACKNOWLEDGED", message: "Your party is larger than the beds in the rooms you picked. Confirm that you will bring sleeping bags or air mattresses for the extra people." };
   }
-  return { ok: true, roomCount, bringsExtraBedding: extraBeddingNeeded, extraBeddingNeeded };
+  return { ok: true, roomCount, bringsExtraBedding: input.carriedAcknowledgement === true, extraBeddingNeeded: true };
 }
 
-/** The sentence the form and the private page show when the party is larger than the beds in the chosen rooms. */
-export function extraBeddingNote(roomCount: number) {
-  return `Your party is larger than the beds in ${roomCount} room${roomCount === 1 ? "" : "s"}; you're welcome to bring extra bedding.`;
+/**
+ * The general bedding note for a type (#803): nearly every room is bring-your-own-bedding. Nothing when every unit of the
+ * type provides linens, "Most rooms: ..." when only some do, and the plain note otherwise (an unknown counts as not provided).
+ */
+export function beddingNote(linens: CategoryCapacity["linens"] | undefined) {
+  if (linens === "ALL") return null;
+  if (linens === "SOME") return "Most rooms: bring your own bedding";
+  return "Bring your own bedding (sheets, pillow, blanket)";
 }
+
+/** The sentence the form and the private page show when the party is larger than the beds of the rooms picked. */
+export const extraBeddingNote = "Your party is larger than the beds in the rooms you picked; bring sleeping bags or air mattresses for the extra people.";
 
 // ---------------------------------------------------------------------------
 // The staff review queue
@@ -526,6 +568,9 @@ export type RequestSnapshot = {
 
 export type RegistrationFact = { confirmationCode: string; label: string; active: boolean };
 
+/** A lodging charge change after the registration's saved promo code (#803): the list change and what the registrant pays. */
+export type ChargeImpactFact = { promoCode: string | null; coversLodging: boolean; sponsored: boolean; registrantDeltaCents: number; discountDeltaCents: number };
+
 export type ReviewFacts = {
   /** The event's bookable nights. */
   nights: readonly string[];
@@ -537,9 +582,15 @@ export type ReviewFacts = {
   guardians: readonly GuardianLink[];
   capacity: Partial<Record<LodgingCategory, CategoryCapacity>>;
   /** Open registrant changes the edit policy kept from applying. */
-  changeRequests?: ReadonlyArray<{ id: string; registrationId: string; category: LodgingCategory | null; chargedCents?: number; requestedCents?: number }>;
+  changeRequests?: ReadonlyArray<{
+    id: string; registrationId: string; category: LodgingCategory | null; chargedCents?: number; requestedCents?: number;
+    /** What the registrant asked for: the rooms and whether they will bring sleeping bags or air mattresses (#803). */
+    partySize?: number; roomCount?: number; bringsExtraBedding?: boolean;
+    /** The change as the registrant would feel it after their saved promo code. */
+    impact?: ChargeImpactFact;
+  }>;
   /** What each active registration was charged for lodging, against what its request costs at today's rates. */
-  lodgingCharges?: ReadonlyArray<{ registrationId: string; chargedCents: number; currentCents: number }>;
+  lodgingCharges?: ReadonlyArray<{ registrationId: string; chargedCents: number; currentCents: number; impact?: ChargeImpactFact }>;
   /** Registrations promoted from the waitlist (automatically or by staff): their lodging request was never priced or confirmed. */
   promotedRegistrationIds?: readonly string[];
 };
@@ -577,6 +628,26 @@ function pairKey(a: string, b: string) {
  */
 function signedDollars(cents: number) {
   return `${cents < 0 ? "-" : "+"}$${(Math.abs(cents) / 100).toFixed(2)}`;
+}
+
+/**
+ * What staff are told after saving a lodging change that alters the charge (#803): the list change and, when the
+ * registration holds a saved promo code, what the registrant really pays differently (and the sponsor's share for a
+ * church-sponsored code). The Payments adjustment follows the registrant figure, never the list one.
+ */
+export function chargeChangeSentence(result: { chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null }) {
+  const list = signedDollars(result.chargeDeltaCents ?? 0);
+  const promo = result.promo;
+  if (!promo) return `This change alters the lodging charge (${list}), but the registration's total was not changed.`;
+  if (!promo.coversLodging) return `This change alters the lodging charge (${list} at list price). Code ${promo.code} does not apply to the lodging line on this registration (it was submitted before codes covered lodging), so the registrant's change is ${list}. The registration's total was not changed.`;
+  return `This change alters the lodging charge (${list} at list price). A promo code applies: after ${promo.code} the registrant's change is ${signedDollars(result.registrantDeltaCents ?? 0)}${promo.sponsored ? ` and the sponsor's share is ${signedDollars(result.sponsorDeltaCents ?? 0)}` : ""}. Adjust Payments by the registrant figure. The registration's total was not changed.`;
+}
+
+/** The list change, and the change after the registration's promo code, in words. Empty when no code is involved. */
+function impactWords(impact: ChargeImpactFact | undefined) {
+  if (!impact?.promoCode) return "";
+  if (!impact.coversLodging) return ` Code ${impact.promoCode} does not apply to the lodging line on this registration (it was submitted before codes covered lodging), so the registrant's change is the list change.`;
+  return ` After code ${impact.promoCode} the registrant's change is ${signedDollars(impact.registrantDeltaCents)}${impact.sponsored ? `, and the sponsor's share ${signedDollars(impact.discountDeltaCents)}` : `, with ${signedDollars(impact.discountDeltaCents)} more or less discount`}. Adjust Payments by that amount, not the list figure.`;
 }
 
 export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
@@ -696,8 +767,8 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
     if (request.category && request.bringsExtraBedding) {
       push({
         key: `bedding:${request.registrationId}`, kind: "EXTRA_BEDDING", fingerprint, registrationIds: [request.registrationId],
-        title: `${who}: party of ${request.partySize} in ${request.roomCount} ${request.roomCount === 1 ? "room" : "rooms"}, bringing extra bedding`,
-        detail: `The party is larger than the beds in the rooms chosen, and the registrant acknowledged bringing extra bedding. Placing them is allowed with a warning; staff can offer more rooms instead.`,
+        title: `${who}: party of ${request.partySize} in ${request.roomCount} ${request.roomCount === 1 ? "room" : "rooms"}, bringing sleeping bags or air mattresses`,
+        detail: `The party is larger than the beds in the rooms chosen (even counting the largest rooms), and the registrant acknowledged bringing sleeping bags or air mattresses. Placing them is allowed with a warning.`,
       });
     }
     if (request.afterDeadline) {
@@ -744,9 +815,9 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
   for (const change of facts.changeRequests ?? []) {
     if (!active(change.registrationId)) continue;
     push({
-      key: `change:${change.id}`, kind: "CHANGE_REQUESTED", fingerprint: `${change.id}:${change.chargedCents ?? ""}:${change.requestedCents ?? ""}`, registrationIds: [change.registrationId],
-      title: `${label(facts, change.registrationId)}: lodging charge change requested${change.chargedCents !== undefined && change.requestedCents !== undefined ? ` (${signedDollars(change.requestedCents - change.chargedCents)})` : ""}${change.category ? `, to ${lodgingCategoryLabels[change.category].toLowerCase()}` : ""}`,
-      detail: "A registrant's change that alters the lodging charge is never applied by itself. Make the change for them if it is right, then adjust the charge in Payments.",
+      key: `change:${change.id}`, kind: "CHANGE_REQUESTED", fingerprint: `${change.id}:${change.chargedCents ?? ""}:${change.requestedCents ?? ""}:${change.impact?.registrantDeltaCents ?? ""}`, registrationIds: [change.registrationId],
+      title: `${label(facts, change.registrationId)}: lodging charge change requested${change.chargedCents !== undefined && change.requestedCents !== undefined ? ` (list ${signedDollars(change.requestedCents - change.chargedCents)})` : ""}${change.category ? `, to ${lodgingCategoryLabels[change.category].toLowerCase()}` : ""}${change.partySize !== undefined ? `: ${change.partySize} ${change.partySize === 1 ? "person" : "people"}${change.category && change.roomCount !== undefined ? `, ${change.roomCount} ${change.roomCount === 1 ? "room" : "rooms"}` : ""}${change.bringsExtraBedding ? ", bringing sleeping bags or air mattresses" : ""}` : ""}`,
+      detail: `A registrant's change that alters the lodging charge is never applied by itself. Make the change for them if it is right, then adjust the charge in Payments.${impactWords(change.impact)}`,
     });
   }
 
@@ -755,9 +826,9 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
     if (!active(charge.registrationId) || charge.chargedCents === charge.currentCents) continue;
     const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
     push({
-      key: `price:${charge.registrationId}`, kind: "PRICE_DIFFERS", fingerprint: `${charge.chargedCents}:${charge.currentCents}`, registrationIds: [charge.registrationId],
+      key: `price:${charge.registrationId}`, kind: "PRICE_DIFFERS", fingerprint: `${charge.chargedCents}:${charge.currentCents}:${charge.impact?.registrantDeltaCents ?? ""}`, registrationIds: [charge.registrationId],
       title: `${label(facts, charge.registrationId)} was charged ${dollars(charge.chargedCents)} for lodging; the request costs ${dollars(charge.currentCents)}`,
-      detail: "The charge is never changed automatically after submission. If it should follow the request, adjust it in Payments.",
+      detail: `The charge is never changed automatically after submission. If it should follow the request, adjust it in Payments.${impactWords(charge.impact)}`,
     });
   }
 

@@ -1,3 +1,4 @@
+import { storedPromoDiscount, type StoredPromoTerms } from "@/modules/promo-codes/stored-discount";
 import {
   describeRate,
   lodgingCategoryLabels,
@@ -70,4 +71,78 @@ export function lodgingCharge(input: LodgingChargeInput): LodgingCharge {
 /** The lodging line a stored pricing snapshot holds, if any. */
 export function storedLodgingLine(lineItems: ReadonlyArray<{ key: string; amountCents: number }>) {
   return lineItems.find(isLodgingLine) ?? null;
+}
+
+export type RegistrationPromo = StoredPromoTerms & {
+  code: string;
+  /** The code was decided on a subtotal that includes the lodging line (`promoCoversLodging` on the pricing snapshot, #803). */
+  coversLodging: boolean;
+  /** A church-sponsored code: the discount is the sponsor's share, the rest the registrant's. */
+  sponsored: boolean;
+};
+
+/** The saved promo code of a registration, as the redemption row records it. */
+export type RedemptionFact = {
+  codeSnapshot: string;
+  discountTypeSnapshot: "FIXED_CENTS" | "PERCENT_BPS";
+  discountValueSnapshot: number;
+  maximumDiscountCentsSnapshot: number | null;
+  minimumSubtotalCentsSnapshot: number | null;
+  sponsored: boolean;
+};
+
+/**
+ * What a registration's current pricing snapshot and saved code say about a lodging change: the other lines' total, and
+ * the code with whether it covers lodging (only a snapshot written when codes started covering lodging says so; an older
+ * registration keeps the old math). A registration with no code has no promo.
+ */
+export function promoContextOf(snapshot: Record<string, unknown> | null, redemption: RedemptionFact | null): { otherCents: number; promo: RegistrationPromo | null } {
+  const lines = Array.isArray(snapshot?.lineItems) ? (snapshot!.lineItems as unknown[]) : [];
+  const otherCents = lines.reduce<number>((total, line) => {
+    const row = line && typeof line === "object" ? line as Record<string, unknown> : {};
+    return row.key === LODGING_LINE_KEY || typeof row.amountCents !== "number" ? total : total + row.amountCents;
+  }, 0);
+  if (!redemption) return { otherCents, promo: null };
+  return {
+    otherCents,
+    promo: {
+      code: redemption.codeSnapshot,
+      discountType: redemption.discountTypeSnapshot,
+      discountValue: redemption.discountValueSnapshot,
+      maximumDiscountCents: redemption.maximumDiscountCentsSnapshot,
+      minimumSubtotalCents: redemption.minimumSubtotalCentsSnapshot,
+      coversLodging: snapshot?.promoCoversLodging === true,
+      sponsored: redemption.sponsored,
+    },
+  };
+}
+
+export type LodgingChargeImpact = {
+  /** The change in the lodging line at list price (what an unpromoted registration would see). */
+  listDeltaCents: number;
+  /** The change in what the registrant pays after the registration's saved promo code (the subtotal, before any card fee). */
+  registrantDeltaCents: number;
+  /** The change in the discount: for a church-sponsored code, the sponsor's share of the change. */
+  discountDeltaCents: number;
+  promo: { code: string; coversLodging: boolean; sponsored: boolean } | null;
+};
+
+/**
+ * What changing the lodging line from `fromCents` to `toCents` really does to a registration that holds a saved promo code
+ * (#803). The code's discount is worked out the way an amendment would: on the other lines plus, when the registration's
+ * code covers lodging, the lodging line, with the code's minimum and cap. A registration submitted before codes covered
+ * lodging (`coversLodging` false) keeps the old math, so lodging is undiscounted and the registrant's change is the list change.
+ */
+export function lodgingChargeImpact(input: { otherCents: number; fromCents: number; toCents: number; promo: RegistrationPromo | null }): LodgingChargeImpact {
+  const listDeltaCents = input.toCents - input.fromCents;
+  if (!input.promo) return { listDeltaCents, registrantDeltaCents: listDeltaCents, discountDeltaCents: 0, promo: null };
+  const { promo } = input;
+  const discountOn = (lodgingCents: number) => storedPromoDiscount(promo, Math.max(0, input.otherCents + (promo.coversLodging ? lodgingCents : 0))).discountCents;
+  const discountDeltaCents = discountOn(input.toCents) - discountOn(input.fromCents);
+  return {
+    listDeltaCents,
+    registrantDeltaCents: listDeltaCents - discountDeltaCents,
+    discountDeltaCents,
+    promo: { code: promo.code, coversLodging: promo.coversLodging, sponsored: promo.sponsored },
+  };
 }

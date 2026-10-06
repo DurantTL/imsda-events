@@ -53,6 +53,10 @@ export type PublicLodgingOffer = {
     unitCapacity: number | null;
     /** A room-type category: the registrant chooses how many rooms ("How many rooms?"), and `remaining` counts rooms. */
     roomBased: boolean;
+    /** Per night, the beds of the rooms in service, largest first (room-type types): what the over-beds note is worked out from. */
+    roomBeds: Record<string, number[]> | null;
+    /** Whether the type's units provide linens, for the bring-your-own-bedding note. */
+    linens: "ALL" | "SOME" | "NONE";
   }>;
 };
 
@@ -79,6 +83,8 @@ export async function getPublicLodgingOffer(eventId: string, client: PrismaClien
       rate: context.churchBilled ? null : rateForCategory(rates, category),
       unitCapacity: capacity[category]!.unitCapacity ?? null,
       roomBased: capacity[category]!.roomBased === true,
+      roomBeds: capacity[category]!.roomBeds ?? null,
+      linens: capacity[category]!.linens ?? "NONE",
     }));
   return { nights: context.nights, deadline: context.deadlineDay, fullBehavior: context.fullBehavior, categories };
 }
@@ -163,7 +169,7 @@ export async function planRegistrationLodging(
       throw new LodgingError("CATEGORY_NOT_OFFERED", `${lodgingCategoryLabels[next.category]} is not available for this event.`);
     }
     // The choice is kept as asked (rooms between 1 and the party; extra bedding acknowledged), with no availability check.
-    const choice = resolveRoomChoice({ capacity: capacity[next.category], partySize, roomCount: wanted.roomCount, bringsExtraBedding: wanted.bringsExtraBedding, requireAcknowledgement: true });
+    const choice = resolveRoomChoice({ capacity: capacity[next.category], partySize, nights, roomCount: wanted.roomCount, bringsExtraBedding: wanted.bringsExtraBedding, requireAcknowledgement: true });
     if (!choice.ok) throw new LodgingError(choice.code, choice.message);
     next.roomCount = choice.roomCount;
     next.bringsExtraBedding = choice.bringsExtraBedding;
@@ -187,7 +193,7 @@ export async function planRegistrationLodging(
       throw new LodgingError("CATEGORY_FULL", `${lodgingCategoryLabels[next.category]} is full for those nights. Choose another type or other nights.`);
     }
     const choice = resolveRoomChoice({
-      capacity: categoryCapacity, partySize, roomCount: wanted.roomCount, bringsExtraBedding: wanted.bringsExtraBedding, requireAcknowledgement: true,
+      capacity: categoryCapacity, partySize, nights, roomCount: wanted.roomCount, bringsExtraBedding: wanted.bringsExtraBedding, requireAcknowledgement: true,
       roomsAvailable: free.minimumAvailable,
     });
     if (!choice.ok) throw new LodgingError(choice.code, choice.message);

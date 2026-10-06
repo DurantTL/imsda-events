@@ -1694,6 +1694,34 @@ export function calculationWithLine(
   return finalizeCalculation(definition, registrationResponses, line ? [...others, line] : others);
 }
 
+/**
+ * Adds a registration-level line that no promo code touches to a calculation that may already carry a discount: the
+ * discount was worked out on the other lines, so the line is added after it (subtotal, pre-discount subtotal and lines) and
+ * the processing fee follows the new subtotal. Only an amendment of a registration submitted before promo codes covered
+ * lodging (#803) uses it; every new calculation adds the line first (`calculationWithLine`).
+ */
+export function addUndiscountedLine<T extends FormCalculation & { preDiscountSubtotalCents?: number }>(
+  definition: RegistrationFormDefinition,
+  registrationResponses: Record<string, unknown>,
+  calculation: T,
+  line: FormCalculation["lineItems"][number],
+): T {
+  const payment = definition.payment;
+  const cardSelected = Boolean(payment?.enabled && registrationResponses[payment.paymentMethodFieldKey] === payment.cardOptionValue);
+  const before = calculation.lineItems.find((item) => item.key === line.key)?.amountCents ?? 0;
+  const lineItems = [...calculation.lineItems.filter((item) => item.key !== line.key), line];
+  const subtotalCents = calculation.subtotalCents - before + line.amountCents;
+  const processingFeeCents = processingFeeForSubtotal(payment, subtotalCents, cardSelected);
+  return {
+    ...calculation,
+    lineItems,
+    subtotalCents,
+    processingFeeCents,
+    totalCents: subtotalCents + processingFeeCents,
+    ...(calculation.preDiscountSubtotalCents !== undefined ? { preDiscountSubtotalCents: calculation.preDiscountSubtotalCents - before + line.amountCents } : {}),
+  };
+}
+
 export function processingFeeForSubtotal(
   payment: RegistrationFormDefinition["payment"],
   subtotalCents: number,

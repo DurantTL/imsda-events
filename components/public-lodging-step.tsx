@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { describeRate, lodgingCategoryLabels } from "@/modules/lodging/domain";
-import { extraBeddingNote } from "@/modules/lodging/preferences-domain";
+import { beddingNote, extraBeddingNote } from "@/modules/lodging/preferences-domain";
 import {
   categoryIsFull,
   chosenNights,
@@ -41,6 +41,9 @@ export function PublicLodgingStep({ offer, choice, attendees, issues, ignoreFull
     onChange({ ...next, roomCount: rooms, bringsExtraBedding: question.extraBeddingNeeded ? next.bringsExtraBedding : false });
   };
   const rooms = roomQuestion(offer, choice, ignoreFull);
+  // Nearly every room is bring-your-own-bedding: a general note for any chosen type unless every unit of it provides linens.
+  const chosenEntry = choice.category === "" ? undefined : offer.categories.find((option) => option.category === choice.category);
+  const bedding = chosenEntry ? beddingNote(chosenEntry.linens) : null;
   const maxParty = Math.max(1, attendees.length);
   return (
     <div className="public-registration-lodging" data-testid="lodging-step">
@@ -82,6 +85,7 @@ export function PublicLodgingStep({ offer, choice, attendees, issues, ignoreFull
             {Array.from({ length: maxParty }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count}</option>)}
           </select>
         </label>
+        {bedding ? <p data-testid="lodging-bedding">{bedding}</p> : null}
         {rooms.asked ? (
           <label>How many rooms?
             <select value={choice.roomCount} onChange={(event) => set({ roomCount: Number(event.target.value) })} data-testid="lodging-room-count">
@@ -91,8 +95,8 @@ export function PublicLodgingStep({ offer, choice, attendees, issues, ignoreFull
         ) : null}
         {rooms.asked && rooms.extraBeddingNeeded ? (
           <p role="note" data-testid="lodging-extra-bedding">
-            {extraBeddingNote(choice.roomCount)}{" "}
-            <label><input type="checkbox" checked={choice.bringsExtraBedding} onChange={(event) => set({ bringsExtraBedding: event.target.checked })} /> We will bring extra bedding</label>
+            {extraBeddingNote}{" "}
+            <label><input type="checkbox" checked={choice.bringsExtraBedding} onChange={(event) => set({ bringsExtraBedding: event.target.checked })} /> We will bring sleeping bags or air mattresses</label>
           </p>
         ) : null}
         <label>Everyone on this registration
