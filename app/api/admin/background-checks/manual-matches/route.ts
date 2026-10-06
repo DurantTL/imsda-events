@@ -4,7 +4,7 @@ import { listManualBackgroundCheckMatches } from "@/modules/background-checks/re
 import { withRequestContext } from "@/lib/request-context";
 
 /**
- * Background-check matches staff made by hand (#527): a staff decision that
+ * Sterling Volunteers matches staff made by hand (#527): a staff decision that
  * holds across refreshes and uploads until staff undo it. Staff-only.
  */
 async function getHandler() {

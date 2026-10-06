@@ -9,7 +9,7 @@ export { clubYearChoices };
  * drafts, one per entry. Only what a club needs is kept: names, roles, ages,
  * and class levels for the roster, and the leader and co-leader's name and
  * email for invites. Addresses, phone numbers, and the child-protection
- * answers are never read (ADR 0005 keeps background-check data off rosters).
+ * answers are never read (ADR 0005 keeps Sterling Volunteers data off rosters).
  */
 
 export const CLUB_IMPORT_FORM_ID = "89";

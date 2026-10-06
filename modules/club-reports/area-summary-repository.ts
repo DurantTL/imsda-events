@@ -12,7 +12,7 @@ import { directorGrantIsActive } from "@/modules/organizations/director-grants-d
 
 /**
  * Every active club's report summary for a club year: read-only, counts and
- * points only. Sterling Volunteers are the same counts-only reminder figures a
+ * points only. Sterling Volunteers shows the same counts-only reminder figures a
  * coordinator already sees on a club (#479), never a name or note. Director
  * names are the club's current Director role holders.
  */

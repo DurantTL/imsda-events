@@ -116,7 +116,7 @@ describe("club check-in panel markup (#412)", () => {
     expect(markup).toContain("Ankeny Son-Seekers");
     expect(markup).toContain("REG-A1");
     expect(markup).toContain("$63.00 billed to church");
-    expect(markup).toContain("Not in compliance with Sterling Volunteers");
+    expect(markup).toContain("Sterling Volunteers needed");
     expect(markup).toContain("Check in all (1)");
     expect(markup).not.toContain("Pay");
     expect(markup).not.toContain("Refund");

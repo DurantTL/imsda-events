@@ -22,7 +22,7 @@ type ImportResponse = {
 };
 
 /**
- * The background-check CSV upload (#388, #427, #527): one stored list,
+ * The Sterling Volunteers CSV upload (#388, #427, #527): one stored list,
  * replaced wholesale on every upload. Previews the counts an upload would
  * change — added, changed, dropped — before saving; matching a row to a
  * person happens afterward, at lookup, not here.

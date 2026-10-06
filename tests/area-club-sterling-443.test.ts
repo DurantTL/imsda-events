@@ -147,3 +147,20 @@ describe("the Area Coordinator club page (#443)", () => {
     expect(source).toContain("canSeeIssuesTextForAreaClub");
   });
 });
+
+describe("staff acting as an Area Coordinator (#442, #443)", () => {
+  it("gets the note on a club in scope through the same viewer check, with no attendee grant of their own", async () => {
+    mocks.areaGrantFindUnique.mockResolvedValue(null);
+    mocks.getCurrentAttendee.mockResolvedValue({ account: null, via: null, sessionId: null });
+    mocks.currentStaffActingContext.mockResolvedValue({ role: "AREA_COORDINATOR" });
+    const props = await overviewProps();
+    expect(props.backgroundChecks).toEqual({ includeNotes: true });
+  });
+
+  it("acting as a club director never gets the note, and the club page is not found", async () => {
+    mocks.areaGrantFindUnique.mockResolvedValue(null);
+    mocks.getCurrentAttendee.mockResolvedValue({ account: null, via: null, sessionId: null });
+    mocks.currentStaffActingContext.mockResolvedValue({ role: "CLUB_DIRECTOR" });
+    await expect(AreaClubPage(params("club-1"))).rejects.toThrow("NOT_FOUND");
+  });
+});

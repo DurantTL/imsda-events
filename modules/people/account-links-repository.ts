@@ -110,7 +110,7 @@ export async function linkAttendeeAccountToPerson(accountId: string, rawInput: u
         evidenceReference: input.evidenceReference,
       },
     });
-    // #527: the account's email is matching evidence for the background-check list; best effort.
+    // #527: the account's email is matching evidence for the Sterling Volunteers list; best effort.
     await refreshBackgroundCheckMatchesSafely([input.personId]);
     return serializeAttendeeAccountLink(created);
   } catch (error) {

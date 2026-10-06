@@ -1,5 +1,5 @@
 /**
- * The background-check list's "issues" column (#544, Caleb's decision).
+ * The Sterling Volunteers list's "issues" column (#544, Caleb's decision).
  *
  * The column records a person's overall standing, not only driving:
  * - `BGC`: the background screening.
@@ -77,14 +77,14 @@ export function parseIssues(text: string | null | undefined): ParsedIssues {
 
 /**
  * The parsed items as readable reasons for staff, in the order written, as of
- * `today`: "Marked Non-Driver", "Sterling Volunteers expired", "Sterling Volunteers
+ * `today`: "Marked Non-Driver", "Background screening expired", "Background screening
  * expiring (10/04/2026)", "Child-protection training not completed", and so
  * on. Unrecognised items are left to the text shown beside them.
  */
 export function describeIssues(text: string | null | undefined, today: string): string[] {
   return parseIssues(text).items.map((item) => {
     if (item.kind === "NON_DRIVER") return "Marked Non-Driver";
-    const subject = item.kind === "BGC" ? "Sterling Volunteers" : "Child-protection training";
+    const subject = item.kind === "BGC" ? "Background screening" : "Child-protection training";
     if (item.date === null) return item.kind === "BGC" ? `${subject} expired` : `${subject} not completed`;
     return item.date < today ? `${subject} expired (${formatIssueDate(item.date)})` : `${subject} expiring (${formatIssueDate(item.date)})`;
   });

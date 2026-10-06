@@ -19,7 +19,7 @@ import { SortOrderNote } from "@/components/list-sort";
  * Read-only cross-club report views shared by the Area Coordinator's Clubs
  * section and the conference office. `clubHref` / `reportHref` let each
  * workspace link to its own view-only club and report pages. Counts and
- * points only: Sterling Volunteers are counts, never names or notes.
+ * points only: Sterling Volunteers shows counts, never names or notes.
  */
 
 const shortMonth = (month: string) => new Date(`${month}-15T12:00:00Z`).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });

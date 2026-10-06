@@ -1,4 +1,6 @@
 import { isValidElement, type ReactElement, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -347,5 +349,38 @@ describe("the staff overview's roster year (#541)", () => {
     const props = rosterProps(await staffOverview("2026-27"));
     expect(props).toMatchObject({ clubYear: "2026-27", readOnly: true, canSeeBirthDates: true, birthDatesEndpoint: "/api/admin/organizations/club-1/roster/birth-dates" });
     expect(rosterProps(await staffOverview())).toMatchObject({ clubYear: "2026-27", canSeeBirthDates: true });
+  });
+});
+
+describe("the note reaches an Area Coordinator's roster and never a director's (#443)", () => {
+  const adult = {
+    id: "adult-1", firstName: "Pat", lastName: "Pathfinder", attendeeType: "ADULT", role: "", classLevel: null, gender: null,
+    status: "ACTIVE", source: "DIRECTOR", age: 30, reportedAge: null, birthDateNeeded: false, updatedAt: "2026-09-01T00:00:00.000Z",
+  };
+  const rosterHtml = async (backgroundChecks: { includeNotes: boolean }) => {
+    mocks.listRoster.mockResolvedValue([adult]);
+    // Like the real repository: the note only comes back when it was asked for.
+    mocks.clubRosterComplianceStatuses.mockImplementation(async (_org: string, _year: string, options: { includeNotes: boolean }) => ({
+      statuses: { "adult-1": { state: "NOT_COMPLIANT", note: options.includeNotes ? "Synthetic note for the coordinator" : null, reasons: [] } },
+      notInCompliance: 1, expiringSoon: 0, missing: 0,
+    }));
+    const tree = await ClubOverview({
+      organizationId: "club-1", honorsHref: "/account/area/club-1/honors", reportHref: () => "#", reportsEditable: false, backgroundChecks,
+    });
+    const roster = componentElements(tree).find((element) => element.type === ClubRosterWorkspace);
+    expect(roster).toBeDefined();
+    return renderToStaticMarkup(createElement(ClubRosterWorkspace, roster!.props as Parameters<typeof ClubRosterWorkspace>[0]));
+  };
+
+  it("renders each adult's status and the full note for an Area Coordinator", async () => {
+    const html = await rosterHtml({ includeNotes: true });
+    expect(html).toContain("Not in compliance");
+    expect(html).toContain("Synthetic note for the coordinator");
+  });
+
+  it("renders the status without any note when notes are not allowed", async () => {
+    const html = await rosterHtml({ includeNotes: false });
+    expect(html).toContain("Not in compliance");
+    expect(html).not.toContain("Synthetic note");
   });
 });

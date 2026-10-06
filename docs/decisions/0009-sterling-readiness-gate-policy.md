@@ -68,7 +68,7 @@ principle for protected medical data, applied to screening readiness instead.
 
 **Decision needed:** exact notification wording for `ACTION_REQUIRED` and
 `EXPIRED` states — what a worker or their supervisor is told, and whether the
-notification names the requirement (e.g., "Sterling Volunteers") without naming
+notification names the requirement (e.g., "background check") without naming
 the provider or process detail.
 
 ### 4. Field allowlist, retention, and refresh cadence

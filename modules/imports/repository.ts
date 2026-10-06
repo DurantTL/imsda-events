@@ -785,7 +785,7 @@ export async function commitImportRun(eventId: string, importRunId: string, acto
     });
   }, { timeout: 30_000 });
 
-  // #527: imported people on the background-check list are matched after commit; best effort.
+  // #527: imported people on the Sterling Volunteers list are matched after commit; best effort.
   await refreshBackgroundCheckMatchesForRegistrations(touchedRegistrationIds);
   return (await getImportRun(eventId, importRunId))!;
 }

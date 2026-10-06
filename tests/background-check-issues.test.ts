@@ -57,11 +57,11 @@ describe("readable reasons for staff (#544)", () => {
 
   it("says what each item means, in the order written", () => {
     expect(describeIssues("Non-Driver", today)).toEqual(["Marked Non-Driver"]);
-    expect(describeIssues("BGC", today)).toEqual(["Sterling Volunteers expired"]);
+    expect(describeIssues("BGC", today)).toEqual(["Background screening expired"]);
     expect(describeIssues("Training", today)).toEqual(["Child-protection training not completed"]);
     expect(describeIssues("Training (10/04/26),BGC (09/30/26), non driver", today)).toEqual([
       "Child-protection training expiring (10/04/2026)",
-      "Sterling Volunteers expired (09/30/2026)",
+      "Background screening expired (09/30/2026)",
       "Marked Non-Driver",
     ]);
   });

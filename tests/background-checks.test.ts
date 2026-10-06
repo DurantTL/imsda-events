@@ -1529,7 +1529,7 @@ describe("club page compliance (#427, #527)", () => {
     expect(JSON.stringify(flags)).not.toContain("Synthetic");
     const withNotes = await listEventBackgroundFlags("event-1", { includeNotes: true });
     expect(withNotes!.people.map((flag) => [flag.attendeeId, flag.issuesNote])).toEqual([["roster-no", "Synthetic issue, Non-Driver, BGC"], ["none", null]]);
-    expect(withNotes!.people[0]!.issueReasons).toEqual(["Marked Non-Driver", "Sterling Volunteers expired"]);
+    expect(withNotes!.people[0]!.issueReasons).toEqual(["Marked Non-Driver", "Background screening expired"]);
     // Without includeNotes there is no text and no reason: nothing to leak.
     expect(flags!.people.every((flag) => flag.issueReasons.length === 0)).toBe(true);
     expect(JSON.stringify(flags)).not.toContain("Non-Driver");

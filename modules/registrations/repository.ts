@@ -493,7 +493,7 @@ export async function createRegistration(eventId: string, input: RegistrationInp
     return registration.id;
   });
 
-  // #527: a person on the background-check list is matched without a re-upload.
+  // #527: a person on the Sterling Volunteers list is matched without a re-upload.
   await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
   return getRegistrationById(eventId, registrationId);
 }
@@ -781,7 +781,7 @@ export async function updateRegistrationAttendeeEmail(
     });
   });
 
-  // An email is matching evidence for the background-check list (#527).
+  // An email is matching evidence for the Sterling Volunteers list (#527).
   await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
   return getRegistrationById(eventId, registrationId);
 }

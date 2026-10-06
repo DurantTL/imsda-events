@@ -4,7 +4,7 @@ import { listNameOnlyBackgroundCheckMatches } from "@/modules/background-checks/
 import { withRequestContext } from "@/lib/request-context";
 
 /**
- * Background-check rows matched on the name alone because the site didn't
+ * Sterling Volunteers rows matched on the name alone because the site didn't
  * match (#598), for a staff spot check. Staff-only.
  */
 async function getHandler() {

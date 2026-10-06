@@ -422,7 +422,7 @@ export function ClubRosterWorkspace({
             title={complianceFilter && complianceStatuses ? "No one matches this filter" : "No one is on the roster yet"}
           >
             {complianceFilter && complianceStatuses
-              ? "Choose a different background-check filter to see the rest of the roster."
+              ? "Choose a different Sterling Volunteers filter to see the rest of the roster."
               : readOnly
                 ? "This club's roster has no one on it yet."
                 : "Add regular members one at a time or import a CSV. You can add event-only guests when registering."}

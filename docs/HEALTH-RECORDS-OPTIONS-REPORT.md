@@ -246,7 +246,7 @@ ADR 0005 is **Proposed**, except for Addendum A (roster birth dates), which is
     key-operations owners.
 
 Addendum A says plainly that it **does not approve medical, insurance, or
-background-check data**. A new **Addendum B: club health records** would record
+Sterling Volunteers data**. A new **Addendum B: club health records** would record
 the decisions in §6 below. It follows the same pattern as Addendum A.
 
 ## 5. What's needed from UltraCamp

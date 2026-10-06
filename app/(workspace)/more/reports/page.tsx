@@ -239,7 +239,7 @@ export default async function OperationalReportsPage({
               <span className="report-icon coral"><ShieldAlert aria-hidden="true" size={19} /></span>
               <div>
                 <p className="eyebrow">Youth or children&apos;s event</p>
-                <h2>Sterling Volunteers</h2>
+                <h2>Sterling Volunteers needed</h2>
                 <p>
                   Adults registered: {backgroundFlags.adults}. Not in compliance with Sterling Volunteers through
                   {" "}{backgroundFlags.lastDay}: {backgroundFlags.people.length}. Registration and check-in aren&apos;t blocked;

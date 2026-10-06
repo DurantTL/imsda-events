@@ -166,7 +166,7 @@ export function centuryForTwoDigitYear(twoDigit: number, currentYear: number) {
  * calendar date (`02/30/2014`) or a year before 1900; it doesn't check
  * whether the date is in the future or implausibly old — use
  * `birthDateProblem` for that. Pass `allowTwoDigitYear: false` for dates
- * that aren't birth dates (a Sterling Volunteers expiration, say), where the
+ * that aren't birth dates (an expiration date from Sterling Volunteers, say), where the
  * century rule would misread `6/30/28` as 1928: `M/D/YY` is then rejected.
  */
 export function parseRosterBirthDateInput(

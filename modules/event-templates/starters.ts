@@ -99,7 +99,7 @@ export function starterDescription(starter: StarterEventTemplate) {
   }
   if (starter.locations?.length) {
     const names = starter.locations.map((location) => location.name).join(" and ");
-    return `Starter set: created from the built-in "${form?.name ?? starter.name}" form (${starter.formTemplateKey}) with church billing and adult Sterling Volunteers on. It creates two locations, ${names}, with no dates. Fill in the sites and dates under Event settings > Locations. This template sets no prices or capacity: set the Fall Camporee fee on the draft event before publishing.`;
+    return `Starter set: created from the built-in "${form?.name ?? starter.name}" form (${starter.formTemplateKey}) with church billing and the adult Sterling Volunteers requirement on. It creates two locations, ${names}, with no dates. Fill in the sites and dates under Event settings > Locations. This template sets no prices or capacity: set the Fall Camporee fee on the draft event before publishing.`;
   }
   const source = form ? `the built-in "${form.name}" form (${starter.formTemplateKey})` : `the ${starter.formTemplateKey} form`;
   const features = formPriceFeatures(starter.formTemplateKey);

@@ -54,7 +54,7 @@ export function MatchAnywayDialog({
 }
 
 /**
- * Staff review for the background-check list (#527): entries or people an
+ * Staff review for the Sterling Volunteers list (#527): entries or people an
  * upload couldn't match with confidence, and entries that match no one yet.
  * Nothing here is guessed — staff pick a candidate by hand, or say none of
  * them is right. A pick is a staff decision: it holds across refreshes and

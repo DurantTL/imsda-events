@@ -7,7 +7,7 @@ import { withRequestContext } from "@/lib/request-context";
 type RouteContext = { params: Promise<{ matchId: string }> };
 
 /**
- * Undo a background-check match made by hand (#527): the automatic rules
+ * Undo a Sterling Volunteers match made by hand (#527): the automatic rules
  * apply to that person again. 404 for a match that no longer exists, 400 for
  * one that wasn't made by hand. Staff-only.
  */

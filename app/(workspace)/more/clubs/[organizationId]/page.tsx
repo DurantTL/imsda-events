@@ -58,7 +58,7 @@ export default async function EventClubPage({
           <div className="section-heading">
             <div>
               <p className="eyebrow">Youth or children&apos;s event · the club doesn&apos;t see this</p>
-              <h2>Sterling Volunteers</h2>
+              <h2>Sterling Volunteers needed</h2>
               <p>Adults from this club who are not in compliance with Sterling Volunteers through {backgroundFlags.lastDay}. Nothing is blocked.</p>
             </div>
           </div>

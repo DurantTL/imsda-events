@@ -16,7 +16,7 @@ import type { HonorYearSummary } from "@/modules/honors/member-honor-domain";
 
 export type EventsTileSummary = { open: number; registered: number };
 
-/** Background-check counts only (#479) — never a name, so this is safe for any caller allowed the roster's counts. */
+/** Sterling Volunteers counts only (#479) — never a name, so this is safe for any caller allowed the roster's counts. */
 export type ComplianceTileSummary = { missing: number; notInCompliance: number; expiringSoon: number };
 
 export function ClubYearTiles({
@@ -37,7 +37,7 @@ export function ClubYearTiles({
   /** Null hides the tile: honors are visible to anyone who can view the roster, but a caller may not have loaded them. */
   honors: HonorYearSummary | null;
   honorsHref: string;
-  /** Null hides the tile: the viewer isn't allowed background-check information at all. */
+  /** Null hides the tile: the viewer isn't allowed Sterling Volunteers information at all. */
   compliance: ComplianceTileSummary | null;
   complianceHref: string;
   events: EventsTileSummary;

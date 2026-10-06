@@ -1,5 +1,5 @@
 /**
- * Background-check request errors a route turns into a clear status instead
+ * Sterling Volunteers request errors a route turns into a clear status instead
  * of a 500 (#527). Messages are operator-facing text written here, never
  * record data.
  */

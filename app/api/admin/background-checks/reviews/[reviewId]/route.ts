@@ -13,7 +13,7 @@ const resolveSchema = z.discriminatedUnion("type", [
 ]);
 
 /**
- * Resolving one background-check review by hand (#527): match it to one of
+ * Resolving one Sterling Volunteers review by hand (#527): match it to one of
  * the listed candidates (a staff match, held across refreshes and uploads
  * until staff undo it), or dismiss it. A dismissal holds until the next
  * upload replaces the list: that entry is matched to no one meanwhile, and

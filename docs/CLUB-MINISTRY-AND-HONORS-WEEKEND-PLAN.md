@@ -56,7 +56,7 @@ stays the canonical roadmap. Nothing here changes #98 until a human approves it.
   - **Encrypted birth dates** on club rosters, with the database security that
     implies (Section 6.5).
 - **Decisions:** billing (church), locations, rosters kept on file, birth dates,
-  first-come classes, sessions, minimum age, and Sterling Volunteers are settled.
+  first-come classes, sessions, minimum age, and the Sterling Volunteers rules are settled.
   Spanish comes through browser translation. Still open: sign-off on the
   birth-date security design (Section 9).
 
@@ -75,7 +75,7 @@ Confirmed answers from Caleb (September 22, 2026):
 
 - Clubs should **register once** and then just select who is going for Honors
   Weekend and Camporee.
-- **Adult background-check (Sterling) readiness** is needed for the April event.
+- **Adult Sterling Volunteers readiness** is needed for the April event.
 - **Honor/class sign-ups with capacity limits** are needed.
 - **Camp Meeting** needs rooms/tents/RV sites **and** meal plans in the system.
 - WR26 door payments use Square's **in-person rate (2.6% + 15¢)**. Shipped in #351.
@@ -136,7 +136,7 @@ models:
 | Area | CMMS-1 model / behavior |
 | --- | --- |
 | Clubs | `Club` with type (Pathfinder, Adventurer, Eager Beaver), code, district; directors linked by `ClubMembership` |
-| Yearly roster | `ClubRosterYear` per club per year. **Rollover** copies active members into the new year and keeps the old one. `RosterMember` holds role (Pathfinder, Adventurer, TLT, Staff, Child, Director, Counselor), birth date/age, status, rollover status, Master Guide, swim test, background-check date/cleared, consents, emergency contact, **and medical/insurance fields** |
+| Yearly roster | `ClubRosterYear` per club per year. **Rollover** copies active members into the new year and keeps the old one. `RosterMember` holds role (Pathfinder, Adventurer, TLT, Staff, Child, Director, Counselor), birth date/age, status, rollover status, Master Guide, swim test, Sterling Volunteers date/cleared, consents, emergency contact, **and medical/insurance fields** |
 | Event registration | One `EventRegistration` per club per event. The director selects roster members as `RegistrationAttendee`s and answers **club-level and per-attendee** questions. Statuses: draft → submitted → reviewed / needs changes → approved / rejected. Walk-ins supported |
 | Honor catalog | `ClassCatalog` (type: Honor, Specialty, Workshop, Required) with `ClassRequirement` eligibility: **min age, max age, member role, completed prerequisite honor, Master Guide** |
 | Class periods | `EventClassTimeslot` (label, start/end, order) |
@@ -228,7 +228,7 @@ A further 15 people were never assigned a site.
 - A "Sterling Check" sheet listed each staff member and adult with a check
   result: **Good**, **Not Found**, **Not Compliant**, or **Error**.
 - About 100 people were checked by hand; 93 were recorded as Good.
-- Adult background-check readiness is therefore already part of Honors Weekend
+- Adult Sterling Volunteers readiness is therefore already part of Honors Weekend
   practice, not only Camporee.
 
 **What this changes in the plan:**
@@ -244,7 +244,7 @@ A further 15 people were never assigned a site.
    actually used.
 5. **Spanish speakers need to be able to register** (one site used a Spanish
    form in 2026). For 2027 that's through browser translation (Section 6.4).
-6. **Staff and adult background-check status** is needed for Honors Weekend as
+6. **Staff and adult Sterling Volunteers status** is needed for Honors Weekend as
    well as Camporee.
 7. Cabin assignment and check-in were done on paper. Check-in can move to the
    existing QR check-in; cabins can stay on paper for 2027.
@@ -323,7 +323,7 @@ reproduced here.
 | Spanish (2026: one Spanish-only form) | Not supported | **Browser translation** | Browser translation | Browser translation | T1 (Section 6.4) |
 | Teacher and site rosters (print) | Printable run rosters exist | **Needed** | — | — | H6 |
 | Class attendance + honor sign-off | No | Paper, as in 2026 | Nice | — | #209/#197 later |
-| Background-check readiness | No (policy gate #218) | **Done by hand in 2026**; needed | **Needed** | Maybe | #115, #113, #218 |
+| Sterling Volunteers readiness | No (policy gate #218) | **Done by hand in 2026**; needed | **Needed** | Maybe | #115, #113, #218 |
 | Post-event church invoice | Billing mode only | Manual report acceptable | **Needed by May** | — | #165–#167 |
 | Campsite assignment | No | — | Likely | Needed (sites) | #89 / #198–#200 |
 | Lodging (rooms, tents, RV) | No | — | — | **Needed** | #198–#200 |
@@ -451,7 +451,7 @@ Each slice is one issue and one PR.
   encrypted and shown only to that club's directors and authorized staff
   (Section 6.5). The design was approved on 2026-09-22 (ADR 0005 Addendum A); H2
   goes live for real directors once `docs/SERVER-SECURITY-CHECKLIST.md` is done.
-- No medical, insurance, or background-check fields (principle 5). Dietary needs
+- No medical, insurance, or Sterling Volunteers fields (principle 5). Dietary needs
   and other event questions stay on each event's registration.
 - Carves out narrow versions of #183 and #184.
 
@@ -537,7 +537,7 @@ two real directors before registration opens.
 | --- | --- | --- |
 | Reuse the roster and "who's going" | Clubs register once (H2/H3) | — |
 | Roster rollover and CSV re-import | Directors refresh for the new year | #184 (narrow) |
-| Background-check readiness for adults | Confirmed requirement | #115 → #113; **human gate #218** before any real data |
+| Sterling Volunteers readiness for adults | Confirmed requirement | #115 → #113; **human gate #218** before any real data |
 | Set up Camporee 2027 from a template or clone | Avoid hand-building | #152, #157 |
 | Campsite assignment | Likely needed | #89 (grouping) |
 | **Post-event church invoice** | Billed after attendance | #165 → #166 → #167 (human approval); build Feb–May |
@@ -650,7 +650,7 @@ until ADR 0005 is approved.
 | Nov 1 → Nov 20 | H5, H6; seed the honor catalog; re-test key flows with Chrome translation to Spanish; rehearse with 1–2 directors, including one Spanish-speaking director using browser translation |
 | Late Nov | Buffer; set up the 2027 sites and offerings |
 | **Dec 2026** | **Honors Weekend registration opens** |
-| Dec → Jan | Background-check readiness for Honors Weekend staff and adults (#115, #113; #218 approval); roster rollover; Camporee setup from template (#152, #157); campsite grouping (#89) |
+| Dec → Jan | Sterling Volunteers readiness for Honors Weekend staff and adults (#115, #113; #218 approval); roster rollover; Camporee setup from template (#152, #157); campsite grouping (#89) |
 | Late Feb – Mar 2027 | **Honors Weekend sites** (2026 pattern); rosters from H6; QR check-in |
 | Jan/Feb | **Camporee registration opens** |
 | Feb → Mar | Camp Meeting: #153, #155, #104; lodging #198–#200; meals #210; #327 |

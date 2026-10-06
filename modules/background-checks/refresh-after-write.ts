@@ -3,7 +3,7 @@ import { getPrisma } from "@/lib/prisma";
 import { describeError, logError, logInfo } from "@/lib/logger";
 
 /**
- * Fills the background-check match cache after a write that adds or edits a
+ * Fills the Sterling Volunteers match cache after a write that adds or edits a
  * person (#527 B5): registrations and their status changes, answer edits,
  * amendments, transfers, substitutions, imports, club imports, account
  * links, attendee-type backfills, and roster edits. Always after the write

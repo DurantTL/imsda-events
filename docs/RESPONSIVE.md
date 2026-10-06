@@ -65,7 +65,7 @@ writes anything, refuses a database that is not a seeded dev or CI one
 must exist). Sessions are always revoked and Prisma disconnected, even when the
 browser fails to start. It writes synthetic rows whose ids start with
 `mobilecheck` (two churches, two clubs, two accounts with a placeholder
-authenticator, a roster, a monthly report, invites, a background-check list and
+authenticator, a roster, a monthly report, invites, a Sterling Volunteers list and
 a club event) and mints sessions that skip the second step. Nothing in it is a
 real person.
 

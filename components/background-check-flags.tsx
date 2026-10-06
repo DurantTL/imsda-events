@@ -5,7 +5,7 @@ import type { BackgroundFlag } from "@/modules/background-checks/repository";
 
 const badgeTitles = {
   MISSING: "No Sterling Volunteers record on file.",
-  EXPIRED: "Their Sterling Volunteers has expired.",
+  EXPIRED: "Their Sterling Volunteers record has expired.",
   NOT_COMPLIANT: "The latest roster import marks them not in compliance.",
 } as const;
 
@@ -17,7 +17,7 @@ const badgeTitles = {
 export function BackgroundCheckBadge({ state }: { state?: BackgroundFlag["state"] }) {
   return (
     <span className="status-chip coral background-check-badge" title={badgeTitles[state ?? "MISSING"]}>
-      <ShieldAlert aria-hidden="true" size={12} /> Not in compliance with Sterling Volunteers
+      <ShieldAlert aria-hidden="true" size={12} /> Sterling Volunteers needed
     </span>
   );
 }

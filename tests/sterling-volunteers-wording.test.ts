@@ -13,8 +13,19 @@ const root = process.cwd();
 const scanned = ["app", "components", "modules", "lib", "docs", "README.md"];
 const extensions = new Set([".ts", ".tsx", ".md", ".mdx", ".css"]);
 
-/** Files that may keep the old words, with the reason. Empty on purpose. */
-const allowlist: Record<string, string> = {};
+/** Files that may keep the old words, with the reason. Each entry needs a reason. */
+const allowlist: Record<string, string> = {
+  "docs/decisions/0005-protected-records-policy.md": "ADR 0005 is a policy record; its wording is not rewritten.",
+  "docs/decisions/0009-sterling-readiness-gate-policy.md": "ADR 0009 holds an open policy question about notification wording; the old wording is the question.",
+};
+
+/**
+ * "background check(s)" or "background-check(s)" as words. A hyphenated form
+ * that is part of a code identifier (a path, route, class name, id, quoted
+ * key or command such as \`modules/background-checks\`, \`background-check-note\`
+ * or \`test:background-check-list\`) is not user-facing and is skipped.
+ */
+const oldWording = /(?<![\w/.:@$-])background[ \t]+checks?\b|(?<![\w/.:@$-])background-checks?(?![\w/:'"`-]|\.\w)/i;
 
 function files(entry: string): string[] {
   const full = path.join(root, entry);
@@ -40,7 +51,7 @@ describe("Sterling Volunteers wording (#443)", () => {
     for (const file of sources) {
       if (allowlist[file]) continue;
       readFileSync(path.join(root, file), "utf8").split(/\r?\n/).forEach((line, index) => {
-        if (/background[ \t]+checks?\b/i.test(line)) offenders.push(`${file}:${index + 1}: ${line.trim().slice(0, 120)}`);
+        if (oldWording.test(line)) offenders.push(`${file}:${index + 1}: ${line.trim().slice(0, 120)}`);
       });
     }
     expect(offenders).toEqual([]);
@@ -50,7 +61,7 @@ describe("Sterling Volunteers wording (#443)", () => {
     const domain = readFileSync(path.join(root, "modules/background-checks/domain.ts"), "utf8");
     expect(domain).toContain('"Confirmation code", "Sterling Volunteers", "Expired on"');
     const flags = readFileSync(path.join(root, "components/background-check-flags.tsx"), "utf8");
-    expect(flags).toContain("Not in compliance with Sterling Volunteers");
+    expect(flags).toContain("Sterling Volunteers needed");
     const template = readFileSync(path.join(root, "app/api/admin/background-checks/template/route.ts"), "utf8");
     expect(template).toContain("sterling-volunteers-");
   });
