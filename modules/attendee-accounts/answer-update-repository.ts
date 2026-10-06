@@ -257,7 +257,11 @@ export async function updateTieredRegistrationAnswersWithClient(
     // A team registration keeps its event's team rules whoever edits it (#809); nothing is saved if they break.
     let teamMessageIds: string[] = [];
     try {
-      teamMessageIds = (await enforceTeamRegistrationRules(tx, registration.id)).queuedMessageIds;
+      // Only someone whose own answers change here can be stopped by their own declined permission; a teammate's never stops this.
+      teamMessageIds = (await enforceTeamRegistrationRules(tx, registration.id, {
+        declineScope: "CHANGED_ONLY",
+        changedAttendeeIds: new Set(prepared.filter((update) => update.changedKeys.length > 0).map((update) => update.attendee.id)),
+      })).queuedMessageIds;
     } catch (error) {
       if (error instanceof ClubTeamError) throw new AttendeeAnswerUpdateError("INVALID_ANSWER", error.message);
       throw error;

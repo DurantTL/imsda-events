@@ -823,9 +823,15 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         teamKey: clubRegistration.teamKey,
         teamName: clubRegistration.teamName ?? "",
         // What the director is told about team members of 18 or older: pending, declined and granted (#809).
-        permissionNotices: clubRegistration.registration.attendees.flatMap(({ id, profileSnapshot }) => {
+        permissionNotices: clubRegistration.registration.attendees.flatMap(({ id, profileSnapshot, formResponses }) => {
           const flag = permissions.get(id);
-          return flag ? [{ attendeeId: id, status: flag.status, text: permissionNotice(flag.status, snapshotName(recordFromJson(profileSnapshot))) }] : [];
+          if (!flag) return [];
+          const snapshot = recordFromJson(profileSnapshot);
+          // A TLT is always a team member, so "make them a coach" is not an option for them.
+          const rosterId = typeof snapshot.clubRosterMemberId === "string" ? snapshot.clubRosterMemberId : null;
+          const answered = recordFromJson(formResponses).attendee_type;
+          const tlt = members.find((member) => member.id === rosterId)?.classLevel === "TLT" || (typeof answered === "string" && answered.trim().toLowerCase() === "tlt");
+          return [{ attendeeId: id, status: flag.status, text: permissionNotice(flag.status, snapshotName(snapshot), tlt) }];
         }),
         results: clubRegistration.teamResults.map((result) => ({
           level: result.level, placement: result.placement, qualified: result.qualified, notes: result.notes,

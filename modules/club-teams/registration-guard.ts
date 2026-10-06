@@ -3,9 +3,9 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { ClubTeamError } from "@/modules/club-teams/errors";
 import { normalizeTeamName } from "@/modules/club-teams/domain";
-import { ALTERNATE_FIELD_KEY, isAlternateAnswer, teamAgeDate, teamRoleFor, teamRuleProblems, type TeamPerson } from "@/modules/club-teams/rules";
+import { ALTERNATE_FIELD_KEY, ROLE_FIELD_KEY, isAlternateAnswer, teamAgeDate, teamRoleFor, teamRuleProblems, type TeamPerson } from "@/modules/club-teams/rules";
 import { syncTeamMemberPermissions } from "@/modules/club-teams/permission-repository";
-import { permissionDeclinedProblem } from "@/modules/club-teams/permission-domain";
+import { permissionDeclinedGenericProblem, permissionDeclinedProblem } from "@/modules/club-teams/permission-domain";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { openBirthDate } from "@/modules/club-rosters/birth-dates";
 import { ageOn } from "@/modules/club-rosters/domain";
@@ -107,6 +107,15 @@ export async function enforceTeamRegistrationRules(
     /** Staff only: who confirmed, and the attendees confirmed as a different person from a name match (never a person-record match). */
     actorUserId?: string;
     differentPersonAttendeeIds?: ReadonlySet<string>;
+    /** Who acted, for the audit rows: an attendee account (a club director) when it was not a staff user. */
+    actorAccountId?: string;
+    /**
+     * Whose declined permission stops this save. "ANY" (the default, a director or staff changing the team): any declined team
+     * member. "CHANGED_ONLY" (an attendee's own edit, or a transfer of one person): only a declined person whose own row is
+     * being changed here, with a message that names nobody, so a teammate's decline never blocks someone else's edit.
+     */
+    declineScope?: "ANY" | "CHANGED_ONLY";
+    changedAttendeeIds?: ReadonlySet<string>;
   } = {},
 ): Promise<{ queuedMessageIds: string[] }> {
   const team = await tx.clubEventRegistration.findUnique({
@@ -135,7 +144,7 @@ export async function enforceTeamRegistrationRules(
   const eventDate = calendarDateInEventTimeZone(team.registration.event.startsAt, team.registration.event.timezone);
   const ageDate = teamAgeDate(settings, eventDate);
   const people: TeamPerson[] = [];
-  const flagCandidates: Array<{ attendeeId: string; name: string; age: number | null; role: "MEMBER" | "COACH" }> = [];
+  const flagCandidates: Array<{ attendeeId: string; personId: string; name: string; age: number | null; role: "MEMBER" | "COACH"; tlt: boolean }> = [];
   const checked: Array<{ personId: string; name: string; onRoster: boolean; skipNameMatch: boolean }> = [];
   for (const attendee of attendees) {
     const snapshot = record(attendee.profileSnapshot);
@@ -155,20 +164,26 @@ export async function enforceTeamRegistrationRules(
       maxMemberAge: settings.maxMemberAge,
       age,
     });
-    if (snapshot.teamRole !== role || (snapshot.ageOnEventDate ?? null) !== age) {
+    // Staff's confirmation that this is a different person from someone with the same name on another team is kept on the
+    // attendee, so a later save of the team (by anyone) does not refuse them again.
+    const staffConfirmsNow = snapshot.differentPersonConfirmed !== true && options.actorUserId !== undefined && options.differentPersonAttendeeIds?.has(attendee.id) === true;
+    if (snapshot.teamRole !== role || (snapshot.ageOnEventDate ?? null) !== age || staffConfirmsNow) {
       await tx.registrationAttendee.update({
         where: { id: attendee.id },
-        data: { profileSnapshot: { ...snapshot, teamRole: role, ageOnEventDate: age } as Prisma.InputJsonValue },
+        data: { profileSnapshot: { ...snapshot, teamRole: role, ageOnEventDate: age, ...(staffConfirmsNow ? { differentPersonConfirmed: true } : {}) } as Prisma.InputJsonValue },
       });
     }
-    flagCandidates.push({ attendeeId: attendee.id, name, age, role });
+    const answeredRole = typeof responses[ROLE_FIELD_KEY] === "string" ? (responses[ROLE_FIELD_KEY] as string).trim().toLowerCase() : "";
+    flagCandidates.push({ attendeeId: attendee.id, personId: attendee.personId, name, age, role, tlt: rosterMember?.classLevel === "TLT" || answeredRole === "tlt" });
     people.push({ name, role, alternate: isAlternateAnswer(responses[ALTERNATE_FIELD_KEY]), age });
     // Someone on the club roster is matched by person; anyone else (an extra person, or one staff typed in) by name.
     checked.push({
       personId: attendee.personId,
       name,
       onRoster: snapshot.temporary !== true && rosterByPerson.has(attendee.personId),
-      skipNameMatch: options.actorUserId !== undefined && options.differentPersonAttendeeIds?.has(attendee.id) === true,
+      // Staff's confirmation of a different person lasts (it is kept on the attendee), so a later edit by anyone does not ask again.
+      skipNameMatch: snapshot.differentPersonConfirmed === true || (options.actorUserId !== undefined && options.differentPersonAttendeeIds?.has(attendee.id) === true),
+
     });
   }
 
@@ -202,10 +217,13 @@ export async function enforceTeamRegistrationRules(
   // Team members of 18 or older are flagged for the Area Coordinator's permission: a flag, never a block, except that a
   // declined person must become a coach or leave before the team can be saved again.
   const flags = await syncTeamMemberPermissions(tx, {
-    eventId: team.eventId, clubEventRegistrationId: team.id, registrationId, people: flagCandidates, actorUserId: options.actorUserId,
+    eventId: team.eventId, clubEventRegistrationId: team.id, registrationId, people: flagCandidates,
+    actor: { userId: options.actorUserId, accountId: options.actorAccountId },
   });
-  if (flags.declined.length > 0) {
-    const messages = flags.declined.map(permissionDeclinedProblem);
+  const scope = options.declineScope ?? "ANY";
+  const blocking = scope === "ANY" ? flags.declined : flags.declined.filter((entry) => options.changedAttendeeIds?.has(entry.attendeeId));
+  if (blocking.length > 0) {
+    const messages = scope === "ANY" ? blocking.map((entry) => permissionDeclinedProblem(entry.name, entry.tlt)) : [permissionDeclinedGenericProblem];
     throw new ClubTeamError("TEAM_RULES", messages.join(" "), messages);
   }
   return { queuedMessageIds: flags.queuedMessageIds };

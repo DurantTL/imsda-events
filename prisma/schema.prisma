@@ -6821,14 +6821,19 @@ enum TeamPermissionStatus {
 }
 
 /// A team member who is 18 or older on the event's age date needs the Area Coordinator's permission (#809). The team
-/// registers anyway: this is a flag, not a block. One row per such attendee, made when the team is saved and removed when
-/// the person is no longer a team member of 18 or older. Decided by the Area Coordinator, or staff who manage
-/// registrations; a declined person must become a coach or leave before the team can be saved again.
+/// registers anyway: this is a flag, not a block. One row per PERSON on a team, so a decision outlives the attendee row it
+/// was made about: a person who stops needing the flag (a coach, removed, under 18) keeps a granted or declined decision
+/// (marked inactive) and gets it back if they become a team member of 18 or older on that team again; only a pending flag is
+/// deleted. Decided by the Area Coordinator (who does not direct the team's own club), or staff who manage registrations;
+/// a declined person must become a coach or leave before the team can be saved again.
 model ClubTeamMemberPermission {
   id                      String               @id @default(cuid())
   eventId                 String
   clubEventRegistrationId String
-  registrationAttendeeId  String               @unique
+  personId                String
+  /// The person's current attendee row on the team; null while the flag is inactive.
+  registrationAttendeeId  String?              @unique
+  active                  Boolean              @default(true)
   status                  TeamPermissionStatus @default(PENDING)
   /// The age on the age date when it was flagged, kept for the Area Coordinator's view.
   ageOnAgeDate            Int
@@ -6839,10 +6844,10 @@ model ClubTeamMemberPermission {
   updatedAt               DateTime             @updatedAt
 
   clubEventRegistration ClubEventRegistration @relation(fields: [clubEventRegistrationId], references: [id], onDelete: Cascade)
-  attendee              RegistrationAttendee  @relation(fields: [registrationAttendeeId], references: [id], onDelete: Cascade)
+  attendee              RegistrationAttendee? @relation(fields: [registrationAttendeeId], references: [id], onDelete: SetNull)
   decidedByUser         User?                 @relation("ClubTeamPermissionDecidedBy", fields: [decidedByUserId], references: [id], onDelete: SetNull)
   decidedByAccount      AttendeeAccount?      @relation("ClubTeamPermissionDecidedByAccount", fields: [decidedByAccountId], references: [id], onDelete: SetNull)
 
+  @@unique([clubEventRegistrationId, personId])
   @@index([eventId, status])
-  @@index([clubEventRegistrationId])
 }

@@ -1664,7 +1664,12 @@ export async function amendRegistration(
         const differentPeople = actor.kind === "STAFF"
           ? new Set(input.attendees.flatMap((entry, index) => (entry.differentPerson ? committedAttendees[index]?.attendeeId ?? [] : [])))
           : undefined;
-        permissionMessageIds.push(...(await enforceTeamRegistrationRules(tx, registrationId, actor.kind === "STAFF" ? { actorUserId: actor.id, differentPersonAttendeeIds: differentPeople } : {})).queuedMessageIds);
+        permissionMessageIds.push(...(await enforceTeamRegistrationRules(tx, registrationId, {
+            // Staff only can confirm a name match as a different person; everyone else's flag is ignored.
+            ...(actor.kind === "STAFF" ? { differentPersonAttendeeIds: differentPeople } : {}),
+            ...(actor.kind === "STAFF" || actor.kind === "STAFF_ACTING_DIRECTOR" ? { actorUserId: actor.id } : {}),
+            ...(actor.kind === "CLUB_DIRECTOR" ? { actorAccountId: actor.attendeeAccountId } : {}),
+          })).queuedMessageIds);
         await tx.registration.update({
           where: { id: registrationId },
           data: {

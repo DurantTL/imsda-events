@@ -52,6 +52,8 @@ type RegistrationOperationDraft = {
   email: string;
   phone: string;
   reason: string;
+  /** A substitute's age on a team event's age date, for someone not on the club roster (#809); blank otherwise. */
+  age: string;
   clientRequestId: string;
 };
 
@@ -596,6 +598,7 @@ export function PeopleWorkspace({
       email: "",
       phone: "",
       reason: "",
+      age: "",
       clientRequestId: "",
     });
   }
@@ -617,6 +620,7 @@ export function PeopleWorkspace({
       email: "",
       phone: "",
       reason: "",
+      age: "",
       clientRequestId: "",
     });
   }
@@ -634,6 +638,7 @@ export function PeopleWorkspace({
       email: String(form.get("email") ?? "").trim().toLowerCase(),
       phone: String(form.get("phone") ?? "").trim(),
       reason: String(form.get("reason") ?? "").trim(),
+      age: String(form.get("age") ?? "").trim(),
     });
   }
 
@@ -663,6 +668,7 @@ export function PeopleWorkspace({
           email: operationDraft.email,
           phone: operationDraft.phone,
           reason: operationDraft.reason,
+          ...(operationDraft.kind === "substitution" && /^\d{1,3}$/.test(operationDraft.age) ? { age: Number(operationDraft.age) } : {}),
         }),
       });
       const result = await response.json();
@@ -833,6 +839,9 @@ export function PeopleWorkspace({
                         <label>{operationDraft.kind === "transfer" ? "New contact email" : "Replacement email (optional)"}<input name="email" type="email" required={operationDraft.kind === "transfer"} maxLength={160} defaultValue={operationDraft.email} /></label>
                         <label>New phone (optional)<input name="phone" type="tel" maxLength={40} defaultValue={operationDraft.phone} /></label>
                       </div>
+                      {operationDraft.kind === "substitution" && (
+                        <label>Age on the event&apos;s age date (team events only)<input name="age" inputMode="numeric" pattern="[0-9]{1,3}" maxLength={3} defaultValue={operationDraft.age} /></label>
+                      )}
                       <label>Reason or staff note<textarea name="reason" rows={3} maxLength={500} defaultValue={operationDraft.reason} placeholder="Optional — saved with the immutable operation history" /></label>
                       <div className="inline-notice">
                         {operationDraft.kind === "transfer"

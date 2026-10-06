@@ -87,6 +87,8 @@ export const attendeeSubstitutionInputSchema = z.strictObject({
   email: operationIdentityFields.email.default(""),
   phone: operationIdentityFields.phone.default(""),
   reason: operationIdentityFields.reason.default(""),
+  /** The replacement's age on the team's age date, for a team event with an age limit and someone not on the club roster (#809). */
+  age: z.number().int().min(0).max(120).optional(),
 });
 
 export type RegistrationTransferInput = z.infer<

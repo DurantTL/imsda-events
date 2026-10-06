@@ -20,89 +20,117 @@ import { coordinatorGrantActive } from "@/modules/event-locations/domain";
 
 type Tx = Prisma.TransactionClient;
 
-export type PermissionCandidate = { attendeeId: string; name: string; age: number | null; role: "MEMBER" | "COACH" };
+export type PermissionCandidate = { attendeeId: string; personId: string; name: string; age: number | null; role: "MEMBER" | "COACH"; tlt?: boolean };
+
+/** Who acted, for the audit rows: a staff user, or an attendee account (a club director), or neither (the system). */
+export type PermissionActor = { userId?: string; accountId?: string };
 
 export type PermissionSyncResult = {
-  /** Names of people whose permission was declined and who are still team members: the team cannot be saved as it is. */
-  declined: string[];
+  /** People whose permission was declined and who are team members now; each blocks the save as the scope says. */
+  declined: Array<{ name: string; tlt: boolean; attendeeId: string }>;
   /** Outbox messages queued for the Area Coordinator (or staff); deliver them after the transaction commits. */
   queuedMessageIds: string[];
 };
 
+const actorMetadata = (actor: PermissionActor) => (actor.accountId ? { actorAccountId: actor.accountId } : {});
+
 /**
- * Brings a team's permission flags in line with who is on it, inside the caller's transaction: a flag is made (pending)
- * for each team member of 18 or older who has none, kept for those who still need it, and removed for anyone who no
- * longer does (a coach, someone under 18, someone removed). One message goes out for the people newly flagged in this
- * change, not one per save of the same people.
+ * Brings a team's permission flags in line with who is on it, inside the caller's transaction. A flag belongs to the PERSON
+ * on the team: a new pending one is made for each team member of 18 or older who has none; one that exists is reused
+ * (whatever its decision, so a declined person stays declined and a granted one stays granted, even after being a coach or
+ * off the team for a while). A person who no longer needs one loses a pending flag, but a decided one is kept, inactive. One
+ * message goes out for the people newly flagged in this change, not one per save.
  */
 export async function syncTeamMemberPermissions(
   tx: Tx,
-  input: { eventId: string; clubEventRegistrationId: string; registrationId: string; people: readonly PermissionCandidate[]; actorUserId?: string },
+  input: { eventId: string; clubEventRegistrationId: string; registrationId: string; people: readonly PermissionCandidate[]; actor?: PermissionActor },
 ): Promise<PermissionSyncResult> {
+  const actor = input.actor ?? {};
   const needing = input.people.filter((person) => person.role === "MEMBER" && person.age !== null && person.age >= 18);
+  const needingPersons = new Set(needing.map((person) => person.personId));
   const existing = await tx.clubTeamMemberPermission.findMany({ where: { clubEventRegistrationId: input.clubEventRegistrationId } });
-  const byAttendee = new Map(existing.map((row) => [row.registrationAttendeeId, row]));
-  const needingIds = new Set(needing.map((person) => person.attendeeId));
-  const names = new Map(input.people.map((person) => [person.attendeeId, person.name]));
+  const byPerson = new Map(existing.map((row) => [row.personId, row]));
+  const nameOfPerson = new Map(input.people.map((person) => [person.personId, person.name]));
 
-  const declined = needing.filter((person) => byAttendee.get(person.attendeeId)?.status === "DECLINED").map((person) => person.name);
-
-  const created: PermissionCandidate[] = [];
+  const declined: PermissionSyncResult["declined"] = [];
+  const created: Array<PermissionCandidate & { rowId: string }> = [];
   for (const person of needing) {
-    const row = byAttendee.get(person.attendeeId);
+    const row = byPerson.get(person.personId);
     if (!row) {
       const saved = await tx.clubTeamMemberPermission.create({
-        data: { eventId: input.eventId, clubEventRegistrationId: input.clubEventRegistrationId, registrationAttendeeId: person.attendeeId, ageOnAgeDate: person.age as number },
+        data: { eventId: input.eventId, clubEventRegistrationId: input.clubEventRegistrationId, personId: person.personId, registrationAttendeeId: person.attendeeId, ageOnAgeDate: person.age as number },
         select: { id: true },
       });
-      created.push(person);
+      created.push({ ...person, rowId: saved.id });
       await writeAuditLog({
-        eventId: input.eventId, actorUserId: input.actorUserId, action: "CLUB_TEAM_PERMISSION_REQUESTED", entityType: "ClubTeamMemberPermission", entityId: saved.id,
+        eventId: input.eventId, actorUserId: actor.userId, action: "CLUB_TEAM_PERMISSION_REQUESTED", entityType: "ClubTeamMemberPermission", entityId: saved.id,
         summary: `${person.name} is ${person.age} on the age date and needs the Area Coordinator's permission to be a team member.`,
-        metadata: { registrationId: input.registrationId, attendeeId: person.attendeeId, age: person.age },
+        metadata: { registrationId: input.registrationId, attendeeId: person.attendeeId, age: person.age, ...actorMetadata(actor) },
       }, tx);
-    } else if (row.ageOnAgeDate !== person.age) {
-      await tx.clubTeamMemberPermission.update({ where: { id: row.id }, data: { ageOnAgeDate: person.age as number } });
+      continue;
     }
+    if (!row.active || row.registrationAttendeeId !== person.attendeeId || row.ageOnAgeDate !== person.age) {
+      await tx.clubTeamMemberPermission.update({ where: { id: row.id }, data: { active: true, registrationAttendeeId: person.attendeeId, ageOnAgeDate: person.age as number } });
+    }
+    if (row.status === "DECLINED") declined.push({ name: person.name, tlt: person.tlt === true, attendeeId: person.attendeeId });
   }
   for (const row of existing) {
-    if (needingIds.has(row.registrationAttendeeId)) continue;
-    await tx.clubTeamMemberPermission.delete({ where: { id: row.id } });
+    if (needingPersons.has(row.personId)) continue;
+    // Only a pending flag is deleted; a decision is kept, inactive, in case the person is a team member of 18 or older here again.
+    if (row.status !== "PENDING" && !row.active) continue;
+    if (row.status === "PENDING") await tx.clubTeamMemberPermission.delete({ where: { id: row.id } });
+    else await tx.clubTeamMemberPermission.update({ where: { id: row.id }, data: { active: false, registrationAttendeeId: null } });
     await writeAuditLog({
-      eventId: input.eventId, actorUserId: input.actorUserId, action: "CLUB_TEAM_PERMISSION_CLEARED", entityType: "ClubTeamMemberPermission", entityId: row.id,
-      summary: `${names.get(row.registrationAttendeeId) ?? "A person"} no longer needs the Area Coordinator's permission (no longer a team member of 18 or older).`,
-      metadata: { registrationId: input.registrationId, attendeeId: row.registrationAttendeeId, status: row.status },
+      eventId: input.eventId, actorUserId: actor.userId, action: "CLUB_TEAM_PERMISSION_CLEARED", entityType: "ClubTeamMemberPermission", entityId: row.id,
+      summary: `${nameOfPerson.get(row.personId) ?? "A person"} no longer needs the Area Coordinator's permission (no longer a team member of 18 or older).`,
+      metadata: { registrationId: input.registrationId, attendeeId: row.registrationAttendeeId, status: row.status, kept: row.status !== "PENDING", ...actorMetadata(actor) },
     }, tx);
   }
-  const queuedMessageIds = created.length > 0 ? await queuePermissionRequest(tx, { ...input, people: created }) : [];
+  const queuedMessageIds = created.length > 0 ? await queuePermissionRequest(tx, { eventId: input.eventId, registrationId: input.registrationId, people: created }) : [];
   return { declined, queuedMessageIds };
 }
 
-const idempotencyHash = (ids: readonly string[]) => [...ids].sort().join(",");
+/** Whether this account is a director, deputy or registrar of the club: they cannot decide their own club's flags. */
+export async function accountActsForClub(client: Pick<Tx, "clubDirectorGrant">, accountId: string, organizationId: string, now = new Date()) {
+  const grant = await client.clubDirectorGrant.findFirst({
+    where: {
+      attendeeAccountId: accountId,
+      organizationId,
+      role: { in: ["DIRECTOR", "DEPUTY", "REGISTRAR"] },
+      revokedAt: null,
+      effectiveFrom: { lte: now },
+      OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+    },
+    select: { id: true },
+  });
+  return grant !== null;
+}
 
 /**
  * Writes the request to the event's outbox (the event's own delivery mode, so local capture works in development): to the
- * Area Coordinator of the team's location while their grant is active, otherwise to the event's staff who manage
- * registrations. One message per recipient for the people newly flagged in this change.
+ * Area Coordinator of the team's location while their grant is active and they do not direct the team's own club, otherwise
+ * to the event's staff who manage registrations. One message per recipient for the people newly flagged in this change.
  */
 async function queuePermissionRequest(
   tx: Tx,
-  input: { eventId: string; registrationId: string; people: readonly PermissionCandidate[] },
+  input: { eventId: string; registrationId: string; people: ReadonlyArray<PermissionCandidate & { rowId: string }> },
 ): Promise<string[]> {
   const registration = await tx.registration.findUnique({
     where: { id: input.registrationId },
     select: {
       confirmationCode: true,
       event: { select: { name: true } },
-      location: { select: { name: true, coordinator: { select: { email: true, displayName: true, disabledAt: true, areaCoordinatorGrant: { select: { revokedAt: true, expiresAt: true } } } } } },
-      clubRegistration: { select: { teamName: true, organization: { select: { name: true } } } },
+      location: { select: { name: true, coordinator: { select: { id: true, email: true, displayName: true, disabledAt: true, areaCoordinatorGrant: { select: { revokedAt: true, expiresAt: true } } } } } },
+      clubRegistration: { select: { teamName: true, organizationId: true, organization: { select: { name: true } } } },
     },
   });
   if (!registration) return [];
   const settings = await tx.eventTeamSettings.findUnique({ where: { eventId: input.eventId }, select: { ageAsOf: true } });
   const coordinator = registration.location?.coordinator;
   const recipients: Array<{ email: string; name: string; staff: boolean }> = [];
-  if (coordinator && !coordinator.disabledAt && coordinatorGrantActive(coordinator.areaCoordinatorGrant)) {
+  const coordinatorEligible = coordinator && !coordinator.disabledAt && coordinatorGrantActive(coordinator.areaCoordinatorGrant)
+    && !(registration.clubRegistration && await accountActsForClub(tx, coordinator.id, registration.clubRegistration.organizationId));
+  if (coordinator && coordinatorEligible) {
     recipients.push({ email: coordinator.email, name: coordinator.displayName, staff: false });
   } else {
     const memberships = await tx.eventMembership.findMany({
@@ -125,6 +153,8 @@ async function queuePermissionRequest(
   const label = teamLabel(registration.clubRegistration?.organization.name ?? "A club", registration.clubRegistration?.teamName ?? null);
   const dateText = settings?.ageAsOf ? formatCalendarDate(settings.ageAsOf) : "the event date";
   const baseUrl = getServerEnv().APP_BASE_URL;
+  // Each new flag has its own id, so a flag made after an earlier one was cleared is a new request and emails again.
+  const requestKey = [...input.people.map((person) => person.rowId)].sort().join(",");
   const ids: string[] = [];
   const seen = new Set<string>();
   for (const recipient of recipients) {
@@ -145,8 +175,9 @@ async function queuePermissionRequest(
       "IMSDA Events",
     ].join("\n");
     const suppressed = messageSettings.deliveryMode === "DISABLED";
+    const idempotencyKey = `team-permission:${input.registrationId}:${requestKey}:${email}`;
     const message = await tx.messageOutbox.upsert({
-      where: { idempotencyKey: `team-permission:${input.registrationId}:${idempotencyHash(input.people.map((person) => person.attendeeId))}:${email}` },
+      where: { idempotencyKey },
       update: {},
       create: {
         eventId: input.eventId,
@@ -161,7 +192,7 @@ async function queuePermissionRequest(
         subjectSnapshot: `Permission needed: team members 18 and over on ${label}`,
         bodyTextSnapshot: bodyText,
         metadata: { trigger: "TEAM_PERMISSION_REQUEST", deliveryMode: messageSettings.deliveryMode, realDelivery: messageSettings.deliveryMode === "EXTERNAL_EMAIL", confirmationCode: registration.confirmationCode, people: input.people.length },
-        idempotencyKey: `team-permission:${input.registrationId}:${idempotencyHash(input.people.map((person) => person.attendeeId))}:${email}`,
+        idempotencyKey,
         correlationId: randomUUID(),
         status: suppressed ? "SUPPRESSED" : "PENDING",
         lastError: suppressed ? "Delivery is disabled for this event." : null,
@@ -205,7 +236,7 @@ const rowSelect = {
   attendee: { select: { profileSnapshot: true } },
   clubEventRegistration: {
     select: {
-      registrationId: true, teamName: true,
+      registrationId: true, teamName: true, organizationId: true,
       organization: { select: { name: true } },
       registration: { select: { location: { select: { name: true } }, event: { select: { name: true } } } },
     },
@@ -228,7 +259,7 @@ function toRow(row: RowShape): TeamPermissionRow {
     clubEventRegistrationId: row.clubEventRegistrationId,
     teamLabel: teamLabel(row.clubEventRegistration.organization.name, row.clubEventRegistration.teamName),
     locationName: row.clubEventRegistration.registration.location?.name ?? null,
-    name: personName(row.attendee.profileSnapshot),
+    name: personName(row.attendee?.profileSnapshot),
     age: row.ageOnAgeDate,
     status: row.status,
     decidedAt: row.decidedAt?.toISOString() ?? null,
@@ -242,7 +273,7 @@ const byUrgency = (a: TeamPermissionRow, b: TeamPermissionRow) => statusOrder[a.
 /** Every flag on an event's active teams, pending first, for staff who manage registrations. */
 export async function listEventTeamPermissions(eventId: string): Promise<TeamPermissionRow[]> {
   const rows = await getPrisma().clubTeamMemberPermission.findMany({
-    where: { eventId, clubEventRegistration: { registration: { status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED"] } } } },
+    where: { eventId, active: true, clubEventRegistration: { registration: { status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED"] } } } },
     select: rowSelect,
   });
   return rows.map(toRow).sort(byUrgency);
@@ -255,6 +286,7 @@ export async function listEventTeamPermissions(eventId: string): Promise<TeamPer
 export async function listCoordinatorTeamPermissions(accountId: string, now = new Date()): Promise<TeamPermissionRow[]> {
   const rows = await getPrisma().clubTeamMemberPermission.findMany({
     where: {
+      active: true,
       clubEventRegistration: {
         registration: {
           status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED"] },
@@ -264,16 +296,24 @@ export async function listCoordinatorTeamPermissions(accountId: string, now = ne
     },
     select: rowSelect,
   });
-  return rows.map(toRow).sort(byUrgency);
+  // A coordinator who directs the team's own club does not decide its flags; event staff do.
+  const own = new Map<string, boolean>();
+  const visible: RowShape[] = [];
+  for (const row of rows) {
+    const organizationId = row.clubEventRegistration.organizationId;
+    if (!own.has(organizationId)) own.set(organizationId, await accountActsForClub(getPrisma(), accountId, organizationId, now));
+    if (!own.get(organizationId)) visible.push(row);
+  }
+  return visible.map(toRow).sort(byUrgency);
 }
 
 /** Flags for one team, by attendee, for the team page and the printed form. */
 export async function permissionsForRegistration(clubEventRegistrationId: string, client: Pick<Tx, "clubTeamMemberPermission"> = getPrisma()) {
   const rows = await client.clubTeamMemberPermission.findMany({
-    where: { clubEventRegistrationId },
+    where: { clubEventRegistrationId, active: true, registrationAttendeeId: { not: null } },
     select: { registrationAttendeeId: true, status: true, decidedAt: true, decidedByUser: { select: { displayName: true } }, decidedByAccount: { select: { displayName: true } } },
   });
-  return new Map(rows.map((row) => [row.registrationAttendeeId, {
+  return new Map(rows.map((row) => [row.registrationAttendeeId as string, {
     status: row.status as PermissionStatus,
     decidedAt: row.decidedAt?.toISOString() ?? null,
     decidedBy: row.decidedByUser?.displayName ?? row.decidedByAccount?.displayName ?? null,
@@ -283,16 +323,16 @@ export async function permissionsForRegistration(clubEventRegistrationId: string
 /** The sentences a director is shown for a team's flags (pending and declined; granted ones are reassurance, shown too), by registration. */
 export async function permissionNoticesForRegistration(registrationId: string): Promise<string[]> {
   const rows = await getPrisma().clubTeamMemberPermission.findMany({
-    where: { clubEventRegistration: { registrationId } },
+    where: { active: true, clubEventRegistration: { registrationId } },
     orderBy: { createdAt: "asc" },
     select: { status: true, attendee: { select: { profileSnapshot: true } } },
   });
-  return rows.map((row) => permissionNotice(row.status, personName(row.attendee.profileSnapshot)));
+  return rows.map((row) => permissionNotice(row.status, personName(row.attendee?.profileSnapshot)));
 }
 
 /** Pending flags per team of an event, for the results report. */
 export async function pendingPermissionCounts(eventId: string): Promise<Map<string, number>> {
-  const groups = await getPrisma().clubTeamMemberPermission.groupBy({ by: ["clubEventRegistrationId"], where: { eventId, status: "PENDING" }, _count: { _all: true } });
+  const groups = await getPrisma().clubTeamMemberPermission.groupBy({ by: ["clubEventRegistrationId"], where: { eventId, active: true, status: "PENDING" }, _count: { _all: true } });
   return new Map(groups.map((group) => [group.clubEventRegistrationId, group._count._all]));
 }
 
@@ -313,6 +353,7 @@ export async function decideTeamPermission(input: {
     const found = await tx.clubTeamMemberPermission.findFirst({
       where: {
         id: input.permissionId,
+        active: true,
         ...("eventId" in input.scope
           ? { eventId: input.scope.eventId }
           : { clubEventRegistration: { registration: { location: { is: { coordinatorAccountId: input.scope.coordinatorAccountId, coordinator: { is: { disabledAt: null, areaCoordinatorGrant: { is: { revokedAt: null, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] } } } } } } } } }),
@@ -320,6 +361,10 @@ export async function decideTeamPermission(input: {
       select: rowSelect,
     });
     if (!found) throw new ClubTeamError("REGISTRATION_NOT_FOUND", "That permission request was not found.");
+    // An Area Coordinator who directs the team's own club cannot decide its flags: event staff do.
+    if ("coordinatorAccountId" in input.scope && await accountActsForClub(tx, input.scope.coordinatorAccountId, found.clubEventRegistration.organizationId, now)) {
+      throw new ClubTeamError("REGISTRATION_NOT_FOUND", "That permission request was not found.");
+    }
     const before = found.status;
     if (before !== input.decision) {
       await tx.clubTeamMemberPermission.update({

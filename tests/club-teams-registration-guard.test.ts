@@ -99,10 +99,39 @@ describe("enforceTeamRegistrationRules (#809)", () => {
     }));
   });
 
-  it("refuses the save while a declined person is still a team member", async () => {
-    mocks.syncTeamMemberPermissions.mockResolvedValue({ declined: ["Blake Two"], queuedMessageIds: [] });
+  it("refuses the save while a declined person is still a team member, and says what to do for a TLT", async () => {
+    mocks.syncTeamMemberPermissions.mockResolvedValue({ declined: [{ name: "Blake Two", tlt: false, attendeeId: "b" }], queuedMessageIds: [] });
     const tx = transaction({ attendees: [attendee("a", "Alex One", { age: 14 }), attendee("b", "Blake Two", { age: 18 })], roster: rosterOf("a", "b") });
-    await expect(enforceTeamRegistrationRules(tx, "reg-1")).rejects.toMatchObject({ code: "TEAM_RULES", message: expect.stringContaining("declined permission for Blake Two") });
+    await expect(enforceTeamRegistrationRules(tx, "reg-1")).rejects.toMatchObject({ code: "TEAM_RULES", message: expect.stringContaining("Change them to a coach or remove them") });
+    mocks.syncTeamMemberPermissions.mockResolvedValue({ declined: [{ name: "Blake Two", tlt: true, attendeeId: "b" }], queuedMessageIds: [] });
+    await expect(enforceTeamRegistrationRules(transaction({ attendees: [attendee("a", "Alex One", { age: 14 }), attendee("b", "Blake Two", { age: 18 })], roster: rosterOf("a", "b") }), "reg-1"))
+      .rejects.toMatchObject({ message: expect.stringContaining("Remove them or replace them with another team member") });
+  });
+
+  it("does not stop an attendee's own edit, or a transfer of someone else, for a teammate's declined permission", async () => {
+    mocks.syncTeamMemberPermissions.mockResolvedValue({ declined: [{ name: "Blake Two", tlt: false, attendeeId: "b" }], queuedMessageIds: [] });
+    const people = [attendee("a", "Alex One", { age: 14 }), attendee("b", "Blake Two", { age: 18 })];
+    await expect(enforceTeamRegistrationRules(transaction({ attendees: people, roster: rosterOf("a", "b") }), "reg-1", { declineScope: "CHANGED_ONLY", changedAttendeeIds: new Set(["a"]) })).resolves.toEqual({ queuedMessageIds: [] });
+  });
+
+  it("stops the declined person's own edit, with a message that names nobody", async () => {
+    mocks.syncTeamMemberPermissions.mockResolvedValue({ declined: [{ name: "Blake Two", tlt: false, attendeeId: "b" }], queuedMessageIds: [] });
+    const people = [attendee("a", "Alex One", { age: 14 }), attendee("b", "Blake Two", { age: 18 })];
+    const error = (await enforceTeamRegistrationRules(transaction({ attendees: people, roster: rosterOf("a", "b") }), "reg-1", { declineScope: "CHANGED_ONLY", changedAttendeeIds: new Set(["b"]) }).then(() => null, (caught: unknown) => caught)) as Error;
+    expect(error.message).toContain("declined permission for a team member on this team");
+    expect(error.message).not.toContain("Blake");
+  });
+
+  it("passes who acted to the permission flags, and marks a TLT from the roster class level or the role answer", async () => {
+    const tx = transaction({
+      attendees: [attendee("a", "Alex One", { age: 14 }), attendee("b", "Blake Two", { age: 18, responses: { attendee_type: "TLT" } })],
+      roster: rosterOf("a", "b"),
+    });
+    await enforceTeamRegistrationRules(tx, "reg-1", { actorAccountId: "acct-director" });
+    expect(mocks.syncTeamMemberPermissions).toHaveBeenCalledWith(tx, expect.objectContaining({
+      actor: { userId: undefined, accountId: "acct-director" },
+      people: [expect.objectContaining({ attendeeId: "a", personId: "person-a", tlt: false }), expect.objectContaining({ attendeeId: "b", personId: "person-b", tlt: true })],
+    }));
   });
 
   it("works out the role of a person staff added from the age answered on the form, and saves it", async () => {
@@ -162,6 +191,16 @@ describe("enforceTeamRegistrationRules (#809)", () => {
     await enforceTeamRegistrationRules(sameNameRoster, "reg-1");
   });
 
+  it("remembers staff's confirmation on the attendee, so a later save by anyone is not refused for the same name again", async () => {
+    const confirmedBefore = { ...attendee("b", "Pat Visitor", { age: 15, temporary: true }), profileSnapshot: { firstName: "Pat", lastName: "Visitor", ageOnEventDate: 15, teamRole: "MEMBER", temporary: true, differentPersonConfirmed: true } };
+    const later = transaction({ attendees: [attendee("a", "Alex One", { age: 14 }), confirmedBefore], others: [{ personId: "person-z", name: "Pat Visitor", temporary: true }], roster: rosterOf("a") });
+    await enforceTeamRegistrationRules(later, "reg-1");
+    const first = transaction({ attendees: [attendee("a", "Alex One", { age: 14 }), attendee("b", "Pat Visitor", { age: 15, temporary: true })], others: [{ personId: "person-z", name: "Pat Visitor", temporary: true }], roster: rosterOf("a") });
+    await enforceTeamRegistrationRules(first, "reg-1", { actorUserId: "staff-1", differentPersonAttendeeIds: new Set(["b"]) });
+    const saved = first.registrationAttendee.update.mock.calls.map(([call]) => (call as { data: { profileSnapshot: Record<string, unknown> } }).data.profileSnapshot);
+    expect(saved.some((snapshot) => snapshot.differentPersonConfirmed === true)).toBe(true);
+  });
+
   it("lets staff confirm a name-only match as a different person, and audits it, but never a person-record match", async () => {
     const attendees = [attendee("a", "Alex One", { age: 14 }), attendee("b", "Pat Visitor", { age: 15, temporary: true })];
     const nameOnly = transaction({ attendees, others: [{ personId: "person-z", name: "Pat Visitor", temporary: true }], roster: rosterOf("a") });
@@ -169,7 +208,7 @@ describe("enforceTeamRegistrationRules (#809)", () => {
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "CLUB_TEAM_DIFFERENT_PERSON_CONFIRMED", actorUserId: "staff-1", entityId: "reg-1" }), nameOnly);
     const sameRecord = transaction({ attendees, others: [{ personId: "person-b", name: "Someone Else" }], roster: rosterOf("a") });
     await expect(enforceTeamRegistrationRules(sameRecord, "reg-1", { actorUserId: "staff-1", differentPersonAttendeeIds: new Set(["b"]) })).rejects.toMatchObject({ message: expect.stringContaining("Pat Visitor is already on another team") });
-    // Without a staff actor the confirmation is ignored.
+    // Without a staff user the confirmation is ignored, even when an account acted.
     const noActor = transaction({ attendees, others: [{ personId: "person-z", name: "Pat Visitor", temporary: true }], roster: rosterOf("a") });
     await expect(enforceTeamRegistrationRules(noActor, "reg-1", { differentPersonAttendeeIds: new Set(["b"]) })).rejects.toMatchObject({ code: "TEAM_RULES" });
   });

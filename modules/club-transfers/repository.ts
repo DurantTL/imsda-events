@@ -1458,8 +1458,8 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
   // runs first so the person's permission flag leaves it before the receiving team flags them again. A refusal stops the move.
   const teamMessageIds: string[] = [];
   try {
-    teamMessageIds.push(...(await enforceTeamRegistrationRules(tx, fromRegistrationId, { actorUserId: actor.userId })).queuedMessageIds);
-    teamMessageIds.push(...(await enforceTeamRegistrationRules(tx, toRegistrationId, { actorUserId: actor.userId })).queuedMessageIds);
+    teamMessageIds.push(...(await enforceTeamRegistrationRules(tx, fromRegistrationId, { actorUserId: actor.userId, declineScope: "CHANGED_ONLY", changedAttendeeIds: new Set([attendeeId]) })).queuedMessageIds);
+    teamMessageIds.push(...(await enforceTeamRegistrationRules(tx, toRegistrationId, { actorUserId: actor.userId, declineScope: "CHANGED_ONLY", changedAttendeeIds: new Set([attendeeId]) })).queuedMessageIds);
   } catch (error) {
     if (error instanceof ClubTeamError) throw new MemberTransferError("MOVE_BLOCKED", `The event's team rules stop this move. ${error.message}`);
     throw error;

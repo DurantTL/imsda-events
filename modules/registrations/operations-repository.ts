@@ -33,6 +33,7 @@ export type RegistrationOperationErrorCode =
   | "ATTENDEE_ALREADY_IN_PARTY"
   | "ATTENDEE_SAME_PERSON"
   | "TRANSFER_SAME_DESTINATION"
+  | "TEAM_AGE_REQUIRED"
   | "IDEMPOTENCY_KEY_REUSED"
   | "OPERATION_CONFLICT";
 
@@ -698,11 +699,14 @@ export async function substituteRegistrationAttendee(
       email: input.email,
       phone: input.phone,
       reason: input.reason,
+      ...(input.age !== undefined ? { age: input.age } : {}),
     },
   });
 
-  const permissionMessageIds: string[] = [];
+  let permissionMessageIds: string[] = [];
   const result = await runSerializableOperation(async (tx) => {
+    // Each attempt starts clean, so a retried transaction never delivers the ids of one that rolled back.
+    permissionMessageIds = [];
     const existingOperation = await tx.registrationOperation.findUnique({
       where: {
         eventId_clientRequestId: {
@@ -820,15 +824,24 @@ export async function substituteRegistrationAttendee(
     const operationId = randomUUID();
     // On a team registration (#809) the replacement is a different person: the age and team role of the one they replace
     // are cleared (and the age answer too, which is the prior person's), and the team rules are checked below.
-    const teamEvent = await tx.clubEventRegistration.findUnique({ where: { registrationId }, select: { eventId: true } });
-    const onTeamEvent = teamEvent !== null && (await tx.eventTeamSettings.findUnique({ where: { eventId: teamEvent.eventId }, select: { eventId: true } })) !== null;
-    const { ageOnEventDate: _priorAge, teamRole: _priorRole, ...snapshotWithoutTeamFields } = jsonRecord(attendee.profileSnapshot);
+    const teamEvent = await tx.clubEventRegistration.findUnique({ where: { registrationId }, select: { eventId: true, organizationId: true } });
+    const teamRules = teamEvent ? await tx.eventTeamSettings.findUnique({ where: { eventId: teamEvent.eventId }, select: { maxMemberAge: true, ageAsOf: true } }) : null;
+    const onTeamEvent = teamEvent !== null && teamRules !== null;
+    // A replacement who is not on the club's roster has no birth date to count an age from, so staff give their age on the age
+    // date (or the event date), where the event has an age limit or an age date; the age rules and the 18-and-over flag follow.
+    if (teamEvent && teamRules && (teamRules.maxMemberAge !== null || teamRules.ageAsOf !== null) && input.age === undefined) {
+      const onRoster = await tx.clubRosterMember.findFirst({ where: { organizationId: teamEvent.organizationId, personId: newPerson.id, status: "ACTIVE" }, select: { id: true } });
+      if (!onRoster) {
+        throw new RegistrationOperationError("TEAM_AGE_REQUIRED", "Enter the replacement's age on the team's age date. They are not on the club's roster, so it can't be worked out from a birth date.");
+      }
+    }
+    const { ageOnEventDate: _priorAge, teamRole: _priorRole, differentPersonConfirmed: _priorConfirmed, ...snapshotWithoutTeamFields } = jsonRecord(attendee.profileSnapshot);
     void _priorAge;
     void _priorRole;
-    const keptSnapshot = onTeamEvent ? snapshotWithoutTeamFields : jsonRecord(attendee.profileSnapshot);
+    void _priorConfirmed;
+    const keptSnapshot = onTeamEvent ? { ...snapshotWithoutTeamFields, ...(input.age !== undefined ? { ageOnEventDate: input.age } : {}) } : jsonRecord(attendee.profileSnapshot);
     const keptResponses = substitutedFormResponses(jsonRecord(attendee.formResponses), input);
     if (onTeamEvent) for (const key of Object.keys(keptResponses)) if (isAgeFieldKey(key)) delete keptResponses[key];
-    if (onTeamEvent) await tx.clubTeamMemberPermission.deleteMany({ where: { registrationAttendeeId: attendeeId } });
     await tx.registrationAttendee.update({
       where: { id: attendeeId },
       data: {

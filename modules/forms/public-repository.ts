@@ -1351,7 +1351,7 @@ async function createPublicRegistrationTransaction(
     }
     // The team's rules once more on what was just saved, and the flag for any team member of 18 or older (#809). Nothing
     // for an event without team rules.
-    teamPermissionMessageIds = (await enforceTeamRegistrationRules(tx, registration.id)).queuedMessageIds;
+    teamPermissionMessageIds = (await enforceTeamRegistrationRules(tx, registration.id, { actorUserId: club.submittedByUserId, actorAccountId: club.submittedByAccountId })).queuedMessageIds;
   }
   if (group) {
     // The contact is the billing party; no club, church, or roster is involved (#650).
