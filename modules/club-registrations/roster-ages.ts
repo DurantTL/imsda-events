@@ -45,12 +45,22 @@ export function ageInputValue(person: AgeInputPerson, text: Readonly<Record<stri
   return text[person.memberId] ?? String(saved[person.memberId] ?? person.reportedAge ?? "");
 }
 
+/** "Sam Synthetic's", or "their" when the roster has no name. */
+function possessiveName(person: Pick<AgeInputPerson, "firstName" | "lastName">) {
+  const name = `${person.firstName} ${person.lastName}`.trim();
+  return name ? `${name}'s` : "their";
+}
+
 /** What is wrong with this person's age entry, or null. A blank entry is never read as the reported age. */
 export function ageInputProblem(person: AgeInputPerson, text: Readonly<Record<string, string>>, saved: Readonly<Record<string, number>>): string | null {
   if (person.ageOnEventDate !== null) return null;
   const raw = ageInputValue(person, text, saved);
-  if (raw.trim() === "") return `Enter ${`${person.firstName} ${person.lastName}`.trim() || "their"} age on the event date.`;
-  return parseTypedAge(raw) === undefined ? "Enter the age as a whole number from 0 to 120." : null;
+  if (raw.trim() === "") return `Enter ${possessiveName(person)} age on the event date.`;
+  if (parseTypedAge(raw) === undefined) {
+    // Name the person: this reads on its own in a summary or to a screen reader (#799 G6).
+    return `Enter ${possessiveName(person)} age as a whole number from 0 to 120.`;
+  }
+  return null;
 }
 
 /** The age in use for each going person with no birth date. Once edited, the reported age never stands in again. */
@@ -87,4 +97,16 @@ export function ageFieldId(memberId: string): string {
 /** What Continue says while ages are still needed, e.g. "Enter 3 ages to continue". */
 export function agesNeededLabel(count: number): string {
   return `Enter ${count} ${count === 1 ? "age" : "ages"} to continue`;
+}
+
+/**
+ * The age summary's lines, one per person who still needs an age, each naming
+ * the person and pointing at their own input (#799 G6): never a bare count.
+ */
+export function missingAgeSummaryItems(missing: ReadonlyArray<AgeInputPerson>): Array<{ memberId: string; fieldId: string; text: string }> {
+  return missing.map((person) => ({
+    memberId: person.memberId,
+    fieldId: ageFieldId(person.memberId),
+    text: `${`${person.firstName} ${person.lastName}`.trim() || "A person"} needs an age on the event date.`,
+  }));
 }

@@ -113,6 +113,19 @@ export function guestIdFromClientId(clientId: string) {
   return clientId.startsWith(GUEST_PREFIX) ? clientId.slice(GUEST_PREFIX.length) : null;
 }
 
+/**
+ * A request-validation message that says which person it is about (#799 G6),
+ * from where the schema found it: an extra person by their place in the list
+ * ("Extra person 2: Enter a first name."). Anything else keeps its message.
+ */
+export function namedSchemaIssueMessage(issue: { path: ReadonlyArray<PropertyKey>; message: string }): string {
+  const [section, position] = issue.path;
+  if (section === "guests" && typeof position === "number") return `Extra person ${position + 1}: ${issue.message}`;
+  // The edit flow sends brand-new extra people as `newGuests`.
+  if (section === "newGuests" && typeof position === "number") return `New extra person ${position + 1}: ${issue.message}`;
+  return issue.message;
+}
+
 const EXISTING_PREFIX = "attendee:";
 
 /**
