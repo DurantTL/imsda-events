@@ -26,6 +26,8 @@ export type TeamFormFilled = {
   /** The director's confirmation box was checked, and the date it was recorded. */
   confirmed: boolean;
   confirmedOn: string | null;
+  /** The photo, video and liability release answer the director gave: "Yes", "No", or blank when none was recorded. */
+  releaseAnswer: "Yes" | "No" | "";
 };
 
 export type TeamFormInput = {

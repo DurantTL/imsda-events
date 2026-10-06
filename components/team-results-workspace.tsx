@@ -77,7 +77,7 @@ function LevelEditor({
         <input checked={draft.qualified} id={`${base}-qualified`} onChange={(event) => setDraft({ ...draft, qualified: event.target.checked })} type="checkbox" />
         <span>Qualified for the next level</span>
       </label>
-      <label htmlFor={`${base}-notes`}>Notes
+      <label htmlFor={`${base}-notes`}>Notes (shown to the club)
         <input id={`${base}-notes`} maxLength={2000} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} value={draft.notes} />
       </label>
       <div className="intro-actions">

@@ -2716,6 +2716,8 @@ model RegistrationAttendee {
   @@unique([registrationId, personId])
   @@index([registrationId, position])
   @@index([eventId, attendeeType])
+  /// "Who is already on another team of this club for this event" (#809) reads an event's attendees by person.
+  @@index([eventId, personId])
   @@index([attendeeTypeDefinitionId])
 }
 

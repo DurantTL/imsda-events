@@ -32,7 +32,7 @@ const filled: TeamFormFilled = {
   teamName: "Bible Bees", clubName: "Test Pathfinders", church: "Test SDA Church", confirmationCode: "PBE-1", areaLocation: "Iowa",
   coordinator: { name: "Pat Coordinator", address: "1 Example Road", city: "Testville", state: "IA", zip: "50000", phone: "515-555-0100", email: "pat@example.test" },
   partnerClub: "Sample Explorers", members: ["Alex Sample", "Casey Example"], alternate: "Morgan Reported", coaches: ["Jordan Example"],
-  confirmed: true, confirmedOn: "2026-11-02",
+  confirmed: true, confirmedOn: "2026-11-02", releaseAnswer: "Yes" as const,
 };
 
 describe("the team form's wording", () => {
@@ -97,6 +97,14 @@ describe("the printed sheet", () => {
     expect(html).not.toContain("Club Director&#x27;s Signature:");
   });
 
+  it("shows the release answer the director gave, or says none was recorded", () => {
+    const html = (releaseAnswer: "Yes" | "No" | "") => renderToStaticMarkup(createElement(TeamFormSheet, { model: buildTeamForm({ ...base, filled: { ...filled, releaseAnswer } }) }));
+    expect(html("Yes")).toContain("Release understood and agreed:</strong> Yes");
+    expect(html("No")).toContain("Release understood and agreed:</strong> No");
+    expect(html("")).toContain("Not recorded");
+    expect(renderToStaticMarkup(createElement(TeamFormSheet, { model: buildTeamForm({ ...base, filled: null }) }))).not.toContain("Release understood and agreed");
+  });
+
   it("says plainly when the confirmation was not recorded", () => {
     const html = renderToStaticMarkup(createElement(TeamFormSheet, { model: buildTeamForm({ ...base, filled: { ...filled, confirmed: false, confirmedOn: null } }) }));
     expect(html).toContain("(not recorded)");
@@ -131,7 +139,7 @@ describe("loading the form", () => {
     vi.clearAllMocks();
     mocks.currentRegistrationAnswers.mockResolvedValue({ responses: {
       coordinator_name: "Pat Coordinator", coordinator_address: "1 Example Road", coordinator_city: "Testville", coordinator_state: "IA", coordinator_zip: "50000",
-      coordinator_phone: "515-555-0100", coordinator_email: "pat@example.test", partner_club: "", director_confirmation: true,
+      coordinator_phone: "515-555-0100", coordinator_email: "pat@example.test", partner_club: "", director_confirmation: true, photo_video_release: "Yes",
       medical_notes: "PRIVATE",
     } });
   });
@@ -140,7 +148,7 @@ describe("loading the form", () => {
     const client = prisma();
     const page = await loadFilledTeamForm({ eventId: "event-1", organizationId: "club-1", teamKey: "bible bees" });
     expect(page?.title).toBe("Bible Bees (Test Pathfinders)");
-    expect(page?.model.filled).toMatchObject({ members: ["Alex Sample"], alternate: "Morgan Reported", coaches: ["Jordan Example"], areaLocation: "Iowa", confirmed: true, confirmedOn: "2026-11-02" });
+    expect(page?.model.filled).toMatchObject({ members: ["Alex Sample"], alternate: "Morgan Reported", coaches: ["Jordan Example"], areaLocation: "Iowa", confirmed: true, confirmedOn: "2026-11-02", releaseAnswer: "Yes" });
     expect(page?.model.filled?.coordinator.name).toBe("Pat Coordinator");
     // Looked up under the club and the team named, never by the team alone.
     expect(client.clubEventRegistration.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { eventId: "event-1", organizationId: "club-1", teamKey: "bible bees" } }));

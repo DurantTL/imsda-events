@@ -8,6 +8,15 @@ import { buildTeamForm, type TeamFormFilled, type TeamFormModel } from "@/module
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { currentRegistrationAnswers } from "@/modules/registrations/amendments-repository";
 
+/** The release answer as the paper form shows it: only Yes or No (a checkbox form stores true), else blank. */
+function releaseAnswer(value: unknown): "Yes" | "No" | "" {
+  if (value === true) return "Yes";
+  if (value === false) return "No";
+  if (typeof value !== "string") return "";
+  const answer = value.trim().toLowerCase();
+  return answer === "yes" ? "Yes" : answer === "no" ? "No" : "";
+}
+
 export type TeamFormPage = { eventName: string; title: string; model: TeamFormModel };
 
 function text(value: unknown) {
@@ -115,6 +124,7 @@ export async function loadFilledTeamForm(which: Which): Promise<TeamFormPage | n
     members,
     alternate,
     coaches,
+    releaseAnswer: releaseAnswer(responses.photo_video_release),
     confirmed: responses.director_confirmation === true,
     confirmedOn: responses.director_confirmation === true ? calendarDateInEventTimeZone(row.createdAt, context.timezone) : null,
   };

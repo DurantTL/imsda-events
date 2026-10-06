@@ -75,6 +75,9 @@ export async function saveTeamResult(
 ): Promise<{ result: TeamResultView | null; changed: boolean }> {
   const input = teamResultInputSchema.parse(rawInput);
   return getPrisma().$transaction(async (tx) => {
+    // Results belong to events that run teams; an event without team rules has none to enter.
+    const teamEvent = await tx.eventTeamSettings.findUnique({ where: { eventId }, select: { eventId: true } });
+    if (!teamEvent) throw new ClubTeamError("RESULT_INVALID", "This event doesn't use team rules, so it has no team results.");
     const team = await tx.clubEventRegistration.findFirst({
       where: { id: clubEventRegistrationId, eventId },
       select: { teamName: true, organization: { select: { name: true } }, registration: { select: { status: true } } },

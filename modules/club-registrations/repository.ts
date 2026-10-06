@@ -72,6 +72,7 @@ import { getTeamSettings } from "@/modules/club-teams/settings-repository";
 import { NO_TEAM_KEY, draftKeySchema, resolveTeamName, teamLabel, type TeamSettings } from "@/modules/club-teams/domain";
 import { ClubTeamError } from "@/modules/club-teams/errors";
 import { ALTERNATE_FIELD_KEY, isAlternateAnswer, teamAgeDate, teamRoleFor, teamRuleProblems, type TeamPerson } from "@/modules/club-teams/rules";
+import { peopleOnOtherTeams, throwIfOnOtherTeams } from "@/modules/club-teams/registration-guard";
 import { confirmationEmailStatusFromMessages, describeClubConfirmationEmail } from "@/modules/forms/confirmation-email-status";
 
 // The registrant messages that confirm a club registration (or its waitlist spot).
@@ -563,6 +564,7 @@ async function activeRosterFor(client: Prisma.TransactionClient, organizationId:
       id: true,
       personId: true,
       attendeeType: true,
+      classLevel: true,
       role: true,
       gender: true,
       sealedBirthDate: true,
@@ -729,6 +731,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         // An age a form reported for someone with no birth date (#376); prefills the age field (#639).
         reportedAge: member.sealedBirthDate ? null : member.reportedAge,
         attendeeType: member.attendeeType,
+        classLevel: member.classLevel,
         role: member.role,
         ownedResponses: experience ? rosterOwnedResponses(experience.form.definition, person) : {},
         prefillResponses: experience
@@ -926,34 +929,6 @@ export type ClubRegistrationActor = { accountId: string } | { userId: string; ac
  * The draft a request names, against what the event allows (#809): an event with several teams per club needs the id the
  * page picked for the team, and one without has only the empty key, so a stray id can never start a second draft there.
  */
-/**
- * People of this club already on another of its teams for the event (#809): everyone is on one team only, team members,
- * the alternate and coaches alike. Reads the club's other registrations that still hold a place (submitted, confirmed or on the
- * waitlist); `excludeRegistrationId` leaves out the one being edited. Returns each such person's name, or an empty list.
- */
-async function membersOnOtherTeams(
-  client: Pick<Prisma.TransactionClient, "registrationAttendee">,
-  input: { eventId: string; organizationId: string; members: ReadonlyArray<{ personId: string; name: string }>; excludeRegistrationId?: string },
-): Promise<string[]> {
-  if (input.members.length === 0) return [];
-  const rows = await client.registrationAttendee.findMany({
-    where: {
-      eventId: input.eventId,
-      personId: { in: input.members.map((member) => member.personId) },
-      registration: {
-        status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED"] },
-        clubRegistration: { is: { organizationId: input.organizationId, ...(input.excludeRegistrationId ? { registrationId: { not: input.excludeRegistrationId } } : {}) } },
-      },
-    },
-    select: { personId: true },
-  });
-  const taken = new Set(rows.map((row) => row.personId));
-  return input.members.filter((member) => taken.has(member.personId)).map((member) => member.name);
-}
-
-const onOtherTeamMessage = (name: string) =>
-  `${name || "Someone"} is already on another team from your club for this event. Everyone is on one team only: remove them here, or from the other team.`;
-
 export function clubDraftKey(settings: Pick<TeamSettings, "allowMultipleTeams"> | null, requested: string | undefined): string {
   if (!settings?.allowMultipleTeams) {
     if (requested) throw new ClubRegistrationError("TEAM_INVALID", "This event takes one registration per club.");
@@ -1098,6 +1073,7 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
     const ageDate = teamAgeDate(teamSettings, eventDate);
     const teamPeople: TeamPerson[] = [];
     const teamMemberPersons: Array<{ personId: string; name: string }> = [];
+    const teamGuestNames: string[] = [];
     // The club directory field (#482) is locked to this club's own
     // `Organization` record, read inside the transaction — never from
     // anything the client sent, whatever the client's UI let through. The
@@ -1119,7 +1095,7 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
           );
         }
         // An extra person's typed age is their age on the event's age date (#809).
-        const role = teamRoleFor({ responses: attendee.responses, age: guest.age });
+        const role = teamRoleFor({ responses: attendee.responses, maxMemberAge: teamSettings?.maxMemberAge ?? null, age: guest.age });
         resolved.set(attendee.clientId, {
           personId: null,
           rosterMemberId: null,
@@ -1128,6 +1104,7 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
           guest: { email: guest.email, attendeeType: guestIsAdult(guest) ? "ADULT" : "YOUTH", guestId: guest.id },
         });
         const person = { firstName: guest.firstName, lastName: guest.lastName, ageOnEventDate: guest.age, gender: null };
+        teamGuestNames.push(`${guest.firstName} ${guest.lastName}`.trim());
         teamPeople.push({
           name: `${guest.firstName} ${guest.lastName}`.trim(),
           role,
@@ -1160,8 +1137,8 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
         }
       }
       const person = effectiveAge === undefined ? rosterOnly : { ...rosterOnly, ageOnEventDate: effectiveAge };
-      if (typedAge !== undefined && typedAge !== (member.reportedAge ?? undefined) && actor && !saveOff.has(member.id)) saveBack.push({ memberId: member.id, age: typedAge });
-      const memberRole = teamRoleFor({ responses: attendee.responses, rosterAttendeeType: member.attendeeType, age: person.ageOnEventDate });
+      if (typedAge !== undefined && typedAge !== (member.reportedAge ?? undefined) && actor && !teamSettings?.ageAsOf && !saveOff.has(member.id)) saveBack.push({ memberId: member.id, age: typedAge });
+      const memberRole = teamRoleFor({ responses: attendee.responses, rosterAttendeeType: member.attendeeType, rosterClassLevel: member.classLevel, maxMemberAge: teamSettings?.maxMemberAge ?? null, age: person.ageOnEventDate });
       teamMemberPersons.push({ personId: member.personId, name: `${person.firstName} ${person.lastName}`.trim() });
       resolved.set(attendee.clientId, { personId: member.personId, rosterMemberId: member.id, ageOnEventDate: person.ageOnEventDate, ...(teamSettings ? { teamRole: memberRole } : {}) });
       teamPeople.push({
@@ -1176,8 +1153,7 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
     const teamProblems = teamRuleProblems(teamSettings, teamPeople, eventDate);
     if (teamProblems.length > 0) throw new ClubTeamError("TEAM_RULES", teamProblems.join(" "), teamProblems);
     if (teamSettings?.allowMultipleTeams) {
-      const twice = await membersOnOtherTeams(tx, { eventId: event.id, organizationId, members: teamMemberPersons });
-      if (twice.length > 0) throw new ClubTeamError("TEAM_RULES", twice.map(onOtherTeamMessage).join(" "), twice.map(onOtherTeamMessage));
+      throwIfOnOtherTeams(await peopleOnOtherTeams(tx, { eventId: event.id, organizationId, people: teamMemberPersons, guestNames: teamGuestNames }));
     }
     // Part of the submit transaction: a failed submit saves nothing back (#639).
     if (actor && saveBack.length > 0) await saveRosterAgesBack(tx, organizationId, clubYearFor(event.startsAt), actor, saveBack);
@@ -1441,8 +1417,6 @@ export async function amendClubRegistration(
   // The event's team rules (#809): ages are counted on its age date, and the whole team is checked against its limits.
   const teamSettings = await getTeamSettings(eventId);
   const ageDate = teamAgeDate(teamSettings, eventDate);
-  const teamPeople: TeamPerson[] = [];
-  const teamMemberPersons: Array<{ personId: string; name: string }> = [];
   const definition = form.definition;
   const seminarKeys = definition.sections.flatMap((section) => section.fields)
     .filter(isSeminarPreferenceField)
@@ -1492,7 +1466,7 @@ export async function amendClubRegistration(
         person = { ...rosterOnly, ageOnEventDate: age };
         // Only an age the director changed from where it started (the registered age, else the roster's reported age).
         const startingAge = typeof registeredAge === "number" ? registeredAge : member.reportedAge ?? undefined;
-        if (typedAges[memberId] !== undefined && typedAges[memberId] !== startingAge && saveAgeIds.has(memberId)) saveAgeBack.push({ memberId, age });
+        if (typedAges[memberId] !== undefined && typedAges[memberId] !== startingAge && !teamSettings?.ageAsOf && saveAgeIds.has(memberId)) saveAgeBack.push({ memberId, age });
       }
     }
     const owned = rosterOwnedResponses(definition, person);
@@ -1502,14 +1476,7 @@ export async function amendClubRegistration(
     };
     if (current) assertSeminarPicksUnchanged(current, responses);
     amendmentAttendees.push({ attendeeId: current?.id ?? null, clientId, responses });
-    const memberRole = teamRoleFor({ responses, rosterAttendeeType: member.attendeeType, age: person.ageOnEventDate });
-    if (member.personId) teamMemberPersons.push({ personId: member.personId, name: `${person.firstName} ${person.lastName}`.trim() });
-    teamPeople.push({
-      name: `${person.firstName} ${person.lastName}`.trim(),
-      role: memberRole,
-      alternate: isAlternateAnswer(responses[ALTERNATE_FIELD_KEY]),
-      age: person.ageOnEventDate,
-    });
+    const memberRole = teamRoleFor({ responses, rosterAttendeeType: member.attendeeType, rosterClassLevel: member.classLevel, maxMemberAge: teamSettings?.maxMemberAge ?? null, age: person.ageOnEventDate });
     serverOptions.set(clientId, {
       // A newly added roster person is that roster person, never a new or
       // name-matched one (the submit path links them the same way).
@@ -1534,8 +1501,7 @@ export async function amendClubRegistration(
     assertSeminarPicksUnchanged(current, responses);
     const ageOnEventDate = typeof snapshot.ageOnEventDate === "number" ? snapshot.ageOnEventDate : null;
     amendmentAttendees.push({ attendeeId: current.id, clientId, responses });
-    const guestRole = teamRoleFor({ responses, age: ageOnEventDate });
-    teamPeople.push({ name: snapshotName(snapshot), role: guestRole, alternate: isAlternateAnswer(responses[ALTERNATE_FIELD_KEY]), age: ageOnEventDate });
+    const guestRole = teamRoleFor({ responses, maxMemberAge: teamSettings?.maxMemberAge ?? null, age: ageOnEventDate });
     serverOptions.set(clientId, {
       // Their own email, as submitted, not whatever the form answers imply.
       email: typeof snapshot.email === "string" ? snapshot.email : null,
@@ -1559,15 +1525,6 @@ export async function amendClubRegistration(
     const responses = withRegisteredIdentity(definition, keptAnswers(clientId, current), recordFromJson(current.formResponses));
     assertSeminarPicksUnchanged(current, responses);
     amendmentAttendees.push({ attendeeId: current.id, clientId, responses });
-    // Someone no longer on the roster counts as the role they were registered with (#809).
-    const offRosterSnapshot = recordFromJson(current.profileSnapshot);
-    const offRosterAge = typeof offRosterSnapshot.ageOnEventDate === "number" ? offRosterSnapshot.ageOnEventDate : null;
-    teamPeople.push({
-      name: snapshotName(offRosterSnapshot),
-      role: offRosterSnapshot.teamRole === "COACH" || offRosterSnapshot.teamRole === "MEMBER" ? offRosterSnapshot.teamRole : teamRoleFor({ responses, age: offRosterAge }),
-      alternate: isAlternateAnswer(responses[ALTERNATE_FIELD_KEY]),
-      age: offRosterAge,
-    });
   }
 
   for (const guest of input.newGuests) {
@@ -1578,8 +1535,7 @@ export async function amendClubRegistration(
       ...rosterOwnedResponses(definition, person),
     };
     amendmentAttendees.push({ attendeeId: null, clientId, responses });
-    const newGuestRole = teamRoleFor({ responses, age: guest.age });
-    teamPeople.push({ name: `${guest.firstName} ${guest.lastName}`.trim(), role: newGuestRole, alternate: isAlternateAnswer(responses[ALTERNATE_FIELD_KEY]), age: guest.age });
+    const newGuestRole = teamRoleFor({ responses, maxMemberAge: teamSettings?.maxMemberAge ?? null, age: guest.age });
     serverOptions.set(clientId, {
       email: guest.email,
       profileMetadata: {
@@ -1596,13 +1552,8 @@ export async function amendClubRegistration(
   if (amendmentAttendees.length === 0) {
     throw new ClubRegistrationError("ATTENDEES_INVALID", "Choose at least one person from your roster.");
   }
-  // The team's size, alternate and age rules (#809), checked again on every edit, on the server.
-  const teamProblems = teamRuleProblems(teamSettings, teamPeople, eventDate);
-  if (teamProblems.length > 0) throw new ClubTeamError("TEAM_RULES", teamProblems.join(" "), teamProblems);
-  if (teamSettings?.allowMultipleTeams) {
-    const twice = await membersOnOtherTeams(getPrisma(), { eventId, organizationId, members: teamMemberPersons, excludeRegistrationId: registrationId });
-    if (twice.length > 0) throw new ClubTeamError("TEAM_RULES", twice.map(onOtherTeamMessage).join(" "), twice.map(onOtherTeamMessage));
-  }
+  // The team rules (size, alternate, age, one team per person) are checked inside the amendment's own Serializable
+  // transaction by `enforceTeamRegistrationRules`, from the settings read there, so a race cannot slip past them (#809).
 
   const amendmentInput: RegistrationAmendmentInput = {
     clientRequestId: input.clientRequestId,

@@ -91,6 +91,11 @@ export function TeamFormSheet({ model }: { model: TeamFormModel }) {
       </section>
 
       <p className="team-form-release">{model.releaseText}</p>
+      {filled && (
+        <p className="team-form-release-answer">
+          <strong>Release understood and agreed:</strong> {filled.releaseAnswer || "Not recorded"}
+        </p>
+      )}
       <footer className="team-form-footer">
         {model.contactLines.map((line) => <p key={line}>{line}</p>)}
         <p className="team-form-number">{model.formNumber}</p>

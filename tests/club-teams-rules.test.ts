@@ -108,23 +108,37 @@ describe("the age limit, counted on the age date", () => {
 });
 
 describe("who is a coach", () => {
-  it("follows the roster for a roster person, whatever the form's role answer says", () => {
-    expect(teamRoleFor({ responses: {}, rosterAttendeeType: "STAFF", age: 38 })).toBe("COACH");
-    expect(teamRoleFor({ responses: {}, rosterAttendeeType: "ADULT", age: 41 })).toBe("COACH");
-    expect(teamRoleFor({ responses: {}, rosterAttendeeType: "YOUTH", age: 14 })).toBe("MEMBER");
-    expect(teamRoleFor({ responses: {}, rosterAttendeeType: "UNDERAGE", age: 6 })).toBe("MEMBER");
-    // A youth cannot be made a coach by answering Coach.
+  it("counts everyone under 18 as a team member, whatever the roster or the form says", () => {
+    // A director cannot dodge the size limit by marking a 13-year-old as staff.
+    expect(teamRoleFor({ responses: {}, rosterAttendeeType: "STAFF", age: 13 })).toBe("MEMBER");
     expect(teamRoleFor({ responses: { attendee_type: "Coach" }, rosterAttendeeType: "YOUTH", age: 14 })).toBe("MEMBER");
-  });
-
-  it("makes an extra person under 18 a team member, whatever they are called", () => {
     expect(teamRoleFor({ responses: { attendee_type: "Coach" }, age: 15 })).toBe("MEMBER");
+    expect(teamRoleFor({ responses: {}, rosterAttendeeType: "UNDERAGE", age: 6 })).toBe("MEMBER");
   });
 
-  it("makes an extra person of 18 or older a coach, unless given a team member's role", () => {
+  it("lets an 18 or 19 year old Pathfinder or TLT be a team member, even when staff on the roster", () => {
+    expect(teamRoleFor({ responses: { attendee_type: "TLT" }, rosterAttendeeType: "STAFF", maxMemberAge: 19, age: 18 })).toBe("MEMBER");
+    expect(teamRoleFor({ responses: {}, rosterAttendeeType: "STAFF", rosterClassLevel: "TLT", maxMemberAge: 19, age: 19 })).toBe("MEMBER");
+    expect(teamRoleFor({ responses: { attendee_type: "Pathfinder" }, age: 19 })).toBe("MEMBER");
+    expect(teamRoleFor({ responses: { attendee_type: "Pathfinder" }, rosterAttendeeType: "YOUTH", maxMemberAge: 19, age: 19 })).toBe("MEMBER");
+  });
+
+  it("makes an 18 or older person a coach unless given a team member's role", () => {
+    expect(teamRoleFor({ responses: {}, rosterAttendeeType: "YOUTH", maxMemberAge: 19, age: 18 })).toBe("COACH");
     expect(teamRoleFor({ responses: {}, age: 35 })).toBe("COACH");
     expect(teamRoleFor({ responses: { attendee_type: "Coach" }, age: 35 })).toBe("COACH");
-    expect(teamRoleFor({ responses: { attendee_type: "Pathfinder" }, age: 19 })).toBe("MEMBER");
-    expect(teamRoleFor({ responses: { attendee_type: "TLT" }, age: 18 })).toBe("MEMBER");
+    expect(teamRoleFor({ responses: { attendee_type: "Coach" }, rosterAttendeeType: "STAFF", age: 38 })).toBe("COACH");
+  });
+
+  it("makes anyone older than the oldest team member age a coach, even answering Pathfinder", () => {
+    expect(teamRoleFor({ responses: { attendee_type: "Pathfinder" }, rosterAttendeeType: "YOUTH", maxMemberAge: 19, age: 20 })).toBe("COACH");
+    expect(teamRoleFor({ responses: { attendee_type: "TLT" }, maxMemberAge: 19, age: 25 })).toBe("COACH");
+  });
+
+  it("follows the roster type when the age is not known", () => {
+    expect(teamRoleFor({ responses: {}, rosterAttendeeType: "STAFF", age: null })).toBe("COACH");
+    expect(teamRoleFor({ responses: {}, rosterAttendeeType: "ADULT", age: null })).toBe("COACH");
+    expect(teamRoleFor({ responses: {}, rosterAttendeeType: "YOUTH", age: null })).toBe("MEMBER");
+    expect(teamRoleFor({ responses: {}, age: null })).toBe("MEMBER");
   });
 });

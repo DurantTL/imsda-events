@@ -5,8 +5,8 @@ import type { TeamSettings } from "@/modules/club-teams/domain";
  * The rules a team must keep (#809): how many team members it has, who the alternate is, and how old a team member
  * may be on the event's age date. Pure, so the director's page and the server (submit and amend) read one rule.
  *
- * A team member is anyone who is not a coach. Coaches (the adults who come with the team) are listed with it but
- * never counted toward its size, never its alternate, and never held to the oldest age.
+ * A team member is anyone who is not a coach (see `teamRoleFor`). Coaches (the adults who come with the team) are listed
+ * with it but never counted toward its size, never its alternate, and never held to the oldest age.
  */
 
 export type TeamRole = "MEMBER" | "COACH";
@@ -17,8 +17,6 @@ export const ALTERNATE_FIELD_KEY = "alternate";
 /** The attendee form answer that holds a person's role, shared with every club form's roster role question. */
 export const ROLE_FIELD_KEY = "attendee_type";
 
-const COACH_ROLE_ANSWERS = new Set(["coach", "staff", "adult"]);
-
 /** Whether an attendee is marked the alternate: a checked box (or the words Yes/true a stored answer may carry). */
 export function isAlternateAnswer(value: unknown): boolean {
   if (value === true) return true;
@@ -26,22 +24,35 @@ export function isAlternateAnswer(value: unknown): boolean {
   return false;
 }
 
+/** A role answer (or roster class level) that names a Pathfinder or a TLT: a youth member, even at 18 or 19. */
+function isYouthRoleAnswer(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const answer = value.trim().toLowerCase();
+  return answer === "pathfinder" || answer === "tlt" || answer === "teen leader in training";
+}
+
 /**
- * Whether a person is a coach: an adult who comes with the team. A roster person is what the roster says (staff and adults
- * are coaches, youth and children are team members), whatever the form's role answer, so a director cannot turn a youth
- * into a coach to keep them out of the count. An extra person under 18 is a team member; one who is 18 or older is a coach
- * unless the director gave them a team member's role (a Pathfinder or TLT of 18 or 19 from a partner club).
+ * Whether a person is a team member or a coach, the same rule for roster people and extra people (#809), by their age on
+ * the event's age date, so a director cannot dodge the size limit by marking a child as staff:
+ * - under 18 is a team member, whatever the roster says;
+ * - 18 up to the oldest team member age is a team member when the role answer is Pathfinder or TLT (or the roster class
+ *   level is TLT), otherwise a coach;
+ * - older than that is a coach;
+ * - an age that is not known follows the roster type (staff and adults are coaches, everyone else a team member).
  */
 export function teamRoleFor(input: {
   responses: Readonly<Record<string, unknown>>;
   rosterAttendeeType?: "YOUTH" | "STAFF" | "ADULT" | "UNDERAGE" | null;
+  rosterClassLevel?: string | null;
+  maxMemberAge?: number | null;
   age: number | null;
 }): TeamRole {
-  if (input.rosterAttendeeType) return input.rosterAttendeeType === "STAFF" || input.rosterAttendeeType === "ADULT" ? "COACH" : "MEMBER";
-  if (input.age === null || input.age < 18) return "MEMBER";
-  const answer = input.responses[ROLE_FIELD_KEY];
-  if (typeof answer === "string" && answer.trim()) return COACH_ROLE_ANSWERS.has(answer.trim().toLowerCase()) ? "COACH" : "MEMBER";
-  return "COACH";
+  if (input.age === null) {
+    return input.rosterAttendeeType === "STAFF" || input.rosterAttendeeType === "ADULT" ? "COACH" : "MEMBER";
+  }
+  if (input.age < 18) return "MEMBER";
+  if (input.maxMemberAge !== null && input.maxMemberAge !== undefined && input.age > input.maxMemberAge) return "COACH";
+  return isYouthRoleAnswer(input.responses[ROLE_FIELD_KEY]) || input.rosterClassLevel === "TLT" ? "MEMBER" : "COACH";
 }
 
 /** One person on a team, as the rules read them. `age` is on the event's age date. */

@@ -116,7 +116,7 @@ async function main() {
   await cleanup();
   await prisma.user.create({ data: { id: staffUserId, email: `${P}-staff@example.test`, displayName: "PBE Check Staff", globalRole: "SYSTEM_ADMIN" } });
   await prisma.organization.create({ data: { id: churchId, type: "CHURCH", name: `Pbe Church ${P}`, normalizedName: `pbe church ${P}` } });
-  const clubKeys = ["a", "b", "c"] as const;
+  const clubKeys = ["a", "b", "c", "d"] as const;
   await prisma.organization.createMany({
     data: clubKeys.map((key) => ({ id: clubOf(key), type: "CLUB" as const, name: `Pbe Club ${key} ${P}`, normalizedName: `pbe club ${key} ${P}`, parentOrganizationId: churchId })),
   });
@@ -127,6 +127,8 @@ async function main() {
     // 20 on 2026-01-01 (turns 20 on 2025-12-31), so too old; 19 on 2026-01-01 (turns 20 on 2026-01-02), so still eligible.
     twenty: sealBirthDate("2005-12-31"),
     nineteen: sealBirthDate("2006-01-02"),
+    // 18 on 2026-01-01 (turned 18 on 2025-06-01).
+    eighteen: sealBirthDate("2007-06-01"),
     adult: sealBirthDate("1985-03-02"),
   };
   const members = new Map<string, string>();
@@ -149,6 +151,12 @@ async function main() {
   await addMember("b", "coach2", "adult", "STAFF", "PbeCoach", "Four");
   for (let index = 1; index <= 5; index += 1) await addMember("c", `y${index}`, "youth", "YOUTH", "PbeCory", `Cc${index}`);
   await addMember("c", "coach1", "adult", "STAFF", "PbeCoach", "Five");
+  // Club d: the people for the role, guest, amend-race and staff-amendment checks.
+  for (let index = 1; index <= 9; index += 1) await addMember("d", `y${index}`, "youth", "YOUTH", "PbeDana", `Dd${index}`);
+  await addMember("d", "staff13", "youth", "STAFF", "PbeStaffKid", "Thirteen");
+  await addMember("d", "staff13b", "youth", "STAFF", "PbeStaffKid", "ThirteenB");
+  await addMember("d", "staff18", "eighteen", "STAFF", "PbeStaffTlt", "Eighteen");
+  await addMember("d", "coach1", "adult", "STAFF", "PbeCoach", "Six");
   const clientId = (club: string, key: string) => clubAttendeeClientId(members.get(`${club}:${key}`)!);
 
   // 1. The starter template creates the event: team rules, two sites, the deadline, the form.
@@ -241,13 +249,14 @@ async function main() {
   await expectCode(submit("b", "Coach Alt", [person("b", "y8"), person("b", "y9"), { ...coach("b", "coach1"), alternate: true }]), "TEAM_RULES", "a coach cannot be the alternate", ["is a coach, so can't be the alternate"]);
   console.log("ok  1 and 8 refused, 2 and 7 accepted, coaches never counted, a second alternate refused");
 
-  // 5. The age date: 20 on 2026-01-01 refused by name; 19 on that date accepted though older at the event.
-  await expectCode(submit("a", "Too Old", [person("a", "twenty"), person("a", "y5")]), "TEAM_RULES", "a member who is 20 on 2026-01-01 is refused", ["PbeOlder Twenty is 20 on January 1, 2026", "at most 19"]);
+  // 5. The age date: ages are counted on 2026-01-01, not the event day. Someone older than the limit on that date is a coach
+  // (never a team member); someone 19 on it is a team member though older at the event.
+  await expectCode(submit("a", "Too Old", [person("a", "twenty"), person("a", "y5")]), "TEAM_RULES", "a person who is 20 on 2026-01-01 is a coach, so the team has one member", ["this one has 1", "Coaches don't count"]);
   await submit("a", "Edge Team", [person("a", "nineteen"), person("a", "y5")]);
   const edge = await rowOf("a", "Edge Team");
-  const edgeAge = (edge.registration.attendees.find((attendee) => attendee.personId === personOf.get("a:nineteen")!)!.profileSnapshot as { ageOnEventDate?: number }).ageOnEventDate;
-  assert(edgeAge === 19, `ages are counted on 2026-01-01, not the event day, got ${edgeAge}`);
-  // An extra person's age is their age on that date too: 20 refused by name, 19 accepted as a team member.
+  const edgeSnapshot = (edge.registration.attendees.find((attendee) => attendee.personId === personOf.get("a:nineteen")!)!.profileSnapshot as { ageOnEventDate?: number; teamRole?: string });
+  assert(edgeSnapshot.ageOnEventDate === 19 && edgeSnapshot.teamRole === "MEMBER", `ages are counted on 2026-01-01, not the event day, got ${edgeSnapshot.ageOnEventDate}`);
+  // An extra person's age is their age on that date too: 20 is a coach, 19 a team member.
   const guestDraft = draftKey();
   const guestOld = "gstold000001";
   const guestOk = "gstok0000001";
@@ -261,9 +270,12 @@ async function main() {
     ...input([person("c", "y3")]),
     attendees: [{ clientId: clientId("c", "y3"), responses: { attendee_type: "Pathfinder" } }, ...ids.map((id) => ({ clientId: clubGuestClientId(id), responses: { attendee_type: "Pathfinder" } }))],
   });
-  await expectCode(club.submitClubRegistration(clubOf("c"), eventId, actor, guestInput([guestOld, guestOk]), now, { locationId: iowa!.id, teamName: "Joint Team", draftKey: guestDraft }), "TEAM_RULES", "an extra person of 20 is refused", ["PbeGuest Old is 20 on January 1, 2026"]);
-  await club.submitClubRegistration(clubOf("c"), eventId, actor, { ...guestInput([guestOk]), idempotencyKey: randomUUID(), responses: input([]).responses }, now, { locationId: iowa!.id, teamName: "Joint Team", draftKey: guestDraft });
-  console.log("ok  the age limit counts on 2026-01-01: 20 refused by name, 19 accepted, extra people the same");
+  await expectCode(club.submitClubRegistration(clubOf("c"), eventId, actor, guestInput([guestOld]), now, { locationId: iowa!.id, teamName: "Joint Team", draftKey: guestDraft }), "TEAM_RULES", "an extra person of 20 is a coach, so one team member is too few", ["this one has 1"]);
+  await club.submitClubRegistration(clubOf("c"), eventId, actor, { ...guestInput([guestOld, guestOk]), idempotencyKey: randomUUID(), responses: input([]).responses }, now, { locationId: iowa!.id, teamName: "Joint Team", draftKey: guestDraft });
+  const joint = await rowOf("c", "Joint Team");
+  const jointRoles = joint.registration.attendees.map((attendee) => (attendee.profileSnapshot as { firstName?: string; teamRole?: string }).teamRole).sort();
+  assert(jointRoles.join() === "COACH,MEMBER,MEMBER", `the 20-year-old extra person is a coach, the 19-year-old a team member, got ${jointRoles.join()}`);
+  console.log("ok  the age limit counts on 2026-01-01: 20 is a coach, 19 a team member, extra people the same");
 
   // 6. A person is on one team of a club only: team members and coaches alike.
   await expectCode(submit("a", "Twice", [person("a", "y1"), person("a", "y6")]), "TEAM_RULES", "a team member already on another team is refused", ["PbeAlex Aa1 is already on another team from your club"]);
@@ -305,7 +317,7 @@ async function main() {
     attendeeResponses: Object.fromEntries(selected.map((key) => [clientId("b", key), { attendee_type: key.startsWith("coach") ? "Coach" : "Pathfinder" }])),
     teamKey: "quiz kids", ...extra,
   });
-  await expectCode(club.amendClubRegistration(clubOf("b"), eventId, actor, edit(["y1"]), now), "TEAM_RULES", "an edit down to one team member is refused", ["at least 2 team members"]);
+  await expectCode(club.amendClubRegistration(clubOf("b"), eventId, actor, edit(["y1", "coach1", "coach2"]), now), "TEAM_RULES", "an edit down to one team member and two coaches is refused", ["at least 2 team members"]);
   await expectCode(club.amendClubRegistration(clubOf("b"), eventId, actor, edit(["y1", "y2", "y3", "y4", "y5", "y6", "y7", "y8"]), now), "TEAM_RULES", "an edit up to eight is refused", ["at most 7 team members", "this one has 8"]);
   await club.amendClubRegistration(clubOf("b"), eventId, actor, edit(["y1", "y2", "y3", "y4", "y5", "y6"]), now);
   assert((await prisma.registrationAttendee.count({ where: { registrationId: quizRow.registrationId } })) === 6, "an edit to six team members and no coaches is saved");
@@ -447,6 +459,92 @@ async function main() {
   assert(assignments.filter((row) => row.organizationId === clubOf("a")).length >= 3, "assignments have a row for each team");
   console.log("ok  the packet, QR pass, check-in and assignments follow the team");
 
+  // 15b. The group (public) path takes no team event: it would skip every team rule.
+  const groupModule = await import("../modules/group-registrations/repository");
+  const publicForms = await import("../modules/forms/public-repository");
+  const landing = await import("../modules/events/public-repository");
+  const eventSlug = `${S}-pbe`;
+  await expectCode(groupModule.getGroupRegistrationExperience(eventSlug, now), "EVENT_NOT_FOUND", "the group page is refused on an event with team rules");
+  await expectCode(groupModule.submitGroupRegistration(eventSlug, { ...input([]), attendees: [] } as never, {}, now), "EVENT_NOT_FOUND", "a group submission is refused on an event with team rules");
+  // Even past that first gate, the submit transaction refuses a group on an event with team settings.
+  await expectCode(
+    publicForms.submitPublicRegistration(eventSlug, form.slug, { ...input([]), attendees: [{ clientId: "gstgrp000001", responses: { attendee_type: "Pathfinder" } }] } as never, now, {
+      group: true, locationId: null, report: () => undefined, registered: () => undefined,
+      prepareAttendees: async (_tx: unknown, context: { input: unknown }) => ({ input: context.input, attendees: new Map() }),
+    } as never),
+    "GROUP_REGISTRATION_UNAVAILABLE", "the submit transaction refuses a group on an event with team rules",
+  );
+  const landingPage = await landing.getPublicEventLanding(eventSlug, now);
+  assert(landingPage && landingPage.groupRegistration === null, "the public event page offers no group registration on an event with team rules");
+  console.log("ok  group registration is refused on an event with team rules: page, submit and landing link");
+
+  // 15c. Who is a team member: by age on the age date, whatever the roster says.
+  const staffDirector = (key: string, role: string): Person => ({ client: clientId("d", key), role });
+  await submit("d", "Staff Kids", [staffDirector("staff13", "Pathfinder"), staffDirector("staff18", "TLT")], iowa!.id);
+  const staffKids = await rowOf("d", "Staff Kids");
+  const kidRoles = new Map(staffKids.registration.attendees.map((attendee) => [attendee.personId, (attendee.profileSnapshot as { teamRole?: string }).teamRole]));
+  assert(kidRoles.get(personOf.get("d:staff13")!) === "MEMBER", "a 13-year-old marked staff on the roster counts as a team member");
+  assert(kidRoles.get(personOf.get("d:staff18")!) === "MEMBER", "an 18-year-old TLT marked staff on the roster can be a team member");
+  // Marking a child as staff does not hide them from the count: 7 youth and a 13-year-old marked staff is 8 team members.
+  await expectCode(submit("d", "Dodge", [...Array.from({ length: 7 }, (_, index) => person("d", `y${index + 1}`)), staffDirector("staff13b", "Pathfinder")], iowa!.id), "TEAM_RULES", "a child marked staff still counts toward the size limit", ["at most 7 team members", "this one has 8"]);
+  console.log("ok  the role follows the age on the age date: staff-marked 13 and TLT 18 are team members");
+
+  // 15d. The same extra person cannot be on two teams of a club: matched by name.
+  const guestTeam = async (teamName: string, guestId: string, first: string, last: string, ids: string[]) => {
+    const key = draftKey();
+    await club.saveClubRegistrationDraft(clubOf("d"), eventId, actor, {
+      selectedMemberIds: ids.map((id) => members.get(`d:${id}`)!), guests: [{ id: guestId, firstName: first, lastName: last, age: 15, email: null }],
+      responses: {}, attendeeResponses: {}, baseRevision: 0, saveId: randomUUID(), draftKey: key, teamName,
+    });
+    return club.submitClubRegistration(clubOf("d"), eventId, actor, {
+      ...input([]), idempotencyKey: randomUUID(),
+      attendees: [...ids.map((id) => ({ clientId: clientId("d", id), responses: { attendee_type: "Pathfinder" } })), { clientId: clubGuestClientId(guestId), responses: { attendee_type: "Pathfinder" } }],
+    } as never, now, { locationId: iowa!.id, teamName, draftKey: key });
+  };
+  await guestTeam("Visitors One", "gstvis000001", "PbeVisitor", "Pat", ["y1"]);
+  await expectCode(guestTeam("Visitors Two", "gstvis000002", "pbevisitor", "  PAT ", ["y2"]), "TEAM_RULES", "the same extra person on a second team is refused, naming them", ["pbevisitor PAT is already on another team from your club"]);
+  console.log("ok  an extra person already on another team of the club is refused, matched by name");
+
+  // 15e. Amend and submit racing for one person: exactly one lands. The amend reads the rules inside its own transaction.
+  const alpha = await submit("d", "Alpha", [person("d", "y3"), person("d", "y4")], iowa!.id).then(() => rowOf("d", "Alpha"));
+  const alphaEdit = (selected: string[], updatedAt: Date) => ({
+    clientRequestId: randomUUID(), expectedUpdatedAt: updatedAt.toISOString(), selectedMemberIds: selected.map((key) => members.get(`d:${key}`)!),
+    keptGuestIds: [] as string[], keptOffRosterAttendeeIds: [] as string[], newGuests: [] as never[],
+    attendeeResponses: Object.fromEntries(selected.map((key) => [clientId("d", key), { attendee_type: "Pathfinder" }])), teamKey: "alpha",
+  });
+  const amendRace = await Promise.allSettled([
+    club.amendClubRegistration(clubOf("d"), eventId, actor, alphaEdit(["y3", "y4", "y5"], alpha.registration.updatedAt), now),
+    submit("d", "Beta", [person("d", "y5"), person("d", "y6")], iowa!.id),
+  ]);
+  assert(amendRace.filter((result) => result.status === "fulfilled").length === 1, `exactly one of an amend and a submit sharing a person lands, got ${amendRace.map((result) => result.status).join()}`);
+  assert(await prisma.registrationAttendee.count({ where: { personId: personOf.get("d:y5")!, registration: { eventId } } }) === 1, "the shared person is on one team only after the race");
+  console.log("ok  an amend racing a submit for the same person: exactly one landed");
+
+  // 15f. A staff amendment of a team keeps the same rules and sets the role of the people staff add.
+  const amendments = await import("../modules/registrations/amendments-repository");
+  const staffActor = { kind: "STAFF" as const, id: staffUserId, displayName: "PBE Check Staff" };
+  const gamma = await submit("d", "Gamma", [person("d", "y7"), person("d", "y8"), coach("d", "coach1")], iowa!.id).then(() => rowOf("d", "Gamma"));
+  async function staffAmend(attendees: Array<{ attendeeId: string | null; clientId: string; responses: Record<string, unknown> }>) {
+    const answers = await amendments.currentRegistrationAnswers(eventId, gamma.registrationId);
+    const amendInput = { clientRequestId: randomUUID(), expectedUpdatedAt: answers!.updatedAt, reason: "Staff check", responses: answers!.responses, attendees, previewOnly: true as boolean };
+    const quote = await amendments.previewRegistrationAmendment(eventId, gamma.registrationId, amendInput);
+    return amendments.amendRegistration(eventId, gamma.registrationId, { ...amendInput, previewOnly: false, quoteFingerprint: quote.quoteFingerprint }, staffActor, now);
+  }
+  const gammaAttendees = (await prisma.registrationAttendee.findMany({ where: { registrationId: gamma.registrationId }, orderBy: { position: "asc" } }))
+    .map((attendee) => ({ attendeeId: attendee.id, clientId: `existing-${attendee.id}`, responses: attendee.formResponses as Record<string, unknown> }));
+  // Under the form's own minimum of two people the engine refuses first; two people with one coach is the team rule's.
+  await expectCode(staffAmend([gammaAttendees[0]!, gammaAttendees[2]!]), "TEAM_RULES", "staff cannot take a team below its minimum size", ["at least 2 team members", "this one has 1"]);
+  assert((await prisma.registrationAttendee.count({ where: { registrationId: gamma.registrationId } })) === 3, "a refused staff change saved nothing");
+  await expectCode(staffAmend([...gammaAttendees, { attendeeId: null, clientId: "staff-new-1", responses: { first_name: "PbeAdded", last_name: "Coachy", attendee_age: "40", attendee_type: "Pathfinder", alternate: true } }]), "TEAM_RULES", "an added 40-year-old is a coach and cannot be the alternate", ["can't be the alternate"]);
+  await staffAmend([...gammaAttendees, { attendeeId: null, clientId: "staff-new-2", responses: { first_name: "PbeAdded", last_name: "Coachy", attendee_age: "40", attendee_type: "Coach" } }]);
+  const added = (await prisma.registrationAttendee.findMany({ where: { registrationId: gamma.registrationId } })).find((attendee) => (attendee.profileSnapshot as { lastName?: string }).lastName === "Coachy")!;
+  assert((added.profileSnapshot as { teamRole?: string }).teamRole === "COACH", "the person staff added has a team role set (a coach by age)");
+  // Staff cannot put a person who is on another team of the club onto this one.
+  const y1Attendee = await prisma.registrationAttendee.findFirstOrThrow({ where: { personId: personOf.get("d:y1")!, registration: { eventId } } });
+  await expectCode(staffAmend([...gammaAttendees, { attendeeId: null, clientId: "staff-new-3", responses: { first_name: "PbeDana", last_name: "Dd1", attendee_age: "12", attendee_type: "Pathfinder" } }]), "TEAM_RULES", "staff cannot add a person who is on another team of the club", ["is already on another team from your club"]);
+  assert(y1Attendee.personId === personOf.get("d:y1"), "the other team still holds that person");
+  console.log("ok  a staff amendment keeps the size, alternate and one-team rules and sets roles");
+
   // 16. An event without team rules is a club event as it always was.
   await prisma.registrationForm.create({
     data: {
@@ -458,6 +556,7 @@ async function main() {
   await club.submitClubRegistration(clubOf("a"), plainEventId, actor, plainInput([person("a", "y1"), person("a", "y2")]), now, { locationId: null });
   const plainRow = await prisma.clubEventRegistration.findFirstOrThrow({ where: { eventId: plainEventId } });
   assert(plainRow.teamKey === "" && plainRow.teamName === null, "a plain club registration has no team name and the empty key");
+  await expectCode(saveTeamResult(plainEventId, plainRow.id, { level: "AREA", placement: "1st" }, staffUserId), "RESULT_INVALID", "results can only be entered on an event with team rules");
   await expectCode(club.submitClubRegistration(clubOf("a"), plainEventId, actor, { ...plainInput([person("a", "y3"), person("a", "y4")]), idempotencyKey: randomUUID() }, now, { locationId: null }), "CLUB_ALREADY_REGISTERED", "a plain club event still takes one registration per club");
   await expectCode(club.submitClubRegistration(clubOf("c"), plainEventId, actor, plainInput([person("c", "y1"), person("c", "y2")]), now, { locationId: null, teamName: "Surprise" }), "TEAM_INVALID", "a team name is refused on an event with one registration per club");
   await expectCode(club.submitClubRegistration(clubOf("b"), plainEventId, actor, plainInput([person("b", "y1"), person("b", "y2")]), now, { locationId: null, draftKey: draftKey() }), "TEAM_INVALID", "a draft id is refused there too");

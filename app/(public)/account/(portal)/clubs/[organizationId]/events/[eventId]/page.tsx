@@ -18,6 +18,7 @@ import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { directorContactPrefill } from "@/modules/club-registrations/contact-prefill";
 import { loadDirectorClubAssignment } from "@/modules/club-registrations/director-assignment";
 import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
+import { formHasPrices, noCostPrice } from "@/modules/club-registrations/per-person-price";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { activeRegistrationStatuses, registrationClosedMessage } from "@/modules/events/lifecycle";
@@ -86,6 +87,9 @@ export default async function ClubEventRegistrationPage({
   // roster access itself rather than trusting the check above.
   const assignment = workspace.registration ? await loadDirectorClubAssignment(organizationId, eventId, workspace.registration.teamKey) : null;
 
+  // A free team event (#809) has no church bill to announce.
+  const freeTeamEvent = multipleTeams && workspace.experience !== null && !formHasPrices(workspace.experience.form.definition);
+
   let contactPrefill: Record<string, string> = {};
   // Never prefill from an attendee account while staff act as director
   // (#442): the accounts stay separate, and any attendee cookie on this
@@ -116,7 +120,7 @@ export default async function ClubEventRegistrationPage({
           {multipleTeams && showingTeam ? "Back to your teams" : "Back to club events"}
         </BackLink>
         <h2>{workspace.event.name}{workspace.registration?.teamName ? <> · <span translate="no">{workspace.registration.teamName}</span></> : ""}</h2>
-        <p className="field-help">Billed to your church. No payment is taken online.</p>
+        <p className="field-help">{freeTeamEvent ? "No cost. No payment is taken online." : "Billed to your church. No payment is taken online."}</p>
       </section>
       {multipleTeams && !showingTeam && (
         <section className="public-manage-card" aria-labelledby="club-teams-heading">
@@ -219,7 +223,7 @@ export default async function ClubEventRegistrationPage({
           )}
           <div className="field-help">
             {isChurchBilledStatus(workspace.registration.status)
-              ? <PerPersonPriceNotice price={workspace.registration.perPerson} />
+              ? <PerPersonPriceNotice price={freeTeamEvent ? noCostPrice(workspace.registration.perPerson) : workspace.registration.perPerson} />
               : notBilledLabel(workspace.registration.status)}
           </div>
           {(activeRegistrationStatuses as readonly string[]).includes(workspace.registration.status)

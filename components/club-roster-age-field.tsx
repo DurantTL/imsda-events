@@ -71,10 +71,13 @@ export function ClubRosterAgeField({
         <span aria-hidden="true">years</span>
       </div>
       {shownError && <small className="inline-notice error" id={errorId}>{shownError}</small>}
-      <label className="checkbox-label">
-        <input checked={saveToRoster} onChange={(event) => onSaveToRoster(event.target.checked)} type="checkbox" />
-        <span>Also update their age on the roster</span>
-      </label>
+      {/* An age on the event's own age date is not their age today, so it is never offered for the roster (#809). */}
+      {!dateText && (
+        <label className="checkbox-label">
+          <input checked={saveToRoster} onChange={(event) => onSaveToRoster(event.target.checked)} type="checkbox" />
+          <span>Also update their age on the roster</span>
+        </label>
+      )}
       <small className="field-help">
         No birth date on the roster. Enter their age on {dateText ?? "the event date"}, or{" "}
         <Link

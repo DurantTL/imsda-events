@@ -212,8 +212,8 @@ export function ClubRegistrationWorkspace({
   const goingCount = selected.length + draft.guests.length;
   // The event's team rules (#809), shown beside who is going; the server checks them again on save.
   const teamRules = workspace.teams.settings;
-  const coachCount = selected.filter((person) => teamRoleFor({ responses: {}, rosterAttendeeType: person.attendeeType, age: person.ageOnEventDate }) === "COACH").length
-    + draft.guests.filter((guest) => teamRoleFor({ responses: draft.attendeeResponses[clubGuestClientId(guest.id)] ?? {}, age: guest.age }) === "COACH").length;
+  const coachCount = selected.filter((person) => teamRoleFor({ responses: draft.attendeeResponses[person.clientId] ?? {}, rosterAttendeeType: person.attendeeType, rosterClassLevel: person.classLevel, maxMemberAge: teamRules?.maxMemberAge ?? null, age: person.ageOnEventDate }) === "COACH").length
+    + draft.guests.filter((guest) => teamRoleFor({ responses: draft.attendeeResponses[clubGuestClientId(guest.id)] ?? {}, maxMemberAge: teamRules?.maxMemberAge ?? null, age: guest.age }) === "COACH").length;
   const teamMemberCount = goingCount - coachCount;
   const sizeLimits = teamRules && (teamRules.minTeamMembers !== null || teamRules.maxTeamMembers !== null)
     ? `${teamRules.minTeamMembers ?? 1} to ${teamRules.maxTeamMembers ?? "any number"}`

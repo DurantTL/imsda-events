@@ -117,23 +117,3 @@ export async function saveTeamSettings(eventId: string, actorUserId: string, raw
     return toSettings(saved);
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 }));
 }
-
-/** Removes an event's team rules, back to one registration per club. Refused while teams are registered. */
-export async function removeTeamSettings(eventId: string, actorUserId: string): Promise<void> {
-  await getPrisma().$transaction(async (tx) => {
-    const existing = await tx.eventTeamSettings.findUnique({ where: { eventId } });
-    if (!existing) return;
-    const named = await tx.clubEventRegistration.count({ where: { eventId, teamKey: { not: "" } } });
-    if (named > 0) throw new ClubTeamError("TEAMS_IN_USE", "Teams have already registered for this event, so its team rules cannot be removed.");
-    await tx.eventTeamSettings.delete({ where: { eventId } });
-    await writeAuditLog({
-      eventId,
-      actorUserId,
-      action: "EVENT_TEAM_SETTINGS_REMOVED",
-      entityType: "EventTeamSettings",
-      entityId: eventId,
-      summary: "Removed the event's team rules.",
-      metadata: { before: toSettings(existing) } as unknown as Prisma.InputJsonValue,
-    }, tx);
-  });
-}

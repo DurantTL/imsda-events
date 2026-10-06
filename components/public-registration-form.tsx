@@ -1,5 +1,6 @@
 "use client";
 
+import { pluralAttendeeLabel } from "@/modules/forms/attendee-label";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
   AlertTriangle,
@@ -80,7 +81,7 @@ import {
   type RegistrationFormDefinition,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
-import { perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
+import { formHasPrices, noCostPrice, perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 import {
   AttendeeRosterCsvError,
   createAttendeeRosterCsvTemplate,
@@ -798,12 +799,15 @@ export function PublicRegistrationForm({
     ?? calculation.subtotalCents
     ?? 0;
   // Church-billed events show the per-person price only, never a total (#621).
-  const perPerson = perPersonPrice({
+  // A free team event (#809) has no church bill to announce, so it says "No cost." instead.
+  const freeTeamEvent = Boolean(club?.teamName) && !formHasPrices(definition);
+  const priced = perPersonPrice({
     lineItems: calculation.lineItems,
     roster: rosterEnabled,
     attendeeCount: rosterEnabled ? attendees.length : undefined,
     attendeeNames: rosterEnabled ? attendees.map((attendee, index) => attendeeName(attendee, index, roster.attendeeLabel)) : undefined,
   });
+  const perPerson = freeTeamEvent ? noCostPrice(priced) : priced;
   // The lead wording and the invoice recipient come from the configured fee and the church answer (#743).
   const invoiceTerms = deferredOrganizationBilling
     ? churchInvoiceTerms(definition, { pricingDate, attendeeLabel: rosterEnabled ? roster.attendeeLabel : undefined })
@@ -2521,7 +2525,7 @@ export function PublicRegistrationForm({
             <p className="public-registration-eyebrow">Attendees</p>
             <h3>
               {rosterEnabled
-                ? `${attendees.length} ${attendees.length === 1 ? roster.attendeeLabel.toLowerCase() : `${roster.attendeeLabel.toLowerCase()}s`}`
+                ? `${attendees.length} ${pluralAttendeeLabel(roster.attendeeLabel, attendees.length)}`
                 : singleAttendeeName}
             </h3>
             {rosterEnabled && (
@@ -2741,7 +2745,7 @@ export function PublicRegistrationForm({
         key: "attendees",
         path: "attendees",
         attendeeIndex: null,
-        message: `Add between ${roster.minAttendees} and ${roster.maxAttendees} ${roster.attendeeLabel.toLowerCase()}${roster.maxAttendees === 1 ? "" : "s"}.`,
+        message: `Add between ${roster.minAttendees} and ${roster.maxAttendees} ${pluralAttendeeLabel(roster.attendeeLabel, roster.maxAttendees)}.`,
       });
     }
     const projectedUsage = cloneChoiceUsage(definition, choiceUsage);
@@ -2983,7 +2987,7 @@ export function PublicRegistrationForm({
             </dl>
             {deferredOrganizationBilling && (
               <>
-                <PerPersonPriceNotice price={confirmation.perPerson ?? perPersonPrice({ lineItems: confirmation.lineItems, roster: rosterEnabled })} className="public-registration-review-waitlist" />
+                <PerPersonPriceNotice price={freeTeamEvent ? noCostPrice(confirmation.perPerson ?? perPersonPrice({ lineItems: confirmation.lineItems, roster: rosterEnabled })) : (confirmation.perPerson ?? perPersonPrice({ lineItems: confirmation.lineItems, roster: rosterEnabled }))} className="public-registration-review-waitlist" />
                 {!waitlisted && <p className="public-registration-review-waitlist">No payment is due online.</p>}
               </>
             )}
@@ -3268,7 +3272,7 @@ export function PublicRegistrationForm({
             </p>
           )}
           {group?.waitlistNote && <p className="public-registration-summary-empty">{group.waitlistNote}</p>}
-          {rosterEnabled && <p className="public-registration-summary-roster"><UsersRound size={15} aria-hidden="true" /> {attendees.length} {attendees.length === 1 ? roster.attendeeLabel.toLowerCase() : `${roster.attendeeLabel.toLowerCase()}s`}</p>}
+          {rosterEnabled && <p className="public-registration-summary-roster"><UsersRound size={15} aria-hidden="true" /> {attendees.length} {pluralAttendeeLabel(roster.attendeeLabel, attendees.length)}</p>}
           {deferredOrganizationBilling ? <ChurchInvoiceNotice terms={shownInvoiceTerms} price={perPerson} className="public-registration-summary-lines" /> : calculation.lineItems.length === 0 ? <p className="public-registration-summary-empty">Select any priced options to see your total.</p> : (
             <div className="public-registration-summary-lines">
               {calculation.lineItems.map((item) => (

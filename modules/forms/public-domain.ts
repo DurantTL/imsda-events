@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { pluralAttendeeLabel } from "@/modules/forms/attendee-label";
 import { sanitizeAddressInput } from "@/modules/forms/address";
 import {
   calculateFormTotal,
@@ -505,7 +506,7 @@ export function preparePublicRegistration(
       key: "attendees",
       path: "attendees",
       attendeeIndex: null,
-      message: `Add between ${roster.minAttendees} and ${roster.maxAttendees} ${roster.attendeeLabel.toLowerCase()}${roster.maxAttendees === 1 ? "" : "s"}.`,
+      message: `Add between ${roster.minAttendees} and ${roster.maxAttendees} ${pluralAttendeeLabel(roster.attendeeLabel, roster.maxAttendees)}.`,
     });
   }
 

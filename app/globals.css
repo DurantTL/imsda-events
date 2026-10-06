@@ -7214,6 +7214,7 @@ select:focus-visible {
 .team-form-box { font-size: 1.1rem; }
 .team-form-mail { margin: 6px 0 0; text-align: center; font-weight: 700; }
 .team-form-release { margin: 10px 0 0; font-size: max(var(--type-floor, 0px), 0.7rem); }
+.team-form-release-answer { margin: 4px 0 0; font-size: max(var(--type-floor, 0px), 0.7rem); }
 .team-form-footer { margin-top: 8px; border-top: 1px solid #333; padding-top: 4px; text-align: center; font-size: max(var(--type-floor, 0px), 0.7rem); }
 .team-form-footer p { margin: 0; }
 .team-form-footer .team-form-number { margin-top: 4px; }
@@ -7227,7 +7228,7 @@ select:focus-visible {
   .team-form-sheet { width: 7.5in; max-width: none; margin: 0; border: 0; border-radius: 0; padding: 0; font-size: 9pt; }
   .team-form-header h1 { font-size: 11pt; }
   .team-form-header h2 { font-size: 12pt; }
-  .team-form-release, .team-form-footer { font-size: 7.5pt; }
+  .team-form-release, .team-form-release-answer, .team-form-footer { font-size: 7.5pt; }
 }
 @page team-form { size: letter portrait; margin: 0.5in; }
 @media print { .team-form-sheet { page: team-form; } }

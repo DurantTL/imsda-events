@@ -1,5 +1,6 @@
 import "server-only";
 
+import { enforceTeamRegistrationRules } from "@/modules/club-teams/registration-guard";
 import { checkLocationSeats } from "@/modules/event-locations/admission";
 import { LODGING_LINE_KEY } from "@/modules/lodging/pricing";
 import { promoteWaitlistAfterSeatsFreed } from "@/modules/registrations/lifecycle-repository";
@@ -1656,6 +1657,8 @@ export async function amendRegistration(
         }
 
         if (serverOptions.inTransaction) await serverOptions.inTransaction(tx);
+        // A team's registration keeps its event's team rules however it is changed, by a director or by staff (#809).
+        await enforceTeamRegistrationRules(tx, registrationId);
         await tx.registration.update({
           where: { id: registrationId },
           data: {

@@ -39,8 +39,9 @@ const stored = (overrides: Record<string, unknown> = {}) => ({
   id: "result-1", level: "AREA", placement: "2nd place", qualified: true, notes: "", updatedAt: new Date("2027-01-16T20:00:00Z"), ...overrides,
 });
 
-function database(options: { team?: unknown; existing?: unknown; listRows?: unknown[] } = {}) {
+function database(options: { team?: unknown; existing?: unknown; listRows?: unknown[]; noTeamRules?: boolean } = {}) {
   const tx = {
+    eventTeamSettings: { findUnique: vi.fn().mockResolvedValue(options.noTeamRules ? null : { eventId: "event-1" }) },
     clubEventRegistration: {
       findFirst: vi.fn().mockResolvedValue("team" in options ? options.team : { teamName: "Bible Bees", organization: { name: "Test Pathfinders" }, registration: { status: "CONFIRMED" } }),
       findMany: vi.fn().mockResolvedValue(options.listRows ?? []),
@@ -99,6 +100,14 @@ describe("PUT /api/events/[eventId]/team-results/[registrationId]", () => {
       summary: "Entered the area result for Bible Bees (Test Pathfinders).",
       metadata: expect.objectContaining({ before: null, after: { placement: "2nd place", qualified: true, notes: "" } }),
     }), tx);
+  });
+
+  it("refuses a result on an event without team rules, and writes nothing", async () => {
+    const { tx } = database({ noTeamRules: true });
+    const response = await PUT(put({ level: "AREA", placement: "1st place" }), ctx);
+    expect(response.status).toBe(422);
+    expect(tx.clubTeamResult.upsert).not.toHaveBeenCalled();
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
   });
 
   it("audits a change with the values before and after", async () => {
