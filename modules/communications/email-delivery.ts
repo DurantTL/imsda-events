@@ -567,7 +567,7 @@ async function finalizeFailedAttempt(
         failedAt: reschedule ? null : completedAt,
         provider: internal ? undefined : "RESEND",
         providerDeliveryStatus: reschedule || internal ? undefined : "FAILED",
-        providerStatusAt: reschedule ? undefined : completedAt,
+        providerStatusAt: reschedule || internal ? undefined : completedAt,
         lastError: error.message,
       },
     });

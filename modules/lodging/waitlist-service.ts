@@ -258,8 +258,12 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
           const assessed = await assessOffer(tx, state, eventId, entry, now, shared);
           const recipient = await lodgingRecipient(tx, eventId, entry.registrationId);
           const eligible = assessed.eligible && Boolean(recipient?.email) && (!deliveryDisabled || assessed.alreadyOffered);
-          // Only an entry the confirm would really offer is counted against the next one, in the same order as confirm.
-          if (eligible && !assessed.alreadyOffered && !isCounted(entry, now)) reserveEntry(shared, entry, state.context.nights);
+          // The same demand steps as the confirm, in the same order: a re-offer's old live offer leaves the shared demand
+          // (it is expired even when it is then skipped), and only an entry the confirm would really offer is counted again.
+          if (assessed.eligible && !assessed.alreadyOffered && !deliveryDisabled && entry.status === "OFFERED" && isCounted(entry, now)) {
+            addWaitingDemand(shared.groups, entry.registrationId, entry.category, entryNightsOf(entry, state.context.nights), -entry.partySize);
+          }
+          if (eligible && !assessed.alreadyOffered) reserveEntry(shared, entry, state.context.nights);
           rows.push({
             entryId: entry.id, registrationCode: entry.registration.confirmationCode, holder: recipient?.name ?? "", category: entry.category, partySize: entry.partySize,
             eligible,

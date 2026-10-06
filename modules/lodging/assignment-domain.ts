@@ -271,12 +271,13 @@ class Planner {
       if (index >= 0) this.working[index] = { ...segment, ...keptPiece! };
       if (remainderPiece) {
         const key = this.nextKey();
+        // The remainder takes the edited create's provenance, never its `new:` key: a remainder of a remainder still
+        // comes from the real row (the writer resolves its occupant and source from it), and the rest of a placement this
+        // plan made is that same placement (ASSIGNED stays ASSIGNED; MOVED_IN keeps the real row it moved from).
         this.creates.push({
-          kind: "CREATE", key, type: "SPLIT_REMAINDER",
+          kind: "CREATE", key, type: created.type,
           segment: { occupantKey: segment.occupantKey, unitId: segment.unitId, bucketId: segment.bucketId, people: segment.people, ...remainderPiece },
-          // A remainder of a remainder still comes from the real row (the writer resolves its occupant and source from it);
-          // a remainder of a placement this plan made carries that placement's own occupant and source.
-          occupant: created.occupant, source: created.source, relatedId: created.type === "SPLIT_REMAINDER" ? created.relatedId : segment.id,
+          occupant: created.occupant, source: created.source, relatedId: created.relatedId, previous: created.previous,
         });
         this.working.push({ ...segment, id: key, ...remainderPiece });
       }

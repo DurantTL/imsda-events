@@ -181,6 +181,50 @@ describe("planPlacements", () => {
     it("does the same for three cuts out of seven nights", () => check(0, 6, [1, 3, 5]));
   });
 
+  describe("history of a batch's own placements", () => {
+    const six = Array.from({ length: 6 }, (_, index) => `2027-06-${String(15 + index).padStart(2, "0")}`);
+    const sixBase = { ...base, eventNights: six };
+    const sixUnits = units(unit("a", null), unit("b", null), unit("c", null), unit("d", null));
+    const step = (unitId: string, first: number, last: number, mode: "ASSIGN" | "MOVE" = "MOVE") => place("p1", unitId, six[first]!, six[last]!, { mode });
+
+    it("records someone never placed before as assigned, however the batch cuts and moves them", () => {
+      for (const placements of [
+        [step("d", 1, 4), step("d", 2, 2), step("d", 3, 3)],
+        [step("a", 0, 2, "ASSIGN"), step("a", 1, 1), step("a", 0, 1), step("a", 0, 2)],
+      ]) {
+        const result = planPlacements({ ...sixBase, segments: [], units: sixUnits, placements });
+        expect(result.ok).toBe(true);
+        if (!result.ok) continue;
+        for (const create of result.plan.creates) {
+          expect(create).toMatchObject({ type: "ASSIGNED" });
+          expect(create.relatedId).toBeUndefined();
+          expect(create.previous).toBeUndefined();
+        }
+      }
+    });
+
+    it("never links a create to a key of the same plan (seeded random batches)", () => {
+      let seed = 20261006;
+      const random = (limit: number) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % limit; };
+      for (let run = 0; run < 3000; run += 1) {
+        const fresh = run % 2 === 0;
+        const placements = Array.from({ length: 1 + random(6) }, () => {
+          const first = random(6);
+          return step(["a", "b", "c", "d"][random(4)]!, first, first + random(6 - first), random(3) === 0 ? "ASSIGN" : "MOVE");
+        });
+        const outcome = planPlacementsLenient({ ...sixBase, segments: fresh ? [] : [segment("s1", "p1", "a", six[0]!, six[5]!)], units: sixUnits, placements });
+        for (const create of outcome.plan.creates) {
+          expect(create.relatedId?.startsWith("new:") ?? false, `run ${run}: ${create.type} ${create.key} -> ${create.relatedId}`).toBe(false);
+          if (fresh) expect(create.type, `run ${run}`).toBe("ASSIGNED");
+          else if (create.type !== "ASSIGNED") expect(create.relatedId, `run ${run}`).toBe("s1");
+        }
+        for (const release of outcome.plan.releases) {
+          if (release.relatedKey) expect(outcome.plan.creates.some((create) => create.key === release.relatedKey), `run ${run}`).toBe(true);
+        }
+      }
+    });
+  });
+
   it("points a release at the placement that replaced the one it was linked to", () => {
     const chained = planPlacements({ ...base, segments: [segment("s1", "p1", "a")], units: units(unit("a", 2), unit("b", 2), unit("c", 2)), placements: [place("p1", "b", nights[0]!, nights[3]!, { mode: "MOVE" }), place("p1", "c", nights[0]!, nights[3]!, { mode: "MOVE" })] });
     expect(chained.ok).toBe(true);
