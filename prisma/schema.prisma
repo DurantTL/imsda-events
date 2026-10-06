@@ -6665,6 +6665,8 @@ model EventLodgingAssignmentNotice {
   outboxMessageId   String?
   /// The registration's assignment version when the notice was written (history rows for its attendees).
   assignmentVersion Int
+  /// Hash of what the notice said (stays, roommates, closed rooms, instructions): a later difference makes it obsolete.
+  contentHash       String
   sentByUserId      String?
   createdAt         DateTime @default(now())
 

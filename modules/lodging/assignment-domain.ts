@@ -905,6 +905,8 @@ export type OccupancyNight = {
   unlimited: boolean;
   /** People in alternate housing this night (they use no on-site inventory). */
   offsite: number;
+  /** Of `occupied`, people in a room that is closed, held or retired this night (a conflict: it has no places to count against). */
+  inClosedRooms: number;
 };
 
 /** Occupancy night by night for every in-service unit, reproduced from the current assignments. */
@@ -915,10 +917,15 @@ export function occupancyByNight(input: {
 }): OccupancyNight[] {
   const occupancy = occupancyOf(input.segments);
   return input.nights.map((night) => {
-    const row: OccupancyNight = { night, capacity: 0, occupied: 0, available: 0, unitsInService: 0, unlimited: false, offsite: 0 };
+    const row: OccupancyNight = { night, capacity: 0, occupied: 0, available: 0, unitsInService: 0, unlimited: false, offsite: 0, inClosedRooms: 0 };
     for (const unit of input.units) {
       const unitRow = unitNight(unit, night, occupancy.get(unit.unitId)?.get(night) ?? 0);
-      if (unitRow.status !== "AVAILABLE") continue;
+      // People placed in a room that closed after they were placed still count as placed, and are flagged.
+      if (unitRow.status !== "AVAILABLE") {
+        row.occupied += unitRow.occupied;
+        row.inClosedRooms += unitRow.occupied;
+        continue;
+      }
       row.unitsInService += 1;
       row.occupied += unitRow.occupied;
       if (unitRow.capacity === null) row.unlimited = true;

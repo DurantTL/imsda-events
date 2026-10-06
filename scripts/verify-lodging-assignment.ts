@@ -334,6 +334,8 @@ async function main() {
   await updateEventUnit(eventId, room218.id, userId, { unavailable: true, unavailableReason: "Burst pipe" }, prisma);
   assert((await exceptionKinds()).includes("UNIT_OUT_OF_SERVICE"), "a room closed after assignment is a conflict");
   assert((await current(eventId, { eventLodgingUnitId: room218.id })).length === 2, "the assignments are not silently changed");
+  const closedReport = await reports();
+  assert(closedReport.occupancy.every((row) => row.inClosedRooms >= 2) && closedReport.occupancy.every((row) => row.occupied >= row.inClosedRooms), "occupancy by night still counts people in a room closed after they were placed, and flags them");
   const closure = (await workspace()).exceptions.find((row) => row.kind === "UNIT_OUT_OF_SERVICE" && row.unitId === room218.id)!;
   assert(closure.assignmentIds.length === 2, "the conflict drills down to the two assignments");
   await expectLodgingError(placeAt(eventId, (await makeReg(eventId, [40])).people[0]!, "girls-218"), "UNIT_OUT_OF_SERVICE", "placing into the closed room");
@@ -490,6 +492,14 @@ async function main() {
   const csvApplied = await applyAssignmentPlan(eventId, userId, { mode: "apply", source: "CSV_IMPORT", csv: goodCsv, fingerprint: csvPreview.fingerprint }, staffBlind, prisma);
   assert(csvApplied.created === 2 && csvApplied.released === 1, "the confirmed import places one person and moves another");
   assert((await current(eventId, { attendeeId: csvGuest.attendeeId })).length === 1 && (await current(eventId, { attendeeId: csvMover.attendeeId }))[0]!.source === "CSV_IMPORT", "the rows record that they came from the import");
+  // A file previewed, then a colleague changes an affected assignment: the apply is refused as stale.
+  const csvGuest2 = (await makeReg(eventId, [40])).people[0]!;
+  const staleCsv = `${header}\r\n${csvGuest2.attendeeId},unit:girls-215,${N[0]},${N[3]}\r\n${csvMover.attendeeId},unit:girls-214,${N[0]},${N[3]}`;
+  const stalePreview = await previewAssignmentPlan(eventId, { mode: "preview", source: "CSV_IMPORT", csv: staleCsv }, staffBlind, prisma);
+  assert(stalePreview.counts.problems === 0 && stalePreview.counts.new === 1 && stalePreview.counts.unchanged === 1, `the second file previews one new placement and one unchanged: ${JSON.stringify(stalePreview.counts)} ${JSON.stringify(stalePreview.problems)}`);
+  await applyAssignmentAction(eventId, userId, { action: "place", reason: "A colleague moved her", placements: [{ occupant: attendee(csvMover), place: { kind: "UNIT", eventUnitId: (await unitRow(eventId, "girls-216")).id }, firstNight: N[0], lastNight: N[3], mode: "MOVE" }] }, prisma);
+  await expectLodgingError(applyAssignmentPlan(eventId, userId, { mode: "apply", source: "CSV_IMPORT", csv: staleCsv, fingerprint: stalePreview.fingerprint }, staffBlind, prisma), "PLAN_CHANGED", "applying an import after a colleague changed an affected assignment");
+  assert((await current(eventId, { attendeeId: csvGuest2.attendeeId })).length === 0 && (await current(eventId, { attendeeId: csvMover.attendeeId }))[0]!.eventLodgingUnitId === (await unitRow(eventId, "girls-216")).id, "the stale import changed nothing and the colleague's move stands");
   await expectLodgingError(previewAssignmentPlan(eventId, { mode: "preview", source: "CSV_IMPORT", csv: "  " }, staffBlind, prisma), "IMPORT_INVALID", "an empty file");
   const noColumns = await previewAssignmentPlan(eventId, { mode: "preview", source: "CSV_IMPORT", csv: "a,b\n1,2" }, staffBlind, prisma);
   assert(noColumns.counts.problems === 1 && noColumns.problems[0]!.message.includes("Occupant ID"), "a file without the needed columns reports what is missing");
@@ -542,7 +552,9 @@ async function main() {
   // Make room for exactly one more person on every night: the tent area takes 4, the club of 3 sits on two nights only.
   await prisma.eventLodgingAssignment.findMany({ where: { eventLodgingUnitId: tentRow.id, cancelledAt: null } });
   const outboxBefore = await prisma.messageOutbox.count({ where: { eventId, templateKey: "LODGING_WAITLIST_OFFER" } });
+  const versionBeforePreview = await capacityVersion();
   const offerPreview = await staffActor({ action: "offer", entryIds: [entryA.id, entryB.id] });
+  assert((await capacityVersion()) === versionBeforePreview, "an offer preview is read-only: it does not bump the capacity version");
   assert(offerPreview.action === "offer" && !offerPreview.confirmed, "an offer without confirm is a preview");
   assert((await prisma.messageOutbox.count({ where: { eventId, templateKey: "LODGING_WAITLIST_OFFER" } })) === outboxBefore, "a preview queues no email");
   if (offerPreview.action !== "offer" || offerPreview.confirmed) throw new Error("FAILED: the preview shape");
@@ -556,6 +568,7 @@ async function main() {
   assert(outboxAfter.length === outboxBefore + 1, "an offer queues exactly one email");
   const offerMail = outboxAfter[0]!;
   assert(offerMail.status === "CAPTURED" && (await prisma.messageDeliveryAttempt.count({ where: { messageOutboxId: offerMail.id } })) === 1, `the offer went through the existing outbox and delivery path (status ${offerMail.status})`);
+  assert((await loadAssignmentFacts(prisma, eventId)).waitlist.some((row) => row.offerMessageStatus === "CAPTURED"), "the workspace exposes the offer email's outbox status");
   assert(offerMail.bodyTextSnapshot.includes("__IMSDA_PRIVATE_MANAGE_LINK__") && !/\/manage\//.test(offerMail.bodyTextSnapshot), "the offer carries the private-link sentinel, never a stored link");
   assert(!/\$\s?\d/.test(offerMail.bodyTextSnapshot) && !/\$\s?\d/.test(offerMail.bodyHtmlSnapshot ?? ""), "the offer names no price");
   const offeredEntry = await prisma.eventLodgingWaitlistEntry.findUniqueOrThrow({ where: { id: offered.offered[0]!.entryId } });
@@ -672,7 +685,7 @@ async function main() {
       idempotencyKey: `${P}-pending-notice`, correlationId: randomUUID(), status: "PENDING",
     },
   });
-  await prisma.eventLodgingAssignmentNotice.create({ data: { eventId, registrationId: host.id, outboxMessageId: pendingMail.id, assignmentVersion: notices1.currentVersion } });
+  await prisma.eventLodgingAssignmentNotice.create({ data: { eventId, registrationId: host.id, outboxMessageId: pendingMail.id, assignmentVersion: notices1.currentVersion, contentHash: "0".repeat(64) } });
   await applyAssignmentAction(eventId, userId, { action: "place", reason: "Swapped rooms", placements: [{ occupant: attendee(host.people[0]!), place: { kind: "UNIT", eventUnitId: (await unitRow(eventId, "girls-228")).id }, firstNight: N[0], lastNight: N[3], mode: "MOVE" }] }, prisma);
   const notices2 = (await loadAssignmentFacts(prisma, eventId)).notices.find((notice) => notice.registrationId === host.id)!;
   assert(notices2.obsolete && notices2.currentVersion > notices2.assignmentVersion, "a later move makes the notice obsolete");
@@ -681,6 +694,28 @@ async function main() {
   const noticeC = await sendRoomNotice(eventId, userId, host.id, prisma);
   assert(!noticeC.alreadySent && noticeC.assignmentVersion > noticeA.assignmentVersion, "a new notice is a new version");
   assert((await registrant(host)).stays[0]!.room === "228", "the attendee view shows the latest room");
+  const noticeIsObsolete = async () => (await loadAssignmentFacts(prisma, eventId)).notices.find((notice) => notice.registrationId === host.id)?.obsolete === true;
+  let latestNoticeId = noticeC.noticeId;
+  assert(!(await noticeIsObsolete()), "the newest notice is current");
+  await updateAssignmentSettings(eventId, userId, { attendeeInstructions: "Check in at the gym instead." }, prisma);
+  assert(await noticeIsObsolete(), "editing the arrival instructions makes the notice obsolete");
+  latestNoticeId = (await sendRoomNotice(eventId, userId, host.id, prisma)).noticeId;
+  assert(!(await noticeIsObsolete()), "a fresh notice is current again");
+  await applyAssignmentAction(eventId, userId, { action: "place", reason: "Same room", placements: [{ occupant: attendee(mate.people[0]!), place: { kind: "UNIT", eventUnitId: (await unitRow(eventId, "girls-228")).id }, firstNight: N[0], lastNight: N[3], mode: "MOVE" }] }, prisma);
+  assert(await noticeIsObsolete(), "a roommate moving in makes the notice obsolete although this registration's own assignment did not change");
+  latestNoticeId = (await sendRoomNotice(eventId, userId, host.id, prisma)).noticeId;
+  const room228 = await unitRow(eventId, "girls-228");
+  await updateEventUnit(eventId, room228.id, userId, { unavailable: true, unavailableReason: "Burst pipe" }, prisma);
+  assert(await noticeIsObsolete(), "closing the room makes the notice obsolete");
+  await updateEventUnit(eventId, room228.id, userId, { unavailable: false }, prisma);
+  latestNoticeId = (await sendRoomNotice(eventId, userId, host.id, prisma)).noticeId;
+  // Send time: a notice that a later change made wrong is cancelled when it comes to be sent, not sent.
+  const { lodgingMessageStaleReason } = await import("../modules/lodging/message-currency");
+  const staleNotice = await prisma.eventLodgingAssignmentNotice.findUniqueOrThrow({ where: { id: latestNoticeId } });
+  assert((await lodgingMessageStaleReason(staleNotice.outboxMessageId!, "LODGING_ASSIGNMENT_NOTICE")) === null, "a current notice passes the send-time check");
+  await updateAssignmentSettings(eventId, userId, { attendeeInstructions: "Check in at the gym, side door." }, prisma);
+  assert(Boolean(await lodgingMessageStaleReason(staleNotice.outboxMessageId!, "LODGING_ASSIGNMENT_NOTICE")), "a notice made wrong after it was queued is refused at send time");
+  await updateAssignmentSettings(eventId, userId, { attendeeInstructions: "Check in at the front office after 3 pm." }, prisma);
   await expectDatabaseRefusal(prisma.eventLodgingAssignmentNotice.update({ where: { id: noticeA.noticeId }, data: { assignmentVersion: 99 } }), "rewriting a notice");
   await expectDatabaseRefusal(prisma.eventLodgingAssignmentNotice.delete({ where: { id: noticeA.noticeId } }), "deleting a notice");
 
@@ -693,6 +728,7 @@ async function main() {
   const released = await applyAssignmentAction(eventId, userId, { action: "release_inactive", reason: "Registration cancelled" }, prisma);
   assert(released.released >= 1 && !(await exceptionKinds()).includes("INACTIVE_REGISTRATION"), "staff can release the rooms of inactive registrations, with history");
   await expectDatabaseRefusal(prisma.registration.delete({ where: { id: alice.id } }), "deleting a registration that holds a room (its history is kept)");
+  await expectDatabaseRefusal(prisma.registrationAttendee.delete({ where: { id: alice.people[0]!.attendeeId } }), "deleting an attendee with room assignment history (the amendment guard reports ATTENDEE_HAS_HISTORY before this)");
   const otherReg = await makeReg(otherEventId, [40]);
   const otherUnit = await unitRow(otherEventId, "girls-101");
   await expectDatabaseRefusal(prisma.eventLodgingAssignment.create({ data: { eventId, eventLodgingUnitId: otherUnit.id, attendeeId: alice.people[0]!.attendeeId, firstNight: new Date(`${N[0]}T00:00:00Z`), lastNight: new Date(`${N[0]}T00:00:00Z`), source: "STAFF", revision: 1 } }), "a unit of another event");

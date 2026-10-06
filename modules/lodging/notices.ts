@@ -8,7 +8,8 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
 import { escapeMarkdown, renderEmailBodyHtml } from "@/modules/communications/email-html";
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
-import { getRegistrantAssignmentView } from "@/modules/lodging/assignment-view";
+import { loadRegistrantStays, registrationAssignmentVersion } from "@/modules/lodging/registrant-stays";
+import { noticeContentHash } from "@/modules/lodging/stays";
 import { LodgingError } from "@/modules/lodging/errors";
 import { lodgingTransactionTimeoutMs } from "@/modules/lodging/service";
 import type { Client, Tx } from "@/modules/lodging/preferences-service";
@@ -138,15 +139,7 @@ export async function deliverAfterCommit(messageIds: readonly string[]) {
 
 const nightWords = (first: string, last: string) => (first === last ? `the night of ${first}` : `the nights ${first} to ${last}`);
 
-/**
- * The assignment version of a registration: how many history rows exist for its attendees. It only ever grows, so a
- * notice written at version N is out of date as soon as any later change is recorded.
- */
-export async function registrationAssignmentVersion(client: Client, eventId: string, registrationId: string) {
-  const attendees = await client.registrationAttendee.findMany({ where: { eventId, registrationId }, select: { id: true } });
-  if (attendees.length === 0) return 0;
-  return client.eventLodgingAssignmentHistory.count({ where: { eventId, attendeeId: { in: attendees.map((attendee) => attendee.id) } } });
-}
+export { registrationAssignmentVersion };
 
 export type RoomNoticeResult = { noticeId: string; messageId: string | null; assignmentVersion: number; alreadySent: boolean; skipped: EnqueuedLodgingMessage["skipped"] };
 
@@ -163,10 +156,12 @@ export async function sendRoomNotice(eventId: string, actorUserId: string, regis
     if (!lodging.showAssignmentsToAttendees) throw new LodgingError("NOT_PUBLISHED", "Show room assignments to attendees first. A room notice says what the private page says.");
     const registration = await tx.registration.findFirst({ where: { id: registrationId, eventId, status: { in: ["SUBMITTED", "CONFIRMED"] } }, select: { id: true } });
     if (!registration) throw new LodgingError("REGISTRATION_NOT_FOUND", "That registration was not found, or it is not active.");
-    const view = await getRegistrantAssignmentView({ eventId, registrationId }, tx);
+    const view = await loadRegistrantStays(tx, eventId, registrationId);
     if (view.stays.length === 0) throw new LodgingError("ASSIGNMENT_NOT_FOUND", "Nobody on that registration has a room yet.");
     const version = await registrationAssignmentVersion(tx, eventId, registrationId);
-    const existing = await tx.eventLodgingAssignmentNotice.findFirst({ where: { eventId, registrationId, assignmentVersion: version }, orderBy: { createdAt: "desc" } });
+    // What the notice would say: it is current only while this (and the assignment version) still match.
+    const contentHash = noticeContentHash(view.stays, view.instructions, view.published);
+    const existing = await tx.eventLodgingAssignmentNotice.findFirst({ where: { eventId, registrationId, assignmentVersion: version, contentHash }, orderBy: { createdAt: "desc" } });
     if (existing) return { noticeId: existing.id, messageId: existing.outboxMessageId, assignmentVersion: version, alreadySent: true, skipped: null as EnqueuedLodgingMessage["skipped"] };
     const recipient = await lodgingRecipient(tx, eventId, registrationId);
     const bullets = view.stays.map((stay) => {
@@ -187,10 +182,10 @@ export async function sendRoomNotice(eventId: string, actorUserId: string, regis
         bullets,
         linkLabel: "Open your private registration page",
       },
-      idempotencyKey: `lodging-notice:${registrationId}:${version}`,
+      idempotencyKey: `lodging-notice:${registrationId}:${version}:${contentHash.slice(0, 16)}`,
       metadata: { assignmentVersion: version },
     });
-    const notice = await tx.eventLodgingAssignmentNotice.create({ data: { eventId, registrationId, outboxMessageId: enqueued.messageId, assignmentVersion: version, sentByUserId: actorUserId } });
+    const notice = await tx.eventLodgingAssignmentNotice.create({ data: { eventId, registrationId, outboxMessageId: enqueued.messageId, assignmentVersion: version, contentHash, sentByUserId: actorUserId } });
     await writeAuditLog({
       eventId, actorUserId, action: "LODGING_ROOM_NOTICE_QUEUED", entityType: "EventLodgingAssignmentNotice", entityId: notice.id,
       summary: enqueued.skipped ? "A room notice could not be queued (no email address on the registration)." : "Queued a room notice for one registration.",

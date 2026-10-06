@@ -228,13 +228,21 @@ function addReservation(reserved: Reservations, entry: { category: LodgingCatego
 
 async function assessOffer(tx: Client, state: PlanningState, eventId: string, entry: EntryRow, now: Date, previewReserved?: Reservations) {
   const lapsed = isOfferLapsed({ status: entry.status as WaitlistStatus, offerExpiresAt: entry.offerExpiresAt }, now);
-  if (entry.status === "OFFERED" && !lapsed) return { eligible: true, alreadyOffered: true, reason: null as string | null };
-  if (!["JOINED", "EXPIRED"].includes(entry.status) && !(entry.status === "OFFERED" && lapsed)) {
+  // A live offer whose email failed, was suppressed or was cancelled never reached the guest: it can be offered again.
+  let undelivered = false;
+  if (entry.status === "OFFERED" && !lapsed && entry.offerMessageId) {
+    const sent = await tx.messageOutbox.findUnique({ where: { id: entry.offerMessageId }, select: { status: true } });
+    undelivered = Boolean(sent && ["FAILED", "SUPPRESSED", "CANCELLED"].includes(sent.status));
+  }
+  if (entry.status === "OFFERED" && !lapsed && !undelivered) return { eligible: true, alreadyOffered: true, reason: null as string | null };
+  if (!["JOINED", "EXPIRED"].includes(entry.status) && !(entry.status === "OFFERED" && (lapsed || undelivered))) {
     return { eligible: false, alreadyOffered: false, reason: `This entry is ${entry.status.toLowerCase()}, so it cannot be offered a place.` };
   }
   if (!(assignableRegistrationStatuses as readonly string[]).includes(entry.registration.status)) {
     return { eligible: false, alreadyOffered: false, reason: "The registration is no longer submitted or confirmed." };
   }
+  const newer = await tx.eventLodgingWaitlistEntry.findFirst({ where: { eventId, registrationId: entry.registrationId, id: { not: entry.id }, status: { in: ["JOINED", "OFFERED", "ACCEPTED"] } }, select: { id: true } });
+  if (newer) return { eligible: false, alreadyOffered: false, reason: "That registration has a newer open waitlist entry. Answer or remove it first." };
   const reserved = await reservedByCategory(tx, eventId, state.context.nights, entry.id, now);
   if (previewReserved) {
     for (const [category, byNight] of previewReserved) {
@@ -264,8 +272,12 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
       return { action: "join", entryId: entry.id };
     }
     if (input.action === "offer") {
-      await lockAll(tx, eventId);
+      // The preview only reads: it takes no lock and does not touch the capacity version. Only a confirmed offer does.
+      if (input.confirm) await lockAll(tx, eventId);
       const state = await loadPlanningState(tx, eventId);
+      // With delivery disabled for the event the email is suppressed and the offer clock would run for nothing.
+      const deliveryDisabled = (await tx.eventMessageSettings.findUnique({ where: { eventId }, select: { deliveryMode: true } }))?.deliveryMode === "DISABLED";
+      const disabledReason = "Email delivery is disabled for this event, so the guest would never receive the offer. Turn delivery on in the event's communication settings first.";
       const entries: EntryRow[] = [];
       for (const entryId of [...new Set(input.entryIds)]) entries.push(await loadEntry(tx, eventId, entryId));
       if (!input.confirm) {
@@ -277,7 +289,8 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
           const recipient = await lodgingRecipient(tx, eventId, entry.registrationId);
           rows.push({
             entryId: entry.id, registrationCode: entry.registration.confirmationCode, holder: recipient?.name ?? "", category: entry.category, partySize: entry.partySize,
-            eligible: assessed.eligible && Boolean(recipient?.email), reason: assessed.reason ?? (recipient?.email ? null : "The registration has no email address to send the offer to."),
+            eligible: assessed.eligible && Boolean(recipient?.email) && (!deliveryDisabled || assessed.alreadyOffered),
+            reason: assessed.reason ?? (!recipient?.email ? "The registration has no email address to send the offer to." : deliveryDisabled && !assessed.alreadyOffered ? disabledReason : null),
             alreadyOffered: assessed.alreadyOffered, recipientMasked: recipient?.email ? `${recipient.email.slice(0, 1)}***@${recipient.email.split("@")[1] ?? ""}` : null,
           });
         }
@@ -292,6 +305,7 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
           continue;
         }
         if (!assessed.eligible) { skipped.push({ entryId: entry.id, reason: assessed.reason ?? "Not eligible." }); continue; }
+        if (deliveryDisabled) { skipped.push({ entryId: entry.id, reason: disabledReason }); continue; }
         const lapsed = entry.status === "OFFERED";
         if (lapsed) {
           await tx.eventLodgingWaitlistEntry.update({ where: { id: entry.id }, data: { status: "EXPIRED" } });
@@ -379,7 +393,11 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
     await tx.eventLodgingWaitlistEntry.update({ where: { id: entry.id }, data: { status: "PROMOTED" } });
     await record(tx, entry, "PROMOTED", actor, { reason: "Placed in a room by staff", offerNumber: entry.offerNumber }, now);
     return { action: "promote", entryId: entry.id, status: "PROMOTED", replay: false, assignmentIds: placed.assignmentIds };
-  }, { timeout: lodgingTransactionTimeoutMs });
+  }, { timeout: lodgingTransactionTimeoutMs }).catch((error: unknown) => {
+    // A race with another open entry for the same registration (the database's one-open-entry rule).
+    if (isOpenEntryViolation(error)) throw new LodgingError("WAITLIST_ALREADY_OPEN", "That registration already has another open lodging waitlist entry.");
+    throw error;
+  });
   await deliverAfterCommit(deliver);
   return result;
 }

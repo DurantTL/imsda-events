@@ -106,7 +106,7 @@ describe("the other panels", () => {
 
   it("previews offers before anything is sent and says nothing offers on its own", () => {
     const html = renderToStaticMarkup(createElement(WaitlistPanel, {
-      view: view({ waitlist: [{ id: "w1", registrationId: "reg-p2", registrationCode: "CODE-p2", holder: "Sam Sample", category: "DORM_ROOM", firstNight: null, lastNight: null, partySize: 2, status: "JOINED", offerNumber: 0, offeredAt: null, offerExpiresAt: null, lapsed: false, joinedAt: "2027-05-01T00:00:00.000Z", createdVia: "STAFF" }] }),
+      view: view({ waitlist: [{ id: "w1", registrationId: "reg-p2", registrationCode: "CODE-p2", holder: "Sam Sample", category: "DORM_ROOM", firstNight: null, lastNight: null, partySize: 2, status: "JOINED", offerNumber: 0, offeredAt: null, offerExpiresAt: null, offerMessageStatus: null, lapsed: false, joinedAt: "2027-05-01T00:00:00.000Z", createdVia: "STAFF" }] }),
       base, run, busy: false, canConfigure: true,
     }));
     expect(html).toContain("one email per entry, only when you confirm here");
@@ -116,6 +116,16 @@ describe("the other panels", () => {
     const noConfigure = renderToStaticMarkup(createElement(WaitlistPanel, { view: view(), base, run, busy: false, canConfigure: false }));
     expect(noConfigure).toContain("Event administrators send offers");
     expect(noConfigure).not.toContain("Preview offers");
+  });
+
+  it("shows the offer email's status and warns when an open offer never reached the guest", () => {
+    const entry = { id: "w1", registrationId: "reg-p2", registrationCode: "CODE-p2", holder: "Sam Sample", category: "DORM_ROOM" as const, firstNight: null, lastNight: null, partySize: 1, status: "OFFERED" as const, offerNumber: 1, offeredAt: "2027-05-20T12:00:00.000Z", offerExpiresAt: "2027-05-22T12:00:00.000Z", offerMessageStatus: "SUPPRESSED", lapsed: false, joinedAt: "2027-05-01T00:00:00.000Z", createdVia: "STAFF" };
+    const html = renderToStaticMarkup(createElement(WaitlistPanel, { view: view({ waitlist: [entry] }), base, run, busy: false, canConfigure: true }));
+    expect(html).toContain("Offer email: suppressed");
+    expect(html).toContain("did not reach the guest");
+    const captured = renderToStaticMarkup(createElement(WaitlistPanel, { view: view({ waitlist: [{ ...entry, offerMessageStatus: "CAPTURED" }] }), base, run, busy: false, canConfigure: true }));
+    expect(captured).toContain("Offer email: captured");
+    expect(captured).not.toContain("did not reach the guest");
   });
 
   it("previews a proposal or import and applies nothing until confirmed, and says what the proposal ignores without access", () => {

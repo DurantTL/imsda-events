@@ -235,6 +235,35 @@ function resolveConfiguration(dependencies: ExternalEmailDeliveryDependencies) {
   }
 }
 
+/** Cancels (and audits, ids only) a lodging email that a later change made wrong before it went out (#200). */
+async function cancelIfLodgingStale(
+  prisma: DeliveryPrisma,
+  message: { id: string; eventId: string | null; templateKey: string; lockToken: string },
+) {
+  if (message.templateKey !== "LODGING_ASSIGNMENT_NOTICE" && message.templateKey !== "LODGING_WAITLIST_OFFER") return false;
+  const { lodgingMessageStaleReason } = await import("@/modules/lodging/message-currency");
+  const reason = await lodgingMessageStaleReason(message.id, message.templateKey);
+  if (!reason) return false;
+  const updated = await prisma.messageOutbox.updateMany({
+    where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
+    data: { status: "CANCELLED", lockedAt: null, lockToken: null, lastError: reason },
+  });
+  if (updated.count === 1) {
+    await prisma.auditLog.create({
+      data: {
+        eventId: message.eventId,
+        action: "LODGING_MESSAGE_CANCELLED",
+        entityType: "MessageOutbox",
+        entityId: message.id,
+        correlationId: randomUUID(),
+        summary: "Cancelled a lodging email because it was out of date before it was sent.",
+        metadata: { messageId: message.id, templateKey: message.templateKey },
+      },
+    });
+  }
+  return true;
+}
+
 const INVOICE_REPLACED_REASON = "Invoice version superseded";
 
 /** Cancels (and audits, ids only) an invoice message whose version is no longer FINALIZED. Returns true when it did. */
@@ -599,6 +628,7 @@ async function runDeliveryLoop(
     if (!message) break;
     // An invoice email is sent only while its version is still FINALIZED (#168): one a revision replaced is cancelled, never sent.
     if (await cancelIfInvoiceReplaced(prisma, message)) continue;
+    if (await cancelIfLodgingStale(prisma, message)) continue;
     let preparedBody: PreparedEmailBody | null = null;
     try {
       const prepareBodyText = dependencies.prepareBodyText
@@ -621,6 +651,7 @@ async function runDeliveryLoop(
       }
       // Checked again immediately before the provider call, so a revision that committed while the body was prepared cannot slip one out.
       if (await cancelIfInvoiceReplaced(prisma, message)) continue;
+      if (await cancelIfLodgingStale(prisma, message)) continue;
       const delivery = await sendEmail({
         fromName: message.senderNameSnapshot,
         fromEmail: message.senderEmailSnapshot ?? "",

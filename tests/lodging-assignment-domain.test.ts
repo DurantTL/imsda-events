@@ -247,16 +247,21 @@ describe("warnings, conflicts and reports", () => {
     expect(rows.find((row) => row.kind === "OVER_CAPACITY")).toMatchObject({ night: nights[1], assignmentIds: ["s2", "s3"] });
   });
 
-  it("reproduces occupancy night by night, with nights partly covered and people in housing elsewhere", () => {
+  it("reproduces occupancy night by night, with nights partly covered, people in housing elsewhere and people in a closed room", () => {
     const rows = occupancyByNight({
       nights, units: [unit("a", 2), unit("b", 4, { holds: [{ id: "h", firstNight: nights[0], lastNight: nights[0] }] })],
-      segments: [segment("s1", "p1", "a", nights[0], nights[1]), segment("s2", "p2", "a", nights[1], nights[3]), segment("s3", "p3", null, nights[2], nights[2], 2, "bucket-hotel")],
+      segments: [
+        segment("s1", "p1", "a", nights[0], nights[1]), segment("s2", "p2", "a", nights[1], nights[3]),
+        segment("s3", "p3", null, nights[2], nights[2], 2, "bucket-hotel"),
+        // Placed in room b, which is then held on the first night: still counted, and flagged.
+        segment("s4", "p4", "b", nights[0], nights[0]),
+      ],
     });
-    expect(rows.map((row) => [row.night, row.capacity, row.occupied, row.available, row.offsite])).toEqual([
-      [nights[0], 2, 1, 1, 0], // b is held on the first night
-      [nights[1], 6, 2, 4, 0],
-      [nights[2], 6, 1, 5, 2],
-      [nights[3], 6, 1, 5, 0],
+    expect(rows.map((row) => [row.night, row.capacity, row.occupied, row.available, row.offsite, row.inClosedRooms])).toEqual([
+      [nights[0], 2, 2, 1, 0, 1], // b is held on the first night but its guest is still counted
+      [nights[1], 6, 2, 4, 0, 0],
+      [nights[2], 6, 1, 5, 2, 0],
+      [nights[3], 6, 1, 5, 0, 0],
     ]);
   });
 });
@@ -431,7 +436,7 @@ describe("report CSVs", () => {
       placeKey: "unit:boys-101", building: "Boys Dorm", place: "101", floor: 1, capacity: 2,
       occupants: [{ assignmentId: "a1", occupantId: "att1", kind: "Attendee", name: "=cmd|' /C calc'!A0", registrationCode: "REG1", firstNight: nights[0]!, lastNight: nights[2]!, people: 1, groundFloorNeeded: true, accessibleRoomNeeded: false }],
     }],
-    occupancy: [{ night: nights[0]!, capacity: 2, occupied: 1, available: 1, unitsInService: 1, unlimited: false, offsite: 0 }],
+    occupancy: [{ night: nights[0]!, capacity: 2, occupied: 1, available: 1, unitsInService: 1, unlimited: false, offsite: 0, inClosedRooms: 0 }],
     occupancyByUnit: [], unassigned: [], conflicts: [], closeout: [],
     keyHandoff: [{ building: "Boys Dorm", place: "101", placeKey: "unit:boys-101", people: 1, arrival: nights[0]!, departure: "2027-06-18", holder: "Pat", registrationCodes: ["REG1"] }],
   };

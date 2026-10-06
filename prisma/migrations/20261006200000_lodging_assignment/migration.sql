@@ -118,6 +118,7 @@ CREATE TABLE "EventLodgingAssignmentNotice" (
     "registrationId" TEXT NOT NULL,
     "outboxMessageId" TEXT,
     "assignmentVersion" INTEGER NOT NULL,
+    "contentHash" TEXT NOT NULL,
     "sentByUserId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 

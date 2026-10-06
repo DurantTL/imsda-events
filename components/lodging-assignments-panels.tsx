@@ -100,7 +100,10 @@ export function WaitlistPanel({ view, base, run, busy, canConfigure }: { view: A
             <td>{lodgingCategoryLabels[entry.category]}</td>
             <td>{nightRange(entry.firstNight, entry.lastNight)}</td>
             <td>{entry.partySize}</td>
-            <td>{waitlistStatusLabels[entry.status]}{entry.lapsed ? " (expired)" : ""}{entry.offerExpiresAt && entry.status === "OFFERED" ? <><br /><small>until {new Date(entry.offerExpiresAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</small></> : null}</td>
+            <td>{waitlistStatusLabels[entry.status]}{entry.lapsed ? " (expired)" : ""}{entry.offerExpiresAt && entry.status === "OFFERED" ? <><br /><small>until {new Date(entry.offerExpiresAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</small></> : null}
+              {entry.offerMessageStatus ? <><br /><small>Offer email: {entry.offerMessageStatus.toLowerCase()}</small></> : null}
+              {entry.status === "OFFERED" && entry.offerMessageStatus && ["FAILED", "SUPPRESSED", "CANCELLED"].includes(entry.offerMessageStatus)
+                ? <><br /><strong role="alert">The offer email did not reach the guest, but the offer clock is running. Offer again to send it, or contact them.</strong></> : null}</td>
             <td>
               {open ? <details><summary>Answer, remove or place</summary>
                 <form onSubmit={(event: FormEvent<HTMLFormElement>) => {
@@ -271,9 +274,9 @@ export function ReportsPanel({ eventId }: { eventId: string }) {
       <h3 id="la-occ">Occupancy by night</h3>
       <div className="table-wrap"><table>
         <caption className="sr-only">Occupancy by night</caption>
-        <thead><tr><th scope="col">Night</th><th scope="col">Places</th><th scope="col">Placed</th><th scope="col">Free</th><th scope="col">Rooms in service</th><th scope="col">Housing elsewhere</th><th scope="col">Rooms and people</th></tr></thead>
+        <thead><tr><th scope="col">Night</th><th scope="col">Places</th><th scope="col">Placed</th><th scope="col">Free</th><th scope="col">Rooms in service</th><th scope="col">Housing elsewhere</th><th scope="col">In closed rooms</th><th scope="col">Rooms and people</th></tr></thead>
         <tbody>{reports.occupancy.map((row) => <tr key={row.night}>
-          <th scope="row">{shortNight(row.night)}</th><td>{row.capacity}{row.unlimited ? " + no limit" : ""}</td><td>{row.occupied}</td><td>{row.available}</td><td>{row.unitsInService}</td><td>{row.offsite}</td>
+          <th scope="row">{shortNight(row.night)}</th><td>{row.capacity}{row.unlimited ? " + no limit" : ""}</td><td>{row.occupied}</td><td>{row.available}</td><td>{row.unitsInService}</td><td>{row.offsite}</td><td>{row.inClosedRooms > 0 ? `${row.inClosedRooms} (closed or held)` : 0}</td>
           <td><button type="button" className="secondary-button" aria-pressed={night === row.night} onClick={() => setNight(night === row.night ? null : row.night)}>{night === row.night ? "Hide" : "Show"}</button></td>
         </tr>)}</tbody>
       </table></div>

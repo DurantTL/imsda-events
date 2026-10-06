@@ -4,7 +4,6 @@ import type { PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { addDays, nightsInclusive, unitNight, type LodgingBathroom, type LodgingCategory, type LodgingUnitKind, type NightStatus } from "@/modules/lodging/domain";
 import {
-  firstNameOf,
   householdColorIndex,
   occupancyByNight,
   occupancyOf,
@@ -19,6 +18,7 @@ import {
   type VisibleException,
   type WaitlistFact,
 } from "@/modules/lodging/assignment-facts";
+import { loadRegistrantStays } from "@/modules/lodging/registrant-stays";
 import { togetherGroupsOn } from "@/modules/lodging/preferences-domain";
 import type { Client } from "@/modules/lodging/preferences-service";
 
@@ -472,44 +472,9 @@ export type RegistrantAssignmentView = {
 };
 
 export async function getRegistrantAssignmentView(input: { eventId: string; registrationId: string; now?: Date }, client: Client = getPrisma()): Promise<RegistrantAssignmentView> {
-  const lodging = await client.eventLodging.findUnique({ where: { eventId: input.eventId }, select: { showAssignmentsToAttendees: true, showRoommateFirstNames: true, attendeeInstructions: true } });
-  if (!lodging || !lodging.showAssignmentsToAttendees) return { published: false, instructions: null, stays: [] };
-  const registration = await client.registration.findFirst({
-    where: { id: input.registrationId, eventId: input.eventId, status: { in: ["SUBMITTED", "CONFIRMED"] } },
-    select: { id: true },
-  });
-  if (!registration) return { published: true, instructions: lodging.attendeeInstructions, stays: [] };
-  const facts = await loadAssignmentFacts(client, input.eventId, { now: input.now });
-  const own = facts.people.filter((person) => person.registrationId === input.registrationId);
-  const ownKeys = new Set(own.map((person) => person.occupantKey));
-  const stays: RegistrantAssignmentView["stays"] = [];
-  for (const person of own) {
-    for (const segment of facts.state.segments.filter((candidate) => candidate.occupantKey === person.occupantKey)) {
-      const unitMeta = segment.unitId ? facts.state.meta.get(segment.unitId) : null;
-      const bucket = segment.bucketId ? facts.state.buckets.find((candidate) => candidate.id === segment.bucketId) : null;
-      const others = segment.unitId && lodging.showRoommateFirstNames
-        ? facts.state.segments.filter((candidate) => candidate.unitId === segment.unitId && candidate.id !== segment.id && !ownKeys.has(candidate.occupantKey) && candidate.firstNight <= segment.lastNight && segment.firstNight <= candidate.lastNight)
-        : [];
-      const roommates: string[] = [];
-      let otherGuests = 0;
-      for (const other of others) {
-        const roommate = facts.personByKey.get(other.occupantKey);
-        // Only another registration's adult is named; everyone else is counted. An unknown age is never treated as adult.
-        if (roommate && roommate.kind === "ATTENDEE" && roommate.active && roommate.minorStatus === "ADULT") roommates.push(firstNameOf(roommate.name));
-        else otherGuests += roommate?.people ?? 1;
-      }
-      stays.push({
-        name: person.name,
-        kind: unitMeta ? "ROOM" : "ELSEWHERE",
-        building: unitMeta ? unitMeta.buildingName : null,
-        room: unitMeta ? unitMeta.name : bucket?.label ?? "Housing arranged elsewhere",
-        firstNight: segment.firstNight,
-        lastNight: segment.lastNight,
-        roommates: [...new Set(roommates)].sort(),
-        otherGuests,
-      });
-    }
-  }
-  return { published: true, instructions: lodging.attendeeInstructions, stays: stays.sort((a, b) => a.name.localeCompare(b.name) || a.firstNight.localeCompare(b.firstNight)) };
+  // Loaded narrowly (one registration, its units, and only when roommates are on, the people in those units).
+  const loaded = await loadRegistrantStays(client, input.eventId, input.registrationId);
+  if (!loaded.published) return { published: false, instructions: null, stays: [] };
+  // `outOfService` is for notice staleness only: a guest is never told a room is closed.
+  return { published: true, instructions: loaded.instructions, stays: loaded.stays.map(({ outOfService: _outOfService, ...stay }) => { void _outOfService; return stay; }) };
 }
-

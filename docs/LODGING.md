@@ -646,7 +646,9 @@ household members are the keep-together groups of #199 (registration, responsibl
 Both go through `POST .../lodging/assignments/plan`. `mode: "preview"` writes, locks and queues nothing and returns the
 outcome of every row and a fingerprint of exactly what would happen. `mode: "apply"` needs that fingerprint and, under
 the same locks as every writer, rebuilds the plan from scratch: if anything differs (someone placed a person, a room was
-held, the file changed) it refuses with `PLAN_CHANGED` and writes nothing. A CSV with any problem row is refused whole
+held, the file changed) it refuses with `PLAN_CHANGED` and writes nothing. The fingerprint covers the **whole plan**: every
+row's outcome, each assignment it would release (id, revision and the range kept) and each one it would create, so a
+colleague's move made between preview and apply (even of a row the file lists as unchanged) is refused as stale. A CSV with any problem row is refused whole
 (`IMPORT_HAS_PROBLEMS`).
 
 - **Proposal** (`proposeAssignments`, deterministic): households first (largest and accessibility-needing first), the
@@ -670,7 +672,11 @@ number); `ACCEPTED` → `PROMOTED` (staff place the party in a unit); any open s
   offer queues **one email per entry** through the existing outbox (`LODGING_WAITLIST_OFFER`, the event's sender and
   delivery mode, the private-link sentinel, no price), a batch is capped at 25, and offering an entry that already holds
   a live offer returns it without another email. Nothing offers or promotes on its own, and a freed room never promotes
-  anyone by itself.
+  anyone by itself. The **preview is read-only** (no locks, no capacity version bump); only a confirmed offer locks. If
+  email delivery is turned off for the event, nothing is offered (the entry is skipped with the reason), so the offer
+  clock never runs without an email. The workspace shows the **offer email's outbox status**; a live offer whose email
+  failed, was suppressed or cancelled is flagged and can be offered again. Re-offering an expired entry while a newer
+  open entry exists for the registration is refused as `WAITLIST_ALREADY_OPEN`.
 - **A live offer reserves its places** (and so does an accepted entry) against the room that is free in its category, night
   by night, so one place cannot be offered twice; an expired offer holds nothing. An answer after the expiry records the
   expiry and is refused ("expired"); accepting, declining and promoting twice return the first outcome.
@@ -688,13 +694,22 @@ cancelled registration sees nothing. The same page shows the waitlist state and 
 offer. Staff can send one registration its **room notice** (MANAGE_REGISTRATION plus CONFIGURE_EVENT, one at a time, only
 when assignments are published): it is **versioned** (the registration's assignment version is the count of its history
 rows), sending again at an unchanged version queues nothing new, a later change makes it **obsolete** (listed for
-closeout and sendable again), and a notice not yet delivered is **cancelled** by the change.
+closeout and sendable again), and a notice not yet delivered is **cancelled** by the change. A notice also records a
+**content hash** of what it said (rooms, nights, building, bucket labels, roommate first names, closed-room flags and the
+arrival instructions), so it goes obsolete when a roommate moves in or out, a room closes, a bucket is renamed or the
+instructions are edited, not only when the registration's own assignments change. The notice is **checked again just
+before it is sent** (like an invoice email): one that a later change made wrong, or a waitlist offer that is no longer
+open, is cancelled instead of delivered. The private page and the notice load only that registration's own rows (and the
+other occupants of its rooms when roommates are on), never the event's whole picture.
+
+An amendment that **removes an attendee** with any room assignment history (even a cancelled assignment or an expected
+guest linked to them) is refused with `ATTENDEE_HAS_HISTORY`; staff release or cancel the room from Lodging first.
 
 ### Reports
 
 All built from the same facts as the workspace, so a number on one screen is the number on the others
 (`getRoomingReports`): the **rooming list**; **occupancy by night** (capacity, placed, free, rooms in service, people in
-housing elsewhere) drilling to the assignments behind each unit-night; **not placed** and **conflicts** (over capacity,
+housing elsewhere, and people still placed in a room closed or held after they were placed, flagged) drilling to the assignments behind each unit-night; **not placed** and **conflicts** (over capacity,
 room closed after assignment, split household, keep-apart sharing, ground floor needed but placed upstairs); **key hand-off
 inputs** (room, people, arrival, departure, the name on the registration, never a contact detail; key issuance itself is #80);
 and **closeout exceptions** (rooms held by inactive registrations, open waitlist entries, obsolete notices, expected

@@ -265,6 +265,9 @@ const amendmentRegistrationInclude = {
       },
       checkIns: { select: { id: true } },
       substitutionOperations: { select: { id: true } },
+      // Room assignment history and an expected-guest link keep the attendee (#200): NO ACTION keys.
+      lodgingAssignments: { select: { id: true }, take: 1 },
+      lodgingPlaceholderLinks: { select: { id: true }, take: 1 },
       attendeeTypeDefinition: { select: { id: true, code: true, label: true } },
     },
   },
@@ -1046,11 +1049,12 @@ async function prepareAmendment(
   const removedAttendees = registration.attendees.filter((attendee) => !retainedIds.has(attendee.id));
   const blockedRemoval = removedAttendees.find((attendee) => (
     attendee.checkIns.length > 0 || attendee.substitutionOperations.length > 0
+    || attendee.lodgingAssignments.length > 0 || attendee.lodgingPlaceholderLinks.length > 0
   ));
   if (blockedRemoval) {
     throw new RegistrationAmendmentError(
       "ATTENDEE_HAS_HISTORY",
-      `${blockedRemoval.person.firstName} ${blockedRemoval.person.lastName} cannot be removed because check-in or substitution history is attached.`,
+      `${blockedRemoval.person.firstName} ${blockedRemoval.person.lastName} cannot be removed because check-in, substitution or room assignment history is attached. Release or cancel the room assignment from Lodging first.`,
       [],
       {
         attendeeId: blockedRemoval.id,

@@ -209,6 +209,8 @@ function repositoryFixture() {
       },
       checkIns: [],
       substitutionOperations: [],
+      lodgingAssignments: [] as Array<{ id: string }>,
+      lodgingPlaceholderLinks: [] as Array<{ id: string }>,
     }],
     payments: [],
     capacityReservations: [{
@@ -685,6 +687,25 @@ describe("registration amendments repository", () => {
       expectedUpdatedAt: registration.updatedAt.toISOString(),
       attendees: [{ ...input.attendees[0], responses: { ...input.attendees[0].responses, first_name: "Jordan" } }],
     })).rejects.toMatchObject({ code: "ATTENDEE_IDENTITY_CHANGED" });
+  });
+
+  it("refuses to remove an attendee who has room assignment history, naming the way out", async () => {
+    const { registration } = repositoryFixture();
+    const kept = registration.attendees[0]!;
+    registration.attendees.push({
+      ...structuredClone(kept),
+      id: "attendee-2",
+      person: { ...kept.person, id: "person-attendee-2", firstName: "Riley", lastName: "Sample" },
+      lodgingAssignments: [{ id: "assignment-1" }],
+    } as typeof kept);
+    await expect(previewRegistrationAmendment("event-1", "registration-1", {
+      clientRequestId: "5d1f7a2e-3b4c-4d6e-8f90-a1b2c3d4e5f6",
+      expectedUpdatedAt: registration.updatedAt.toISOString(),
+      reason: "",
+      responses: { ...registrationResponses },
+      attendees: [{ attendeeId: "attendee-1", clientId: "attendee-row-1", responses: { ...attendeeResponses } }],
+      previewOnly: true as const,
+    })).rejects.toMatchObject({ code: "ATTENDEE_HAS_HISTORY", message: expect.stringContaining("room assignment") });
   });
 
   it("still requires seminar ranks for a newly added attendee", async () => {

@@ -184,12 +184,14 @@ export async function writePlan(tx: Tx, plan: Plan, meta: PlanMeta): Promise<Pla
     if (!row) throw new LodgingError("ASSIGNMENT_NOT_FOUND", "That assignment changed while you were working. Refresh and try again.");
     const revision = row.revision + 1;
     const cancelReason = `${assignmentEventLabels[release.type]}: ${reason}`.slice(0, 300);
-    await tx.eventLodgingAssignment.update({
+    const updated = await tx.eventLodgingAssignment.update({
       where: { id: row.id },
       data: release.after
         ? { firstNight: toDate(release.after.firstNight), lastNight: toDate(release.after.lastNight), revision, actorUserId }
         : { cancelledAt: now, cancelledByUserId: actorUserId, cancelReason, revision, actorUserId },
     });
+    // A plan can release the same row twice (two moves of one stay): the next release builds on this revision.
+    rows.set(row.id, updated);
     if (row.attendeeId) touchedAttendees.add(row.attendeeId);
     pending.push({
       eventId, assignmentId: row.id, type: release.type, at: now, actorUserId, reason, source: meta.source,
@@ -532,9 +534,16 @@ export type PlanPreview = {
   counts: { new: number; move: number; unchanged: number; problems: number; unplaced: number };
 };
 
-function fingerprintOf(source: string, placements: readonly PlanPlacement[]) {
-  const canonical = placements.map((placement) => [placement.occupantKey, "unitId" in placement.place ? `u:${placement.place.unitId}` : `b:${placement.place.bucketId}`, placement.firstNight, placement.lastNight, placement.mode, placement.people]);
-  return createHash("sha256").update(JSON.stringify([source, canonical])).digest("hex");
+/**
+ * A fingerprint of the whole plan, not just what was asked for: every row's outcome, every assignment the plan would
+ * release (with the revision it was read at and the range it keeps) and every row it would create. So a colleague's
+ * move, cancellation or placement of an affected assignment between preview and apply changes it.
+ */
+function fingerprintOf(source: string, placements: readonly PlanPlacement[], outcomes: readonly string[], plan: Plan, rowsById: ReadonlyMap<string, AssignmentRow>) {
+  const asked = placements.map((placement) => [placement.occupantKey, "unitId" in placement.place ? `u:${placement.place.unitId}` : `b:${placement.place.bucketId}`, placement.firstNight, placement.lastNight, placement.mode, placement.people]);
+  const releases = plan.releases.map((release) => [release.id, rowsById.get(release.id)?.revision ?? 0, release.type, release.after ? [release.after.firstNight, release.after.lastNight] : null, release.before.unitId, release.before.bucketId, release.before.firstNight, release.before.lastNight]);
+  const creates = plan.creates.map((create) => [create.type, create.segment.occupantKey, create.segment.unitId, create.segment.bucketId, create.segment.people, create.segment.firstNight, create.segment.lastNight, create.relatedId ?? null]);
+  return createHash("sha256").update(JSON.stringify([source, asked, outcomes, releases, creates, plan.unchanged])).digest("hex");
 }
 
 /** Everyone who could be proposed: active attendees (and unplaced expected guests), with the nights they want. */
@@ -703,7 +712,7 @@ async function buildPreview(client: Client, eventId: string, state: PlanningStat
     problems: allProblems.length,
     unplaced: unplaced.length,
   };
-  return { source, fingerprint: fingerprintOf(source, placements.filter((_, index) => !problemByIndex.has(index))), rows, unplaced, problems: allProblems, counts, placements };
+  return { source, fingerprint: fingerprintOf(source, placements, rows.map((row) => `${row.outcome}:${row.message ?? ""}`), lenient.plan, state.rowsById), rows, unplaced, problems: allProblems, counts, placements };
 }
 
 /**

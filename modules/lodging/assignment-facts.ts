@@ -16,6 +16,7 @@ import {
   type WaitlistStatus,
 } from "@/modules/lodging/assignment-domain";
 import { loadPlanningState, loadTogetherInput, toNight, type PlanningState } from "@/modules/lodging/assignment-state";
+import { buildStays, noticeContentHash, type Stay } from "@/modules/lodging/stays";
 import { requestNights } from "@/modules/lodging/preferences-domain";
 import { attendeeName, loadCurrentRequests, type Client } from "@/modules/lodging/preferences-service";
 import { minorStatusAt, personAgeFromAnswers, eventStartDate } from "@/modules/guardian-authority/domain";
@@ -64,6 +65,8 @@ export type WaitlistFact = {
   offerNumber: number;
   offeredAt: string | null;
   offerExpiresAt: string | null;
+  /** The status of the offer email in the outbox (null before any offer). A failed, suppressed or cancelled one never reached the guest. */
+  offerMessageStatus: string | null;
   lapsed: boolean;
   joinedAt: string;
   createdVia: string;
@@ -82,7 +85,7 @@ export type NoticeFact = {
 export async function loadAssignmentFacts(client: Client, eventId: string, options: { now?: Date } = {}) {
   const now = options.now ?? new Date();
   const state = await loadPlanningState(client, eventId);
-  const [registrations, requests, placeholders, waitlistRows, noticeRows, historyCounts, event] = await Promise.all([
+  const [registrations, requests, placeholders, waitlistRows, noticeRows, historyCounts, event, lodgingSettings] = await Promise.all([
     client.registration.findMany({
       where: { eventId, status: { not: "DRAFT" } },
       orderBy: { confirmationCode: "asc" },
@@ -102,6 +105,7 @@ export async function loadAssignmentFacts(client: Client, eventId: string, optio
     client.eventLodgingAssignmentNotice.findMany({ where: { eventId }, orderBy: { createdAt: "asc" } }),
     client.eventLodgingAssignmentHistory.groupBy({ by: ["attendeeId"], where: { eventId, attendeeId: { not: null } }, _count: { _all: true } }),
     client.event.findUniqueOrThrow({ where: { id: eventId }, select: { startsAt: true, timezone: true } }),
+    client.eventLodging.findUniqueOrThrow({ where: { eventId }, select: { showAssignmentsToAttendees: true, showRoommateFirstNames: true, attendeeInstructions: true } }),
   ]);
   const requestByRegistration = new Map(requests.map((request) => [request.registrationId, request]));
   const startDate = eventStartDate(event.startsAt, state.context.timezone);
@@ -179,6 +183,18 @@ export async function loadAssignmentFacts(client: Client, eventId: string, optio
   const messageStatus = new Map(messages.map((message) => [message.id, message.status]));
   const latestNotice = new Map<string, (typeof noticeRows)[number]>();
   for (const notice of noticeRows) latestNotice.set(notice.registrationId, notice);
+  // What each registration would be told right now: a notice is current only while this still matches what it was sent with.
+  const currentHashOf = (registrationId: string) => {
+    const registration = registrations.find((candidate) => candidate.id === registrationId);
+    const own = (registration?.attendees ?? []).map((attendee) => ({ occupantKey: attendee.id, name: attendeeName(attendee) }));
+    const units = new Map([...state.units].map(([id, unit]) => [id, { name: unit.name, buildingName: state.meta.get(id)?.buildingName ?? "", state: unit }] as const));
+    const others = new Map(people.map((person) => [person.occupantKey, { name: person.name, people: person.people, nameable: person.kind === "ATTENDEE" && person.active && person.minorStatus === "ADULT" }] as const));
+    const stays: Stay[] = buildStays({
+      own, segments: state.segments, units, bucketLabels: new Map(state.buckets.map((bucket) => [bucket.id, bucket.label])), others,
+      showRoommates: lodgingSettings.showRoommateFirstNames,
+    });
+    return noticeContentHash(stays, lodgingSettings.attendeeInstructions, lodgingSettings.showAssignmentsToAttendees);
+  };
   const notices: NoticeFact[] = [...latestNotice.values()].map((notice) => {
     const currentVersion = versionOfRegistration(notice.registrationId);
     return {
@@ -186,12 +202,17 @@ export async function loadAssignmentFacts(client: Client, eventId: string, optio
       noticeId: notice.id,
       assignmentVersion: notice.assignmentVersion,
       currentVersion,
-      obsolete: noticeIsObsolete(notice.assignmentVersion, currentVersion),
+      // Obsolete when any of the registration's assignments changed, or anything the notice says did (roommates, a room
+      // closed or held, the instructions, a renamed housing choice, unpublishing).
+      obsolete: noticeIsObsolete(notice.assignmentVersion, currentVersion) || notice.contentHash !== currentHashOf(notice.registrationId),
       sentAt: notice.createdAt.toISOString(),
       messageStatus: notice.outboxMessageId ? messageStatus.get(notice.outboxMessageId) ?? null : null,
     };
   });
 
+  const offerIds = waitlistRows.flatMap((entry) => (entry.offerMessageId ? [entry.offerMessageId] : []));
+  const offerMessages = offerIds.length === 0 ? [] : await client.messageOutbox.findMany({ where: { id: { in: offerIds } }, select: { id: true, status: true } });
+  const offerStatus = new Map(offerMessages.map((message) => [message.id, message.status]));
   const waitlist: WaitlistFact[] = waitlistRows.map((entry) => ({
     id: entry.id,
     registrationId: entry.registrationId,
@@ -205,6 +226,7 @@ export async function loadAssignmentFacts(client: Client, eventId: string, optio
     offerNumber: entry.offerNumber,
     offeredAt: entry.offeredAt?.toISOString() ?? null,
     offerExpiresAt: entry.offerExpiresAt?.toISOString() ?? null,
+    offerMessageStatus: entry.offerMessageId ? offerStatus.get(entry.offerMessageId) ?? null : null,
     lapsed: isOfferLapsed({ status: entry.status as WaitlistStatus, offerExpiresAt: entry.offerExpiresAt }, now),
     joinedAt: entry.joinedAt.toISOString(),
     createdVia: entry.createdVia,
