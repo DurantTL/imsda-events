@@ -286,7 +286,7 @@ Under the link model, **no row moves** in any slice. The only data written, in o
 | **Passkeys** | Both tables stay. `UserPasskey` signs in with staff grade; `AttendeePasskey` signs in with attendee grade (attendee session only). WebAuthn credential ids are unique per registration, so the two sets cannot collide. Passkeys are **moved or merged for nobody**. | A passkey is bound to a relying party and key; copying one is not possible. Whether an attendee passkey may count as a staff second factor is a separate decision (open). |
 | **MFA secrets** | Never copied or merged. Staff sign-in uses `UserMfaEnrollment`. `AttendeeMfaEnrollment` stays for attendee-grade sign-in and is retired in (e). If only the attendee side is enrolled, the person enrols on the staff side before staff access (required). | Two secrets cannot be reconciled, and the staff one is the one the staff rules protect. |
 | **Recovery codes** | Stay with their enrollment. Staff codes are the ones that count. Attendee codes are deleted only when the attendee enrollment is retired in (e). | They are hashed and enrollment-bound. |
-| **Passwords** | Both hashes are salted and cannot be compared, so "different passwords" is assumed. A staff session requires a staff credential (`AuthCredential` password or `UserPasskey`) plus the staff second factor, and nothing else; an attendee password, attendee passkey or Google only ever yields the attendee session, whatever second factor follows. The attendee credential is **disabled, not deleted** (`disabledAt`), so it can be re-enabled. | Reversible, and one password per person from the person's view. |
+| **Passwords** | Both hashes are salted and cannot be compared, so "different passwords" is assumed. A staff session requires, as today, the `AuthCredential` password followed by an ACTIVE `UserMfaEnrollment` code (or recovery code), or a user-verified `UserPasskey` on its own, and nothing else; an attendee password, attendee passkey or Google only ever yields the attendee session, whatever second factor follows. The attendee credential is **disabled, not deleted** (`disabledAt`), so it can be re-enabled. | Reversible, and one password per person from the person's view. |
 | **Sessions** | Not merged and not revoked at link time. Existing staff and attendee sessions stay valid so nobody is signed out mid-task. New sign-ins through the single page create both. Revoking staff ends the staff session only. | ADR 0013. |
 | **Audit actor ids** | Never rewritten. `AuditLog.actorUserId` and every `...ByUserId` / `...ByAccountId` keep their original value. Reports union both columns through the link. One new `account.linked` row records the pair's ids. | History must stay true to who acted at the time; a rewrite is irreversible. |
 
@@ -413,7 +413,10 @@ same rule sign-in uses), and for each pair reports the conflicts above plus coun
   sign-in material, role grants, sessions and recipient rows), so a column added later is
   counted without editing the script. It covers the authored ones among the 122 columns of
   section 1 that have a Prisma relation field. The plain-string columns without a relation (the 48 "no FK" rows)
-  cannot be counted this way; query 6.8 covers them;
+  cannot be counted this way; query 6.8 covers them. Staff act-as records (`staffActAs`) are left
+  out with the session material because they are tied to a staff session; they stay with the
+  staff user, are never moved, and an excluded name that no longer exists on the model stops
+  the dry run with an error rather than being counted silently;
 - totals for staff-only and attendee-only accounts, and for ambiguous groups.
 
 Emails are masked in the local part and the domain (`j***@d***.org`); only gmail.com,

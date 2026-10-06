@@ -48,9 +48,9 @@ Instead:
 2. **One sign-in page** (`/sign-in`; the old `/login` and `/account/sign-in` redirect to it).
    It is **one form with one submit** (see "The single sign-in page, with no account
    enumeration" below); it must not change shape after the email is typed. What it grants:
-   - **Staff access:** requires a staff credential (the staff password, or a staff passkey)
-     and the staff second factor, exactly as today. On success it issues **both** sessions:
-     the staff session and the linked attendee session.
+   - **Staff access:** exactly as today, either the staff password followed by the staff
+     second factor, or a user-verified staff passkey on its own. On success it issues **both**
+     sessions: the staff session and the linked attendee session.
    - **Attendee access only:** attendee password, Google or passkey, exactly as today, and it
      issues the attendee session only.
    - A sign-in method that is weaker than the staff rules (such as Google alone) **never**
@@ -145,7 +145,10 @@ before they are built:
 
 - suspending a person's attendee side ends both sessions;
 - slice (d) disables the attendee password (`disabledAt`) for people with staff access;
-- an attendee account is auto-created for staff at activation.
+- an attendee account is auto-created for staff at activation;
+- a pair whose staff side has a role but no active second factor and no passkey
+  (`STAFF_NO_SECOND_FACTOR`) is blocked from linking until the person enrols, which is stricter
+  than today's enrol-at-next-sign-in gate.
 
 The read-only dry run moved into slice (a) (it only reads, so it can ship now); merging and
 linking stay in slice (d). The table-by-table inventory, backfill, rollback and
@@ -195,9 +198,11 @@ Two rules make the link safe:
   whichever sessions the browser carries. New code uses it instead of reading both cookies.
 - Staff authorization is unchanged: `getCurrentSession()`, event memberships, system admin,
   MFA, step-up.
-- **What a staff session requires, exactly:** a staff credential (an `AuthCredential`
-  password, or a `UserPasskey`) **plus** a `UserMfaEnrollment` second factor (or a staff
-  passkey as the second factor, where staff passkeys already count), and nothing else.
+- **What a staff session requires, exactly** (unchanged from today): either (a) the
+  `AuthCredential` password followed by an ACTIVE `UserMfaEnrollment` code or recovery code,
+  or (b) a user-verified `UserPasskey` assertion on its own (`modules/access/passkeys.ts`).
+  Nothing else, and never an attendee credential. No extra prompt is added after a staff
+  passkey, and no password-plus-passkey path is created.
 - **An `AttendeeCredential` password, an attendee passkey or Google can only ever yield the
   attendee session**, whatever second factor follows. An attendee password followed by a staff
   authenticator code is still not a staff sign-in. A person holding a staff role who signs in

@@ -102,6 +102,10 @@ type CountSelect = Record<string, true>;
 function authoredRelations(model: "User" | "AttendeeAccount", excluded: readonly string[]): CountSelect {
   const definition = Prisma.dmmf.datamodel.models.find((candidate) => candidate.name === model);
   if (!definition) throw new Error(`Model ${model} missing from the schema`);
+  const lists = new Set(definition.fields.filter((field) => field.kind === "object" && field.isList).map((field) => field.name));
+  // A renamed relation must not slip silently from the excluded list into the authored count.
+  const stale = excluded.filter((name) => !lists.has(name));
+  if (stale.length > 0) throw new Error(`Excluded relations not on ${model}: ${stale.join(", ")}`);
   const select: CountSelect = {};
   for (const field of definition.fields) {
     if (field.kind === "object" && field.isList && !excluded.includes(field.name)) select[field.name] = true;
