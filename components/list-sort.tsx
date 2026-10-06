@@ -31,7 +31,7 @@ export function SortableHeader({
   disabled?: boolean;
 }) {
   return (
-    <th aria-sort={ariaSortValue(active, direction)} scope="col">
+    <th aria-sort={ariaSortValue(active, direction)} role="columnheader" scope="col">
       <button className="table-sort-button" disabled={disabled} onClick={onSort} type="button">
         {label}
         {active

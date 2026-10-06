@@ -21,10 +21,24 @@ event administrator and system administrator), visits the main pages at 360,
 | `dialog-too-tall` | a dialog or sheet taller than the screen, or cut off at the top or bottom | every width |
 | `sticky-bar-covers-content` / `sticky-bar-size` | the last content is hidden under a fixed bar, or fixed bars take over a third of the screen | every width |
 
-It runs as its own workflow (`.github/workflows/mobile-layout.yml`), not in
-`ci.yml`: on pull requests that touch `components/**`, `app/**/*.tsx`,
-`app/globals.css`, the script or the workflow, weekly, and by hand. Screenshots
-are the `mobile-layout-screenshots` artifact. Locally:
+It runs as its own workflow, not in `ci.yml` (CI minutes are tight):
+
+- **Pull requests, quick run** (360 and 1024 px, no screenshots), only when a
+  layout-wide file changes: `app/globals.css`, `app/**/*.css`,
+  `components/table-card-labels.tsx`, `components/list-sort.tsx`, the script,
+  `scripts/support/**` or the workflows (`mobile-layout.yml`).
+- **Pull requests with the `mobile-check` label**, whatever they change: the
+  same quick run, started by `mobile-layout-label.yml`. Put the label on a PR
+  that changes a page's layout. A workflow cannot OR a `paths` filter with a
+  label, so the label trigger is a small second workflow that calls the first
+  (`workflow_call`); a PR that matches both runs twice, which is rare and cheap.
+- **Weekly (Monday) and by hand** (`workflow_dispatch`): the full run, all four
+  widths, with screenshots (the `mobile-layout-screenshots` artifact, 14 days).
+
+The job is optional (`continue-on-error: true`, like badge-print): a browser or
+runner flake does not turn a pull request red, so read the job's log. Workflows
+have `permissions: contents: read`. The label is created in the repository
+(`mobile-check`). Locally:
 
 ```bash
 npm i --no-save playwright-core@1.56.1
@@ -37,14 +51,20 @@ MOBILE_LAYOUT_BROWSER=/path/to/chromium MOBILE_LAYOUT_OUT_DIR=/tmp/mobile-layout
 Options: `MOBILE_LAYOUT_WIDTHS=360,390`, `MOBILE_LAYOUT_ONLY=club-roster` (page
 name contains), `MOBILE_LAYOUT_NO_SHOTS=1`. `MOBILE_LAYOUT_SELF_TEST=1` injects
 one defect of every kind into each page, and the run must then fail.
+`MOBILE_LAYOUT_CLEANUP=1` deletes every `mobilecheck` row the run created
+(children before parents) when it ends; leave it off in CI, where the database
+is thrown away, and use it on a dev database you want to keep tidy.
 
-Like the badge-print check it is local-only: it refuses to run with
-`NODE_ENV=production`, a `DATABASE_URL` or base URL that is not on this
-machine, or a staff account that is not a seeded `@imsda-events.test` one. It
-writes synthetic rows whose ids start with `mobilecheck` (two churches, two
-clubs, two accounts with a placeholder authenticator, a roster, a monthly
-report, invites, a background-check list and a club event) and mints sessions
-that skip the second step. Nothing in it is a real person.
+It is local-only: it refuses to run with `NODE_ENV=production`, or a
+`DATABASE_URL` or base URL that is not on this machine, and then, before it
+writes anything, refuses a database that is not a seeded dev or CI one
+(`admin@imsda-events.test`, `system@imsda-events.test` and `usr_system_admin`
+must exist). Sessions are always revoked and Prisma disconnected, even when the
+browser fails to start. It writes synthetic rows whose ids start with
+`mobilecheck` (two churches, two clubs, two accounts with a placeholder
+authenticator, a roster, a monthly report, invites, a background-check list and
+a club event) and mints sessions that skip the second step. Nothing in it is a
+real person.
 
 **Adding a page:** add a line to `pages` in the script. A page that needs data
 the script does not create gets that data in `seedSynthetic`. A button that
@@ -91,17 +111,30 @@ already cards. Opt in with `table.table-cards` and
 </div>
 ```
 
-The ARIA roles keep the table semantics when `display` changes. The header row
-is visually hidden on a phone, so **column sorting is not available on cards**
-(the order stays the default; say so in a note, as the roster does). If sorting
-is essential on a phone, keep the table and its scroll box and record the
-exception in `acceptedFindings`. Used by: roster (`.roster-card-table`), club
-reports, honors, area overview and points, invites, background checks, team,
-accounts, club forms, attendee listing.
+The ARIA roles keep the table semantics when `display` changes. Make the
+person's name (or the item's title) the row header (`<th scope="row">`): it
+becomes the card's title. On a desktop the row header looks like a normal cell
+if the table has no `.report-table` styling; check the wide table too.
+
+The header row is visually hidden on a phone, so a **sortable column's header
+control is not usable on cards**. Say how the list is ordered with a
+`SortOrderNote`, and give the phone another way to change it:
+
+- a client-sorted list (honors) keeps its order and its note;
+- a server-sorted list (the attendee listing) adds Sort and Direction selects to
+  its GET filter form, shown at 600 px and under (`.attendee-sort-phone`), and
+  its header links are `PhoneHiddenSortLink`, which is out of the tab order on a
+  phone so there are no invisible Tab stops. The header row itself stays in the
+  accessibility tree so each cell keeps its column name.
+
+If a list cannot give up its sort header, keep the table in its scroll box and
+record the exception in `acceptedFindings`. Used by: roster
+(`.roster-card-table`), club reports, honors, area overview and points,
+invites, background checks, team, accounts, club forms, attendee listing.
 
 ### 44px tap targets
 
-`:root { --touch-target: 44px }` applies at 768 px and under. Under it:
+`:root { --touch-target: 44px }` is set at 768 px and under; the rules this section lists apply at **600 px and under** (phones), the width the audit uses, so the registration form builder and other tablet layouts keep their sizes. At 600 px and under:
 
 - every text-like `input`, `select`, `textarea`, color input and `summary` is at
   least 44px tall (`app/globals.css`, "#447");

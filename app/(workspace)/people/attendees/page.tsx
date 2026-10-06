@@ -4,7 +4,10 @@ import { Download } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
 import { staffPageTitles } from "@/components/staff-navigation";
 import { resolveEventContext } from "@/modules/events/selection";
+import { PhoneHiddenSortLink } from "@/components/phone-hidden-sort-link";
+import { SortOrderNote } from "@/components/list-sort";
 import { cardCell } from "@/components/table-card-labels";
+import { sortOrderText } from "@/lib/list-sort";
 import { isClubAudienceEvent } from "@/modules/events/repository";
 import { listRegistrations } from "@/modules/registrations/repository";
 import {
@@ -74,8 +77,23 @@ export default async function AttendeeListingPage({ searchParams }: { searchPara
 
       <form action="/people/attendees" method="get" className="panel choice-filter-form" aria-label="Filter attendees">
         <input type="hidden" name="event" value={event.id} />
-        {query.sort && <input type="hidden" name="sort" value={query.sort} />}
-        {query.sort && query.direction === "desc" && <input type="hidden" name="dir" value="desc" />}
+        {/* Sort and Direction: on a phone the card list has no header row to click (docs/RESPONSIVE.md),
+            so these are shown at 600px and under. They always submit, which also keeps the current sort
+            when a filter is applied on a wider screen. */}
+        <div className="attendee-sort-phone">
+          <label>Sort by
+            <select name="sort" defaultValue={query.sort ?? ""}>
+              <option value="">Default order</option>
+              {LISTING_COLUMNS.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
+            </select>
+          </label>
+          <label>Direction
+            <select name="dir" defaultValue={query.direction === "desc" ? "desc" : "asc"}>
+              <option value="asc">Ascending</option>
+              <option value="desc">Descending</option>
+            </select>
+          </label>
+        </div>
         <label>Search<input type="search" name="q" defaultValue={query.search} placeholder="Name or confirmation code" /></label>
         <label>Meal preference
           <select name="meal" defaultValue={query.meal ?? ""}>
@@ -95,7 +113,8 @@ export default async function AttendeeListingPage({ searchParams }: { searchPara
       </form>
 
       <div className="table-scroll">
-        <table role="table" className="table-cards">
+        {query.sort && <SortOrderNote>{sortOrderText(LISTING_COLUMNS.find((column) => column.key === query.sort)?.label.toLowerCase() ?? "default order", query.direction)}</SortOrderNote>}
+        <table role="table" className="table-cards attendee-listing-table">
           <caption className="sr-only">Attendees</caption>
           <thead role="rowgroup">
             <tr role="row">
@@ -104,7 +123,7 @@ export default async function AttendeeListingPage({ searchParams }: { searchPara
                 const nextDirection = active && query.direction === "asc" ? "desc" : "asc";
                 return (
                   <th key={column.key} role="columnheader" scope="col" aria-sort={active ? (query.direction === "asc" ? "ascending" : "descending") : undefined}>
-                    <Link href={href({ sort: column.key, direction: nextDirection })}>{column.label}{active ? (query.direction === "asc" ? " ▲" : " ▼") : ""}</Link>
+                    <PhoneHiddenSortLink href={href({ sort: column.key, direction: nextDirection })}>{column.label}{active ? (query.direction === "asc" ? " ▲" : " ▼") : ""}</PhoneHiddenSortLink>
                   </th>
                 );
               })}
@@ -118,7 +137,10 @@ export default async function AttendeeListingPage({ searchParams }: { searchPara
                   const value = column.key === "confirmationCode"
                     ? <Link href={`/people?event=${encodeURIComponent(event.id)}&registration=${encodeURIComponent(row.registrationId)}`}>{row.confirmationCode}</Link>
                     : row[column.key];
-                  return <td key={column.key} {...cardCell(column.label)}>{value}</td>;
+                  // The attendee's name is the card's title on a phone (table-cards).
+                  return column.key === "name"
+                    ? <th key={column.key} role="rowheader" scope="row">{value}</th>
+                    : <td key={column.key} {...cardCell(column.label)}>{value}</td>;
                 })}
               </tr>
             ))}

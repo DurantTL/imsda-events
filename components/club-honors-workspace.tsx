@@ -367,7 +367,7 @@ export function ClubHonorsWorkspace({
                         </label>
                       </td>
                     )}
-                    <td {...cardCell("Name")}><strong translate="no">{row.lastName}, {row.firstName}</strong></td>
+                    <th role="rowheader" scope="row"><strong translate="no">{row.lastName}, {row.firstName}</strong></th>
                     <td {...cardCell("Current class")}>{row.classLevel ? clubClassLevelLabels[row.classLevel as keyof typeof clubClassLevelLabels] : "—"}</td>
                     <td {...cardCell("Honors")}>
                       <HonorPillList honors={row.honors} showStatus />

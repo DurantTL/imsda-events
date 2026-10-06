@@ -1,26 +1,40 @@
 name: Mobile layout
 
 # Real-browser phone-width audit (#447), split out of ci.yml to save GitHub
-# Actions minutes: it runs on pull requests that touch UI files, weekly, and by
-# hand. It visits the club portal, Area Coordinator and staff pages at 360, 390,
-# 768 and 1024 px as synthetic users and fails on horizontal page scroll, tables
-# that scroll sideways on a phone, tap targets under 44 px, dialogs taller than
-# the screen and fixed bars that hide content. Screenshots are kept as an
-# artifact. See docs/RESPONSIVE.md.
+# Actions minutes. See docs/RESPONSIVE.md.
+#
+# When it runs:
+#  - a pull request that changes a layout-wide file (the shared CSS, the
+#    table-card and list-sort helpers, the audit itself): a quick run;
+#  - a pull request carrying the `mobile-check` label: a quick run, started by
+#    mobile-layout-label.yml, which calls this workflow (a `paths` filter and a
+#    label cannot be OR'd in one workflow, so there are two small triggers
+#    and one job);
+#  - weekly and by hand: the full run (all four widths, with screenshots).
+#
+# A quick run is 360 and 1024 px with no screenshots. It is optional
+# (continue-on-error), like badge-print: a browser or runner flake must not
+# turn a pull request red; read the job's log or the artifact.
 on:
   pull_request:
     paths:
-      - "components/**"
-      - "app/**/*.tsx"
       - "app/globals.css"
+      - "app/**/*.css"
+      - "components/table-card-labels.tsx"
+      - "components/list-sort.tsx"
       - "scripts/verify-mobile-layout.ts"
       - "scripts/support/**"
-      - "docs/RESPONSIVE.md"
       - ".github/workflows/mobile-layout.yml"
+      - ".github/workflows/mobile-layout-label.yml"
   # Weekly safety run, so a change outside the paths above still gets caught.
   schedule:
     - cron: "47 9 * * 1"
   workflow_dispatch:
+  # Called by mobile-layout-label.yml for pull requests labelled `mobile-check`.
+  workflow_call:
+
+permissions:
+  contents: read
 
 concurrency:
   group: mobile-layout-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -28,14 +42,14 @@ concurrency:
 
 jobs:
   # Needs a browser and a package that is deliberately not a dependency
-  # (playwright-core), so it is its own job and is not part of `verify`: a
-  # browser or runner problem shows up here and never hides, or fails, the main
-  # gate. GitHub-hosted runners ship Google Chrome, which this job drives
-  # instead of downloading a browser. `--no-save` keeps the lockfile untouched.
+  # (playwright-core), so it is its own job and is not part of `verify`.
+  # GitHub-hosted runners ship Google Chrome, which this job drives instead of
+  # downloading a browser. `--no-save` keeps the lockfile untouched.
   mobile-layout:
-    name: Mobile layout (real browser)
+    name: Mobile layout (real browser, optional)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    continue-on-error: true
     services:
       postgres:
         image: postgres:16-alpine
@@ -52,6 +66,9 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://imsda:imsda_ci@localhost:5432/imsda_events?schema=public
+      # Pull requests (by path or by label) get the quick run; weekly and manual runs the full one.
+      MOBILE_LAYOUT_WIDTHS: ${{ github.event_name == 'pull_request' && '360,1024' || '360,390,768,1024' }}
+      MOBILE_LAYOUT_NO_SHOTS: ${{ github.event_name == 'pull_request' && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -88,7 +105,7 @@ jobs:
           MOBILE_LAYOUT_BROWSER: /usr/bin/google-chrome
           MOBILE_LAYOUT_OUT_DIR: ${{ runner.temp }}/mobile-layout
         run: npm run test:mobile-layout
-      - name: Keep the screenshots
+      - name: Keep the screenshots and report
         if: always()
         uses: actions/upload-artifact@v4
         with:

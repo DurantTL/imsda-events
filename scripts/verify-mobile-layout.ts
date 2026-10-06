@@ -9,9 +9,9 @@
  *    and the elements that stick out are named when it fails;
  *  - no table that has to be scrolled sideways on a phone (<= 600 px). Such a
  *    table becomes stacked cards (`table-cards`, docs/RESPONSIVE.md);
- *  - tap targets of at least 44 px on the controls a thumb has to hit (touch
- *    widths only, <= 768 px): buttons, form controls, summaries, and links
- *    that are not part of a sentence;
+ *  - tap targets of at least 44 px on the controls a thumb has to hit (phone
+ *    widths only, <= 600 px; tablets keep the denser desktop sizes): buttons,
+ *    form controls, summaries, and links that are not part of a sentence;
  *  - no dialog or sheet taller than the screen without scrolling inside it
  *    (every `aria-haspopup="dialog"` button on the page is opened, and the
  *    dialog is closed again without being submitted);
@@ -26,9 +26,10 @@
  * LOCAL USE ONLY. It writes synthetic clubs, people and accounts (every id
  * starts with "mobilecheck") and mints sessions that skip the second factor,
  * so it refuses to run with NODE_ENV=production, with a DATABASE_URL or
- * MOBILE_LAYOUT_BASE_URL that is not on this machine, or as any staff account
- * except a seeded @imsda-events.test one. The guard runs before anything is
- * written. Nothing it creates is a real person or club.
+ * MOBILE_LAYOUT_BASE_URL that is not on this machine, or against a database
+ * that is not a seeded dev or CI one (admin@imsda-events.test,
+ * system@imsda-events.test and usr_system_admin must exist). Both guards run
+ * before anything is written. Nothing it creates is a real person or club.
  *
  * playwright-core is deliberately not a dependency (it would bloat the
  * production image); install it first with
@@ -46,6 +47,7 @@
  *   MOBILE_LAYOUT_ONLY      run only the pages whose name contains this text
  *   MOBILE_LAYOUT_BROWSER   path to a Chromium executable (default: Playwright's)
  *   MOBILE_LAYOUT_NO_SHOTS  set to 1 to skip the screenshots
+ *   MOBILE_LAYOUT_CLEANUP   set to 1 to delete every `mobilecheck` row it created when the run ends
  *   MOBILE_LAYOUT_SELF_TEST set to 1 to inject one defect of every kind into each page;
  *                           the run must then FAIL with all of them reported
  *   DATABASE_URL            the local database the app uses (read from .env when not exported)
@@ -55,11 +57,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { loadEnvConfig } from "@next/env";
 import type { PrismaClient } from "@prisma/client";
-import {
-  assertLocalDatabase,
-  assertLocalUrl,
-  assertSeededStaffEmail,
-} from "./support/local-only-guard";
+import { assertLocalDatabase, assertLocalUrl } from "./support/local-only-guard";
 
 loadEnvConfig(process.cwd());
 
@@ -235,6 +233,52 @@ function record(kind: string, page: string, width: number, detail: string) {
 /* ------------------------------------------------------------------ data */
 
 const longName = "Saint Bartholomew-Montgomery Pathfinder Adventurers of the Western Prairie";
+
+/**
+ * Refuses a database that is not a seeded dev or CI one: the audit signs in as
+ * the seeded staff and writes rows beside them, so those must be there. This is
+ * a second guard after the localhost check, and runs before anything is written.
+ */
+async function assertSeededDatabase(prisma: PrismaClient) {
+  const wanted = [
+    { where: { email: "admin@imsda-events.test" }, name: "admin@imsda-events.test" },
+    { where: { email: "system@imsda-events.test" }, name: "system@imsda-events.test" },
+    { where: { id: "usr_system_admin" }, name: "usr_system_admin" },
+  ];
+  const missing: string[] = [];
+  for (const item of wanted) {
+    if (!(await prisma.user.findFirst({ where: item.where, select: { id: true } }))) missing.push(item.name);
+  }
+  if (missing.length > 0) {
+    throw new Error(`Refusing to write synthetic rows: this is not a seeded dev or CI database (missing ${missing.join(", ")}). Run \`npm run db:seed\` on a local database first.`);
+  }
+}
+
+/** MOBILE_LAYOUT_CLEANUP=1: deletes every row the audit created, children before parents. */
+async function cleanupSynthetic(prisma: PrismaClient) {
+  const orgs = { organizationId: { in: [clubA, clubB] } };
+  const accountIds = [`${P}_account_director`, `${P}_account_area`];
+  await prisma.$transaction([
+    prisma.attendeeSession.deleteMany({ where: { accountId: { in: accountIds } } }),
+    prisma.clubInvite.deleteMany({ where: { OR: [orgs, { id: { startsWith: `${P}_` } }] } }),
+    prisma.clubMonthlyReport.deleteMany({ where: orgs }),
+    prisma.clubRosterMember.deleteMany({ where: orgs }),
+    prisma.person.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
+    prisma.clubDirectorGrant.deleteMany({ where: { attendeeAccountId: { in: accountIds } } }),
+    prisma.areaCoordinatorGrant.deleteMany({ where: { attendeeAccountId: { in: accountIds } } }),
+    prisma.attendeeMfaEnrollment.deleteMany({ where: { accountId: { in: accountIds } } }),
+    prisma.attendeeAccount.deleteMany({ where: { id: { in: accountIds } } }),
+    prisma.clubProfile.deleteMany({ where: orgs }),
+    prisma.backgroundCheckEntry.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
+    prisma.backgroundCheckUpload.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
+    prisma.registrationFormVersion.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
+    prisma.registrationForm.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
+    prisma.event.deleteMany({ where: { id: clubEventId } }),
+    prisma.organization.deleteMany({ where: { id: { in: [clubA, clubB] } } }),
+    prisma.organization.deleteMany({ where: { id: { in: [churchA, churchB] } } }),
+  ]);
+  console.log("Deleted the synthetic mobilecheck rows.");
+}
 
 /** Synthetic clubs, people, accounts and rows. Idempotent: safe to run twice. */
 async function seedSynthetic(prisma: PrismaClient) {
@@ -419,10 +463,9 @@ async function seedSynthetic(prisma: PrismaClient) {
 }
 
 /** Sessions are minted directly (the second factor is skipped, as in verify-badge-print). */
-async function mintSessions(prisma: PrismaClient) {
+async function mintSessions(prisma: PrismaClient, tokens: { staff: string[]; attendee: string[] }) {
   const staffSession = await import("../modules/access/session-store");
   const attendeeSession = await import("../modules/attendee-accounts/session-store");
-  const tokens: { staff: string[]; attendee: string[] } = { staff: [], attendee: [] };
   const cookie = async (role: Role) => {
     if (role === "director" || role === "area") {
       const accountId = role === "director" ? `${P}_account_director` : `${P}_account_area`;
@@ -431,7 +474,6 @@ async function mintSessions(prisma: PrismaClient) {
       return { name: attendeeSession.ATTENDEE_SESSION_COOKIE_NAME, value: session.token, expires: Math.floor(session.expiresAt.getTime() / 1000) };
     }
     const email = role === "system-admin" ? "system@imsda-events.test" : "admin@imsda-events.test";
-    assertSeededStaffEmail(email);
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) throw new Error(`The seeded account ${email} is missing. Run \`npm run db:seed\` first.`);
     const session = await staffSession.createDatabaseSession(user.id, null);
@@ -444,7 +486,7 @@ async function mintSessions(prisma: PrismaClient) {
     director: await cookie("director"),
     area: await cookie("area"),
   };
-  return { cookies, tokens };
+  return cookies;
 }
 
 /* ------------------------------------------------------- in-page audit */
@@ -791,7 +833,6 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
   pagesVisited.push(`${spec.name}@${width}`);
 }
 
-let tokensToRevoke: { staff: string[]; attendee: string[] } | undefined;
 
 async function main() {
   // Hard guard first: nothing below may load Prisma or the session store
@@ -811,16 +852,20 @@ async function main() {
   }
   mkdirSync(outDir, { recursive: true });
   const prisma: PrismaClient = new Prisma();
-  await seedSynthetic(prisma);
-  const { cookies, tokens } = await mintSessions(prisma);
-  tokensToRevoke = tokens;
-  console.log(`Auditing ${pages.length} pages at ${widths.join(", ")} px; output in ${outDir}`);
-
-  const browser = await chromium.launch({
-    executablePath: process.env.MOBILE_LAYOUT_BROWSER || undefined,
-    args: ["--no-sandbox", "--disable-dev-shm-usage"],
-  });
+  // Declared before the first thing that can fail, so the finally below always
+  // revokes the sessions and disconnects.
+  const tokens: { staff: string[]; attendee: string[] } = { staff: [], attendee: [] };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let browser: any;
   try {
+    await assertSeededDatabase(prisma);
+    await seedSynthetic(prisma);
+    const cookies = await mintSessions(prisma, tokens);
+    console.log(`Auditing ${pages.length} pages at ${widths.join(", ")} px; output in ${outDir}`);
+    browser = await chromium.launch({
+      executablePath: process.env.MOBILE_LAYOUT_BROWSER || undefined,
+      args: ["--no-sandbox", "--disable-dev-shm-usage"],
+    });
     for (const width of widths) {
       const height = heightFor(width);
       for (const role of ["director", "area", "event-admin", "system-admin"] as Role[]) {
@@ -854,11 +899,14 @@ async function main() {
       }
     }
   } finally {
-    await browser.close();
+    await browser?.close().catch(() => undefined);
     const { revokeDatabaseSession } = await import("../modules/access/session-store");
     const { revokeAttendeeSession } = await import("../modules/attendee-accounts/session-store");
-    for (const token of tokensToRevoke?.staff ?? []) await revokeDatabaseSession(token);
-    for (const token of tokensToRevoke?.attendee ?? []) await revokeAttendeeSession(token);
+    for (const token of tokens.staff) await revokeDatabaseSession(token).catch(() => undefined);
+    for (const token of tokens.attendee) await revokeAttendeeSession(token).catch(() => undefined);
+    if (process.env.MOBILE_LAYOUT_CLEANUP === "1") {
+      await cleanupSynthetic(prisma).catch((error: Error) => console.error(`Cleanup failed: ${error.message}`));
+    }
     await prisma.$disconnect();
   }
 

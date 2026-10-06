@@ -9901,7 +9901,9 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 .page-stack > *, .workspace-content > * { min-width: 0; }
 .checkbox-hit { display: inline-flex; align-items: center; justify-content: center; }
 /* A select with a long option (a person's or club's name) never sets its container's width. */
-select { max-width: 100%; }
+@media screen and (max-width: 768px) {
+  select { max-width: 100%; }
+}
 .club-form-filter label { flex: 1 1 14rem; min-width: 0; max-width: 100%; }
 .club-form-filter select { width: 100%; }
 /* A scroll box is the containing block of the visually hidden (position: absolute) text
@@ -9929,7 +9931,9 @@ select { max-width: 100%; }
   .table-scroll:has(> table.table-cards) { overflow: visible; }
 }
 
-@media screen and (max-width: 768px) {
+/* The 44px rules below are for phones (600px and under), the same width the audit uses for
+   tap targets; the registration form builder and other tablet layouts keep their sizes. */
+@media screen and (max-width: 600px) {
   /* Every text-like form control is a 44px target (several form styles set 41-43px). */
   :root :is(input:not([type="checkbox"], [type="radio"], [type="hidden"], [type="file"], [type="color"],
     [type="range"], [type="submit"], [type="button"], [type="image"], [type="reset"]), select, textarea) {
@@ -9950,4 +9954,14 @@ select { max-width: 100%; }
   :root .settings-jump-bar a { min-width: var(--touch-target, 44px); justify-content: center; }
   /* A checkbox inside a table cell: the wrapping label is the 44px target. */
   :root .checkbox-hit { min-width: var(--touch-target, 44px); min-height: var(--touch-target, 44px); }
+}
+
+/* Attendee listing (#447): the attendee's name is a row header (the card title on a phone), shown
+   like the other cells on a wide screen; Sort and Direction replace the hidden header links. */
+@media screen and (min-width: 601px) {
+  .attendee-listing-table tbody th { font-weight: inherit; text-align: start; }
+}
+.attendee-sort-phone { display: none; }
+@media screen and (max-width: 600px) {
+  .attendee-sort-phone { display: contents; }
 }
