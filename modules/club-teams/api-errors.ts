@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { logError } from "@/lib/logger";
 import { AccessDeniedError } from "@/modules/access/authorization";
+import { isSerializationFailure } from "@/lib/prisma-errors";
 import { ClubTeamError, clubTeamErrorStatus } from "@/modules/club-teams/errors";
 
 const noStore = { "Cache-Control": "no-store" };
@@ -21,6 +22,10 @@ export function clubTeamApiError(error: unknown, action: string) {
   }
   if (error instanceof ClubTeamError) {
     return Response.json({ error: error.code, message: error.message, problems: error.problems }, { status: clubTeamErrorStatus(error.code), headers: noStore });
+  }
+  // A race that outlasted its retries: nothing was saved, and a second try will go through.
+  if (isSerializationFailure(error)) {
+    return Response.json({ error: "CLUB_TEAM_CONFLICT", message: "Another change landed at the same time. Refresh and try again." }, { status: 409, headers: noStore });
   }
   logError(`${action} failed`, error);
   return Response.json(

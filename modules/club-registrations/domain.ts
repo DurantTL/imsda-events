@@ -409,8 +409,8 @@ export function rosterGenderPrefill(definition: RegistrationFormDefinition, pers
 // blank or unrecognized youth role (e.g. "Teen Leader") is left for the
 // director to pick — never silently defaulted to a role like Pathfinder.
 const TYPE_OPTION_NAMES: Record<string, string[]> = {
-  STAFF: ["staff"],
-  ADULT: ["adult", "staff"],
+  STAFF: ["staff", "coach"],
+  ADULT: ["adult", "staff", "coach"],
   UNDERAGE: ["child", "underage"],
 };
 

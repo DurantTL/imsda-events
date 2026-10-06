@@ -35,6 +35,7 @@ import {
   type ClubGuest,
 } from "@/modules/club-registrations/domain";
 import { fillMissingAnswers } from "@/modules/club-registrations/contact-prefill";
+import { teamRoleFor } from "@/modules/club-teams/rules";
 import type { ClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { ClassPickFields } from "@/components/class-pick-fields";
 import { attendeeTypeLabel } from "@/modules/honors/class-picker-view";
@@ -209,6 +210,17 @@ export function ClubRegistrationWorkspace({
 
   const selected = workspace.roster.filter((person) => draft.selectedMemberIds.includes(person.memberId));
   const goingCount = selected.length + draft.guests.length;
+  // The event's team rules (#809), shown beside who is going; the server checks them again on save.
+  const teamRules = workspace.teams.settings;
+  const coachCount = selected.filter((person) => teamRoleFor({ responses: {}, rosterAttendeeType: person.attendeeType, age: person.ageOnEventDate }) === "COACH").length
+    + draft.guests.filter((guest) => teamRoleFor({ responses: draft.attendeeResponses[clubGuestClientId(guest.id)] ?? {}, age: guest.age }) === "COACH").length;
+  const teamMemberCount = goingCount - coachCount;
+  const sizeLimits = teamRules && (teamRules.minTeamMembers !== null || teamRules.maxTeamMembers !== null)
+    ? `${teamRules.minTeamMembers ?? 1} to ${teamRules.maxTeamMembers ?? "any number"}`
+    : null;
+  const sizeProblem = teamRules && ((teamRules.minTeamMembers !== null && teamMemberCount < teamRules.minTeamMembers)
+    || (teamRules.maxTeamMembers !== null && teamMemberCount > teamRules.maxTeamMembers));
+  const ageDateText = formatCalendarDate(workspace.event.ageDate);
   // Roster people with no birth date need an age typed in for this registration (#639).
   // The raw text of the age fields, so a half-typed entry is reported rather than read as blank.
   const [ageText, setAgeText] = useState<Record<string, string>>({});
@@ -486,9 +498,18 @@ export function ClubRegistrationWorkspace({
       )}
       <ClubLocationPicker allowWaitlist locations={locations} onChange={setLocationId} value={locationId} />
       <p>
-        Tap everyone from your roster who is attending. Ages are as of the first day of the
-        event, {formatCalendarDate(chosenLocation?.firstDay ?? workspace.event.eventDate)}. Your choices save automatically.
+        Tap everyone from your roster who is attending. Ages are as of {workspace.event.ageAsOf ? "" : "the first day of the event, "}
+        {workspace.event.ageAsOf ? ageDateText : formatCalendarDate(chosenLocation?.firstDay ?? workspace.event.eventDate)}. Your choices save automatically.
       </p>
+      {teamRules && (
+        <div className={`inline-notice${sizeProblem ? " error" : ""}`} role="status">
+          <strong>{teamMemberCount} team {teamMemberCount === 1 ? "member" : "members"}</strong>
+          {sizeLimits ? <> (a team has {sizeLimits}{teamRules.maxAlternates > 0 ? `, including ${teamRules.maxAlternates === 1 ? "the alternate" : `up to ${teamRules.maxAlternates} alternates`}` : ""})</> : null}
+          {" · "}{coachCount} {coachCount === 1 ? "coach" : "coaches"}. Coaches are adults who come with the team; they don&apos;t count toward the team.
+          {teamRules.maxMemberAge !== null && <> A team member can be at most {teamRules.maxMemberAge} on {ageDateText}.</>}
+          {teamRules.maxAlternates > 0 && <> You mark the alternate on the next step.</>}
+        </div>
+      )}
       {workspace.roster.length === 0 ? (
         <p className="public-manage-empty">
           <UsersRound size={17} aria-hidden="true" /> Your roster is empty. Add regular members using Add to roster on the roster page, or import a CSV. You can add event-only guests when registering.
@@ -536,6 +557,7 @@ export function ClubRegistrationWorkspace({
                     href={rosterHref}
                     onNavigate={(event) => followRosterLink(event, rosterHref)}
                     onSaveToRoster={(save) => changeSaveToRoster(person.memberId, save)}
+                    dateText={workspace.event.ageAsOf ? ageDateText : undefined}
                     organizationId={organizationId}
                     saveToRoster={!draft.rosterAgeSaveOff.includes(person.memberId)}
                   />
@@ -581,7 +603,7 @@ export function ClubRegistrationWorkspace({
             <div className="form-grid two-column">
               <label>First name<input autoComplete="off" maxLength={80} name="firstName" required /></label>
               <label>Last name<input autoComplete="off" maxLength={80} name="lastName" required /></label>
-              <label>Age at the event<input {...ageInputAttributes} name="age" required type="number" /></label>
+              <label>{workspace.event.ageAsOf ? `Age on ${ageDateText}` : "Age at the event"}<input {...ageInputAttributes} name="age" required type="number" /></label>
               <label>
                 Email (optional)
                 <input autoComplete="off" maxLength={254} name="email" type="email" />

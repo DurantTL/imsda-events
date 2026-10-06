@@ -167,6 +167,7 @@ function toLine(row: RegistrationRow): BillingLine {
     clubId: club?.id ?? null,
     // A club's teams (#809) are separate lines, so each is told apart by its team's name.
     clubName: club ? teamLabel(club.name, row.clubRegistration?.teamName) : null,
+    clubOrganizationName: club?.name ?? null,
     registrantName: personName(row.accountHolderPerson),
     party,
     source,

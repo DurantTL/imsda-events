@@ -176,7 +176,10 @@ export type BillingLine = {
   locationName: string | null;
   /** The club this registration belongs to; null for individual and group registrations. */
   clubId: string | null;
+  /** The club's name, or "Team (Club)" for a team (#809), so each registration's line is told apart. */
   clubName: string | null;
+  /** The club's own name (#809), for the title of a per-club invoice group; falls back to `clubName` when absent. */
+  clubOrganizationName?: string | null;
   /** Registrant name for a registration with no club, shown as the line label. */
   registrantName: string;
   party: ResponsibleParty;
@@ -235,7 +238,7 @@ export function groupBillingLines(
       group = {
         key,
         party: line.party,
-        title: perClub ? (line.clubName ?? "Club") : partyName(line.party),
+        title: perClub ? (line.clubOrganizationName ?? line.clubName ?? "Club") : partyName(line.party),
         clubId: perClub ? line.clubId : null,
         readiness: line.party.kind === "ORGANIZATION"
           ? organizationReadiness(contact)

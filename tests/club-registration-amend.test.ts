@@ -226,6 +226,7 @@ function fixture({
         return created;
       }),
     },
+    eventTeamSettings: { findUnique: vi.fn(async () => null) },
     clubRosterMember: { findMany: vi.fn(async () => rosterRows), updateMany: vi.fn(async () => ({ count: 1 })) },
     attendeeAccount: { findUnique: vi.fn(async () => ({ displayName: "Test Director" })) },
     registration: {

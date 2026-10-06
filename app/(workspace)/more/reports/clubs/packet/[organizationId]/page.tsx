@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
+import { singleSearchParam } from "@/modules/club-teams/domain";
 import { AccessRestricted } from "@/components/access-restricted";
 import { ClubPacketSheet } from "@/components/club-packet-sheet";
 import { PrintReportButton } from "@/components/print-report-button";
@@ -16,11 +18,13 @@ export default async function StaffClubPacketPage({
   searchParams,
 }: {
   params: Promise<{ organizationId: string }>;
-  searchParams: Promise<{ event?: string; team?: string }>;
+  searchParams: Promise<{ event?: string; team?: string | string[] }>;
 }) {
   const { organizationId } = await params;
   // Which of the club's teams (#809); absent on an event without teams.
-  const { event: requested, team: teamKey = "" } = await searchParams;
+  const { event: requested, team: rawTeam } = await searchParams;
+  const teamKey = singleSearchParam(rawTeam);
+  if (teamKey === null) notFound();
   const { event, allowed } = await resolveClubReportsAccess(requested);
   if (!allowed) {
     return (
@@ -32,6 +36,8 @@ export default async function StaffClubPacketPage({
   }
   const packet = await getClubPacketData(event.id, organizationId, teamKey);
   if (!packet) {
+    // A team this club never registered (or another club's) is not found.
+    if (teamKey) notFound();
     return <AccessRestricted title="No active registration" detail="This club has no submitted or confirmed registration for this event." />;
   }
   const eventQuery = `event=${encodeURIComponent(event.id)}`;

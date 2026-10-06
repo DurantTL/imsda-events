@@ -21,6 +21,7 @@ import {
   clubAttendeeClientId,
   clubExistingAttendeeClientId,
   clubGuestClientId,
+  formatCalendarDate,
   guestIsAdult,
   MAX_CLUB_GUESTS,
   rosterOwnedResponses,
@@ -375,6 +376,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
                 onSaveToRoster={(save) => setSaveAgeOff((current) => (save ? current.filter((id) => id !== person.memberId) : [...current.filter((id) => id !== person.memberId), person.memberId]))}
                 href={rosterHrefFromRegistration(organizationId, workspace.event.id)}
                 newTab
+                dateText={workspace.event.ageAsOf ? formatCalendarDate(workspace.event.ageDate) : undefined}
                 organizationId={organizationId}
                 saveToRoster={!saveAgeOff.includes(person.memberId)}
               />
@@ -452,7 +454,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
             <div className="form-grid two-column">
               <label>First name<input autoComplete="off" maxLength={80} name="firstName" required /></label>
               <label>Last name<input autoComplete="off" maxLength={80} name="lastName" required /></label>
-              <label>Age at the event<input {...ageInputAttributes} name="age" required type="number" /></label>
+              <label>{workspace.event.ageAsOf ? `Age on ${formatCalendarDate(workspace.event.ageDate)}` : "Age at the event"}<input {...ageInputAttributes} name="age" required type="number" /></label>
               <label>Email (optional)<input autoComplete="off" maxLength={254} name="email" type="email" /></label>
             </div>
             <div className="club-registration-toolbar">

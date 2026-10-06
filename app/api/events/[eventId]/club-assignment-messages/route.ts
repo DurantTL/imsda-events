@@ -8,6 +8,7 @@ import {
 import { clubAssignmentBatchInputSchema } from "@/modules/communications/schemas";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
+import { singleQueryParam } from "@/modules/club-teams/domain";
 import { findActiveMembership } from "@/modules/events/repository";
 import { withRequestContext } from "@/lib/request-context";
 
@@ -25,7 +26,7 @@ async function getHandler(
     const search = new URL(request.url).searchParams;
     const scope = search.get("scope") === "ONE" ? "ONE" as const : "ALL_SET" as const;
     const organizationId = search.get("organizationId") ?? "";
-    const teamKey = search.get("teamKey") ?? "";
+    const teamKey = singleQueryParam(search, "teamKey") ?? "";
     const preview = await getClubAssignmentMessagePreview(
       eventId,
       scope === "ONE" ? { scope, organizationId, ...(teamKey ? { teamKey } : {}) } : { scope },

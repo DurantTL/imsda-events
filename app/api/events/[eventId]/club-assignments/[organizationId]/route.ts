@@ -8,6 +8,7 @@ import {
   clubAssignmentInputSchema,
   upsertClubAssignment,
 } from "@/modules/club-registrations/assignments-repository";
+import { singleQueryParam } from "@/modules/club-teams/domain";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
@@ -43,7 +44,8 @@ async function putHandler(
     const access = await requireClubAssignmentAccess(await getCurrentSession(), eventId, findActiveMembership);
     const input = clubAssignmentInputSchema.parse(await request.json());
     // Which of the club's teams (#809); omitted on an event without teams.
-    const teamKey = new URL(request.url).searchParams.get("team") ?? "";
+    const teamKey = singleQueryParam(new URL(request.url).searchParams, "team");
+    if (teamKey === null) throw new ClubAssignmentError("NOT_FOUND", "That club has no active registration for this event.");
     const saved = await upsertClubAssignment(eventId, organizationId, input, access.user.id, teamKey);
     return Response.json({
       assignment: {

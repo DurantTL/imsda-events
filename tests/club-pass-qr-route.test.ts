@@ -65,6 +65,24 @@ describe("director's club check-in QR route (#412)", () => {
     expect(await response.text()).toBe("<svg>club pass</svg>");
   });
 
+  it("passes the team the request names, and answers 404 for one the club never registered (#809)", async () => {
+    const response = await GET(new Request("https://events.imsda.test/x?team=bible%20bees"), context());
+    expect(mocks.createDirectorClubPass).toHaveBeenCalledWith("club-1", "event_123", expect.any(Date), "bible bees");
+    expect(response.status).toBe(200);
+
+    // Another club's team, a stale link or a made-up key: the repository finds no registration of this club under it.
+    mocks.createDirectorClubPass.mockResolvedValue(null);
+    const missing = await GET(new Request("https://events.imsda.test/x?team=not-a-team"), context());
+    expect(missing.status).toBe(404);
+    expect(mocks.toString).toHaveBeenCalledTimes(1);
+  });
+
+  it("answers 404 for a repeated team parameter without looking anything up (#809)", async () => {
+    const response = await GET(new Request("https://events.imsda.test/x?team=a&team=b"), context());
+    expect(response.status).toBe(404);
+    expect(mocks.createDirectorClubPass).not.toHaveBeenCalled();
+  });
+
   it("refuses another club's director with 404, never rendering that club's QR", async () => {
     const response = await GET(new Request("https://events.imsda.test/x"), context("club-2"));
 

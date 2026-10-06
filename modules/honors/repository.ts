@@ -36,7 +36,8 @@ export type HonorErrorCode =
   | "PICKS_NEED_CONFIRMATION"
   | "HAS_WRITTEN_BACK_COMPLETIONS"
   | "COPY_SAME_EVENT"
-  | "COPY_SOURCE_CHANGED";
+  | "COPY_SOURCE_CHANGED"
+  | "EVENT_HAS_TEAMS";
 
 export class HonorConfigurationError extends Error {
   constructor(
@@ -269,6 +270,20 @@ async function requireEvent(tx: Prisma.TransactionClient, eventId: string) {
   return event;
 }
 
+/**
+ * An event where a club can register several teams has no classes (#809): a class is picked once for a club's one
+ * registration, so with teams on, nothing here creates, copies or clones one.
+ */
+export async function requireNoTeams(tx: Pick<Prisma.TransactionClient, "eventTeamSettings">, eventId: string) {
+  const settings = await tx.eventTeamSettings.findUnique({ where: { eventId }, select: { allowMultipleTeams: true } });
+  if (settings?.allowMultipleTeams) {
+    throw new HonorConfigurationError(
+      "EVENT_HAS_TEAMS",
+      "This event lets a club register several teams, which can't take classes: classes are chosen once for a club's one registration. Turn off teams in the event settings first.",
+    );
+  }
+}
+
 /** The site must belong to this event (#589). Null is always allowed: a session no site owns. */
 async function requireSessionLocation(tx: Prisma.TransactionClient, eventId: string, locationId: string | null | undefined) {
   if (!locationId) return;
@@ -291,6 +306,7 @@ export async function createHonorSession(eventId: string, input: HonorSessionInp
   try {
     await getPrisma().$transaction(async (tx) => {
       await requireEvent(tx, eventId);
+      await requireNoTeams(tx, eventId);
       await requireSessionLocation(tx, eventId, input.locationId);
       if (!input.locationId && await eventHasActiveLocations(tx, eventId)) throw siteRequired("session");
       const session = await tx.honorSession.create({
@@ -482,6 +498,7 @@ export async function createHonorOffering(eventId: string, input: HonorOfferingI
   try {
     await serializable(async (tx) => {
       await requireEvent(tx, eventId);
+      await requireNoTeams(tx, eventId);
       const honor = await tx.honor.findUnique({
         where: { id: input.honorId },
         select: { id: true, name: true, isActive: true },

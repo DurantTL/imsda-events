@@ -165,3 +165,19 @@ export function resolveTeamName(
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Enter a name for the team." };
   return { ok: true, teamName: parsed.data, teamKey: normalizeTeamName(parsed.data) };
 }
+
+/**
+ * A team key (or draft id) read from a page's search params: the empty string when absent, the value when it is given once,
+ * and null when the parameter was repeated, which is never a team (the page or route answers not-found).
+ */
+export function singleSearchParam(value: string | readonly string[] | undefined): string | null {
+  if (value === undefined) return "";
+  return typeof value === "string" ? value : null;
+}
+
+/** Same, from a URL's query string, for route handlers. */
+export function singleQueryParam(params: URLSearchParams, name: string): string | null {
+  const values = params.getAll(name);
+  if (values.length === 0) return "";
+  return values.length === 1 ? values[0]! : null;
+}

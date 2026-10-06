@@ -55,15 +55,18 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
               <caption className="sr-only">Registered clubs</caption>
               <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Club</th><th role="columnheader" scope="col">Going</th>{backgroundFlags && <th role="columnheader" scope="col">Background checks</th>}<th role="columnheader" scope="col">Registration</th><th role="columnheader" scope="col"><span className="sr-only">Open</span></th></tr></thead>
               <tbody role="rowgroup">
-                {clubs.map((club) => (
+                {clubs.map((club, index) => (
                   <tr role="row" key={`${club.organizationId}:${club.teamKey}`}>
                     <th role="rowheader" scope="row" translate="no">{club.teamName ? `${club.teamName} (${club.name})` : club.name}{club.sponsoringChurch && <small> · {club.sponsoringChurch}</small>}</th>
                     <td {...cardCell("Going")}>{club.attendeeCount}</td>
                     {backgroundFlags && (
                       <td {...cardCell("Background checks")}>
-                        {neededByClub.get(club.organizationId)
-                          ? <><BackgroundCheckBadge /> <small className="quiet-copy">{neededByClub.get(club.organizationId)}</small></>
-                          : <small className="quiet-copy">All current</small>}
+                        {/* Background checks are the club's, not a team's (#809): a club's count shows once, on its first team. */}
+                        {clubs.findIndex((other) => other.organizationId === club.organizationId) !== index
+                          ? <small className="quiet-copy">Club-wide, shown above</small>
+                          : neededByClub.get(club.organizationId)
+                            ? <><BackgroundCheckBadge /> <small className="quiet-copy">{neededByClub.get(club.organizationId)}{club.teamName ? " (club-wide)" : ""}</small></>
+                            : <small className="quiet-copy">All current</small>}
                       </td>
                     )}
                     <td {...cardCell("Registration")}>{club.confirmationCode}</td>

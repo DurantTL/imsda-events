@@ -94,6 +94,8 @@ export type AmendmentProfileMetadata = {
   temporary?: boolean;
   temporaryAttendeeType?: "ADULT" | "YOUTH";
   clubGuestId?: string;
+  /** Whether the person is a team member or a coach on a team registration (#809), decided by the server. */
+  teamRole?: "MEMBER" | "COACH";
   /** A "Group" person's id (#650): the client id the registration form gave them. */
   groupAttendeeId?: string;
 };
@@ -189,6 +191,7 @@ function allowedProfileMetadata(metadata: AmendmentProfileMetadata | undefined) 
     allowed.temporaryAttendeeType = metadata.temporaryAttendeeType;
   }
   if (typeof metadata.clubGuestId === "string") allowed.clubGuestId = metadata.clubGuestId;
+  if (metadata.teamRole === "MEMBER" || metadata.teamRole === "COACH") allowed.teamRole = metadata.teamRole;
   if (typeof metadata.groupAttendeeId === "string") allowed.groupAttendeeId = metadata.groupAttendeeId;
   return allowed;
 }

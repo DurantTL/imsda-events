@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { ClubTeamError } from "@/modules/club-teams/errors";
@@ -40,6 +40,17 @@ export async function getTeamSettings(eventId: string, client: Client = getPrism
   return row ? toSettings(row) : null;
 }
 
+/** A Serializable transaction that lost a race (P2034) is run again, a few times, before it is given up on. */
+async function retrySerialization<T>(work: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await work();
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") || attempt >= 2) throw error;
+    }
+  }
+}
+
 /**
  * Sets an event's team rules (CONFIGURE_EVENT, audited). The guards keep an event
  * from ending up with registrations its own rules cannot describe:
@@ -50,16 +61,23 @@ export async function getTeamSettings(eventId: string, client: Client = getPrism
  */
 export async function saveTeamSettings(eventId: string, actorUserId: string, rawInput: unknown): Promise<TeamSettings> {
   const input = teamSettingsInputSchema.parse(rawInput);
-  return getPrisma().$transaction(async (tx) => {
+  return retrySerialization(() => getPrisma().$transaction(async (tx) => {
+    // The lock a club's draft save takes shared, and a Serializable transaction: a club registration or draft that races this
+    // save either sees the new rules or makes this save fail and try again, never slips between the checks and the write.
+    await tx.$queryRaw`SELECT "id" FROM "Event" WHERE "id" = ${eventId} FOR NO KEY UPDATE`;
     const event = await tx.event.findUnique({ where: { id: eventId }, select: { id: true, audience: true, name: true } });
     if (!event) throw new ClubTeamError("EVENT_NOT_FOUND", "That event could not be found.");
     if (event.audience !== "CLUB") throw new ClubTeamError("NOT_A_CLUB_EVENT", "Team settings are for club events.");
     const existing = await tx.eventTeamSettings.findUnique({ where: { eventId } });
     if (input.allowMultipleTeams && !existing?.allowMultipleTeams) {
-      const [unnamed, classes] = await Promise.all([
+      const [unnamed, classes, drafts] = await Promise.all([
         tx.clubEventRegistration.count({ where: { eventId, teamKey: "" } }),
         tx.honorOffering.count({ where: { eventId } }),
+        tx.clubRegistrationDraft.count({ where: { eventId, draftKey: "" } }),
       ]);
+      if (drafts > 0) {
+        throw new ClubTeamError("DRAFTS_IN_PROGRESS", `${drafts === 1 ? "A club has" : `${drafts} clubs have`} started a registration for this event without submitting it. Those drafts can't carry over to teams, so they need to be submitted, or removed, before the event switches to teams.`);
+      }
       if (unnamed > 0) {
         throw new ClubTeamError("REGISTRATIONS_WITHOUT_TEAM", "Clubs have already registered for this event without a team name, so it cannot switch to named teams.");
       }
@@ -97,7 +115,7 @@ export async function saveTeamSettings(eventId: string, actorUserId: string, raw
       } as unknown as Prisma.InputJsonValue,
     }, tx);
     return toSettings(saved);
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 }));
 }
 
 /** Removes an event's team rules, back to one registration per club. Refused while teams are registered. */

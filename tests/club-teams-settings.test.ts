@@ -39,7 +39,7 @@ function put(body: unknown) {
   });
 }
 
-function database(overrides: { event?: unknown; existing?: unknown; unnamed?: number; named?: number; classes?: number } = {}) {
+function database(overrides: { event?: unknown; existing?: unknown; unnamed?: number; named?: number; classes?: number; drafts?: number } = {}) {
   const tx = {
     event: { findUnique: vi.fn().mockResolvedValue("event" in overrides ? overrides.event : { id: "event-1", audience: "CLUB", name: "Synthetic PBE" }) },
     eventTeamSettings: {
@@ -51,6 +51,8 @@ function database(overrides: { event?: unknown; existing?: unknown; unnamed?: nu
       count: vi.fn(async ({ where }: { where: { teamKey: unknown } }) => (typeof where.teamKey === "string" ? overrides.unnamed ?? 0 : overrides.named ?? 0)),
     },
     honorOffering: { count: vi.fn().mockResolvedValue(overrides.classes ?? 0) },
+    clubRegistrationDraft: { count: vi.fn().mockResolvedValue(overrides.drafts ?? 0) },
+    $queryRaw: vi.fn().mockResolvedValue([{ id: "event-1" }]),
   };
   const prisma = { ...tx, $transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)) };
   mocks.getPrisma.mockReturnValue(prisma);
@@ -114,6 +116,24 @@ describe("PUT /api/events/[eventId]/team-settings", () => {
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({ error: "REGISTRATIONS_WITHOUT_TEAM" });
     expect(tx.eventTeamSettings.upsert).not.toHaveBeenCalled();
+  });
+
+  it("will not switch to named teams while clubs have unsubmitted drafts, and does not delete them", async () => {
+    const { tx } = database({ drafts: 2 });
+    const response = await PUT(put(pbe), context);
+    expect(response.status).toBe(409);
+    const body = await response.json() as { error: string; message: string };
+    expect(body.error).toBe("DRAFTS_IN_PROGRESS");
+    expect(body.message).toContain("2 clubs have started a registration");
+    expect(tx.eventTeamSettings.upsert).not.toHaveBeenCalled();
+    expect("deleteMany" in tx.clubRegistrationDraft).toBe(false);
+  });
+
+  it("saves under the event lock, as one Serializable transaction", async () => {
+    const { prisma, tx } = database();
+    await PUT(put(pbe), context);
+    expect(tx.$queryRaw).toHaveBeenCalled();
+    expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), expect.objectContaining({ isolationLevel: "Serializable" }));
   });
 
   it("will not allow several teams on an event with classes, which are picked once per club", async () => {

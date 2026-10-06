@@ -22,7 +22,7 @@ import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registratio
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { activeRegistrationStatuses, registrationClosedMessage } from "@/modules/events/lifecycle";
 import { getClassSelectionWorkspaceIfRegistered, getRegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
-import { draftKeySchema } from "@/modules/club-teams/domain";
+import { draftKeySchema, singleSearchParam } from "@/modules/club-teams/domain";
 
 export const metadata: Metadata = { title: "Club registration" };
 export const dynamic = "force-dynamic";
@@ -32,25 +32,31 @@ export default async function ClubEventRegistrationPage({
   searchParams,
 }: {
   params: Promise<{ organizationId: string; eventId: string }>;
-  searchParams: Promise<{ team?: string; draft?: string }>;
+  searchParams: Promise<{ team?: string | string[]; draft?: string | string[] }>;
 }) {
   const { organizationId, eventId } = await params;
-  const { team: requestedTeam, draft: requestedDraft } = await searchParams;
+  const { team: rawTeam, draft: rawDraft } = await searchParams;
+  // A repeated ?team= or ?draft= names nothing.
+  const requestedTeam = singleSearchParam(rawTeam);
+  const requestedDraft = singleSearchParam(rawDraft);
+  if (requestedTeam === null || requestedDraft === null) notFound();
   const access = await getRosterAccessStateForPage(organizationId);
   // The club layout shows the sign-in and authenticator steps.
   if (access.state !== "OPEN") return null;
 
   // A club that registers several teams (#809) has a page for each team and one for each team being started; the
   // address says which. An event without teams ignores both and shows the one registration it has always had.
-  const requestedDraftKey = draftKeySchema.safeParse(requestedDraft ?? "").success ? requestedDraft! : null;
+  const requestedDraftKey = draftKeySchema.safeParse(requestedDraft).success ? requestedDraft : null;
   let workspace: Awaited<ReturnType<typeof getClubEventWorkspace>>;
   try {
-    workspace = await getClubEventWorkspace(organizationId, eventId, new Date(), { teamKey: requestedTeam ?? null, draftKey: requestedDraftKey });
+    workspace = await getClubEventWorkspace(organizationId, eventId, new Date(), { teamKey: requestedTeam || null, draftKey: requestedDraftKey });
   } catch (error) {
     if (error instanceof ClubRegistrationError) notFound();
     throw error;
   }
   const multipleTeams = workspace.teams.multiple;
+  // A team this club never registered (another club's, a stale link, a made-up key), or one on an event without teams, is not found.
+  if (requestedTeam && (!multipleTeams || !workspace.registration)) notFound();
   const eventBase = `/account/clubs/${organizationId}/events/${eventId}`;
   const canStartTeam = !workspace.problem && workspace.event.phase === "OPEN" && Boolean(workspace.experience);
   // The first team goes straight to its form: there is nothing to choose between yet.
@@ -234,6 +240,8 @@ export default async function ClubEventRegistrationPage({
                   <strong translate="no">{attendee.lastName}, {attendee.firstName}</strong>
                   {attendee.ageOnEventDate !== null && <small>Age {attendee.ageOnEventDate} at the event</small>}
                   {attendee.temporary && <small>Not on your roster · this event only</small>}
+                  {attendee.teamRole === "COACH" && <small>Coach</small>}
+                  {attendee.alternate && <small>Alternate</small>}
                 </span>
               </li>
             ))}

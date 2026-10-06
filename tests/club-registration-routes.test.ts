@@ -19,7 +19,10 @@ vi.mock("server-only", () => ({}));
 // The attendee second step is covered in tests/club-second-step.test.ts; here it has been passed.
 vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({ accountNeedsSecondStep: async () => "OK" }));
 vi.mock("@/lib/prisma", () => ({
-  getPrisma: () => ({
+  getPrisma: () => {
+    const client = {
+    $queryRaw: async () => [{ id: "event-1" }],
+    $transaction: async (operation: (tx: unknown) => unknown) => operation(client),
     attendeeMfaEnrollment: { findUnique: async () => ({ status: "ACTIVE" }) },
     attendeeSession: { findUnique: async () => ({ secondFactorVerifiedAt: new Date() }) },
     attendeePasskey: { count: async () => 0 },
@@ -30,10 +33,13 @@ vi.mock("@/lib/prisma", () => ({
     clubRegistrationDraft: {
       update: mocks.draftUpdate,
       findUnique: mocks.draftFind,
-      create: mocks.draftCreate,
+      createMany: mocks.draftCreate,
+      findUniqueOrThrow: mocks.draftFind,
     },
     eventLocation: { findFirst: mocks.locationFindFirst },
-  }),
+    };
+    return client;
+  },
 }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
 vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: async () => null }));
@@ -83,7 +89,8 @@ beforeEach(() => {
   mocks.rosterFindMany.mockResolvedValue([{ id: "m1" }, { id: "m2" }]);
   mocks.draftUpdate.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 2, lastSaveId: "save-00000001" });
   mocks.draftFind.mockResolvedValue({ id: "draft-1" });
-  mocks.draftCreate.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 1, lastSaveId: "save-00000001" });
+  // `createMany` with skipDuplicates: one row made, then read back.
+  mocks.draftCreate.mockResolvedValue({ count: 1 });
   mocks.locationFindFirst.mockResolvedValue({ id: "loc-1" });
   // An event without team rules, unless a test says otherwise.
   mocks.teamSettingsFind.mockResolvedValue(null);
@@ -250,9 +257,10 @@ describe("club registration routes", () => {
 
     it("creates the first draft only for a page that loaded with none", async () => {
       mocks.draftUpdate.mockRejectedValue(missed());
-      mocks.draftFind.mockResolvedValue(null);
+      mocks.draftFind.mockResolvedValueOnce(null).mockResolvedValue(row(1, "save-00000001"));
       expect((await PUT_DRAFT(request("PUT", { ...body, baseRevision: 0 }), ctx("club-a"))).status).toBe(200);
-      expect(mocks.draftCreate.mock.calls[0][0].data).toMatchObject({ revision: 1, lastSaveId: "save-00000001" });
+      expect(mocks.draftCreate.mock.calls[0][0].data[0]).toMatchObject({ revision: 1, lastSaveId: "save-00000001" });
+      expect(mocks.draftCreate.mock.calls[0][0].skipDuplicates).toBe(true);
     });
 
     it("does not bring back a draft that was submitted or deleted", async () => {
@@ -267,7 +275,7 @@ describe("club registration routes", () => {
     it("refuses the tab that loses a simultaneous first save, but accepts its own lost-response retry", async () => {
       mocks.draftUpdate.mockRejectedValue(missed());
       mocks.draftFind.mockResolvedValueOnce(null).mockResolvedValueOnce(row(1, "someone-else"));
-      mocks.draftCreate.mockRejectedValue(Object.assign(new Error("unique"), { code: "P2002" }));
+      mocks.draftCreate.mockResolvedValue({ count: 0 });
       expect((await PUT_DRAFT(request("PUT", { ...body, baseRevision: 0 }), ctx("club-a"))).status).toBe(409);
       mocks.draftFind.mockResolvedValueOnce(null).mockResolvedValueOnce(row(1, "save-00000001"));
       expect((await PUT_DRAFT(request("PUT", { ...body, baseRevision: 0 }), ctx("club-a"))).status).toBe(200);

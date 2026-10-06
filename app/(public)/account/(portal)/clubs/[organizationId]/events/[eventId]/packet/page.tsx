@@ -4,6 +4,7 @@ import { BackLink } from "@/components/back-link";
 import { ClubPacketSheet } from "@/components/club-packet-sheet";
 import { PrintReportButton } from "@/components/print-report-button";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
+import { singleSearchParam } from "@/modules/club-teams/domain";
 import { loadDirectorClubPacket } from "@/modules/reporting/director-club-packet";
 
 export const metadata: Metadata = { title: "Club packet" };
@@ -18,11 +19,12 @@ export default async function DirectorClubPacketPage({
   searchParams,
 }: {
   params: Promise<{ organizationId: string; eventId: string }>;
-  searchParams: Promise<{ team?: string }>;
+  searchParams: Promise<{ team?: string | string[] }>;
 }) {
   const { organizationId, eventId } = await params;
   // Which of the club's teams (#809); absent on an event without teams.
-  const { team: teamKey = "" } = await searchParams;
+  const teamKey = singleSearchParam((await searchParams).team);
+  if (teamKey === null) notFound();
   const packet = await loadDirectorClubPacket(organizationId, eventId, teamKey);
   if (!packet) {
     // The club layout shows the sign-in / unlock prompts; an open club with

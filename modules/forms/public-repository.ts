@@ -137,6 +137,8 @@ export type ClubSubmissionContext = {
       personId: string | null;
       rosterMemberId: string | null;
       ageOnEventDate: number | null;
+      /** Team member or coach (#809), set only for an event with team rules; kept on the attendee's profile snapshot. */
+      teamRole?: "MEMBER" | "COACH";
       // `guestId` is the club module's own guest identifier (#388), kept on
       // the created attendee's profileSnapshot as `clubGuestId` so a later
       // reopen-and-amend (H3b, #366) can match this attendee back to the
@@ -726,6 +728,15 @@ async function createPublicRegistrationTransaction(
   const replay = await findExistingConfirmation(tx, version.id, input.idempotencyKey, requestHash, definition, churchBilledDisplay);
   if (replay) return replay;
   if (club) {
+    // The team rules, read inside this Serializable transaction (#809): a save of the rules that races this submit makes one
+    // of them fail rather than letting a team be registered on an event that has just stopped taking teams, or the reverse.
+    const teamRules = await tx.eventTeamSettings.findUnique({ where: { eventId: form.eventId }, select: { allowMultipleTeams: true } });
+    if ((teamRules?.allowMultipleTeams === true) !== Boolean(club.team)) {
+      throw new PublicRegistrationError(
+        "CLUB_REGISTRATION_UNAVAILABLE",
+        "This event's team rules changed while you were registering. Reload the page and try again.",
+      );
+    }
     const existingClubRegistration = await tx.clubEventRegistration.findUnique({
       where: { eventId_organizationId_teamKey: { eventId: form.eventId, organizationId: club.organizationId, teamKey: club.team?.key ?? "" } },
       select: { id: true },
@@ -1148,6 +1159,7 @@ async function createPublicRegistrationTransaction(
             clubOrganizationId: club.organizationId,
             ...(clubAttendee.rosterMemberId ? { clubRosterMemberId: clubAttendee.rosterMemberId } : {}),
             ageOnEventDate: clubAttendee.ageOnEventDate,
+            ...(clubAttendee.teamRole ? { teamRole: clubAttendee.teamRole } : {}),
             // For this event only: never on the club roster (#388).
             ...(clubAttendee.guest
               ? { temporary: true, temporaryAttendeeType: clubAttendee.guest.attendeeType, clubGuestId: clubAttendee.guest.guestId }
