@@ -100,6 +100,8 @@ const registrationAmendmentAttendeeSchema = z.strictObject({
   attendeeId: z.string().trim().min(1).max(100).nullable(),
   clientId: z.string().trim().min(1).max(100),
   responses: z.record(z.string(), z.unknown()),
+  /** Staff only: this person is not the same person as someone with the same name on another team of the club (#809). */
+  differentPerson: z.boolean().optional(),
 });
 
 export const registrationAmendmentInputSchema = z.strictObject({

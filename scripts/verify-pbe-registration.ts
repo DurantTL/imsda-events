@@ -90,6 +90,7 @@ async function cleanup() {
   await prisma.person.deleteMany({ where: { id: { startsWith: `${P}_` } } });
   await prisma.person.deleteMany({ where: { normalizedEmail: { startsWith: "pbe-" } } });
   await prisma.person.deleteMany({ where: { firstName: { startsWith: "Pbe" } } });
+  await prisma.attendeeAccount.deleteMany({ where: { id: { startsWith: `${P}_` } } });
   await prisma.user.deleteMany({ where: { id: staffUserId } });
 }
 
@@ -116,7 +117,7 @@ async function main() {
   await cleanup();
   await prisma.user.create({ data: { id: staffUserId, email: `${P}-staff@example.test`, displayName: "PBE Check Staff", globalRole: "SYSTEM_ADMIN" } });
   await prisma.organization.create({ data: { id: churchId, type: "CHURCH", name: `Pbe Church ${P}`, normalizedName: `pbe church ${P}` } });
-  const clubKeys = ["a", "b", "c", "d"] as const;
+  const clubKeys = ["a", "b", "c", "d", "e", "f"] as const;
   await prisma.organization.createMany({
     data: clubKeys.map((key) => ({ id: clubOf(key), type: "CLUB" as const, name: `Pbe Club ${key} ${P}`, normalizedName: `pbe club ${key} ${P}`, parentOrganizationId: churchId })),
   });
@@ -129,6 +130,8 @@ async function main() {
     nineteen: sealBirthDate("2006-01-02"),
     // 18 on 2026-01-01 (turned 18 on 2025-06-01).
     eighteen: sealBirthDate("2007-06-01"),
+    // 17 on 2026-01-01 (turns 18 on 2026-06-01).
+    seventeen: sealBirthDate("2008-06-01"),
     adult: sealBirthDate("1985-03-02"),
   };
   const members = new Map<string, string>();
@@ -157,6 +160,12 @@ async function main() {
   await addMember("d", "staff13b", "youth", "STAFF", "PbeStaffKid", "ThirteenB");
   await addMember("d", "staff18", "eighteen", "STAFF", "PbeStaffTlt", "Eighteen");
   await addMember("d", "coach1", "adult", "STAFF", "PbeCoach", "Six");
+  // Clubs e and f: the Area Coordinator permission checks (e), and the single-team event with rules (f).
+  await addMember("e", "tlt18", "eighteen", "YOUTH", "PbeTlt", "Eighteen");
+  await addMember("e", "tlt18b", "eighteen", "YOUTH", "PbeTltB", "Eighteen");
+  for (const key of ["u17", "u17b", "u17c"]) await addMember("e", key, "seventeen", "YOUTH", "PbeSeventeen", key.toUpperCase());
+  await addMember("e", "coach1", "adult", "STAFF", "PbeCoach", "Seven");
+  for (let index = 1; index <= 10; index += 1) await addMember("f", `y${index}`, "youth", "YOUTH", "PbeFran", `Ff${index}`);
   const clientId = (club: string, key: string) => clubAttendeeClientId(members.get(`${club}:${key}`)!);
 
   // 1. The starter template creates the event: team rules, two sites, the deadline, the form.
@@ -400,7 +409,7 @@ async function main() {
   assert(swordReport.results.AREA?.qualified === true && swordReport.results.CONFERENCE?.placement === "5th" && swordReport.results.UNION === null, "the report shows each level");
   assert(report.length === 9, `every registered team is in the report, got ${report.length}`);
   const csv = teamResultsCsvRows(report);
-  assert(csv[0]!.length === 14 && csv.some((row) => row[0] === "Sword Drill" && row[5] === "2nd place, 412 points" && row[6] === "Yes"), "the CSV has the columns and the row");
+  assert(csv[0]!.length === 15 && csv.some((row) => row[0] === "Sword Drill" && row[6] === "2nd place, 412 points" && row[7] === "Yes"), "the CSV has the columns and the row");
   const directorView = await club.getClubEventWorkspace(clubOf("a"), eventId, now, { teamKey: "sword drill" });
   assert(directorView.registration?.results.length === 2 && directorView.registration.teamName === "Sword Drill", "the director sees the results of their own team");
   const otherTeamView = await club.getClubEventWorkspace(clubOf("a"), eventId, now, { teamKey: "bible bees" });
@@ -524,7 +533,7 @@ async function main() {
   const amendments = await import("../modules/registrations/amendments-repository");
   const staffActor = { kind: "STAFF" as const, id: staffUserId, displayName: "PBE Check Staff" };
   const gamma = await submit("d", "Gamma", [person("d", "y7"), person("d", "y8"), coach("d", "coach1")], iowa!.id).then(() => rowOf("d", "Gamma"));
-  async function staffAmend(attendees: Array<{ attendeeId: string | null; clientId: string; responses: Record<string, unknown> }>) {
+  async function staffAmend(attendees: Array<{ attendeeId: string | null; clientId: string; responses: Record<string, unknown>; differentPerson?: boolean }>) {
     const answers = await amendments.currentRegistrationAnswers(eventId, gamma.registrationId);
     const amendInput = { clientRequestId: randomUUID(), expectedUpdatedAt: answers!.updatedAt, reason: "Staff check", responses: answers!.responses, attendees, previewOnly: true as boolean };
     const quote = await amendments.previewRegistrationAmendment(eventId, gamma.registrationId, amendInput);
@@ -543,7 +552,124 @@ async function main() {
   const y1Attendee = await prisma.registrationAttendee.findFirstOrThrow({ where: { personId: personOf.get("d:y1")!, registration: { eventId } } });
   await expectCode(staffAmend([...gammaAttendees, { attendeeId: null, clientId: "staff-new-3", responses: { first_name: "PbeDana", last_name: "Dd1", attendee_age: "12", attendee_type: "Pathfinder" } }]), "TEAM_RULES", "staff cannot add a person who is on another team of the club", ["is already on another team from your club"]);
   assert(y1Attendee.personId === personOf.get("d:y1"), "the other team still holds that person");
+  // Staff can confirm that a name-only match is a different person; it is recorded, and a person-record match can never be skipped.
+  const gammaNow = (await prisma.registrationAttendee.findMany({ where: { registrationId: gamma.registrationId }, orderBy: { position: "asc" } }))
+    .map((attendee) => ({ attendeeId: attendee.id, clientId: `existing-${attendee.id}`, responses: attendee.formResponses as Record<string, unknown> }));
+  await staffAmend([...gammaNow, { attendeeId: null, clientId: "staff-new-4", differentPerson: true, responses: { first_name: "PbeDana", last_name: "Dd1", attendee_age: "12", attendee_type: "Pathfinder" } }]);
+  assert(await prisma.auditLog.count({ where: { eventId, action: "CLUB_TEAM_DIFFERENT_PERSON_CONFIRMED", entityId: gamma.registrationId, actorUserId: staffUserId } }) === 1, "staff's confirmation of a different person is audited");
   console.log("ok  a staff amendment keeps the size, alternate and one-team rules and sets roles");
+
+  // 15f2. Substituting a team member keeps the team rules too: the person must be new to the club's teams, and their age is not
+  // carried over from the one they replace. Nothing is changed when it is refused.
+  const operations = await import("../modules/registrations/operations-repository");
+  const gammaMember = await prisma.registrationAttendee.findFirstOrThrow({ where: { registrationId: gamma.registrationId, personId: personOf.get("d:y7")! } });
+  const substitution = (first: string, last: string) => operations.substituteRegistrationAttendee(
+    eventId, gamma.registrationId, gammaMember.id,
+    { clientRequestId: randomUUID(), firstName: first, lastName: last, email: "", phone: "", reason: "" }, { id: staffUserId, displayName: "PBE Check Staff" }, now,
+  );
+  await expectCode(substitution("PbeDana", "Dd4"), "TEAM_RULES", "substituting someone already on another team of the club is refused", ["Someone named PbeDana Dd4 is already on another team from your club"]);
+  assert((await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: gammaMember.id } })).personId === personOf.get("d:y7"), "a refused substitution changed nobody");
+  await expectCode(substitution("PbeFresh", "Replacement"), "TEAM_RULES", "a replacement team member has no age yet, so the age limit cannot be checked", ["age"]);
+  console.log("ok  a substitution keeps the team rules: someone on another team is refused, and nothing is carried over from the old person");
+
+  // 15g. A team member of 18 or older is flagged for the Area Coordinator's permission (a flag, not a block); a 17-year-old
+  // and a coach are not. The Area Coordinator is asked once, decides, and the decision shows on the team page and the form.
+  const permissions = await import("../modules/club-teams/permission-repository");
+  const coordinatorId = `${P}_coordinator`;
+  await prisma.attendeeAccount.create({ data: { id: coordinatorId, email: `${P}-ac@example.test`, displayName: "Pbe Area Coordinator", status: "ACTIVE" } });
+  await prisma.areaCoordinatorGrant.create({ data: { attendeeAccountId: coordinatorId, grantedByUserId: staffUserId } });
+  const otherAccountId = `${P}_not_coordinator`;
+  await prisma.attendeeAccount.create({ data: { id: otherAccountId, email: `${P}-other@example.test`, displayName: "Pbe Someone Else", status: "ACTIVE" } });
+  await prisma.areaCoordinatorGrant.create({ data: { attendeeAccountId: otherAccountId, grantedByUserId: staffUserId } });
+  await prisma.eventLocation.update({ where: { id: iowa!.id }, data: { coordinatorAccountId: coordinatorId } });
+  const eOf = (key: string, role: string): Person => ({ client: clientId("e", key), role });
+  const outboxFor = (registrationId: string) => prisma.messageOutbox.findMany({ where: { registrationId, templateKey: "TEAM_PERMISSION_REQUEST" } });
+  await submit("e", "Flagged", [eOf("tlt18", "TLT"), eOf("u17", "Pathfinder"), eOf("coach1", "Coach")], iowa!.id);
+  const flagged = await rowOf("e", "Flagged");
+  const flagRows = await prisma.clubTeamMemberPermission.findMany({ where: { clubEventRegistrationId: flagged.id } });
+  assert(flagRows.length === 1 && flagRows[0]!.status === "PENDING" && flagRows[0]!.ageOnAgeDate === 18, "only the 18-year-old team member is flagged, as pending");
+  assert(flagRows[0]!.registrationAttendeeId === flagged.registration.attendees.find((attendee) => attendee.personId === personOf.get("e:tlt18"))!.id, "the flag is on the 18-year-old, not the 17-year-old or the coach");
+  const askedOnce = await outboxFor(flagged.registrationId);
+  assert(askedOnce.length === 1 && askedOnce[0]!.recipientEmail === `${P}-ac@example.test`.toLowerCase() && askedOnce[0]!.bodyTextSnapshot.includes("PbeTlt Eighteen (18)"), "the location's Area Coordinator is asked once, naming the person");
+  assert(await prisma.auditLog.count({ where: { eventId, action: "CLUB_TEAM_PERMISSION_REQUESTED", entityId: flagRows[0]!.id } }) === 1, "the request is audited");
+  const pendingView = await club.getClubEventWorkspace(clubOf("e"), eventId, now, { teamKey: "flagged" });
+  assert(pendingView.registration?.permissionNotices.length === 1 && pendingView.registration.permissionNotices[0]!.text === "PbeTlt Eighteen is 18 or older. Team members 18 and over need permission from the Area Coordinator. Your team is registered, and the Area Coordinator has been asked to review it.", "the director is told, in the agreed words, on the team page");
+  // Saving the team again with the same people asks nobody again.
+  const editE = (teamKey: string, row: Awaited<ReturnType<typeof rowOf>>, selected: Array<[string, string]>) => ({
+    clientRequestId: randomUUID(), expectedUpdatedAt: row.registration.updatedAt.toISOString(), selectedMemberIds: selected.map(([key]) => members.get(`e:${key}`)!),
+    keptGuestIds: [] as string[], keptOffRosterAttendeeIds: [] as string[], newGuests: [] as never[],
+    attendeeResponses: Object.fromEntries(selected.map(([key, role]) => [clientId("e", key), { attendee_type: role }])), teamKey,
+  });
+  const edited = await club.amendClubRegistration(clubOf("e"), eventId, actor, editE("flagged", flagged, [["tlt18", "TLT"], ["u17", "Pathfinder"], ["coach1", "Coach"]]), now);
+  assert((await outboxFor(flagged.registrationId)).length === 1, "an edit that changes nobody does not ask the Area Coordinator again");
+  assert(edited.result.permissionNotices.length === 1 && edited.result.permissionNotices[0]!.includes("is 18 or older"), "the result of an edit tells the director too");
+  // Who can see and decide.
+  const coordinatorList = await permissions.listCoordinatorTeamPermissions(coordinatorId);
+  assert(coordinatorList.some((row) => row.id === flagRows[0]!.id) && coordinatorList.every((row) => row.locationName === "Iowa"), "the location's Area Coordinator sees the request, and only teams at their own location");
+  assert((await permissions.listCoordinatorTeamPermissions(otherAccountId)).length === 0, "another Area Coordinator sees nothing of it");
+  await expectCode(permissions.decideTeamPermission({ permissionId: flagRows[0]!.id, decision: "GRANTED", actor: { accountId: otherAccountId }, scope: { coordinatorAccountId: otherAccountId } }), "REGISTRATION_NOT_FOUND", "an Area Coordinator of another location cannot decide it");
+  const staffPendingList = await permissions.listEventTeamPermissions(eventId);
+  assert(staffPendingList.some((row) => row.id === flagRows[0]!.id && row.status === "PENDING"), "staff see it pending in their list");
+  assert((await permissions.pendingPermissionCounts(eventId)).get(flagged.id) === 1, "the results report counts it");
+  const granted = await permissions.decideTeamPermission({ permissionId: flagRows[0]!.id, decision: "GRANTED", actor: { accountId: coordinatorId }, scope: { coordinatorAccountId: coordinatorId } });
+  assert(granted.status === "GRANTED" && granted.decidedBy === "Pbe Area Coordinator" && granted.decidedAt !== null, "the Area Coordinator grants it, with who and when");
+  const grantAudit = await prisma.auditLog.findFirst({ where: { eventId, action: "CLUB_TEAM_PERMISSION_GRANTED", entityId: flagRows[0]!.id } });
+  assert(grantAudit && JSON.stringify(grantAudit.metadata).includes(coordinatorId), "the decision is audited with who decided");
+  const grantedView = await club.getClubEventWorkspace(clubOf("e"), eventId, now, { teamKey: "flagged" });
+  assert(grantedView.registration?.permissionNotices[0]?.text.includes("Permission granted"), "the director sees permission granted");
+  const flaggedForm = await loadFilledTeamForm({ eventId, organizationId: clubOf("e"), teamKey: "flagged" });
+  assert(flaggedForm?.model.filled?.members.some((name) => name === "PbeTlt Eighteen (AC permission: granted)"), "the printed form shows the permission as granted");
+  assert(renderToStaticMarkup(createElement(TeamFormSheet, { model: flaggedForm!.model })).includes("AC permission: granted"), "and the rendered form carries it");
+  // A decline by staff: the person has to become a coach (or leave); nobody is removed for the director.
+  await submit("e", "Second", [eOf("tlt18b", "TLT"), eOf("u17b", "Pathfinder"), eOf("u17c", "Pathfinder")], iowa!.id);
+  const second = await rowOf("e", "Second");
+  const secondFlag = await prisma.clubTeamMemberPermission.findFirstOrThrow({ where: { clubEventRegistrationId: second.id } });
+  await permissions.decideTeamPermission({ permissionId: secondFlag.id, decision: "DECLINED", actor: { userId: staffUserId }, scope: { eventId } });
+  assert((await prisma.registrationAttendee.count({ where: { registrationId: second.registrationId } })) === 3, "a decline removes nobody");
+  const declinedView = await club.getClubEventWorkspace(clubOf("e"), eventId, now, { teamKey: "second" });
+  assert(declinedView.registration?.permissionNotices[0]?.text.includes("declined permission"), "the director is shown the decline");
+  await expectCode(club.amendClubRegistration(clubOf("e"), eventId, actor, editE("second", second, [["tlt18b", "TLT"], ["u17b", "Pathfinder"], ["u17c", "Pathfinder"]]), now), "TEAM_RULES", "saving the team with the declined person still a team member is refused", ["declined permission for PbeTltB Eighteen"]);
+  await club.amendClubRegistration(clubOf("e"), eventId, actor, editE("second", await rowOf("e", "Second"), [["tlt18b", "Coach"], ["u17b", "Pathfinder"], ["u17c", "Pathfinder"]]), now);
+  assert(await prisma.clubTeamMemberPermission.count({ where: { clubEventRegistrationId: second.id } }) === 0, "making the declined person a coach clears the flag");
+  assert(await prisma.auditLog.count({ where: { eventId, action: "CLUB_TEAM_PERMISSION_CLEARED", entityId: secondFlag.id } }) === 1, "and audits that");
+  console.log("ok  a team member of 18 or older is flagged and the Area Coordinator asked once; a 17-year-old and a coach are not; grant, decline and the printed form");
+
+  // 15h. An event with team rules but one registration per club keeps the rules on every edit.
+  const soloEventId = `${P}_solo_event`;
+  await prisma.event.create({ data: { id: soloEventId, slug: `${S}-solo`, name: "Pbe check solo team event", ...plainEventData, startsAt: new Date("2027-01-16T16:00:00Z"), endsAt: new Date("2027-01-16T22:00:00Z") } });
+  await prisma.registrationForm.create({
+    data: {
+      id: `${P}_soloform`, eventId: soloEventId, createdByUserId: staffUserId, name: "solo", slug: `${S}-solo-form`, status: RegistrationFormStatus.PUBLISHED,
+      versions: { create: { id: `${P}_solover`, createdByUserId: staffUserId, versionNumber: 1, status: RegistrationFormStatus.PUBLISHED, publishedAt: new Date(), definition: form.versions[0]!.definition as never } },
+    },
+  });
+  await saveTeamSettings(soloEventId, staffUserId, { allowMultipleTeams: false, minTeamMembers: 2, maxTeamMembers: 7, maxAlternates: 1, ageAsOf: null, maxMemberAge: 19, booksLine: "", levelInfo: [] });
+  const fOf = (key: string, alternate = false): Person => ({ client: clientId("f", key), role: "Pathfinder", alternate });
+  await club.submitClubRegistration(clubOf("f"), soloEventId, actor, { ...input([fOf("y1"), fOf("y2"), fOf("y3"), fOf("y4")]), versionId: `${P}_solover` }, now, { locationId: null });
+  const soloRow = await prisma.clubEventRegistration.findFirstOrThrow({ where: { eventId: soloEventId }, include: { registration: true } });
+  assert(soloRow.teamKey === "", "the one registration of the club has the empty team key");
+  const soloEdit = (selected: string[], alternates: string[], updatedAt: Date) => ({
+    clientRequestId: randomUUID(), expectedUpdatedAt: updatedAt.toISOString(), selectedMemberIds: selected.map((key) => members.get(`f:${key}`)!),
+    keptGuestIds: [] as string[], keptOffRosterAttendeeIds: [] as string[], newGuests: [] as never[],
+    attendeeResponses: Object.fromEntries(selected.map((key) => [clientId("f", key), { attendee_type: "Pathfinder", ...(alternates.includes(key) ? { alternate: true } : {}) }])),
+  });
+  await expectCode(club.amendClubRegistration(clubOf("f"), soloEventId, actor, soloEdit(["y1", "y2", "y3", "y4", "y5", "y6", "y7", "y8", "y9"], [], soloRow.registration.updatedAt), now), "TEAM_RULES", "the director cannot edit the team up to 9 members", ["at most 7 team members", "this one has 9"]);
+  await expectCode(club.amendClubRegistration(clubOf("f"), soloEventId, actor, soloEdit(["y1", "y2", "y3", "y4"], ["y1", "y2", "y3"], soloRow.registration.updatedAt), now), "TEAM_RULES", "the director cannot mark three alternates", ["Only 1 team member can be the alternate"]);
+  assert(await prisma.registrationAttendee.count({ where: { registrationId: soloRow.registrationId } }) === 4, "the refused edits saved nothing");
+  // Staff through the generic amendment: nine members, and three alternates.
+  const soloAnswers = await amendments.currentRegistrationAnswers(soloEventId, soloRow.registrationId);
+  const soloCurrent = (await prisma.registrationAttendee.findMany({ where: { registrationId: soloRow.registrationId }, orderBy: { position: "asc" } }))
+    .map((attendee) => ({ attendeeId: attendee.id, clientId: `existing-${attendee.id}`, responses: attendee.formResponses as Record<string, unknown> }));
+  async function soloStaffAmend(attendees: Array<{ attendeeId: string | null; clientId: string; responses: Record<string, unknown> }>) {
+    const amendInput = { clientRequestId: randomUUID(), expectedUpdatedAt: soloAnswers!.updatedAt, reason: "Staff check", responses: soloAnswers!.responses, attendees, previewOnly: true as boolean };
+    const quote = await amendments.previewRegistrationAmendment(soloEventId, soloRow.registrationId, amendInput);
+    return amendments.amendRegistration(soloEventId, soloRow.registrationId, { ...amendInput, previewOnly: false, quoteFingerprint: quote.quoteFingerprint }, staffActor, now);
+  }
+  const extra = Array.from({ length: 5 }, (_, index) => ({ attendeeId: null, clientId: `solo-new-${index}`, responses: { first_name: `PbeSolo${index}`, last_name: "Added", attendee_age: "13", attendee_type: "Pathfinder" } }));
+  await expectCode(soloStaffAmend([...soloCurrent, ...extra]), "TEAM_RULES", "staff cannot edit the team up to 9 members", ["at most 7 team members"]);
+  await expectCode(soloStaffAmend(soloCurrent.map((entry, index) => (index < 3 ? { ...entry, responses: { ...entry.responses, alternate: true } } : entry))), "TEAM_RULES", "staff cannot mark three alternates", ["Only 1 team member can be the alternate"]);
+  assert(await prisma.registrationAttendee.count({ where: { registrationId: soloRow.registrationId } }) === 4, "the refused staff edits saved nothing");
+  console.log("ok  an event with team rules and one registration per club keeps the size and alternate rules on every edit, director and staff");
 
   // 16. An event without team rules is a club event as it always was.
   await prisma.registrationForm.create({

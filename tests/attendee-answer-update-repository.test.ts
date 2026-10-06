@@ -69,6 +69,8 @@ function fixture() {
     }],
   };
   const tx = {
+    // Not a team registration (#809): the team-rule guard has nothing to check.
+    clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null) },
     $queryRaw: vi.fn().mockResolvedValue([{ id: registration.id }]),
     registration: {
       findFirst: vi.fn().mockResolvedValue(registration),

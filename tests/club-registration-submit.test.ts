@@ -859,6 +859,15 @@ describe("club registration of named teams (#809)", () => {
     expect(tx.registration.create).not.toHaveBeenCalled();
   });
 
+  it("refuses a group submission on an event with team rules, inside the transaction, before anything is saved", async () => {
+    const tx = fixture();
+    tx.eventTeamSettings.findUnique.mockResolvedValue(teamRulesRow());
+    const group = { group: true as const, prepareAttendees: vi.fn() };
+    await expect(submit(baseInput, group as never)).rejects.toMatchObject({ code: "GROUP_REGISTRATION_UNAVAILABLE", message: expect.stringContaining("club teams only") });
+    expect(group.prepareAttendees).not.toHaveBeenCalled();
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
   it("registers a team under its name and key, and replaces only that team's draft", async () => {
     const tx = fixture();
     tx.eventTeamSettings.findUnique.mockResolvedValue(teamRulesRow());

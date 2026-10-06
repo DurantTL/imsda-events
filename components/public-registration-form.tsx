@@ -81,7 +81,7 @@ import {
   type RegistrationFormDefinition,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
-import { formHasPrices, noCostPrice, perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
+import { noCostPrice, perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 import {
   AttendeeRosterCsvError,
   createAttendeeRosterCsvTemplate,
@@ -274,6 +274,8 @@ export type PublicRegistrationFormProps = {
     locationId?: string | null;
     /** The team being registered (#809), on an event that lets a club register several: its name and the draft it replaces, sent beside the answers. */
     teamName?: string | null;
+    /** The event is a team event with nothing to pay (#809): the price notice says "No cost." */
+    noCost?: boolean;
     draftKey?: string | null;
     /** Classes picked under each person's details (#618, #650), by attendee client id; saved by the server after the registration. */
     honorSelections?: Record<string, string[]>;
@@ -800,7 +802,7 @@ export function PublicRegistrationForm({
     ?? 0;
   // Church-billed events show the per-person price only, never a total (#621).
   // A free team event (#809) has no church bill to announce, so it says "No cost." instead.
-  const freeTeamEvent = Boolean(club?.teamName) && !formHasPrices(definition);
+  const freeTeamEvent = club?.noCost === true;
   const priced = perPersonPrice({
     lineItems: calculation.lineItems,
     roster: rosterEnabled,

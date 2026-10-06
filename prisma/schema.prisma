@@ -520,6 +520,8 @@ enum MessageTemplateKey {
   /// The daily digest of location waitlist changes to Area Coordinators and
   /// event staff (#599). Sent without an event, one email per person.
   LOCATION_WAITLIST_DIGEST
+  /// A team member of 18 or older needs the Area Coordinator's permission (#809): sent to the location's Area Coordinator, else event staff.
+  TEAM_PERMISSION_REQUEST
   /// A club member transfer (#489) was started: sent to the sending club.
   MEMBER_TRANSFER_STARTED
   /// A club member transfer (#489) was resolved (acknowledged, staff-finished,
@@ -682,6 +684,7 @@ model User {
   appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
   clubAssignmentUpdates     ClubEventAssignment[]     @relation("ClubEventAssignmentUpdatedBy")
   teamResultUpdates         ClubTeamResult[]          @relation("ClubTeamResultUpdatedBy")
+  teamPermissionDecisions   ClubTeamMemberPermission[] @relation("ClubTeamPermissionDecidedBy")
   registrationOperations    RegistrationOperation[]   @relation("RegistrationOperationActor")
   accountMessages           MessageOutbox[]           @relation("AccountMessageRecipient")
   mfaEnrollment             UserMfaEnrollment?
@@ -924,6 +927,7 @@ model PasswordResetToken {
  */
 model AttendeeAccount {
   id                 String                @id @default(cuid())
+  teamPermissionDecisions ClubTeamMemberPermission[] @relation("ClubTeamPermissionDecidedByAccount")
   email              String                @unique
   displayName        String
   firstName          String?
@@ -2685,6 +2689,7 @@ model RegistrationWaitlistEntry {
 
 model RegistrationAttendee {
   id              String   @id @default(cuid())
+  teamPermission  ClubTeamMemberPermission?
   eventId         String
   registrationId  String
   personId        String
@@ -4485,6 +4490,7 @@ model ClubEventRegistration {
   submittedByUser User?            @relation("ClubEventRegistrationSubmittedByUser", fields: [submittedByUserId], references: [id], onDelete: SetNull)
   assignment      ClubEventAssignment?
   teamResults     ClubTeamResult[]
+  teamPermissions ClubTeamMemberPermission[]
 
   @@unique([eventId, organizationId, teamKey])
   @@index([organizationId])
@@ -6806,4 +6812,37 @@ model ClubTeamResult {
   updatedBy             User?                 @relation("ClubTeamResultUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
   @@unique([clubEventRegistrationId, level])
+}
+
+enum TeamPermissionStatus {
+  PENDING
+  GRANTED
+  DECLINED
+}
+
+/// A team member who is 18 or older on the event's age date needs the Area Coordinator's permission (#809). The team
+/// registers anyway: this is a flag, not a block. One row per such attendee, made when the team is saved and removed when
+/// the person is no longer a team member of 18 or older. Decided by the Area Coordinator, or staff who manage
+/// registrations; a declined person must become a coach or leave before the team can be saved again.
+model ClubTeamMemberPermission {
+  id                      String               @id @default(cuid())
+  eventId                 String
+  clubEventRegistrationId String
+  registrationAttendeeId  String               @unique
+  status                  TeamPermissionStatus @default(PENDING)
+  /// The age on the age date when it was flagged, kept for the Area Coordinator's view.
+  ageOnAgeDate            Int
+  decidedByUserId         String?
+  decidedByAccountId      String?
+  decidedAt               DateTime?
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+
+  clubEventRegistration ClubEventRegistration @relation(fields: [clubEventRegistrationId], references: [id], onDelete: Cascade)
+  attendee              RegistrationAttendee  @relation(fields: [registrationAttendeeId], references: [id], onDelete: Cascade)
+  decidedByUser         User?                 @relation("ClubTeamPermissionDecidedBy", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+  decidedByAccount      AttendeeAccount?      @relation("ClubTeamPermissionDecidedByAccount", fields: [decidedByAccountId], references: [id], onDelete: SetNull)
+
+  @@index([eventId, status])
+  @@index([clubEventRegistrationId])
 }

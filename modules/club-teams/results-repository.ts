@@ -1,3 +1,4 @@
+import { pendingPermissionCounts } from "@/modules/club-teams/permission-repository";
 import "server-only";
 
 import { Prisma, type TeamResultLevel } from "@prisma/client";
@@ -35,6 +36,7 @@ export async function listTeamResults(eventId: string): Promise<TeamResultsRow[]
       teamResults: { select: { level: true, placement: true, qualified: true, notes: true, updatedAt: true } },
     },
   });
+  const pending = await pendingPermissionCounts(eventId);
   return rows.map((row) => {
     const results = emptyResults();
     for (const result of row.teamResults) results[result.level] = view(result);
@@ -46,6 +48,7 @@ export async function listTeamResults(eventId: string): Promise<TeamResultsRow[]
       confirmationCode: row.registration.confirmationCode,
       status: row.registration.status,
       locationName: row.registration.location?.name ?? null,
+      permissionsPending: pending.get(row.id) ?? 0,
       results,
     };
   });

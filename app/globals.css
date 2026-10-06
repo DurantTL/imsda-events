@@ -7214,6 +7214,11 @@ select:focus-visible {
 .team-form-box { font-size: 1.1rem; }
 .team-form-mail { margin: 6px 0 0; text-align: center; font-weight: 700; }
 .team-form-release { margin: 10px 0 0; font-size: max(var(--type-floor, 0px), 0.7rem); }
+.team-permission-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.team-permission-item { display: flex; flex-wrap: wrap; gap: 10px 16px; justify-content: space-between; align-items: center; padding: 10px 12px; border: 1px solid var(--border, #d0d5dd); border-radius: 8px; }
+.team-permission-item.team-permission-pending { border-width: 2px; border-color: var(--warning, #b54708); }
+.team-permission-item.team-permission-declined { border-color: var(--error, #b42318); }
+.team-permission-actions { display: flex; gap: 8px; }
 .team-form-release-answer { margin: 4px 0 0; font-size: max(var(--type-floor, 0px), 0.7rem); }
 .team-form-footer { margin-top: 8px; border-top: 1px solid #333; padding-top: 4px; text-align: center; font-size: max(var(--type-floor, 0px), 0.7rem); }
 .team-form-footer p { margin: 0; }

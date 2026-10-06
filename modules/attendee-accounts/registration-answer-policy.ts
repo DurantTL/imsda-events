@@ -26,6 +26,8 @@ const protectedAttendeeKeys = new Set([
   "guest_name",
   "attendee_type",
   "registration_fee",
+  // Who is the team's alternate (#809) is the director's call, with the team rules checked: never an attendee's own edit.
+  "alternate",
 ]);
 
 const sensitiveFieldPattern =

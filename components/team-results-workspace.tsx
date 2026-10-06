@@ -110,6 +110,7 @@ export function TeamResultsWorkspace({ eventId, initialRows, canEdit }: { eventI
         <section className="panel team-result-card" key={row.clubEventRegistrationId} aria-labelledby={`team-${row.clubEventRegistrationId}`}>
           <h3 id={`team-${row.clubEventRegistrationId}`} translate="no">{row.teamName || row.clubName}</h3>
           <p className="field-help" translate="no">{row.teamName ? `${row.clubName} · ` : ""}{row.church ?? "No church on file"} · {row.confirmationCode}{row.locationName ? ` · ${row.locationName}` : ""}</p>
+          {row.permissionsPending > 0 && <p className="inline-notice warning" role="status"><strong>{row.permissionsPending} team {row.permissionsPending === 1 ? "member is" : "members are"} waiting for the Area Coordinator&apos;s permission.</strong></p>}
           <p><a className="text-button" href={`/more/reports/clubs/team-form/${encodeURIComponent(row.clubEventRegistrationId)}?event=${encodeURIComponent(eventId)}`}>Print this team&apos;s form</a></p>
           <div className="team-result-levels">
             {TEAM_LEVELS.map((level) => (

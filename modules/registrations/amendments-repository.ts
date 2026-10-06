@@ -1,6 +1,7 @@
 import "server-only";
 
 import { enforceTeamRegistrationRules } from "@/modules/club-teams/registration-guard";
+import { deliverPermissionMessages } from "@/modules/club-teams/permission-repository";
 import { checkLocationSeats } from "@/modules/event-locations/admission";
 import { LODGING_LINE_KEY } from "@/modules/lodging/pricing";
 import { promoteWaitlistAfterSeatsFreed } from "@/modules/registrations/lifecycle-repository";
@@ -1441,6 +1442,7 @@ export async function amendRegistration(
   const prisma = getPrisma();
   for (let attempt = 0; attempt < maxRetryAttempts; attempt += 1) {
     try {
+      const permissionMessageIds: string[] = [];
       const amended = await prisma.$transaction(async (tx) => {
         const existing = await tx.registrationOperation.findUnique({
           where: {
@@ -1658,7 +1660,11 @@ export async function amendRegistration(
 
         if (serverOptions.inTransaction) await serverOptions.inTransaction(tx);
         // A team's registration keeps its event's team rules however it is changed, by a director or by staff (#809).
-        await enforceTeamRegistrationRules(tx, registrationId);
+        // Only staff can confirm that a name match is a different person; the ids are the rows just written, in input order.
+        const differentPeople = actor.kind === "STAFF"
+          ? new Set(input.attendees.flatMap((entry, index) => (entry.differentPerson ? committedAttendees[index]?.attendeeId ?? [] : [])))
+          : undefined;
+        permissionMessageIds.push(...(await enforceTeamRegistrationRules(tx, registrationId, actor.kind === "STAFF" ? { actorUserId: actor.id, differentPersonAttendeeIds: differentPeople } : {})).queuedMessageIds);
         await tx.registration.update({
           where: { id: registrationId },
           data: {
@@ -1867,6 +1873,8 @@ export async function amendRegistration(
       // #527: a new or renamed attendee on the background-check list is
       // matched after commit; best effort, never fails the amendment.
       await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
+      // The request to the Area Coordinator, if this change flagged someone, goes out once the change is committed (#809).
+      await deliverPermissionMessages(permissionMessageIds);
       return amended;
     } catch (error) {
       if (!retryable(error)) throw error;

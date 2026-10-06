@@ -50,6 +50,7 @@ function mockPrisma(parentOrganization: { name: string; isActive: boolean } | nu
     registrationForm: { findFirst: vi.fn().mockResolvedValue({ slug: "clubs", versions: [{ definition }] }) },
     eventLocation: { findMany: vi.fn().mockResolvedValue([]) },
     eventTeamSettings: { findUnique: vi.fn().mockResolvedValue(null) },
+    clubTeamMemberPermission: { findMany: vi.fn().mockResolvedValue([]) },
     clubRosterMember: { findMany: vi.fn().mockResolvedValue([]) },
     clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null) },
     clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(draftResponses ? {

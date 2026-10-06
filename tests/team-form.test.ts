@@ -144,6 +144,17 @@ describe("loading the form", () => {
     } });
   });
 
+  it("shows where the Area Coordinator's permission stands beside a team member of 18 or older", async () => {
+    prisma({ team: { ...teamRow, registration: { ...teamRow.registration, attendees: [
+      { profileSnapshot: { firstName: "Alex", lastName: "Sample", teamRole: "MEMBER" }, formResponses: {}, teamPermission: { status: "PENDING" } },
+      { profileSnapshot: { firstName: "Morgan", lastName: "Reported", teamRole: "MEMBER" }, formResponses: { alternate: true }, teamPermission: { status: "GRANTED" } },
+      { profileSnapshot: { firstName: "Blake", lastName: "Younger", teamRole: "MEMBER" }, formResponses: {}, teamPermission: null },
+    ] } } });
+    const page = await loadFilledTeamForm({ eventId: "event-1", organizationId: "club-1", teamKey: "bible bees" });
+    expect(page?.model.filled?.members).toEqual(["Alex Sample (AC permission: pending)", "Blake Younger"]);
+    expect(page?.model.filled?.alternate).toBe("Morgan Reported (AC permission: granted)");
+  });
+
   it("fills members, the alternate and coaches from the attendees, and the coordinator from the registration answers", async () => {
     const client = prisma();
     const page = await loadFilledTeamForm({ eventId: "event-1", organizationId: "club-1", teamKey: "bible bees" });

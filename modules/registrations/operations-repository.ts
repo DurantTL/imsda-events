@@ -15,6 +15,9 @@ import {
   registrationOperationFingerprint,
   substitutedFormResponses,
 } from "@/modules/registrations/operations-domain";
+import { enforceTeamRegistrationRules } from "@/modules/club-teams/registration-guard";
+import { deliverPermissionMessages } from "@/modules/club-teams/permission-repository";
+import { isAgeFieldKey } from "@/modules/forms/definition";
 import { getRegistrationByIdWithClient } from "@/modules/registrations/repository";
 import type {
   AttendeeSubstitutionInput,
@@ -698,6 +701,7 @@ export async function substituteRegistrationAttendee(
     },
   });
 
+  const permissionMessageIds: string[] = [];
   const result = await runSerializableOperation(async (tx) => {
     const existingOperation = await tx.registrationOperation.findUnique({
       where: {
@@ -814,12 +818,23 @@ export async function substituteRegistrationAttendee(
       select: { id: true },
     });
     const operationId = randomUUID();
+    // On a team registration (#809) the replacement is a different person: the age and team role of the one they replace
+    // are cleared (and the age answer too, which is the prior person's), and the team rules are checked below.
+    const teamEvent = await tx.clubEventRegistration.findUnique({ where: { registrationId }, select: { eventId: true } });
+    const onTeamEvent = teamEvent !== null && (await tx.eventTeamSettings.findUnique({ where: { eventId: teamEvent.eventId }, select: { eventId: true } })) !== null;
+    const { ageOnEventDate: _priorAge, teamRole: _priorRole, ...snapshotWithoutTeamFields } = jsonRecord(attendee.profileSnapshot);
+    void _priorAge;
+    void _priorRole;
+    const keptSnapshot = onTeamEvent ? snapshotWithoutTeamFields : jsonRecord(attendee.profileSnapshot);
+    const keptResponses = substitutedFormResponses(jsonRecord(attendee.formResponses), input);
+    if (onTeamEvent) for (const key of Object.keys(keptResponses)) if (isAgeFieldKey(key)) delete keptResponses[key];
+    if (onTeamEvent) await tx.clubTeamMemberPermission.deleteMany({ where: { registrationAttendeeId: attendeeId } });
     await tx.registrationAttendee.update({
       where: { id: attendeeId },
       data: {
         personId: newPerson.id,
         profileSnapshot: {
-          ...jsonRecord(attendee.profileSnapshot),
+          ...keptSnapshot,
           firstName: input.firstName,
           lastName: input.lastName,
           email: input.email || null,
@@ -828,9 +843,11 @@ export async function substituteRegistrationAttendee(
           identityOperationId: operationId,
         },
         // Rosters, exports, and the edit form read names from the answers too (WR26).
-        formResponses: substitutedFormResponses(jsonRecord(attendee.formResponses), input) as Prisma.InputJsonValue,
+        formResponses: keptResponses as Prisma.InputJsonValue,
       },
     });
+    // The same team rules as any other change to the team, inside this transaction, so a refused one saves nothing.
+    if (onTeamEvent) permissionMessageIds.push(...(await enforceTeamRegistrationRules(tx, registrationId, { actorUserId: actor.id })).queuedMessageIds);
 
     const priorName = `${prior.firstName} ${prior.lastName}`.trim();
     const replacementName = `${input.firstName} ${input.lastName}`.trim();
@@ -963,5 +980,6 @@ export async function substituteRegistrationAttendee(
   });
   // #527: the new person is matched against the background-check list after commit; best effort.
   await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
+  await deliverPermissionMessages(permissionMessageIds);
   return result;
 }

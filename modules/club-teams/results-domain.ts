@@ -37,6 +37,8 @@ export type TeamResultsRow = {
   confirmationCode: string;
   status: string;
   locationName: string | null;
+  /** Team members of 18 or older still waiting for the Area Coordinator's permission (#809). */
+  permissionsPending: number;
   results: Record<TeamLevel, TeamResultView | null>;
 };
 
@@ -51,7 +53,7 @@ export function qualifiedLabel(result: TeamResultView | null) {
 /** The results CSV: one row per team, with placement, qualified and notes for each level. */
 export function teamResultsCsvRows(rows: readonly TeamResultsRow[]): Array<Array<string | number>> {
   const table: Array<Array<string | number>> = [[
-    "Team", "Club", "Church", "Confirmation", "Location",
+    "Team", "Club", "Church", "Confirmation", "Location", "AC permission pending",
     ...TEAM_LEVELS.flatMap((level) => [`${teamLevelLabels[level]} placement`, `${teamLevelLabels[level]} qualified`, `${teamLevelLabels[level]} notes`]),
   ]];
   for (const row of rows) {
@@ -61,6 +63,7 @@ export function teamResultsCsvRows(rows: readonly TeamResultsRow[]): Array<Array
       row.church ?? "",
       row.confirmationCode,
       row.locationName ?? "",
+      row.permissionsPending,
       ...TEAM_LEVELS.flatMap((level) => {
         const result = row.results[level];
         return [result?.placement ?? "", result ? (result.qualified ? "Yes" : "No") : "", result?.notes ?? ""];

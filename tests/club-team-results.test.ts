@@ -41,6 +41,7 @@ const stored = (overrides: Record<string, unknown> = {}) => ({
 
 function database(options: { team?: unknown; existing?: unknown; listRows?: unknown[]; noTeamRules?: boolean } = {}) {
   const tx = {
+    clubTeamMemberPermission: { groupBy: vi.fn().mockResolvedValue([{ clubEventRegistrationId: "cer-1", _count: { _all: 1 } }]) },
     eventTeamSettings: { findUnique: vi.fn().mockResolvedValue(options.noTeamRules ? null : { eventId: "event-1" }) },
     clubEventRegistration: {
       findFirst: vi.fn().mockResolvedValue("team" in options ? options.team : { teamName: "Bible Bees", organization: { name: "Test Pathfinders" }, registration: { status: "CONFIRMED" } }),
@@ -182,7 +183,7 @@ describe("GET /api/events/[eventId]/team-results", () => {
     expect(response.status).toBe(200);
     const body = await response.json() as { teams: TeamResultsRow[] };
     expect(body.teams).toHaveLength(1);
-    expect(body.teams[0]).toMatchObject({ teamName: "Bible Bees", clubName: "Test Pathfinders", church: "Test SDA Church", locationName: "Iowa" });
+    expect(body.teams[0]).toMatchObject({ teamName: "Bible Bees", clubName: "Test Pathfinders", church: "Test SDA Church", locationName: "Iowa", permissionsPending: 1 });
     expect(body.teams[0]!.results.AREA).toMatchObject({ placement: "2nd place", qualified: true });
     expect(body.teams[0]!.results.UNION).toBeNull();
   });
@@ -194,8 +195,8 @@ describe("GET /api/events/[eventId]/team-results", () => {
     expect(response.headers.get("content-type")).toContain("text/csv");
     expect(response.headers.get("content-disposition")).toContain("event-1-team-results.csv");
     const csv = await response.text();
-    expect(csv.split("\r\n")[0]).toBe('"Team","Club","Church","Confirmation","Location","Area placement","Area qualified","Area notes","Conference placement","Conference qualified","Conference notes","Union placement","Union qualified","Union notes"');
-    expect(csv).toContain('"Bible Bees","Test Pathfinders","Test SDA Church","PBE-1","Iowa","2nd place","Yes","","5th","No","\'=SUM(A1)","","",""');
+    expect(csv.split("\r\n")[0]).toBe('"Team","Club","Church","Confirmation","Location","AC permission pending","Area placement","Area qualified","Area notes","Conference placement","Conference qualified","Conference notes","Union placement","Union qualified","Union notes"');
+    expect(csv).toContain('"Bible Bees","Test Pathfinders","Test SDA Church","PBE-1","Iowa","1","2nd place","Yes","","5th","No","\'=SUM(A1)","","",""');
   });
 
   it("is refused to staff without report access", async () => {
@@ -209,9 +210,10 @@ describe("GET /api/events/[eventId]/team-results", () => {
 describe("results CSV rows", () => {
   it("leaves a level with no result empty rather than saying No", () => {
     const rows = teamResultsCsvRows([{
-      clubEventRegistrationId: "cer-1", teamName: "Bible Bees", clubName: "Test Pathfinders", church: null, confirmationCode: "PBE-1", status: "CONFIRMED", locationName: null,
+      clubEventRegistrationId: "cer-1", teamName: "Bible Bees", clubName: "Test Pathfinders", church: null, confirmationCode: "PBE-1", status: "CONFIRMED", locationName: null, permissionsPending: 2,
       results: { AREA: null, CONFERENCE: null, UNION: null },
     }]);
-    expect(rows[1]!.slice(5)).toEqual(["", "", "", "", "", "", "", "", ""]);
+    expect(rows[1]!.slice(5)).toEqual([2, "", "", "", "", "", "", "", "", ""]);
+    expect(rows[0]![5]).toBe("AC permission pending");
   });
 });

@@ -1,3 +1,4 @@
+import { enforceTeamRegistrationRules } from "@/modules/club-teams/registration-guard";
 import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
@@ -119,6 +120,8 @@ export type ClubSubmissionContext = {
    * waitlisted. The club module uses it to skip work that must happen once.
    */
   report?: (outcome: { replayed: boolean; waitlisted: boolean }) => void;
+  /** Told the new (or replayed) registration's id once it has committed, so the director can be told about any flags (#809). */
+  registered?: (registrationId: string) => void;
   prepareAttendees: (
     tx: Prisma.TransactionClient,
     args: {
@@ -1317,6 +1320,7 @@ async function createPublicRegistrationTransaction(
       })),
     });
   }
+  let teamPermissionMessageIds: string[] = [];
   if (club) {
     try {
       await tx.clubEventRegistration.create({
@@ -1345,6 +1349,9 @@ async function createPublicRegistrationTransaction(
       // After the club link exists, so the record names the club.
       await recordLocationWaitlistChange(tx, { registrationId: registration.id, locationId: registrationLocationId, kind: "JOINED", place: waitlistPosition });
     }
+    // The team's rules once more on what was just saved, and the flag for any team member of 18 or older (#809). Nothing
+    // for an event without team rules.
+    teamPermissionMessageIds = (await enforceTeamRegistrationRules(tx, registration.id)).queuedMessageIds;
   }
   if (group) {
     // The contact is the billing party; no club, church, or roster is involved (#650).
@@ -1455,7 +1462,7 @@ async function createPublicRegistrationTransaction(
       managePath: access.managePath,
       manageLinkExpiresAt: access.expiresAt.toISOString(),
     },
-    pendingMessageIds: queuedMessages.pendingMessageIds,
+    pendingMessageIds: [...queuedMessages.pendingMessageIds, ...teamPermissionMessageIds],
     registrantMessageIds: queuedMessages.registrantMessageIds,
     registrationId: registration.id,
     replayed: false,
@@ -1521,7 +1528,7 @@ export async function submitPublicRegistration(
         processed.failedIds.includes(messageId)
       ));
       bulk?.report?.({ replayed: result.replayed, waitlisted: result.confirmation.registrationStatus === "WAITLISTED" });
-      if (bulk && "group" in bulk) bulk.registered?.(result.registrationId);
+      if (bulk) bulk.registered?.(result.registrationId);
       return {
         ...result.confirmation,
         emailSent: registrantSent,

@@ -72,6 +72,9 @@ import { getTeamSettings } from "@/modules/club-teams/settings-repository";
 import { NO_TEAM_KEY, draftKeySchema, resolveTeamName, teamLabel, type TeamSettings } from "@/modules/club-teams/domain";
 import { ClubTeamError } from "@/modules/club-teams/errors";
 import { ALTERNATE_FIELD_KEY, isAlternateAnswer, teamAgeDate, teamRoleFor, teamRuleProblems, type TeamPerson } from "@/modules/club-teams/rules";
+import { formHasPrices } from "@/modules/club-registrations/per-person-price";
+import { permissionNotice, type PermissionStatus } from "@/modules/club-teams/permission-domain";
+import { permissionNoticesForRegistration, permissionsForRegistration } from "@/modules/club-teams/permission-repository";
 import { peopleOnOtherTeams, throwIfOnOtherTeams } from "@/modules/club-teams/registration-guard";
 import { confirmationEmailStatusFromMessages, describeClubConfirmationEmail } from "@/modules/forms/confirmation-email-status";
 
@@ -655,6 +658,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
     selectedTeamKey === null ? Promise.resolve(null) : getPrisma().clubEventRegistration.findUnique({
       where: { eventId_organizationId_teamKey: { eventId, organizationId, teamKey: selectedTeamKey } },
       select: {
+        id: true,
         teamName: true,
         teamKey: true,
         createdAt: true,
@@ -666,6 +670,8 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
             confirmationCode: true,
             status: true,
             updatedAt: true,
+            totalAmount: true,
+            _count: { select: { adjustments: true } },
             publicFormSubmission: { select: { pricingSnapshot: true } },
             // The latest amendment's pricing wins over the original submission's (#621).
             operations: { where: { type: "AMENDMENT" }, orderBy: { createdAt: "desc" }, take: 1, select: { afterSnapshot: true } },
@@ -716,6 +722,13 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
   const problem = form ? clubFormProblem(form.definition) : "The event has no published registration form yet.";
   const experience = form && !problem ? await getPublicRegistrationExperience(event.slug, form.slug) : null;
   const activeMemberIds = new Set(members.map((member) => member.id));
+  // A team event with nothing to pay (#809): no priced form field, no lodging, and for a registered team no charge or
+  // adjustment on it. Then the page says "No cost." instead of "billed to your church".
+  const noCost = teamSettings !== null && experience !== null && !formHasPrices(experience.form.definition)
+    && (await getPrisma().eventLodging.findUnique({ where: { eventId }, select: { eventId: true } })) === null
+    && (clubRegistration === null || (moneyToCents(clubRegistration.registration.totalAmount) === 0 && clubRegistration.registration._count.adjustments === 0));
+  // Where the Area Coordinator's permission stands for each team member of 18 or older (#809).
+  const permissions = clubRegistration ? await permissionsForRegistration(clubRegistration.id) : new Map<string, { status: PermissionStatus; decidedAt: string | null; decidedBy: string | null }>();
   const registrationAnswers = clubRegistration
     ? await currentRegistrationAnswers(eventId, clubRegistration.registrationId)
     : null;
@@ -763,6 +776,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
       /** The date ages are counted on, and whether the event sets it itself rather than using its first day (#809). */
       ageDate,
       ageAsOf: teamSettings?.ageAsOf != null,
+      noCost,
       phase: clubPhase(event, eventLocations, registeredLocation, now),
       ended: hasLocationEnded(event, registeredLocation, now),
       registrationClosesOn: effectiveLocationDates(event, registeredLocation).registrationClosesOn,
@@ -808,6 +822,11 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
       ? {
         teamKey: clubRegistration.teamKey,
         teamName: clubRegistration.teamName ?? "",
+        // What the director is told about team members of 18 or older: pending, declined and granted (#809).
+        permissionNotices: clubRegistration.registration.attendees.flatMap(({ id, profileSnapshot }) => {
+          const flag = permissions.get(id);
+          return flag ? [{ attendeeId: id, status: flag.status, text: permissionNotice(flag.status, snapshotName(recordFromJson(profileSnapshot))) }] : [];
+        }),
         results: clubRegistration.teamResults.map((result) => ({
           level: result.level, placement: result.placement, qualified: result.qualified, notes: result.notes,
         })),
@@ -858,6 +877,7 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
             // On a team (#809): a coach, and whether the person is the alternate; null/false on any other event.
             teamRole: snapshot.teamRole === "COACH" || snapshot.teamRole === "MEMBER" ? snapshot.teamRole : null,
             alternate: isAlternateAnswer(recordFromJson(formResponses)[ALTERNATE_FIELD_KEY]),
+            permission: permissions.get(id) ?? null,
             temporary,
             // For seeding a reopened edit (H3b, #366): which roster person
             // or extra person this attendee is. An extra person submitted
@@ -1072,8 +1092,7 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
     const teamSettings = await getTeamSettings(event.id, tx);
     const ageDate = teamAgeDate(teamSettings, eventDate);
     const teamPeople: TeamPerson[] = [];
-    const teamMemberPersons: Array<{ personId: string; name: string }> = [];
-    const teamGuestNames: string[] = [];
+    const teamMemberPersons: Array<{ personId: string | null; name: string; onRoster: boolean }> = [];
     // The club directory field (#482) is locked to this club's own
     // `Organization` record, read inside the transaction — never from
     // anything the client sent, whatever the client's UI let through. The
@@ -1104,7 +1123,7 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
           guest: { email: guest.email, attendeeType: guestIsAdult(guest) ? "ADULT" : "YOUTH", guestId: guest.id },
         });
         const person = { firstName: guest.firstName, lastName: guest.lastName, ageOnEventDate: guest.age, gender: null };
-        teamGuestNames.push(`${guest.firstName} ${guest.lastName}`.trim());
+        teamMemberPersons.push({ personId: null, name: `${guest.firstName} ${guest.lastName}`.trim(), onRoster: false });
         teamPeople.push({
           name: `${guest.firstName} ${guest.lastName}`.trim(),
           role,
@@ -1139,7 +1158,7 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
       const person = effectiveAge === undefined ? rosterOnly : { ...rosterOnly, ageOnEventDate: effectiveAge };
       if (typedAge !== undefined && typedAge !== (member.reportedAge ?? undefined) && actor && !teamSettings?.ageAsOf && !saveOff.has(member.id)) saveBack.push({ memberId: member.id, age: typedAge });
       const memberRole = teamRoleFor({ responses: attendee.responses, rosterAttendeeType: member.attendeeType, rosterClassLevel: member.classLevel, maxMemberAge: teamSettings?.maxMemberAge ?? null, age: person.ageOnEventDate });
-      teamMemberPersons.push({ personId: member.personId, name: `${person.firstName} ${person.lastName}`.trim() });
+      teamMemberPersons.push({ personId: member.personId, name: `${person.firstName} ${person.lastName}`.trim(), onRoster: true });
       resolved.set(attendee.clientId, { personId: member.personId, rosterMemberId: member.id, ageOnEventDate: person.ageOnEventDate, ...(teamSettings ? { teamRole: memberRole } : {}) });
       teamPeople.push({
         name: `${person.firstName} ${person.lastName}`.trim(),
@@ -1153,7 +1172,7 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
     const teamProblems = teamRuleProblems(teamSettings, teamPeople, eventDate);
     if (teamProblems.length > 0) throw new ClubTeamError("TEAM_RULES", teamProblems.join(" "), teamProblems);
     if (teamSettings?.allowMultipleTeams) {
-      throwIfOnOtherTeams(await peopleOnOtherTeams(tx, { eventId: event.id, organizationId, people: teamMemberPersons, guestNames: teamGuestNames }));
+      throwIfOnOtherTeams((await peopleOnOtherTeams(tx, { eventId: event.id, organizationId, people: teamMemberPersons })).conflicts);
     }
     // Part of the submit transaction: a failed submit saves nothing back (#639).
     if (actor && saveBack.length > 0) await saveRosterAgesBack(tx, organizationId, clubYearFor(event.startsAt), actor, saveBack);
@@ -1181,7 +1200,7 @@ export async function submitClubRegistration(
   actor: ClubRegistrationActor,
   input: PublicRegistrationInput,
   now = new Date(),
-  options: { locationId?: string | null; report?: ClubSubmissionContext["report"]; teamName?: string | null; draftKey?: string } = {},
+  options: { locationId?: string | null; report?: ClubSubmissionContext["report"]; registered?: ClubSubmissionContext["registered"]; teamName?: string | null; draftKey?: string } = {},
 ) {
   const event = await requireClubEvent(eventId);
   const form = await publishedClubForm(event.id);
@@ -1198,6 +1217,7 @@ export async function submitClubRegistration(
     // Picked, locked, and capacity-checked inside the submit transaction (#413).
     locationId: options.locationId ?? null,
     ...(options.report ? { report: options.report } : {}),
+    ...(options.registered ? { registered: options.registered } : {}),
     prepareAttendees: clubAttendeePreparer(organizationId, actor, draftKey),
   });
 }
@@ -1330,7 +1350,8 @@ export async function amendClubRegistration(
         "That amendment request ID was already used for different changes. Start a new review.",
       );
     }
-    return clubEditResult(replay.responseSnapshot);
+    const replayed = clubEditResult(replay.responseSnapshot);
+    return { ...replayed, result: { ...replayed.result, permissionNotices: await permissionNoticesForRegistration(registrationId) } };
   }
 
   const [account, answers, currentAttendees, members] = await Promise.all([
@@ -1593,7 +1614,9 @@ export async function amendClubRegistration(
       now,
       engineOptions,
     );
-    return clubEditResult(response);
+    const edited = clubEditResult(response);
+    // Who needs the Area Coordinator's permission after this edit, told to the director on the result (#809).
+    return { ...edited, result: { ...edited.result, permissionNotices: await permissionNoticesForRegistration(registrationId) } };
   } catch (error) {
     // Field problems come back keyed by the engine's attendee position; the
     // editor knows people by client id, so carry that along.

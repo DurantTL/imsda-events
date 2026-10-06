@@ -35,6 +35,7 @@ import {
   type ClubGuest,
 } from "@/modules/club-registrations/domain";
 import { fillMissingAnswers } from "@/modules/club-registrations/contact-prefill";
+import { permissionPendingNotice } from "@/modules/club-teams/permission-domain";
 import { teamRoleFor } from "@/modules/club-teams/rules";
 import type { ClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { ClassPickFields } from "@/components/class-pick-fields";
@@ -215,6 +216,24 @@ export function ClubRegistrationWorkspace({
   const coachCount = selected.filter((person) => teamRoleFor({ responses: draft.attendeeResponses[person.clientId] ?? {}, rosterAttendeeType: person.attendeeType, rosterClassLevel: person.classLevel, maxMemberAge: teamRules?.maxMemberAge ?? null, age: person.ageOnEventDate }) === "COACH").length
     + draft.guests.filter((guest) => teamRoleFor({ responses: draft.attendeeResponses[clubGuestClientId(guest.id)] ?? {}, maxMemberAge: teamRules?.maxMemberAge ?? null, age: guest.age }) === "COACH").length;
   const teamMemberCount = goingCount - coachCount;
+  // What will happen to people who are over the team-member age or 18 and over, said before the team is saved (#809).
+  const teamHints: string[] = [];
+  if (teamRules) {
+    const hintFor = (name: string, age: number | null, role: "MEMBER" | "COACH") => {
+      if (age === null || age < 18) return;
+      if (role === "COACH" && teamRules.maxMemberAge !== null && age > teamRules.maxMemberAge) teamHints.push(`${name} is over the team-member age and will be listed as a coach.`);
+      if (role === "MEMBER") teamHints.push(permissionPendingNotice(name));
+    };
+    for (const person of selected) {
+      const age = person.ageOnEventDate ?? draft.rosterAges[person.memberId] ?? person.reportedAge ?? null;
+      const role = teamRoleFor({ responses: draft.attendeeResponses[person.clientId] ?? {}, rosterAttendeeType: person.attendeeType, rosterClassLevel: person.classLevel, maxMemberAge: teamRules.maxMemberAge, age });
+      hintFor(`${person.firstName} ${person.lastName}`.trim(), age, role);
+    }
+    for (const guest of draft.guests) {
+      const role = teamRoleFor({ responses: draft.attendeeResponses[clubGuestClientId(guest.id)] ?? {}, maxMemberAge: teamRules.maxMemberAge, age: guest.age });
+      hintFor(`${guest.firstName} ${guest.lastName}`.trim(), guest.age, role);
+    }
+  }
   const sizeLimits = teamRules && (teamRules.minTeamMembers !== null || teamRules.maxTeamMembers !== null)
     ? `${teamRules.minTeamMembers ?? 1} to ${teamRules.maxTeamMembers ?? "any number"}`
     : null;
@@ -421,6 +440,7 @@ export function ClubRegistrationWorkspace({
     lockedRegistrationFieldKeys: workspace.directory.lockedFieldKeys,
     locationId,
     teamName: multipleTeams ? draft.teamName.trim() : null,
+    noCost: workspace.event.noCost,
     draftKey: multipleTeams ? draft.draftKey : null,
     honorSelections: hasHonors ? honorPicks : {},
     renderAttendeeExtras,
@@ -509,6 +529,11 @@ export function ClubRegistrationWorkspace({
           {teamRules.maxMemberAge !== null && <> A team member can be at most {teamRules.maxMemberAge} on {ageDateText}.</>}
           {teamRules.maxAlternates > 0 && <> You mark the alternate on the next step.</>}
         </div>
+      )}
+      {teamHints.length > 0 && (
+        <ul className="inline-notice warning team-hints" role="status">
+          {teamHints.map((hint) => <li key={hint}>{hint}</li>)}
+        </ul>
       )}
       {workspace.roster.length === 0 ? (
         <p className="public-manage-empty">

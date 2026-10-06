@@ -1,3 +1,4 @@
+import { permissionShortLabel } from "@/modules/club-teams/permission-domain";
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
@@ -84,7 +85,7 @@ export async function loadFilledTeamForm(which: Which): Promise<TeamFormPage | n
           confirmationCode: true,
           status: true,
           location: { select: { name: true } },
-          attendees: { orderBy: { position: "asc" }, select: { profileSnapshot: true, formResponses: true } },
+          attendees: { orderBy: { position: "asc" }, select: { profileSnapshot: true, formResponses: true, teamPermission: { select: { status: true } } } },
         },
       },
     },
@@ -101,9 +102,11 @@ export async function loadFilledTeamForm(which: Which): Promise<TeamFormPage | n
     const name = `${text(snapshot.firstName)} ${text(snapshot.lastName)}`.trim();
     if (!name) continue;
     if (snapshot.teamRole === "COACH") { coaches.push(name); continue; }
+    // A team member of 18 or older shows where the Area Coordinator's permission stands (#809).
+    const shown = attendee.teamPermission ? `${name} (${permissionShortLabel(attendee.teamPermission.status)})` : name;
     const flagged = isAlternateAnswer(((attendee.formResponses ?? {}) as Record<string, unknown>)[ALTERNATE_FIELD_KEY]);
-    if (flagged && !alternate) alternate = name;
-    else members.push(name);
+    if (flagged && !alternate) alternate = shown;
+    else members.push(shown);
   }
   const filled: TeamFormFilled = {
     teamName: row.teamName ?? "",

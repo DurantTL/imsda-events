@@ -33,6 +33,8 @@ import {
   type RegistrationMoveBlocker,
   type StaffQueueFilter,
 } from "@/modules/club-transfers/domain";
+import { ClubTeamError } from "@/modules/club-teams/errors";
+import { enforceTeamRegistrationRules } from "@/modules/club-teams/registration-guard";
 import { transferNotificationKey, transferRequestKey } from "@/modules/club-transfers/keys";
 import type { RequestTransferInput } from "@/modules/club-transfers/schemas";
 import { seatHoldingEnrollment } from "@/modules/honors/enrollment-repository";
@@ -1451,6 +1453,18 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
   // `RegistrationOperation` rows stay put: they are the old registration's
   // history (substitution snapshots), and their key to the attendee still holds.
 
+  // A team registration keeps its event's team rules on both sides of the move (#809): the sending team must still be a
+  // team (size, alternate), and the receiving one must take the person (size, age, one team per person). The sending side
+  // runs first so the person's permission flag leaves it before the receiving team flags them again. A refusal stops the move.
+  const teamMessageIds: string[] = [];
+  try {
+    teamMessageIds.push(...(await enforceTeamRegistrationRules(tx, fromRegistrationId, { actorUserId: actor.userId })).queuedMessageIds);
+    teamMessageIds.push(...(await enforceTeamRegistrationRules(tx, toRegistrationId, { actorUserId: actor.userId })).queuedMessageIds);
+  } catch (error) {
+    if (error instanceof ClubTeamError) throw new MemberTransferError("MOVE_BLOCKED", `The event's team rules stop this move. ${error.message}`);
+    throw error;
+  }
+
   const shiftCents = described.adjustmentCents;
   const fromTotalBefore = described.fromRegistration!.totalCents;
   const toTotalBefore = described.toRegistration.totalCents;
@@ -1499,7 +1513,7 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
     { transferId: move.transfer.id, fromOrganizationId: move.transfer.fromOrganizationId, toOrganizationId: move.transfer.toOrganizationId, ...detail },
     { eventId: move.eventId, entityType: "RegistrationAttendee" },
   );
-  return { ...detail, pendingMessageIds: freedSeat?.pendingMessageIds ?? [] };
+  return { ...detail, pendingMessageIds: [...(freedSeat?.pendingMessageIds ?? []), ...teamMessageIds] };
 }
 
 /** Staff skip one registration move (#489 decision 2): the attendee stays where they are. Audited with the actor (N4). */

@@ -18,7 +18,7 @@ import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { directorContactPrefill } from "@/modules/club-registrations/contact-prefill";
 import { loadDirectorClubAssignment } from "@/modules/club-registrations/director-assignment";
 import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
-import { formHasPrices, noCostPrice } from "@/modules/club-registrations/per-person-price";
+import { noCostPrice } from "@/modules/club-registrations/per-person-price";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { activeRegistrationStatuses, registrationClosedMessage } from "@/modules/events/lifecycle";
@@ -88,7 +88,7 @@ export default async function ClubEventRegistrationPage({
   const assignment = workspace.registration ? await loadDirectorClubAssignment(organizationId, eventId, workspace.registration.teamKey) : null;
 
   // A free team event (#809) has no church bill to announce.
-  const freeTeamEvent = multipleTeams && workspace.experience !== null && !formHasPrices(workspace.experience.form.definition);
+  const freeTeamEvent = workspace.event.noCost;
 
   let contactPrefill: Record<string, string> = {};
   // Never prefill from an attendee account while staff act as director
@@ -220,6 +220,11 @@ export default async function ClubEventRegistrationPage({
               {" · "}{formatCalendarDate(workspace.registration.location.firstDay)}
               {workspace.registration.location.lastDay !== workspace.registration.location.firstDay ? <> to {formatCalendarDate(workspace.registration.location.lastDay)}</> : ""}
             </p>
+          )}
+          {workspace.registration.permissionNotices.length > 0 && (
+            <ul className={`inline-notice team-permission-notices${workspace.registration.permissionNotices.some((notice) => notice.status !== "GRANTED") ? " warning" : ""}`} role="status">
+              {workspace.registration.permissionNotices.map((notice) => <li key={notice.attendeeId} translate="no">{notice.text}</li>)}
+            </ul>
           )}
           <div className="field-help">
             {isChurchBilledStatus(workspace.registration.status)
