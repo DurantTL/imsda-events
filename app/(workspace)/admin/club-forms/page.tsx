@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { ClubFormCreate } from "@/components/club-form-create";
 import { ClubFormSync } from "@/components/club-form-sync";
 import { ClubFormTemplateToggle } from "@/components/club-forms-actions";
+import { cardCell } from "@/components/table-card-labels";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { listClubFormTemplatesForAdmin } from "@/modules/club-forms/templates";
 
@@ -41,24 +42,24 @@ export default async function AdminClubFormsPage() {
       <ClubFormSync pendingCount={templates.filter((template) => template.needsSync).length} />
       <section className="panel">
         <div className="report-table-wrap">
-          <table className="report-table">
+          <table role="table" className="report-table table-cards">
             <caption className="sr-only">Club forms</caption>
-            <thead>
-              <tr><th scope="col">Form</th><th scope="col">Status</th><th scope="col">Filled in</th><th scope="col">Version</th><th scope="col"><span className="sr-only">Change</span></th></tr>
+            <thead role="rowgroup">
+              <tr role="row"><th role="columnheader" scope="col">Form</th><th role="columnheader" scope="col">Status</th><th role="columnheader" scope="col">Filled in</th><th role="columnheader" scope="col">Version</th><th role="columnheader" scope="col"><span className="sr-only">Change</span></th></tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup">
               {templates.map((template) => (
-                <tr key={template.key}>
-                  <th scope="row">{template.name}<small className="quiet-copy"> · {template.description}</small></th>
-                  <td>{template.enabled ? "On" : "Off"}{template.needsSync && <small className="club-report-problem"> · Needs sync: use Sync templates above</small>}</td>
-                  <td>{template.submissionCount}</td>
-                  <td>
+                <tr role="row" key={template.key}>
+                  <th role="rowheader" scope="row">{template.name}<small className="quiet-copy"> · {template.description}</small></th>
+                  <td {...cardCell("Status")}>{template.enabled ? "On" : "Off"}{template.needsSync && <small className="club-report-problem"> · Needs sync: use Sync templates above</small>}</td>
+                  <td {...cardCell("Filled in")}>{template.submissionCount}</td>
+                  <td {...cardCell("Version")}>
                     {template.version}
                     {template.customized && <small className="quiet-copy"> · Edited in the app; code updates no longer apply</small>}
                     {template.hasDraft && !template.draftStale && <small className="quiet-copy"> · Draft started on version {template.draftBaseVersion ?? template.version}</small>}
                     {template.draftStale && <small className="club-report-problem"> · Draft is stale (started on version {template.draftBaseVersion}); discard it</small>}
                   </td>
-                  <td>
+                  <td {...cardCell(null)}>
                     {template.version > 0 && <Link className="secondary-button" href={`/admin/club-forms/${encodeURIComponent(template.key)}`}>Edit</Link>}{" "}
                     <ClubFormTemplateToggle enabled={template.enabled} name={template.name} needsSync={template.needsSync} templateKey={template.key} />
                   </td>

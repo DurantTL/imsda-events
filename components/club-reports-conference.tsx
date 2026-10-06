@@ -113,12 +113,14 @@ export function ClubReportsConference({
                     {viewOnly
                       ? (club.registrationOnTime ? "On time" : "—")
                       : (
-                        <input
-                          aria-label={`${club.name} yearly registration on time`}
-                          checked={club.registrationOnTime}
-                          onChange={(event) => void toggleRegistration(club, event.target.checked)}
-                          type="checkbox"
-                        />
+                        <label className="checkbox-hit">
+                          <input
+                            aria-label={`${club.name} yearly registration on time`}
+                            checked={club.registrationOnTime}
+                            onChange={(event) => void toggleRegistration(club, event.target.checked)}
+                            type="checkbox"
+                          />
+                        </label>
                       )}
                   </td>
                   <td {...cardCell("Year to date")}><strong>{yearToDate(Object.values(club.reports), club.registrationOnTime).toLocaleString("en-US")}</strong></td>

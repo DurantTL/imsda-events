@@ -188,3 +188,5 @@ visibility condition is exactly what gated that destination before.
    allowlist of that page's actual parents, not `safeReturnTo` alone.
 3. Reuse `primary-button`, `secondary-button`, and `text-button` — never a
    new button class.
+
+Phone layout rules (tables as cards, 44px targets, dialogs, fixed bars) and the Playwright audit that checks them are in `docs/RESPONSIVE.md` (#447).

@@ -613,3 +613,23 @@
   font-weight: 800;
   text-underline-offset: 3px;
 }
+
+/* #447: links in the event rows are 44px tap targets on a phone (text sizes unchanged). */
+@media (max-width: 768px) {
+  .openEvent,
+  .eventLinks a,
+  .eventWarnings a {
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .eventLinks a {
+    display: inline-flex;
+    padding-inline: 6px;
+  }
+
+  .eventStats a {
+    display: block;
+    min-height: 44px;
+  }
+}

@@ -1,0 +1,117 @@
+name: Mobile layout
+
+# Real-browser phone-width audit (#447), split out of ci.yml to save GitHub
+# Actions minutes. See docs/RESPONSIVE.md.
+#
+# When it runs:
+#  - a pull request that changes the table-card or list-sort helpers or the
+#    audit itself: a quick run (the shared CSS changes in most pull requests,
+#    so it is covered by the label and the weekly run instead);
+#  - a pull request carrying the `mobile-check` label: a quick run, started by
+#    mobile-layout-label.yml, which calls this workflow (a `paths` filter and a
+#    label cannot be OR'd in one workflow, so there are two small triggers
+#    and one job);
+#  - weekly and by hand: the full run (all four widths, with screenshots).
+#
+# A quick run is 360 and 1024 px with no screenshots. It is optional
+# (continue-on-error), like badge-print: a browser or runner flake must not
+# turn a pull request red; read the job's log or the artifact.
+on:
+  pull_request:
+    paths:
+      - "components/table-card-labels.tsx"
+      - "components/list-sort.tsx"
+      - "scripts/verify-mobile-layout.ts"
+      - "scripts/support/**"
+      - ".github/workflows/mobile-layout.yml"
+      - ".github/workflows/mobile-layout-label.yml"
+  # Weekly safety run, so a change outside the paths above still gets caught.
+  schedule:
+    - cron: "47 9 * * 1"
+  workflow_dispatch:
+  # Called by mobile-layout-label.yml for pull requests labelled `mobile-check`.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-layout-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Needs a browser and a package that is deliberately not a dependency
+  # (playwright-core), so it is its own job and is not part of `verify`.
+  # GitHub-hosted runners ship Google Chrome, which this job drives instead of
+  # downloading a browser. `--no-save` keeps the lockfile untouched.
+  mobile-layout:
+    name: Mobile layout (real browser, optional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: imsda_events
+          POSTGRES_USER: imsda
+          POSTGRES_PASSWORD: imsda_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U imsda -d imsda_events"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://imsda:imsda_ci@localhost:5432/imsda_events?schema=public
+      # Pull requests (by path or by label) get the quick run; weekly and manual runs the full one.
+      MOBILE_LAYOUT_WIDTHS: ${{ github.event_name == 'pull_request' && '360,1024' || '360,390,768,1024' }}
+      MOBILE_LAYOUT_NO_SHOTS: ${{ github.event_name == 'pull_request' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run db:deploy
+      - run: npm run db:seed
+      - run: npm run club-forms:sync
+      - run: npm run lodging:sync
+      - run: npm run build
+      - run: npm i --no-save playwright-core@1.56.1
+      # Fictitious CI-only values for production mode. Keep this block identical
+      # to the one in ci.yml ("verify").
+      - name: Start the built app
+        env:
+          MANAGE_LINK_DERIVATION_SECRET: ci-only-manage-link-derivation-secret-0000000
+          ATTENDEE_PASS_SIGNING_SECRET: ci-only-attendee-pass-signing-secret-000000
+          RATE_LIMIT_HASH_SECRET: ci-only-rate-limit-hash-secret-0000000000
+          OUTBOX_SWEEP_TOKEN: ci-only-outbox-sweep-token-000000000000
+          SECRET_ENCRYPTION_KEY: ci-only-secret-encryption-key-00000000000
+          ACCOUNT_EMAIL_SENDER_ADDRESS: events@ci.example.test
+          RESEND_API_KEY: ci-placeholder-never-sent
+        run: |
+          nohup npm run start > app.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS -o /dev/null http://localhost:3000/; then exit 0; fi
+            sleep 2
+          done
+          echo "The app did not start:" && cat app.log && exit 1
+      - name: Check phone layouts
+        env:
+          MOBILE_LAYOUT_BROWSER: /usr/bin/google-chrome
+          MOBILE_LAYOUT_OUT_DIR: ${{ runner.temp }}/mobile-layout
+        run: npm run test:mobile-layout
+      - name: Keep the screenshots and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-layout-screenshots
+          path: ${{ runner.temp }}/mobile-layout
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Show the app log when the check failed
+        if: failure()
+        run: cat app.log || true

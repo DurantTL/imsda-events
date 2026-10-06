@@ -1,0 +1,26 @@
+name: Mobile layout (label)
+
+# Runs the quick phone-layout audit (#447) on a pull request that carries the
+# `mobile-check` label, whatever files it changes. The label is the manual
+# switch for a page-level UI change that mobile-layout.yml's path filter (shared
+# CSS and helpers only) would not pick up. A workflow cannot OR a `paths` filter
+# with a label, so this small trigger calls the one real workflow. Adding the
+# label starts a run; later pushes to a labelled pull request run again.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-layout-label-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  mobile-layout:
+    # Only when the label is present, and not again when some other label is added.
+    if: contains(github.event.pull_request.labels.*.name, 'mobile-check') && (github.event.action != 'labeled' || github.event.label.name == 'mobile-check')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/mobile-layout.yml

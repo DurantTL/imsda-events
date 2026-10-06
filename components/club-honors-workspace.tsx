@@ -11,6 +11,7 @@ import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { bulkScopeSummary } from "@/lib/confirmation-copy";
 import { calendarDateIn } from "@/modules/calendar/domain";
 import { clubClassLevelLabels } from "@/modules/club-rosters/domain";
+import { cardCell } from "@/components/table-card-labels";
 import {
   type ClubHonorsRow,
   type MemberHonorEntryRecord,
@@ -341,35 +342,37 @@ export function ClubHonorsWorkspace({
         ) : (
           <div className="report-table-wrap">
             <SortOrderNote>{sortOrderText(nameSortLabel, nameDirection)}</SortOrderNote>
-            <table aria-labelledby="club-honors-heading" className="report-table">
-              <thead>
-                <tr>
-                  {!readOnly && <th><span className="sr-only">Select</span></th>}
+            <table aria-labelledby="club-honors-heading" className="report-table table-cards" role="table">
+              <thead role="rowgroup">
+                <tr role="row">
+                  {!readOnly && <th role="columnheader" scope="col"><span className="sr-only">Select</span></th>}
                   <SortableHeader active direction={nameDirection} label="Name" onSort={() => setNameDirection(flipDirection(nameDirection))} />
-                  <th>Current class</th>
-                  <th>Honors</th>
-                  <th><span className="sr-only">Add honor and history</span></th>
+                  <th role="columnheader" scope="col">Current class</th>
+                  <th role="columnheader" scope="col">Honors</th>
+                  <th role="columnheader" scope="col"><span className="sr-only">Add honor and history</span></th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {visible.map((row) => (
-                  <tr key={row.memberId}>
+                  <tr key={row.memberId} role="row">
                     {!readOnly && (
-                      <td data-label="Select">
-                        <input
-                          aria-label={`Select ${row.firstName} ${row.lastName}`}
-                          checked={selected.has(row.memberId)}
-                          onChange={() => toggle(row.memberId)}
-                          type="checkbox"
-                        />
+                      <td {...cardCell(null)}>
+                        <label className="checkbox-hit">
+                          <input
+                            aria-label={`Select ${row.firstName} ${row.lastName}`}
+                            checked={selected.has(row.memberId)}
+                            onChange={() => toggle(row.memberId)}
+                            type="checkbox"
+                          />
+                        </label>
                       </td>
                     )}
-                    <td data-label="Name"><strong translate="no">{row.lastName}, {row.firstName}</strong></td>
-                    <td data-label="Current class">{row.classLevel ? clubClassLevelLabels[row.classLevel as keyof typeof clubClassLevelLabels] : "—"}</td>
-                    <td data-label="Honors">
+                    <th role="rowheader" scope="row"><strong translate="no">{row.lastName}, {row.firstName}</strong></th>
+                    <td {...cardCell("Current class")}>{row.classLevel ? clubClassLevelLabels[row.classLevel as keyof typeof clubClassLevelLabels] : "—"}</td>
+                    <td {...cardCell("Honors")}>
                       <HonorPillList honors={row.honors} showStatus />
                     </td>
-                    <td data-label="Add honor">
+                    <td {...cardCell(null)}>
                       <button aria-label={`Add or view honors for ${row.firstName} ${row.lastName}`} className="secondary-button honor-add-button" onClick={() => openHistory(row)} type="button">
                         <Plus aria-hidden="true" size={13} /> Add
                       </button>
