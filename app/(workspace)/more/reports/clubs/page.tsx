@@ -82,7 +82,7 @@ export default async function ClubEventReportsPage({
               </thead>
               <tbody role="rowgroup">
                 {reports.camping.map((row) => (
-                  <tr role="row" key={row.organizationId}>
+                  <tr role="row" key={row.confirmationCode}>
                     <th role="rowheader" scope="row" translate="no">{row.organizationName}{row.sponsoringChurch && <small> · {row.sponsoringChurch}</small>}</th>
                     {showLocation && <td {...cardCell("Location")} translate="no">{row.locationName ?? "—"}</td>}
                     <td {...cardCell("Tents")}>{row.camping.tents}</td>
@@ -95,7 +95,7 @@ export default async function ClubEventReportsPage({
                     <td {...cardCell("Staff")}>{row.headcounts.staff}</td>
                     <td {...cardCell("Child")}>{row.headcounts.child}</td>
                     <td {...cardCell("Total")}><strong>{row.headcounts.total}</strong></td>
-                    <td {...cardCell(null)}><Link className="report-record-link" href={`/more/reports/clubs/packet/${encodeURIComponent(row.organizationId)}?${eventQuery}`}><PackageOpen aria-hidden="true" size={13} /> Packet</Link></td>
+                    <td {...cardCell(null)}><Link className="report-record-link" href={`/more/reports/clubs/packet/${encodeURIComponent(row.organizationId)}?${eventQuery}${row.teamKey ? `&team=${encodeURIComponent(row.teamKey)}` : ""}`}><PackageOpen aria-hidden="true" size={13} /> Packet</Link></td>
                   </tr>
                 ))}
               </tbody>
@@ -120,7 +120,7 @@ export default async function ClubEventReportsPage({
               </thead>
               <tbody role="rowgroup">
                 {reports.dutiesActivities.map((row) => (
-                  <tr role="row" key={row.organizationId}>
+                  <tr role="row" key={row.confirmationCode}>
                     <th role="rowheader" scope="row" translate="no">{row.organizationName}</th>
                     {showLocation && <td {...cardCell("Location")} translate="no">{row.locationName ?? "—"}</td>}
                     <td {...cardCell("Duty areas")}>{row.dutyAreas.join(", ") || "—"}</td>
@@ -150,7 +150,7 @@ export default async function ClubEventReportsPage({
               <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Club</th>{showLocation && <th role="columnheader" scope="col">Location</th>}<th role="columnheader" scope="col">Baptism interest</th><th role="columnheader" scope="col">Bible read-through</th></tr></thead>
               <tbody role="rowgroup">
                 {reports.milestones.map((row) => (
-                  <tr role="row" key={row.organizationId}>
+                  <tr role="row" key={row.confirmationCode}>
                     <th role="rowheader" scope="row" translate="no">{row.organizationName}</th>
                     {showLocation && <td {...cardCell("Location")} translate="no">{row.locationName ?? "—"}</td>}
                     <td {...cardCell("Baptism interest")}>{row.baptismNames || "—"}</td>

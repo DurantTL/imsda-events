@@ -1175,12 +1175,18 @@ const moveSelect = {
 
 type StoredMove = Prisma.MemberTransferRegistrationMoveGetPayload<{ select: typeof moveSelect }>;
 
+/**
+ * The receiving club's registration for the event. A club that registered several teams (#809) has no one
+ * destination, so the move is reported as ambiguous and staff add the person to the right team by hand.
+ */
 async function moveDestination(client: Client, eventId: string, toOrganizationId: string) {
-  const club = await client.clubEventRegistration.findUnique({
-    where: { eventId_organizationId: { eventId, organizationId: toOrganizationId } },
+  const clubs = await client.clubEventRegistration.findMany({
+    where: { eventId, organizationId: toOrganizationId },
+    take: 2,
     select: { registration: { select: destinationSelect } },
   });
-  return club?.registration ?? null;
+  if (clubs.length > 1) return { destination: null, ambiguous: true };
+  return { destination: clubs[0]?.registration ?? null, ambiguous: false };
 }
 
 /**
@@ -1237,12 +1243,10 @@ async function locationHasNoRoom(
 }
 
 async function describeMove(client: Client, move: StoredMove, options: { lockLocation?: boolean } = {}) {
-  const destination = move.status === "APPROVED" && move.toRegistrationId
-    ? await client.registration.findUnique({
-      where: { id: move.toRegistrationId },
-      select: destinationSelect,
-    })
+  const found = move.status === "APPROVED" && move.toRegistrationId
+    ? { destination: await client.registration.findUnique({ where: { id: move.toRegistrationId }, select: destinationSelect }), ambiguous: false }
     : await moveDestination(client, move.eventId, move.transfer.toOrganizationId);
+  const destination = found.destination;
   const personAlreadyThere = Boolean(destination && move.attendee && move.status === "PENDING" && await client.registrationAttendee.findUnique({
     where: { registrationId_personId: { registrationId: destination.id, personId: move.attendee.personId } },
     select: { id: true },
@@ -1274,6 +1278,7 @@ async function describeMove(client: Client, move: StoredMove, options: { lockLoc
       destination: destination
         ? { status: destination.status, waitlisted: destination.waitlistEntry?.status === "WAITING", personAlreadyThere }
         : null,
+      destinationAmbiguous: found.ambiguous,
       classLimitExceeded,
       locationFull,
       classPicksAtOtherSite,

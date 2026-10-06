@@ -59,15 +59,21 @@ type DraftState = {
   rosterAgeSaveOff: string[];
   /** The chosen location (#659), saved with the draft and checked again on restore. */
   locationId: string | null;
+  /** Which team this draft is for and the name typed so far (#809); empty on an event without teams. */
+  draftKey: string;
+  teamName: string;
 };
 
 export function ClubRegistrationWorkspace({
   contactPrefill,
+  draftKey = "",
   honorsCatalog = null,
   organizationId,
   workspace,
 }: {
   contactPrefill: Record<string, string>;
+  /** The id of the team's draft (#809), picked by the page; empty on an event without teams. */
+  draftKey?: string;
   /** The event's honors classes, when it has any (#618). */
   honorsCatalog?: RegistrationHonorsCatalog | null;
   organizationId: string;
@@ -91,7 +97,11 @@ export function ClubRegistrationWorkspace({
     rosterAges: workspace.draft?.rosterAges ?? {},
     rosterAgeSaveOff: workspace.draft?.rosterAgeSaveOff ?? [],
     locationId: restoredLocation.locationId,
+    draftKey,
+    teamName: workspace.draft?.teamName ?? "",
   }));
+  const multipleTeams = workspace.teams.multiple;
+  const teamNameMissing = multipleTeams && draft.teamName.trim().length === 0;
   const [step, setStep] = useState<"who" | "form">("who");
   const locationId = draft.locationId;
   const chosenLocation = locations.find((location) => location.id === locationId) ?? null;
@@ -151,6 +161,14 @@ export function ClubRegistrationWorkspace({
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => { timer.current = null; if (!sender.isConflicted()) void queue.flush(false); }, 1200);
   }, [queue, sender]);
+
+  const setTeamName = (next: string) => {
+    setDraft((current) => {
+      const updated = { ...current, teamName: next };
+      queueSave(updated);
+      return updated;
+    });
+  };
 
   const setLocationId = (next: string) => {
     setLocationNote(null);
@@ -390,6 +408,8 @@ export function ClubRegistrationWorkspace({
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
     lockedRegistrationFieldKeys: workspace.directory.lockedFieldKeys,
     locationId,
+    teamName: multipleTeams ? draft.teamName.trim() : null,
+    draftKey: multipleTeams ? draft.draftKey : null,
     honorSelections: hasHonors ? honorPicks : {},
     renderAttendeeExtras,
     blockedReason: draftBlockedReason({ conflict, honorsProblem }),
@@ -405,7 +425,7 @@ export function ClubRegistrationWorkspace({
       router.refresh();
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonors, honorPicks, honorsProblem, conflict, honorAttendees, honorOfferings, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, multipleTeams, draft.teamName, draft.draftKey, hasHonors, honorPicks, honorsProblem, conflict, honorAttendees, honorOfferings, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
 
   const saveLabel = conflict
     ? DRAFT_CONFLICT_MESSAGE
@@ -450,6 +470,20 @@ export function ClubRegistrationWorkspace({
         <span className="count-badge">{goingCount} chosen</span>
       </div>
       {locationNote && <p className="field-help" role="status">{locationNote}</p>}
+      {multipleTeams && (
+        <div className="club-team-name">
+          <label htmlFor="club-team-name">Team name</label>
+          <input
+            autoComplete="off"
+            id="club-team-name"
+            maxLength={80}
+            onChange={(event) => setTeamName(event.target.value)}
+            required
+            value={draft.teamName}
+          />
+          <small className="field-help">Each team needs its own name, different from every other team at this event.</small>
+        </div>
+      )}
       <ClubLocationPicker allowWaitlist locations={locations} onChange={setLocationId} value={locationId} />
       <p>
         Tap everyone from your roster who is attending. Ages are as of the first day of the
@@ -578,12 +612,12 @@ export function ClubRegistrationWorkspace({
         </Link>
         <button
           className="primary-button"
-          disabled={goingCount === 0 || needsLocation}
+          disabled={goingCount === 0 || needsLocation || teamNameMissing}
           onClick={leaveWho}
-          title={needsLocation ? "Choose a location first" : undefined}
+          title={needsLocation ? "Choose a location first" : teamNameMissing ? "Name the team first" : undefined}
           type="button"
         >
-          {continueButtonLabel({ missingAges: missingAges.length, goingCount, otherwiseDisabled: goingCount === 0 || needsLocation })} <ArrowRight aria-hidden="true" size={15} />
+          {continueButtonLabel({ missingAges: missingAges.length, goingCount, otherwiseDisabled: goingCount === 0 || needsLocation || teamNameMissing })} <ArrowRight aria-hidden="true" size={15} />
         </button>
       </div>
     </section>

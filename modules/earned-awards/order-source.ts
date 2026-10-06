@@ -464,11 +464,16 @@ async function eventPatchCandidates(db: Db, organizationId: string, now: Date, o
     select: { id: true, personId: true },
   });
   const personByMember = new Map(members.map((member) => [member.id, member.personId!]));
-  const candidates: PatchCandidate[] = [];
+  // Decided per club and event, not per registration: a club that registered several teams (#809) either used check-in
+  // for the event or did not, whichever team a person was on.
+  const checkedInEvents = new Set(registrations
+    .filter((registration) => registration.registration.attendees.some((attendee) => attendee.checkIns.length > 0))
+    .map((registration) => registration.eventId));
+  const candidates = new Map<string, PatchCandidate>();
   for (const registration of registrations) {
     // Decided per club, not per event: another club checking in at the same event says nothing about whether
     // *this* club's check-in was used, so one club's check-ins must never switch this club's attendance off.
-    const clubCheckedIn = registration.registration.attendees.some((attendee) => attendee.checkIns.length > 0);
+    const clubCheckedIn = checkedInEvents.has(registration.eventId);
     const basis: AttendanceBasis | null = clubCheckedIn
       ? "CHECK_IN"
       : registration.event.endsAt <= now ? "REGISTRATION" : null;
@@ -477,9 +482,15 @@ async function eventPatchCandidates(db: Db, organizationId: string, now: Date, o
       .filter((attendee) => basis === "REGISTRATION" || attendee.checkIns.length > 0)
       .map((attendee) => personByMember.get(snapshotMemberId(attendee.profileSnapshot) ?? ""))
       .filter((personId): personId is string => personId !== undefined && active.has(personId));
-    const personIds = [...new Set(attended)];
     for (const { item } of registration.event.awardItems) {
-      candidates.push({
+      // One candidate per event and item: a club's teams add their people to it.
+      const key = `${registration.eventId}\u0000${item.id}`;
+      const held = candidates.get(key);
+      if (held) {
+        held.personIds = [...new Set([...held.personIds, ...attended])];
+        continue;
+      }
+      candidates.set(key, {
         eventId: registration.eventId,
         eventName: registration.event.name,
         eventDate: eventDate(registration.event.startsAt),
@@ -487,11 +498,11 @@ async function eventPatchCandidates(db: Db, organizationId: string, now: Date, o
         itemName: item.name,
         catalogNumber: item.catalogNumber,
         basis,
-        personIds,
+        personIds: [...new Set(attended)],
       });
     }
   }
-  return candidates;
+  return [...candidates.values()];
 }
 
 export type PatchSuggestion = {

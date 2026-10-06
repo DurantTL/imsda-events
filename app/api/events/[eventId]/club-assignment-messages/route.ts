@@ -25,9 +25,10 @@ async function getHandler(
     const search = new URL(request.url).searchParams;
     const scope = search.get("scope") === "ONE" ? "ONE" as const : "ALL_SET" as const;
     const organizationId = search.get("organizationId") ?? "";
+    const teamKey = search.get("teamKey") ?? "";
     const preview = await getClubAssignmentMessagePreview(
       eventId,
-      scope === "ONE" ? { scope, organizationId } : { scope },
+      scope === "ONE" ? { scope, organizationId, ...(teamKey ? { teamKey } : {}) } : { scope },
     );
     return Response.json({ clubAssignmentPreview: preview });
   } catch (error) {

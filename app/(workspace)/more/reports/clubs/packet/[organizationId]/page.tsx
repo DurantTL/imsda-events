@@ -16,10 +16,11 @@ export default async function StaffClubPacketPage({
   searchParams,
 }: {
   params: Promise<{ organizationId: string }>;
-  searchParams: Promise<{ event?: string }>;
+  searchParams: Promise<{ event?: string; team?: string }>;
 }) {
   const { organizationId } = await params;
-  const { event: requested } = await searchParams;
+  // Which of the club's teams (#809); absent on an event without teams.
+  const { event: requested, team: teamKey = "" } = await searchParams;
   const { event, allowed } = await resolveClubReportsAccess(requested);
   if (!allowed) {
     return (
@@ -29,7 +30,7 @@ export default async function StaffClubPacketPage({
       />
     );
   }
-  const packet = await getClubPacketData(event.id, organizationId);
+  const packet = await getClubPacketData(event.id, organizationId, teamKey);
   if (!packet) {
     return <AccessRestricted title="No active registration" detail="This club has no submitted or confirmed registration for this event." />;
   }
@@ -48,7 +49,7 @@ export default async function StaffClubPacketPage({
           <PrintReportButton label="Print this packet" />
         </div>
       </div>
-      <ClubPacketSheet packet={packet} qrSrc={`/api/events/${encodeURIComponent(event.id)}/clubs/${encodeURIComponent(organizationId)}/club-pass/qr`} />
+      <ClubPacketSheet packet={packet} qrSrc={`/api/events/${encodeURIComponent(event.id)}/clubs/${encodeURIComponent(organizationId)}/club-pass/qr${teamKey ? `?team=${encodeURIComponent(teamKey)}` : ""}`} />
     </section>
   );
 }

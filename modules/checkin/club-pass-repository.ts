@@ -94,9 +94,11 @@ export async function createDirectorClubPass(
   organizationId: string,
   eventId: string,
   now = new Date(),
+  // Which of the club's teams (#809); the empty key is the one registration of an event without teams.
+  teamKey = "",
 ) {
   const record = await getPrisma().clubEventRegistration.findUnique({
-    where: { eventId_organizationId: { eventId, organizationId } },
+    where: { eventId_organizationId_teamKey: { eventId, organizationId, teamKey } },
     select: {
       id: true,
       eventId: true,

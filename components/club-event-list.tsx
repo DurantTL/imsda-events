@@ -7,6 +7,14 @@ function formatDate(value: string, timeZone: string) {
 }
 
 function statusFor(event: ClubEventSummary) {
+  // A club's teams (#809): how many are in and how many people they hold, whichever is next to register.
+  if (event.multipleTeams && event.teams.length > 0) {
+    const going = event.teams.reduce((sum, team) => sum + team.attendeeCount, 0);
+    return { tone: "green", label: `${event.teams.length} ${event.teams.length === 1 ? "team" : "teams"} registered · ${going} going` };
+  }
+  if (event.multipleTeams && event.drafts.length > 0 && event.phase === "OPEN") {
+    return { tone: "purple", label: `${event.drafts.length === 1 ? "Draft saved" : `${event.drafts.length} drafts saved`}` };
+  }
   if (event.registration) return { tone: "green", label: `Registered · ${event.registration.attendeeCount} going` };
   if (!event.available) return { tone: "gold", label: "Not open for clubs yet" };
   if (event.phase === "UPCOMING") return { tone: "purple", label: "Registration opens soon" };
@@ -47,9 +55,9 @@ export function ClubEventList({ events, organizationId }: { events: ClubEventSum
                   </small>
                   <span className={`status-chip ${status.tone}`}>{status.label}</span>
                 </span>
-                {(event.registration || (event.available && event.phase === "OPEN")) && (
+                {(event.registration || event.teams.length > 0 || (event.available && event.phase === "OPEN")) && (
                   <Link className={isPrimaryEvent ? "primary-button club-event-action" : "secondary-button club-event-action"} href={`/account/clubs/${organizationId}/events/${event.id}`}>
-                    {event.registration ? "View" : event.draft ? "Continue" : "Register"} <ArrowRight size={14} aria-hidden="true" />
+                    {event.multipleTeams && event.teams.length > 0 ? "Your teams" : event.registration ? "View" : event.draft ? "Continue" : "Register"} <ArrowRight size={14} aria-hidden="true" />
                   </Link>
                 )}
               </li>

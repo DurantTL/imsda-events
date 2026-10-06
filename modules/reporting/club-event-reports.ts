@@ -41,9 +41,21 @@ export type ClubRosterAttendee = {
   hasDietaryNeed: boolean;
 };
 
+/**
+ * The key of a registration's assignment in the reports' `assignments` map (#809): the club's id, as it always was, for a
+ * registration without a team, and the club's id with the team's key for each team, so a club's teams never share one.
+ */
+export function assignmentKey(organizationId: string, teamKey: string | null | undefined) {
+  return teamKey ? `${organizationId}\u0000${teamKey}` : organizationId;
+}
+
 export type ClubEventRecord = {
   organizationId: string;
+  /** The club's name, or "Team (Club)" for a team (#809), so every report lists each team under its own name. */
   organizationName: string;
+  /** The team's key and name (#809); absent on an event without teams. */
+  teamKey?: string;
+  teamName?: string | null;
   sponsoringChurch: string | null;
   registrationId: string;
   confirmationCode: string;
@@ -146,6 +158,8 @@ function lateRateFromPricingSnapshot(pricingSnapshot: Record<string, unknown>, l
 export type BuildClubEventRecordInput = {
   organizationId: string;
   organizationName: string;
+  teamKey?: string;
+  teamName?: string | null;
   sponsoringChurch: string | null;
   registrationId: string;
   confirmationCode: string;
@@ -183,6 +197,7 @@ export function buildClubEventRecord(input: BuildClubEventRecordInput): ClubEven
   return {
     organizationId: input.organizationId,
     organizationName: input.organizationName,
+    ...(input.teamKey ? { teamKey: input.teamKey, teamName: input.teamName ?? null } : {}),
     sponsoringChurch: input.sponsoringChurch,
     registrationId: input.registrationId,
     confirmationCode: input.confirmationCode,
@@ -238,6 +253,8 @@ export function buildClubEventRecord(input: BuildClubEventRecordInput): ClubEven
 
 export type CampingReportRow = {
   organizationId: string;
+  /** The team's key (#809); absent on an event without teams. */
+  teamKey?: string;
   organizationName: string;
   sponsoringChurch: string | null;
   confirmationCode: string;
@@ -250,6 +267,7 @@ export function buildCampingReport(clubs: ClubEventRecord[]): CampingReportRow[]
   return clubs
     .map((club) => ({
       organizationId: club.organizationId,
+      ...(club.teamKey ? { teamKey: club.teamKey } : {}),
       organizationName: club.organizationName,
       sponsoringChurch: club.sponsoringChurch,
       confirmationCode: club.confirmationCode,
@@ -325,7 +343,7 @@ export function buildDutiesActivitiesReport(
       partnerClub: club.partnerClub,
       eventRibbons: club.eventRibbons,
       sabbathSkit: club.sabbathSkit,
-      assignment: assignments.get(club.organizationId) ?? null,
+      assignment: assignments.get(assignmentKey(club.organizationId, club.teamKey)) ?? null,
     }))
     .sort((left, right) => left.organizationName.localeCompare(right.organizationName));
 }

@@ -58,7 +58,7 @@ describe("director's club check-in QR route (#412)", () => {
   it("renders a no-store SVG for the director's own club", async () => {
     const response = await GET(new Request("https://events.imsda.test/x"), context());
 
-    expect(mocks.createDirectorClubPass).toHaveBeenCalledWith("club-1", "event_123");
+    expect(mocks.createDirectorClubPass).toHaveBeenCalledWith("club-1", "event_123", expect.any(Date), "");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("image/svg+xml");
     expect(response.headers.get("cache-control")).toContain("no-store");

@@ -100,7 +100,18 @@ export async function listAreaClubEvents(clubYear: string): Promise<AreaClubEven
     }),
   ]);
   return events.map((event) => {
-    const registrations = new Map(event.clubRegistrations.map((entry) => [entry.organizationId, entry.registration]));
+    // A club may have several registrations (#809, teams): it shows as registered when any is, with the people across the
+    // registered ones; otherwise it shows the first one's status, exactly as a club with one registration always did.
+    const registrations = new Map<string, { status: (typeof event.clubRegistrations)[number]["registration"]["status"]; _count: { attendees: number } }>();
+    const byClub = Map.groupBy(event.clubRegistrations, (entry) => entry.organizationId);
+    for (const [organizationId, entries] of byClub) {
+      const registered = entries.filter((entry) => registrationStatusFor(entry.registration.status) === "REGISTERED");
+      const counted = registered.length > 0 ? registered : entries.slice(0, 1);
+      registrations.set(organizationId, {
+        status: counted[0]!.registration.status,
+        _count: { attendees: counted.reduce((sum, entry) => sum + entry.registration._count.attendees, 0) },
+      });
+    }
     const drafts = new Set(event.clubRegistrationDrafts.map((draft) => draft.organizationId));
     return {
       id: event.id,

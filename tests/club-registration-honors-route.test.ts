@@ -20,6 +20,7 @@ vi.mock("@/lib/prisma", () => ({
     attendeePasskey: { count: async () => 0 },
     platformSettings: { findUnique: async () => ({ passkeyRpId: null }) },
     event: { findFirst: mocks.eventFindFirst },
+    eventTeamSettings: { findUnique: async () => null },
     clubRosterMember: { findMany: mocks.rosterFindMany },
     clubRegistrationDraft: { update: mocks.draftUpdate },
   }),

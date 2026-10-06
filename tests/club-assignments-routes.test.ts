@@ -67,8 +67,8 @@ function prismaWithRegistrations() {
   ];
   const tx = {
     clubEventRegistration: {
-      findUnique: vi.fn(async ({ where }: { where: { eventId_organizationId: { eventId: string; organizationId: string } } }) => {
-        const key = where.eventId_organizationId;
+      findUnique: vi.fn(async ({ where }: { where: { eventId_organizationId_teamKey: { eventId: string; organizationId: string; teamKey: string } } }) => {
+        const key = where.eventId_organizationId_teamKey;
         const row = registrations.find((entry) => entry.eventId === key.eventId && entry.organizationId === key.organizationId);
         return row ? { id: row.id, registration: row.registration } : null;
       }),
@@ -106,7 +106,7 @@ describe("PUT /api/events/[eventId]/club-assignments/[organizationId]", () => {
     const response = await PUT(putRequest("org-b"), putContext("org-b"));
     expect(response.status).toBe(404);
     expect(tx.clubEventRegistration.findUnique).toHaveBeenCalledWith(expect.objectContaining({
-      where: { eventId_organizationId: { eventId: "event-1", organizationId: "org-b" } },
+      where: { eventId_organizationId_teamKey: { eventId: "event-1", organizationId: "org-b", teamKey: "" } },
     }));
     expect(tx.clubEventAssignment.upsert).not.toHaveBeenCalled();
   });

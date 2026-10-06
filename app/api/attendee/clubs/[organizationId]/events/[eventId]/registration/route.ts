@@ -28,9 +28,12 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
       return Response.json({ error: "REQUEST_TOO_LARGE", message: "This registration is too large." }, { status: 413 });
     }
     // The picked location travels beside the form answers, never inside them (#413).
-    const { locationId, honorSelections, ...answers } = z.object({
+    // So do the team's name and the draft it replaces (#809), on an event that lets a club register several teams.
+    const { locationId, honorSelections, teamName, draftKey, ...answers } = z.object({
       locationId: z.string().trim().min(1).max(100).nullish(),
       honorSelections: honorSelectionsSchema.optional(),
+      teamName: z.string().max(200).nullish(),
+      draftKey: z.string().max(64).optional(),
     }).loose().parse(JSON.parse(body));
     const input = publicRegistrationInputSchema.parse(answers);
     let outcome = { replayed: false, waitlisted: false };
@@ -40,7 +43,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
       actorAttribution(access.actor),
       input,
       new Date(),
-      { locationId: locationId ?? null, report: (reported) => { outcome = reported; } },
+      { locationId: locationId ?? null, teamName: teamName ?? null, ...(draftKey ? { draftKey } : {}), report: (reported) => { outcome = reported; } },
     );
     // The registration is saved either way. The picks go through the same
     // enrollment rules as the class picker; if a class filled up meanwhile the

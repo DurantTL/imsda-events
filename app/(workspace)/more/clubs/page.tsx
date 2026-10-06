@@ -56,8 +56,8 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
               <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Club</th><th role="columnheader" scope="col">Going</th>{backgroundFlags && <th role="columnheader" scope="col">Background checks</th>}<th role="columnheader" scope="col">Registration</th><th role="columnheader" scope="col"><span className="sr-only">Open</span></th></tr></thead>
               <tbody role="rowgroup">
                 {clubs.map((club) => (
-                  <tr role="row" key={club.organizationId}>
-                    <th role="rowheader" scope="row" translate="no">{club.name}{club.sponsoringChurch && <small> · {club.sponsoringChurch}</small>}</th>
+                  <tr role="row" key={`${club.organizationId}:${club.teamKey}`}>
+                    <th role="rowheader" scope="row" translate="no">{club.teamName ? `${club.teamName} (${club.name})` : club.name}{club.sponsoringChurch && <small> · {club.sponsoringChurch}</small>}</th>
                     <td {...cardCell("Going")}>{club.attendeeCount}</td>
                     {backgroundFlags && (
                       <td {...cardCell("Background checks")}>

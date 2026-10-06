@@ -42,7 +42,9 @@ async function putHandler(
     const { eventId, organizationId } = await context.params;
     const access = await requireClubAssignmentAccess(await getCurrentSession(), eventId, findActiveMembership);
     const input = clubAssignmentInputSchema.parse(await request.json());
-    const saved = await upsertClubAssignment(eventId, organizationId, input, access.user.id);
+    // Which of the club's teams (#809); omitted on an event without teams.
+    const teamKey = new URL(request.url).searchParams.get("team") ?? "";
+    const saved = await upsertClubAssignment(eventId, organizationId, input, access.user.id, teamKey);
     return Response.json({
       assignment: {
         version: saved.version,

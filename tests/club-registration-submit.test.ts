@@ -18,6 +18,7 @@ vi.mock("@/modules/communications/messaging-repository", () => ({
 vi.mock("@/modules/communications/transactional-messages", () => ({ enqueueWaitlistJoinedMessage: dependencies.enqueueWaitlistJoinedMessage }));
 
 import { sealSecret } from "@/lib/secret-box";
+import { normalizeTeamName } from "@/modules/club-teams/domain";
 import { clubAttendeePreparer, clubSubmissionAttribution } from "@/modules/club-registrations/repository";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { publicRegistrationInputSchema } from "@/modules/forms/public-domain";
@@ -108,7 +109,7 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
       findMany: vi.fn(async ({ where }: { where: { organizationId: string } }) => (where.organizationId === "club-1" ? members : [])),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
-    clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "cer-1" }) },
+    clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null), findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "cer-1" }) },
     eventLocation: { count: vi.fn().mockResolvedValue(0) },
     clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(null), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     publicRegistrationSubmission: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "submission-1" }) },
@@ -174,6 +175,13 @@ const club = (organizationId = "club-1"): ClubSubmissionContext => ({
   organizationId,
   submittedByAccountId: "director-1",
   prepareAttendees: clubAttendeePreparer(organizationId),
+});
+/** A team on an event that lets a club register several (#809): the cleaned name, its key, and the draft it replaces. */
+const clubTeam = (name: string, draftKey = "draftkey0001", organizationId = "club-1"): ClubSubmissionContext => ({
+  organizationId,
+  submittedByAccountId: "director-1",
+  team: { name, key: normalizeTeamName(name), draftKey },
+  prepareAttendees: clubAttendeePreparer(organizationId, undefined, draftKey),
 });
 const clubAs = (): ClubSubmissionContext => ({
   organizationId: "club-1",
@@ -833,5 +841,68 @@ describe("responsible adult at an ordinary public submit (#131)", () => {
     const second = ordinary();
     await submitIndividual([dad, son], { "a-son": "NONE" }, second);
     expect(second.publicRegistrationSubmission.create.mock.calls[0]![0].data.requestHash).not.toBe(first);
+  });
+});
+
+describe("club registration of named teams (#809)", () => {
+  it("registers a team under its name and key, and replaces only that team's draft", async () => {
+    const tx = fixture();
+    await submit(baseInput, clubTeam("Bible  Bees"));
+    expect(tx.clubEventRegistration.create).toHaveBeenCalledWith({
+      data: { eventId: "event-1", organizationId: "club-1", registrationId: "registration-1", teamName: "Bible  Bees", teamKey: "bible bees", submittedByAccountId: "director-1", submittedByUserId: null },
+    });
+    expect(tx.clubRegistrationDraft.deleteMany).toHaveBeenCalledWith({ where: { eventId: "event-1", organizationId: "club-1", draftKey: "draftkey0001" } });
+    expect(tx.clubRegistrationDraft.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { eventId_organizationId_draftKey: { eventId: "event-1", organizationId: "club-1", draftKey: "draftkey0001" } },
+    }));
+    const audit = tx.auditLog.create.mock.calls.map(([call]) => call.data).find((data) => data.action === "CLUB_REGISTRATION_SUBMITTED");
+    expect(audit.metadata).toMatchObject({ clubOrganizationId: "club-1", teamName: "Bible  Bees" });
+  });
+
+  it("looks the club's registration up by the team's key, so a second team is not 'already registered'", async () => {
+    const tx = fixture();
+    await submit(baseInput, clubTeam("Second Team"));
+    expect(tx.clubEventRegistration.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { eventId_organizationId_teamKey: { eventId: "event-1", organizationId: "club-1", teamKey: "second team" } },
+    }));
+    expect(tx.registration.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a team name another team already holds in the event, in any case, without naming the other club", async () => {
+    const tx = fixture();
+    tx.clubEventRegistration.findFirst.mockResolvedValue({ id: "someone-elses" });
+    const refused = await submit(baseInput, clubTeam("BIBLE BEES")).catch((error: unknown) => error);
+    expect(refused).toMatchObject({ code: "CLUB_TEAM_NAME_TAKEN", message: 'A team named "BIBLE BEES" is already registered for this event. Choose a different team name.' });
+    expect(tx.clubEventRegistration.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { eventId: "event-1", teamKey: "bible bees" } }));
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses the club's own team name again, as an already registered team", async () => {
+    const tx = fixture();
+    tx.clubEventRegistration.findUnique.mockResolvedValue({ id: "existing" });
+    await expect(submit(baseInput, clubTeam("Bible Bees"))).rejects.toMatchObject({
+      code: "CLUB_ALREADY_REGISTERED",
+      message: 'Your club already registered a team named "Bible Bees" for this event. Choose a different team name.',
+    });
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("turns a lost race on the event-wide name index into the same name-taken answer", async () => {
+    const tx = fixture();
+    const { Prisma } = await import("@prisma/client");
+    tx.clubEventRegistration.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" }));
+    await expect(submit(baseInput, clubTeam("Bible Bees"))).rejects.toMatchObject({ code: "CLUB_TEAM_NAME_TAKEN" });
+  });
+
+  it("leaves a registration with no team exactly as it was: no name, no key, the one draft", async () => {
+    const tx = fixture();
+    await submit();
+    const data = tx.clubEventRegistration.create.mock.calls[0]![0].data;
+    expect(data).not.toHaveProperty("teamName");
+    expect(data).not.toHaveProperty("teamKey");
+    expect(tx.clubEventRegistration.findFirst).not.toHaveBeenCalled();
+    expect(tx.clubEventRegistration.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { eventId_organizationId_teamKey: { eventId: "event-1", organizationId: "club-1", teamKey: "" } },
+    }));
   });
 });

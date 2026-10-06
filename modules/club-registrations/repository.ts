@@ -68,6 +68,8 @@ import {
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import type { RegistrationAmendmentInput } from "@/modules/registrations/schemas";
 import { moneyToCents } from "@/modules/payments/square-domain";
+import { getTeamSettings } from "@/modules/club-teams/settings-repository";
+import { NO_TEAM_KEY, draftKeySchema, resolveTeamName, teamLabel, type TeamSettings } from "@/modules/club-teams/domain";
 import { confirmationEmailStatusFromMessages, describeClubConfirmationEmail } from "@/modules/forms/confirmation-email-status";
 
 // The registrant messages that confirm a club registration (or its waitlist spot).
@@ -101,6 +103,8 @@ export class ClubRegistrationError extends Error {
       | "REGISTRATION_NOT_FOUND"
       | "REGISTRATION_CLOSED"
       | "ATTENDEES_INVALID"
+      | "TEAM_INVALID"
+      | "TEAM_NAME_TAKEN"
       | "CLASS_CHOICES_NOT_EDITABLE",
     message: string,
   ) {
@@ -252,7 +256,11 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
       ...clubEventSelect,
       clubRegistrations: {
         where: { organizationId },
+        // A club's teams (#809) in the order it registered them; an event without teams has just the one.
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         select: {
+          teamName: true,
+          teamKey: true,
           registration: {
             select: {
               confirmationCode: true,
@@ -263,8 +271,9 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
           },
         },
       },
-      clubRegistrationDrafts: { where: { organizationId }, select: { updatedAt: true, selectedMemberIds: true } },
+      clubRegistrationDrafts: { where: { organizationId }, orderBy: [{ updatedAt: "desc" }, { id: "asc" }], select: { updatedAt: true, selectedMemberIds: true, draftKey: true, teamName: true } },
       locations: { where: { isActive: true }, select: clubLocationSelect },
+      teamSettings: { select: { allowMultipleTeams: true } },
     },
   });
   const results = [];
@@ -273,7 +282,10 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
     const problem = form ? clubFormProblem(form.definition) : "The event has no published registration form yet.";
     const registration = event.clubRegistrations[0]?.registration ?? null;
     const draft = event.clubRegistrationDrafts[0] ?? null;
-    const registeredLocation = registration?.location ?? null;
+    const multipleTeams = event.teamSettings?.allowMultipleTeams === true;
+    // A club may register another team at any open location, so where its first team is does not decide
+    // what the event looks like to it (#809); an event without teams keeps following the registration's location.
+    const registeredLocation = multipleTeams ? null : registration?.location ?? null;
     results.push({
       id: event.id,
       name: event.name,
@@ -298,6 +310,21 @@ export async function listClubEvents(organizationId: string, now = new Date()) {
         }
         : null,
       draft: draft ? { updatedAt: draft.updatedAt.toISOString(), selectedCount: draft.selectedMemberIds.length } : null,
+      // The club's teams on an event that lets it register several (#809); empty otherwise.
+      multipleTeams,
+      teams: multipleTeams
+        ? event.clubRegistrations.map((row) => ({
+          teamKey: row.teamKey,
+          teamName: row.teamName ?? "",
+          confirmationCode: row.registration.confirmationCode,
+          status: row.registration.status,
+          attendeeCount: row.registration._count.attendees,
+          locationName: row.registration.location?.name ?? null,
+        }))
+        : [],
+      drafts: multipleTeams
+        ? event.clubRegistrationDrafts.map((row) => ({ draftKey: row.draftKey, teamName: row.teamName, updatedAt: row.updatedAt.toISOString(), selectedCount: row.selectedMemberIds.length }))
+        : [],
     });
   }
   return results;
@@ -336,6 +363,7 @@ export async function listChurchAmountsOwed(eventId: string, options: { location
   const rows = await getPrisma().clubEventRegistration.findMany({
     where: { eventId, ...(options.locationId ? { registration: { locationId: options.locationId } } : {}) },
     select: {
+      teamName: true,
       organization: {
         select: { id: true, name: true, parentOrganization: { select: { id: true, name: true } } },
       },
@@ -361,6 +389,7 @@ export async function listChurchAmountsOwed(eventId: string, options: { location
     isBilled: isChurchBilledStatus(row.registration.status),
     amountOwedCents: churchOwedCents(row.registration.status, moneyToCents(row.registration.totalAmount)),
     ...(row.registration.location ? { locationName: row.registration.location.name } : {}),
+    ...(row.teamName ? { teamName: row.teamName } : {}),
   }));
   // A church-billed event whose registrations are not club registrations (#606: Leadership Weekend, Outdoor
   // School) is reported by the organization each form names. Club events keep exactly the rows above.
@@ -446,6 +475,8 @@ export type ClubCheckInInfo = {
   organizationId: string;
   organizationName: string;
   confirmationCode: string;
+  /** The team's name (#809), on an event where a club registers several; absent otherwise. */
+  teamName?: string;
   /** Read-only estimate billed to the church (#409); never an attendee balance or a door payment. */
   amountOwedCents: number;
   /** The event location the club registered at (#413); null when the event has none. */
@@ -469,13 +500,16 @@ export async function listClubCheckInInfo(eventId: string, options: { locationId
       },
     },
     select: {
+      teamName: true,
       organization: { select: { id: true, name: true } },
       registration: { select: { confirmationCode: true, status: true, totalAmount: true, location: { select: { name: true } } } },
     },
   });
   return rows.map((row) => ({
     organizationId: row.organization.id,
-    organizationName: row.organization.name,
+    // A team shows as "Team (Club)", so check-in lists and finds each team by either name (#809).
+    organizationName: teamLabel(row.organization.name, row.teamName),
+    ...(row.teamName ? { teamName: row.teamName } : {}),
     confirmationCode: row.registration.confirmationCode,
     amountOwedCents: churchOwedCents(row.registration.status, moneyToCents(row.registration.totalAmount)),
     // Only when the club registered at a location, so an event without locations returns what it always did (#413).
@@ -594,16 +628,29 @@ export function clubEditWindow(event: ClubEvent, location: (LocationDateSource &
   });
 }
 
+/**
+ * Which of a club's teams the director's page is showing (#809), on an event that lets a club register several:
+ * a registered team by its key, or an unsubmitted draft by its draft key. Ignored on every other event.
+ */
+export type ClubWorkspaceSelection = { teamKey?: string | null; draftKey?: string | null };
+
 /** Everything the director's page needs for one club event. */
-export async function getClubEventWorkspace(organizationId: string, eventId: string, now = new Date()) {
+export async function getClubEventWorkspace(organizationId: string, eventId: string, now = new Date(), selection: ClubWorkspaceSelection = {}) {
   const event = await requireClubEvent(eventId);
   const eventDate = calendarDateInEventTimeZone(event.startsAt, event.timezone);
-  const [form, members, clubRegistration, draft, identity, eventLocations] = await Promise.all([
+  const teamSettings = await getTeamSettings(eventId);
+  const multipleTeams = teamSettings?.allowMultipleTeams === true;
+  // An event without teams has the one registration and the one draft it always had, under the empty keys.
+  const selectedTeamKey = multipleTeams ? selection.teamKey ?? null : NO_TEAM_KEY;
+  const selectedDraftKey = multipleTeams ? selection.draftKey ?? null : NO_TEAM_KEY;
+  const [form, members, clubRegistration, draft, identity, eventLocations, registeredTeams, savedDrafts] = await Promise.all([
     publishedClubForm(event.id),
     activeRosterFor(getPrisma(), organizationId, event),
-    getPrisma().clubEventRegistration.findUnique({
-      where: { eventId_organizationId: { eventId, organizationId } },
+    selectedTeamKey === null ? Promise.resolve(null) : getPrisma().clubEventRegistration.findUnique({
+      where: { eventId_organizationId_teamKey: { eventId, organizationId, teamKey: selectedTeamKey } },
       select: {
+        teamName: true,
+        teamKey: true,
         createdAt: true,
         registrationId: true,
         registration: {
@@ -627,13 +674,30 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
         },
       },
     }),
-    getPrisma().clubRegistrationDraft.findUnique({ where: { eventId_organizationId: { eventId, organizationId } } }),
+    selectedDraftKey === null ? Promise.resolve(null) : getPrisma().clubRegistrationDraft.findUnique({
+      where: { eventId_organizationId_draftKey: { eventId, organizationId, draftKey: selectedDraftKey } },
+    }),
     clubDirectoryIdentity(getPrisma(), organizationId),
     getPrisma().eventLocation.findMany({
       where: { eventId, isActive: true },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }, { name: "asc" }],
       select: clubLocationSelect,
     }),
+    // The club's teams and unsubmitted drafts (#809): what the page lists beside the one it is showing.
+    multipleTeams
+      ? getPrisma().clubEventRegistration.findMany({
+        where: { eventId, organizationId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { teamName: true, teamKey: true, registration: { select: { confirmationCode: true, status: true, _count: { select: { attendees: true } }, location: { select: { name: true } } } } },
+      })
+      : Promise.resolve([]),
+    multipleTeams
+      ? getPrisma().clubRegistrationDraft.findMany({
+        where: { eventId, organizationId },
+        orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
+        select: { draftKey: true, teamName: true, updatedAt: true, selectedMemberIds: true },
+      })
+      : Promise.resolve([]),
   ]);
   // Locations (#413): seats are counted like the event capacity, leaving out
   // this club's own registration so it never sees its own seats as taken.
@@ -709,8 +773,29 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
       prefillResponses: experience ? clubDirectoryPrefillResponses(experience.form.definition, identity) : {},
     },
     roster,
+    // The team rules (#809); null on an event without teams.
+    teams: {
+      multiple: multipleTeams,
+      settings: teamSettings,
+      registered: registeredTeams.map((row) => ({
+        teamKey: row.teamKey,
+        teamName: row.teamName ?? "",
+        confirmationCode: row.registration.confirmationCode,
+        status: row.registration.status,
+        attendeeCount: row.registration._count.attendees,
+        locationName: row.registration.location?.name ?? null,
+      })),
+      drafts: savedDrafts.map((row) => ({
+        draftKey: row.draftKey,
+        teamName: row.teamName,
+        updatedAt: row.updatedAt.toISOString(),
+        selectedCount: row.selectedMemberIds.length,
+      })),
+    },
     registration: clubRegistration
       ? {
+        teamKey: clubRegistration.teamKey,
+        teamName: clubRegistration.teamName ?? "",
         confirmationCode: clubRegistration.registration.confirmationCode,
         status: clubRegistration.registration.status,
         submittedAt: clubRegistration.createdAt.toISOString(),
@@ -771,6 +856,8 @@ export async function getClubEventWorkspace(organizationId: string, eventId: str
       : null,
     draft: draft
       ? {
+        draftKey: draft.draftKey,
+        teamName: draft.teamName,
         selectedMemberIds: draft.selectedMemberIds,
         guests: guestsFromJson(draft.guests),
         // The locked club (and a missing church) come from the directory,
@@ -806,6 +893,10 @@ export type ClubRegistrationDraftInput = {
   rosterAgeSaveOff?: string[];
   /** The location picked so far (#659). A draft reserves no seats; it is checked again on restore. */
   locationId?: string | null;
+  /** Which of the club's drafts this is (#809): `''` on an event without teams, else the id the page picked for this team. */
+  draftKey?: string;
+  /** The team name typed so far (#809); only kept on an event with teams. */
+  teamName?: string;
   /** The revision this save was based on (0 when the page loaded with no draft). An older one is refused (#659). */
   baseRevision: number;
   /** Names one logical snapshot; a retry of the same snapshot reuses it, so a save whose response was lost isn't a conflict (#659). */
@@ -814,6 +905,20 @@ export type ClubRegistrationDraftInput = {
 
 /** Never an attendee account credited for a staff action (#442): `userId` for a staff "act as" director. */
 export type ClubRegistrationActor = { accountId: string } | { userId: string; actAsId: string };
+
+/**
+ * The draft a request names, against what the event allows (#809): an event with several teams per club needs the id the
+ * page picked for the team, and one without has only the empty key, so a stray id can never start a second draft there.
+ */
+export function clubDraftKey(settings: Pick<TeamSettings, "allowMultipleTeams"> | null, requested: string | undefined): string {
+  if (!settings?.allowMultipleTeams) {
+    if (requested) throw new ClubRegistrationError("TEAM_INVALID", "This event takes one registration per club.");
+    return NO_TEAM_KEY;
+  }
+  const parsed = draftKeySchema.safeParse(requested ?? "");
+  if (!parsed.success) throw new ClubRegistrationError("TEAM_INVALID", parsed.error.issues[0]?.message ?? "Refresh the page and start the team again.");
+  return parsed.data;
+}
 
 /** Saves the director's work in progress. People are roster IDs from this club only. */
 export async function saveClubRegistrationDraft(
@@ -826,6 +931,8 @@ export async function saveClubRegistrationDraft(
     throw new ClubRegistrationError("DRAFT_TOO_LARGE", "This draft is too large to save.");
   }
   const event = await requireClubEvent(eventId);
+  const teamSettings = await getTeamSettings(eventId);
+  const draftKey = clubDraftKey(teamSettings, input.draftKey);
   const members = await activeRosterFor(getPrisma(), organizationId, event);
   const allowed = new Set(members.map((member) => member.id));
   if (input.selectedMemberIds.some((memberId) => !allowed.has(memberId))) {
@@ -860,6 +967,7 @@ export async function saveClubRegistrationDraft(
     guests: input.guests as Prisma.InputJsonValue,
     responses: input.responses as Prisma.InputJsonValue,
     attendeeResponses: attendeeResponses as Prisma.InputJsonValue,
+    teamName: teamSettings?.allowMultipleTeams ? (input.teamName ?? "").slice(0, 200) : "",
     ...("accountId" in actor ? { updatedByAccountId: actor.accountId, updatedByUserId: null } : { updatedByUserId: actor.userId, updatedByAccountId: null }),
   };
   // Only a location of this event is kept; anything else is dropped, not an error.
@@ -867,7 +975,7 @@ export async function saveClubRegistrationDraft(
     ? await getPrisma().eventLocation.findFirst({ where: { id: input.locationId, eventId, isActive: true }, select: { id: true } })
     : null;
   const fields = { ...data, locationId: location?.id ?? null, lastSaveId: input.saveId };
-  const where = { eventId_organizationId: { eventId, organizationId } };
+  const where = { eventId_organizationId_draftKey: { eventId, organizationId, draftKey } };
   const select = { updatedAt: true, revision: true, lastSaveId: true } as const;
   const done = (draft: { updatedAt: Date; revision: number }) => ({ updatedAt: draft.updatedAt.toISOString(), revision: draft.revision });
   const conflict = new ClubRegistrationError(
@@ -897,7 +1005,7 @@ export async function saveClubRegistrationDraft(
   // existed and was submitted or deleted, and must not come back (#659).
   if (input.baseRevision !== 0) throw conflict;
   try {
-    return done(await getPrisma().clubRegistrationDraft.create({ data: { eventId, organizationId, ...fields, revision: 1 }, select }));
+    return done(await getPrisma().clubRegistrationDraft.create({ data: { eventId, organizationId, draftKey, ...fields, revision: 1 }, select }));
   } catch (error) {
     if ((error as { code?: string } | null)?.code !== "P2002") throw error;
     // Another tab created the first draft at the same moment, or this save landed and its response was lost.
@@ -912,7 +1020,7 @@ export async function saveClubRegistrationDraft(
  * transaction: names and age are overwritten from the roster, so the client
  * can only choose who, never change who they are.
  */
-export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistrationActor): ClubSubmissionContext["prepareAttendees"] {
+export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistrationActor, draftKey: string = NO_TEAM_KEY): ClubSubmissionContext["prepareAttendees"] {
   return async (tx, { definition, event, input }) => {
     const problem = clubFormProblem(definition);
     if (problem) throw new PublicRegistrationError("CLUB_REGISTRATION_UNAVAILABLE", problem);
@@ -925,7 +1033,7 @@ export function clubAttendeePreparer(organizationId: string, actor?: ClubRegistr
     // Extra people come from the saved draft, never the request, so the
     // client can only choose them, not change who they are (#388).
     const draft = await tx.clubRegistrationDraft.findUnique({
-      where: { eventId_organizationId: { eventId: event.id, organizationId } },
+      where: { eventId_organizationId_draftKey: { eventId: event.id, organizationId, draftKey } },
       select: { guests: true, rosterAges: true, rosterAgeSaveOff: true, honorSelections: true },
     });
     const draftRosterAges = rosterAgesFromJson(draft?.rosterAges);
@@ -1017,18 +1125,24 @@ export async function submitClubRegistration(
   actor: ClubRegistrationActor,
   input: PublicRegistrationInput,
   now = new Date(),
-  options: { locationId?: string | null; report?: ClubSubmissionContext["report"] } = {},
+  options: { locationId?: string | null; report?: ClubSubmissionContext["report"]; teamName?: string | null; draftKey?: string } = {},
 ) {
   const event = await requireClubEvent(eventId);
   const form = await publishedClubForm(event.id);
   if (!form) throw new ClubRegistrationError("FORM_UNAVAILABLE", "The event has no published registration form yet.");
+  // The team (#809): named when the event lets a club register several, and never otherwise.
+  const teamSettings = await getTeamSettings(eventId);
+  const team = resolveTeamName(teamSettings, options.teamName);
+  if (!team.ok) throw new ClubRegistrationError("TEAM_INVALID", team.message);
+  const draftKey = clubDraftKey(teamSettings, options.draftKey);
   return submitPublicRegistration(event.slug, form.slug, input, now, {
     organizationId,
     ...clubSubmissionAttribution(actor),
+    ...(team.teamName !== null ? { team: { name: team.teamName, key: team.teamKey, draftKey } } : {}),
     // Picked, locked, and capacity-checked inside the submit transaction (#413).
     locationId: options.locationId ?? null,
     ...(options.report ? { report: options.report } : {}),
-    prepareAttendees: clubAttendeePreparer(organizationId, actor),
+    prepareAttendees: clubAttendeePreparer(organizationId, actor, draftKey),
   });
 }
 
@@ -1109,8 +1223,9 @@ export async function amendClubRegistration(
   now = new Date(),
 ) {
   const event = await requireClubEvent(eventId);
+  // Which of the club's registrations is being changed (#809): its team's key, the empty key on an event without teams.
   const clubRegistration = await getPrisma().clubEventRegistration.findUnique({
-    where: { eventId_organizationId: { eventId, organizationId } },
+    where: { eventId_organizationId_teamKey: { eventId, organizationId, teamKey: input.teamKey ?? NO_TEAM_KEY } },
     select: { registrationId: true, registration: { select: { location: { select: clubLocationSelect } } } },
   });
   // The edit window follows the registration's own location when it has one (#413).

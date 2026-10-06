@@ -163,7 +163,7 @@ describe("club pass repository (#412)", () => {
     );
 
     expect(findUnique).toHaveBeenCalledWith(expect.objectContaining({
-      where: { eventId_organizationId: { eventId: "event_123", organizationId: "org_1" } },
+      where: { eventId_organizationId_teamKey: { eventId: "event_123", organizationId: "org_1", teamKey: "" } },
     }));
     expect(verifyClubPassToken(pass!.token, {
       expectedEventId: "event_123",

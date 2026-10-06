@@ -69,6 +69,7 @@ import { LodgingError } from "@/modules/lodging/errors";
 import { lodgingTransactionTimeoutMs } from "@/modules/lodging/service";
 import { getPublicLodgingOffer, planRegistrationLodging, recordRegistrationLodging, type LodgingPlan, type PublicLodgingOffer } from "@/modules/lodging/registration-form";
 import { eventStartDate, planPublicResponsibleAdults } from "@/modules/guardian-authority/domain";
+import { teamNameTakenMessage } from "@/modules/club-teams/domain";
 
 export type PublicRegistrationErrorCode =
   | "FORM_NOT_FOUND"
@@ -82,6 +83,7 @@ export type PublicRegistrationErrorCode =
   | "SUBMISSION_CONFLICT"
   | "CLUB_REGISTRATION_UNAVAILABLE"
   | "CLUB_ALREADY_REGISTERED"
+  | "CLUB_TEAM_NAME_TAKEN"
   | "CLUB_ATTENDEES_INVALID"
   | "GROUP_REGISTRATION_UNAVAILABLE"
   | "GROUP_ATTENDEES_INVALID";
@@ -94,6 +96,12 @@ export type PublicRegistrationErrorCode =
  */
 export type ClubSubmissionContext = {
   organizationId: string;
+  /**
+   * The team being registered (#809), on an event that lets a club register several. `name` and `key` are the team's
+   * cleaned name and its normalized key, `draftKey` the club's draft this submission replaces. Absent on every other
+   * event: the registration takes the empty team key, the one-per-club rule it has always had.
+   */
+  team?: { name: string; key: string; draftKey: string };
   /** Never both: a staff "act as" director (#442) sets `submittedByUserId`, never an attendee account. */
   submittedByAccountId?: string;
   submittedByUserId?: string;
@@ -719,14 +727,26 @@ async function createPublicRegistrationTransaction(
   if (replay) return replay;
   if (club) {
     const existingClubRegistration = await tx.clubEventRegistration.findUnique({
-      where: { eventId_organizationId: { eventId: form.eventId, organizationId: club.organizationId } },
+      where: { eventId_organizationId_teamKey: { eventId: form.eventId, organizationId: club.organizationId, teamKey: club.team?.key ?? "" } },
       select: { id: true },
     });
     if (existingClubRegistration) {
       throw new PublicRegistrationError(
         "CLUB_ALREADY_REGISTERED",
-        "Your club is already registered for this event.",
+        club.team
+          ? `Your club already registered a team named "${club.team.name}" for this event. Choose a different team name.`
+          : "Your club is already registered for this event.",
       );
+    }
+    if (club.team) {
+      // A team name is unique within the whole event, whichever club has it. Never names the other club.
+      const nameTaken = await tx.clubEventRegistration.findFirst({
+        where: { eventId: form.eventId, teamKey: club.team.key },
+        select: { id: true },
+      });
+      if (nameTaken) {
+        throw new PublicRegistrationError("CLUB_TEAM_NAME_TAKEN", teamNameTakenMessage(club.team.name));
+      }
     }
   }
 
@@ -1282,17 +1302,28 @@ async function createPublicRegistrationTransaction(
     });
   }
   if (club) {
-    await tx.clubEventRegistration.create({
-      data: {
-        eventId: form.eventId,
-        organizationId: club.organizationId,
-        registrationId: registration.id,
-        submittedByAccountId: club.submittedByAccountId ?? null,
-        submittedByUserId: club.submittedByUserId ?? null,
-      },
-    });
+    try {
+      await tx.clubEventRegistration.create({
+        data: {
+          eventId: form.eventId,
+          organizationId: club.organizationId,
+          registrationId: registration.id,
+          // Only a team has a name and a key; every other registration takes the column defaults (null, '') as ever.
+          ...(club.team ? { teamName: club.team.name, teamKey: club.team.key } : {}),
+          submittedByAccountId: club.submittedByAccountId ?? null,
+          submittedByUserId: club.submittedByUserId ?? null,
+        },
+      });
+    } catch (error) {
+      // Two clubs choosing the same team name at the same moment: the event-wide unique index decides (#809).
+      if (club.team && error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new PublicRegistrationError("CLUB_TEAM_NAME_TAKEN", teamNameTakenMessage(club.team.name));
+      }
+      throw error;
+    }
     await tx.clubRegistrationDraft.deleteMany({
-      where: { eventId: form.eventId, organizationId: club.organizationId },
+      // The team's own draft (#809); an event without teams has only the one.
+      where: { eventId: form.eventId, organizationId: club.organizationId, ...(club.team ? { draftKey: club.team.draftKey } : {}) },
     });
     if (isWaitlisted && registrationLocationId) {
       // After the club link exists, so the record names the club.
@@ -1378,6 +1409,7 @@ async function createPublicRegistrationTransaction(
         ...(club
           ? {
               clubOrganizationId: club.organizationId,
+              ...(club.team ? { teamName: club.team.name } : {}),
               ...(registrationLocationId ? { locationId: registrationLocationId } : {}),
               ...(club.submittedByAccountId ? { submittedByAttendeeAccountId: club.submittedByAccountId } : {}),
               ...(club.submittedByUserId ? { submittedByStaffUserId: club.submittedByUserId } : {}),

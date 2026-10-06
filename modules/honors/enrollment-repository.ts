@@ -65,9 +65,10 @@ const registrationForLoading = {
 const eventForLoading = { id: true, isPublished: true, endsAt: true, timezone: true, registrationOpensOn: true, registrationClosesOn: true, waitlistEnabled: true } satisfies Prisma.EventSelect;
 
 async function loadRegistration(client: Prisma.TransactionClient, owner: SeatOwner, eventId: string) {
+  // Class picking works on a club's one registration (#809: an event with several teams per club cannot have classes).
   const clubRegistration = owner.kind === "club"
     ? await client.clubEventRegistration.findUnique({
-      where: { eventId_organizationId: { eventId, organizationId: owner.organizationId } },
+      where: { eventId_organizationId_teamKey: { eventId, organizationId: owner.organizationId, teamKey: "" } },
       select: { event: { select: eventForLoading }, registration: { select: registrationForLoading } },
     })
     : await client.groupEventRegistration.findFirst({
@@ -460,7 +461,7 @@ export async function saveRegistrationHonorPicks(
   if (Object.values(picks).every((ids) => ids.length === 0)) return { saved: 0 };
   const prisma = getPrisma();
   const clubRegistration = await prisma.clubEventRegistration.findUnique({
-    where: { eventId_organizationId: { eventId, organizationId } },
+    where: { eventId_organizationId_teamKey: { eventId, organizationId, teamKey: "" } },
     select: { registration: { select: { attendees: { orderBy: { position: "asc" }, select: { id: true, profileSnapshot: true } } } } },
   });
   if (!clubRegistration) throw new ClassSelectionError("NOT_REGISTERED", "Register your club for this event before choosing classes.");

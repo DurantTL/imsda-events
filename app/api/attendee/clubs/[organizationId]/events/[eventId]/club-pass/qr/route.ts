@@ -31,12 +31,13 @@ function privateJson(body: unknown, init?: ResponseInit) {
  * check-in (Q1, #412). Same roster access gate as the club event page —
  * a director from another club can never reach this organization's pass.
  */
-async function getHandler(_request: Request, context: Context) {
+async function getHandler(request: Request, context: Context) {
   try {
     const { organizationId, eventId } = await context.params;
     await requireRosterAccess(organizationId);
 
-    const pass = await createDirectorClubPass(organizationId, eventId);
+    // Which of the club's teams (#809); omitted on an event without teams.
+    const pass = await createDirectorClubPass(organizationId, eventId, new Date(), new URL(request.url).searchParams.get("team") ?? "");
     if (!pass) {
       return privateJson({
         error: "CLUB_PASS_UNAVAILABLE",

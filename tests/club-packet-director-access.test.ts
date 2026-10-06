@@ -40,7 +40,7 @@ describe("loadDirectorClubPacket", () => {
     });
     await loadDirectorClubPacket("org-b", "event-1");
     expect(mocks.getRosterAccessState).toHaveBeenCalledWith("org-b");
-    expect(mocks.getClubPacketData).toHaveBeenCalledWith("event-1", "org-a");
+    expect(mocks.getClubPacketData).toHaveBeenCalledWith("event-1", "org-a", "");
     expect(mocks.getClubPacketData).not.toHaveBeenCalledWith("event-1", "org-b");
   });
 
@@ -62,7 +62,7 @@ describe("loadDirectorClubPacket", () => {
       state: "OPEN", club: clubA, capabilities: { roster: true }, accountId: "account-1", sessionId: "session-1",
     });
     await expect(loadDirectorClubPacket("org-a", "event-1")).resolves.toMatchObject(packetA);
-    expect(mocks.getClubPacketData).toHaveBeenCalledWith("event-1", "org-a");
+    expect(mocks.getClubPacketData).toHaveBeenCalledWith("event-1", "org-a", "");
   });
 
   it("never carries what the church owes to the director, only the per-person price (#621)", async () => {

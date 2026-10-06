@@ -271,6 +271,9 @@ export type PublicRegistrationFormProps = {
     lockedRegistrationFieldKeys?: string[];
     /** The event location the club picked (#413), sent beside the answers; the server checks it again. */
     locationId?: string | null;
+    /** The team being registered (#809), on an event that lets a club register several: its name and the draft it replaces, sent beside the answers. */
+    teamName?: string | null;
+    draftKey?: string | null;
     /** Classes picked under each person's details (#618, #650), by attendee client id; saved by the server after the registration. */
     honorSelections?: Record<string, string[]>;
     submitUrl: string;
@@ -2847,6 +2850,8 @@ export function PublicRegistrationForm({
           ...(responsibleAdultMinors.length > 0 ? { responsibleAdults: responsibleAdultValues } : {}),
           ...(lodgingSubmission ? { lodging: lodgingSubmission } : {}),
           ...(club?.locationId ? { locationId: club.locationId } : {}),
+          ...(club?.teamName ? { teamName: club.teamName } : {}),
+          ...(club?.draftKey ? { draftKey: club.draftKey } : {}),
           ...(club?.honorSelections && Object.keys(club.honorSelections).length > 0 ? { honorSelections: club.honorSelections } : {}),
           ...(group?.locationId ? { locationId: group.locationId } : {}),
           ...(Object.keys(groupPicks).length > 0 ? { honorSelections: groupPicks } : {}),

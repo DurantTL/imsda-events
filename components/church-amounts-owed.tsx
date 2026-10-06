@@ -55,7 +55,9 @@ export function ChurchAmountsOwed({
   const notBilled = sorted.filter((row) => !row.isBilled);
   // Registrations with no club (#606: Leadership Weekend, Outdoor School) are grouped by the church or organization the form names.
   const hasIndividuals = rows.some((row) => row.kind === "INDIVIDUAL");
-  const unit = hasIndividuals ? "registration" : "club";
+  // A club with several teams (#809) has a billed row for each, so they are counted as registrations too.
+  const hasTeams = rows.some((row) => row.teamName);
+  const unit = hasIndividuals || hasTeams ? "registration" : "club";
   return (
     <section className="page-stack">
       <div className="page-intro">
@@ -84,7 +86,7 @@ export function ChurchAmountsOwed({
         </article>
         <article className="finance-stat">
           <span><Building2 aria-hidden="true" size={18} /></span>
-          <small>{hasIndividuals ? "Registrations billed" : "Clubs billed"}</small>
+          <small>{hasIndividuals || hasTeams ? "Registrations billed" : "Clubs billed"}</small>
           <strong>{summary.billedClubCount}</strong>
         </article>
         {groupRows.length > 0 && (
@@ -109,7 +111,7 @@ export function ChurchAmountsOwed({
       </section>
       {summary.churches.length > 0 && (
         <section className="panel finance-list" aria-label="Estimated amount owed by church">
-          <div className="finance-row finance-head"><span>{hasIndividuals ? "Church or organization" : "Church"}</span><span>{hasIndividuals ? "Registrations billed" : "Clubs billed"}</span><span /><span>Estimated amount owed</span></div>
+          <div className="finance-row finance-head"><span>{hasIndividuals ? "Church or organization" : "Church"}</span><span>{hasIndividuals || hasTeams ? "Registrations billed" : "Clubs billed"}</span><span /><span>Estimated amount owed</span></div>
           {summary.churches.map((church) => (
             <div className="finance-row" key={church.churchKey}>
               <span><strong>{church.churchName}</strong></span>
@@ -124,7 +126,7 @@ export function ChurchAmountsOwed({
         <div className="finance-row finance-head"><span>{hasIndividuals ? "Registrant or club / church or organization" : "Club / church"}</span><span>Confirmation</span><span>Attendees</span><span>Estimated amount owed</span></div>
         {billed.map((row) => (
           <div className="finance-row" key={`${row.organizationId}-${row.confirmationCode}`}>
-            <span><strong>{row.organizationName}</strong><small>{row.churchName ?? NO_CHURCH_ON_FILE} · {row.status.toLowerCase()}{row.locationName ? ` · ${row.locationName}` : ""}</small></span>
+            <span><strong>{row.organizationName}</strong><small>{row.teamName ? `Team ${row.teamName} · ` : ""}{row.churchName ?? NO_CHURCH_ON_FILE} · {row.status.toLowerCase()}{row.locationName ? ` · ${row.locationName}` : ""}</small></span>
             <span>{row.confirmationCode}</span>
             <span>{row.attendeeCount} {row.attendeeCount === 1 ? "person" : "people"}</span>
             <span>{money(row.amountOwedCents)}</span>
@@ -188,7 +190,7 @@ export function ChurchAmountsOwed({
           <div className="finance-row finance-head"><span>{hasIndividuals ? "Waitlisted or cancelled registration" : "Waitlisted or cancelled club"}</span><span>Confirmation</span><span>Attendees</span><span>Owed</span></div>
           {notBilled.map((row) => (
             <div className="finance-row" key={`${row.organizationId}-${row.confirmationCode}`}>
-              <span><strong>{row.organizationName}</strong><small>{row.churchName ?? NO_CHURCH_ON_FILE} · {notBilledLabel(row.status)}{row.locationName ? ` · ${row.locationName}` : ""}</small></span>
+              <span><strong>{row.organizationName}</strong><small>{row.teamName ? `Team ${row.teamName} · ` : ""}{row.churchName ?? NO_CHURCH_ON_FILE} · {notBilledLabel(row.status)}{row.locationName ? ` · ${row.locationName}` : ""}</small></span>
               <span>{row.confirmationCode}</span>
               <span>{row.attendeeCount} {row.attendeeCount === 1 ? "person" : "people"}</span>
               <span>{money(0)}</span>

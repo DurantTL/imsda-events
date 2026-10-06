@@ -3,6 +3,7 @@ import "server-only";
 import { getPrisma } from "@/lib/prisma";
 import { effectiveLocationDates } from "@/modules/event-locations/domain";
 import { getClubEventRecords } from "@/modules/reporting/club-event-reports-repository";
+import { assignmentKey } from "@/modules/reporting/club-event-reports";
 import { buildClubPacket, withClubPacketAssignment, type ClubPacket } from "@/modules/reporting/club-packet";
 
 export const CONFERENCE_NAME = "IMSDA Events";
@@ -14,7 +15,7 @@ export const CONFERENCE_NAME = "IMSDA Events";
  * when the club has no active registration for this event, so a stale or
  * mistyped organization id never renders an empty packet.
  */
-export async function getClubPacketData(eventId: string, organizationId: string): Promise<ClubPacket | null> {
+export async function getClubPacketData(eventId: string, organizationId: string, teamKey = ""): Promise<ClubPacket | null> {
   const [event, { clubs, assignments, earlyBirdDeadline }] = await Promise.all([
     getPrisma().event.findUnique({
       where: { id: eventId },
@@ -23,7 +24,8 @@ export async function getClubPacketData(eventId: string, organizationId: string)
     getClubEventRecords(eventId),
   ]);
   if (!event) return null;
-  const club = clubs.find((candidate) => candidate.organizationId === organizationId);
+  // One club's registration: with teams (#809) a club has several, so the team's key picks the one.
+  const club = clubs.find((candidate) => candidate.organizationId === organizationId && (candidate.teamKey ?? "") === teamKey);
   if (!club) return null;
 
   // The location the club registered at (#413): its name, address, and dates
@@ -49,5 +51,5 @@ export async function getClubPacketData(eventId: string, organizationId: string)
   if (location && dates) {
     packet.club.location = { name: location.name, address: location.address, firstDay: dates.firstDay, lastDay: dates.lastDay };
   }
-  return withClubPacketAssignment(packet, assignments.get(organizationId) ?? null);
+  return withClubPacketAssignment(packet, assignments.get(assignmentKey(organizationId, teamKey)) ?? null);
 }

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   draftFind: vi.fn(),
   draftCreate: vi.fn(),
   locationFindFirst: vi.fn(),
+  teamSettingsFind: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -24,6 +25,7 @@ vi.mock("@/lib/prisma", () => ({
     attendeePasskey: { count: async () => 0 },
     platformSettings: { findUnique: async () => ({ passkeyRpId: null }) },
     event: { findFirst: mocks.eventFindFirst },
+    eventTeamSettings: { findUnique: mocks.teamSettingsFind },
     clubRosterMember: { findMany: mocks.rosterFindMany },
     clubRegistrationDraft: {
       update: mocks.draftUpdate,
@@ -83,6 +85,8 @@ beforeEach(() => {
   mocks.draftFind.mockResolvedValue({ id: "draft-1" });
   mocks.draftCreate.mockResolvedValue({ updatedAt: new Date("2026-10-01T00:00:00Z"), revision: 1, lastSaveId: "save-00000001" });
   mocks.locationFindFirst.mockResolvedValue({ id: "loc-1" });
+  // An event without team rules, unless a test says otherwise.
+  mocks.teamSettingsFind.mockResolvedValue(null);
 });
 
 describe("club registration routes", () => {
@@ -207,7 +211,7 @@ describe("club registration routes", () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({ revision: 2 });
       const call = mocks.draftUpdate.mock.calls[0][0];
-      expect(call.where).toMatchObject({ eventId_organizationId: { eventId: "event-1", organizationId: "club-a" }, revision: 1 });
+      expect(call.where).toMatchObject({ eventId_organizationId_draftKey: { eventId: "event-1", organizationId: "club-a", draftKey: "" }, revision: 1 });
       expect(call.data.revision).toEqual({ increment: 1 });
       expect(call.data.lastSaveId).toBe("save-00000001");
     });
@@ -312,5 +316,67 @@ describe("club registration routes", () => {
     mocks.rejectCrossOriginRequest.mockReturnValue(Response.json({}, { status: 403 }));
     expect((await SUBMIT(request("POST", submission), ctx("club-a"))).status).toBe(403);
     expect(mocks.getCurrentAttendee).not.toHaveBeenCalled();
+  });
+});
+
+describe("club registration routes for named teams (#809)", () => {
+  const teamEvent = { eventId: "event-1", allowMultipleTeams: true, minTeamMembers: null, maxTeamMembers: null, maxAlternates: 0, ageAsOf: null, maxMemberAge: null, booksLine: "", levelInfo: [], createdAt: new Date(), updatedAt: new Date() };
+  const body = { selectedMemberIds: ["m1"], responses: {}, attendeeResponses: {} };
+
+  beforeEach(() => mocks.teamSettingsFind.mockResolvedValue(teamEvent));
+
+  it("saves each team's draft under the id the page picked, with the name typed so far", async () => {
+    const response = await PUT_DRAFT(request("PUT", { ...body, draftKey: "a1b2c3d4e5f60718", teamName: "Bible Bees" }), ctx("club-a"));
+    expect(response.status).toBe(200);
+    const call = mocks.draftUpdate.mock.calls[0]![0];
+    expect(call.where).toMatchObject({ eventId_organizationId_draftKey: { eventId: "event-1", organizationId: "club-a", draftKey: "a1b2c3d4e5f60718" } });
+    expect(call.data.teamName).toBe("Bible Bees");
+  });
+
+  it("refuses a team draft with no id, or a malformed one", async () => {
+    for (const draftKey of [undefined, "short", "has spaces!!"]) {
+      const response = await PUT_DRAFT(request("PUT", { ...body, ...(draftKey ? { draftKey } : {}), teamName: "Bible Bees" }), ctx("club-a"));
+      expect(response.status).toBe(422);
+      await expect(response.json()).resolves.toMatchObject({ error: "TEAM_INVALID" });
+    }
+    expect(mocks.draftUpdate).not.toHaveBeenCalled();
+  });
+
+  it("refuses a draft id on an event that takes one registration per club", async () => {
+    mocks.teamSettingsFind.mockResolvedValue(null);
+    const response = await PUT_DRAFT(request("PUT", { ...body, draftKey: "a1b2c3d4e5f60718" }), ctx("club-a"));
+    expect(response.status).toBe(422);
+    expect(mocks.draftUpdate).not.toHaveBeenCalled();
+  });
+
+  it("sends the team's name and draft id beside the answers, never inside them", async () => {
+    await SUBMIT(request("POST", { ...submission, teamName: "Bible Bees", draftKey: "a1b2c3d4e5f60718" }), ctx("club-a"));
+    const [, , , input, , options] = mocks.submitClubRegistration.mock.calls[0]!;
+    expect(options).toMatchObject({ teamName: "Bible Bees", draftKey: "a1b2c3d4e5f60718" });
+    expect(input).not.toHaveProperty("teamName");
+  });
+
+  it("sends no team for a registration that names none", async () => {
+    await SUBMIT(request("POST", submission), ctx("club-a"));
+    const [, , , , , options] = mocks.submitClubRegistration.mock.calls[0]!;
+    expect(options).toMatchObject({ teamName: null });
+    expect(options).not.toHaveProperty("draftKey");
+  });
+
+  it("answers a taken team name with a clear 409", async () => {
+    const { PublicRegistrationError } = await import("@/modules/forms/public-repository");
+    mocks.submitClubRegistration.mockRejectedValue(new PublicRegistrationError("CLUB_TEAM_NAME_TAKEN", 'A team named "Bible Bees" is already registered for this event. Choose a different team name.'));
+    const response = await SUBMIT(request("POST", { ...submission, teamName: "Bible Bees", draftKey: "a1b2c3d4e5f60718" }), ctx("club-a"));
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({ error: "CLUB_TEAM_NAME_TAKEN", message: expect.stringContaining("already registered") });
+  });
+
+  it("edits the team the request names", async () => {
+    const edit = {
+      clientRequestId: "6f1d3c1a-1c55-4c43-8e1c-2f6f6f4a9a10", expectedUpdatedAt: "2026-10-15T12:00:00.000Z",
+      selectedMemberIds: ["m1"], keptGuestIds: [], keptOffRosterAttendeeIds: [], newGuests: [], attendeeResponses: {},
+    };
+    expect((await EDIT(request("PATCH", { ...edit, teamKey: "bible bees" }), ctx("club-a"))).status).toBe(200);
+    expect(mocks.amendClubRegistration.mock.calls[0]![3]).toMatchObject({ teamKey: "bible bees" });
   });
 });

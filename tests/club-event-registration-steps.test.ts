@@ -33,6 +33,9 @@ function event(overrides: Partial<ClubEventSummary> & { id: string }): ClubEvent
     draft: null,
     registeredLocation: null,
     hasLocations: false,
+    multipleTeams: false,
+    teams: [],
+    drafts: [],
     ...overrides,
   };
 }
