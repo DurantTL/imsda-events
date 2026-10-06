@@ -3,17 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: () => { throw new Error("not used"); } }));
 
-import { demandExcluding, type Client } from "@/modules/lodging/preferences-service";
+import { addWaitingDemand, demandExcluding, demandFromGroups, loadDemandGroups, type Client } from "@/modules/lodging/preferences-service";
 import { categoryFits, type CategoryCapacity } from "@/modules/lodging/preferences-domain";
 
-const NIGHTS = ["2027-06-15", "2027-06-16"];
+const NIGHTS = ["2027-06-15", "2027-06-16", "2027-06-17"];
 const capacity = (people: number): CategoryCapacity => ({ perNight: Object.fromEntries(NIGHTS.map((night) => [night, people])), unitsInService: 4, groundLevelUnits: 0, unitCapacity: 10 });
 const day = (value: string) => new Date(`${value}T00:00:00Z`);
 
 type Fixture = {
-  requests?: Array<{ registrationId: string; category: string | null; partySize: number }>;
-  placed?: Array<{ registrationId: string | null; people: number; category: string | null }>;
-  entries?: Array<{ id?: string; registrationId: string; category: string; partySize: number; status: string; offerExpiresAt?: Date | null }>;
+  requests?: Array<{ registrationId: string; category: string | null; partySize: number; firstNight?: string; lastNight?: string }>;
+  placed?: Array<{ registrationId: string | null; people: number; category: string | null; firstNight?: string; lastNight?: string }>;
+  entries?: Array<{ registrationId: string; category: string; partySize: number; status: string; offerExpiresAt?: Date | null; registrationStatus?: string; firstNight?: string; lastNight?: string }>;
 };
 
 function client(fixture: Fixture) {
@@ -21,26 +21,28 @@ function client(fixture: Fixture) {
     eventLodgingRequest: {
       findMany: vi.fn(async () => (fixture.requests ?? []).map((request, index) => ({
         id: `request-${index}`, registrationId: request.registrationId, createdAt: new Date(),
-        versions: [{ version: 1, category: request.category, firstNight: null, lastNight: null, partySize: request.partySize, groundFloorNeeded: false, accessibleRoomNeeded: false, privateRoomRequested: false, householdPreference: "TOGETHER", source: "STAFF", afterDeadline: false, createdAt: new Date() }],
+        versions: [{ version: 1, category: request.category, firstNight: request.firstNight ? day(request.firstNight) : null, lastNight: request.lastNight ? day(request.lastNight) : null, partySize: request.partySize, groundFloorNeeded: false, accessibleRoomNeeded: false, privateRoomRequested: false, householdPreference: "TOGETHER", source: "STAFF", afterDeadline: false, createdAt: new Date() }],
       }))),
     },
     eventLodgingAssignment: {
-      findMany: vi.fn(async () => (fixture.placed ?? []).map((row) => ({
-        attendeeId: row.registrationId ? `attendee-of-${row.registrationId}` : null,
-        people: row.people, firstNight: day(NIGHTS[0]!), lastNight: day(NIGHTS[1]!),
+      findMany: vi.fn(async () => (fixture.placed ?? []).map((row, index) => ({
+        id: `assignment-${index}`,
+        people: row.people, firstNight: day(row.firstNight ?? NIGHTS[0]!), lastNight: day(row.lastNight ?? NIGHTS[2]!),
         eventUnit: { unit: { category: row.category } },
         attendee: row.registrationId ? { registrationId: row.registrationId } : null,
       }))),
     },
     eventLodgingWaitlistEntry: {
-      findMany: vi.fn(async () => (fixture.entries ?? []).map((entry, index) => ({
-        id: entry.id ?? `entry-${index}`, firstNight: null, lastNight: null, offerExpiresAt: entry.offerExpiresAt ?? null, ...entry,
-      }))),
+      // The query asks for active registrations only; the fake applies the same filter.
+      findMany: vi.fn(async ({ where }: { where: { registration?: { status: { in: string[] } } } }) => (fixture.entries ?? [])
+        .filter((entry) => !where.registration || where.registration.status.in.includes(entry.registrationStatus ?? "CONFIRMED"))
+        .map((entry, index) => ({ id: `entry-${index}`, firstNight: entry.firstNight ? day(entry.firstNight) : null, lastNight: entry.lastNight ? day(entry.lastNight) : null, offerExpiresAt: entry.offerExpiresAt ?? null, ...entry }))),
     },
   } as unknown as Client;
 }
 
 const demandFor = (fixture: Fixture, registrationId = "__none__", now = new Date("2027-05-20T12:00:00Z")) => demandExcluding(client(fixture), "event-1", NIGHTS, registrationId, { now });
+const at = (demand: Awaited<ReturnType<typeof demandExcluding>>, category: string, night = NIGHTS[0]!) => demand.get(category as never)?.get(night) ?? 0;
 const fits = (demand: Awaited<ReturnType<typeof demandExcluding>>, partySize: number, category = "DORM_ROOM") => categoryFits({ capacity: capacity(40), demand: demand.get(category as never), nights: NIGHTS, partySize }).fits;
 
 describe("one counting rule for a category's free space (#200)", () => {
@@ -56,41 +58,79 @@ describe("one counting rule for a category's free space (#200)", () => {
     expect(fits(demand, 31)).toBe(false);
   });
 
-  it("counts a placed person who has a request once, as the request, and one without a request as a placement", async () => {
-    const backed = await demandFor({ requests: [{ registrationId: "reg-1", category: "DORM_ROOM", partySize: 1 }], placed: [{ registrationId: "reg-1", people: 1, category: "DORM_ROOM" }] });
-    expect(backed.get("DORM_ROOM" as never)?.get(NIGHTS[0]!)).toBe(1);
-    const unbacked = await demandFor({ placed: [{ registrationId: "reg-2", people: 1, category: "DORM_ROOM" }] });
-    expect(unbacked.get("DORM_ROOM" as never)?.get(NIGHTS[0]!)).toBe(1);
-    const noCategoryRequest = await demandFor({ requests: [{ registrationId: "reg-3", category: null, partySize: 2 }], placed: [{ registrationId: "reg-3", people: 1, category: "DORM_ROOM" }] });
-    expect(noCategoryRequest.get("DORM_ROOM" as never)?.get(NIGHTS[0]!)).toBe(1);
+  it("counts a request, the same people placed in that category and an entry for them once", async () => {
+    const demand = await demandFor({
+      requests: [{ registrationId: "r", category: "DORM_ROOM", partySize: 2 }],
+      placed: [{ registrationId: "r", people: 2, category: "DORM_ROOM" }],
+      entries: [{ registrationId: "r", category: "DORM_ROOM", partySize: 2, status: "ACCEPTED" }],
+    });
+    expect(at(demand, "DORM_ROOM")).toBe(2);
   });
 
-  it("counts a live offer and an accepted entry once, never an expired offer, and never twice when a request already counts it", async () => {
+  it("still counts a cabin placement after a promotion from a dorm request that was not changed", async () => {
+    const demand = await demandFor({
+      requests: [{ registrationId: "r", category: "DORM_ROOM", partySize: 2 }],
+      placed: [{ registrationId: "r", people: 2, category: "CABIN" }],
+    });
+    expect(at(demand, "CABIN")).toBe(2);
+    expect(at(demand, "DORM_ROOM")).toBe(2); // conservative: both are held until staff update the request
+  });
+
+  it("counts a manual placement outside the request's category, and a request switched after placement", async () => {
+    const manual = await demandFor({ requests: [{ registrationId: "r", category: "TENT", partySize: 1 }], placed: [{ registrationId: "r", people: 1, category: "CABIN" }] });
+    expect(at(manual, "CABIN")).toBe(1);
+    const switched = await demandFor({ requests: [{ registrationId: "r", category: "CABIN", partySize: 2 }], placed: [{ registrationId: "r", people: 2, category: "DORM_ROOM" }] });
+    expect(at(switched, "DORM_ROOM")).toBe(2);
+    expect(at(switched, "CABIN")).toBe(2);
+  });
+
+  it("counts people placed above the request's party and on nights outside its window", async () => {
+    const above = await demandFor({ requests: [{ registrationId: "r", category: "DORM_ROOM", partySize: 1 }], placed: [{ registrationId: "r", people: 3, category: "DORM_ROOM" }] });
+    expect(at(above, "DORM_ROOM")).toBe(3);
+    const longer = await demandFor({
+      requests: [{ registrationId: "r", category: "DORM_ROOM", partySize: 2, firstNight: NIGHTS[0], lastNight: NIGHTS[0] }],
+      placed: [{ registrationId: "r", people: 2, category: "DORM_ROOM", firstNight: NIGHTS[0], lastNight: NIGHTS[1] }],
+    });
+    expect([at(longer, "DORM_ROOM", NIGHTS[0]), at(longer, "DORM_ROOM", NIGHTS[1]), at(longer, "DORM_ROOM", NIGHTS[2])]).toEqual([2, 2, 0]);
+  });
+
+  it("counts an entry larger than the request, and for more nights than it", async () => {
+    const demand = await demandFor({
+      requests: [{ registrationId: "r", category: "DORM_ROOM", partySize: 2, firstNight: NIGHTS[0], lastNight: NIGHTS[0] }],
+      entries: [{ registrationId: "r", category: "DORM_ROOM", partySize: 5, status: "ACCEPTED" }],
+    });
+    expect([at(demand, "DORM_ROOM", NIGHTS[0]), at(demand, "DORM_ROOM", NIGHTS[1])]).toEqual([5, 5]);
+  });
+
+  it("counts live offers, never a lapsed one, and an accepted entry of a cancelled registration frees its places", async () => {
     const now = new Date("2027-05-20T12:00:00Z");
-    const future = new Date("2027-05-21T12:00:00Z");
-    const past = new Date("2027-05-19T12:00:00Z");
     const demand = await demandFor({
       entries: [
-        { registrationId: "a", category: "DORM_ROOM", partySize: 2, status: "OFFERED", offerExpiresAt: future },
-        { registrationId: "b", category: "DORM_ROOM", partySize: 3, status: "OFFERED", offerExpiresAt: past },
+        { registrationId: "a", category: "DORM_ROOM", partySize: 2, status: "OFFERED", offerExpiresAt: new Date("2027-05-21T12:00:00Z") },
+        { registrationId: "b", category: "DORM_ROOM", partySize: 3, status: "OFFERED", offerExpiresAt: new Date("2027-05-19T12:00:00Z") },
         { registrationId: "c", category: "DORM_ROOM", partySize: 4, status: "ACCEPTED" },
-        { registrationId: "d", category: "DORM_ROOM", partySize: 5, status: "OFFERED", offerExpiresAt: future },
+        { registrationId: "gone", category: "DORM_ROOM", partySize: 6, status: "ACCEPTED", registrationStatus: "CANCELLED" },
       ],
-      requests: [{ registrationId: "d", category: "DORM_ROOM", partySize: 5 }],
     }, "__none__", now);
-    // a (2) + c (4) as reservations, d (5) as its request; b's offer lapsed.
-    expect(demand.get("DORM_ROOM" as never)?.get(NIGHTS[0]!)).toBe(2 + 4 + 5);
+    expect(at(demand, "DORM_ROOM")).toBe(2 + 4);
   });
 
-  it("leaves the checked registration's own request, placements and entries out, and can leave a kind of registration out later", async () => {
+  it("keeps a cancelled registration's request out but still counts its placement until staff release it", async () => {
+    const demand = await demandFor({ placed: [{ registrationId: "gone", people: 2, category: "DORM_ROOM" }] });
+    expect(at(demand, "DORM_ROOM")).toBe(2);
+  });
+
+  it("leaves the checked registration out, can leave a kind of registration out later, and a batch counts each offer against the next", async () => {
     const fixture: Fixture = {
       requests: [{ registrationId: "me", category: "DORM_ROOM", partySize: 3 }, { registrationId: "other", category: "DORM_ROOM", partySize: 2 }],
-      placed: [{ registrationId: "me2", people: 1, category: "DORM_ROOM" }],
+      placed: [{ registrationId: "me", people: 1, category: "DORM_ROOM" }, { registrationId: "me2", people: 1, category: "DORM_ROOM" }],
       entries: [{ registrationId: "me", category: "DORM_ROOM", partySize: 7, status: "ACCEPTED" }],
     };
-    const own = await demandFor({ ...fixture, placed: [{ registrationId: "me", people: 1, category: "DORM_ROOM" }] }, "me");
-    expect(own.get("DORM_ROOM" as never)?.get(NIGHTS[0]!)).toBe(2);
+    expect(at(await demandFor(fixture, "me"), "DORM_ROOM")).toBe(2 + 1);
     const filtered = await demandExcluding(client(fixture), "event-1", NIGHTS, "__none__", { countsTowardPublicCapacity: (id) => id !== "other" });
-    expect(filtered.get("DORM_ROOM" as never)?.get(NIGHTS[0]!)).toBe(3 + 1);
+    expect(at(filtered, "DORM_ROOM")).toBe(7 + 1);
+    const groups = await loadDemandGroups(client(fixture), "event-1", NIGHTS, { now: new Date("2027-05-20T12:00:00Z") });
+    addWaitingDemand(groups, "newcomer", "DORM_ROOM" as never, NIGHTS, 4);
+    expect(at(demandFromGroups(groups, "me"), "DORM_ROOM")).toBe(2 + 1 + 4);
   });
 });

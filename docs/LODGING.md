@@ -676,19 +676,29 @@ number); `ACCEPTED` → `PROMOTED` (staff place the party in a unit); any open s
   email delivery is turned off for the event, nothing is offered (the entry is skipped with the reason), so the offer
   clock never runs without an email. The workspace shows the **offer email's outbox status**; a live offer whose email
   failed, was suppressed or cancelled is flagged and can be offered again (recorded as "Offered again: the offer email
-  did not reach the guest."). A confirmed offer takes each entry's row lock before reading it, so an acceptance that
+  did not reach the guest."). A confirmed offer (and a promotion) takes the entry's row lock before reading it, so an acceptance or removal that
   committed first is never overwritten. Re-offering an expired entry while a newer open entry exists for the
   registration is skipped by the offer with that reason (the assessment); only a race that slips past it and hits the
   database's one-open-entry index is mapped to `WAITLIST_ALREADY_OPEN` (any other unique violation is not).
-- **One counting rule for free space** (`demandExcluding` + `categoryFits`, shared by the registration form, the waitlist
-  join, request changes and offers). A category's people on a night are: the requests of active registrations; plus people
-  placed in a unit of the category who are **not backed by an active request** (expected guests, anyone placed without a
-  request); plus live offers (OFFERED, not expired) and accepted entries that no request already counts. Free space is the
-  category's capacity less that. A placed person whose registration has an active request is counted once, as the request;
-  a promoted entry is counted once (as the request if there is one, otherwise as an unbacked placement). So a dorm of 40
-  with 40 requests is full for offers even though nobody is placed yet, and an expected group of 10 placed in it leaves
-  30 for the form. The function takes a `countsTowardPublicCapacity` filter so a kind of registration (staff invitations,
-  #804) can be left out later; nothing uses it yet.
+- **One counting rule for free space** (`demandExcluding` / `loadDemandGroups` + `categoryFits`, shared by the registration
+  form, the waitlist join, request changes and offers). For each category C and night N, the people counted are the sum over
+  registrations g of the **largest of**: g's active request party (when the request is for C and covers N); the people of g
+  actually placed in units of C on N; and the party of g's live offers (OFFERED, not expired) and accepted entries for C
+  covering N. An expected guest, or a placement with no registration, is its own group (placed only, with its headcount).
+  Only active registrations count requests and entries (an accepted entry of a cancelled registration frees its places); a
+  placement counts until staff release it. The checked registration is left out (it stands in for itself). Free space is
+  the category's capacity less that, so a party fits when `capacity - demand >= party` on every night asked for.
+  - The same people asked, offered and placed in one category are counted once (the largest term), but a placement in
+    **another** category, more people than asked, nights outside the request, or an entry larger than the request are all
+    still counted: a dorm of 40 with 40 requests is full for offers even though nobody is placed, and an expected group of
+    10 placed in it leaves 30 for the form.
+  - **It is deliberately conservative.** A registration promoted into another type (or placed there by staff) whose request
+    still names the first type holds both until staff update the request. The assignment screen lists such a registration
+    under conflicts ("Placed in a different type than requested") so staff know to update it.
+  - A batch of offers reads the demand and the capacity once after the locks and counts each newly offered entry against
+    the next one in memory.
+  - The function takes a `countsTowardPublicCapacity` filter so a kind of registration (staff invitations, #804) can be
+    left out later; nothing uses it yet.
 - **A live offer reserves its places** (and so does an accepted entry), so one place cannot be offered twice; an expired
   offer holds nothing. An answer after the expiry records the
   expiry and is refused ("expired"); accepting, declining and promoting twice return the first outcome.
@@ -711,7 +721,8 @@ closeout and sendable again), and a notice not yet delivered is **cancelled** by
 arrival instructions), so it goes obsolete when a roommate moves in or out, a room closes, a bucket is renamed or the
 instructions are edited, not only when the registration's own assignments change. The notice is **checked again just
 before it is sent** (like an invoice email): one that a later change made wrong, or a waitlist offer that is no longer
-open, is cancelled instead of delivered. The private page and the notice load only that registration's own rows (and the
+open, is cancelled instead of delivered. If the check itself fails, that counts as a failed delivery attempt and is retried
+with the normal backoff, ending as failed after the usual number of tries (staff can then offer again). The private page and the notice load only that registration's own rows (and the
 other occupants of its rooms when roommates are on), never the event's whole picture.
 
 An amendment that **removes an attendee** with any room assignment history (even a cancelled assignment or an expected

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { LodgingCategory } from "@/modules/lodging/domain";
+import { lodgingCategoryLabels, type LodgingCategory } from "@/modules/lodging/domain";
 import {
   assignableRegistrationStatuses,
   assignmentWarnings,
@@ -288,6 +288,24 @@ function buildExceptions(input: {
     const upstairs = state.segments.filter((segment) => segment.occupantKey === person.occupantKey && segment.unitId && !state.meta.get(segment.unitId)?.groundLevel);
     if (upstairs.length === 0) continue;
     rows.push({ kind: "ACCESSIBILITY_UNMET", key: `access:${person.occupantKey}`, title: `${person.name} is placed above the ground floor`, detail: "Move them to a ground-level room.", assignmentIds: upstairs.map((segment) => segment.id), unitId: upstairs[0]!.unitId ?? undefined });
+  }
+
+  // Placed in a different type than the request names (a promotion into another type, or a manual placement): until staff
+  // update the request, free-space counting holds both the request and the placement.
+  const categoryOfUnit = new Map(state.unitRows.map((row) => [row.id, row.unit.category] as const));
+  for (const person of input.people) {
+    if (!person.active || person.kind !== "ATTENDEE" || !person.category) continue;
+    const elsewhere = state.segments.filter((segment) => {
+      const placedIn = segment.occupantKey === person.occupantKey && segment.unitId ? categoryOfUnit.get(segment.unitId) : null;
+      return Boolean(placedIn) && placedIn !== person.category;
+    });
+    if (elsewhere.length === 0) continue;
+    const placedIn = categoryOfUnit.get(elsewhere[0]!.unitId!)!;
+    rows.push({
+      kind: "REQUEST_CATEGORY_DIFFERS", key: `category:${person.occupantKey}`,
+      title: `${person.name} is placed in ${lodgingCategoryLabels[placedIn]} but asked for ${lodgingCategoryLabels[person.category]}`,
+      detail: "Update their lodging request so the place is not counted twice for other guests until it is.", assignmentIds: elsewhere.map((segment) => segment.id), unitId: elsewhere[0]!.unitId ?? undefined,
+    });
   }
 
   const nameOfPerson = new Map(input.people.flatMap((person) => (person.personId ? [[person.personId, person.name] as const] : [])));

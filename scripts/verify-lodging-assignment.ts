@@ -45,7 +45,7 @@ import { createLodgingRule, saveLodgingRequest, updateLodgingSettings, type Acto
 import { getPublicLodgingOffer } from "@/modules/lodging/registration-form";
 import { createHold, selectEventProperty, updateEventUnit } from "@/modules/lodging/service";
 import { syncLodgingTemplates } from "@/modules/lodging/sync";
-import { applyRegistrantWaitlistAction, applyWaitlistAction, getRegistrantWaitlistView } from "@/modules/lodging/waitlist-service";
+import { applyRegistrantWaitlistAction, applyWaitlistAction, getRegistrantWaitlistView, isOpenEntryViolation } from "@/modules/lodging/waitlist-service";
 
 loadEnvConfig(process.cwd());
 // Local-only, before any connection exists.
@@ -162,6 +162,7 @@ const reports = (sensitive = true, forEvent = eventId) => getRoomingReports(forE
 const workspace = (sensitive = true) => getAssignmentWorkspace(eventId, { canSeeSensitive: sensitive }, prisma);
 const exceptionKinds = async (sensitive = true) => (await workspace(sensitive)).exceptions.map((row) => row.kind).sort();
 const regActorFor = (forEvent: string, reg: Reg, raw: unknown, now = new Date("2027-05-20T12:00:00Z")) => applyRegistrantWaitlistAction({ eventId: forEvent, registrationId: reg.id, accessTokenId: `${P}_tok_${reg.code}`, raw, now }, prisma);
+const exceptionKindsFor = async (forEvent: string) => (await getAssignmentWorkspace(forEvent, { canSeeSensitive: true }, prisma)).exceptions.map((row) => row.kind);
 const registrant = (reg: Reg, now?: Date) => getRegistrantAssignmentView({ eventId, registrationId: reg.id, now }, prisma);
 const requestFor = (reg: Reg, raw: Record<string, unknown>) => saveLodgingRequest({ eventId, registrationId: reg.id, actor: { kind: "STAFF", userId, canSeeSensitive: true } as Actor, raw: { reason: "Seeded for the check", ...raw }, now: new Date("2027-05-20T12:00:00Z") }, prisma);
 
@@ -681,6 +682,38 @@ async function main() {
   const versionBeforeIdle = (await prisma.eventLodging.findUniqueOrThrow({ where: { eventId: capAEvent } })).capacityVersion;
   await capStaff({ action: "offer", entryIds: [waiterEntry.id] });
   assert((await prisma.eventLodging.findUniqueOrThrow({ where: { eventId: capAEvent } })).capacityVersion === versionBeforeIdle, "a preview still does not touch the capacity version");
+
+  // An accepted entry holds its places only while its registration is active.
+  const tentRemaining = async (forEvent: string) => Object.values((await getPublicLodgingOffer(forEvent, prisma))!.categories.find((entry) => entry.category === "TENT_WITH_POWER")!.remaining);
+  const withAccepted = await tentRemaining(capAEvent);
+  await prisma.registration.update({ where: { id: waiter.id }, data: { status: "CANCELLED" } });
+  const afterCancel = await tentRemaining(capAEvent);
+  assert(withAccepted.every((value) => value === 1) && afterCancel.every((value) => value === 2), `an accepted entry of a cancelled registration frees its places (${withAccepted.join()} then ${afterCancel.join()})`);
+
+  // The database's one-open-entry index raises the error the service maps; check the mapping against Prisma's real target.
+  const duplicate = await caught(prisma.eventLodgingWaitlistEntry.create({ data: { eventId: capAEvent, registrationId: waiter.id, category: "TENT_WITH_POWER", partySize: 1, createdVia: "STAFF" } }));
+  assert(duplicate && isOpenEntryViolation(duplicate), `a second open entry for a registration is recognised as the open-entry violation (${JSON.stringify((duplicate as { meta?: unknown } | undefined)?.meta)})`);
+  // A placement outside the request's type is still counted, and a request switched after placement keeps the room counted.
+  const capCEvent = `${P}_ev_capc`;
+  await createEvent(capCEvent);
+  await selectEventProperty(capCEvent, userId, { propertyKey: "sunnydale-academy" }, prisma);
+  await updateLodgingSettings(capCEvent, userId, { collectsPreferences: true, fullBehavior: "WAITLIST" }, prisma);
+  const capCTent = await unitRow(capCEvent, "tents-with-power");
+  await updateEventUnit(capCEvent, capCTent.id, userId, { capacityOverride: 6 }, prisma);
+  const dormUnit = await unitRow(capCEvent, "girls-101");
+  const dormCategory = dormUnit.unit.category!;
+  const dormRemaining = async () => Object.values((await getPublicLodgingOffer(capCEvent, prisma))!.categories.find((entry) => entry.category === dormCategory)!.remaining);
+  const dormBefore = await dormRemaining();
+  const crossMover = await makeReg(capCEvent, [40, 40]);
+  await requestIn(capCEvent, crossMover, { category: "TENT_WITH_POWER", partySize: 2 });
+  for (const person of crossMover.people) await applyAssignmentAction(capCEvent, userId, { action: "place", placements: [{ occupant: attendee(person), place: { kind: "UNIT", eventUnitId: dormUnit.id }, firstNight: N[0], lastNight: N[3] }] }, prisma);
+  const dormAfter = await dormRemaining();
+  assert(dormAfter.every((value, index) => value === (dormBefore[index] as number) - 2), "a placement outside the request's type is counted in the type they were placed in");
+  assert((await tentRemaining(capCEvent)).every((value) => value === 4), "and the unchanged request still holds its places (conservative until staff update it)");
+  assert((await exceptionKindsFor(capCEvent)).includes("REQUEST_CATEGORY_DIFFERS"), "staff are told the registration is placed in a different type than it asked for");
+  await requestIn(capCEvent, crossMover, { category: dormCategory, partySize: 2 });
+  assert((await dormRemaining()).every((value, index) => value === (dormAfter[index] as number)) && (await tentRemaining(capCEvent)).every((value) => value === 6), "switching the request after placement keeps the dorm counted once and frees the tent");
+  assert(!(await exceptionKindsFor(capCEvent)).includes("REQUEST_CATEGORY_DIFFERS"), "and the difference is gone once the request matches");
 
   // Scenario B: an expected group placed in a type takes its places from the form; a placed person with a request counts once.
   const capBEvent = `${P}_ev_capb`;

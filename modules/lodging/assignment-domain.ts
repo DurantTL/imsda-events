@@ -251,7 +251,7 @@ class Planner {
    * Takes `cut` out of `segment` (the whole segment when `cut` is null). One piece left: the segment keeps it. Two
    * pieces: the segment keeps the first and a remainder row is created for the second, in the same place.
    */
-  release(segment: Segment, cut: NightRange | null, type: ReleaseOp["type"], relatedKey?: string) {
+  release(segment: Segment, cut: NightRange | null, type: ReleaseOp["type"], relatedKey?: string): CreateOp | undefined {
     const pieces = cut ? subtractRange(segment, cut) : [];
     const index = this.working.findIndex((candidate) => candidate.id === segment.id);
     // A segment this plan created (an earlier placement of the same batch) is not a row yet: edit its create instead of
@@ -259,10 +259,12 @@ class Planner {
     const createdIndex = this.creates.findIndex((candidate) => candidate.key === segment.id);
     if (createdIndex >= 0) {
       const created = this.creates[createdIndex]!;
+      // What the create was before this edit: the replacement placement inherits its provenance (its type, where it came from).
+      const original: CreateOp = { ...created, segment: { ...created.segment } };
       if (pieces.length === 0) {
         this.creates.splice(createdIndex, 1);
         if (index >= 0) this.working.splice(index, 1);
-        return;
+        return original;
       }
       const [keptPiece, remainderPiece] = pieces;
       created.segment = { ...created.segment, ...keptPiece! };
@@ -276,7 +278,7 @@ class Planner {
         });
         this.working.push({ ...segment, id: key, ...remainderPiece });
       }
-      return;
+      return original;
     }
     if (pieces.length === 0) {
       this.releases.push({ kind: "RELEASE", id: segment.id, type, before: { ...segment }, after: null, relatedKey });
@@ -343,7 +345,11 @@ class Planner {
       return { code: "ALREADY_ASSIGNED", night, message: `Already placed on ${night}. Move them instead.` };
     }
     const key = this.nextKey();
-    for (const segment of existing) this.release(segment, range, "MOVED_OUT", key);
+    let inherited: CreateOp | undefined;
+    for (const segment of existing) {
+      const edited = this.release(segment, range, "MOVED_OUT", key);
+      if (edited && !inherited) inherited = edited;
+    }
     if (unit) {
       const problem = checkUnitPlacement({
         unit,
@@ -354,18 +360,34 @@ class Planner {
       });
       if (problem) return problem;
     }
-    const first = existing[0];
+    // Where this placement came from: a row that existed before the plan, else what the plan's own earlier placement of
+    // these nights was ("assign A to X, then move A to Y" in one batch is an assignment to Y, not a move in from X).
+    const first = existing.find((segment) => !segment.id.startsWith("new:"));
+    let type: CreateOp["type"] = first ? "MOVED_IN" : "ASSIGNED";
+    let relatedId: string | undefined = first?.id;
+    let previous: CreateOp["previous"] = first ? { unitId: first.unitId, bucketId: first.bucketId, firstNight: first.firstNight, lastNight: first.lastNight } : undefined;
+    if (!first && inherited) {
+      if (inherited.type === "SPLIT_REMAINDER") {
+        type = "MOVED_IN";
+        relatedId = inherited.relatedId;
+        previous = { unitId: inherited.segment.unitId, bucketId: inherited.segment.bucketId, firstNight: inherited.segment.firstNight, lastNight: inherited.segment.lastNight };
+      } else {
+        type = inherited.type;
+        relatedId = inherited.relatedId;
+        previous = inherited.previous;
+      }
+    }
     const unitId = "unitId" in placement.place ? placement.place.unitId : null;
     const bucketId = "bucketId" in placement.place ? placement.place.bucketId : null;
     this.creates.push({
       kind: "CREATE",
       key,
-      type: existing.length > 0 ? "MOVED_IN" : "ASSIGNED",
+      type,
       segment: { occupantKey: placement.occupantKey, unitId, bucketId, people: placement.people, ...range },
       occupant: placement.occupant,
       source: placement.source,
-      relatedId: first?.id,
-      previous: first ? { unitId: first.unitId, bucketId: first.bucketId, firstNight: first.firstNight, lastNight: first.lastNight } : undefined,
+      relatedId,
+      previous,
     });
     this.working.push({ id: key, occupantKey: placement.occupantKey, unitId, bucketId, people: placement.people, ...range });
     return null;
@@ -832,6 +854,7 @@ export const exceptionKinds = [
   "OPEN_WAITLIST",
   "OBSOLETE_NOTICE",
   "UNLINKED_PLACEHOLDER",
+  "REQUEST_CATEGORY_DIFFERS",
 ] as const;
 export type ExceptionKind = (typeof exceptionKinds)[number];
 
@@ -846,6 +869,7 @@ export const exceptionKindLabels: Record<ExceptionKind, string> = {
   OPEN_WAITLIST: "Still on the lodging waitlist",
   OBSOLETE_NOTICE: "Room notice is out of date",
   UNLINKED_PLACEHOLDER: "Expected guest not linked to a registration",
+  REQUEST_CATEGORY_DIFFERS: "Placed in a different type than requested",
 };
 
 /** Restricted: only staff holding VIEW_SENSITIVE_DATA see these. */
@@ -863,6 +887,7 @@ export const exceptionSection: Record<ExceptionKind, ExceptionSection> = {
   OPEN_WAITLIST: "CLOSEOUT",
   OBSOLETE_NOTICE: "CLOSEOUT",
   UNLINKED_PLACEHOLDER: "CLOSEOUT",
+  REQUEST_CATEGORY_DIFFERS: "CONFLICT",
 };
 
 export type ExceptionRow = {

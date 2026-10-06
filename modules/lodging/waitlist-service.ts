@@ -18,7 +18,7 @@ import { loadPlanningState, toDate, toNight, type PlanningState } from "@/module
 import { LodgingError } from "@/modules/lodging/errors";
 import { enqueueLodgingMessage, deliverAfterCommit, lodgingRecipient } from "@/modules/lodging/notices";
 import { categoryFits, isPastLodgingDeadline } from "@/modules/lodging/preferences-domain";
-import { demandExcluding, loadCategoryCapacity, loadContext, type Client, type Tx } from "@/modules/lodging/preferences-service";
+import { addWaitingDemand, demandFromGroups, loadCategoryCapacity, loadContext, loadDemandGroups, type Client, type DemandGroups, type Tx } from "@/modules/lodging/preferences-service";
 import { lockEventLodgingUnits, lodgingTransactionTimeoutMs, touchEventLodgingCapacity } from "@/modules/lodging/service";
 
 /**
@@ -110,7 +110,7 @@ async function joinInTransaction(tx: Tx, eventId: string, actor: Actor, input: J
     if (context.fullBehavior !== "WAITLIST") throw new LodgingError("WAITLIST_NOT_ENABLED", "This event does not have a lodging waitlist.");
     if (context.editPolicy === "VERIFY_EVERY_EDIT") throw new LodgingError("EDIT_POLICY_REQUIRES_VERIFICATION", "This event requires verification before this change. To change this, contact the event team.");
     if (isPastLodgingDeadline(context.deadlineDay, now, context.timezone)) throw new LodgingError("DEADLINE_PASSED", "The deadline to change lodging has passed. Contact the event team.");
-    const demand = await demandExcluding(tx, eventId, context.nights, input.registrationId, { now });
+    const demand = demandFromGroups(await loadDemandGroups(tx, eventId, context.nights, { now }), input.registrationId);
     const fit = categoryFits({ capacity: capacity[input.category]!, demand: demand.get(input.category), nights, partySize: input.partySize });
     if (fit.fits) throw new LodgingError("CATEGORY_NOT_FULL", "A place is available in that type. Choose it instead of joining the waitlist.");
   }
@@ -178,17 +178,26 @@ async function lockAll(tx: Tx, eventId: string) {
   await touchEventLodgingCapacity(tx, lodging.id);
 }
 
-type Reservations = Map<LodgingCategory, Map<string, number>>;
+/** What every assessment of a batch shares: the demand groups and the category capacity, read once after the locks. */
+type Shared = { groups: DemandGroups; capacity: Awaited<ReturnType<typeof loadCategoryCapacity>>["capacity"] };
 
-/** Adds an entry's people to the reservations, so a preview of several entries counts each against the next. */
-function addReservation(reserved: Reservations, entry: { category: LodgingCategory; partySize: number; firstNight: Date | null; lastNight: Date | null }, eventNights: readonly string[]) {
-  const nights = entry.firstNight && entry.lastNight ? nightsInclusive(toNight(entry.firstNight), toNight(entry.lastNight)) : [...eventNights];
-  const byNight = reserved.get(entry.category) ?? new Map<string, number>();
-  for (const night of nights) byNight.set(night, (byNight.get(night) ?? 0) + entry.partySize);
-  reserved.set(entry.category, byNight);
+async function loadShared(tx: Client, state: PlanningState, eventId: string, now: Date): Promise<Shared> {
+  return { groups: await loadDemandGroups(tx, eventId, state.context.nights, { now }), capacity: (await loadCategoryCapacity(tx, state.context)).capacity };
 }
 
-async function assessOffer(tx: Client, state: PlanningState, eventId: string, entry: EntryRow, now: Date, previewReserved?: Reservations) {
+const entryNightsOf = (entry: { firstNight: Date | null; lastNight: Date | null }, eventNights: readonly string[]) => (
+  entry.firstNight && entry.lastNight ? nightsInclusive(toNight(entry.firstNight), toNight(entry.lastNight)) : [...eventNights]
+);
+
+/** A live offer is already in the shared demand (a re-offer of an undelivered one must not count twice). */
+const isCounted = (entry: { status: string; offerExpiresAt: Date | null }, now: Date) => entry.status === "OFFERED" && !isOfferLapsed({ status: "OFFERED", offerExpiresAt: entry.offerExpiresAt }, now);
+
+/** Counts a newly offered entry against the entries assessed after it in the same batch. */
+function reserveEntry(shared: Shared, entry: { registrationId: string; category: LodgingCategory; partySize: number; firstNight: Date | null; lastNight: Date | null }, eventNights: readonly string[]) {
+  addWaitingDemand(shared.groups, entry.registrationId, entry.category, entryNightsOf(entry, eventNights), entry.partySize);
+}
+
+async function assessOffer(tx: Client, state: PlanningState, eventId: string, entry: EntryRow, now: Date, shared: Shared) {
   const lapsed = isOfferLapsed({ status: entry.status as WaitlistStatus, offerExpiresAt: entry.offerExpiresAt }, now);
   // A live offer whose email failed, was suppressed or was cancelled never reached the guest: it can be offered again.
   let undelivered = false;
@@ -205,13 +214,10 @@ async function assessOffer(tx: Client, state: PlanningState, eventId: string, en
   }
   const newer = await tx.eventLodgingWaitlistEntry.findFirst({ where: { eventId, registrationId: entry.registrationId, id: { not: entry.id }, status: { in: ["JOINED", "OFFERED", "ACCEPTED"] } }, select: { id: true } });
   if (newer) return { eligible: false, alreadyOffered: false, reason: "That registration has a newer open waitlist entry. Answer or remove it first." };
-  // The shared counting rule (requests, unbacked placements, live offers), less this entry's own registration.
-  const demand = await demandExcluding(tx, eventId, state.context.nights, entry.registrationId, { now, excludeEntryId: entry.id });
-  const byNight = new Map(demand.get(entry.category) ?? []);
-  for (const [night, people] of previewReserved?.get(entry.category) ?? []) byNight.set(night, (byNight.get(night) ?? 0) + people);
-  const nights = entry.firstNight && entry.lastNight ? nightsInclusive(toNight(entry.firstNight), toNight(entry.lastNight)) : [...state.context.nights];
-  const { capacity } = await loadCategoryCapacity(tx, state.context);
-  const categoryCapacity = capacity[entry.category];
+  // The shared counting rule, less this entry's own registration (it stands in for itself).
+  const byNight = demandFromGroups(shared.groups, entry.registrationId).get(entry.category);
+  const nights = entryNightsOf(entry, state.context.nights);
+  const categoryCapacity = shared.capacity[entry.category];
   const fit = categoryCapacity ? categoryFits({ capacity: categoryCapacity, demand: byNight, nights, partySize: entry.partySize }) : null;
   if (!fit || !fit.fits) return { eligible: false, alreadyOffered: false, reason: `No place is free for ${entry.partySize} ${entry.partySize === 1 ? "person" : "people"} in ${lodgingCategoryLabels[entry.category]} on ${fit?.firstFullNight ?? nights[0]}.` };
   return { eligible: true, alreadyOffered: false, reason: null as string | null };
@@ -247,10 +253,10 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
       for (const entryId of entryIds) entries.push(await loadEntry(tx, eventId, entryId));
       if (!input.confirm) {
         const rows: OfferPreviewRow[] = [];
-        const previewReserved: Reservations = new Map();
+        const shared = await loadShared(tx, state, eventId, now);
         for (const entry of entries) {
-          const assessed = await assessOffer(tx, state, eventId, entry, now, previewReserved);
-          if (assessed.eligible && !assessed.alreadyOffered) addReservation(previewReserved, entry, state.context.nights);
+          const assessed = await assessOffer(tx, state, eventId, entry, now, shared);
+          if (assessed.eligible && !assessed.alreadyOffered) { if (!isCounted(entry, now)) reserveEntry(shared, entry, state.context.nights); }
           const recipient = await lodgingRecipient(tx, eventId, entry.registrationId);
           rows.push({
             entryId: entry.id, registrationCode: entry.registration.confirmationCode, holder: recipient?.name ?? "", category: entry.category, partySize: entry.partySize,
@@ -263,8 +269,9 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
       }
       const offered: Array<{ entryId: string; offerNumber: number; expiresAt: string; messageId: string | null; alreadyOffered: boolean }> = [];
       const skipped: Array<{ entryId: string; reason: string }> = [];
+      const shared = await loadShared(tx, state, eventId, now);
       for (const entry of entries) {
-        const assessed = await assessOffer(tx, state, eventId, entry, now);
+        const assessed = await assessOffer(tx, state, eventId, entry, now, shared);
         if (assessed.alreadyOffered) {
           offered.push({ entryId: entry.id, offerNumber: entry.offerNumber, expiresAt: entry.offerExpiresAt!.toISOString(), messageId: entry.offerMessageId, alreadyOffered: true });
           continue;
@@ -297,6 +304,7 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
         if (message.skipped) { skipped.push({ entryId: entry.id, reason: "The registration has no email address to send the offer to." }); continue; }
         await tx.eventLodgingWaitlistEntry.update({ where: { id: entry.id }, data: { status: "OFFERED", offerNumber, offeredAt: now, offerExpiresAt: expiresAt, offerMessageId: message.messageId } });
         await record(tx, entry, "OFFERED", actor, { offerNumber, offerExpiresAt: expiresAt, messageId: message.messageId }, now);
+        if (!isCounted(entry, now)) reserveEntry(shared, entry, state.context.nights);
         if (message.pending && message.messageId) deliver.push(message.messageId);
         offered.push({ entryId: entry.id, offerNumber, expiresAt: expiresAt.toISOString(), messageId: message.messageId, alreadyOffered: false });
       }
@@ -335,6 +343,8 @@ export async function applyWaitlistAction(eventId: string, actorUserId: string, 
     }
     // promote: place the party in a unit, as a staff decision after the guest accepted.
     await lockAll(tx, eventId);
+    // The entry's own row lock, then a fresh read: a removal or an answer that committed first is seen, never overwritten.
+    await lockEntry(tx, input.entryId);
     const entry = await loadEntry(tx, eventId, input.entryId);
     if (entry.status === "PROMOTED") return { action: "promote", entryId: entry.id, status: "PROMOTED", replay: true };
     if (entry.status !== "ACCEPTED") throw new LodgingError("WAITLIST_TRANSITION_INVALID", "Only an accepted offer can be placed. Offer a place and wait for the guest to accept it.");

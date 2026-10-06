@@ -303,7 +303,7 @@ describe("external email queue", () => {
     expect(lodgingStale).not.toHaveBeenCalled();
   });
 
-  it("leaves a lodging email for a later run when its currency check fails, without aborting the run", async () => {
+  it("counts a failed lodging currency check as an attempt, retries with backoff, and ends as FAILED after the last one", async () => {
     lodgingStale.mockReset();
     lodgingStale.mockRejectedValue(new Error("database unavailable"));
     const store = fakeDeliveryStore({ templateKey: "LODGING_WAITLIST_OFFER" });
@@ -311,8 +311,13 @@ describe("external email queue", () => {
     const result = await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail: sendEmail as never } });
     expect(sendEmail).not.toHaveBeenCalled();
     expect(result.sentIds).toEqual([]);
-    expect(store.message).toMatchObject({ status: "PENDING", lockToken: null, lockedAt: null, attemptCount: 0 });
-    expect(store.message.availableAt.getTime()).toBeGreaterThan(Date.now());
+    expect(store.message).toMatchObject({ status: "PENDING", lockToken: null, lockedAt: null, attemptCount: 1 });
+    expect(store.message.availableAt.getTime()).toBe(dependencies.now().getTime() + emailRetryDelayMs(1));
+    expect(store.attempts).toEqual([expect.objectContaining({ attemptNumber: 1, status: "FAILED", errorCode: "LODGING_CURRENCY_CHECK_FAILED" })]);
+    // The last allowed attempt ends as FAILED rather than retrying forever.
+    const last = fakeDeliveryStore({ templateKey: "LODGING_WAITLIST_OFFER", attemptCount: 4 });
+    await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: last.prisma as never, sendEmail: sendEmail as never } });
+    expect(last.message.status).toBe("FAILED");
   });
 
   it("sends a message with no attachment exactly as before", async () => {

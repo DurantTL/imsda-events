@@ -130,6 +130,24 @@ describe("planPlacements", () => {
     expect(result.plan.creates.every((create) => !create.relatedId || !create.relatedId.startsWith("new:") || keys.has(create.relatedId))).toBe(true);
   });
 
+  it("records a batch's own earlier placement as it began: assign to X then move to Y is an assignment to Y", () => {
+    const fresh = planPlacements({ ...base, segments: [], units: units(unit("a", 2), unit("b", 2)), placements: [place("p1", "a"), place("p1", "b", nights[0]!, nights[3]!, { mode: "MOVE" })] });
+    expect(fresh.ok).toBe(true);
+    if (!fresh.ok) return;
+    expect(fresh.plan.releases).toHaveLength(0);
+    expect(fresh.plan.creates).toHaveLength(1);
+    expect(fresh.plan.creates[0]).toMatchObject({ type: "ASSIGNED", segment: { unitId: "b" } });
+    expect(fresh.plan.creates[0]!.previous).toBeUndefined();
+    expect(fresh.plan.creates[0]!.relatedId).toBeUndefined();
+
+    // Moved out of a real row to X, then on to Y: a move in from the real row, never from X.
+    const chained = planPlacements({ ...base, segments: [segment("s1", "p1", "a")], units: units(unit("a", 2), unit("b", 2), unit("c", 2)), placements: [place("p1", "b", nights[0]!, nights[3]!, { mode: "MOVE" }), place("p1", "c", nights[0]!, nights[3]!, { mode: "MOVE" })] });
+    expect(chained.ok).toBe(true);
+    if (!chained.ok) return;
+    expect(chained.plan.creates).toHaveLength(1);
+    expect(chained.plan.creates[0]).toMatchObject({ type: "MOVED_IN", relatedId: "s1", segment: { unitId: "c" }, previous: { unitId: "a" } });
+  });
+
   it("never overbooks a batch with itself: the last bed goes to one person", () => {
     const result = planPlacements({ ...base, segments: [], units: units(unit("a", 1)), placements: [place("p1", "a"), place("p2", "a")] });
     expect(result).toMatchObject({ ok: false, index: 1, problem: { code: "UNIT_FULL" } });

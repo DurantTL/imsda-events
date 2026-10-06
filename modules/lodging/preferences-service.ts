@@ -216,65 +216,106 @@ export async function loadCurrentRequests(client: Client, eventId: string, where
 }
 
 /**
- * The one counting rule for a category's free space (slices 2 and 3 share it): the people already counted against each
- * night are
+ * The one counting rule for a category's free space (slices 2 and 3 share it). For each category C and night N, the
+ * people counted are the sum over registrations g of the largest of
  *
- * - the requests of active registrations (their party size, on the nights asked), plus
- * - people placed in a unit of the category who are **not backed by an active request** (expected guests, and anyone
- *   placed without a request), plus
- * - live waitlist offers (OFFERED and not expired) and accepted entries not yet promoted, unless the entry's own
- *   registration already has an active request in that category (then the request is the count).
+ * - `request`: g's active request party, when the request is for C and covers N;
+ * - `placed`: the people of g actually placed in units of C on N (an expected guest or an assignment with no registration
+ *   is its own group and has only this term, with its headcount);
+ * - `waiting`: the party of g's live offers (OFFERED, not expired) and accepted entries for C covering N.
  *
- * A placed person whose registration has an active request is counted once, as the request; a promoted entry is counted
- * once, as the request when there is one and as an unbacked placement otherwise. `registrationId` leaves one registration
- * out (the one being checked: its request, its placements and its entries stand in for it). Free space is
- * `categoryFits({ capacity, demand })` on the result.
+ * Only active registrations count requests and entries; a placement counts until staff release it. Taking the largest of
+ * the three means a person who asked, was offered and was placed in one category is counted once, while a placement in
+ * another category, more people than asked, nights outside the request, or a larger entry are all still counted. It is
+ * deliberately conservative: a registration promoted into another category holds both its request and its placement
+ * until staff update the request. A registration is left out by name (the one being checked stands in for itself).
+ * Free space is `categoryFits({ capacity, demand })` on the result.
  *
  * `countsTowardPublicCapacity` is the single place to leave a kind of registration out of public capacity later (for
  * example staff-invite registrations, #804): return false for the registrations that should not count.
  */
-export async function demandExcluding(
+type DemandTerms = { request: number; placed: number; waiting: number };
+/** Per group (a registration, or one expected-guest row), category and night: the three terms of the counting rule. */
+export type DemandGroups = Map<string, Map<LodgingCategory, Map<string, DemandTerms>>>;
+
+function termsFor(groups: DemandGroups, group: string, category: LodgingCategory, night: string) {
+  const byCategory = groups.get(group) ?? new Map<LodgingCategory, Map<string, DemandTerms>>();
+  groups.set(group, byCategory);
+  const byNight = byCategory.get(category) ?? new Map<string, DemandTerms>();
+  byCategory.set(category, byNight);
+  const terms = byNight.get(night) ?? { request: 0, placed: 0, waiting: 0 };
+  byNight.set(night, terms);
+  return terms;
+}
+
+/** Adds a live offer's people to a registration's group (so the next entry of a batch counts it). */
+export function addWaitingDemand(groups: DemandGroups, registrationId: string, category: LodgingCategory, entryNights: readonly string[], partySize: number) {
+  for (const night of entryNights) termsFor(groups, registrationId, category, night).waiting += partySize;
+}
+
+/** Loads every group's terms once, for the nights given (nobody left out). */
+export async function loadDemandGroups(
   client: Client,
   eventId: string,
   nights: readonly string[],
-  registrationId: string,
-  options: { now?: Date; excludeEntryId?: string | null; countsTowardPublicCapacity?: (registrationId: string) => boolean } = {},
-) {
+  options: { now?: Date; countsTowardPublicCapacity?: (registrationId: string) => boolean } = {},
+): Promise<DemandGroups> {
   const now = options.now ?? new Date();
   const counts = options.countsTowardPublicCapacity ?? (() => true);
+  const groups: DemandGroups = new Map();
+  const inWindow = (list: readonly string[]) => list.filter((night) => nights.includes(night));
   const requests = await loadCurrentRequests(client, eventId, { registration: { status: { in: [...lodgingActiveRegistrationStatuses] } } });
-  const backed = new Set(requests.flatMap((row) => (row.category ? [row.registrationId] : [])));
-  const countedRequests = requests.filter((row) => row.registrationId !== registrationId && counts(row.registrationId));
-  const demand = demandByCategoryNight(countedRequests.map((row) => ({ registrationId: row.registrationId, category: row.category, nights: requestNights(row, nights), partySize: row.partySize })));
-  const add = (category: LodgingCategory, from: readonly string[], people: number) => {
-    const byNight = demand.get(category) ?? new Map<string, number>();
-    for (const night of from) byNight.set(night, (byNight.get(night) ?? 0) + people);
-    demand.set(category, byNight);
-  };
-  // People placed in a unit and not backed by an active request.
+  for (const row of requests) {
+    if (!row.category || !counts(row.registrationId)) continue;
+    for (const night of inWindow(requestNights(row, nights))) termsFor(groups, row.registrationId, row.category, night).request += row.partySize;
+  }
+  // People placed in a unit, by the registration they belong to (an expected guest or an unlinked row is its own group).
   const placed = await client.eventLodgingAssignment.findMany({
     where: { eventId, cancelledAt: null, eventLodgingUnitId: { not: null } },
-    select: { attendeeId: true, people: true, firstNight: true, lastNight: true, eventUnit: { select: { unit: { select: { category: true } } } }, attendee: { select: { registrationId: true } } },
+    select: { id: true, people: true, firstNight: true, lastNight: true, eventUnit: { select: { unit: { select: { category: true } } } }, attendee: { select: { registrationId: true } } },
   });
   for (const row of placed) {
     const category = row.eventUnit?.unit.category;
     if (!category) continue;
     const owner = row.attendee?.registrationId ?? null;
-    if (owner !== null && (owner === registrationId || backed.has(owner) || !counts(owner))) continue;
-    add(category, nightsInclusive(toNight(row.firstNight), toNight(row.lastNight)).filter((night) => nights.includes(night)), row.people);
+    if (owner !== null && !counts(owner)) continue;
+    for (const night of inWindow(nightsInclusive(toNight(row.firstNight), toNight(row.lastNight)))) termsFor(groups, owner ?? `row:${row.id}`, category, night).placed += row.people;
   }
-  // Live offers and accepted entries that no request already counts.
+  // Live offers and accepted entries of active registrations.
   const entries = await client.eventLodgingWaitlistEntry.findMany({
-    where: { eventId, status: { in: ["OFFERED", "ACCEPTED"] }, registrationId: { not: registrationId }, ...(options.excludeEntryId ? { id: { not: options.excludeEntryId } } : {}) },
+    where: { eventId, status: { in: ["OFFERED", "ACCEPTED"] }, registration: { status: { in: [...lodgingActiveRegistrationStatuses] } } },
   });
-  const requestCategory = new Map(requests.map((row) => [row.registrationId, row.category] as const));
   for (const entry of entries) {
     if (isOfferLapsed({ status: entry.status as "OFFERED" | "ACCEPTED", offerExpiresAt: entry.offerExpiresAt } as Parameters<typeof isOfferLapsed>[0], now)) continue;
-    if (!counts(entry.registrationId) || requestCategory.get(entry.registrationId) === entry.category) continue;
+    if (!counts(entry.registrationId)) continue;
     const entryNights = entry.firstNight && entry.lastNight ? nightsInclusive(toNight(entry.firstNight), toNight(entry.lastNight)) : [...nights];
-    add(entry.category, entryNights.filter((night) => nights.includes(night)), entry.partySize);
+    addWaitingDemand(groups, entry.registrationId, entry.category, inWindow(entryNights), entry.partySize);
+  }
+  return groups;
+}
+
+/** The people counted per category and night, leaving one registration's group out. */
+export function demandFromGroups(groups: DemandGroups, excludeRegistrationId: string | null = null) {
+  const demand = new Map<LodgingCategory, Map<string, number>>();
+  for (const [group, byCategory] of groups) {
+    if (group === excludeRegistrationId) continue;
+    for (const [category, byNight] of byCategory) {
+      const total = demand.get(category) ?? new Map<string, number>();
+      for (const [night, terms] of byNight) total.set(night, (total.get(night) ?? 0) + Math.max(terms.request, terms.placed, terms.waiting));
+      demand.set(category, total);
+    }
   }
   return demand;
+}
+
+export async function demandExcluding(
+  client: Client,
+  eventId: string,
+  nights: readonly string[],
+  registrationId: string,
+  options: { now?: Date; countsTowardPublicCapacity?: (registrationId: string) => boolean } = {},
+) {
+  return demandFromGroups(await loadDemandGroups(client, eventId, nights, options), registrationId);
 }
 
 export function attendeeName(attendee: { profileSnapshot: unknown; person: { firstName: string; lastName: string } }) {
