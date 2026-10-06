@@ -161,7 +161,7 @@ export async function loadCategoryCapacity(client: Client, context: Pick<Context
   return { capacity, unitIdsByCategory };
 }
 
-type RequestRow = {
+export type RequestRow = {
   requestId: string;
   registrationId: string;
   version: number;
@@ -185,7 +185,7 @@ export async function loadRates(client: Client, eventLodgingId: string) {
   return rates;
 }
 
-async function loadCurrentRequests(client: Client, eventId: string, where: Prisma.EventLodgingRequestWhereInput = {}): Promise<RequestRow[]> {
+export async function loadCurrentRequests(client: Client, eventId: string, where: Prisma.EventLodgingRequestWhereInput = {}): Promise<RequestRow[]> {
   const requests = await client.eventLodgingRequest.findMany({
     where: { eventId, ...where },
     include: { versions: { orderBy: { version: "desc" }, take: 1 } },
