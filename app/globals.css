@@ -9889,3 +9889,65 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 /* Class-choice status next to a person name (#799 G3). */
 .class-readiness-summary { margin: 8px 0; font-size: 0.95rem; }
 .class-person-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 2px 0 6px; }
+
+/* Issue #447 - mobile pass: the phone layout audit (scripts/verify-mobile-layout.ts,
+   docs/RESPONSIVE.md). Everything here is layout only; desktop sizes are unchanged. */
+
+/* A wide table's own scroll box: it never widens the page. The class was used in
+   markup (the attendee listing) before it had a rule, so the table pushed the
+   page 500px sideways. A grid item also needs min-width: 0 or its content sets
+   the track width. */
+.table-scroll { max-width: 100%; min-width: 0; overflow-x: auto; }
+.page-stack > *, .workspace-content > * { min-width: 0; }
+.checkbox-hit { display: inline-flex; align-items: center; justify-content: center; }
+/* A select with a long option (a person's or club's name) never sets its container's width. */
+select { max-width: 100%; }
+.club-form-filter label { flex: 1 1 14rem; min-width: 0; max-width: 100%; }
+.club-form-filter select { width: 100%; }
+/* A scroll box is the containing block of the visually hidden (position: absolute) text
+   inside it; otherwise that text escapes the box's clipping and widens the page. */
+.report-table-wrap, .table-wrap, .table-scroll, .reminder-recipient-table-wrap { position: relative; }
+
+/* Two-column form grids: `1fr 1fr` (min-content tracks) let a date input push the
+   page wider than a 360px phone; stack them on narrow phones. */
+@media (max-width: 800px) {
+  :root .form-grid.two-column, :root .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 520px) {
+  :root .form-grid.two-column { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* A popup never grows past the screen: dvh follows the phone's collapsing browser bars. */
+@supports (height: 1dvh) {
+  .modal-card { max-height: calc(100dvh - 44px); }
+}
+@media (max-width: 800px) {
+  @supports (height: 1dvh) { .modal-card { max-height: calc(100dvh - 20px); } }
+}
+
+@media screen and (max-width: 600px) {
+  .table-scroll:has(> table.table-cards) { overflow: visible; }
+}
+
+@media screen and (max-width: 768px) {
+  /* Every text-like form control is a 44px target (several form styles set 41-43px). */
+  :root :is(input:not([type="checkbox"], [type="radio"], [type="hidden"], [type="file"], [type="color"],
+    [type="range"], [type="submit"], [type="button"], [type="image"], [type="reset"]), select, textarea) {
+    min-height: var(--touch-target, 44px);
+  }
+  :root input[type="color"] { min-width: var(--touch-target, 44px); min-height: var(--touch-target, 44px); }
+  :root summary { min-height: var(--touch-target, 44px); }
+
+  /* Links and sort buttons in table cells and headers. */
+  :root :is(td, th) > a:not(.primary-button, .secondary-button) {
+    display: inline-flex; align-items: center; min-width: var(--touch-target, 44px); min-height: var(--touch-target, 44px);
+  }
+  :root .table-sort-button { min-height: var(--touch-target, 44px); }
+
+  /* Buttons that sat at 36-39px. */
+  :root :is(.arrival-row button, .communications-tabs button) { min-height: var(--touch-target, 44px); }
+  :root .club-invite-actions button { min-width: var(--touch-target, 44px); }
+  :root .settings-jump-bar a { min-width: var(--touch-target, 44px); justify-content: center; }
+  /* A checkbox inside a table cell: the wrapping label is the 44px target. */
+  :root .checkbox-hit { min-width: var(--touch-target, 44px); min-height: var(--touch-target, 44px); }
+}

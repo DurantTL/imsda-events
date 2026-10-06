@@ -4,6 +4,7 @@ import { Download } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
 import { staffPageTitles } from "@/components/staff-navigation";
 import { resolveEventContext } from "@/modules/events/selection";
+import { cardCell } from "@/components/table-card-labels";
 import { isClubAudienceEvent } from "@/modules/events/repository";
 import { listRegistrations } from "@/modules/registrations/repository";
 import {
@@ -94,31 +95,31 @@ export default async function AttendeeListingPage({ searchParams }: { searchPara
       </form>
 
       <div className="table-scroll">
-        <table>
-          <thead>
-            <tr>
+        <table role="table" className="table-cards">
+          <caption className="sr-only">Attendees</caption>
+          <thead role="rowgroup">
+            <tr role="row">
               {LISTING_COLUMNS.map((column) => {
                 const active = query.sort === column.key;
                 const nextDirection = active && query.direction === "asc" ? "desc" : "asc";
                 return (
-                  <th key={column.key} scope="col" aria-sort={active ? (query.direction === "asc" ? "ascending" : "descending") : undefined}>
+                  <th key={column.key} role="columnheader" scope="col" aria-sort={active ? (query.direction === "asc" ? "ascending" : "descending") : undefined}>
                     <Link href={href({ sort: column.key, direction: nextDirection })}>{column.label}{active ? (query.direction === "asc" ? " ▲" : " ▼") : ""}</Link>
                   </th>
                 );
               })}
             </tr>
           </thead>
-          <tbody>
-            {rows.length === 0 && <tr><td colSpan={LISTING_COLUMNS.length}>No attendees match these filters.</td></tr>}
+          <tbody role="rowgroup">
+            {rows.length === 0 && <tr role="row"><td role="cell" colSpan={LISTING_COLUMNS.length}>No attendees match these filters.</td></tr>}
             {rows.map((row) => (
-              <tr key={row.attendeeId}>
-                {LISTING_COLUMNS.map((column) => (
-                  <td key={column.key}>
-                    {column.key === "confirmationCode"
-                      ? <Link href={`/people?event=${encodeURIComponent(event.id)}&registration=${encodeURIComponent(row.registrationId)}`}>{row.confirmationCode}</Link>
-                      : row[column.key]}
-                  </td>
-                ))}
+              <tr role="row" key={row.attendeeId}>
+                {LISTING_COLUMNS.map((column) => {
+                  const value = column.key === "confirmationCode"
+                    ? <Link href={`/people?event=${encodeURIComponent(event.id)}&registration=${encodeURIComponent(row.registrationId)}`}>{row.confirmationCode}</Link>
+                    : row[column.key];
+                  return <td key={column.key} {...cardCell(column.label)}>{value}</td>;
+                })}
               </tr>
             ))}
           </tbody>
