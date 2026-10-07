@@ -219,7 +219,7 @@ async function main() {
   assert(enrolledNow === 2, `two people are enrolled, found ${enrolledNow}`);
   const unconfirmed = await rejected(updateHonorOffering(eventId, multi.id, { honorIds: [knots, fire] }, adminId));
   assert(unconfirmed instanceof HonorConfigurationError && unconfirmed.code === "HONORS_NEED_CONFIRMATION" && unconfirmed.picks === 2
-    && unconfirmed.message.startsWith("2 students are enrolled. They will now take:"), "removing an honor asks for the enrolled count first");
+    && unconfirmed.message.startsWith("2 people are enrolled. They will now take:"), "removing an honor asks for the enrolled count first");
   const stale = await rejected(updateHonorOffering(eventId, multi.id, { honorIds: [knots, fire], confirmEnrolled: 1 }, adminId));
   assert(stale instanceof HonorConfigurationError && stale.code === "HONORS_NEED_CONFIRMATION" && stale.picks === 2, "a stale count is refused with the live one");
   assert((await joinRows(multi.id)).length === 3, "a refused edit changes nothing");
@@ -254,7 +254,7 @@ async function main() {
   // An honor already recorded as completed can't come off the class; another one can still be added.
   const recorded = await rejected(updateHonorOffering(eventId, multi.id, { honorIds: [fire, knots], confirmEnrolled: 2 }, adminId));
   assert(recorded instanceof HonorConfigurationError && recorded.code === "HAS_WRITTEN_BACK_COMPLETIONS"
-    && recorded.message.includes("was already recorded as completed for 1 student") && recorded.message.includes("Void those records first."),
+    && recorded.message.includes("was already recorded as completed for 1 person") && recorded.message.includes("Void those records first."),
   `removing an honor already written back must be refused with the student count, got ${String(recorded && (recorded as Error).message)}`);
   assert((await joinRows(multi.id)).length === 3, "the refused removal changed nothing");
   await updateHonorOffering(eventId, multi.id, { honorIds: [fire, knots, maps, birds], confirmEnrolled: 2 }, adminId);
@@ -365,6 +365,55 @@ async function main() {
   const uRows = await joinRows(classU.id);
   assert(uRows.length === 1 && uRows[0]!.honorId === rope && uRows[0]!.locationId === siteB.id, "a site move that swaps the honor the destination site already teaches works");
   console.log("ok  editing honors while moving a class (session swap, span change, site move) succeeds, and a real clash is still refused");
+
+  // 10. A voided record no longer blocks removing the honor or deleting the class (#591): write back, refused, void, allowed.
+  const gone = await prisma.honorSession.create({ data: { eventId, name: "Gone", normalizedName: "gone", sortOrder: 4 } });
+  const goneClass = (await createHonorOffering(eventId, offeringInput([compass, fire], gone.id), adminId)).offerings.find((offering) => offering.sessionId === gone.id)!;
+  const staffPicks = (await prisma.honorEnrollment.findMany({ where: { registrationAttendeeId: aStaff.id }, select: { offeringId: true } })).map((row) => row.offeringId);
+  await setClassSelections(clubs[0], eventId, { accountId: "director-a" }, { [aStaff.id]: [...staffPicks, goneClass.id] }, now);
+  await prisma.checkIn.create({ data: { eventId, registrationAttendeeId: aStaff.id, idempotencyKey: `${P}-checkin-staff` } });
+  await writeBackHonorsWeekendCompletions(eventId, adminId);
+  const staffEntry = await prisma.memberHonorEntry.findFirstOrThrow({ where: { personId: aStaff.personId, honorId: compass } });
+  const refusedRemoval = await rejected(updateHonorOffering(eventId, goneClass.id, { honorIds: [fire], confirmEnrolled: 1 }, adminId));
+  assert(refusedRemoval instanceof HonorConfigurationError && refusedRemoval.code === "HAS_WRITTEN_BACK_COMPLETIONS"
+    && refusedRemoval.message.includes("for 1 person"), "removing an honor that was written back is refused");
+  const refusedDelete = await rejected(deleteHonorOffering(eventId, goneClass.id, adminId, 1));
+  assert(refusedDelete instanceof HonorConfigurationError && refusedDelete.code === "HAS_WRITTEN_BACK_COMPLETIONS", "deleting a class with written-back honors is refused");
+  await prisma.memberHonorEntryVoid.create({ data: { entryId: staffEntry.id, reason: "Synthetic void for verification", voidedByUserId: adminId } });
+  assert(await prisma.honorWeekendCompletionLink.count({ where: { memberHonorEntryId: staffEntry.id } }) === 1, "voiding keeps the link");
+  await updateHonorOffering(eventId, goneClass.id, { honorIds: [fire], confirmEnrolled: 1 }, adminId);
+  assert((await joinRows(goneClass.id)).map((row) => row.honorId).join() === fire, "once the record is voided the honor can be removed");
+  // Fire was written back too (its record is not voided), so the class still can't be deleted; void it and the delete goes through.
+  const stillBlocked = await rejected(deleteHonorOffering(eventId, goneClass.id, adminId, 1));
+  assert(stillBlocked instanceof HonorConfigurationError && stillBlocked.code === "HAS_WRITTEN_BACK_COMPLETIONS", "a record that is not voided still blocks the delete");
+  const fireEntry = await prisma.memberHonorEntry.findFirstOrThrow({ where: { personId: aStaff.personId, honorId: fire, void: null }, orderBy: { seq: "desc" } });
+  const fireLink = await prisma.honorWeekendCompletionLink.findFirstOrThrow({ where: { memberHonorEntryId: fireEntry.id, enrollment: { offeringId: goneClass.id } } });
+  assert(fireLink, "the fire record is linked to this class");
+  await prisma.memberHonorEntryVoid.create({ data: { entryId: fireEntry.id, reason: "Synthetic void for verification", voidedByUserId: adminId } });
+  await deleteHonorOffering(eventId, goneClass.id, adminId, 1);
+  assert(await prisma.honorOffering.count({ where: { id: goneClass.id } }) === 0, "with every record voided the class can be deleted");
+  console.log("ok  written back, refused, voided, then the honor can be removed and the class deleted");
+
+  // 11. A write-back and an honor removal at the same moment serialize: no link survives for an honor the class no longer teaches.
+  const lateSession = await prisma.honorSession.create({ data: { eventId, name: "Late", normalizedName: "late", sortOrder: 5 } });
+  const lateClass = (await createHonorOffering(eventId, offeringInput([rope, fire], lateSession.id), adminId)).offerings.find((offering) => offering.sessionId === lateSession.id)!;
+  const pickedNow = (await prisma.honorEnrollment.findMany({ where: { registrationAttendeeId: aStaff.id }, select: { offeringId: true } })).map((row) => row.offeringId);
+  await setClassSelections(clubs[0], eventId, { accountId: "director-a" }, { [aStaff.id]: [...pickedNow, lateClass.id] }, now);
+  const outcomes = await Promise.allSettled([
+    writeBackHonorsWeekendCompletions(eventId, adminId),
+    updateHonorOffering(eventId, lateClass.id, { honorIds: [rope], confirmEnrolled: 1 }, adminId),
+  ]);
+  assert(outcomes[0].status === "fulfilled", "the write-back finishes");
+  const removal = outcomes[1];
+  if (removal.status === "rejected") {
+    assert(removal.reason instanceof HonorConfigurationError && removal.reason.code === "HAS_WRITTEN_BACK_COMPLETIONS", `a removal that loses is refused as written back, got ${String(removal.reason)}`);
+  }
+  const taughtNow = (await joinRows(lateClass.id)).map((row) => row.honorId);
+  const lateLinks = await prisma.honorWeekendCompletionLink.findMany({ where: { enrollment: { offeringId: lateClass.id } }, select: { honorId: true } });
+  assert(lateLinks.every((link) => taughtNow.includes(link.honorId)), "no completion link names an honor the class no longer teaches");
+  assert(removal.status === "rejected" ? taughtNow.length === 2 && lateLinks.length === 2 : taughtNow.join() === rope && lateLinks.length <= 1,
+    "either the write-back ran first and the removal was refused, or the removal ran first and only the remaining honor was written back");
+  console.log("ok  a write-back and an honor removal serialize: removal refused after the write-back, or the write-back skips the removed honor");
 
   // 8. Deleting an unpicked class removes its honors; the event cascade removes the rest (cleanup proves it).
   const spare = (await createHonorOffering(eventId, offeringInput([rope], sessionThree.id), adminId)).offerings.find((offering) => offering.sessionId === sessionThree.id && offering.honorIds.join() === rope)!;

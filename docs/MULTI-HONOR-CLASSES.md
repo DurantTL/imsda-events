@@ -50,10 +50,14 @@ after students have enrolled. Enrollment is per class, so the honors follow.
   write-back includes it for them.
 - **Removing** an honor takes it from them. The one refusal: an honor already
   written back as completed for any enrollee of the class (a completion link)
-  can't be removed. The message says it "was already recorded as completed for N
-  students in this class" and tells staff to void those records first.
+  can't be removed. A voided record (#591) does not count: voiding adds a void row
+  and keeps the link, so staff void the records first and then remove the honor.
+  The message says it "was already recorded as completed for N people in this
+  class" and tells staff to void those records first. The removal takes the same
+  per-event lock as the write-back, so a write-back and a removal run one after
+  the other.
 - **Confirmation.** When the honors change on a class people are enrolled in, the
-  editor asks "12 students are enrolled. They will now take: Birds + Knots." and
+  editor asks "12 people are enrolled. They will now take: Birds + Knots." (staff and adults count) and
   sends that count back as `confirmEnrolled`. The server counts the enrollments
   inside its serializable transaction and refuses a missing or stale number with
   `HONORS_NEED_CONFIRMATION` and the live count, which the editor asks about

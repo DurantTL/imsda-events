@@ -441,7 +441,10 @@ async function removeOfferings(
     organizations: [...perOrganization].map(([organizationId, count]) => ({ organizationId, picks: count })),
   };
   if (picks > 0) {
-    const writtenBack = await tx.honorWeekendCompletionLink.count({ where: { enrollment: { offeringId: { in: offeringIds } } } });
+    // A voided record (#591) no longer holds the pick: voiding adds a void row and never deletes the link.
+    const writtenBack = await tx.honorWeekendCompletionLink.count({
+      where: { enrollment: { offeringId: { in: offeringIds } }, memberHonorEntry: { void: null } },
+    });
     if (writtenBack > 0) {
       throw new HonorConfigurationError(
         "HAS_WRITTEN_BACK_COMPLETIONS",
@@ -732,9 +735,15 @@ export async function updateHonorOffering(
         }
         // An honor already written back as completed can't be taken off the class: the records name it.
         if (honorChange.removed.length > 0) {
-          const recorded = await tx.honorWeekendCompletionLink.groupBy({
+          // Serialize with the write-back, which takes the same lock for the event: it is either finished (its links are
+          // seen below) or starts after this edit commits (and reads the class's new honors).
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`honors-weekend-write-back:${eventId}`}))`;
+          // Read with a fresh snapshot, not this transaction's: it was taken before the lock was granted, so a write-back
+          // that committed while this edit waited would be invisible to it. Once the lock is held none can start.
+          // A voided record is ignored, as the write-back ignores it: staff void records first, then remove the honor.
+          const recorded = await getPrisma().honorWeekendCompletionLink.groupBy({
             by: ["honorId"],
-            where: { honorId: { in: honorChange.removed }, enrollment: { offeringId } },
+            where: { honorId: { in: honorChange.removed }, enrollment: { offeringId }, memberHonorEntry: { void: null } },
             _count: { _all: true },
           });
           const first = recorded[0];

@@ -91,6 +91,7 @@ function fakeDatabase() {
         db.pickedOfferingIds = db.pickedOfferingIds.filter((offeringId) => !where.offeringId.in.includes(offeringId));
       },
     },
+    $executeRaw: async () => 1,
     honorWeekendCompletionLink: {
       groupBy: async ({ where }: { where: { honorId: { in: string[] }; enrollment: { offeringId: string } } }) => db.writtenBackHonors
         .filter((row) => row.offeringId === where.enrollment.offeringId && where.honorId.in.includes(row.honorId))
@@ -858,7 +859,7 @@ describe("a class that teaches several honors (#812)", () => {
         .rejects.toMatchObject({
           code: "HONORS_NEED_CONFIRMATION",
           picks: 2,
-          message: "2 students are enrolled. They will now take: Knot Tying + Birds + Fire Building.",
+          message: "2 people are enrolled. They will now take: Knot Tying + Birds + Fire Building.",
         });
       await expect(updateHonorOffering("site-a", offeringId, { honorIds: ["honor-knots", "honor-birds", "honor-fire"], confirmEnrolled: 1 }, "staff-1"))
         .rejects.toMatchObject({ code: "HONORS_NEED_CONFIRMATION", picks: 2 });
@@ -881,7 +882,7 @@ describe("a class that teaches several honors (#812)", () => {
       await expect(updateHonorOffering("site-a", offeringId, { honorIds: ["honor-knots"], confirmEnrolled: 2 }, "staff-1"))
         .rejects.toMatchObject({
           code: "HAS_WRITTEN_BACK_COMPLETIONS",
-          message: "Birds was already recorded as completed for 2 students in this class, so it can't be removed. Void those records first.",
+          message: "Birds was already recorded as completed for 2 people in this class, so it can't be removed. Void those records first.",
         });
       expect(honorsOf()).toEqual(["honor-birds", "honor-knots"]);
       // Another honor can still be removed, and honors can still be added.

@@ -40,9 +40,9 @@ describe("how a class's set of honors changes", () => {
   });
 
   it("words the confirmation staff see, and the refusal for an honor already recorded as completed", () => {
-    expect(honorsNeedConfirmationMessage(12, ["Birds", "Knots"])).toBe("12 students are enrolled. They will now take: Birds + Knots.");
-    expect(honorsNeedConfirmationMessage(1, ["Birds"])).toBe("1 student is enrolled. They will now take: Birds.");
-    expect(writtenBackRemovalMessage("Birds", 3)).toBe("Birds was already recorded as completed for 3 students in this class, so it can't be removed. Void those records first.");
+    expect(honorsNeedConfirmationMessage(12, ["Birds", "Knots"])).toBe("12 people are enrolled. They will now take: Birds + Knots.");
+    expect(honorsNeedConfirmationMessage(1, ["Birds"])).toBe("1 person is enrolled. They will now take: Birds.");
+    expect(writtenBackRemovalMessage("Birds", 3)).toBe("Birds was already recorded as completed for 3 people in this class, so it can't be removed. Void those records first.");
   });
 
   it("orders classes by their honor names alphabetically, so reordering a class's honors never moves it", () => {

@@ -62,12 +62,12 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
  * enrolled in: "12 students are enrolled. They will now take: Birds + Knots."
  */
 export function honorsNeedConfirmationMessage(enrolled: number, honorNames: readonly string[]) {
-  return `${plural(enrolled, "student")} ${enrolled === 1 ? "is" : "are"} enrolled. They will now take: ${joinHonorNames(honorNames)}.`;
+  return `${enrolled === 1 ? "1 person is" : `${enrolled} people are`} enrolled. They will now take: ${joinHonorNames(honorNames)}.`;
 }
 
 /** Why an honor can't come off a class: it was already recorded as completed for enrollees. */
-export function writtenBackRemovalMessage(honorName: string, students: number) {
-  return `${honorName} was already recorded as completed for ${plural(students, "student")} in this class, so it can't be removed. Void those records first.`;
+export function writtenBackRemovalMessage(honorName: string, people: number) {
+  return `${honorName} was already recorded as completed for ${people === 1 ? "1 person" : `${people} people`} in this class, so it can't be removed. Void those records first.`;
 }
 
 /**

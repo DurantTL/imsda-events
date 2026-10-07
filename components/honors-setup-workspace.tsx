@@ -291,7 +291,7 @@ export function HonorsSetupWorkspace({
       if (!ask(pending.enrolled)) return null;
       confirmed = pending.enrolled;
     }
-    setError("The number of enrolled students kept changing, so nothing was saved. Try again.");
+    setError("The number of enrolled people kept changing, so nothing was saved. Try again.");
     return null;
   }
 
@@ -487,7 +487,7 @@ export function HonorsSetupWorkspace({
             <HonorMultiSelect label="Honors taught" onChange={setEditHonorIds} options={honorOptions(editing)} value={editHonorIds} />
             {editing.enrolled > 0 && (
               <p className="field-help">
-                {editing.enrolled} student{editing.enrolled === 1 ? " is" : "s are"} enrolled. Adding an honor gives it to them; removing one takes it
+                {editing.enrolled === 1 ? "1 person is" : `${editing.enrolled} people are`} enrolled. Adding an honor gives it to them; removing one takes it
                 from them (unless it was already recorded as completed). You will be asked to confirm.
               </p>
             )}
