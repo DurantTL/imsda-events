@@ -6,7 +6,7 @@ import { comboboxKeyResult, filterHonorsByWordPrefix } from "@/modules/honors/ho
 export type HonorComboboxOption = { id: string; name: string };
 
 /**
- * The type-to-search honor picker (#819), used wherever a honor is chosen. An
+ * The type-to-search honor picker (#819), used wherever a honor is chosen (and, with `noun`, a class on the class tracking page, #827). An
  * ARIA 1.2 editable combobox with a listbox popup: typing filters by the start
  * of any word in the name; Arrow Up/Down move through the matches, Enter
  * chooses, Escape closes the list (and never closes a dialog around it).
@@ -23,6 +23,8 @@ export function HonorCombobox({
   required = false,
   describedBy,
   placeholder,
+  noun = "honor",
+  nounPlural = `${noun}s`,
 }: {
   options: readonly HonorComboboxOption[];
   value: string;
@@ -33,6 +35,9 @@ export function HonorCombobox({
   required?: boolean;
   describedBy?: string;
   placeholder?: string;
+  /** What is being chosen, in the words the page uses. Honors by default; the class tracking page passes "class" (#827). */
+  noun?: string;
+  nounPlural?: string;
 }) {
   const baseId = useId();
   const listId = `${baseId}-list`;
@@ -93,7 +98,7 @@ export function HonorCombobox({
         onClick={() => setOpen(true)}
         onFocus={(event) => event.currentTarget.select()}
         onKeyDown={onKeyDown}
-        placeholder={placeholder ?? "Type to search honors"}
+        placeholder={placeholder ?? `Type to search ${nounPlural}`}
         required={required && !value}
         role="combobox"
         type="text"
@@ -120,10 +125,10 @@ export function HonorCombobox({
             {choice.name}
           </li>
         ))}
-        {choices.length === 0 && <li className="honor-combobox-empty" role="presentation">No honor matches</li>}
+        {choices.length === 0 && <li className="honor-combobox-empty" role="presentation">No {noun} matches</li>}
       </ul>
       <span aria-live="polite" className="sr-only" role="status">
-        {open ? `${matches.length} ${matches.length === 1 ? "honor matches" : "honors match"}` : ""}
+        {open ? `${matches.length} ${matches.length === 1 ? `${noun} matches` : `${nounPlural} match`}` : ""}
       </span>
     </div>
   );
