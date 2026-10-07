@@ -11,8 +11,6 @@ import { rosterGuardiansForAccess } from "@/modules/club-rosters/guardians-acces
 import { listRoster } from "@/modules/club-rosters/repository";
 import { listTransferClubOptions } from "@/modules/club-transfers/repository";
 import { personIdsMovedToOtherClubs } from "@/modules/earned-awards/order-source";
-import { honorSummaryByMemberId } from "@/modules/honors/member-honor-domain";
-import { listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 import { requireHealthViewerForClub } from "@/modules/health-records/access";
 import { healthRecordsEnabled } from "@/modules/health-records/flag";
 import { healthRecordFlagsForRoster, healthSummariesForMembers } from "@/modules/health-records/repository";
@@ -41,10 +39,9 @@ export default async function ClubRosterPage({
   // Status only, never the note, and only for a director or deputy: this is the club's own page (#427).
   // Transfers (#489) are the same leader-only capability that manages the club's team.
   const canTransfer = access.capabilities.manageTeam && !readOnly;
-  const [members, complianceStatuses, honorRows, clubOptions, guardians] = await Promise.all([
+  const [members, complianceStatuses, clubOptions, guardians] = await Promise.all([
     listRoster(organizationId, clubYear),
     clubPortalComplianceStatuses(organizationId, clubYear, access.capabilities),
-    listClubHonorsPage(organizationId, clubYear),
     canTransfer ? listTransferClubOptions(organizationId) : Promise.resolve([]),
     // Guardian contacts (#510): the club's director and deputy only, and only on the current year, where they can be edited.
     readOnly ? Promise.resolve(undefined) : rosterGuardiansForAccess(access, organizationId, clubYear),
@@ -84,7 +81,6 @@ export default async function ClubRosterPage({
         complianceFilter={complianceFilterFrom(complianceParam)}
         complianceStatuses={complianceStatuses}
         headingActions={canTransfer ? <RequestTransferButton clubOptions={clubOptions} organizationId={organizationId} /> : undefined}
-        honorSummaries={honorSummaryByMemberId(honorRows)}
         guardians={guardians}
         healthRecordFlags={healthRecordFlags}
         healthTab={healthTab}

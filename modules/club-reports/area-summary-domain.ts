@@ -115,6 +115,21 @@ export function filterClubsByName<T extends { name: string }>(clubs: readonly T[
   return needle === "" ? [...clubs] : clubs.filter((club) => normalizeName(club.name).includes(needle));
 }
 
+/**
+ * The All clubs tab's search (#819): keeps clubs whose name, sponsoring church or
+ * city contains the text, ignoring case and extra spaces. Blank keeps all.
+ * Never mutates the input.
+ */
+export function filterClubsByNameChurchOrCity<T extends { name: string; sponsoringChurch?: string | null; city?: string | null }>(
+  clubs: readonly T[],
+  query: string | undefined,
+) {
+  const needle = normalizeName(query ?? "");
+  if (needle === "") return [...clubs];
+  return clubs.filter((club) =>
+    [club.name, club.sponsoringChurch ?? "", club.city ?? ""].some((field) => normalizeName(field).includes(needle)));
+}
+
 /** Plain-language description of a chart, for screen readers. */
 export function pointsChartDescription(clubs: ReadonlyArray<{ name: string; totalPoints: number }>, clubYear: string) {
   if (clubs.length === 0) return `No active clubs for ${clubYear}.`;

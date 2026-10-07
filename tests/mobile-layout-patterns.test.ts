@@ -60,14 +60,13 @@ describe("tables that became phone cards (#447)", () => {
     expect(honors).toContain('cardCell("Current class")');
     expect(honors).toContain('cardCell("Honors")');
     expect(honors).toContain('<th role="rowheader" scope="row"><strong translate="no">');
-    // Header and cell counts line up: Select (editors), Name, Current class, Honors, Add.
+    // Header and cell counts line up: Name, Current class, Honors, Add. No Select column: the bulk popup does the selecting (#819).
     const head = honors.slice(honors.indexOf("<thead"), honors.indexOf("</thead>"));
-    expect((head.match(/<th\b|<SortableHeader/g) ?? []).length).toBe(5);
+    expect((head.match(/<th\b|<SortableHeader/g) ?? []).length).toBe(4);
     const body = honors.slice(honors.indexOf("<tbody"), honors.indexOf("</tbody>"));
-    expect((body.match(/<td\b|<th\b/g) ?? []).length).toBe(5);
-    // The editor's Select cell comes first, then the name, in both the header and the rows.
-    expect(head.indexOf("Select")).toBeLessThan(head.indexOf("<SortableHeader"));
-    expect(body.indexOf("checkbox-hit")).toBeLessThan(body.indexOf('role="rowheader"'));
+    expect((body.match(/<td\b|<th\b/g) ?? []).length).toBe(4);
+    expect(body).not.toContain("checkbox-hit");
+    expect(head).not.toContain("Select");
   });
 
   it("the admin club forms table is table-cards with labelled cells and the form as row header", () => {

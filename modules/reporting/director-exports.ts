@@ -45,6 +45,27 @@ export function honorsSummary(rows: readonly HonorsExportRow[]): HonorsSummaryRo
   return [...counts.values()].sort((a, b) => b.count - a.count || a.honorName.localeCompare(b.honorName));
 }
 
+/**
+ * The club-wide print report (#819): each completed honor with how many members
+ * completed it. The result type has no name or date field, so nothing about a
+ * person can reach the printed page through it.
+ */
+export type ClubHonorCount = { honorName: string; count: number };
+
+export function clubHonorCounts(rows: readonly HonorsExportRow[]): ClubHonorCount[] {
+  return honorsSummary(rows).map(({ honorName, count }) => ({ honorName, count }));
+}
+
+/** The one-person print report (#819): that member's completed honors, A to Z, with the completion date when one is on file. */
+export type MemberCompletedHonor = { honorName: string; completionDate: string };
+
+export function memberCompletedHonors(rows: readonly HonorsExportRow[]): MemberCompletedHonor[] {
+  return rows
+    .filter((row) => row.status === "Completed")
+    .map((row) => ({ honorName: row.honorName, completionDate: row.dateKind === "Completed" ? row.dateEarned : "" }))
+    .sort((a, b) => a.honorName.localeCompare(b.honorName));
+}
+
 export const HONORS_EXPORT_HEADERS = [
   "Last name", "First name", "Class", "Honor", "Category", "Status", "Date earned or recorded", "Date type", "Event where earned",
 ] as const;

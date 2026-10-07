@@ -10,7 +10,6 @@ import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { RosterTypeDefinitions } from "@/components/roster-type-definitions";
 import { validateRosterForm, rosterFormFieldOrder, type RosterFormErrors, type RosterFormField } from "@/modules/club-rosters/form-validation";
 import { ClubMemberHonorsDialog } from "@/components/club-member-honors-dialog";
-import { HonorPillList } from "@/components/honor-pill-list";
 import { RosterCsvImport } from "@/components/roster-csv-import";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { complianceFilterLabels, complianceFilterState, type ComplianceFilterValue } from "@/modules/background-checks/display";
@@ -33,7 +32,6 @@ import {
   type GuardianRecord,
 } from "@/modules/club-rosters/guardians-domain";
 import type { RosterMemberRecord } from "@/modules/club-rosters/repository";
-import { honorSummaryByMemberId, type ClubHonorsRow, type CurrentMemberHonor } from "@/modules/honors/member-honor-domain";
 
 type RosterResponse = {
   members?: RosterMemberRecord[];
@@ -67,8 +65,8 @@ export function ClubRosterWorkspace({
   readOnly = false,
   birthDatesEndpoint,
   complianceStatuses,
-  honorSummaries: initialHonorSummaries,
   honorsPopup,
+  honorsHref,
   classHistoryBase,
   complianceFilter: initialComplianceFilter = null,
   headingActions,
@@ -91,14 +89,16 @@ export function ClubRosterWorkspace({
    * caller is allowed to see it (club directors never get a note).
    */
   complianceStatuses?: Record<string, RosterComplianceInfo>;
-  /** Each active member's current honors (#486), keyed by roster member id. Omitted where honors aren't shown here. */
-  honorSummaries?: Record<string, CurrentMemberHonor[]>;
   /**
-   * Opens each person's honors in a popup (#701) instead of linking away.
+   * The Honors column holds only a button (#819), never a list of honors: the
+   * honors themselves live on the Honors page and in the history popup.
+   * This one opens each person's honors in a popup (#701) instead of linking away.
    * `canRecord` shows the record form; without it the popup is view-only.
    * Omit where the caller can't use the club honors endpoints (staff views).
    */
   honorsPopup?: { canRecord: boolean };
+  /** Where callers without the popup (conference staff) open the club's Honors page; the button links there. */
+  honorsHref?: string;
   /**
    * The club portal's class tracking address (#791). Only that page sets it: the
    * class history page opens on the club portal's own gate, so area and staff
@@ -127,7 +127,7 @@ export function ClubRosterWorkspace({
   guardians?: Record<string, GuardianRecord[]>;
 }) {
   const [members, setMembers] = useState(initialMembers);
-  const [honorSummaries, setHonorSummaries] = useState(initialHonorSummaries);
+  const showHonors = Boolean(honorsPopup || honorsHref);
   const [honorsFor, setHonorsFor] = useState<RosterMemberRecord | null>(null);
   const [editing, setEditing] = useState<RosterMemberRecord | null>(null);
   /** The type picked in the dialog, so the Role placeholder shows the blank-role default (#424). */
@@ -155,17 +155,6 @@ export function ClubRosterWorkspace({
   }, []);
   const dialogRef = useAccessibleDialog<HTMLElement>(dialogOpen, closeDialog);
   const closeHonors = useCallback(() => setHonorsFor(null), []);
-
-  /** After a honor is recorded in the popup, refresh the row's chips from the Honors list. */
-  async function refreshHonorSummaries() {
-    try {
-      const response = await fetch(`/api/attendee/clubs/${encodeURIComponent(organizationId)}/honors`);
-      const body = await response.json().catch(() => ({})) as { rows?: ClubHonorsRow[] };
-      if (response.ok && body.rows) setHonorSummaries(honorSummaryByMemberId(body.rows));
-    } catch {
-      // The chips catch up on the next page load.
-    }
-  }
 
   /** Add and edit happen in a pop-up (#383), so the list never scrolls away. */
   function openDialog(member: RosterMemberRecord | null) {
@@ -224,7 +213,7 @@ export function ClubRosterWorkspace({
     { key: "MEMBERS", title: "Members", empty: "No Pathfinders on the roster yet.", people: sortByName(visible.filter((member) => rosterSectionOf(member.attendeeType) === "MEMBERS"), nameDirection) },
   ] as const;
   /** Name, Age, Type, Current class, Role, Gender, Flags — plus every optional column, for the section-title row's colSpan. */
-  const rosterColumnCount = 7 + (birthDates ? 1 : 0) + (complianceStatuses ? 1 : 0) + (honorSummaries ? 1 : 0) + (readOnly ? 0 : 1);
+  const rosterColumnCount = 7 + (birthDates ? 1 : 0) + (complianceStatuses ? 1 : 0) + (showHonors ? 1 : 0) + (readOnly ? 0 : 1);
 
   async function call(url: string, method: string, body: unknown, success: string) {
     setSaving(true);
@@ -451,7 +440,7 @@ export function ClubRosterWorkspace({
                   <th>Gender</th>
                   <th>Flags</th>
                   {complianceStatuses && <th>Sterling Volunteers</th>}
-                  {honorSummaries && <th>Honors</th>}
+                  {showHonors && <th>Honors</th>}
                   {!readOnly && <th><span className="sr-only">Actions</span></th>}
                 </tr>
               </thead>
@@ -521,9 +510,17 @@ export function ClubRosterWorkspace({
                                 ) : "—"}
                               </td>
                             )}
-                            {honorSummaries && (
+                            {showHonors && (
                               <td className="roster-honors-cell" data-label="Honors">
-                                <HonorPillList honors={honorSummaries[member.id] ?? []} withIcon />
+                                {honorsHref && !honorsPopup && (
+                                  <a
+                                    aria-label={`Honors for ${member.firstName} ${member.lastName}`}
+                                    className="secondary-button roster-honors-button"
+                                    href={honorsHref}
+                                  >
+                                    <Award aria-hidden="true" size={13} /> Honors
+                                  </a>
+                                )}
                                 {honorsPopup && (
                                   <button
                                     aria-haspopup="dialog"
@@ -723,7 +720,6 @@ export function ClubRosterWorkspace({
           canRecord={honorsPopup.canRecord}
           member={honorsFor}
           onClose={closeHonors}
-          onRecorded={refreshHonorSummaries}
           organizationId={organizationId}
         />
       )}

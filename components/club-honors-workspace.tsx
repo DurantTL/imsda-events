@@ -6,22 +6,25 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { Download, ListPlus, Plus, Search, UsersRound } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { HonorCombobox } from "@/components/honor-combobox";
 import { HonorPillList } from "@/components/honor-pill-list";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { bulkScopeSummary } from "@/lib/confirmation-copy";
-import { calendarDateIn } from "@/modules/calendar/domain";
 import { clubClassLevelLabels } from "@/modules/club-rosters/domain";
 import { cardCell } from "@/components/table-card-labels";
 import {
   type ClubHonorsRow,
   type MemberHonorEntryRecord,
   bulkHonorButtonState,
+  bulkHonorPayload,
   clubHonorsEmptyCopy,
   clubHonorsEmptyState,
   filterClubHonorsRows,
   filterRowsByPersonName,
   memberHonorStatusLabels,
+  visibleHonorHistory,
 } from "@/modules/honors/member-honor-domain";
+import { filterPeopleByWordPrefix } from "@/modules/honors/honor-search";
 
 type HonorOption = { id: string; code: string; name: string };
 
@@ -33,8 +36,6 @@ type HistoryResponse = {
   message?: string;
   issues?: Array<{ message?: string }>;
 };
-
-const MULTI_ADD_ID = "honors-multi-add";
 
 /**
  * A club's Honors page (#486): filter by honor, status, and current class
@@ -69,6 +70,9 @@ export function ClubHonorsWorkspace({
   const [unitFilter, setUnitFilter] = useState("");
   const [nameSearch, setNameSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [singleHonorId, setSingleHonorId] = useState("");
   const [bulkHonorId, setBulkHonorId] = useState("");
   const [bulkStatus, setBulkStatus] = useState<"IN_PROGRESS" | "COMPLETED">("IN_PROGRESS");
   const [bulkDate, setBulkDate] = useState("");
@@ -87,6 +91,8 @@ export function ClubHonorsWorkspace({
   const [voidError, setVoidError] = useState("");
   const closeHistory = () => { historyRequest.current += 1; setHistoryFor(null); };
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(historyFor) && !voidTarget, closeHistory);
+  const closeBulk = () => { setBulkOpen(false); setConfirmingBulk(false); };
+  const bulkDialogRef = useAccessibleDialog<HTMLElement>(bulkOpen && !confirmingBulk, closeBulk);
   const closeVoid = () => { setVoidTarget(null); setVoidReason(""); };
   const voidDialogRef = useAccessibleDialog<HTMLElement>(Boolean(voidTarget), closeVoid);
 
@@ -116,8 +122,20 @@ export function ClubHonorsWorkspace({
     });
   }
 
-  function selectAllShown() {
-    setSelected(new Set(visible.map((row) => row.memberId)));
+  // The popup's member list: everyone on the roster, by name, narrowed by its own search.
+  const bulkMembers = useMemo(
+    () => sortByName(filterPeopleByWordPrefix(rows, memberSearch), "asc"),
+    [rows, memberSearch],
+  );
+
+  function selectAllListed() {
+    setSelected((prev) => new Set([...prev, ...bulkMembers.map((row) => row.memberId)]));
+  }
+
+  function openBulk() {
+    setError("");
+    setNotice("");
+    setBulkOpen(true);
   }
 
   async function applyBulk() {
@@ -129,13 +147,13 @@ export function ClubHonorsWorkspace({
       const response = await fetch(`${base}/honors`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          memberIds: [...selected],
+        body: JSON.stringify(bulkHonorPayload({
+          memberIds: selected,
           honorId: bulkHonorId,
           status: bulkStatus,
-          completionDate: bulkStatus === "COMPLETED" ? bulkDate : "",
+          completionDate: bulkDate,
           note: bulkNote,
-        }),
+        })),
       });
       const result = await response.json().catch(() => ({})) as { rows?: ClubHonorsRow[]; message?: string; issues?: Array<{ message?: string }> };
       if (!response.ok) throw new Error(result.message ?? result.issues?.[0]?.message ?? "Honors could not be recorded.");
@@ -143,7 +161,11 @@ export function ClubHonorsWorkspace({
       setNotice(`Recorded for ${selected.size} ${selected.size === 1 ? "person" : "people"}.`);
       setSelected(new Set());
       setBulkNote("");
+      setBulkHonorId("");
+      setBulkDate("");
+      setMemberSearch("");
       setConfirmingBulk(false);
+      setBulkOpen(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Honors could not be recorded.");
     } finally {
@@ -175,6 +197,7 @@ export function ClubHonorsWorkspace({
 
   async function openHistory(row: ClubHonorsRow) {
     const request = ++historyRequest.current;
+    setSingleHonorId("");
     setHistoryFor(row);
     await loadHistory(row.memberId, request);
   }
@@ -209,6 +232,7 @@ export function ClubHonorsWorkspace({
       const refreshedBody = await refreshed.json().catch(() => ({})) as { rows?: ClubHonorsRow[] };
       if (refreshedBody.rows) setRows(refreshedBody.rows);
       formElement.reset();
+      setSingleHonorId("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That honor could not be recorded.");
     } finally {
@@ -248,7 +272,7 @@ export function ClubHonorsWorkspace({
       const refreshed = await fetch(`${base}/honors`);
       const refreshedBody = await refreshed.json().catch(() => ({})) as { rows?: ClubHonorsRow[] };
       if (refreshedBody.rows) setRows(refreshedBody.rows);
-      setNotice("Entry voided. It stays in the history.");
+      setNotice("Entry voided. It is kept in the audit record.");
     } catch (caught) {
       setVoidError(caught instanceof Error ? caught.message : "That entry could not be voided.");
     } finally {
@@ -283,9 +307,9 @@ export function ClubHonorsWorkspace({
 
         {!readOnly && emptyState !== "NO_MEMBERS" && (
           <p className="honor-multi-add-jump">
-            <a className="secondary-button" href={`#${MULTI_ADD_ID}`}>
+            <button aria-haspopup="dialog" className="secondary-button" onClick={openBulk} type="button">
               <ListPlus aria-hidden="true" size={14} /> Add honors to several members
-            </a>
+            </button>
           </p>
         )}
 
@@ -303,15 +327,7 @@ export function ClubHonorsWorkspace({
               />
             </span>
           </label>
-          <label>
-            Honor
-            <select onChange={(event) => setHonorFilter(event.target.value)} value={honorFilter}>
-              <option value="">All honors</option>
-              {honorOptions.map((honor) => (
-                <option key={honor.id} value={honor.id}>{honor.name}</option>
-              ))}
-            </select>
-          </label>
+          <HonorCombobox allLabel="All honors" label="Honor" onChange={setHonorFilter} options={honorOptions} value={honorFilter} />
           <label>
             Status
             <select onChange={(event) => setStatusFilter(event.target.value)} value={statusFilter}>
@@ -330,11 +346,6 @@ export function ClubHonorsWorkspace({
               ))}
             </select>
           </label>
-          {!readOnly && (
-            <button className="text-button" disabled={visible.length === 0} onClick={selectAllShown} type="button">
-              <UsersRound aria-hidden="true" size={14} /> Select all shown ({visible.length})
-            </button>
-          )}
         </div>
 
         {emptyState === "NO_MEMBERS" || emptyState === "NO_MATCH" ? (
@@ -345,7 +356,6 @@ export function ClubHonorsWorkspace({
             <table aria-labelledby="club-honors-heading" className="report-table table-cards" role="table">
               <thead role="rowgroup">
                 <tr role="row">
-                  {!readOnly && <th role="columnheader" scope="col"><span className="sr-only">Select</span></th>}
                   <SortableHeader active direction={nameDirection} label="Name" onSort={() => setNameDirection(flipDirection(nameDirection))} />
                   <th role="columnheader" scope="col">Current class</th>
                   <th role="columnheader" scope="col">Honors</th>
@@ -355,18 +365,6 @@ export function ClubHonorsWorkspace({
               <tbody role="rowgroup">
                 {visible.map((row) => (
                   <tr key={row.memberId} role="row">
-                    {!readOnly && (
-                      <td {...cardCell(null)}>
-                        <label className="checkbox-hit">
-                          <input
-                            aria-label={`Select ${row.firstName} ${row.lastName}`}
-                            checked={selected.has(row.memberId)}
-                            onChange={() => toggle(row.memberId)}
-                            type="checkbox"
-                          />
-                        </label>
-                      </td>
-                    )}
                     <th role="rowheader" scope="row"><strong translate="no">{row.lastName}, {row.firstName}</strong></th>
                     <td {...cardCell("Current class")}>{row.classLevel ? clubClassLevelLabels[row.classLevel as keyof typeof clubClassLevelLabels] : "—"}</td>
                     <td {...cardCell("Honors")}>
@@ -390,55 +388,93 @@ export function ClubHonorsWorkspace({
           </p>
         )}
 
-        {!readOnly && emptyState !== "NO_MEMBERS" && (
-          <section aria-labelledby="honors-multi-add-heading" className="honor-multi-add" id={MULTI_ADD_ID} tabIndex={-1}>
-          <h3 id="honors-multi-add-heading">Add honors to several members</h3>
-          <p className="field-help">Tick the names above (or Select all shown), choose an honor, then record it for everyone ticked.</p>
-          <div className="club-roster-tools honor-bulk-actions">
-            <label>
-              Honor
-              <select onChange={(event) => setBulkHonorId(event.target.value)} value={bulkHonorId}>
-                <option value="">Choose an honor</option>
-                {honorOptions.map((honor) => (
-                  <option key={honor.id} value={honor.id}>{honor.name}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Status
-              <select onChange={(event) => setBulkStatus(event.target.value as "IN_PROGRESS" | "COMPLETED")} value={bulkStatus}>
-                {Object.entries(memberHonorStatusLabels).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </label>
-            {bulkStatus === "COMPLETED" && (
-              <label>
-                Completion date (optional)
-                <input onChange={(event) => setBulkDate(event.target.value)} type="date" value={bulkDate} />
-              </label>
-            )}
-            <label>
-              Note (optional)
-              <input aria-describedby="honor-note-help" maxLength={500} onChange={(event) => setBulkNote(event.target.value)} value={bulkNote} />
-              <small className="field-help" id="honor-note-help">Notes stay with the member&apos;s history, including in future clubs. No health details.</small>
-            </label>
-            <div className="honor-bulk-submit">
-              <button
-                aria-describedby={bulkState.disabledReason ? "honor-bulk-reason" : undefined}
-                className="primary-button"
-                disabled={saving || Boolean(bulkState.disabledReason)}
-                onClick={() => { setError(""); setConfirmingBulk(true); }}
-                type="button"
-              >
-                {bulkState.label}
-              </button>
+      </section>
+
+      {bulkOpen && !readOnly && (
+        <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !confirmingBulk) closeBulk(); }} role="presentation">
+          <section aria-labelledby="honor-bulk-title" aria-modal="true" className="modal-card honor-bulk-dialog" ref={bulkDialogRef} role="dialog" tabIndex={-1}>
+            <div className="modal-head">
+              <div>
+                <p className="public-registration-eyebrow">Several members</p>
+                <h2 id="honor-bulk-title">Add honors to several members</h2>
+              </div>
+              <button aria-label="Close" className="icon-button modal-close-button" onClick={closeBulk} type="button">×</button>
+            </div>
+            <div className="form-stack">
+              {error && !confirmingBulk && <div className="inline-notice error" role="alert">{error}</div>}
+              <div className="form-grid two-column">
+                <HonorCombobox label="Honor" onChange={setBulkHonorId} options={honorOptions} value={bulkHonorId} />
+                <label>
+                  Status
+                  <select onChange={(event) => setBulkStatus(event.target.value as "IN_PROGRESS" | "COMPLETED")} value={bulkStatus}>
+                    {Object.entries(memberHonorStatusLabels).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </label>
+                {bulkStatus === "COMPLETED" && (
+                  <label>
+                    Completion date (optional)
+                    <input onChange={(event) => setBulkDate(event.target.value)} type="date" value={bulkDate} />
+                  </label>
+                )}
+                <label>
+                  Note (optional)
+                  <input aria-describedby="honor-note-help" maxLength={500} onChange={(event) => setBulkNote(event.target.value)} value={bulkNote} />
+                  <small className="field-help" id="honor-note-help">Notes stay with the member&apos;s history, including in future clubs. No health details.</small>
+                </label>
+              </div>
+              <fieldset className="honor-bulk-members">
+                <legend>Members</legend>
+                <div className="honor-bulk-members-tools">
+                  <label className="honor-name-search">
+                    <span className="sr-only">Search members by name</span>
+                    <span className="honor-name-search-field">
+                      <Search aria-hidden="true" size={14} />
+                      <input
+                        autoComplete="off"
+                        onChange={(event) => setMemberSearch(event.target.value)}
+                        placeholder="Search members by name"
+                        type="search"
+                        value={memberSearch}
+                      />
+                    </span>
+                  </label>
+                  <button className="text-button" disabled={bulkMembers.length === 0} onClick={selectAllListed} type="button">Select all</button>
+                  <button className="text-button" disabled={selected.size === 0} onClick={() => setSelected(new Set())} type="button">Clear</button>
+                </div>
+                <ul className="honor-bulk-member-list">
+                  {bulkMembers.map((row) => (
+                    <li key={row.memberId}>
+                      <label className="checkbox-hit">
+                        <input checked={selected.has(row.memberId)} onChange={() => toggle(row.memberId)} type="checkbox" />
+                        <span>
+                          <strong translate="no">{row.lastName}, {row.firstName}</strong>
+                          <small>{row.classLevel ? clubClassLevelLabels[row.classLevel as keyof typeof clubClassLevelLabels] : "No class"}</small>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                  {bulkMembers.length === 0 && <li className="field-help">No member matches that search.</li>}
+                </ul>
+              </fieldset>
+              <div className="form-actions honor-bulk-submit">
+                <button className="secondary-button" onClick={closeBulk} type="button">Close</button>
+                <button
+                  aria-describedby={bulkState.disabledReason ? "honor-bulk-reason" : undefined}
+                  className="primary-button"
+                  disabled={saving || Boolean(bulkState.disabledReason)}
+                  onClick={() => { setError(""); setConfirmingBulk(true); }}
+                  type="button"
+                >
+                  {bulkState.label}
+                </button>
+              </div>
               {bulkState.disabledReason && <small className="field-help" id="honor-bulk-reason">{bulkState.disabledReason}</small>}
             </div>
-          </div>
           </section>
-        )}
-      </section>
+        </div>
+      )}
       <ConfirmDialog
         busy={saving}
         busyLabel="Recording…"
@@ -473,26 +509,21 @@ export function ClubHonorsWorkspace({
               </div>
             ) : !history ? (
               <p className="public-manage-empty" role="status">Loading history…</p>
-            ) : history.history.length === 0 ? (
+            ) : visibleHonorHistory(history.history).length === 0 ? (
               <p className="public-manage-empty">No honors recorded yet.</p>
             ) : (
               <ul className="public-manage-club-list">
-                {history.history.map((entry) => (
+                {visibleHonorHistory(history.history).map((entry) => (
                   <li key={entry.id}>
                     <span>
-                      <strong style={entry.voided ? { textDecoration: "line-through" } : undefined}>{entry.honorName}</strong>
-                      <small style={entry.voided ? { textDecoration: "line-through" } : undefined}>
+                      <strong>{entry.honorName}</strong>
+                      <small>
                         {memberHonorStatusLabels[entry.status]}{entry.completionDate ? ` · ${entry.completionDate}` : ""}
                         {" · "}{entry.recordedByName}, {entry.recordedAtOrganizationName}
                         {entry.note ? ` · ${entry.note}` : ""}
                       </small>
-                      {entry.voided && (
-                        <small>
-                          Voided by <span translate="no">{entry.voided.voidedByName}</span> on {calendarDateIn(new Date(entry.voided.voidedAt))}: {entry.voided.reason}
-                        </small>
-                      )}
                     </span>
-                    {!entry.voided && (staff || (!readOnly && canVoid && entry.recordedAtOrganizationId === organizationId)) && (
+                    {(staff || (!readOnly && canVoid && entry.recordedAtOrganizationId === organizationId)) && (
                       <button
                         aria-label={`Void ${entry.honorName} entry`}
                         className="honor-void-button"
@@ -509,15 +540,7 @@ export function ClubHonorsWorkspace({
             {!readOnly && (
               <form className="form-stack" key={historyFor.memberId} onSubmit={recordSingle}>
                 <div className="form-grid two-column">
-                  <label>
-                    Honor
-                    <select defaultValue="" name="honorId" required>
-                      <option disabled value="">Choose an honor</option>
-                      {honorOptions.map((honor) => (
-                        <option key={honor.id} value={honor.id}>{honor.name}</option>
-                      ))}
-                    </select>
-                  </label>
+                  <HonorCombobox label="Honor" name="honorId" onChange={setSingleHonorId} options={honorOptions} required value={singleHonorId} />
                   <label>
                     Status
                     <select defaultValue="IN_PROGRESS" name="status">
@@ -558,7 +581,7 @@ export function ClubHonorsWorkspace({
             </div>
             <form className="form-stack" onSubmit={submitVoid}>
               <p>
-                The entry stays in the history, struck through, with your name, the date and this reason. It no longer counts
+                The entry leaves the list. It is kept in the audit record with your name, the date and this reason. It no longer counts
                 toward the member&apos;s current honors, awards or reports. A void can&apos;t be undone; to restore it, record a new entry.
               </p>
               {voidTarget.status === "COMPLETED" && (

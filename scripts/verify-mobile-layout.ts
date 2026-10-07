@@ -136,6 +136,8 @@ const pages: PageSpec[] = [
   club("registration-form", `/events/${clubEventId}`),
   club("class-tracking", "/class-tracking"),
   club("honors", "/honors"),
+  club("honors-report", "/exports/honors"),
+  club("honors-report-person", "/exports/honors?view=person"),
   club("monthly-records", "/records"),
   club("monthly-report-form", `/records?month=${reportMonth}`),
   club("orders", "/orders"),
@@ -886,6 +888,39 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
     await page.keyboard.press("Escape").catch(() => undefined);
     await page.waitForTimeout(100);
     if (page.url() !== before) await page.goto(before, { waitUntil: "load" });
+  }
+
+  // The bulk honor popup (#819), with its type-to-search list open and narrowed and
+  // the member list showing: the dialog must fit, nothing may stick out sideways and
+  // every control in it must be a big enough tap target.
+  const bulkOpener = page.locator('button:has-text("Add honors to several members"):visible').first();
+  if ((await bulkOpener.count()) > 0) {
+    const bulkBefore = page.url();
+    try {
+      await bulkOpener.scrollIntoViewIfNeeded({ timeout: 3000 });
+      await bulkOpener.click({ timeout: 3000 });
+      await page.waitForTimeout(250);
+      const combobox = page.locator('[role="dialog"] input[role="combobox"]:visible').first();
+      await combobox.click({ timeout: 3000 });
+      await combobox.fill("ab");
+      await page.waitForTimeout(150);
+      const bulkName = `${spec.name} (bulk honor popup)`;
+      const fit = await page.evaluate(dialogFitInPage);
+      dialogsOpened += fit.count;
+      if (fit.count === 0) record("dialog-open-failed", bulkName, width, "the bulk honor popup did not open");
+      for (const problem of fit.problems) record("dialog-too-tall", bulkName, width, problem);
+      const open = await page.evaluate(auditInPage, { touch, cards: width <= cardsMaxWidth, minTarget: touchTarget, tolerance: touchTolerance });
+      if (open.scrollWidth > open.innerWidth) record("horizontal-scroll", bulkName, width, `page is ${open.scrollWidth}px wide in a ${open.innerWidth}px window; sticking out: ${open.overflowers.join("; ") || "(nothing identified)"}`);
+      for (const target of open.smallTargets) record("small-tap-target", bulkName, width, target);
+      if (takeShots) await page.screenshot({ path: `${prefix}-bulk-honor.jpg`, type: "jpeg", quality: 60 });
+    } catch (error) {
+      record("dialog-open-failed", `${spec.name} (bulk honor popup)`, width, (error as Error).message.split("\n")[0] ?? "failed");
+    }
+    // First Escape closes the open list, the second closes the dialog.
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.waitForTimeout(100);
+    if (page.url() !== bulkBefore) await page.goto(bulkBefore, { waitUntil: "load" });
   }
 
   if (takeShots) {
