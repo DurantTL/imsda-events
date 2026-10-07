@@ -21,6 +21,7 @@ import {
   EventHeroBanner,
   publicEventAssetUrl,
 } from "@/components/event-content-blocks";
+import { EventEmbedFullLoad } from "@/components/event-embed-full-load";
 import { sanitizedHtmlBySection } from "@/modules/events/content-html";
 import { ClubDirectorSignInNotice } from "@/components/club-director-sign-in-notice";
 import { TranslateHint } from "@/components/translate-hint";
@@ -248,6 +249,10 @@ export default async function PublicEventPage({
         nowMs={landing.renderedAtMs}
         sanitizedHtml={sanitizedHtmlBySection(landing.contentSections)}
       />
+      {/* The frames' Content-Security-Policy applies only to a full page load. */}
+      {landing.contentSections.some((section) => section.kind === "EMBED" && section.placement !== "REGISTRATION_FORM") && (
+        <EventEmbedFullLoad />
+      )}
 
       <div className="public-event-layout">
         <section className="public-event-main" aria-labelledby="registration-options-title">

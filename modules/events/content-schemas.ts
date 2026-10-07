@@ -272,7 +272,7 @@ export const speakersDataSchema = z.object({
 }).strict();
 
 const phoneSchema = z.string().trim().max(30)
-  .refine((value) => value === "" || /^\+?[0-9][0-9 ().-]{5,24}[0-9]$/.test(value), "Enter a phone number such as (555) 010-0100.");
+  .refine((value) => value === "" || /^\+?[0-9(][0-9 ().-]{5,24}[0-9]$/.test(value), "Enter a phone number such as (555) 010-0100.");
 export const contactDataSchema = z.object({
   contacts: z.array(z.object({
     name: requiredText(80, "Give each contact a name."),
