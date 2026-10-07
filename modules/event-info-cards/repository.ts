@@ -3,6 +3,7 @@ import "server-only";
 import { cache } from "react";
 import { getPrisma } from "@/lib/prisma";
 import { logWarn } from "@/lib/logger";
+import { offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
 import { formatPublicEventSchedule } from "@/modules/events/public-domain";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import {
@@ -61,7 +62,7 @@ async function loadAutoEventInfoCards(eventSlug: string): Promise<EventInfoCards
           teacherName: true,
           additionalCostCents: true,
           requirementNote: true,
-          honor: { select: { name: true } },
+          honors: offeringHonorsSelect,
         },
       },
       registrationForms: {
@@ -113,7 +114,8 @@ async function loadAutoEventInfoCards(eventSlug: string): Promise<EventInfoCards
     sessions: event.honorSessions,
     offerings: event.honorOfferings.map((offering) => ({
       id: offering.id,
-      honorName: offering.honor.name,
+      // A class can teach several honors (#812); the public grid names them all.
+      honorName: summarizeOfferingHonors(offering.honors).honorName,
       teacherName: offering.teacherName,
       capacity: offering.capacity,
       minimumAge: offering.minimumAge,

@@ -252,7 +252,11 @@ export type SourceConfiguration = {
   }>;
   honorOfferings: Array<{
     id: string;
+    /** The class's primary honor. */
     honorId: string;
+    /** Every honor the class teaches, in order (#812); absent means just `honorId`. */
+    honorIds?: string[];
+    /** The names joined: what the review shows. */
     honorName: string;
     sessionId: string | null;
     sessionName: string | null;

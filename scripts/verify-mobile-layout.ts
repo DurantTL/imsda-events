@@ -86,6 +86,10 @@ const blocksEventId = `${P}_blocks_event`;
 const blocksEventSlug = `${P}-blocks-weekend`;
 // A new club application waiting for a decision, and a private link that opens the form (#817).
 const applicationLinkToken = `${P}-application-link-token-0123456789-abcdefghijklmnopqrstuv`;
+// A class that teaches several honors, on the staff class builder (#812).
+const multiHonorSessionId = `${P}_honor_session`;
+const multiHonorIds = [1, 2, 3, 4].map((index) => `${P}_honor_${index}`);
+const multiHonorOfferingId = `${P}_honor_offering`;
 const churchA = `${P}_church_a`;
 const churchB = `${P}_church_b`;
 const reportMonth = "2026-09";
@@ -349,6 +353,9 @@ async function cleanupSynthetic(prisma: PrismaClient) {
     prisma.backgroundCheckUpload.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
     prisma.registrationFormVersion.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
     prisma.registrationForm.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
+    prisma.honorOffering.deleteMany({ where: { id: multiHonorOfferingId } }),
+    prisma.honorSession.deleteMany({ where: { id: multiHonorSessionId } }),
+    prisma.honor.deleteMany({ where: { id: { in: multiHonorIds } } }),
     prisma.eventContentSection.deleteMany({ where: { eventId: blocksEventId } }),
     prisma.eventAsset.deleteMany({ where: { eventId: blocksEventId } }),
     prisma.auditLog.deleteMany({ where: { eventId: blocksEventId } }),
@@ -574,6 +581,36 @@ async function seedSynthetic(prisma: PrismaClient) {
   }
 
   await seedBlocksEvent(prisma);
+  await seedMultiHonorClass(prisma);
+}
+
+/**
+ * One class that teaches four honors with long names (#812), so the staff class
+ * builder's chosen-honor chips and the honors column wrap. Inserted directly: the
+ * database trigger writes the primary honor's row, the rest are added here.
+ */
+async function seedMultiHonorClass(prisma: PrismaClient) {
+  const long = "Extraordinarily-Long-Synthetic-Honor-Name-For-Wrapping";
+  for (const [index, id] of multiHonorIds.entries()) {
+    await prisma.honor.upsert({
+      where: { id },
+      update: {},
+      create: { id, code: `MOBILECHECK-${index + 1}`, name: `Mobilecheck ${long} ${index + 1}`, normalizedName: `mobilecheck honor ${index + 1}` },
+    });
+  }
+  await prisma.honorSession.upsert({
+    where: { id: multiHonorSessionId },
+    update: {},
+    create: { id: multiHonorSessionId, eventId, name: "Mobilecheck Sabbath afternoon", normalizedName: "mobilecheck sabbath afternoon", sortOrder: 90 },
+  });
+  if (!(await prisma.honorOffering.findUnique({ where: { id: multiHonorOfferingId } }))) {
+    await prisma.honorOffering.create({
+      data: { id: multiHonorOfferingId, eventId, honorId: multiHonorIds[0]!, sessionId: multiHonorSessionId, span: "SINGLE_SESSION", capacity: 12, teacherName: "Synthetic Teacher" },
+    });
+    await prisma.honorOfferingHonor.createMany({
+      data: multiHonorIds.slice(1).map((honorId, index) => ({ offeringId: multiHonorOfferingId, honorId, eventId, position: index + 1 })),
+    });
+  }
 }
 
 /** Sessions are minted directly (the second factor is skipped, as in verify-badge-print). */
@@ -1032,6 +1069,44 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
     }
     await page.keyboard.press("Escape").catch(() => undefined);
     await page.waitForTimeout(100);
+  }
+
+  // The class builder with several honors chosen (#812): the add form with its honor search narrowed and
+  // three honors ticked, then the edit form of a class that teaches four. Nothing may stick out sideways,
+  // and every checkbox, chip button and search box must be a big enough tap target.
+  if (spec.name === "staff-honors") {
+    const builderBefore = page.url();
+    const auditBuilder = async (state: string, shot: string) => {
+      const stateName = `${spec.name} (${state})`;
+      const open = await page.evaluate(auditInPage, { touch, cards: width <= cardsMaxWidth, minTarget: touchTarget, tolerance: touchTolerance });
+      if (open.scrollWidth > open.innerWidth) record("horizontal-scroll", stateName, width, `page is ${open.scrollWidth}px wide in a ${open.innerWidth}px window; sticking out: ${open.overflowers.join("; ") || "(nothing identified)"}`);
+      for (const target of open.smallTargets) record("small-tap-target", stateName, width, target);
+      if (takeShots) await page.screenshot({ path: `${prefix}-${shot}.jpg`, type: "jpeg", quality: 60 });
+    };
+    try {
+      const search = page.locator('input[placeholder="Type to search honors"]:visible').first();
+      await search.scrollIntoViewIfNeeded({ timeout: 3000 });
+      await search.fill("mobilecheck");
+      await page.waitForTimeout(150);
+      const boxes = page.locator('[data-testid="honor-multi-options"] input[type="checkbox"]:visible');
+      const listed = await boxes.count();
+      if (listed < 4) record("dialog-open-failed", `${spec.name} (several honors)`, width, `the honor search listed ${listed} synthetic honors, expected 4`);
+      for (let index = 0; index < Math.min(listed, 3); index += 1) await boxes.nth(index).check({ timeout: 3000 });
+      await page.waitForTimeout(150);
+      const chosen = await page.locator('ul[aria-label^="Chosen honors"] li:visible').count();
+      if (chosen !== 3) record("dialog-open-failed", `${spec.name} (several honors)`, width, `expected 3 chosen honors, found ${chosen}`);
+      await auditBuilder("add form, several honors chosen", "several-honors-add");
+      const edit = page.locator('button[aria-label^="Edit Mobilecheck"]:visible').first();
+      await edit.scrollIntoViewIfNeeded({ timeout: 3000 });
+      await edit.click({ timeout: 3000 });
+      await page.waitForTimeout(250);
+      const editChosen = await page.locator('ul[aria-label^="Chosen honors"] li:visible').count();
+      if (editChosen < 4) record("dialog-open-failed", `${spec.name} (several honors)`, width, `the edit form listed ${editChosen} chosen honors, expected the class's 4`);
+      await auditBuilder("edit form, class with four honors", "several-honors-edit");
+    } catch (error) {
+      record("dialog-open-failed", `${spec.name} (several honors)`, width, (error as Error).message.split("\n")[0] ?? "failed");
+    }
+    if (page.url() !== builderBefore) await page.goto(builderBefore, { waitUntil: "load" });
   }
 
   if (takeShots) {

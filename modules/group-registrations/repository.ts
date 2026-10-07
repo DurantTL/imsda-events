@@ -1,5 +1,6 @@
 import "server-only";
 
+import { offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { attendeeAgeKey } from "@/modules/club-registrations/domain";
@@ -408,7 +409,7 @@ async function assertClassPicksStillValid(tx: Prisma.TransactionClient, registra
     where: { registrationId },
     select: {
       consumesSeat: true,
-      offering: { select: { minimumAge: true, honor: { select: { name: true } } } },
+      offering: { select: { minimumAge: true, honors: offeringHonorsSelect } },
       registrationAttendee: { select: { profileSnapshot: true } },
     },
   });
@@ -420,14 +421,14 @@ async function assertClassPicksStillValid(tx: Prisma.TransactionClient, registra
     if (enrollment.offering.minimumAge !== null && (age === null || age < enrollment.offering.minimumAge)) {
       throw new GroupRegistrationError(
         "CLASS_PICKS_CONFLICT",
-        `${name} is too young for ${enrollment.offering.honor.name} (ages ${enrollment.offering.minimumAge} and up). Remove that class first, then change the age.`,
+        `${name} is too young for ${summarizeOfferingHonors(enrollment.offering.honors).honorName} (ages ${enrollment.offering.minimumAge} and up). Remove that class first, then change the age.`,
       );
     }
     // A change that would start or stop using a class seat is decided with the classes, not silently here.
     if (consumesClassSeat(type) !== enrollment.consumesSeat) {
       throw new GroupRegistrationError(
         "CLASS_PICKS_CONFLICT",
-        `Changing ${name}'s age changes whether they use a class seat in ${enrollment.offering.honor.name}. Remove their classes first, change the age, then choose classes again.`,
+        `Changing ${name}'s age changes whether they use a class seat in ${summarizeOfferingHonors(enrollment.offering.honors).honorName}. Remove their classes first, change the age, then choose classes again.`,
       );
     }
   }

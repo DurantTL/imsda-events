@@ -5,6 +5,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, TriangleAlert, X } from "lucide-react";
 import { honorOfferingSpanLabels, offeringPlacementPatch, sessionEditPatch } from "@/modules/honors/domain";
+import { honorSetChange, honorsNeedConfirmationMessage } from "@/modules/honors/offering-honors";
+import { HonorMultiSelect } from "@/components/honor-multi-select";
 import { siteChangePatch } from "@/modules/honors/locations";
 import type { HonorCopyPlan } from "@/modules/honors/copy";
 import { groupSessionsBySite, nextSessionOrder, sessionClassWarning, sharedSessionsLabel } from "@/modules/honors/session-order";
@@ -51,6 +53,9 @@ export function HonorsSetupWorkspace({
   const [newSessionSite, setNewSessionSite] = useState(initialSetup.locations.find((location) => location.isActive)?.id ?? "");
   const [span, setSpan] = useState<"SINGLE_SESSION" | "ALL_SESSIONS">("SINGLE_SESSION");
   const [editing, setEditing] = useState<Offering | null>(null);
+  // The honors chosen for the class being added, and for the one being edited (#812); the first is the primary.
+  const [newHonorIds, setNewHonorIds] = useState<string[]>([]);
+  const [editHonorIds, setEditHonorIds] = useState<string[]>([]);
   const [editSpan, setEditSpan] = useState<"SINGLE_SESSION" | "ALL_SESSIONS">("SINGLE_SESSION");
   const [editingSession, setEditingSession] = useState<SetupSession | null>(null);
   const [copySource, setCopySource] = useState(otherEvents[0]?.id ?? "");
@@ -224,7 +229,7 @@ export function HonorsSetupWorkspace({
       ...(editing
         ? {
           ...offeringPlacementPatch(editing, {
-            honorId: String(form.get("honorId") ?? editing.honorId),
+            honorIds: editHonorIds,
             span: editSpan,
             // A disabled select (a class clubs picked) isn't submitted: fall back to the current session so it isn't read as a change.
             sessionId: editSpan === "SINGLE_SESSION" && !form.has("sessionId")
@@ -235,19 +240,66 @@ export function HonorsSetupWorkspace({
         }
         : span === "ALL_SESSIONS" && hasSites ? { locationId: String(form.get("locationId") ?? "") || null } : {}),
     };
+    if (!editing && newHonorIds.length === 0) {
+      setError("Choose at least one honor for the class.");
+      return;
+    }
+    if (editing && editHonorIds.length === 0) {
+      setError("Choose at least one honor for the class.");
+      return;
+    }
     const result = editing
-      ? await call(`${base}/offerings/${encodeURIComponent(editing.id)}`, "PATCH", details, "Class updated.")
+      ? await saveEditedOffering(editing, details)
       : await call(`${base}/offerings`, "POST", {
-        honorId: String(form.get("honorId") ?? ""),
+        honorIds: newHonorIds,
         span,
         sessionId: span === "SINGLE_SESSION" ? String(form.get("sessionId") ?? "") || null : null,
         ...details,
       }, "Class added.");
     if (result) {
       setEditing(null);
+      setNewHonorIds([]);
       formElement.reset();
     }
   }
+
+  /**
+   * Changing the honors of a class people are enrolled in asks first: "12 students are enrolled. They will now take:
+   * Birds + Knots." The count is sent back as the confirmation, and the server refuses a stale one with the live
+   * count, which is asked about again (#812).
+   */
+  async function saveEditedOffering(offering: Offering, details: Record<string, unknown>) {
+    const url = `${base}/offerings/${encodeURIComponent(offering.id)}`;
+    const names = editHonorIds.map((id) => honorOptions(offering).find((honor) => honor.id === id)?.name ?? id);
+    const ask = (enrolled: number) => window.confirm(`${honorsNeedConfirmationMessage(enrolled, names)} Save this change?`);
+    const changed = honorSetChange(offering.honorIds, editHonorIds).changed;
+    let confirmed: number | undefined;
+    if (changed && offering.enrolled > 0) {
+      if (!ask(offering.enrolled)) return null;
+      confirmed = offering.enrolled;
+    }
+    const pending: { enrolled: number | null } = { enrolled: null };
+    const needsConfirmation = (result: ApiResult) => {
+      if (result.error !== "HONORS_NEED_CONFIRMATION" || typeof result.picks !== "number") return false;
+      pending.enrolled = result.picks;
+      return true;
+    };
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      pending.enrolled = null;
+      const result = await call(url, "PATCH", { ...details, ...(confirmed === undefined ? {} : { confirmEnrolled: confirmed }) }, "Class updated.", needsConfirmation);
+      if (result || pending.enrolled === null) return result;
+      if (!ask(pending.enrolled)) return null;
+      confirmed = pending.enrolled;
+    }
+    setError("The number of enrolled people kept changing, so nothing was saved. Try again.");
+    return null;
+  }
+
+  /** The catalog plus the honors the class already teaches, even ones the catalog has since turned off. */
+  const honorOptions = (offering: Offering) => [
+    ...catalog,
+    ...offering.honors.filter((honor) => !catalog.some((entry) => entry.id === honor.id)),
+  ];
 
   async function toggleOffering(offering: Offering) {
     await call(
@@ -289,7 +341,7 @@ export function HonorsSetupWorkspace({
           <p className="eyebrow">Honors Weekend</p>
           <h2 className="duplicate-page-title">{staffPageTitles.honors}</h2>
           <p>
-            Name this site&apos;s sessions, then add the honors it teaches. Capacity
+            Name this site&apos;s sessions, then add the classes it teaches. A class can teach one honor or several. Capacity
             counts youth seats only. Seats and sign-ups appear here once class
             selection opens.
           </p>
@@ -432,17 +484,13 @@ export function HonorsSetupWorkspace({
         </div>
         {editing && (
           <div className="form-grid two-column">
-            <label>
-              Honor
-              <select defaultValue={editing.honorId} disabled={editing.enrolled > 0} name="honorId" required>
-                {!catalog.some((honor) => honor.id === editing.honorId) && (
-                  <option value={editing.honorId}>{editing.honorName} ({editing.honorCode})</option>
-                )}
-                {catalog.map((honor) => (
-                  <option key={honor.id} value={honor.id}>{honor.name} ({honor.code})</option>
-                ))}
-              </select>
-            </label>
+            <HonorMultiSelect label="Honors taught" onChange={setEditHonorIds} options={honorOptions(editing)} value={editHonorIds} />
+            {editing.enrolled > 0 && (
+              <p className="field-help">
+                {editing.enrolled === 1 ? "1 person is" : `${editing.enrolled} people are`} enrolled. Adding an honor gives it to them; removing one takes it
+                from them (unless it was already recorded as completed). You will be asked to confirm.
+              </p>
+            )}
             <label>
               Taught in
               <select disabled={editing.enrolled > 0} name="span" onChange={(event) => setEditSpan(event.target.value as typeof editSpan)} value={editSpan}>
@@ -462,21 +510,13 @@ export function HonorsSetupWorkspace({
               </label>
             )}
             {editing.enrolled > 0 && (
-              <p className="field-help">Clubs have picked this class, so its honor, session and span are fixed. Its seats, teacher and room can still change.</p>
+              <p className="field-help">Clubs have picked this class, so its session and span are fixed. Its seats, teacher and room can still change.</p>
             )}
           </div>
         )}
         {!editing && (
           <div className="form-grid two-column">
-            <label>
-              Honor
-              <select name="honorId" required>
-                <option value="">Choose an honor</option>
-                {catalog.map((honor) => (
-                  <option key={honor.id} value={honor.id}>{honor.name} ({honor.code})</option>
-                ))}
-              </select>
-            </label>
+            <HonorMultiSelect label="Honors taught" onChange={setNewHonorIds} options={catalog} value={newHonorIds} />
             <label>
               Taught in
               <select name="span" onChange={(event) => setSpan(event.target.value as typeof span)} value={span}>
@@ -584,10 +624,10 @@ export function HonorsSetupWorkspace({
         ) : groups.filter((group) => group.offerings.length > 0).map((group) => (
           <div className="report-table-wrap honor-table-wrap" key={group.key}>
             <h3 className="honor-group-heading">{group.title}</h3>
-            <table className="report-table">
+            <table className="report-table roster-card-table">
               <thead>
                 <tr>
-                  <th>Honor</th>
+                  <th>Honors</th>
                   <th>Youth seats taken</th>
                   <th>Min. age</th>
                   <th>Per club</th>
@@ -600,26 +640,31 @@ export function HonorsSetupWorkspace({
               <tbody>
                 {group.offerings.map((offering) => (
                   <tr key={offering.id}>
-                    <td><strong>{offering.honorName}</strong><br /><small><code>{offering.honorCode}</code></small></td>
-                    <td>
+                    <td className="roster-card-name" data-label="Honors">
+                      {/* One line per honor the class teaches (#812). */}
+                      {offering.honors.map((honor) => (
+                        <div key={honor.id}><strong>{honor.name}</strong> <small><code>{honor.code}</code></small></div>
+                      ))}
+                    </td>
+                    <td data-label="Youth seats taken">
                       {offering.seatsTaken} / {offering.capacity}
                       {offering.enrolled > offering.seatsTaken && <><br /><small>+{offering.enrolled - offering.seatsTaken} without a seat</small></>}
                     </td>
-                    <td>{offering.minimumAge ?? "—"}</td>
-                    <td>{offering.perClubLimit ?? "—"}</td>
-                    <td translate="no">{offering.teacherName || "—"}</td>
-                    <td>{offering.location || "—"}</td>
-                    <td>
+                    <td data-label="Min. age">{offering.minimumAge ?? "—"}</td>
+                    <td data-label="Per club">{offering.perClubLimit ?? "—"}</td>
+                    <td data-label="Teacher" translate="no">{offering.teacherName || "—"}</td>
+                    <td data-label="Location">{offering.location || "—"}</td>
+                    <td data-label="Status">
                       <span className={`status-chip ${offering.isActive ? "green" : "gold"}`}>
                         {offering.isActive ? "Active" : "Inactive"}
                       </span>
                     </td>
-                    <td className="honor-row-actions">
+                    <td className="honor-row-actions roster-card-actions">
                       <button
                         aria-label={`Edit ${offering.honorName}`}
                         className="secondary-button"
                         disabled={saving}
-                        onClick={() => { setEditing(offering); setEditSpan(offering.span); setNotice(""); setError(""); }}
+                        onClick={() => { setEditing(offering); setEditHonorIds(offering.honorIds); setEditSpan(offering.span); setNotice(""); setError(""); }}
                         type="button"
                       >
                         <Pencil aria-hidden="true" size={13} />

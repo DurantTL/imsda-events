@@ -2,6 +2,7 @@ import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
+import { offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
 import {
   dietaryFieldPattern,
   type RosterAttendee,
@@ -69,7 +70,7 @@ export async function getHonorRosterData(
       select: {
         id: true, span: true, sessionId: true, locationId: true, site: { select: { name: true } },
         capacity: true, teacherName: true, location: true, isActive: true,
-        honor: { select: { name: true, code: true } },
+        honors: offeringHonorsSelect,
       },
     }),
     prisma.clubEventRegistration.findMany({
@@ -168,8 +169,9 @@ export async function getHonorRosterData(
     sessions: sessions satisfies RosterSession[],
     offerings: offerings.map((offering): RosterOffering => ({
       id: offering.id,
-      honorName: offering.honor.name,
-      honorCode: offering.honor.code,
+      // A class can teach several honors (#812); the roster lists everyone in the class under all of them.
+      honorName: summarizeOfferingHonors(offering.honors).honorName,
+      honorCode: summarizeOfferingHonors(offering.honors).honorCode,
       span: offering.span,
       sessionId: offering.sessionId,
       capacity: offering.capacity,

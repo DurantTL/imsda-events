@@ -146,7 +146,7 @@ function fixture() {
       // One seat: the youth takes it, and staff still join without one.
       id: "knots", span: "SINGLE_SESSION", sessionId: "sabbath", capacity: 1, minimumAge: null, perClubLimit: null,
       teacherName: "Fictional Teacher", location: "Pavilion", isActive: true,
-      honor: { name: "Knot Tying", code: "HW-DEMO-1" }, session: { name: "Sabbath afternoon", sortOrder: 1 },
+      honors: [{ honor: { id: "honor-hw-demo-1", name: "Knot Tying", code: "HW-DEMO-1", isActive: true } }], session: { name: "Sabbath afternoon", sortOrder: 1 },
     }]) },
     honorSession: { findMany: vi.fn().mockResolvedValue([{ id: "sabbath", name: "Sabbath afternoon", locationId: null }]) },
     honorEnrollment: {
