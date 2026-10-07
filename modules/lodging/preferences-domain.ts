@@ -665,7 +665,7 @@ function signedDollars(cents: number) {
  * The figures are the change THIS edit makes; the cumulative picture ("originally charged X, now costs Y") is context,
  * never the figure to record.
  */
-export function chargeChangeSentence(result: { chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; belowMinimumAfter?: boolean; churchShare?: ChurchShareFact; originallyChargedCents?: number; requestNowCostsCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null }) {
+export function chargeChangeSentence(result: { chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; belowMinimumAfter?: boolean; churchShare?: ChurchShareFact; churchCorrectionCents?: number; originallyChargedCents?: number; requestNowCostsCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null }) {
   const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
   const list = signedDollars(result.chargeDeltaCents ?? 0);
   const promo = result.promo;
@@ -679,12 +679,13 @@ export function chargeChangeSentence(result: { chargeDeltaCents?: number; regist
       : share?.status === "FLAGGED"
         ? ` The church's invoice is already finalized, so the church's share (${signedDollars(share.deltaCents)}) was not changed; the finance office has been flagged to review it.`
         : "";
+  const correction = result.churchCorrectionCents ? ` Church share corrected by ${signedDollars(result.churchCorrectionCents)} for an earlier change.` : "";
   if (!promo) return `This edit changes the lodging charge by ${list}, but the registration's total was not changed.${context}`;
   if (!promo.coversLodging) return `This edit changes the lodging charge by ${list} at list price. Code ${promo.code} does not apply to the lodging line on this registration (it was submitted before codes covered lodging), so the registrant's change is ${list}. The registration's total was not changed.${context}`;
   const minimum = result.belowMinimumAfter ? ` After this edit the registration would be under code ${promo.code}'s minimum, so an amendment would refuse it and the code would no longer apply.` : "";
   const figures = result.chargeDeltaCents === undefined ? "" : `This edit changes the lodging charge by ${list} at list price. A promo code applies: after ${promo.code} the registrant's change is ${signedDollars(result.registrantDeltaCents ?? 0)}${promo.sponsored ? ` and the sponsor's share is ${signedDollars(result.sponsorDeltaCents ?? 0)}` : ""}.`;
   const record = figures && promo.sponsored ? ` The amount to record for the registrant is ${signedDollars(result.registrantDeltaCents ?? 0)}.` : "";
-  return `${figures}${record}${church}${minimum}${figures ? " The registration's total was not changed." : ""}${context}`.trim();
+  return `${figures}${record}${church}${correction}${minimum}${figures ? " The registration's total was not changed." : ""}${context}`.trim();
 }
 
 /** The list change, and the change after the registration's promo code, in words. Empty when no code is involved. */

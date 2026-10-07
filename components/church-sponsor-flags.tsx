@@ -3,10 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import type { ChurchSponsorFinanceFlagRow } from "@/modules/promo-codes/church-sponsor-lodging";
-
-function signedMoney(cents: number) {
-  return `${cents < 0 ? "-" : "+"}${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Math.abs(cents) / 100)}`;
-}
+import { churchSponsorFlagLabel } from "@/modules/promo-codes/church-sponsor-flag-label";
 
 /**
  * Lodging changes that moved a church's share after the church's invoice was finalized (#813). The invoice and the church's
@@ -44,7 +41,7 @@ export function ChurchSponsorFlags({ eventId, flags }: { eventId: string; flags:
       <ul>
         {flags.map((flag) => (
           <li key={flag.id}>
-            <strong translate="no">{flag.churchName}</strong>, registration <span translate="no">{flag.confirmationCode}</span>: church share {signedMoney(flag.deltaCents)} not applied ({flag.createdAt.slice(0, 10)}).
+            <strong translate="no">{flag.churchName}</strong>, registration <span translate="no">{flag.confirmationCode}</span>: {churchSponsorFlagLabel(flag)} ({flag.createdAt.slice(0, 10)}).
             <form onSubmit={(event) => void clear(event, flag.id)}>
               <label>Note (optional) <input name="note" maxLength={300} /></label>
               <button type="submit" className="secondary-button" disabled={busyId === flag.id}>{busyId === flag.id ? "Clearing…" : "Clear flag"}</button>

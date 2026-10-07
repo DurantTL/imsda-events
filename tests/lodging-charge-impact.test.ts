@@ -281,3 +281,16 @@ describe("the current lodging charge the church's share is recomputed from (#813
     expect(currentLodgingChargeCents({ storedCents: 1000, currentRequestCents: 0, baselineRequestCents: 5000 })).toBe(0);
   });
 });
+
+describe("a church correction for an earlier change is shown apart (#813)", () => {
+  it("names the correction and keeps it out of this edit's registrant amount", () => {
+    const sentence = chargeChangeSentence({
+      chargeDeltaCents: 4000, registrantDeltaCents: 2000, sponsorDeltaCents: 2000, churchCorrectionCents: 2000,
+      churchShare: { status: "UPDATED", deltaCents: 4000, churchName: "Example Church", registrationOwedCents: 6500 },
+      promo: { code: "HALFOFF", coversLodging: true, sponsored: true },
+    });
+    expect(sentence).toContain("The amount to record for the registrant is +$20.00.");
+    expect(sentence).toContain("Church share corrected by +$20.00 for an earlier change.");
+    expect(chargeChangeSentence({ churchShare: { status: "UPDATED", deltaCents: 2000, churchName: "Example Church", registrationOwedCents: 4500 }, promo: { code: "HALFOFF", coversLodging: true, sponsored: true } })).not.toContain("corrected");
+  });
+});

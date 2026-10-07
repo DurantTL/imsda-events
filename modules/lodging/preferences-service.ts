@@ -488,6 +488,8 @@ export type SaveRequestResult =
        * finalized, so nothing was changed and the finance office was flagged.
        */
       churchShare?: ChurchShareOutcome;
+      /** What the church's share moved by for an EARLIER change (stored short of the recompute, e.g. edited under the #806 interim rule), apart from this edit's own share. */
+      churchCorrectionCents?: number;
       promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null;
     }
   /** The event's edit policy kept the change from applying itself; it waits in the staff review queue. */
@@ -725,6 +727,12 @@ async function saveLodgingRequestOnce(
       }
     }
 
+    // What the church's share should be BEFORE this edit (#813): the difference to what it should be after is this edit's own
+    // church share. A registration edited under the #806 interim rule may be stored short of this figure; that gap is a
+    // correction for an earlier change, shown apart, never charged to the registrant as part of this edit.
+    const desiredBefore = staff && promoContext?.promo?.sponsored
+      ? (await computeChurchShare(tx, { eventId: input.eventId, registrationId: input.registrationId }))?.desiredCents ?? null
+      : null;
     const request = previous
       ? await tx.eventLodgingRequest.update({ where: { id: previous.requestId }, data: { currentVersion: previous.version + 1 } })
       : await tx.eventLodgingRequest.create({ data: { eventId: input.eventId, registrationId: input.registrationId, currentVersion: 1 } });
@@ -791,16 +799,18 @@ async function saveLodgingRequestOnce(
     // One computation for both figures (#813): for a church-sponsored code the sponsor's share of this edit is the recompute's own
     // change to the church's share, and the registrant's amount to record is the list change less that, so staff never see two
     // different numbers. (A flagged share did not move; it keeps the per-edit figure.)
-    const sponsorDelta = churchShare?.status === "UPDATED" ? churchShare.deltaCents : churchShare?.status === "UNCHANGED" ? 0 : null;
+    const storedChange = churchShare?.status === "UPDATED" ? churchShare.deltaCents : churchShare?.status === "UNCHANGED" ? 0 : null;
+    const sponsorDelta = storedChange !== null && churchShare && desiredBefore !== null ? churchShare.desiredCents - desiredBefore : storedChange;
+    const churchCorrectionCents = storedChange !== null && sponsorDelta !== null ? storedChange - sponsorDelta : 0;
     const costContext = promoContext && cumulative ? { originallyChargedCents: promoContext.lodgingCents, requestNowCostsCents: nextCents } : {};
     return { requestId: request.id, version, changed: true, afterDeadline: staff && pastDeadline, ...(staff && chargeChanges && impact
       ? {
           priceNeedsReview: true, chargeDeltaCents: impact.listDeltaCents,
           registrantDeltaCents: sponsorDelta === null ? impact.registrantDeltaCents : impact.listDeltaCents - sponsorDelta,
           sponsorDeltaCents: sponsorDelta ?? (impact.promo?.sponsored ? impact.discountDeltaCents : 0), belowMinimumAfter: cumulative?.belowMinimumAfter ?? false,
-          promo: impact.promo, ...(churchShare ? { churchShare } : {}), ...costContext,
+          promo: impact.promo, ...(churchShare ? { churchShare } : {}), ...(churchCorrectionCents !== 0 ? { churchCorrectionCents } : {}), ...costContext,
         }
-      : churchShare && churchShare.status !== "UNCHANGED" ? { churchShare, promo: promoContext?.promo ? { code: promoContext.promo.code, coversLodging: promoContext.promo.coversLodging, sponsored: promoContext.promo.sponsored } : null } : {}) };
+      : churchShare && churchShare.status !== "UNCHANGED" ? { churchShare, ...(churchCorrectionCents !== 0 ? { churchCorrectionCents } : {}), promo: promoContext?.promo ? { code: promoContext.promo.code, coversLodging: promoContext.promo.coversLodging, sponsored: promoContext.promo.sponsored } : null } : {}) };
   }, { timeout: lodgingTransactionTimeoutMs });
 }
 

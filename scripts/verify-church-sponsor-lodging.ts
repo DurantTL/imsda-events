@@ -473,6 +473,16 @@ async function main() {
   assert(differentAgain?.status === "FLAGGED" && differentAgain.deltaCents === 500 && await prisma.churchSponsorFinanceReview.count({ where: { registrationId: reviewedFor, clearedAt: null } }) === 1, `a different recompute flags the difference from the reviewed share: ${JSON.stringify(differentAgain)}`);
   await prisma.event.update({ where: { id: eventId }, data: { billingMode: "ATTENDEE_PAY" } });
 
+  // ---- A drifted registration (edited under the #806 interim rule) gets a priced edit: the correction is shown apart (#813) ----------
+  const drifted = await submit("HALFCHURCH");
+  await staffParty(drifted.id, 2);
+  await prisma.promoCodeRedemption.update({ where: { registrationId: drifted.id }, data: { sponsorLodgingChangeCents: 0 } });
+  assert((await owedFor(drifted.id)).owed === 4500, "stored short: the church owes $45 but the request is worth +$20 more");
+  const driftEdit = await staffParty(drifted.id, 3);
+  assert(driftEdit.chargeDeltaCents === 4000 && driftEdit.registrantDeltaCents === 2000 && driftEdit.sponsorDeltaCents === 2000, `the registrant records +$20 and this edit's church share is +$20: ${JSON.stringify(driftEdit)}`);
+  assert(driftEdit.churchCorrectionCents === 2000 && driftEdit.churchShare?.status === "UPDATED" && driftEdit.churchShare.deltaCents === 4000, `the church share is corrected by +$20 for the earlier change, and moves +$40 in all: ${JSON.stringify({ c: driftEdit.churchCorrectionCents, s: driftEdit.churchShare })}`);
+  assert((await owedFor(drifted.id)).owed === 8500 && chargeChangeSentence(driftEdit).includes("Church share corrected by +$20.00 for an earlier change."), "the stored share is the recompute, and staff are told about the correction");
+
   // ---- Edits made before #813, and the report that shows what will move ----------------------------------------------------------
   const legacy = await submit("HALFCHURCH");
   await prisma.promoCodeRedemption.update({ where: { registrationId: legacy.id }, data: { sponsorLodgingChangeCents: 999 } });
@@ -483,6 +493,8 @@ async function main() {
   assert(driftRow && driftRow.storedCents === 999 && driftRow.recomputedCents === 0 && driftRow.differenceCents === -999 && driftRow.churchId === church, `the report shows the registration that will move: ${JSON.stringify(driftRow)}`);
   assert(JSON.stringify(Object.keys(driftRow).sort()) === JSON.stringify(["churchId", "differenceCents", "eventId", "promoCodeId", "recomputedCents", "registrationId", "storedCents"]), "ids and amounts only");
   assert(!drift.rows.some((row) => row.registrationId === half.id), "a registration that is in sync is not listed");
+  const batched = await reportChurchShareDrift(prisma, { batchSize: 2 });
+  assert(batched.scanned === drift.scanned && JSON.stringify(batched.rows) === JSON.stringify(drift.rows) && drift.scanned > 2, "small batches give the same report");
   assert(legacyBefore === JSON.stringify(await prisma.promoCodeRedemption.findUniqueOrThrow({ where: { registrationId: legacy.id } })) && await prisma.auditLog.count({ where: { eventId } }) === auditCountBefore, "the report wrote nothing");
   const writeRefused = await caught(prisma.$transaction(async (tx) => { await tx.$executeRaw`SET TRANSACTION READ ONLY`; await tx.promoCodeRedemption.update({ where: { registrationId: legacy.id }, data: { sponsorLodgingChangeCents: 1 } }); }));
   assert(writeRefused, "and a read-only transaction really refuses a write");

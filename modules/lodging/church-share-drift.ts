@@ -2,6 +2,7 @@ import "server-only";
 
 import type { PrismaClient } from "@prisma/client";
 import { computeChurchShare } from "@/modules/lodging/preferences-service";
+import { CHURCH_SPONSORED_BILLED_STATUSES } from "@/modules/promo-codes/church-sponsored";
 
 export type ChurchShareDriftRow = {
   registrationId: string;
@@ -22,24 +23,42 @@ export type ChurchShareDriftRow = {
  * give, so finance can see what will move before the deploy. It runs in a READ ONLY transaction (the database itself refuses a
  * write), and returns ids and amounts only: no names, confirmation codes or contact details.
  */
-export async function reportChurchShareDrift(client: PrismaClient): Promise<{ scanned: number; rows: ChurchShareDriftRow[] }> {
-  return client.$transaction(async (tx) => {
-    await tx.$executeRaw`SET TRANSACTION READ ONLY`;
-    const redemptions = await tx.promoCodeRedemption.findMany({
-      where: { promoCode: { sponsoringOrganizationId: { not: null } } },
-      orderBy: [{ eventId: "asc" }, { createdAt: "asc" }],
-      select: { registrationId: true, eventId: true, promoCodeId: true, sponsorLodgingChangeCents: true, promoCode: { select: { sponsoringOrganizationId: true } } },
-    });
-    const rows: ChurchShareDriftRow[] = [];
-    for (const redemption of redemptions) {
-      const figures = await computeChurchShare(tx, { eventId: redemption.eventId, registrationId: redemption.registrationId });
-      if (!figures || figures.desiredCents === redemption.sponsorLodgingChangeCents) continue;
-      rows.push({
-        registrationId: redemption.registrationId, eventId: redemption.eventId, promoCodeId: redemption.promoCodeId,
-        churchId: redemption.promoCode.sponsoringOrganizationId ?? "", storedCents: redemption.sponsorLodgingChangeCents,
-        recomputedCents: figures.desiredCents, differenceCents: figures.desiredCents - redemption.sponsorLodgingChangeCents,
+export async function reportChurchShareDrift(client: PrismaClient, options: { batchSize?: number } = {}): Promise<{ scanned: number; rows: ChurchShareDriftRow[] }> {
+  const batchSize = Math.max(1, options.batchSize ?? 100);
+  const rows: ChurchShareDriftRow[] = [];
+  let scanned = 0;
+  let cursor: string | null = null;
+  // Batches by id, each in its own READ ONLY transaction, so a large event never holds one long transaction open.
+  for (;;) {
+    const lastId: string | null = cursor;
+    const batch: { count: number; lastId: string | null; found: ChurchShareDriftRow[] } = await client.$transaction(async (tx) => {
+      await tx.$executeRaw`SET TRANSACTION READ ONLY`;
+      const redemptions = await tx.promoCodeRedemption.findMany({
+        where: {
+          promoCode: { sponsoringOrganizationId: { not: null } },
+          registration: { status: { in: [...CHURCH_SPONSORED_BILLED_STATUSES] } },
+          ...(lastId ? { id: { gt: lastId } } : {}),
+        },
+        orderBy: { id: "asc" },
+        take: batchSize,
+        select: { id: true, registrationId: true, eventId: true, promoCodeId: true, sponsorLodgingChangeCents: true, promoCode: { select: { sponsoringOrganizationId: true } } },
       });
-    }
-    return { scanned: redemptions.length, rows };
-  }, { timeout: 300_000, maxWait: 30_000 });
+      const found: ChurchShareDriftRow[] = [];
+      for (const redemption of redemptions) {
+        const figures = await computeChurchShare(tx, { eventId: redemption.eventId, registrationId: redemption.registrationId });
+        if (!figures || figures.desiredCents === redemption.sponsorLodgingChangeCents) continue;
+        found.push({
+          registrationId: redemption.registrationId, eventId: redemption.eventId, promoCodeId: redemption.promoCodeId,
+          churchId: redemption.promoCode.sponsoringOrganizationId ?? "", storedCents: redemption.sponsorLodgingChangeCents,
+          recomputedCents: figures.desiredCents, differenceCents: figures.desiredCents - redemption.sponsorLodgingChangeCents,
+        });
+      }
+      return { count: redemptions.length, lastId: redemptions.at(-1)?.id ?? null, found };
+    }, { timeout: 120_000, maxWait: 30_000 });
+    scanned += batch.count;
+    rows.push(...batch.found);
+    if (batch.count < batchSize || !batch.lastId) break;
+    cursor = batch.lastId;
+  }
+  return { scanned, rows };
 }

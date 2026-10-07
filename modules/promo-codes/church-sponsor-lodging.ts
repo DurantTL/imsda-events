@@ -38,9 +38,11 @@ export type ChurchShareOutcome =
       churchName: string;
       /** The church's share for this registration now (never the church's event total: that is finance data). */
       registrationOwedCents: number;
+      /** What the share should be (and now is): the recompute. */
+      desiredCents: number;
     }
-  | { status: "UNCHANGED"; churchName: string; registrationOwedCents: number }
-  | { status: "FLAGGED"; deltaCents: number; churchName: string };
+  | { status: "UNCHANGED"; churchName: string; registrationOwedCents: number; desiredCents: number }
+  | { status: "FLAGGED"; deltaCents: number; churchName: string; desiredCents: number };
 
 export type ChurchShareBasis = { currentLodgingCents: number; storedLodgingCents: number };
 
@@ -96,7 +98,7 @@ export async function setChurchShare(
           metadata: { registrationId: input.registrationId, churchId, deltaCents: 0 },
         }, tx);
       }
-      return { status: "UNCHANGED", churchName, registrationOwedCents: owed(stored) };
+      return { status: "UNCHANGED", churchName, registrationOwedCents: owed(stored), desiredCents: desired };
     }
     const flag = open
       ? await tx.churchSponsorFinanceReview.update({ where: { id: open.id }, data: { deltaCents: difference, desiredShareCents: desired, sourceKey: input.sourceKey, invoiceVersionId: finalized.id }, select: { id: true } })
@@ -113,7 +115,7 @@ export async function setChurchShare(
         sourceKey: input.sourceKey, deltaCents: difference, ...input.basis,
       },
     }, tx);
-    return { status: "FLAGGED", deltaCents: difference, churchName };
+    return { status: "FLAGGED", deltaCents: difference, churchName, desiredCents: desired };
   }
 
   if (desired === stored) {
@@ -121,7 +123,7 @@ export async function setChurchShare(
     // snapshot older than this edit's request version; its own write to this row then fails as a serialization conflict and is
     // retried against the new request, instead of storing a figure recomputed from a request that is no longer current.
     await tx.promoCodeRedemption.update({ where: { id: redemption.id }, data: { sponsorLodgingChangeCents: stored } });
-    return { status: "UNCHANGED", churchName, registrationOwedCents: owed(stored) };
+    return { status: "UNCHANGED", churchName, registrationOwedCents: owed(stored), desiredCents: desired };
   }
   await tx.promoCodeRedemption.update({ where: { id: redemption.id }, data: { sponsorLodgingChangeCents: desired } });
   await writeAuditLog({
@@ -133,7 +135,7 @@ export async function setChurchShare(
       fromCents: owed(stored), toCents: owed(desired), beforeCents: stored, afterCents: desired, deltaCents: desired - stored, ...input.basis,
     },
   }, tx);
-  return { status: "UPDATED", deltaCents: desired - stored, churchName, registrationOwedCents: owed(desired) };
+  return { status: "UPDATED", deltaCents: desired - stored, churchName, registrationOwedCents: owed(desired), desiredCents: desired };
 }
 
 export type ChurchSponsorFinanceFlagRow = {
@@ -142,6 +144,10 @@ export type ChurchSponsorFinanceFlagRow = {
   churchName: string;
   confirmationCode: string;
   deltaCents: number;
+  /** What the church's share should be now. */
+  shareCents: number;
+  /** The share the finance office reviewed when they cleared an earlier flag for this registration, if they did. */
+  reviewedShareCents: number | null;
   createdAt: string;
   invoiceVersionId: string | null;
 };
@@ -152,13 +158,20 @@ export async function listOpenChurchSponsorFlags(eventId: string, client: Client
     where: { eventId, clearedAt: null },
     orderBy: { createdAt: "asc" },
     select: {
-      id: true, churchId: true, deltaCents: true, createdAt: true, invoiceVersionId: true,
+      id: true, churchId: true, registrationId: true, deltaCents: true, desiredShareCents: true, createdAt: true, invoiceVersionId: true,
       church: { select: { name: true } }, registration: { select: { confirmationCode: true } },
     },
   });
+  const cleared = rows.length === 0 ? [] : await client.churchSponsorFinanceReview.findMany({
+    where: { eventId, registrationId: { in: rows.map((row) => row.registrationId) }, reviewedShareCents: { not: null } },
+    orderBy: { clearedAt: "asc" },
+    select: { registrationId: true, reviewedShareCents: true },
+  });
+  const reviewed = new Map(cleared.map((row) => [row.registrationId, row.reviewedShareCents] as const));
   return rows.map((row) => ({
     id: row.id, churchId: row.churchId, churchName: row.church.name, confirmationCode: row.registration.confirmationCode,
-    deltaCents: row.deltaCents, createdAt: row.createdAt.toISOString(), invoiceVersionId: row.invoiceVersionId,
+    deltaCents: row.deltaCents, shareCents: row.desiredShareCents, reviewedShareCents: reviewed.get(row.registrationId) ?? null,
+    createdAt: row.createdAt.toISOString(), invoiceVersionId: row.invoiceVersionId,
   }));
 }
 

@@ -13,6 +13,7 @@ import {
   setChurchShare,
 } from "@/modules/promo-codes/church-sponsor-lodging";
 import { lodgingChargeImpact, type RegistrationPromo } from "@/modules/lodging/pricing";
+import { churchSponsorFlagLabel } from "@/modules/promo-codes/church-sponsor-flag-label";
 
 beforeEach(() => { dependencies.writeAuditLog.mockClear(); });
 
@@ -55,7 +56,7 @@ const set = (tx: unknown, desiredCents: number, sourceKey = "lodging:ver_1") => 
 describe("the church's share is a recomputed figure, stored idempotently (#813)", () => {
   it("stores the recomputed figure, whatever it was before, and returns exactly to zero on a revert", async () => {
     const { tx, state } = transaction();
-    expect(await set(tx, 2_000)).toEqual({ status: "UPDATED", deltaCents: 2_000, churchName: "Synthetic Church", registrationOwedCents: 6_500 });
+    expect(await set(tx, 2_000)).toEqual({ status: "UPDATED", deltaCents: 2_000, churchName: "Synthetic Church", registrationOwedCents: 6_500, desiredCents: 2_000 });
     expect(await set(tx, 4_000)).toMatchObject({ status: "UPDATED", deltaCents: 2_000, registrationOwedCents: 8_500 });
     expect(await set(tx, 0)).toMatchObject({ status: "UPDATED", deltaCents: -4_000, registrationOwedCents: 4_500 });
     expect(state.moved).toBe(0);
@@ -64,7 +65,7 @@ describe("the church's share is a recomputed figure, stored idempotently (#813)"
 
   it("says nothing moved, and writes no audit row, when the stored value already equals the recomputed one", async () => {
     const { tx } = transaction({ state: { discount: 4_500, moved: 2_000 } });
-    expect(await set(tx, 2_000)).toEqual({ status: "UNCHANGED", churchName: "Synthetic Church", registrationOwedCents: 6_500 });
+    expect(await set(tx, 2_000)).toEqual({ status: "UNCHANGED", churchName: "Synthetic Church", registrationOwedCents: 6_500, desiredCents: 2_000 });
     // The row is touched (same value) so a racing amendment on an older snapshot conflicts and retries; nothing is audited.
     expect(tx.promoCodeRedemption.update).toHaveBeenCalledTimes(1);
     expect(tx.promoCodeRedemption.update.mock.calls[0]![0].data).toEqual({ sponsorLodgingChangeCents: 2_000 });
@@ -119,7 +120,7 @@ describe("the church's share is a recomputed figure, stored idempotently (#813)"
 describe("the finalized-invoice rule (#813)", () => {
   it("a finalized church invoice on an invoiced event is flagged for the finance office and nothing is stored", async () => {
     const { tx, state, flag } = transaction({ deferred: true, finalized: true });
-    expect(await set(tx, 2_000, "lodging:ver_1")).toEqual({ status: "FLAGGED", deltaCents: 2_000, churchName: "Synthetic Church" });
+    expect(await set(tx, 2_000, "lodging:ver_1")).toEqual({ status: "FLAGGED", deltaCents: 2_000, churchName: "Synthetic Church", desiredCents: 2_000 });
     expect(state).toEqual({ discount: 4_500, moved: 0 });
     expect(tx.promoCodeRedemption.update).not.toHaveBeenCalled();
     expect(flag()).toMatchObject({ deltaCents: 2_000, sourceKey: "lodging:ver_1" });
@@ -144,7 +145,7 @@ describe("the finalized-invoice rule (#813)", () => {
     expect(await set(same.tx, 2_000)).toMatchObject({ status: "UNCHANGED" });
     expect(same.tx.churchSponsorFinanceReview.create).not.toHaveBeenCalled();
     const different = transaction({ deferred: true, finalized: true, reviewedShareCents: 2_000 });
-    expect(await set(different.tx, 2_500)).toEqual({ status: "FLAGGED", deltaCents: 500, churchName: "Synthetic Church" });
+    expect(await set(different.tx, 2_500)).toEqual({ status: "FLAGGED", deltaCents: 500, churchName: "Synthetic Church", desiredCents: 2_500 });
     expect(different.tx.churchSponsorFinanceReview.create.mock.calls[0]![0].data).toMatchObject({ deltaCents: 500, desiredShareCents: 2_500 });
   });
 
@@ -158,19 +159,28 @@ describe("the finalized-invoice rule (#813)", () => {
 });
 
 describe("the finance office's flags (#813)", () => {
-  it("lists open flags with a church name and confirmation code only", async () => {
-    const prisma = {
-      churchSponsorFinanceReview: {
-        findMany: vi.fn().mockResolvedValue([
-          { id: "flag_1", churchId: "church_1", deltaCents: 2_000, createdAt: new Date("2027-05-20T12:00:00Z"), invoiceVersionId: "inv_v1", church: { name: "Synthetic Church" }, registration: { confirmationCode: "SYN-0001" } },
-        ]),
-      },
-    };
+  it("lists open flags with a church name and confirmation code only, and the share finance last reviewed", async () => {
+    const findMany = vi.fn()
+      .mockResolvedValueOnce([
+        { id: "flag_1", churchId: "church_1", registrationId: "reg_1", deltaCents: 500, desiredShareCents: 2_500, createdAt: new Date("2027-05-20T12:00:00Z"), invoiceVersionId: "inv_v1", church: { name: "Synthetic Church" }, registration: { confirmationCode: "SYN-0001" } },
+        { id: "flag_2", churchId: "church_1", registrationId: "reg_2", deltaCents: 2_000, desiredShareCents: 2_000, createdAt: new Date("2027-05-21T12:00:00Z"), invoiceVersionId: "inv_v1", church: { name: "Synthetic Church" }, registration: { confirmationCode: "SYN-0002" } },
+      ])
+      .mockResolvedValueOnce([{ registrationId: "reg_1", reviewedShareCents: 2_000 }]);
+    const prisma = { churchSponsorFinanceReview: { findMany } };
     const rows = await listOpenChurchSponsorFlags("event_1", prisma as never);
-    expect(rows).toEqual([{ id: "flag_1", churchId: "church_1", churchName: "Synthetic Church", confirmationCode: "SYN-0001", deltaCents: 2_000, createdAt: "2027-05-20T12:00:00.000Z", invoiceVersionId: "inv_v1" }]);
-    const query = prisma.churchSponsorFinanceReview.findMany.mock.calls[0]![0];
+    expect(rows).toEqual([
+      { id: "flag_1", churchId: "church_1", churchName: "Synthetic Church", confirmationCode: "SYN-0001", deltaCents: 500, shareCents: 2_500, reviewedShareCents: 2_000, createdAt: "2027-05-20T12:00:00.000Z", invoiceVersionId: "inv_v1" },
+      { id: "flag_2", churchId: "church_1", churchName: "Synthetic Church", confirmationCode: "SYN-0002", deltaCents: 2_000, shareCents: 2_000, reviewedShareCents: null, createdAt: "2027-05-21T12:00:00.000Z", invoiceVersionId: "inv_v1" },
+    ]);
+    const query = findMany.mock.calls[0]![0];
     expect(query.where).toEqual({ eventId: "event_1", clearedAt: null });
     expect(JSON.stringify(query.select)).not.toMatch(/attendee|firstName|lastName|email|profile/i);
+  });
+
+  it("words a flag with both figures once finance has reviewed one", () => {
+    expect(churchSponsorFlagLabel({ shareCents: 2_500, reviewedShareCents: 2_000, deltaCents: 500 })).toBe("Church share now $25.00; finance reviewed $20.00 (difference +$5.00 not applied)");
+    expect(churchSponsorFlagLabel({ shareCents: 1_000, reviewedShareCents: 2_000, deltaCents: -1_000 })).toBe("Church share now $10.00; finance reviewed $20.00 (difference -$10.00 not applied)");
+    expect(churchSponsorFlagLabel({ shareCents: 2_000, reviewedShareCents: null, deltaCents: 2_000 })).toBe("church share +$20.00 not applied");
   });
 
   function clearPrisma(flag: { clearedAt: Date | null } | null, updated = 1) {

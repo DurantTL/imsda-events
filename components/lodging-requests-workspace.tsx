@@ -13,7 +13,7 @@ import {
 } from "@/modules/lodging/preferences-domain";
 import type { StaffLodgingRequestView, StaffLodgingRequestsView } from "@/modules/lodging/preferences-service";
 
-type ChargeResult = { priceNeedsReview?: boolean; belowMinimumAfter?: boolean; churchShare?: ChurchShareFact; chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; originallyChargedCents?: number; requestNowCostsCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null };
+type ChargeResult = { priceNeedsReview?: boolean; belowMinimumAfter?: boolean; churchShare?: ChurchShareFact; churchCorrectionCents?: number; chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; originallyChargedCents?: number; requestNowCostsCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null };
 type Reply = { requests?: StaffLodgingRequestsView; result?: ChargeResult };
 type Run = (action: () => Promise<Reply>, success: string) => Promise<void>;
 
