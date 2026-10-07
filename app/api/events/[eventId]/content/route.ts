@@ -40,7 +40,7 @@ function apiError(error: unknown, operation: string) {
   if (error instanceof EventContentError) {
     return Response.json(
       { error: error.code, message: error.message },
-      { status: 400 },
+      { status: error.code === "CUSTOM_HTML_FORBIDDEN" ? 403 : 400 },
     );
   }
   logError(`${operation} failed`, error);
@@ -77,7 +77,11 @@ async function putHandler(request: Request, context: RouteContext) {
       findActiveMembership,
     );
     const input = eventContentInputSchema.parse(await request.json());
-    const sections = await replaceEventContent(eventId, input, access.user.id);
+    // Custom HTML is for system administrators only. The repository enforces
+    // it against what is stored, so this flag is the only thing a caller sets.
+    const sections = await replaceEventContent(eventId, input, access.user.id, {
+      isSystemAdmin: access.user.globalRole === "SYSTEM_ADMIN",
+    });
     return Response.json({ sections });
   } catch (error) {
     return apiError(error, "Saving the event page content");

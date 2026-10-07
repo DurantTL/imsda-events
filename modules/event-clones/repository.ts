@@ -81,8 +81,11 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
   const [community, sections, forms, attendeeTypes, classifications, messageTemplates, tags, promoCodes, honorSessions, honorOfferings,
     merchandiseProducts, paymentInstructionVersions, messageDeliverySettings, uploadedFiles, locations] = [
     await db.eventCommunitySettings.findUnique({ where: { eventId } }),
+    // Only the original five kinds are cloned. The #816 blocks (banner, photos,
+    // schedule, speakers, countdown, embeds, custom HTML...) carry this event's
+    // own images, dates and people, so a copy starts without them.
     await db.eventContentSection.findMany({
-      where: { eventId }, orderBy: [{ position: "asc" }, { id: "asc" }],
+      where: { eventId, kind: { in: ["RICH_TEXT", "RESOURCE_LINKS", "NOTICE", "STEPS", "CHECKLIST"] } }, orderBy: [{ position: "asc" }, { id: "asc" }],
       include: { links: { orderBy: [{ position: "asc" }, { id: "asc" }] } },
     }),
     await db.registrationForm.findMany({
@@ -141,7 +144,8 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
         : null,
     },
     contentSections: sections.map((section) => ({
-      kind: section.kind, title: section.title, body: section.body, position: section.position,
+      kind: section.kind as SourceConfiguration["contentSections"][number]["kind"],
+      title: section.title, body: section.body, position: section.position,
       tone: section.tone, placement: section.placement, items: parseEventContentItems(section.items),
       links: section.links
         .filter((link) => link.assetId === null && link.url !== null)

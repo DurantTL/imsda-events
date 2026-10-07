@@ -62,11 +62,13 @@ function assetInlineUrl(eventId: string, assetId: string) {
 
 function summarizeUsage(asset: {
   links: Array<{ section: { title: string; isPublished: boolean } }>;
+  /** Pictures shown by the #816 blocks (banner, photos, gallery, speakers). */
+  blockRefs?: Array<{ section: { title: string; isPublished: boolean } }>;
   badgeBackgroundEvents: Array<{ id: string }>;
 }): EventAssetUsage {
   const published = new Set<string>();
   const draft = new Set<string>();
-  for (const link of asset.links) {
+  for (const link of [...asset.links, ...(asset.blockRefs ?? [])]) {
     (link.section.isPublished ? published : draft).add(link.section.title);
   }
   return {
@@ -81,6 +83,10 @@ function summarizeUsage(asset: {
 function usageSelect(eventId: string) {
   return {
     links: {
+      where: { section: { eventId } },
+      select: { section: { select: { title: true, isPublished: true } } },
+    },
+    blockRefs: {
       where: { section: { eventId } },
       select: { section: { select: { title: true, isPublished: true } } },
     },
@@ -251,12 +257,28 @@ export async function removeEventAsset(
               },
             },
           },
+          blockRefs: {
+            where: { section: { eventId } },
+            select: { section: { select: { title: true, isPublished: true } } },
+          },
           badgeBackgroundEvents: { select: { id: true } },
           _count: { select: { merchandiseArtworkProducts: true } },
         },
       });
       if (!asset) {
         throw new EventAssetError("ASSET_NOT_FOUND", "That file is no longer available.");
+      }
+
+      // A picture shown by a content block (#816). Unlike a resource tile it
+      // cannot be dropped for staff, so a draft block refuses the delete too.
+      const blockRefs = asset.blockRefs ?? [];
+      if (blockRefs.length > 0) {
+        const titles = [...new Set(blockRefs.map((ref) => ref.section.title))];
+        const names = titles.map((title) => `"${title}"`).join(", ");
+        throw new EventAssetError(
+          "ASSET_IN_USE",
+          `Remove this image from the block${titles.length === 1 ? "" : "s"} ${names} and save before deleting it.`,
+        );
       }
 
       const publishedSectionTitles = [...new Set(
@@ -377,6 +399,8 @@ export async function findPublishedEventAsset(eventSlug: string, assetId: string
       event: { slug: eventSlug, isPublished: true },
       OR: [
         { links: { some: { section: { isPublished: true, event: { slug: eventSlug } } } } },
+        // A picture a published content block shows (#816).
+        { blockRefs: { some: { section: { isPublished: true, event: { slug: eventSlug } } } } },
         {
           merchandiseArtworkProducts: {
             some: {

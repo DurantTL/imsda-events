@@ -96,6 +96,17 @@ const kindLabels: Record<SectionDraft["kind"], string> = {
   NOTICE: "Notice card",
   STEPS: "Steps card",
   CHECKLIST: "Checklist card",
+  HERO: "Header banner",
+  IMAGE: "Photo with text",
+  GALLERY: "Photo gallery",
+  FORMATTED_TEXT: "Formatted text",
+  EMBED: "Video or map",
+  FAQ: "Questions and answers",
+  CUSTOM_HTML: "Custom HTML",
+  SCHEDULE: "Schedule",
+  SPEAKERS: "Speaker cards",
+  CONTACT: "Contact card",
+  COUNTDOWN: "Countdown",
 };
 
 type UpdateSection = (index: number, patch: Partial<SectionDraft>) => void;

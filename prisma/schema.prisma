@@ -393,6 +393,28 @@ enum EventContentSectionKind {
   STEPS
   /// An info card: a titled list of items to have ready.
   CHECKLIST
+  /// Header banner (#816): one large uploaded image with title and button.
+  HERO
+  /// A photo with a caption and optional text beside it (#816).
+  IMAGE
+  /// Several uploaded images in a grid, opening a larger view (#816).
+  GALLERY
+  /// Markdown subset: headings, bold, italic, links, lists. Never raw HTML (#816).
+  FORMATTED_TEXT
+  /// A YouTube, Vimeo, or Google Maps embed, stored as provider and id (#816).
+  EMBED
+  /// Questions and answers as a disclosure list (#816).
+  FAQ
+  /// Sanitized custom HTML. SYSTEM_ADMIN only, enforced on the server (#816).
+  CUSTOM_HTML
+  /// Rows of day, time, title, location and description (#816).
+  SCHEDULE
+  /// Speaker cards: photo, name, role and short bio (#816).
+  SPEAKERS
+  /// Contact cards with mailto and tel links (#816).
+  CONTACT
+  /// Counts down to the event start or a chosen date (#816).
+  COUNTDOWN
 }
 
 /// The look and meaning of a NOTICE card. Rendered with a text label and an
@@ -1242,16 +1264,37 @@ model EventContentSection {
   /// STEPS and CHECKLIST entries: `[{ "title": string, "text": string }]`.
   /// Plain text, validated by modules/events/content-schemas.ts.
   items       Json                    @default("[]")
+  /// Per-kind content for the #816 blocks (HERO, IMAGE, GALLERY, EMBED, FAQ,
+  /// SCHEDULE, SPEAKERS, CONTACT, COUNTDOWN). Validated by zod in
+  /// modules/events/content-schemas.ts on save and again on read. `{}` for
+  /// every older kind.
+  data        Json                    @default("{}")
   position    Int
   isPublished Boolean                 @default(false)
   createdAt   DateTime                @default(now())
   updatedAt   DateTime                @updatedAt
 
-  event Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  links EventContentLink[]
+  event  Event                      @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  links  EventContentLink[]
+  assets EventContentSectionAsset[]
 
   @@index([eventId, position])
   @@index([eventId, isPublished])
+}
+
+/// An uploaded image a block's `data` points at (#816), derived from `data` on
+/// every save. It is what lets the public asset route serve a published
+/// block's image, and what makes deleting a file that a block still shows fail
+/// loudly (Restrict) instead of leaving a broken picture.
+model EventContentSectionAsset {
+  sectionId String
+  assetId   String
+
+  section EventContentSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  asset   EventAsset          @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@id([sectionId, assetId])
+  @@index([assetId])
 }
 
 /// One resource tile inside a RESOURCE_LINKS section.
@@ -1295,6 +1338,7 @@ model EventAsset {
   event      Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
   uploadedBy User?              @relation("EventAssetUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
   links      EventContentLink[]
+  blockRefs  EventContentSectionAsset[]
   merchandiseArtworkProducts MerchandiseProduct[] @relation("MerchandiseProductArtwork")
   badgeBackgroundEvents      Event[]              @relation("EventBadgeBackground")
 
