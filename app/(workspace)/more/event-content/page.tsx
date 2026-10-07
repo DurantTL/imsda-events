@@ -15,7 +15,7 @@ export default async function EventContentPage({
   searchParams: Promise<{ event?: string }>;
 }) {
   const { event: requested } = await searchParams;
-  const { event, permissions } = await resolveEventContext(requested);
+  const { event, permissions, user } = await resolveEventContext(requested);
   const back = <BackLink href={`/more?event=${event.id}`} variant="staff">Back to More</BackLink>;
   if (!permissions.includes("CONFIGURE_EVENT")) {
     return (
@@ -35,6 +35,13 @@ export default async function EventContentPage({
         key={event.id}
         eventId={event.id}
         eventName={event.name}
+        eventSlug={event.slug}
+        eventTiming={{
+          startsAt: event.startsAt.toISOString(),
+          endsAt: event.endsAt.toISOString(),
+          timezone: event.timezone,
+        }}
+        isSystemAdmin={user.globalRole === "SYSTEM_ADMIN"}
         initialSections={await listEventContentSections(event.id)}
         initialAssets={await listEventAssets(event.id)}
       />

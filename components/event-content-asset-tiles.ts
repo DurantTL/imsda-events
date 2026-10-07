@@ -16,6 +16,8 @@ export type SectionDraft = {
   tone?: EventContentTone | null;
   placement?: EventContentPlacement;
   items?: Array<{ title: string; text: string }>;
+  /** Per-kind content of the #816 blocks. Absent for the older kinds. */
+  data?: Record<string, unknown>;
   isPublished: boolean;
   links: LinkDraft[];
 };

@@ -7,6 +7,16 @@ import type { EventContentSectionRecord } from "@/modules/events/content-reposit
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EventInfoCards, eventContentToneLabels } from "@/components/event-info-cards";
 import {
+  BlockEditor,
+  BlockPreview,
+  blockKindLabels,
+  defaultBlockData,
+  isNewBlockKind,
+  newBlockKinds,
+} from "@/components/event-block-editors";
+import type { EventBlockEvent } from "@/components/event-content-blocks";
+import {
+  canPlaceOnRegistrationForm,
   eventContentTones,
   isInfoCardKind,
   type EventContentPlacement,
@@ -236,17 +246,28 @@ function draftsFrom(sections: EventContentSectionRecord[]): SectionDraft[] {
     items: section.items.map((item) => ({ ...item })),
     isPublished: section.isPublished,
     links: section.links.map((link) => ({ ...link })),
+    // Only the #816 blocks carry data; the older kinds save exactly as before.
+    ...(isNewBlockKind(section.kind) && section.kind !== "CUSTOM_HTML" && section.kind !== "FORMATTED_TEXT"
+      ? { data: structuredClone(section.data) }
+      : {}),
   }));
 }
 
 export function EventContentWorkspace({
   eventId,
   eventName,
+  eventSlug,
+  eventTiming,
+  isSystemAdmin,
   initialSections,
   initialAssets,
 }: {
   eventId: string;
   eventName: string;
+  eventSlug: string;
+  eventTiming: EventBlockEvent;
+  /** Custom HTML is editable only by a system administrator; the server enforces it too. */
+  isSystemAdmin: boolean;
   initialSections: EventContentSectionRecord[];
   initialAssets: EventAssetRecord[];
 }) {
@@ -309,8 +330,12 @@ export function EventContentWorkspace({
     });
   }
 
+  const hasHero = sections.some((section) => section.kind === "HERO");
+  const [blockToAdd, setBlockToAdd] = useState<(typeof newBlockKinds)[number]>("FORMATTED_TEXT");
+
   function addSection(kind: SectionDraft["kind"], tone?: EventContentTone) {
-    setSections((current) => [...current, {
+    if ((kind === "HERO" && hasHero) || (kind === "CUSTOM_HTML" && !isSystemAdmin)) return;
+    const added: SectionDraft = {
       kind,
       title: "",
       body: "",
@@ -319,7 +344,12 @@ export function EventContentWorkspace({
       items: kind === "STEPS" || kind === "CHECKLIST" ? [{ title: "", text: "" }] : [],
       isPublished: false,
       links: kind === "RESOURCE_LINKS" ? [{ label: "", description: "", url: "", assetId: null }] : [],
-    }]);
+      ...(defaultBlockData(kind) ? { data: defaultBlockData(kind) } : {}),
+    };
+    // The banner always goes first; everything else goes last.
+    setSections((current) => (kind === "HERO" ? [added, ...current] : [...current, added]));
+    setError("");
+    setNotice("");
   }
 
   function addRetreatGuideStarter() {
@@ -539,6 +569,7 @@ export function EventContentWorkspace({
               <div>
                 <p className="eyebrow">
                   {kindLabels[section.kind]}
+                  {section.kind === "CUSTOM_HTML" && !isSystemAdmin ? " · system administrator only" : ""}
                   {section.isPublished ? "" : " · draft"}
                 </p>
               </div>
@@ -549,6 +580,7 @@ export function EventContentWorkspace({
                   className="secondary-button"
                   type="button"
                   onClick={() => setRemoveSectionIndex(index)}
+                  disabled={section.kind === "CUSTOM_HTML" && !isSystemAdmin}
                 >
                   <Trash2 size={15} aria-hidden="true" /> Remove
                 </button>
@@ -561,6 +593,7 @@ export function EventContentWorkspace({
                 value={section.title}
                 maxLength={120}
                 required
+                readOnly={section.kind === "CUSTOM_HTML" && !isSystemAdmin}
                 onChange={(event) => updateSection(index, { title: event.target.value })}
               />
             </label>
@@ -576,6 +609,15 @@ export function EventContentWorkspace({
                 />
                 <small>Leave a blank line between paragraphs. Formatting and links are not carried through.</small>
               </label>
+            ) : isNewBlockKind(section.kind) ? (
+              <BlockEditor
+                eventId={eventId}
+                section={section}
+                index={index}
+                assets={assets}
+                isSystemAdmin={isSystemAdmin}
+                updateSection={updateSection}
+              />
             ) : section.kind === "RESOURCE_LINKS" ? (
               <LinksEditor section={section} index={index} assets={assets} updateSection={updateSection} />
             ) : section.kind === "NOTICE" ? (
@@ -606,6 +648,28 @@ export function EventContentWorkspace({
               </>
             ) : (
               <ItemsEditor section={section} index={index} updateSection={updateSection} />
+            )}
+
+            {isNewBlockKind(section.kind) && section.kind !== "CUSTOM_HTML" && (
+              <>
+                {canPlaceOnRegistrationForm(section.kind) && (
+                  <label>
+                    Show this block
+                    <select
+                      value={section.placement ?? "PUBLIC_PAGE"}
+                      onChange={(event) => updateSection(index, { placement: event.target.value as EventContentPlacement })}
+                    >
+                      <option value="PUBLIC_PAGE">On the public event page</option>
+                      <option value="REGISTRATION_FORM">At the top of the registration form</option>
+                      <option value="BOTH">On both</option>
+                    </select>
+                  </label>
+                )}
+                <details className="event-info-card-preview">
+                  <summary>Preview this block</summary>
+                  <BlockPreview section={section} index={index} assets={assets} eventSlug={eventSlug} eventTiming={eventTiming} />
+                </details>
+              </>
             )}
 
             {isInfoCardKind(section.kind) && (
@@ -646,6 +710,7 @@ export function EventContentWorkspace({
               <input
                 type="checkbox"
                 checked={section.isPublished}
+                disabled={section.kind === "CUSTOM_HTML" && !isSystemAdmin}
                 onChange={(event) => updateSection(index, { isPublished: event.target.checked })}
               />
               <span>
@@ -671,6 +736,28 @@ export function EventContentWorkspace({
           </button>
           <button className="secondary-button" type="button" onClick={() => addSection("CHECKLIST")}>
             <SquareCheck size={15} aria-hidden="true" /> Add a checklist card
+          </button>
+        </div>
+
+        <div className="event-block-picker">
+          <label>
+            Add a block
+            <select value={blockToAdd} onChange={(event) => setBlockToAdd(event.target.value as typeof blockToAdd)}>
+              {newBlockKinds.map((kind) => (
+                <option
+                  value={kind}
+                  key={kind}
+                  disabled={(kind === "HERO" && hasHero) || (kind === "CUSTOM_HTML" && !isSystemAdmin)}
+                >
+                  {blockKindLabels[kind]}
+                  {kind === "HERO" && hasHero ? " (already on the page)" : ""}
+                  {kind === "CUSTOM_HTML" && !isSystemAdmin ? " (system administrators only)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="secondary-button" type="button" onClick={() => addSection(blockToAdd)}>
+            <Plus size={15} aria-hidden="true" /> Add block
           </button>
         </div>
 
