@@ -17,6 +17,10 @@
  *    dialog is closed again without being submitted);
  *  - no fixed or sticky bar that hides the last thing on the page, and no
  *    bar that takes more than a third of the screen;
+ *  - table cells (#811): no cell's text runs into or over its neighbour or out of its
+ *    own cell, no two columns touch with no gap, each card label (`data-label`) is its
+ *    column header, a header sits over its column, an honor pill never loses its
+ *    "In progress / Completed" status, and a table marked `data-fit-width` fits its box;
  *  - a full-page screenshot of every page and width, saved as an artifact.
  *
  * Every layout assertion is made for every page at every width. A finding that
@@ -145,6 +149,11 @@ const pages: PageSpec[] = [
   club("registration-form", `/events/${clubEventId}`),
   club("class-tracking", "/class-tracking"),
   club("honors", "/honors"),
+  club("class-tracking-report", "/exports/class-tracking"),
+  club("class-history", `/class-tracking/${P}_person_a_01`),
+  club("roster-export", "/roster/export"),
+  club("orders-print", "/orders/print"),
+  club("schedule", `/events/${clubEventId}/schedule`),
   club("honors-report", "/exports/honors"),
   club("honors-report-person", "/exports/honors?view=person"),
   club("monthly-records", "/records"),
@@ -187,6 +196,16 @@ const pages: PageSpec[] = [
   staff("clubs-oversight-club", `/more/clubs/${clubA}`),
   staff("clubs-oversight-reports", "/more/clubs/reports"),
   staff("honors", "/more/honors"),
+  staff("honors-rosters", "/more/honors/rosters"),
+  staff("event-health", "/more/event-health"),
+  staff("attendee-configuration", "/more/attendee-configuration"),
+  staff("club-assignments", "/more/club-assignments"),
+  staff("program-assignments", "/more/program-assignments"),
+  staff("club-forms-staff", "/more/club-forms"),
+  staff("reports-packets", "/more/reports/packets"),
+  staff("responsible-adults", "/people/responsible-adults"),
+  staff("directory-review", "/people/directory-review"),
+  staff("person-matches", "/people/matches", "system-admin"),
   staff("promo-codes", "/more/promo-codes"),
   staff("tags", "/more/tags"),
   staff("event-settings", "/more/event-settings"),
@@ -206,11 +225,18 @@ const pages: PageSpec[] = [
   staff("club-transfers", "/admin/clubs/transfers", "system-admin"),
   staff("background-checks", "/admin/organizations/background-checks", "system-admin"),
   staff("club-as-director", `/admin/organizations/${clubA}/club`, "system-admin"),
+  staff("club-as-director-honors", `/admin/organizations/${clubA}/club/honors`, "system-admin"),
   staff("team", "/admin/team", "system-admin"),
   staff("accounts", "/admin/accounts", "system-admin"),
   staff("system-settings", "/admin/settings", "system-admin"),
   staff("club-supplies", "/admin/club-supplies", "system-admin"),
   staff("club-forms", "/admin/club-forms", "system-admin"),
+  staff("map-locations", "/admin/organizations/map-locations", "system-admin"),
+  staff("honor-catalog", "/admin/honors", "system-admin"),
+  staff("year-end-reports", "/admin/clubs/reports/year-end", "system-admin"),
+  staff("church-import", "/admin/organizations/import", "system-admin"),
+  staff("club-import", "/admin/clubs/import", "system-admin"),
+  staff("club-directors", `/admin/organizations/${clubA}/directors`, "system-admin"),
   // The block editor with one of each kind, as a system administrator (custom HTML is editable).
   staff("event-content-blocks", `/more/event-content?event=${blocksEventId}`, "system-admin"),
 ];
@@ -227,6 +253,7 @@ const dialogOpeners = [
   'button:has-text("Add club admin")',
   'button:has-text("New announcement")',
   'button[aria-label^="Add or view honors"]',
+  'button[aria-label^="Honors for "]',
   'button[aria-label^="Edit "]',
   "button.record-card",
   ".finance-record",
@@ -335,6 +362,11 @@ async function cleanupSynthetic(prisma: PrismaClient) {
     prisma.clubInvite.deleteMany({ where: { OR: [orgs, { id: { startsWith: `${P}_` } }] } }),
     prisma.newClubApplication.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
     prisma.newClubApplicationInvite.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
+    prisma.clubOrderNeed.deleteMany({ where: { OR: [orgs, { personId: { startsWith: `${P}_` } }] } }),
+    prisma.memberHonorEntry.deleteMany({ where: { OR: [orgs, { personId: { startsWith: `${P}_` } }] } }),
+    prisma.honor.deleteMany({ where: { code: { startsWith: `${P}-honor-` } } }),
+    prisma.registrationAttendee.deleteMany({ where: { registrationId: { startsWith: `${P}_reg_` } } }),
+    prisma.registration.deleteMany({ where: { id: { startsWith: `${P}_reg_` } } }),
     prisma.clubMonthlyReport.deleteMany({ where: orgs }),
     prisma.clubRosterMember.deleteMany({ where: orgs }),
     prisma.person.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
@@ -574,6 +606,7 @@ async function seedSynthetic(prisma: PrismaClient) {
     });
   }
 
+  await seedHonorsAndRegistrations(prisma);
   await seedBlocksEvent(prisma);
   await seedMultiHonorClass(prisma);
 }
@@ -604,6 +637,92 @@ async function seedMultiHonorClass(prisma: PrismaClient) {
     await prisma.honorOfferingHonor.createMany({
       data: multiHonorIds.slice(1).map((honorId, index) => ({ offeringId: multiHonorOfferingId, honorId, eventId, position: index + 1 })),
     });
+  }
+}
+
+/**
+ * Table stress data (#811): members with many long honor names in mixed
+ * statuses (one name is a single unbroken 90-character word), and one
+ * registration in every status with long attendee names on the seeded
+ * Women's Retreat event. All synthetic; ids start with "mobilecheck" so the
+ * cleanup finds them.
+ */
+async function seedHonorsAndRegistrations(prisma: PrismaClient) {
+  const unbroken = "Supercalifragilisticexpialidocious-Honor-With-An-Unbroken-Name-That-Never-Wraps-Ever-01";
+  const honorNames = [
+    "Advanced Wilderness Survival Skills and Emergency Preparedness for Large Groups",
+    unbroken,
+    "Knots", "Basketry", "Astronomy", "Cooking for a Crowd: Camp Kitchen Safety and Menus",
+    "Stream and River Ecology of the Western Prairie Watershed Region",
+    "First Aid - Standard", "Bird Study - Advanced", "Orienteering", "Cycling", "Swimming - Beginner",
+    "Backpacking Across the Extremely Long-Named Mountain Range of Synthetic Testville",
+    "Leatherwork", "Wildflowers", "Weather", "Camping Skills I", "Camping Skills II", "Camping Skills III", "Camping Skills IV",
+  ];
+  const honors: string[] = [];
+  for (const [index, name] of honorNames.entries()) {
+    const upserted = await prisma.honor.upsert({
+      where: { code: `${P}-honor-${index + 1}` },
+      update: {},
+      create: { code: `${P}-honor-${index + 1}`, name: `Mobilecheck ${name}`, normalizedName: `mobilecheck ${name}`.toLowerCase() },
+    });
+    honors.push(upserted.id);
+  }
+  // Person 01 has 20 honors, 03 has 7 (more than the 6 shown collapsed), 02 has 3, 05 has one.
+  const plan: Array<[string, number]> = [["a_01", 20], ["a_03", 7], ["a_02", 3], ["a_05", 1]];
+  for (const [suffix, count] of plan) {
+    const personId = `${P}_person_${suffix}`;
+    for (let index = 0; index < count; index += 1) {
+      const completed = index % 3 !== 1;
+      await prisma.memberHonorEntry.upsert({
+        where: { id: `${P}_honor_entry_${suffix}_${index}` },
+        update: {},
+        create: {
+          id: `${P}_honor_entry_${suffix}_${index}`, personId, honorId: honors[index % honors.length], organizationId: clubA,
+          status: completed ? "COMPLETED" : "IN_PROGRESS", completionDate: completed ? "2026-08-15" : "",
+          recordedByUserId: "usr_system_admin",
+        },
+      });
+    }
+  }
+
+  // One registration in every status on the Women's Retreat event, with long names.
+  const statuses = ["DRAFT", "SUBMITTED", "CONFIRMED", "WAITLISTED", "CANCELLED"] as const;
+  const firstNames = ["Bartholomew-Alexander", "Maria", "Lisa", "Wolfeschlegelsteinhausenbergerdorff", "Ng"];
+  const lastNames = ["Quillfeather-Hargreaves-Montgomery", "de la Cruz-Montenegro", "Hickman", "Oyelaran-Whitcombe", "Smith"];
+  for (const [index, status] of statuses.entries()) {
+    const registrationId = `${P}_reg_${index + 1}`;
+    const holderId = `${P}_reg_person_${index + 1}_0`;
+    await prisma.person.upsert({
+      where: { id: holderId }, update: {},
+      create: { id: holderId, firstName: firstNames[index], lastName: lastNames[index], normalizedEmail: `${P}.reg${index + 1}.with-a-long-address-for-wrapping@example.test`, phone: "555-0100" },
+    });
+    await prisma.registration.upsert({
+      where: { id: registrationId },
+      update: {},
+      create: {
+        id: registrationId, eventId, accountHolderPersonId: holderId, confirmationCode: `MC-${index + 1}0${index}${index}`, status, totalAmount: 175 * (index + 1),
+        submittedAt: status === "DRAFT" ? null : new Date("2026-09-20T15:00:00Z"), cancelledAt: status === "CANCELLED" ? new Date("2026-09-25T15:00:00Z") : null,
+      },
+    });
+    for (let slot = 0; slot < 3; slot += 1) {
+      const personId = slot === 0 ? holderId : `${P}_reg_person_${index + 1}_${slot}`;
+      if (slot > 0) {
+        await prisma.person.upsert({
+          where: { id: personId }, update: {},
+          create: { id: personId, firstName: firstNames[(index + slot) % 5], lastName: lastNames[(index + slot * 2) % 5] },
+        });
+      }
+      const person = await prisma.person.findUniqueOrThrow({ where: { id: personId } });
+      await prisma.registrationAttendee.upsert({
+        where: { registrationId_personId: { registrationId, personId } },
+        update: {},
+        create: {
+          id: `${P}_reg_attendee_${index + 1}_${slot}`, eventId, registrationId, personId, position: slot,
+          attendeeType: slot === 2 ? "WORKER" : "ATTENDEE",
+          profileSnapshot: { firstName: person.firstName, lastName: person.lastName, email: person.normalizedEmail, phone: "555-0100" },
+        },
+      });
+    }
   }
 }
 
@@ -741,6 +860,139 @@ function auditInPage(args: { touch: boolean; cards: boolean; minTarget: number; 
     }
   }
 
+  // 5. Table cells (#811): nothing overlaps its neighbour, nothing spills out of its cell,
+  //    each card label matches its column header, and a header lines up over its column.
+  const cellProblems: string[] = [];
+  const contentRect = (cell: Element) => {
+    // What a person sees in the cell: its text and its controls and images, not hidden or clipped text.
+    const rects: DOMRect[] = [];
+    const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (!(node.textContent ?? "").trim()) continue;
+      const parent = node.parentElement;
+      if (!parent || parent.closest(".sr-only, .visually-hidden, [hidden]") || !visible(parent)) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      // Text cut by an ancestor's overflow (an ellipsis) only shows inside that ancestor.
+      let clipLeft = -Infinity;
+      let clipRight = Infinity;
+      for (let up: Element | null = parent; up && up !== cell.parentElement; up = up.parentElement) {
+        if (up === cell) break;
+        if (/(auto|scroll|hidden|clip)/.test(getComputedStyle(up).overflowX)) {
+          const box = up.getBoundingClientRect();
+          clipLeft = Math.max(clipLeft, box.left);
+          clipRight = Math.min(clipRight, box.right);
+        }
+      }
+      for (const rect of Array.from(range.getClientRects())) {
+        const left = Math.max(rect.left, clipLeft);
+        const right = Math.min(rect.right, clipRight);
+        if (right - left > 0 && rect.height > 0) rects.push(new DOMRect(left, rect.top, right - left, rect.height));
+      }
+      range.detach();
+    }
+    for (const el of Array.from(cell.querySelectorAll("button, input:not([type=hidden]), select, textarea, img, svg"))) {
+      if (el.closest(".sr-only, .visually-hidden, [hidden]") || !visible(el)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 2 && rect.height > 2) rects.push(rect);
+    }
+    if (rects.length === 0) return null;
+    return {
+      left: Math.min(...rects.map((rect) => rect.left)), right: Math.max(...rects.map((rect) => rect.right)),
+      top: Math.min(...rects.map((rect) => rect.top)), bottom: Math.max(...rects.map((rect) => rect.bottom)),
+    };
+  };
+  const clean = (text: string | null) => (text ?? "").replace(/[▲▼↑↓]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  const cellLabel = (table: HTMLTableElement, name: string) => `${describe(table)} ${name}`;
+  for (const table of Array.from(document.querySelectorAll("table"))) {
+    if (!visible(table) || inHiddenTree(table)) continue;
+    const headerRow = table.tHead?.rows[0];
+    const headers: Element[] = [];
+    if (headerRow) for (const cell of Array.from(headerRow.cells)) for (let n = 0; n < cell.colSpan; n += 1) headers.push(cell);
+    const rows = Array.from(table.rows).filter((row) => row.parentElement?.tagName === "TBODY");
+    let reported = 0;
+    const spanOf = (row: HTMLTableRowElement) => Array.from(row.cells).reduce((sum, cell) => sum + cell.colSpan, 0);
+    // The first body row with one cell per header (a group heading row or an empty-state row spans the table).
+    const firstFull = rows.find((row) => spanOf(row) === headers.length && row.cells.length > 1);
+    if (headers.length > 1 && !firstFull && rows.some((row) => row.cells.length > 1)) {
+      cellProblems.push(`${describe(table)}: no row has ${headers.length} cells to match the ${headers.length} headers`);
+    }
+    for (const row of rows.slice(0, 60)) {
+      if (!visible(row) || reported >= 4) continue;
+      const cells = Array.from(row.cells).filter((cell) => visible(cell));
+      const boxes = cells.map((cell) => ({ cell, rect: cell.getBoundingClientRect(), text: contentRect(cell) }));
+      for (const [index, box] of boxes.entries()) {
+        const style = getComputedStyle(box.cell);
+        const clipsX = /(auto|scroll|hidden|clip)/.test(style.overflowX);
+        const name = clean(box.cell.getAttribute("data-label") ?? box.cell.textContent).slice(0, 24) || `cell ${index + 1}`;
+        // Text that runs out of its own cell (it would draw over the next cell).
+        if (box.text && !clipsX && (box.text.right > box.rect.right + 1 || box.text.left < box.rect.left - 1)) {
+          const nested = Array.from(box.cell.querySelectorAll("*")).some((el) => /(auto|scroll|hidden|clip)/.test(getComputedStyle(el).overflowX) && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().right <= box.rect.right + 1);
+          if (!nested) { cellProblems.push(`${cellLabel(table, name)}: text runs ${Math.round(Math.max(box.text.right - box.rect.right, box.rect.left - box.text.left))}px outside its cell`); reported += 1; }
+        }
+        for (const other of boxes.slice(index + 1)) {
+          if (!box.text || !other.text) continue;
+          const across = Math.min(box.text.right, other.text.right) - Math.max(box.text.left, other.text.left);
+          const down = Math.min(box.text.bottom, other.text.bottom) - Math.max(box.text.top, other.text.top);
+          // Side by side with no gap at all ("CONFIRMEDLisa Hickman"): the text of one column touches the next.
+          const touching = down > 1 && across <= 0 && across > -4 && getComputedStyle(box.cell).display.startsWith("table") && getComputedStyle(other.cell).display.startsWith("table") && other.cell === boxes[index + 1]?.cell;
+          if (touching) {
+            cellProblems.push(`${cellLabel(table, name)}: text touches "${clean(other.cell.getAttribute("data-label") ?? other.cell.textContent).slice(0, 24)}" with ${Math.round(-across)}px between them`);
+            reported += 1;
+          }
+          if (across > 1 && down > 1) {
+            cellProblems.push(`${cellLabel(table, name)}: overlaps "${clean(other.cell.getAttribute("data-label") ?? other.cell.textContent).slice(0, 24)}" by ${Math.round(across)}x${Math.round(down)}px (text at ${Math.round(box.text.left)}..${Math.round(box.text.right)} and ${Math.round(other.text.left)}..${Math.round(other.text.right)}; cells ${Math.round(box.rect.left)}..${Math.round(box.rect.right)} and ${Math.round(other.rect.left)}..${Math.round(other.rect.right)})`);
+            reported += 1;
+          }
+        }
+        // The card label is the column header (checked once per column: the first row).
+        const label = box.cell.getAttribute("data-label");
+        if (label !== null && row === firstFull && headers.length > 0) {
+          let column = 0;
+          for (const earlier of Array.from(row.cells)) { if (earlier === box.cell) break; column += earlier.colSpan; }
+          const header = headers[column];
+          const headerText = header ? clean(header.textContent) : "";
+          if (header && clean(label) !== headerText && !headerText.startsWith(clean(label))) cellProblems.push(`${cellLabel(table, name)}: data-label "${label}" but the column header is "${header.textContent?.replace(/\s+/g, " ").trim()}"`);
+        }
+        // Headers sit over their column: in a real table layout the header's left edge is within the cell's.
+        if (row === firstFull && style.display.startsWith("table") && headers.length > 0) {
+          let column = 0;
+          for (const earlier of Array.from(row.cells)) { if (earlier === box.cell) break; column += earlier.colSpan; }
+          const header = headers[column];
+          if (header && (header as HTMLTableCellElement).colSpan <= 1 && getComputedStyle(header).display.startsWith("table")) {
+            const headRect = header.getBoundingClientRect();
+            if (Math.abs(headRect.left - box.rect.left) > 2 || Math.abs(headRect.right - box.rect.right) > 2) cellProblems.push(`${cellLabel(table, name)}: header "${clean(header.textContent).slice(0, 20)}" is ${Math.round(headRect.left)}..${Math.round(headRect.right)}px over a column at ${Math.round(box.rect.left)}..${Math.round(box.rect.right)}px`);
+          }
+        }
+      }
+    }
+  }
+  // Honor pills: the status ("In progress" / "Completed") is never cut off, and a pill stays inside its cell.
+  const pillProblems: string[] = [];
+  for (const pill of Array.from(document.querySelectorAll(".honor-pill"))) {
+    if (!visible(pill) || inHiddenTree(pill)) continue;
+    const status = pill.querySelector(".honor-pill-status");
+    const pillRect = pill.getBoundingClientRect();
+    if (status) {
+      const statusRect = status.getBoundingClientRect();
+      if (statusRect.width <= 0 || statusRect.right > pillRect.right + 1 || (status as HTMLElement).scrollWidth > (status as HTMLElement).clientWidth + 1) {
+        pillProblems.push(`${describe(pill)}: the status is cut off (${Math.round(statusRect.right)}px past a pill ending at ${Math.round(pillRect.right)}px)`);
+      }
+    }
+    const cell = pill.closest("td, th");
+    if (cell) {
+      const cellRect = cell.getBoundingClientRect();
+      if (pillRect.right > cellRect.right + 1) pillProblems.push(`${describe(pill)}: sticks out of its cell by ${Math.round(pillRect.right - cellRect.right)}px`);
+    }
+  }
+  // A table marked data-fit-width fits its box without a sideways scroll (the honors table at 768-1024px).
+  const fitProblems: string[] = [];
+  for (const table of Array.from(document.querySelectorAll("table[data-fit-width]"))) {
+    if (!visible(table) || inHiddenTree(table)) continue;
+    const box = table.parentElement;
+    if (box && box.scrollWidth > box.clientWidth + 1) fitProblems.push(`${describe(table)} is ${box.scrollWidth}px wide in a ${box.clientWidth}px box`);
+  }
+
   // 4. Fixed and sticky bars.
   const bars: Array<{ el: Element; top: number; bottom: number; kind: string }> = [];
   for (const el of Array.from(document.body.querySelectorAll("*"))) {
@@ -769,6 +1021,9 @@ function auditInPage(args: { touch: boolean; cards: boolean; minTarget: number; 
     scrollingTables,
     smallTargets,
     barNotes,
+    cellProblems,
+    pillProblems,
+    fitProblems,
     barCount: bars.length,
   };
 }
@@ -863,6 +1118,8 @@ function injectDefects() {
     '<div style="width:2000px;height:4px;background:red"></div>',
     '<button type="button" style="width:20px;height:20px">x</button>',
     '<div style="max-width:100%;overflow-x:auto"><table><tbody><tr><td><div style="width:1500px">wide cell</div></td></tr></tbody></table></div>',
+    // A cell whose text runs over the next cell, and a label that is not its column header (#811).
+    '<table style="table-layout:fixed;width:200px"><thead><tr><th>One</th><th>Two</th></tr></thead><tbody><tr><td data-label="Uno" style="white-space:nowrap">AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</td><td data-label="Two">BBBBBBBB</td></tr></tbody></table>',
     '<div style="position:fixed;left:0;right:0;bottom:0;height:90px;background:#ccc;z-index:30">self-test bar</div>',
     '<p style="margin:0 0 0 0">self-test last line</p>',
   ].join("");
@@ -930,6 +1187,9 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
   for (const table of result.scrollingTables) record("table-scrolls-sideways", spec.name, width, table);
   for (const target of result.smallTargets) record("small-tap-target", spec.name, width, target);
   for (const note of result.barNotes) record("sticky-bar-size", spec.name, width, note);
+  for (const problem of result.cellProblems) record("table-cell", spec.name, width, problem);
+  for (const problem of result.pillProblems) record("honor-pill", spec.name, width, problem);
+  for (const problem of result.fitProblems) record("table-too-wide", spec.name, width, problem);
 
   // Scroll to the bottom: is the last content hidden behind a fixed bar?
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));

@@ -1,6 +1,7 @@
 import { makeSearchMatcher } from "@/lib/search-match";
 import { isCalendarDate } from "@/modules/calendar/domain";
 import { clubYearMonths } from "@/modules/club-reports/domain";
+import { clubClassLevelLabels } from "@/modules/club-rosters/domain";
 import { toCsv } from "@/modules/reporting/csv";
 
 /**
@@ -209,16 +210,24 @@ export function honorYearSummary(rows: readonly ClubHonorsRow[], clubYear: strin
   return { inProgress, completedThisYear };
 }
 
-/** Names and honors only — no birth dates, ages, or any medical field. */
+/**
+ * The CSV's columns (#811). The first five keep their original positions, so a spreadsheet that reads by
+ * position still works; "Current class", the page's other column, is added at the end. The name is split
+ * in two so it sorts in a spreadsheet, and there is one line per honor.
+ */
+export const CLUB_HONORS_CSV_HEADERS = ["Last name", "First name", "Honor", "Status", "Completion date", "Current class"] as const;
+
+/** Names, class and honors only — no birth dates, ages, or any medical field. */
 export function clubHonorsCsv(rows: readonly ClubHonorsRow[]) {
-  const out: Array<Array<string | number>> = [["Last name", "First name", "Honor", "Status", "Completion date"]];
+  const out: Array<Array<string | number>> = [[...CLUB_HONORS_CSV_HEADERS]];
   for (const row of rows) {
+    const className = row.classLevel ? (clubClassLevelLabels[row.classLevel as keyof typeof clubClassLevelLabels] ?? row.classLevel) : "";
     if (row.honors.length === 0) {
-      out.push([row.lastName, row.firstName, "", "", ""]);
+      out.push([row.lastName, row.firstName, "", "", "", className]);
       continue;
     }
     for (const honor of row.honors) {
-      out.push([row.lastName, row.firstName, honor.honorName, memberHonorStatusLabels[honor.status], honor.completionDate]);
+      out.push([row.lastName, row.firstName, honor.honorName, memberHonorStatusLabels[honor.status], honor.completionDate, className]);
     }
   }
   return toCsv(out);

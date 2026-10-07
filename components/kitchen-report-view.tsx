@@ -23,24 +23,24 @@ export function KitchenReportView({ eventName, report, csvHref }: { eventName: s
 
       <section className="panel" aria-label="Meal types">
         <h3>Meal types</h3>
-        <table>
+        <div className="report-table-wrap"><table className="report-table report-table-auto">
           <thead><tr><th scope="col">Meal type</th><th scope="col">People</th></tr></thead>
           <tbody>
             {report.meals.map((meal) => <tr key={meal.value}><th scope="row">{meal.label}</th><td>{meal.count}</td></tr>)}
           </tbody>
-        </table>
+        </table></div>
       </section>
 
       <section className="panel" aria-label="Dietary needs">
         <h3>Dietary needs</h3>
         <p className="field-help">People with any dietary need: <strong>{report.peopleWithNeeds}</strong>. One person can give more than one answer.</p>
-        <table>
+        <div className="report-table-wrap"><table className="report-table report-table-auto">
           <thead><tr><th scope="col">Answer</th><th scope="col">People</th></tr></thead>
           <tbody>
             {report.needs.length === 0 && <tr><td colSpan={2}>No dietary needs reported.</td></tr>}
             {report.needs.map((need) => <tr key={need.answer}><td>{need.answer}</td><td>{need.count}</td></tr>)}
           </tbody>
-        </table>
+        </table></div>
       </section>
     </section>
   );
