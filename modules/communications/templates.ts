@@ -71,6 +71,7 @@ export const MESSAGE_TEMPLATE_TOKEN_KEYS = [
   "checkin_block",
   "checkin_qr_url",
   "checkin_qr_image",
+  "checkin_qr_images",
   "club_assignments_block",
 ] as const;
 
@@ -95,6 +96,7 @@ export const OPTIONAL_MESSAGE_TEMPLATE_TOKENS: ReadonlySet<MessageTemplateToken>
   "checkin_block",
   "checkin_qr_url",
   "checkin_qr_image",
+  "checkin_qr_images",
   "seminar_preferences",
 ]);
 
@@ -128,8 +130,10 @@ export const MARKDOWN_MESSAGE_TEMPLATE_TOKENS: ReadonlySet<MessageTemplateToken>
   "checkin_block",
   "checkin_qr_url",
   "checkin_qr_image",
+  "checkin_qr_images",
   "portal_url",
   "announcement_body",
+  "seminar_preferences",
   "club_assignments_block",
 ]);
 
@@ -786,8 +790,9 @@ export const MESSAGE_TEMPLATE_TOKEN_OPTIONS: readonly {
   },
   {
     key: "seminar_preferences",
-    label: "Seminar preferences",
-    description: "Attendee names and resulting seminar labels for a seminar preference update.",
+    label: "Seminar choices",
+    description:
+      "Each attendee's name with their seminar choices in ranked order, and their assigned seminar where one exists. Filled from each registration's own answers; renders nothing when the form has no seminar choice.",
   },
   {
     key: "payment_amount",
@@ -839,14 +844,21 @@ export const MESSAGE_TEMPLATE_TOKEN_OPTIONS: readonly {
   },
   {
     key: "checkin_qr_url",
-    label: "Check-in pass link",
-    description: "A link to the registrant's own check-in pass, for a custom check-in section.",
+    label: "Check-in page link",
+    description:
+      "A link to the registrant's check-in page. Use it inside a link, as [Open my check-in pass]({{checkin_qr_url}}). To show the QR code itself, use the Check-in QR code (image) token.",
   },
   {
     key: "checkin_qr_image",
-    label: "Check-in QR image",
+    label: "Check-in QR code (image)",
     description:
-      "The pass QR image, for a single-attendee registration only. A party has one code per attendee, so this renders nothing and the check-in block links to the portal instead.",
+      "The pass QR image, written as ![Check-in QR code]({{checkin_qr_image}}). For a single-attendee registration only; in an event announcement to a party, each attendee's own labelled QR is shown instead. Other messages to a party link to the portal.",
+  },
+  {
+    key: "checkin_qr_images",
+    label: "Check-in QR codes (one per attendee)",
+    description:
+      "Each attendee's own QR code image, labelled with their name. Written on its own line, with no image markup around it. Event announcements fill it for every attendee.",
   },
   {
     key: "club_assignments_block",
@@ -892,7 +904,12 @@ export const SAMPLE_MESSAGE_TEMPLATE_CONTEXT: Readonly<
   contact_email: "registration@example.test",
   registration_contact_email: "avery.johnson@example.test",
   change_category: "Seminar preferences",
-  seminar_preferences: "Avery Johnson: Prayer, Service",
+  seminar_preferences: [
+    "**Avery Johnson**",
+    "- Assigned: Prayer",
+    "- 1st choice: Prayer",
+    "- 2nd choice: Service",
+  ].join("\n"),
   payment_amount: "$129.05",
   payment_reference: "square-demo-reference",
   prior_person_name: "Jordan Lee",
@@ -927,12 +944,32 @@ export const SAMPLE_MESSAGE_TEMPLATE_CONTEXT: Readonly<
   ].join("\n"),
   checkin_qr_url: "https://events.example.test/manage/sample-preview-link",
   checkin_qr_image: "https://events.example.test/manage/sample-preview-link/qr.png",
+  checkin_qr_images: [
+    "**Avery Johnson**",
+    "",
+    "![Check-in QR code for Avery Johnson](https://events.example.test/manage/sample-preview-link/qr.png)",
+  ].join("\n"),
   club_assignments_block: [
     "- **Campsite:** Field C, site 12 — near the east restrooms",
     "- **Duty:** Flag raising / lowering — Friday morning",
     "- **Activity:** Lead singing around campfire at your campsite",
   ].join("\n"),
 });
+
+/**
+ * The baseline for a message built from a real registration: no sample data.
+ * An optional token with no real value renders nothing; a required token with
+ * none renders a plain "(none)" so the send still works and nothing invented
+ * reaches an inbox.
+ */
+export const NO_VALUE_MESSAGE_TEMPLATE_CONTEXT: Readonly<
+  Required<{ [Token in MessageTemplateToken]: string }>
+> = Object.freeze(Object.fromEntries(
+  MESSAGE_TEMPLATE_TOKEN_KEYS.map((token) => [
+    token,
+    OPTIONAL_MESSAGE_TEMPLATE_TOKENS.has(token) ? "" : "(none)",
+  ]),
+) as Record<MessageTemplateToken, string>);
 
 const templateTokenPattern = /\{\{([^{}]+)\}\}/g;
 const subjectLineBreakPattern = /[\r\n]/;

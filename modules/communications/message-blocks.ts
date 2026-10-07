@@ -2,6 +2,7 @@ import {
   REGISTRATION_MANAGE_API_SENTINEL,
   REGISTRATION_MANAGE_LINK_SENTINEL,
 } from "@/modules/communications/manage-link";
+import { escapeMarkdown } from "@/modules/communications/email-html";
 import { formatMessageMoney } from "@/modules/communications/templates";
 
 /**
@@ -251,7 +252,42 @@ export type CheckinBlockInput = {
   qrImageUrl?: string | null;
   /** How many attendees the registration covers, which decides the wording. */
   attendeeCount?: number;
+  /**
+   * Each attendee's own pass QR, labelled with their name. When present for a
+   * party, these replace the portal-link fallback: every code is shown next to
+   * the person it checks in, so nobody is handed someone else's.
+   */
+  attendeeQrs?: readonly AttendeeQr[] | null;
 };
+
+export type AttendeeQr = { name: string; qrImageUrl: string };
+
+/** One labelled QR image per attendee. Names are registrant-supplied, so escaped. */
+export function buildAttendeeQrImagesBlock(attendeeQrs: readonly AttendeeQr[]) {
+  return attendeeQrs
+    .map((attendee) => {
+      const name = escapeMarkdown(clean(attendee.name) ?? "Attendee");
+      return [`**${name}**`, "", `![Check-in QR code for ${name}](${attendee.qrImageUrl})`].join("\n");
+    })
+    .join("\n\n");
+}
+
+function attendeePassQrUrl(attendeeId: string) {
+  return `${REGISTRATION_MANAGE_API_SENTINEL}/attendee-passes/${encodeURIComponent(attendeeId)}/qr?format=png`;
+}
+
+const CHECKIN_QR_IMAGE_MARKDOWN = /!\[[^\]]*\]\(\s*\{\{\s*checkin_qr_image\s*\}\}\s*\)/g;
+
+/**
+ * A single image token cannot hold several pictures, so for a party that gets
+ * per-attendee QRs the template's `![…]({{checkin_qr_image}})` is swapped for
+ * the labelled per-attendee block before rendering.
+ */
+export function withPerAttendeeQrImages(body: string, attendeeCount: number) {
+  return attendeeCount > 1
+    ? body.replace(CHECKIN_QR_IMAGE_MARKDOWN, "{{checkin_qr_images}}")
+    : body;
+}
 
 /**
  * The check-in tokens for one registration, written against the delivery
@@ -269,22 +305,34 @@ export type CheckinBlockInput = {
 export function buildRegistrationCheckinTokens(input: {
   confirmationCode: string;
   attendeeIds?: readonly string[] | null;
+  /**
+   * Event announcements only: name every attendee's own pass QR. A party then
+   * gets one labelled code each rather than the portal link.
+   */
+  attendees?: ReadonlyArray<{ id: string; name: string }> | null;
 }) {
+  const attendeeQrs = (input.attendees ?? [])
+    .filter((attendee) => clean(attendee.id))
+    .map((attendee) => ({
+      name: attendee.name,
+      qrImageUrl: attendeePassQrUrl(attendee.id),
+    }));
   const attendeeIds = (input.attendeeIds ?? []).map(clean).filter(
     (value): value is string => value !== null,
   );
   const soleAttendeeId = attendeeIds.length === 1 ? attendeeIds[0] : null;
-  const qrImageUrl = soleAttendeeId
-    ? `${REGISTRATION_MANAGE_API_SENTINEL}/attendee-passes/${encodeURIComponent(soleAttendeeId)}/qr?format=png`
-    : null;
+  const qrImageUrl = soleAttendeeId ? attendeePassQrUrl(soleAttendeeId) : null;
+  const perAttendee = attendeeQrs.length > 1 ? attendeeQrs : null;
   return {
     checkin_qr_url: REGISTRATION_MANAGE_LINK_SENTINEL,
     checkin_qr_image: qrImageUrl ?? "",
+    checkin_qr_images: attendeeQrs.length > 0 ? buildAttendeeQrImagesBlock(attendeeQrs) : "",
     checkin_block: buildCheckinBlock({
       confirmationCode: input.confirmationCode,
       passUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
       qrImageUrl,
       attendeeCount: attendeeIds.length,
+      attendeeQrs: perAttendee,
     }),
   };
 }
@@ -297,6 +345,19 @@ export function buildCheckinBlock(input: CheckinBlockInput) {
   const isParty = (input.attendeeCount ?? 0) > 1;
 
   const lines = ["### At check-in", ""];
+  if (isParty && input.attendeeQrs && input.attendeeQrs.length > 1) {
+    lines.push(
+      "Everyone on this registration has their own check-in QR code. Show each person's code at the check-in desk:",
+      "",
+      buildAttendeeQrImagesBlock(input.attendeeQrs),
+      "",
+    );
+    if (passUrl) lines.push(`[Show our check-in passes](${passUrl})`, "");
+    if (code) {
+      lines.push(`If you cannot open the codes, give your confirmation code **${code}** at the desk instead.`);
+    }
+    return lines.join("\n").trimEnd();
+  }
   if (qrImageUrl && !isParty) {
     lines.push(
       "Show this QR code at the check-in desk:",
@@ -323,4 +384,44 @@ export function buildCheckinBlock(input: CheckinBlockInput) {
     );
   }
   return lines.join("\n").trimEnd();
+}
+
+export type SeminarAttendee = {
+  name: string;
+  /** Every seminar field the form has, with this attendee's choices in ranked order. */
+  fields: ReadonlyArray<{ label: string; choices: readonly string[]; assigned: readonly string[] }>;
+};
+
+function ordinal(position: number) {
+  const mod100 = position % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${position}th`;
+  const suffix = ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[position % 10] ?? "th";
+  return `${position}${suffix}`;
+}
+
+/**
+ * Markdown list of each attendee's seminar choices in ranked order, with their
+ * assigned seminar first where one exists. Names and option labels come from
+ * registrants and staff, so every one is escaped. Returns "" when the form has
+ * no seminar choice at all, so the section is omitted rather than empty.
+ */
+export function buildSeminarPreferencesBlock(attendees: readonly SeminarAttendee[]) {
+  if (!attendees.some((attendee) => attendee.fields.length > 0)) return "";
+  return attendees
+    .map((attendee) => {
+      const lines = [`**${escapeMarkdown(clean(attendee.name) ?? "Attendee")}**`];
+      const labelled = attendee.fields.length > 1;
+      for (const field of attendee.fields) {
+        const prefix = labelled ? `${escapeMarkdown(field.label)} — ` : "";
+        field.assigned.forEach((value) => lines.push(`- ${prefix}Assigned: ${escapeMarkdown(value)}`));
+        field.choices.forEach((choice, index) => (
+          lines.push(`- ${prefix}${ordinal(index + 1)} choice: ${escapeMarkdown(choice)}`)
+        ));
+        if (field.choices.length === 0 && field.assigned.length === 0) {
+          lines.push(`- ${prefix}No seminar choices recorded yet`);
+        }
+      }
+      return lines.join("\n");
+    })
+    .join("\n\n");
 }

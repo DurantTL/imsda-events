@@ -1,15 +1,13 @@
 import { $getRoot, createEditor } from "lexical";
 import { LinkNode } from "@lexical/link";
 import { ListItemNode, ListNode } from "@lexical/list";
-import {
-  $convertFromMarkdownString,
-  $convertToMarkdownString,
-} from "@lexical/markdown";
 import { HeadingNode } from "@lexical/rich-text";
 import { HorizontalRuleNode } from "@lexical/extension";
 import { describe, expect, it } from "vitest";
 import {
-  EMAIL_MARKDOWN_TRANSFORMERS,
+  $exportEmailMarkdown,
+  $importEmailMarkdown,
+  hasStandaloneCheckinQrUrl,
   MessageTokenNode,
 } from "@/components/message-body-editor";
 import { renderEmailBodyHtml } from "@/modules/communications/email-html";
@@ -31,16 +29,14 @@ function loadMarkdown(source: string) {
   });
 
   editor.update(() => {
-    $convertFromMarkdownString(source, EMAIL_MARKDOWN_TRANSFORMERS, undefined, true);
+    $importEmailMarkdown(source);
   }, { discrete: true });
 
   return editor;
 }
 
 function exportMarkdown(source: string) {
-  return loadMarkdown(source).getEditorState().read(() => (
-    $convertToMarkdownString(EMAIL_MARKDOWN_TRANSFORMERS, undefined, true)
-  ));
+  return loadMarkdown(source).getEditorState().read(() => $exportEmailMarkdown());
 }
 
 describe("message body editor Markdown", () => {
@@ -97,5 +93,63 @@ describe("message body editor Markdown", () => {
     expect(html).not.toContain("onerror=\"alert(1)\"");
     expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
     expect(markdown).toContain("{{first_name}}");
+  });
+
+  it("separates blocks with a blank line so each renders as its own paragraph", () => {
+    const markdown = exportMarkdown("First paragraph\n\nSecond paragraph\n\nThird paragraph");
+
+    expect(markdown).toBe("First paragraph\n\nSecond paragraph\n\nThird paragraph");
+    expect(exportMarkdown(markdown)).toBe(markdown);
+    const html = renderEmailBodyHtml(markdown);
+    expect(html.match(/<p /g)).toHaveLength(3);
+    expect(html).not.toContain("<br />");
+  });
+
+  it("loads bodies saved with single newlines as one paragraph per line and fixes them on re-save", () => {
+    const legacy = "Hello {{first_name}}\nArrival is Friday\nBring a coat";
+
+    expect(renderEmailBodyHtml(legacy).match(/<p /g)).toHaveLength(1);
+    const resaved = exportMarkdown(legacy);
+
+    expect(resaved).toBe("Hello {{first_name}}\n\nArrival is Friday\n\nBring a coat");
+    expect(renderEmailBodyHtml(resaved).match(/<p /g)).toHaveLength(3);
+  });
+
+  it("keeps headings, lists and rules spaced when re-saving a legacy body", () => {
+    const legacy = ["# Title", "Intro line", "- one", "- two", "After list", "---", "1. a", "2. b"].join("\n");
+    const markdown = exportMarkdown(legacy);
+
+    expect(markdown).toBe(
+      ["# Title", "", "Intro line", "", "- one", "- two", "", "After list", "", "---", "", "1. a", "2. b"].join("\n"),
+    );
+    expect(exportMarkdown(markdown)).toBe(markdown);
+    const html = renderEmailBodyHtml(markdown);
+    expect(html).toContain("<h1 ");
+    expect(html).toContain("<hr ");
+    expect(html.match(/<ul /g)).toHaveLength(1);
+    expect(html.match(/<li /g)).toHaveLength(4);
+  });
+
+  it("keeps a line break inside a paragraph as a br", () => {
+    const markdown = exportMarkdown("Line one  \nLine two\n\nNext paragraph");
+
+    expect(markdown).toBe("Line one  \nLine two\n\nNext paragraph");
+    expect(exportMarkdown(markdown)).toBe(markdown);
+    const html = renderEmailBodyHtml(markdown);
+    expect(html.match(/<p /g)).toHaveLength(2);
+    expect(html.match(/<br \/>/g)).toHaveLength(1);
+  });
+});
+
+describe("check-in link warning", () => {
+  it("warns when the check-in page link is outside a Markdown link", () => {
+    expect(hasStandaloneCheckinQrUrl("Show this:\n\n{{checkin_qr_url}}")).toBe(true);
+    expect(hasStandaloneCheckinQrUrl("See [pass]({{checkin_qr_url}}) or {{checkin_qr_url}}")).toBe(true);
+  });
+
+  it("stays quiet when it is inside a link, or absent", () => {
+    expect(hasStandaloneCheckinQrUrl("[Open my pass]({{checkin_qr_url}})")).toBe(false);
+    expect(hasStandaloneCheckinQrUrl("![QR]({{checkin_qr_image}})")).toBe(false);
+    expect(hasStandaloneCheckinQrUrl("No tokens here")).toBe(false);
   });
 });

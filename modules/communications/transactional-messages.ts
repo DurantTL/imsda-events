@@ -18,8 +18,11 @@ import {
   buildHotelInformationBlock,
   buildPaymentStatusBlock,
   buildRegistrationCheckinTokens,
+  buildSeminarPreferencesBlock,
+  withPerAttendeeQrImages,
   type PaymentState,
 } from "@/modules/communications/message-blocks";
+import { buildRegistrationSeminarPreferences } from "@/modules/communications/seminar-preferences";
 
 type TransactionalTemplateKey =
   | "REGISTRATION_CONFIRMATION_PAID"
@@ -456,11 +459,28 @@ async function enqueueTransactionalMessage(
   const publishedBody = registration.location && waitlistTemplateKeys.has(input.templateKey)
     ? withLocationLine(churchWordedBody)
     : churchWordedBody;
+  // An announcement shows every attendee's own labelled pass QR. One image token
+  // cannot hold several pictures, so a party's `![…]({{checkin_qr_image}})` is
+  // swapped for the per-attendee block.
+  const announcementBody = input.templateKey === "EVENT_ANNOUNCEMENT"
+    ? withPerAttendeeQrImages(publishedBody, registration.attendees.length)
+    : publishedBody;
   const bodyTemplate = input.changeCategory === "SEMINAR_PREFERENCES"
     && input.seminarPreferences
-    && !publishedBody.includes("{{seminar_preferences}}")
-    ? `${publishedBody.trimEnd()}\n\n### Seminar preferences\n\n{{seminar_preferences}}`
-    : publishedBody;
+    && !announcementBody.includes("{{seminar_preferences}}")
+    ? `${announcementBody.trimEnd()}\n\n### Seminar preferences\n\n{{seminar_preferences}}`
+    : announcementBody;
+  // A change notice carries the labels that were just saved; every other message
+  // reads the registration's own answers and any seminar assignment.
+  const seminarPreferences = input.seminarPreferences
+    ? buildSeminarPreferencesBlock(input.seminarPreferences.map((attendee) => ({
+        name: attendee.attendeeName,
+        fields: [{ label: "Seminar", choices: attendee.seminarLabels, assigned: [] }],
+      })))
+    : await buildRegistrationSeminarPreferences(tx, {
+        eventId: input.eventId,
+        registrationId: registration.id,
+      });
   const context: MessageTemplateContext = {
     recipient_name: recipientName || "Registrant",
     // The person the registration belongs to, which is not always the person
@@ -514,6 +534,12 @@ async function enqueueTransactionalMessage(
     ...buildRegistrationCheckinTokens({
       confirmationCode: registration.confirmationCode,
       attendeeIds: registration.attendees.map((attendee) => attendee.id),
+      attendees: input.templateKey === "EVENT_ANNOUNCEMENT"
+        ? registration.attendees.map((attendee) => ({
+            id: attendee.id,
+            name: attendeeName(attendee),
+          }))
+        : null,
     }),
     payment_amount: formatMessageMoney(input.paymentAmountCents ?? 0),
     payment_reference: input.paymentReference?.trim() || "Not provided",
@@ -526,11 +552,7 @@ async function enqueueTransactionalMessage(
     change_category: input.changeCategory
       ? registrationUpdateCategoryLabels[input.changeCategory]
       : "Registration details",
-    seminar_preferences: input.seminarPreferences
-      ?.map((attendee) => (
-        `${attendee.attendeeName}: ${attendee.seminarLabels.join(", ")}`
-      ))
-      .join("\n") ?? "",
+    seminar_preferences: seminarPreferences,
   };
   const rendered = renderMessageTemplate(
     {

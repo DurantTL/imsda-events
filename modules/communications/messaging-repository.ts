@@ -48,6 +48,7 @@ import {
   DEFAULT_MESSAGE_TEMPLATE_LIST,
   DEFAULT_MESSAGE_TEMPLATES,
   MESSAGE_TEMPLATE_KEYS,
+  NO_VALUE_MESSAGE_TEMPLATE_CONTEXT,
   SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
   isEventMessageTemplateKey,
   formatMessageDateRange,
@@ -94,11 +95,14 @@ import type {
   ShirtSizeRequestPreview,
 } from "@/modules/communications/types";
 import { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
+import { buildRegistrationSeminarPreferences, buildSubmittedSeminarPreferences } from "@/modules/communications/seminar-preferences";
+import { publicAttendeeName } from "@/modules/public-access/domain";
 import {
   buildHotelInformationBlock,
   buildPaymentStatusBlock,
   buildRegistrationCheckinTokens,
   EVENT_LODGING_SELECT,
+  withPerAttendeeQrImages,
 } from "@/modules/communications/message-blocks";
 import { getAttendeeRosterConfig, resolveBillingContactName, resolveResponsibleOrganization } from "@/modules/forms/definition";
 import type { FormCalculation, RegistrationFormDefinition } from "@/modules/forms/definition";
@@ -1212,22 +1216,24 @@ export async function processPendingMessages(
  * send anything by itself — batches still need their own review and an explicit
  * queue run — so the requirement costs a setting change, not an unplanned send.
  *
- * Tokens come from the sample context, so `portal_url` is a placeholder rather
- * than a working private link. The test proves rendering, sender identity, and
- * deliverability; it does not produce a clickable registration.
+ * Without a registration, tokens come from the sample context, so `portal_url`
+ * is a placeholder rather than a working private link. With one, every token
+ * is real or empty: sample values never appear in a message built from a real
+ * registration.
  */
 /**
  * Real values for the tokens a test message can meaningfully fill from one
  * registration.
  *
  * Tokens with no equivalent on a registration — the transfer templates' prior
- * and new person names, for instance — keep their sample values, so every
- * template still renders completely rather than failing on an unrelated token.
+ * and new person names, for instance — render empty (optional tokens) or
+ * "(none)", never a sample value, so a real test cannot show invented data.
  */
 async function loadTestRegistrationContext(
   eventId: string,
   confirmationCode: string,
   client: MessagingDatabaseClient,
+  templateKey?: string,
 ) {
   const registration = await client.registration.findFirst({
     where: { eventId, confirmationCode },
@@ -1252,7 +1258,11 @@ async function loadTestRegistrationContext(
       },
       attendees: {
         orderBy: { position: "asc" },
-        select: { id: true, person: { select: { firstName: true, lastName: true } } },
+        select: {
+          id: true,
+          profileSnapshot: true,
+          person: { select: { firstName: true, lastName: true } },
+        },
       },
       payments: {
         where: { status: "SUCCEEDED" },
@@ -1303,11 +1313,17 @@ async function loadTestRegistrationContext(
     ? registration.event?.paymentInstructionVersions?.[0]?.instructions?.trim() || ""
     : "";
 
+  const seminarPreferences = await buildRegistrationSeminarPreferences(client, {
+    eventId,
+    registrationId: registration.id,
+  });
   return {
     registrationId: registration.id,
     confirmationCode: registration.confirmationCode,
     contactEmail,
+    attendeeCount: registration.attendees.length,
     tokens: {
+      seminar_preferences: seminarPreferences,
       recipient_name: recipientName,
       registrant_name: recipientName,
       confirmation_code: registration.confirmationCode,
@@ -1337,6 +1353,13 @@ async function loadTestRegistrationContext(
       ...buildRegistrationCheckinTokens({
         confirmationCode: registration.confirmationCode,
         attendeeIds: registration.attendees.map((attendee) => attendee.id),
+        // An announcement shows each attendee's own labelled QR, as it will when sent.
+        attendees: templateKey === "EVENT_ANNOUNCEMENT"
+          ? registration.attendees.map((attendee) => ({
+              id: attendee.id,
+              name: publicAttendeeName(attendee.profileSnapshot, attendee.person) || "Attendee",
+            }))
+          : null,
       }),
     } satisfies Partial<MessageTemplateContext>,
   };
@@ -1398,11 +1421,13 @@ export async function sendTestMessage(
   }
 
   const source = input.confirmationCode
-    ? await loadTestRegistrationContext(eventId, input.confirmationCode, prisma)
+    ? await loadTestRegistrationContext(eventId, input.confirmationCode, prisma, template.key)
     : null;
 
   const context: MessageTemplateContext = {
-    ...SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
+    // A test that names a registration is a real message: a token with no real
+    // value renders empty (optional blocks) or "(none)", never a sample value.
+    ...(source ? NO_VALUE_MESSAGE_TEMPLATE_CONTEXT : SAMPLE_MESSAGE_TEMPLATE_CONTEXT),
     recipient_name: input.recipientName,
     event_name: event.name,
     event_dates: formatMessageDateRange(event.startsAt, event.endsAt, { timeZone: event.timezone }),
@@ -1422,9 +1447,12 @@ export async function sendTestMessage(
   const rendered = renderMessageTemplate(
     {
       subject: version.subjectTemplate,
-      body: withChurchBilledLinkWording(
-        version.bodyTemplate,
-        event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
+      body: withPerAttendeeQrImages(
+        withChurchBilledLinkWording(
+          version.bodyTemplate,
+          event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
+        ),
+        template.key === "EVENT_ANNOUNCEMENT" ? source?.attendeeCount ?? 0 : 0,
       ),
     },
     context,
@@ -3351,6 +3379,12 @@ export async function enqueuePublicRegistrationMessages(
     ...buildRegistrationCheckinTokens({
       confirmationCode: input.registration.confirmationCode,
       attendeeIds: registrationAttendees.map((attendee) => attendee.id),
+    }),
+    // From this registration's own answers; empty when its form has no seminar choice.
+    seminar_preferences: buildSubmittedSeminarPreferences({
+      definition: input.definition,
+      attendeeResponses: input.attendeeResponses ?? [],
+      registrantName,
     }),
   };
   const recipients: Array<{

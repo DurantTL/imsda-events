@@ -5512,6 +5512,7 @@ select:focus-visible {
 .message-editor-source textarea { min-height: 520px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.6; }
 .message-editor-source small { color: var(--muted); font-size: max(var(--type-floor, 0px), 0.54rem); font-weight: 500; line-height: 1.45; }
 .message-editor-footer { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); background: white; color: var(--muted); padding: 8px 11px; font-size: max(var(--type-floor, 0px), 0.52rem); line-height: 1.4; }
+.message-editor-warning { margin: 0; border-top: 1px solid var(--line); background: #fff8e6; color: #5c4400; padding: 8px 11px; font-size: max(var(--type-floor, 0px), 0.56rem); line-height: 1.45; }
 .message-safety-banner { display: flex; align-items: flex-start; gap: 9px; border-radius: 11px; background: var(--imsda-gold-soft); color: #74530e; padding: 10px; }
 .message-safety-banner svg { flex: 0 0 auto; margin-top: 1px; }
 .message-safety-banner span { display: grid; gap: 2px; }
