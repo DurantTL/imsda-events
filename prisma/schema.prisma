@@ -3856,7 +3856,7 @@ model MessageTemplateVersionFile {
   createdAt         DateTime @default(now())
 
   templateVersion MessageTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Cascade)
-  file            MessageFile            @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  file            MessageFile            @relation(fields: [fileId], references: [id], onDelete: Restrict)
 
   @@id([templateVersionId, fileId])
   @@index([fileId])
@@ -3869,7 +3869,7 @@ model AnnouncementFile {
   createdAt      DateTime @default(now())
 
   announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
-  file         MessageFile  @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  file         MessageFile  @relation(fields: [fileId], references: [id], onDelete: Restrict)
 
   @@id([announcementId, fileId])
   @@index([fileId])
@@ -3885,7 +3885,7 @@ model MessageOutboxFile {
   createdAt       DateTime               @default(now())
 
   message MessageOutbox @relation(fields: [messageOutboxId], references: [id], onDelete: Cascade)
-  file    MessageFile   @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  file    MessageFile   @relation(fields: [fileId], references: [id], onDelete: Restrict)
 
   @@id([messageOutboxId, fileId])
   @@index([fileId])

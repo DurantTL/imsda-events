@@ -8,6 +8,7 @@ import {
   MAX_INLINE_IMAGES_TOTAL_BYTES,
   MESSAGE_FILE_ID_PATTERN,
   MESSAGE_FILE_SCHEME,
+  MessageFileDeliveryError,
 } from "@/modules/communications/message-file-rules";
 
 /**
@@ -18,8 +19,9 @@ import {
  *   `cid:<id>`, so the client shows it without "download pictures":
  *   - an uploaded image (`msgfile:<id>`) is read from private storage;
  *   - a check-in QR image is rendered here, in-process, from the pass id, not fetched over HTTP.
- * - When an image cannot be embedded the message still goes out. A QR keeps its remote URL as before; an uploaded
- *   image, which has no public URL, is replaced by its description.
+ * - An uploaded picture that cannot be read fails the message, like an attachment: it has no public address, and a
+ *   message must never go out missing something staff put in it. Only a check-in QR falls back, to the remote URL
+ *   it had before; the count of those is returned so the caller can log it.
  */
 
 export type DeliveryFileLink = {
@@ -96,52 +98,55 @@ export async function buildEmailParts(
     : null;
 
   // Decide each distinct source once: the same image shown twice is one part.
-  const decided = new Map<string, { src: string } | { drop: true } | null>();
-  let inlineBytes = 0;
-  let embeddedCount = 0;
+  const decided = new Map<string, { src: string } | null>();
+  const budget = { uploadBytes: 0, uploads: 0, qrBytes: 0, qrs: 0 };
   let unembedded = 0;
   for (const src of sources) {
     if (decided.has(src)) continue;
-    const isUpload = src.startsWith(MESSAGE_FILE_SCHEME);
-    const qr = !isUpload && qrPattern ? qrPattern.exec(src) : null;
-    if (!isUpload && !qr) {
+    if (src.startsWith(MESSAGE_FILE_SCHEME)) {
+      // An uploaded picture has no public address to fall back to, so a picture that cannot be sent fails the
+      // message (as an attachment does) rather than going out without it. The count and size were checked when
+      // staff saved, so this is a defence, not a path.
+      const id = src.slice(MESSAGE_FILE_SCHEME.length);
+      const file = MESSAGE_FILE_ID_PATTERN.test(id) ? inlineFiles.get(id) : undefined;
+      if (!file) throw new MessageFileDeliveryError("ATTACHMENT_MISSING", false);
+      const bytes = await dependencies.readFile(file);
+      budget.uploads += 1;
+      budget.uploadBytes += bytes.byteLength;
+      if (budget.uploads > MAX_INLINE_IMAGES_PER_MESSAGE || budget.uploadBytes > MAX_INLINE_IMAGES_TOTAL_BYTES) {
+        throw new Error("The pictures in this message are over the allowed size, so it was not sent.");
+      }
+      const contentId = contentIdFor(src);
+      attachments.push({ filename: file.filename, contentType: file.contentType, content: bytes, contentId });
+      decided.set(src, { src: `cid:${contentId}` });
+      continue;
+    }
+    const qr = qrPattern ? qrPattern.exec(src) : null;
+    if (!qr) {
       // A remote image the author chose. Left exactly as written.
       decided.set(src, null);
       continue;
     }
-    // The remote URL is the fallback for a QR; an upload has none, so its fallback is its description.
-    const fallback = isUpload ? { drop: true as const } : null;
+    // A check-in QR is the one picture with a fallback: its remote address still works. Embedding is best effort.
     let bytes: Uint8Array | null = null;
-    let part: Omit<EmailPart, "content" | "contentId"> | null = null;
     try {
-      if (isUpload) {
-        const id = src.slice(MESSAGE_FILE_SCHEME.length);
-        const file = MESSAGE_FILE_ID_PATTERN.test(id) ? inlineFiles.get(id) : undefined;
-        if (file) {
-          bytes = await dependencies.readFile(file);
-          part = { filename: file.filename, contentType: file.contentType };
-        }
-      } else if (qr) {
-        bytes = await dependencies.renderQrPng(decodeURIComponent(qr[1]), decodeURIComponent(qr[2]));
-        part = { filename: "check-in-qr.png", contentType: "image/png" };
-      }
+      bytes = await dependencies.renderQrPng(decodeURIComponent(qr[1]), decodeURIComponent(qr[2]));
     } catch {
       bytes = null;
     }
     if (
       !bytes
-      || !part
-      || embeddedCount >= MAX_INLINE_IMAGES_PER_MESSAGE
-      || inlineBytes + bytes.byteLength > MAX_INLINE_IMAGES_TOTAL_BYTES
+      || budget.qrs >= MAX_INLINE_IMAGES_PER_MESSAGE
+      || budget.qrBytes + bytes.byteLength > MAX_INLINE_IMAGES_TOTAL_BYTES
     ) {
       unembedded += 1;
-      decided.set(src, fallback);
+      decided.set(src, null);
       continue;
     }
     const contentId = contentIdFor(src);
-    inlineBytes += bytes.byteLength;
-    embeddedCount += 1;
-    attachments.push({ ...part, content: bytes, contentId });
+    budget.qrs += 1;
+    budget.qrBytes += bytes.byteLength;
+    attachments.push({ filename: "check-in-qr.png", contentType: "image/png", content: bytes, contentId });
     decided.set(src, { src: `cid:${contentId}` });
   }
 

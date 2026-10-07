@@ -41,7 +41,8 @@ import {
   prepareHealthRecordLinkBodyForDelivery,
   retireHealthRecordLinkForMessage,
 } from "@/modules/health-records/link-email";
-import { logError } from "@/lib/logger";
+import { logError, logWarn } from "@/lib/logger";
+import { MessageFileDeliveryError } from "@/modules/communications/message-file-rules";
 import {
   buildEmailParts,
   type DeliveryFileLink,
@@ -204,6 +205,10 @@ export function emailRetryDelayMs(attemptNumber: number) {
 }
 
 export function normalizeEmailDeliveryError(error: unknown): NormalizedEmailDeliveryError {
+  // A stored file that could not be read: a generic message (never a path), retryable only for transient I/O.
+  if (error instanceof MessageFileDeliveryError) {
+    return { code: error.code, message: error.message, retryable: error.retryable };
+  }
   if (error instanceof EmailProviderRequestError) {
     return {
       code: error.code,
@@ -236,10 +241,27 @@ function resolvePrisma(dependencies: ExternalEmailDeliveryDependencies) {
   return dependencies.prisma ?? getPrisma();
 }
 
-function resolveEmailPartDependencies(dependencies: ExternalEmailDeliveryDependencies): EmailPartDependencies {
+/**
+ * One file is read and hash-checked once per delivery run, however many messages carry it: an announcement to a
+ * few hundred registrations sends the same attachment each time.
+ */
+function resolveEmailPartDependencies(
+  dependencies: ExternalEmailDeliveryDependencies,
+  fileCache: Map<string, Promise<Uint8Array>>,
+): EmailPartDependencies {
   const overrides = dependencies.emailParts ?? {};
+  const read = overrides.readFile ?? readMessageFileBytes;
   return {
-    readFile: overrides.readFile ?? readMessageFileBytes,
+    readFile: (file) => {
+      let pending = fileCache.get(file.id);
+      if (!pending) {
+        pending = read(file);
+        fileCache.set(file.id, pending);
+        // A failure is not remembered: the next message tries again (a transient error may have passed).
+        pending.catch(() => fileCache.delete(file.id));
+      }
+      return pending;
+    },
     renderQrPng: overrides.renderQrPng ?? (async (registrationAccessToken, attendeeId) => {
       const [{ createAuthorizedAttendeePass }, { renderAttendeePassQrPng }] = await Promise.all([
         import("@/modules/checkin/attendee-pass-repository"),
@@ -654,6 +676,7 @@ async function runDeliveryLoop(
   const configuration = resolveConfiguration(dependencies);
   const sendEmail = dependencies.sendEmail ?? sendEmailWithResend;
   const now = dependencies.now ?? (() => new Date());
+  const fileCache = new Map<string, Promise<Uint8Array>>();
   const uniqueMessageIds = options.messageIds
     ? [...new Set(options.messageIds)]
     : undefined;
@@ -709,8 +732,12 @@ async function runDeliveryLoop(
       // retry sends exactly what the first attempt would have.
       const parts = await buildEmailParts(
         { bodyHtml: preparedBody.bodyHtml ?? null, files: message.files ?? [] },
-        resolveEmailPartDependencies(dependencies),
+        resolveEmailPartDependencies(dependencies, fileCache),
       );
+      if (parts.unembeddedImageCount > 0) {
+        // Not an error (the QR's remote address still works), but worth seeing if it becomes common.
+        logWarn("Check-in QR images were left as remote links.", { messageId: message.id, count: parts.unembeddedImageCount });
+      }
       // Checked again immediately before the provider call, so a revision that committed while the body was prepared cannot slip one out.
       if (await cancelIfInvoiceReplaced(prisma, message)) continue;
       if (await cancelIfLodgingStale(prisma, message, now())) continue;

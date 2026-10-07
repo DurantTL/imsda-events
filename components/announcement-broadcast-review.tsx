@@ -70,7 +70,14 @@ export function AnnouncementBroadcastReviewFacts({
             </dd>
           </div>
         )}
-        <div><dt>Delivery</dt><dd>{deliveryTimingLabel(preview.deliveryMode)}</dd></div>
+        <div>
+          <dt>Delivery</dt>
+          <dd>
+            {preview.deliveryMode === "EXTERNAL_EMAIL" && (preview.attachments ?? []).length > 0
+              ? "Queued by email with the attachments; the background worker sends it, usually within a few minutes"
+              : deliveryTimingLabel(preview.deliveryMode)}
+          </dd>
+        </div>
         <div>
           <dt>Attachments</dt>
           <dd>

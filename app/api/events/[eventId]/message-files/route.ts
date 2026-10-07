@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AccessDeniedError, requirePermission } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
+import { MAX_MESSAGE_FILE_BYTES } from "@/modules/communications/message-file-rules";
 import { createMessageFile, listInlineImages, MessageFileError } from "@/modules/communications/message-files";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
@@ -9,13 +10,16 @@ import { withRequestContext } from "@/lib/request-context";
 
 type RouteContext = { params: Promise<{ eventId: string }> };
 
-const purposeSchema = z.enum(["attachment", "inline-image"]);
+/** A 10 MB file plus the multipart framing around it. */
+const MAX_MESSAGE_UPLOAD_REQUEST_BYTES = MAX_MESSAGE_FILE_BYTES + 512 * 1024;
+
+const purposeSchema =z.enum(["attachment", "inline-image"]);
 
 function apiError(error: unknown, operation: string) {
   if (error instanceof MessageFileError) {
     return Response.json(
       { error: error.code, message: error.message },
-      { status: error.code === "FILE_TOO_LARGE" ? 413 : error.code === "FILE_NOT_FOUND" ? 404 : 400 },
+      { status: error.code === "FILE_TOO_LARGE" ? 413 : error.code === "FILE_NOT_FOUND" ? 404 : error.code === "FILE_LIMIT_REACHED" ? 409 : 400 },
     );
   }
   if (error instanceof AccessDeniedError) {
@@ -55,6 +59,14 @@ async function postHandler(request: Request, context: RouteContext) {
   try {
     const { eventId } = await context.params;
     const access = await authorize(eventId);
+    // Refused on the declared size before the body is read: `formData()` would buffer the whole upload first.
+    const declared = Number(request.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > MAX_MESSAGE_UPLOAD_REQUEST_BYTES) {
+      return Response.json(
+        { error: "FILE_TOO_LARGE", message: "That file is too large. Each attachment must be 10 MB or smaller." },
+        { status: 413 },
+      );
+    }
     const formData = await request.formData();
     const file = formData.get("file");
     if (!(file instanceof File)) {

@@ -43,15 +43,18 @@ vi.mock("@/modules/events/asset-response", () => ({
 
 import { GET as getFile, DELETE as deleteFile } from "@/app/api/events/[eventId]/message-files/[fileId]/route";
 import { GET as listImages, POST as upload } from "@/app/api/events/[eventId]/message-files/route";
-import { createMessageFile, MessageFileError } from "@/modules/communications/message-files";
+import { createMessageFile, MessageFileError, readMessageFileBytes } from "@/modules/communications/message-files";
+import { MessageFileDeliveryError } from "@/modules/communications/message-file-rules";
 
 const PDF = Buffer.from("%PDF-1.7 synthetic agenda");
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 1)]);
 
-function fakeClient() {
+function fakeClient(options: { eventExists?: boolean; existingFiles?: number } = {}) {
   const rows: Array<Record<string, unknown>> = [];
   const client = {
+    event: { findUnique: vi.fn(async () => (options.eventExists === false ? null : { id: "event-1" })) },
     messageFile: {
+      count: vi.fn(async () => options.existingFiles ?? rows.length),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
         const row = { id: `file-${rows.length + 1}`, createdAt: new Date("2026-10-01T00:00:00Z"), ...data };
         rows.push(row);
@@ -152,7 +155,61 @@ describe("createMessageFile (#824)", () => {
   });
 });
 
+describe("createMessageFile limits on the event (#824)", () => {
+  it("makes no directory and writes no byte for an event that does not exist", async () => {
+    const { client } = fakeClient({ eventExists: false });
+    await expect(createMessageFile("no-such-event", new File([PDF], "a.pdf"), "staff-1", "attachment", client as never)).rejects.toMatchObject({ code: "FILE_NOT_FOUND" });
+    expect(mocks.writeStoredFile).not.toHaveBeenCalled();
+  });
+
+  it("refuses an upload once the event holds 200 files", async () => {
+    const { client } = fakeClient({ existingFiles: 200 });
+    await expect(createMessageFile("event-1", new File([PDF], "a.pdf"), "staff-1", "attachment", client as never)).rejects.toMatchObject({ code: "FILE_LIMIT_REACHED" });
+    expect(mocks.writeStoredFile).not.toHaveBeenCalled();
+  });
+});
+
+describe("readMessageFileBytes (#824)", () => {
+  const file = { storageKey: "message-files/event-1/secret-dir/x.pdf", sha256: createHash("sha256").update(PDF).digest("hex") };
+
+  it("returns bytes that match their recorded hash", async () => {
+    mocks.readAsset.mockResolvedValue(PDF);
+    expect(Buffer.from(await readMessageFileBytes(file)).equals(PDF)).toBe(true);
+  });
+
+  it("is final, with a generic message and no path, for a missing file or a changed one", async () => {
+    mocks.readAsset.mockRejectedValue(Object.assign(new Error("ENOENT: no such file /var/data/secret-dir/x.pdf"), { code: "ENOENT" }));
+    const missing = await readMessageFileBytes(file).catch((error: unknown) => error);
+    expect(missing).toBeInstanceOf(MessageFileDeliveryError);
+    expect(missing).toMatchObject({ code: "ATTACHMENT_MISSING", retryable: false });
+    expect((missing as Error).message).not.toContain("secret-dir");
+    mocks.readAsset.mockResolvedValue(Buffer.from("%PDF-1.7 changed"));
+    expect(await readMessageFileBytes(file).catch((error: unknown) => error)).toMatchObject({ code: "ATTACHMENT_CHANGED", retryable: false });
+  });
+
+  it("is retryable only for a transient I/O error", async () => {
+    for (const [code, retryable] of [["EIO", true], ["EMFILE", true], ["EACCES", false]] as const) {
+      mocks.readAsset.mockRejectedValue(Object.assign(new Error(`${code}: /var/data/secret-dir/x.pdf`), { code }));
+      const error = await readMessageFileBytes(file).catch((caught: unknown) => caught);
+      expect(error, code).toMatchObject({ code: "ATTACHMENT_UNREADABLE", retryable });
+      expect((error as Error).message, code).not.toContain("secret-dir");
+    }
+  });
+});
+
 describe("message file routes (#824)", () => {
+  it("refuses an upload whose declared size is over 10.5 MB before reading the body", async () => {
+    const request = new Request("https://events.imsda.test/api/events/event-1/message-files", {
+      method: "POST",
+      headers: { origin: "https://events.imsda.test", "content-length": String(11 * 1024 * 1024) },
+      body: "x",
+    });
+    const formData = vi.spyOn(request, "formData");
+    const response = await upload(request, eventContext);
+    expect(response.status).toBe(413);
+    expect(formData).not.toHaveBeenCalled();
+  });
+
   it("require MANAGE_COMMUNICATIONS for upload, listing, download and delete", async () => {
     const denied = new mocks.AccessDeniedError("You do not have permission to do that.");
     mocks.requirePermission.mockRejectedValue(denied);

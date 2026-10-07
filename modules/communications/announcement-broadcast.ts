@@ -305,7 +305,19 @@ export async function broadcastPublishedAnnouncement(input: {
       replayed: false,
     };
   }, { timeout: BATCH_TRANSACTION_TIMEOUT_MS, maxWait: BATCH_TRANSACTION_MAX_WAIT_MS });
-  await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
+  // Real email with attachments is delivered by the outbox worker (the sweep runs `processPendingMessages` for every
+  // event holding due messages), not inside this request: reading and sending several megabytes per recipient would
+  // hold the staff member's request open for the whole audience. Without files, the send goes out as it always has.
+  let inRequestIds = result.pendingMessageIds;
+  if (result.deliveryMode === "EXTERNAL_EMAIL" && inRequestIds.length > 0) {
+    const withFiles = new Set((await getPrisma().messageOutboxFile.findMany({
+      where: { messageOutboxId: { in: inRequestIds } },
+      select: { messageOutboxId: true },
+      distinct: ["messageOutboxId"],
+    })).map((row) => row.messageOutboxId));
+    inRequestIds = inRequestIds.filter((id) => !withFiles.has(id));
+  }
+  await processQueuedMessageIdsAfterCommit(inRequestIds);
   return {
     broadcastId: input.batchId,
     announcementId: input.announcementId,

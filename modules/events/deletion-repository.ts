@@ -343,6 +343,10 @@ async function removeEventOwnedRows(tx: Db, eventId: string) {
   await tx.eventAttendeeClassification.deleteMany({ where: inEvent });
   await tx.eventTag.deleteMany({ where: inEvent });
   await tx.eventMessageTemplate.deleteMany({ where: inEvent });
+  // Message files (#824): the foreign keys to them are RESTRICT, so they go only once nothing refers to them: the
+  // outbox rows are gone (step 1), the announcements and the template versions with their file links just now.
+  await tx.announcement.deleteMany({ where: inEvent });
+  await tx.messageFile.deleteMany({ where: inEvent });
 
   // 12. Content and files: links RESTRICT assets, and the event RESTRICTs its badge artwork.
   await tx.event.update({ where: { id: eventId }, data: { badgeBackgroundAssetId: null } });

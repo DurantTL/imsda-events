@@ -105,6 +105,10 @@ async function cleanup() {
   await prisma.memberTransfer.deleteMany({ where: { fromOrganizationId: { startsWith: `${P}_` } } });
   await prisma.registration.deleteMany({ where: inEvents });
   await prisma.eventLocation.deleteMany({ where: inEvents });
+  // Message files (#824) are RESTRICTed by what refers to them, so the templates (and their file links) go first.
+  await prisma.eventMessageTemplate.deleteMany({ where: inEvents });
+  await prisma.announcement.deleteMany({ where: inEvents });
+  await prisma.messageFile.deleteMany({ where: inEvents });
   await prisma.event.deleteMany({ where: events });
   await prisma.clubSupplyItem.deleteMany({ where: { name: { startsWith: "Evdel" } } });
   await prisma.clubYearEndReport.deleteMany({ where: { organizationId: { startsWith: `${P}_` } } });
@@ -555,7 +559,13 @@ async function main() {
   const setupSession = await prisma.honorSession.create({ data: { eventId: setupEventId, name: "Evdel Setup Session", normalizedName: "evdel setup session", locationId: setupLocation.id } });
   await prisma.honorOffering.create({ data: { eventId: setupEventId, honorId: honor.id, span: "SINGLE_SESSION", capacity: 10, sessionId: setupSession.id } });
   const setupTemplate = await prisma.eventMessageTemplate.create({ data: { eventId: setupEventId, key: "PAYMENT_RECEIPT" } });
-  await prisma.messageTemplateVersion.create({ data: { templateId: setupTemplate.id, versionNumber: 1, subjectTemplate: "Receipt", bodyTemplate: "Thanks." } });
+  const setupVersion = await prisma.messageTemplateVersion.create({ data: { templateId: setupTemplate.id, versionNumber: 1, subjectTemplate: "Receipt", bodyTemplate: "Thanks." } });
+  // Message files (#824): linked to a template version, with RESTRICT keys. Deleting the event
+  // removes the links first and then the files.
+  const setupMessageFile = await prisma.messageFile.create({
+    data: { eventId: setupEventId, filename: "terms.pdf", contentType: "application/pdf", sizeBytes: 10, sha256: "abc", storageKey: id("setup_message_file_key") },
+  });
+  await prisma.messageTemplateVersionFile.create({ data: { templateVersionId: setupVersion.id, fileId: setupMessageFile.id } });
   const setupAsset = await prisma.eventAsset.create({
     data: { eventId: setupEventId, displayName: "setup.pdf", contentType: "application/pdf", byteSize: 10, checksum: "abc", storageKey: id("setup_asset_key") },
   });
@@ -662,6 +672,7 @@ async function main() {
 
   // Uploaded-file rows are gone (the file itself is removed by the service after commit).
   assert(await prisma.eventAsset.count({ where: { storageKey: id("setup_asset_key") } }) === 0, "asset rows are gone");
+  assert(await prisma.messageFile.count({ where: { storageKey: id("setup_message_file_key") } }) === 0, "message file rows are gone");
 
   // The audit row: who, which event, dates and counts, no personal data.
   const auditRows = await prisma.auditLog.findMany({ where: { action: "EVENT_DELETED", entityId: setupEventId } });

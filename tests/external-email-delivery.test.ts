@@ -7,6 +7,7 @@ const lodgingStale = vi.hoisted(() => vi.fn());
 vi.mock("@/modules/lodging/message-currency", () => ({ lodgingMessageStaleReason: lodgingStale }));
 
 import { renderEmailBodyHtml } from "@/modules/communications/email-html";
+import { MessageFileDeliveryError } from "@/modules/communications/message-file-rules";
 import { resetServerEnvCache } from "@/lib/env";
 import { EmailProviderRequestError } from "@/integrations/email/resend";
 import {
@@ -752,33 +753,72 @@ describe("attachments and embedded images", () => {
     expect(secondCall.bodyHtml).toBe(firstCall.bodyHtml);
   });
 
-  it("falls back to the remote QR URL when the pass cannot be rendered, and to the description for a missing picture", async () => {
+  it("falls back to the remote QR URL when the pass cannot be rendered, and still sends the rest", async () => {
     const store = fakeDeliveryStore({ bodyHtmlSnapshot: bodyHtml, files });
-    stored.delete(FILE_ID);
-    try {
-      const sent: Sent[] = [];
-      await processExternalEmailQueue("event-1", {
+    const sent: Sent[] = [];
+    await processExternalEmailQueue("event-1", {
+      dependencies: {
+        ...dependencies,
+        prisma: store.prisma as never,
+        sendEmail: (async (input: Sent) => { sent.push(input); return { provider: "RESEND" as const, providerMessageId: "email-fallback" }; }) as never,
+        emailParts: emailParts({ renderQrPng: async () => { throw new Error("no pass"); } }),
+      },
+    });
+    const html = sent[0].bodyHtml ?? "";
+    expect(html).toContain(`<img src="${QR_URL}" alt="Check-in QR code for Ann"`);
+    expect(html).toContain(`<img src="cid:${(sent[0].attachments ?? []).find((part) => part.filename === "map.png")?.contentId}" alt="Map of the grounds"`);
+    expect(sent[0].attachments?.map((part) => part.filename)).toEqual(["Agenda.pdf", "map.png"]);
+  });
+
+  it("fails the message, and sends nothing, when an uploaded picture is missing, changed or unreadable", async () => {
+    for (const [label, failure, retryable] of [
+      ["missing", new MessageFileDeliveryError("ATTACHMENT_MISSING", false), false],
+      ["changed", new MessageFileDeliveryError("ATTACHMENT_CHANGED", false), false],
+      ["unreadable", new MessageFileDeliveryError("ATTACHMENT_UNREADABLE", true), true],
+    ] as const) {
+      const store = fakeDeliveryStore({ bodyHtmlSnapshot: bodyHtml, files });
+      const sendEmail = vi.fn();
+      const result = await processExternalEmailQueue("event-1", {
         dependencies: {
           ...dependencies,
           prisma: store.prisma as never,
-          sendEmail: (async (input: Sent) => { sent.push(input); return { provider: "RESEND" as const, providerMessageId: "email-fallback" }; }) as never,
-          emailParts: emailParts({ renderQrPng: async () => { throw new Error("no pass"); } }),
+          sendEmail: sendEmail as never,
+          emailParts: emailParts({ readFile: async (row: { id: string }) => { if (row.id === FILE_ID) throw failure; return PDF; } }),
         },
       });
-      const html = sent[0].bodyHtml ?? "";
-      expect(html).toContain(`<img src="${QR_URL}" alt="Check-in QR code for Ann"`);
-      expect(html).not.toContain("msgfile:");
-      expect(html).toContain("Map of the grounds");
-      expect(html).not.toContain('alt="Map of the grounds"');
-      // Only the attachment is left.
-      expect(sent[0].attachments?.map((part) => part.filename)).toEqual(["Agenda.pdf"]);
-    } finally {
-      stored.set(FILE_ID, PNG);
+      expect(sendEmail, label).not.toHaveBeenCalled();
+      expect(retryable ? result.rescheduledIds : result.failedIds, label).toEqual(["message-1"]);
+      expect(store.message.status, label).toBe(retryable ? "PENDING" : "FAILED");
+      expect(String(store.message.lastError), label).toBe(failure.message);
+      expect(String(store.message.lastError), label).not.toContain("/");
     }
   });
 
+  it("fails a picture that the row does not reference, rather than dropping it to its description", async () => {
+    const store = fakeDeliveryStore({ bodyHtmlSnapshot: bodyHtml, files: [files[0]] });
+    const sendEmail = vi.fn();
+    const result = await processExternalEmailQueue("event-1", {
+      dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail: sendEmail as never, emailParts: emailParts() },
+    });
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(result.failedIds).toEqual(["message-1"]);
+  });
+
+  it("reads a file once per run however many messages carry it", async () => {
+    const store = fakeDeliveryStore({ bodyHtmlSnapshot: bodyHtml, files });
+    const reads: string[] = [];
+    const deps = {
+      ...dependencies,
+      prisma: store.prisma as never,
+      sendEmail: (async () => ({ provider: "RESEND" as const, providerMessageId: `email-${reads.length}` })) as never,
+      emailParts: emailParts({ readFile: async (row: { id: string }) => { reads.push(row.id); return stored.get(row.id) ?? PDF; } }),
+    };
+    await processExternalEmailQueue("event-1", { dependencies: deps });
+    expect(reads.sort()).toEqual(["agenda", FILE_ID]);
+  });
+
   it("does not embed a pass image whose address is not this app's own", async () => {
-    const store = fakeDeliveryStore({ bodyHtmlSnapshot: bodyHtml, files: [] });
+    const store = fakeDeliveryStore({ bodyHtmlSnapshot: bodyHtml, files });
     const renderQrPng = vi.fn(async () => QR);
     const sent: Sent[] = [];
     await processExternalEmailQueue("event-1", {

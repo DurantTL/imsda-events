@@ -6,16 +6,20 @@ import { getPrisma } from "@/lib/prisma";
 import { deleteAsset, readAsset, writeStoredFile } from "@/modules/events/asset-storage";
 import {
   attachmentSetIssue,
+  inlineImageSetIssue,
   isMessageImageType,
   MAX_INLINE_IMAGE_BYTES,
   MAX_MESSAGE_FILE_BYTES,
+  MAX_MESSAGE_FILES_PER_EVENT,
   MESSAGE_FILE_TYPES,
   messageFileIdsInHtml,
+  messageFileIdsInMarkdown,
+  MessageFileDeliveryError,
   messageFileUrl,
   safeMessageFileName,
-  sniffMessageFileType,
   type MessageFileRecord,
 } from "@/modules/communications/message-file-rules";
+import { sniffMessageFileType } from "@/modules/communications/message-file-sniff";
 
 export class MessageFileError extends Error {
   constructor(
@@ -25,6 +29,7 @@ export class MessageFileError extends Error {
       | "FILE_TOO_LARGE"
       | "FILE_TYPE_NOT_ALLOWED"
       | "FILE_NOT_FOUND"
+      | "FILE_LIMIT_REACHED"
       | "FILE_SET_INVALID",
     message: string,
   ) {
@@ -96,6 +101,17 @@ export async function createMessageFile(
         : `Each attachment must be ${Math.floor(limit / (1024 * 1024))} MB or smaller.`,
     );
   }
+  // The event must exist (a system administrator can address any id), and holds a bounded number of files, before
+  // a directory is made or a byte is written.
+  if (!(await client.event.findUnique({ where: { id: eventId }, select: { id: true } }))) {
+    throw new MessageFileError("FILE_NOT_FOUND", "That event no longer exists.");
+  }
+  if ((await client.messageFile.count({ where: { eventId } })) >= MAX_MESSAGE_FILES_PER_EVENT) {
+    throw new MessageFileError(
+      "FILE_LIMIT_REACHED",
+      `This event already holds ${MAX_MESSAGE_FILES_PER_EVENT} message files. Ask a system administrator to clear unused ones.`,
+    );
+  }
   const bytes = new Uint8Array(await file.arrayBuffer());
   const type = sniffMessageFileType(bytes);
   if (!type || (purpose === "inline-image" && !isMessageImageType(type))) {
@@ -161,11 +177,23 @@ export async function findMessageFileForStaff(eventId: string, fileId: string, c
   });
 }
 
-/** The bytes of a stored file, checked against the hash recorded at upload. */
+const TRANSIENT_READ_ERRORS = new Set(["EIO", "EMFILE", "ENFILE", "EAGAIN", "EBUSY", "ETIMEDOUT"]);
+
+/**
+ * The bytes of a stored file, checked against the hash recorded at upload. A failure is a typed error with a
+ * generic message (never a path): retryable for a transient I/O condition, final for a missing or changed file.
+ */
 export async function readMessageFileBytes(file: { storageKey: string; sha256: string }) {
-  const bytes = await readAsset(file.storageKey);
+  let bytes: Uint8Array;
+  try {
+    bytes = await readAsset(file.storageKey);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code ?? "";
+    if (code === "ENOENT" || code === "ENOTDIR") throw new MessageFileDeliveryError("ATTACHMENT_MISSING", false);
+    throw new MessageFileDeliveryError("ATTACHMENT_UNREADABLE", TRANSIENT_READ_ERRORS.has(code));
+  }
   if (createHash("sha256").update(bytes).digest("hex") !== file.sha256) {
-    throw new Error("A stored message file no longer matches its recorded hash.");
+    throw new MessageFileDeliveryError("ATTACHMENT_CHANGED", false);
   }
   return bytes;
 }
@@ -193,19 +221,26 @@ export async function resolveAttachmentSet(
   return unique;
 }
 
-/** Every uploaded image a body refers to must be one of this event's own inline images. */
+/**
+ * Every uploaded image a body refers to must be one of this event's own inline images, and together they must fit
+ * the per-message picture limits, so delivery never has to drop one.
+ */
 export async function assertBodyImagesBelongToEvent(
   client: FileClient,
   eventId: string,
   ids: readonly string[],
 ) {
-  if (ids.length === 0) return;
-  const count = await client.messageFile.count({
-    where: { id: { in: [...ids] }, eventId, isInlineImage: true },
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return;
+  const rows = await client.messageFile.findMany({
+    where: { id: { in: unique }, eventId, isInlineImage: true },
+    select: { sizeBytes: true },
   });
-  if (count !== new Set(ids).size) {
+  if (rows.length !== unique.length) {
     throw new MessageFileError("FILE_SET_INVALID", "An image in the message is no longer available. Remove it and insert it again.");
   }
+  const issue = inlineImageSetIssue(rows);
+  if (issue) throw new MessageFileError("FILE_SET_INVALID", issue.message);
 }
 
 export async function listTemplateVersionFiles(
@@ -254,6 +289,18 @@ export async function setAnnouncementFiles(
   fileIds: readonly string[],
 ) {
   const ids = await resolveAttachmentSet(tx, eventId, fileIds);
+  // The announcement goes out through the event's announcement template, whose own files and pictures go with it.
+  const published = ids.length === 0
+    ? null
+    : await tx.messageTemplateVersion.findFirst({
+        where: { template: { eventId, key: "EVENT_ANNOUNCEMENT" }, status: "PUBLISHED" },
+        orderBy: { versionNumber: "desc" },
+        select: { bodyTemplate: true, files: { select: { fileId: true } } },
+      });
+  if (published) {
+    await resolveAttachmentSet(tx, eventId, [...ids, ...published.files.map((row) => row.fileId)]);
+    await assertBodyImagesBelongToEvent(tx, eventId, messageFileIdsInMarkdown(published.bodyTemplate));
+  }
   await tx.announcementFile.deleteMany({ where: { announcementId } });
   if (ids.length > 0) {
     await tx.announcementFile.createMany({
@@ -346,13 +393,26 @@ export async function linkQueuedMessageFiles(
       ids.forEach((id) => allImageIds.add(id));
     }
   }
-  // Only this event's own inline images are ever linked, whatever a body claims.
-  const validImages = allImageIds.size > 0
-    ? new Set((await tx.messageFile.findMany({
+  // Only this event's own inline images are ever linked, whatever a body claims, and one that fails the check is an
+  // error: a message is never queued with a picture it could not send.
+  const imageRows = allImageIds.size > 0
+    ? await tx.messageFile.findMany({
         where: { id: { in: [...allImageIds] }, eventId: input.eventId, isInlineImage: true },
-        select: { id: true },
-      })).map((row) => row.id))
-    : new Set<string>();
+        select: { id: true, sizeBytes: true },
+      })
+    : [];
+  if (imageRows.length !== allImageIds.size) {
+    throw new MessageFileError("FILE_SET_INVALID", "A picture in the message is not one of this event's uploaded images, so the message was not queued.");
+  }
+  const imageSize = new Map(imageRows.map((row) => [row.id, row.sizeBytes]));
+  const allAttachmentIds = [...new Set([...(input.extraAttachmentFileIds ?? []), ...versionFiles.map((row) => row.fileId)])];
+  const attachmentRows = allAttachmentIds.length > 0
+    ? await tx.messageFile.findMany({ where: { id: { in: allAttachmentIds }, eventId: input.eventId }, select: { id: true, sizeBytes: true } })
+    : [];
+  if (attachmentRows.length !== allAttachmentIds.length) {
+    throw new MessageFileError("FILE_SET_INVALID", "A file attached to this message is no longer available, so the message was not queued.");
+  }
+  const attachmentSize = new Map(attachmentRows.map((row) => [row.id, row.sizeBytes]));
 
   const data: Prisma.MessageOutboxFileCreateManyInput[] = [];
   for (const message of messages) {
@@ -361,14 +421,18 @@ export async function linkQueuedMessageFiles(
       ...(input.extraAttachmentFileIds ?? []),
       ...(message.templateVersionId ? idsByVersion.get(message.templateVersionId) ?? [] : []),
     ])];
+    // The limits are checked here too, so a test message or a late edit can never queue a set delivery would refuse.
+    const attachmentIssue = attachmentSetIssue(attachmentIds.map((id) => ({ sizeBytes: attachmentSize.get(id) ?? 0 })));
+    if (attachmentIssue) throw new MessageFileError("FILE_SET_INVALID", attachmentIssue.message);
+    const messageImages = imageIdsByMessage.get(message.id) ?? [];
+    const imageIssue = inlineImageSetIssue(messageImages.map((id) => ({ sizeBytes: imageSize.get(id) ?? 0 })));
+    if (imageIssue) throw new MessageFileError("FILE_SET_INVALID", imageIssue.message);
     attachmentIds.forEach((fileId, position) => {
       data.push({ messageOutboxId: message.id, fileId, disposition: "ATTACHMENT", position });
     });
-    (imageIdsByMessage.get(message.id) ?? [])
-      .filter((id) => validImages.has(id))
-      .forEach((fileId, position) => {
-        data.push({ messageOutboxId: message.id, fileId, disposition: "INLINE", position });
-      });
+    messageImages.forEach((fileId, position) => {
+      data.push({ messageOutboxId: message.id, fileId, disposition: "INLINE", position });
+    });
   }
   if (data.length > 0) await tx.messageOutboxFile.createMany({ data, skipDuplicates: true });
 }
@@ -413,7 +477,8 @@ export async function deleteMessageFileIfUnused(eventId: string, fileId: string,
   try {
     removed = await client.messageFile.deleteMany({ where: { id: file.id } });
   } catch {
-    // Something linked it between the check and the delete; the database refuses, and the file stays.
+    // The foreign keys are RESTRICT: if anything linked the file between the check and the delete, the database
+    // refuses the delete and the file stays.
     return false;
   }
   if (removed.count === 0) return false;

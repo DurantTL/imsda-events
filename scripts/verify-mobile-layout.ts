@@ -432,6 +432,9 @@ async function seedLauncherModule(prisma: PrismaClient) {
 async function cleanupSynthetic(prisma: PrismaClient) {
   const orgs = { organizationId: { in: [clubA, clubB] } };
   const accountIds = [`${P}_account_director`, `${P}_account_area`];
+  // The message files' bytes (#824) live on disk, outside the database; their keys are read before the rows go.
+  const messageFileKeys = (await prisma.messageFile.findMany({ where: { eventId: blocksEventId }, select: { storageKey: true } }))
+    .map((file) => file.storageKey);
   await prisma.$transaction([
     prisma.attendeeSession.deleteMany({ where: { accountId: { in: accountIds } } }),
     prisma.clubInvite.deleteMany({ where: { OR: [orgs, { id: { startsWith: `${P}_` } }] } }),
@@ -468,6 +471,8 @@ async function cleanupSynthetic(prisma: PrismaClient) {
     prisma.organization.deleteMany({ where: { id: { in: [clubA, clubB] } } }),
     prisma.organization.deleteMany({ where: { id: { in: [churchA, churchB] } } }),
   ]);
+  const { deleteAsset } = await import("../modules/events/asset-storage");
+  for (const key of messageFileKeys) await deleteAsset(key).catch(() => undefined);
   console.log("Deleted the synthetic mobilecheck rows.");
 }
 

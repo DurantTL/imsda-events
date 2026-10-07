@@ -73,17 +73,17 @@ ALTER TABLE "MessageFile" ADD CONSTRAINT "MessageFile_uploadedByUserId_fkey" FOR
 ALTER TABLE "MessageTemplateVersionFile" ADD CONSTRAINT "MessageTemplateVersionFile_templateVersionId_fkey" FOREIGN KEY ("templateVersionId") REFERENCES "MessageTemplateVersion"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "MessageTemplateVersionFile" ADD CONSTRAINT "MessageTemplateVersionFile_fileId_fkey" FOREIGN KEY ("fileId") REFERENCES "MessageFile"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "MessageTemplateVersionFile" ADD CONSTRAINT "MessageTemplateVersionFile_fileId_fkey" FOREIGN KEY ("fileId") REFERENCES "MessageFile"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "AnnouncementFile" ADD CONSTRAINT "AnnouncementFile_announcementId_fkey" FOREIGN KEY ("announcementId") REFERENCES "Announcement"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "AnnouncementFile" ADD CONSTRAINT "AnnouncementFile_fileId_fkey" FOREIGN KEY ("fileId") REFERENCES "MessageFile"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "AnnouncementFile" ADD CONSTRAINT "AnnouncementFile_fileId_fkey" FOREIGN KEY ("fileId") REFERENCES "MessageFile"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "MessageOutboxFile" ADD CONSTRAINT "MessageOutboxFile_messageOutboxId_fkey" FOREIGN KEY ("messageOutboxId") REFERENCES "MessageOutbox"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "MessageOutboxFile" ADD CONSTRAINT "MessageOutboxFile_fileId_fkey" FOREIGN KEY ("fileId") REFERENCES "MessageFile"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "MessageOutboxFile" ADD CONSTRAINT "MessageOutboxFile_fileId_fkey" FOREIGN KEY ("fileId") REFERENCES "MessageFile"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 

@@ -123,6 +123,12 @@ function startProviderStub(statuses: number[]) {
 async function cleanup() {
   await prisma.auditLog.deleteMany({ where: { OR: [{ eventId: { in: [ids.event, ids.other] } }, { actorUserId: ids.staff }] } });
   await prisma.publicRegistrationSubmission.deleteMany({ where: { eventId: ids.event } });
+  // The foreign keys to a message file are RESTRICT, so what refers to one goes first (as event deletion does).
+  const inEvents = { eventId: { in: [ids.event, ids.other] } };
+  await prisma.messageOutbox.deleteMany({ where: inEvents });
+  await prisma.announcement.deleteMany({ where: inEvents });
+  await prisma.eventMessageTemplate.deleteMany({ where: inEvents });
+  await prisma.messageFile.deleteMany({ where: inEvents });
   await prisma.event.deleteMany({ where: { id: { in: [ids.event, ids.other] } } });
   await prisma.person.deleteMany({ where: { id: { in: [ids.holder, ids.ann, ids.bo] } } });
   await prisma.user.deleteMany({ where: { id: ids.staff } });
@@ -341,6 +347,40 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>, st
   assert(auditText.includes("Terms.pdf"), "the audit trail names the file");
   assert(stored.every((row) => !auditText.includes(row.sha256) && !auditText.includes(row.storageKey.replaceAll("\\", "\\\\"))), "the audit trail holds no hash or storage path");
 
+  // Picture limits are enforced when staff save, so delivery never has to drop one: 31 pictures, or over 6 MB together.
+  const smallPng = (index: number, size: number) => Buffer.concat([mapPng.subarray(0, 8), Buffer.alloc(size - 8, index)]);
+  const manyImages = [] as string[];
+  for (let index = 0; index < 31; index += 1) {
+    manyImages.push((await createMessageFile(ids.event, file(smallPng(index, 200), `p${index}.png`, "image/png"), ids.staff, "inline-image", prisma)).id);
+  }
+  let tooManyPictures = false;
+  try {
+    await publish(undefined, manyImages.map((id) => `![p](msgfile:${id})`).join("\n\n"));
+  } catch (error) {
+    tooManyPictures = error instanceof MessageFileError && error.code === "FILE_SET_INVALID";
+  }
+  assert(tooManyPictures, "a body with 31 pictures is refused when published");
+  const bigPictures = [] as string[];
+  for (let index = 0; index < 4; index += 1) {
+    bigPictures.push((await createMessageFile(ids.event, file(smallPng(index, 1_700_000), `big${index}.png`, "image/png"), ids.staff, "inline-image", prisma)).id);
+  }
+  let picturesTooLarge = false;
+  try {
+    await publish(undefined, bigPictures.map((id) => `![p](msgfile:${id})`).join("\n\n"));
+  } catch (error) {
+    picturesTooLarge = error instanceof MessageFileError && error.code === "FILE_SET_INVALID";
+  }
+  assert(picturesTooLarge, "pictures over 6 MB together are refused when published");
+  // An announcement's own files plus the template's must fit too: 20 MB of its own, plus Terms.pdf, is refused.
+  let announcementTooLarge = false;
+  try {
+    await createAnnouncement(ids.event, ids.staff, { title: "Too many files", body: "Over the limit.", priority: "NORMAL", attachmentFileIds: [big1.id, big2.id] });
+  } catch (error) {
+    announcementTooLarge = error instanceof MessageFileError && error.code === "FILE_SET_INVALID";
+  }
+  assert(announcementTooLarge, "an announcement whose files and the template's together are over 20 MB is refused when saved");
+  assert((await attachmentsOfPublished()).join() === "Terms.pdf", "the refused publishes left the published version alone");
+
   // 3. An announcement with one attachment, broadcast through the template.
   const announcement = await createAnnouncement(ids.event, ids.staff, {
     title: "Friday arrival information",
@@ -376,9 +416,15 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>, st
   assert(message.bodyTextSnapshot.includes("[Image: Map of the grounds]"), "the text part names the picture");
   assert(message.bodyHtmlSnapshot?.includes(`src="msgfile:${mapFile.id}"`) && message.bodyHtmlSnapshot.includes('bgcolor="#0f6f8c"'), "the stored HTML has the picture reference and the table button");
 
-  // 4. The first attempt (inside the broadcast) met a 503; the row waits for a retry. Then the retry sends the same parts.
+  // 4. A message with files is not sent inside the staff request: it waits for the outbox worker, which is the
+  //    sweep's `processPendingMessages`. The first attempt meets a 503 and is rescheduled; the retry sends the same parts.
   const providerCalls = () => stub.received.length;
-  assert(providerCalls() === 1, `the provider was called once by the broadcast, got ${providerCalls()}`);
+  assert(providerCalls() === 0, `the broadcast request did not send a message that carries files, got ${providerCalls()} provider calls`);
+  const queued = await prisma.messageOutbox.findUniqueOrThrow({ where: { id: message.id }, select: { status: true, attemptCount: true } });
+  assert(queued.status === "PENDING" && queued.attemptCount === 0, `the message waits for the worker: ${JSON.stringify(queued)}`);
+  const { processPendingMessages } = await import("@/modules/communications/messaging-repository");
+  await processPendingMessages(ids.event, ids.staff);
+  assert(providerCalls() === 1, `the worker's first pass called the provider once, got ${providerCalls()}`);
   const afterFirst = await prisma.messageOutbox.findUniqueOrThrow({ where: { id: message.id }, select: { status: true, attemptCount: true } });
   assert(afterFirst.status === "PENDING" && afterFirst.attemptCount === 1, `the message waits for a retry: ${JSON.stringify(afterFirst)}`);
   await prisma.messageOutbox.update({ where: { id: message.id }, data: { availableAt: new Date(Date.now() - 1000) } });
@@ -473,7 +519,23 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>, st
   );
   assert(boAttendee.id !== annAttendee.id, "two attendees were used");
 
-  // 8. A file referenced by a sent message is never deleted, and an unused attachment can be.
+  // 8. A file referenced by a template, an announcement or a message cannot be deleted at all: the keys are RESTRICT.
+  let deleteRefused = false;
+  try {
+    await prisma.messageFile.delete({ where: { id: agendaFile.id } });
+  } catch {
+    deleteRefused = true;
+  }
+  assert(deleteRefused, "the database refuses to delete a file an outbox row and an announcement refer to");
+  let pictureDeleteRefused = false;
+  try {
+    await prisma.messageFile.delete({ where: { id: mapFile.id } });
+  } catch {
+    pictureDeleteRefused = true;
+  }
+  assert(pictureDeleteRefused, "the database refuses to delete a picture an outbox row refers to");
+  assert((await prisma.messageFile.count({ where: { id: { in: [agendaFile.id, mapFile.id] } } })) === 2, "both files are still there");
+  // A file referenced by a sent message is never deleted by the app either, and an unused attachment can be.
   const { deleteMessageFileIfUnused } = await import("@/modules/communications/message-files");
   assert(!(await deleteMessageFileIfUnused(ids.event, agendaFile.id, prisma)), "an attachment a message refers to stays");
   assert(await deleteMessageFileIfUnused(ids.event, big1.id, prisma), "an unused attachment is removed");
