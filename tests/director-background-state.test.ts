@@ -68,9 +68,25 @@ describe("directorBackgroundStatesByEmail", () => {
     expect(result.get(KEY)).toMatchObject({ state: "NOT_COMPLIANT", ambiguous: true });
   });
 
-  it("marks a name mismatch: found by email, but a different person", async () => {
+  it("marks a name mismatch and never shows the other person's status: No record", async () => {
     const result = await directorBackgroundStatesByEmail(typed("Dana Director"), NOW, database([person("p1", "Robert", "Stranger", "2030-01-02")]));
-    expect(result.get(KEY)).toEqual({ state: "CLEAR", ambiguous: false, nameMismatch: true });
+    expect(result.get(KEY)).toEqual({ state: "NO_RECORD", ambiguous: false, nameMismatch: true });
+  });
+
+  it("uses the one matching person's status, not the least favorable, and still says ambiguous", async () => {
+    const result = await directorBackgroundStatesByEmail(typed(), NOW, database([
+      person("p1", "Dana", "Director", "2030-01-02"),
+      person("p2", "Robert", "Stranger", null),
+    ]));
+    expect(result.get(KEY)).toEqual({ state: "CLEAR", ambiguous: true, nameMismatch: false });
+  });
+
+  it("with two strangers on the email, shows No record and the mismatch", async () => {
+    const result = await directorBackgroundStatesByEmail(typed(), NOW, database([
+      person("p1", "Robert", "Stranger", "2030-01-02"),
+      person("p2", "Rita", "Other", "2030-01-02"),
+    ]));
+    expect(result.get(KEY)).toEqual({ state: "NO_RECORD", ambiguous: true, nameMismatch: true });
   });
 
   it("compares names loosely: case, accents, punctuation, a middle name", async () => {

@@ -2309,10 +2309,11 @@ export type DirectorBackgroundMatch = {
  * to them. Someone who matches nobody is "No record". The check is the cached
  * match, else the same read-time match the rosters use.
  *
- * An email can reach more than one person: the least favorable state is shown
- * and the result is marked ambiguous. The matched person's name is compared
- * with the name the applicant typed; when no matched person agrees, the result
- * is marked as a name mismatch, so a reviewer doesn't trust a stranger's check.
+ * An email can reach more than one person, and the result is then marked
+ * ambiguous. The matched people's names are compared with the name the
+ * applicant typed: the status shown is that of the people who agree (the least
+ * favorable if several), and when none agrees it is No record with the result
+ * marked as a name mismatch, so a stranger's check is never shown as theirs.
  * It is a flag for staff to review, never a block, and it returns no names,
  * notes or dates.
  */
@@ -2372,14 +2373,15 @@ export async function directorBackgroundStatesByEmail(
     }
   }
   for (const [email, matches] of byEmail) {
-    const worst = matches.reduce((least, match) => (favor[match.state] < favor[least.state] ? match : least));
     // One result per typed name: two applications can share an email and carry different names.
     for (const name of new Set(typedNames.get(email) ?? [])) {
-      results.set(directorMatchKey(email, name), {
-        state: worst.state,
-        ambiguous: matches.length > 1,
-        nameMismatch: !matches.some((match) => namesAgree(name, match.person)),
-      });
+      const agreeing = matches.filter((match) => namesAgree(name, match.person));
+      // Someone else's check is never shown as the applicant's: with no matching name the status is No record.
+      // Among people with the typed name, the least favorable status wins (a single one is simply theirs).
+      const state: ClubComplianceState = agreeing.length === 0
+        ? "NO_RECORD"
+        : agreeing.reduce((least, match) => (favor[match.state] < favor[least.state] ? match : least)).state;
+      results.set(directorMatchKey(email, name), { state, ambiguous: matches.length > 1, nameMismatch: agreeing.length === 0 });
     }
   }
   return results;

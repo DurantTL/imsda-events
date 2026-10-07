@@ -206,7 +206,7 @@ async function main() {
     assert(clear?.sterling === "CLEAR" && !clear.sterlingNameMismatch && !clear.sterlingAmbiguous, "a director with a current Sterling Volunteers check shows Clear, unambiguously, under the same name");
     const stranger = await repo.submitNewClubApplication(application({ clubName: `${stamp} Mismatch`, directorName: "Someone Else", directorSignature: "Someone Else" }), { now });
     const mismatch = (await repo.listNewClubApplications("SYSTEM_ADMIN", now)).find((row) => row.id === stranger.id);
-    assert(mismatch?.sterlingNameMismatch, "an email matched to a person with a different name is marked as a name mismatch");
+    assert(mismatch?.sterlingNameMismatch && mismatch.sterling === "NO_RECORD", "an email matched only to a person with a different name shows No record, with the mismatch marked, never that person's Clear");
     await repo.decideNewClubApplication(sysAdmin, stranger.id, { decision: "decline" }, now);
     await prisma.backgroundCheckEntry.update({ where: { id: entry.id }, data: { expiresOn: "2020-01-02" } });
     const expired = (await repo.listNewClubApplications("SYSTEM_ADMIN", now)).find((row) => row.id === first.id);
