@@ -23,15 +23,17 @@ export function SortableHeader({
   direction,
   onSort,
   disabled,
+  className,
 }: {
   label: string;
   active: boolean;
   direction: SortDirection;
   onSort: () => void;
   disabled?: boolean;
+  className?: string;
 }) {
   return (
-    <th aria-sort={ariaSortValue(active, direction)} role="columnheader" scope="col">
+    <th aria-sort={ariaSortValue(active, direction)} className={className} role="columnheader" scope="col">
       <button className="table-sort-button" disabled={disabled} onClick={onSort} type="button">
         {label}
         {active
