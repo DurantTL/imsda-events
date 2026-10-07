@@ -1,5 +1,5 @@
 import type { OrganizationType } from "@prisma/client";
-import { normalizeOrganizationName, organizationTypeLabels } from "@/modules/organizations/domain";
+import { isSponsorOrganizationType, normalizeOrganizationName, organizationTypeLabels } from "@/modules/organizations/domain";
 
 /**
  * The eAdventist organizations export (#649). Pure: parses the CSV, maps each
@@ -548,6 +548,10 @@ export function planEadventistImport(
     if (stored && stored.type === "CHURCH" && record.type !== "CHURCH" && stored.hasDependents) {
       kind = "CHURCH";
       notes.push(`Kept as a church: it sponsors clubs or promo codes or has a location, so it was not changed to ${organizationTypeLabels[record.type].toLocaleLowerCase("en-US")}.`);
+    } else if (stored && isSponsorOrganizationType(stored.type) && !isSponsorOrganizationType(record.type) && stored.hasDependents) {
+      // A company or group (or church) that sponsors clubs or promo codes must stay a kind that can sponsor (#822); the preview says so.
+      kind = stored.type;
+      notes.push(`Kept as a ${organizationTypeLabels[stored.type].toLocaleLowerCase("en-US")}: it sponsors clubs or promo codes, so it was not changed to ${organizationTypeLabels[record.type].toLocaleLowerCase("en-US")}. Review it.`);
     }
 
     const action: PlanAction = !stored ? "NEW" : differs(record, kind, stored, affiliatedEadventistId) ? "UPDATED" : "UNCHANGED";

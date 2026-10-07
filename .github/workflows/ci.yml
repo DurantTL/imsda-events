@@ -92,6 +92,9 @@ jobs:
       # Real-database check of new club applications (#817): a public submission waits and creates nothing; the notice goes to the configured address with only the club, church and director names and a link; system administrators and Area Coordinators see the queue and attachment but only administrators decide; the director's Sterling Volunteers status and possible duplicates are flagged; approving makes the club and its director invite exactly once even when approvals race; declining emails the reason; a private link stores only its token hash and works once; audit rows hold ids only.
       - run: npm run test:new-club-application
 
+      # Real-database check of who may sponsor a club (#822): an active church, company or group is accepted and a school, camp, inactive company or club is refused, on create, edit and the club profile; pickers list the kind; church-billed charges and the billing contact go to a company sponsor.
+      - run: npm run test:organization-sponsors
+
       # Real-database round trip of club order fulfillment: idempotent need
       # syncing, order/stock math, receiving, awarding never below zero, and
       # an idempotent Honors Weekend write-back (#487).

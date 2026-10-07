@@ -101,7 +101,7 @@ describe("what each church owes (#409)", () => {
     expect(summary.churches).toEqual([
       { churchKey: "church-a", churchName: "Ankeny SDA Church", clubCount: 2, amountOwedCents: 2200 },
       { churchKey: "church-z", churchName: "Zion SDA Church", clubCount: 1, amountOwedCents: 6300 },
-      { churchKey: "none", churchName: "No sponsoring church on file", clubCount: 1, amountOwedCents: 1800 },
+      { churchKey: "none", churchName: "No sponsoring church or company on file", clubCount: 1, amountOwedCents: 1800 },
     ]);
   });
 

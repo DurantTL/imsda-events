@@ -226,6 +226,20 @@ describe("the synthetic eAdventist export (#649)", () => {
       expect(free.kind).toBe("GROUP");
     });
 
+    it.each(["COMPANY", "GROUP"] as const)("keeps a linked %s that sponsors clubs from being retyped to a kind that cannot sponsor, and says so (#822)", (storedType) => {
+      const parsed = parseEadventistCsv(fixture);
+      const asSchool = { ...parsed, records: parsed.records.map((record) => (record.eadventistId === "9002" ? { ...record, type: "SCHOOL" as const } : record)) };
+      const linked = (hasDependents: boolean) => stored({ type: storedType, eadventistId: "9002", identityEadventistId: "9002", hasDependents });
+      const kept = planEadventistImport(asSchool, [linked(true)]).items.find((entry) => entry.eadventistId === "9002")!;
+      expect(kept.kind).toBe(storedType);
+      expect(kept.notes.join(" ")).toContain(`Kept as a ${storedType.toLowerCase()}`);
+      expect(kept.notes.join(" ")).toContain("Review it");
+      // Without clubs or promo codes it is retyped; a church stays a sponsor kind without a note.
+      expect(planEadventistImport(asSchool, [linked(false)]).items.find((entry) => entry.eadventistId === "9002")!.kind).toBe("SCHOOL");
+      const toGroup = { ...parsed, records: parsed.records.map((record) => (record.eadventistId === "9002" ? { ...record, type: "GROUP" as const } : record)) };
+      expect(planEadventistImport(toGroup, [linked(true)]).items.find((entry) => entry.eadventistId === "9002")!.notes.join(" ")).not.toContain("Kept as");
+    });
+
     it("never matches by name once the stored church carries an eAdventist id, nor a non-church kind", () => {
       const linked = planEadventistImport(parseEadventistCsv(fixture), [stored({ eadventistId: "5555" })]);
       expect(linked.items.find((entry) => entry.name === "Sample Hills SDA Church")).toMatchObject({ action: "NEW", matchedBy: null });

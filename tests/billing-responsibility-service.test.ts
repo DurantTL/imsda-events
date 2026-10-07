@@ -139,6 +139,7 @@ beforeEach(() => {
     { id: "closed", isActive: false, type: "CHURCH" },
     { id: "company-1", isActive: true, type: "COMPANY" },
     { id: "bookstore-1", isActive: true, type: "BOOKSTORE" },
+    { id: "group-1", isActive: true, type: "GROUP" },
   ];
 });
 
@@ -272,6 +273,11 @@ describe("billing contacts (#165): conference-wide, system administrators only",
 
   it("keeps a billing contact for a company that sponsors a club (#822)", async () => {
     await expect(setOrganizationBillingContact({ organizationId: "company-1", contact, actor: admin })).resolves.toMatchObject({ replaced: false });
+    expect(state.contacts).toHaveLength(1);
+  });
+
+  it("keeps a billing contact for a group that sponsors a club (#822)", async () => {
+    await expect(setOrganizationBillingContact({ organizationId: "group-1", contact, actor: admin })).resolves.toMatchObject({ replaced: false });
     expect(state.contacts).toHaveLength(1);
   });
 

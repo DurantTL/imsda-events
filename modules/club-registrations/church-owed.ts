@@ -15,7 +15,7 @@ export type ClubRegistrationStatus = "DRAFT" | "SUBMITTED" | "CONFIRMED" | "WAIT
 
 export const CHURCH_BILLED_STATUSES: readonly ClubRegistrationStatus[] = ["SUBMITTED", "CONFIRMED"];
 
-export const NO_CHURCH_ON_FILE = "No sponsoring church on file";
+export const NO_CHURCH_ON_FILE = "No sponsoring church or company on file";
 
 export function isChurchBilledStatus(status: ClubRegistrationStatus) {
   return CHURCH_BILLED_STATUSES.includes(status);

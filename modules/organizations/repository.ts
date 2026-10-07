@@ -115,7 +115,7 @@ async function validateParentOrganization(
     if (parentOrganizationId !== null) {
       throw new OrganizationOperationError(
         "ORGANIZATION_PARENT_NOT_ALLOWED",
-        "A church cannot be placed under another church or club.",
+        "This organization cannot be placed under another organization.",
       );
     }
     return;
@@ -295,7 +295,7 @@ export async function updateOrganization(
       if (activeClub) {
         throw new OrganizationOperationError(
           "ORGANIZATION_HAS_ACTIVE_CLUBS",
-          "Move or deactivate this church's active clubs before deactivating the church.",
+          "Move or deactivate its active clubs before deactivating it.",
         );
       }
     }

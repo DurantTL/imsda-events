@@ -35,7 +35,7 @@ const promoCodeShape = {
   maximumDiscountCents: z.number().int().min(1).max(100_000_000).nullable().optional().default(null),
   /**
    * Church-sponsored code (#545). Omitted on an update means "leave the link
-   * as it is"; null unlinks; an id links an active CHURCH organization (the
+   * as it is"; null unlinks; an id links an active church, company or group (the
    * repository checks the organization and the event's audience).
    */
   sponsoringOrganizationId: z.string().trim().min(1).max(100).nullable().optional(),

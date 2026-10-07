@@ -177,7 +177,8 @@ export async function listPromoCodes(eventId: string, now = new Date()) {
 
 /**
  * Church-sponsored codes (#545): only a GENERAL, attendee-paid event's code
- * may name a sponsor, and the sponsor must be an active CHURCH organization.
+ * may name a sponsor, and the sponsor must be an active church, company or
+ * group (#822).
  * An event that bills churches or organizations already invoices them
  * directly (#409), so a sponsored code there would bill it twice. The event
  * row is locked so a concurrent settings change cannot slip past this check

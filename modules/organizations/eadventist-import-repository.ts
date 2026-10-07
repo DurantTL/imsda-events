@@ -285,7 +285,7 @@ export async function setDirectoryOrganizationActive(organizationId: string, isA
     if (!isActive && isSponsorOrganizationType(existing.type)) {
       const activeClub = await tx.organization.findFirst({ where: { parentOrganizationId: organizationId, type: "CLUB", isActive: true }, select: { id: true } });
       if (activeClub) {
-        throw new OrganizationOperationError("ORGANIZATION_HAS_ACTIVE_CLUBS", "Move or deactivate this church's active clubs before deactivating the church.");
+        throw new OrganizationOperationError("ORGANIZATION_HAS_ACTIVE_CLUBS", "Move or deactivate its active clubs before deactivating it.");
       }
     }
     await tx.organization.update({ where: { id: organizationId }, data: { isActive } });

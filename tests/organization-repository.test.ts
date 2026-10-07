@@ -119,6 +119,43 @@ describe("organization repository invariants", () => {
     expect(mocks.create).not.toHaveBeenCalled();
   });
 
+  it.each(["COMPANY", "GROUP", "SCHOOL"])("never lets a %s be placed under another organization (#822)", async (type) => {
+    mocks.findUnique.mockResolvedValue({ id: "org-1", type, name: "Sample", isActive: true });
+    await expect(updateOrganization("org-1", {
+      name: "Sample",
+      parentOrganizationId: "church-1",
+      isActive: true,
+      expectedUpdatedAt: "2026-07-27T12:00:00.000Z",
+    }, "actor-1")).rejects.toMatchObject({ code: "ORGANIZATION_PARENT_NOT_ALLOWED" });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each(["COMPANY", "GROUP"])("accepts a %s with no parent on update (#822)", async (type) => {
+    mocks.findUnique.mockResolvedValue({ id: "org-1", type, name: "Sample", isActive: true });
+    mocks.findFirst.mockResolvedValue(null);
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    await updateOrganization("org-1", {
+      name: "Sample",
+      parentOrganizationId: null,
+      isActive: true,
+      expectedUpdatedAt: "2026-07-27T12:00:00.000Z",
+    }, "actor-1");
+    expect(mocks.updateMany).toHaveBeenCalled();
+  });
+
+  it.each(["CHURCH", "COMPANY", "GROUP"])("will not deactivate a %s that has an active club (#822)", async (type) => {
+    mocks.findUnique.mockResolvedValue({ id: "org-1", type, name: "Sample", isActive: true });
+    mocks.findFirst.mockResolvedValue({ id: "club-1" });
+    await expect(updateOrganization("org-1", {
+      name: "Sample",
+      parentOrganizationId: null,
+      isActive: false,
+      expectedUpdatedAt: "2026-07-27T12:00:00.000Z",
+    }, "actor-1")).rejects.toMatchObject({ code: "ORGANIZATION_HAS_ACTIVE_CLUBS" });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+    expect(mocks.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ parentOrganizationId: "org-1", type: "CLUB", isActive: true }) }));
+  });
+
   it("refuses an inactive company as a club sponsor (#822)", async () => {
     mocks.findUnique.mockResolvedValue({ type: "COMPANY", isActive: false });
     await expect(createOrganization({

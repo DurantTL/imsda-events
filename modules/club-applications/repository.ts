@@ -371,6 +371,8 @@ export type NewClubApplicationRecord = {
     id: string | null;
     name: string;
     isOther: boolean;
+    /** The directory sponsor's kind (#822); null for a typed name. */
+    type: string | null;
     /** A directory church was chosen but it is gone, inactive or no longer a church. */
     unavailable: boolean;
     /** Approving needs the admin to pick a directory church first. */

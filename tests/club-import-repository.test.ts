@@ -278,6 +278,57 @@ describe("the preview's sponsor matching (#822)", () => {
   });
 });
 
+describe("the preview's sponsor matching when names overlap (#822)", () => {
+  const sponsors = [
+    { id: "church-1", name: "Sample Hills Church", normalizedName: "sample hills church", type: "CHURCH" },
+    { id: "company-1", name: "Sample Hills Company", normalizedName: "sample hills company", type: "COMPANY" },
+    { id: "church-2", name: "Lone Oak SDA Church", normalizedName: "lone oak sda church", type: "CHURCH" },
+    { id: "company-2", name: "Lone Oak Company", normalizedName: "lone oak company", type: "COMPANY" },
+    { id: "company-3", name: "River Bend Company", normalizedName: "river bend company", type: "COMPANY" },
+    { id: "church-3", name: "Twin Pines", normalizedName: "twin pines", type: "CHURCH" },
+    { id: "group-3", name: "Twin Pines", normalizedName: "twin pines", type: "GROUP" },
+  ];
+  const match = async (churchName: string) => {
+    mocks.identityFindMany.mockResolvedValue([]);
+    mocks.orgFindMany.mockImplementation(({ where }: { where: { type: unknown } }) => Promise.resolve(typeof where.type === "object" ? sponsors : []));
+    const drafts = parseClubRegistrationExport([syntheticExportEntry({ id: 902 })], now).drafts.map((draft) => ({ ...draft, churchName }));
+    return (await annotateImportDrafts(drafts)).drafts[0]!;
+  };
+
+  it("matches an exact name first, even when a company shares its stem", async () => {
+    expect(await match("Sample Hills Church")).toMatchObject({ churchId: "church-1", newChurchName: "" });
+    expect(await match("Sample Hills Company")).toMatchObject({ churchId: "company-1", newChurchName: "" });
+  });
+
+  it("leaves the draft unmatched when more than one sponsor shares its stem, instead of letting the first win", async () => {
+    expect(await match("Sample Hills")).toMatchObject({ churchId: null, newChurchName: "Sample Hills" });
+    // The stem of a differently worded name is shared by a church and a company too.
+    expect(await match("Lone Oak Seventh-day Adventist Church")).toMatchObject({ churchId: null });
+  });
+
+  it("matches by stem when exactly one sponsor has it", async () => {
+    expect(await match("River Bend SDA Church")).toMatchObject({ churchId: "company-3", newChurchName: "" });
+  });
+
+  it("prefers the church when a church and a company have exactly the same name", async () => {
+    expect(await match("Twin Pines")).toMatchObject({ churchId: "church-3", newChurchName: "" });
+  });
+});
+
+describe("saving a typed name that matches a church and a company (#822)", () => {
+  it("looks for the church first among equally active matches, and links to what it finds", async () => {
+    mocks.orgFindFirst.mockImplementation(({ where }: { where: { type: unknown } }) => Promise.resolve(
+      typeof where.type === "object" ? { id: "church-3", isActive: true } : null,
+    ));
+    const [result] = await importClubs([item({ churchId: null, newChurchName: "Twin Pines" })], "admin-1", now);
+    expect(result).toMatchObject({ status: "IMPORTED" });
+    const lookup = mocks.orgFindFirst.mock.calls.map(([call]) => call).find((call) => typeof call.where.type === "object")!;
+    // Enum order is CHURCH, COMPANY, GROUP, so an active church sorts ahead of a company of the same name.
+    expect(lookup.orderBy).toEqual([{ isActive: "desc" }, { type: "asc" }, { name: "asc" }]);
+    expect(mocks.orgCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "CLUB", parentOrganizationId: "church-3" }) }));
+  });
+});
+
 describe("the preview's earlier imports (#541)", () => {
   const drafts = () => parseClubRegistrationExport([syntheticExportEntry({ id: 777 }), syntheticExportEntry({ id: 778 })], now).drafts;
 

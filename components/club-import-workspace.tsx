@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { CheckCircle2, CircleAlert, FileUp, Upload } from "lucide-react";
 import { confirmPayload } from "@/modules/club-imports/confirm-payload";
-import { earlierImportNotice, inFileDuplicateKeys, skipReasonLabel, submissionYearNote } from "@/modules/club-imports/domain";
+import { churchStem, earlierImportNotice, inFileDuplicateKeys, skipReasonLabel, submissionYearNote } from "@/modules/club-imports/domain";
 import type { AnnotatedImportDraft, ClubImportResult } from "@/modules/club-imports/repository";
 import { clubClassLevelLabels } from "@/modules/club-rosters/domain";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
@@ -270,7 +270,7 @@ export function ClubImportWorkspace({ initialPreview }: { initialPreview?: ClubI
                       {(draft.newChurchName || draft.churchName) && (
                         <option value={NEW_CHURCH}>Create church: {draft.newChurchName || draft.churchName}</option>
                       )}
-                      {churches.map((church) => <option key={church.id} value={church.id}>{sponsorOptionLabel(church)}</option>)}
+                      {churches.map((church) => <option key={church.id} value={church.id}>{church.type !== "CHURCH" && churchStem(church.name) === churchStem(draft.churchName) ? `Use existing ${church.type === "GROUP" ? "group" : "company"}: ${church.name}` : sponsorOptionLabel(church)}</option>)}
                     </select>
                   </label>
                   <label>
