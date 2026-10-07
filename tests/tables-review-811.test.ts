@@ -57,7 +57,7 @@ describe("the printed honors report copes with any number of honors (#811)", () 
   it("lists every honor of a large club once, under one header row", () => {
     const counts = Array.from({ length: 600 }, (_, index) => ({ honorName: `Synthetic honor ${index} ${"long ".repeat(20)}`, count: (index % 9) + 1 }));
     const html = renderToStaticMarkup(createElement(HonorsPrintReport, { clubName: "Synthetic Club", clubYear: "2026-2027", honors: counts, scope: "CLUB" }));
-    expect(html.match(/<tr>/g)).toHaveLength(601);
+    expect(html.match(/<tr[\s>]/g)).toHaveLength(601);
     expect(html.match(/<thead>/g)).toHaveLength(1);
     expect(html).toContain("Synthetic honor 599");
   });
@@ -65,7 +65,7 @@ describe("the printed honors report copes with any number of honors (#811)", () 
   it("lists every completed honor of one member, and a dated or undated row each", () => {
     const completed = Array.from({ length: 150 }, (_, index) => ({ honorName: `Synthetic honor ${index}`, completionDate: index % 2 ? "2026-08-15" : "" }));
     const html = renderToStaticMarkup(createElement(HonorsPrintReport, { clubName: "Synthetic Club", clubYear: "2026-2027", honors: completed, memberLabel: "Synthetic, Pat", scope: "MEMBER" }));
-    expect(html.match(/<tr>/g)).toHaveLength(151);
+    expect(html.match(/<tr[\s>]/g)).toHaveLength(151);
     expect(html).toContain("No date");
   });
 
@@ -100,10 +100,11 @@ describe("sort controls state the order they set (#811)", () => {
 describe("every table carries a style that gives its cells padding (#811)", () => {
   // A table with no class has no cell padding at all, which ran "CONFIRMED" into the name beside it (I4).
   const styledClasses = ["report-table", "editable-settings-table", "guardian-review-table", "reminder-recipient-table", "club-form-roll-table", "printTable"];
-  // Styled through their container's own rules (the CSS selector named here), not a class on the table.
-  const styledByAncestor: Record<string, string> = {
-    "components/check-in-book.tsx": ".check-in-book-page table",
-    "app/(workspace)/more/reports/packets/page.tsx": ".retreat-packet-sheet table",
+  // Tables styled through their container's own rule, not a class on the table: the exact number allowed per
+  // file, and the CSS selector that styles them. Any other table in these files still needs a base class.
+  const styledByAncestor: Record<string, { tables: number; selector: string }> = {
+    "components/check-in-book.tsx": { tables: 1, selector: ".check-in-book-page table" },
+    "app/(workspace)/more/reports/packets/page.tsx": { tables: 2, selector: ".retreat-packet-sheet table" },
   };
 
   it("has a base class on every table in the app and components", () => {
@@ -111,15 +112,19 @@ describe("every table carries a style that gives its cells padding (#811)", () =
     const unstyled: string[] = [];
     for (const file of files) {
       const relative = path.relative(root, file);
-      if (styledByAncestor[relative]) continue;
-      for (const match of readFileSync(file, "utf8").matchAll(/<table\b([^>]*)>/g)) {
-        if (!styledClasses.some((name) => match[1].includes(name))) unstyled.push(`${relative}: <table${match[1]}>`);
-      }
+      const bare = Array.from(readFileSync(file, "utf8").matchAll(/<table\b([^>]*)>/g)).filter((match) => !styledClasses.some((name) => match[1].includes(name)));
+      const allowed = styledByAncestor[relative]?.tables ?? 0;
+      if (bare.length !== allowed) unstyled.push(`${relative}: ${bare.length} tables without a base class (allowed ${allowed}): ${bare.map((match) => `<table${match[1]}>`).join(" ")}`);
     }
     expect(unstyled).toEqual([]);
   });
 
+  it("keeps the packet's row headers unshaded and lets long last columns grow", () => {
+    expect(css).toMatch(/\.retreat-packet-sheet tbody th\s*\{[^}]*background:\s*transparent/);
+    expect(css).toMatch(/\.report-table\.report-table-auto td:last-child\s*\{[^}]*width:\s*auto/);
+  });
+
   it("the ancestor-styled tables still have their rule", () => {
-    for (const selector of Object.values(styledByAncestor)) expect(css).toContain(selector);
+    for (const { selector } of Object.values(styledByAncestor)) expect(css).toContain(selector);
   });
 });

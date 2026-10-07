@@ -58,7 +58,7 @@ export function ClubYearEndConference({ reportYear, initialRows }: { reportYear:
       </div>
       {error && <div className="inline-notice error" role="alert">{error}</div>}
       <div className="table-wrap">
-        <table role="table" className="report-table table-cards">
+        <table role="table" className="report-table report-table-auto table-cards">
           <thead role="rowgroup">
             <tr role="row"><th role="columnheader">Club</th><th role="columnheader">Sponsoring church</th><th role="columnheader">Status</th><th role="columnheader">Total membership</th><th role="columnheader" /></tr>
           </thead>

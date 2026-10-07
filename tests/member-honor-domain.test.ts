@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   type ClubHonorsRow,
@@ -10,6 +12,8 @@ import {
   honorYearSummary,
   memberHonorEntryProblem,
 } from "@/modules/honors/member-honor-domain";
+
+const read = (file: string) => readFileSync(path.resolve(__dirname, "..", file), "utf8");
 
 const entry = (overrides: Partial<MemberHonorEntryRecord>): MemberHonorEntryRecord => ({
   id: "entry-1",
@@ -131,12 +135,15 @@ describe("filterClubHonorsRows and clubHonorsCsv", () => {
     expect(csv).not.toMatch(/birth|dietary|allerg|medical|insurance/i);
   });
 
-  it("starts with the page's own columns (name, current class) and names the class as the screen does (#811)", () => {
+  it("keeps the original five columns in place and adds the page's Current class column at the end (#811)", () => {
+    expect(CLUB_HONORS_CSV_HEADERS).toEqual(["Last name", "First name", "Honor", "Status", "Completion date", "Current class"]);
     const lines = clubHonorsCsv(rows).split(/\r?\n/);
     expect(lines[0]).toBe(CLUB_HONORS_CSV_HEADERS.map((header) => `"${header}"`).join(","));
-    expect(lines[1]).toContain("Explorer");
+    // The label the screen shows for the class column is the CSV's, and the class is named as the screen names it.
+    expect(read("components/club-honors-workspace.tsx")).toContain(">Current class</th>");
+    expect(lines[1]).toBe('"Lin","Ada","Basic Rescue","Completed","2026-09-01","Explorer"');
     // A member with no honors still has a line, with the honor columns empty.
-    expect(lines.some((line) => line.includes("Diaz") && line.includes("Explorer"))).toBe(true);
+    expect(lines.some((line) => line.includes("Diaz") && line.endsWith(',"Explorer"'))).toBe(true);
   });
 
   it("maps current honors by roster member id for the roster card", () => {

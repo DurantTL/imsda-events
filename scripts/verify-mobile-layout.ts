@@ -922,7 +922,7 @@ function auditInPage(args: { touch: boolean; cards: boolean; minTarget: number; 
           let column = 0;
           for (const earlier of Array.from(row.cells)) { if (earlier === box.cell) break; column += earlier.colSpan; }
           const header = headers[column];
-          if (header && getComputedStyle(header).display.startsWith("table")) {
+          if (header && (header as HTMLTableCellElement).colSpan <= 1 && getComputedStyle(header).display.startsWith("table")) {
             const headRect = header.getBoundingClientRect();
             if (Math.abs(headRect.left - box.rect.left) > 2 || Math.abs(headRect.right - box.rect.right) > 2) cellProblems.push(`${cellLabel(table, name)}: header "${clean(header.textContent).slice(0, 20)}" is ${Math.round(headRect.left)}..${Math.round(headRect.right)}px over a column at ${Math.round(box.rect.left)}..${Math.round(box.rect.right)}px`);
           }

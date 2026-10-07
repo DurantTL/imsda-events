@@ -211,10 +211,11 @@ export function honorYearSummary(rows: readonly ClubHonorsRow[], clubYear: strin
 }
 
 /**
- * The columns of the club Honors page's table, in order (#811): the CSV starts with the same
- * ones (the name is split in two so it sorts in a spreadsheet), then has one line per honor.
+ * The CSV's columns (#811). The first five keep their original positions, so a spreadsheet that reads by
+ * position still works; "Current class", the page's other column, is added at the end. The name is split
+ * in two so it sorts in a spreadsheet, and there is one line per honor.
  */
-export const CLUB_HONORS_CSV_HEADERS = ["Last name", "First name", "Current class", "Honor", "Status", "Completion date"] as const;
+export const CLUB_HONORS_CSV_HEADERS = ["Last name", "First name", "Honor", "Status", "Completion date", "Current class"] as const;
 
 /** Names, class and honors only — no birth dates, ages, or any medical field. */
 export function clubHonorsCsv(rows: readonly ClubHonorsRow[]) {
@@ -222,11 +223,11 @@ export function clubHonorsCsv(rows: readonly ClubHonorsRow[]) {
   for (const row of rows) {
     const className = row.classLevel ? (clubClassLevelLabels[row.classLevel as keyof typeof clubClassLevelLabels] ?? row.classLevel) : "";
     if (row.honors.length === 0) {
-      out.push([row.lastName, row.firstName, className, "", "", ""]);
+      out.push([row.lastName, row.firstName, "", "", "", className]);
       continue;
     }
     for (const honor of row.honors) {
-      out.push([row.lastName, row.firstName, className, honor.honorName, memberHonorStatusLabels[honor.status], honor.completionDate]);
+      out.push([row.lastName, row.firstName, honor.honorName, memberHonorStatusLabels[honor.status], honor.completionDate, className]);
     }
   }
   return toCsv(out);

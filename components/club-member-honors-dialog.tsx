@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { HonorCombobox } from "@/components/honor-combobox";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import {
@@ -51,6 +51,13 @@ export function ClubMemberHonorsDialog({
   const [honorId, setHonorId] = useState("");
   const [saving, setSaving] = useState(false);
   const dialogRef = useAccessibleDialog<HTMLElement>(true, onClose);
+  // The honors list scrolls inside a capped height, so it is a keyboard stop only while it actually scrolls.
+  const listRef = useRef<HTMLUListElement>(null);
+  const [listScrolls, setListScrolls] = useState(false);
+  useEffect(() => {
+    const node = listRef.current;
+    setListScrolls(Boolean(node && node.scrollHeight > node.clientHeight + 1));
+  }, [history]);
 
   const load = useCallback(async () => {
     try {
@@ -130,7 +137,7 @@ export function ClubMemberHonorsDialog({
         ) : current.length === 0 ? (
           <p className="public-manage-empty">No honors recorded yet.</p>
         ) : (
-          <ul className="public-manage-club-list member-honors-list" aria-label="Recorded honors" tabIndex={0}>
+          <ul className="public-manage-club-list member-honors-list" aria-label="Recorded honors" ref={listRef} tabIndex={listScrolls ? 0 : undefined}>
             {current.map((entry) => (
               <li key={entry.honorId}>
                 <span>

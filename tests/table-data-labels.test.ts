@@ -70,8 +70,8 @@ describe("card labels match their column headers", () => {
         const headers = headerLabels(table);
         for (const label of new Set(labels)) {
           const wanted = normalize(label);
-          // A header may carry extra words ("Honors" over "Honors, newest first"); the label is its start.
-          if (!headers.some((header) => header === wanted || header.startsWith(wanted))) {
+          // An exact match, or the label followed by a separator ("honors, newest first"), never a longer word.
+          if (!headers.some((header) => header === wanted || (header.startsWith(wanted) && /^[\s,:;(/-]/.test(header.slice(wanted.length))))) {
             problems.push(`${path.relative(root, file)}: data-label "${label}" has no matching header (headers: ${headers.join(" | ") || "none found"})`);
           }
         }

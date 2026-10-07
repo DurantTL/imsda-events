@@ -10445,3 +10445,8 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
   .retreat-packet-sheet table.table-cards td, .retreat-packet-sheet table.table-cards th { border: 0; }
   .retreat-packet-sheet table.table-cards.table-cards > tbody > tr > th[scope="row"] { background: transparent; border-bottom: 1px solid #eaf0f2; }
 }
+
+/* Review fixes (#811). The retreat packet's row headers are plain cells, not shaded column headings. */
+.retreat-packet-sheet tbody th { background: transparent; font-weight: inherit; }
+/* Tables whose last column holds long text (a result, a name, a repeat rule) are not held to 120px. */
+.report-table.report-table-auto td:last-child { width: auto; }

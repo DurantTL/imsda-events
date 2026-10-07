@@ -83,7 +83,7 @@ export function LodgingWorkspace({ eventName, initialView, canSetRates }: { even
             <span role="status">Version {view.property.currentTemplateVersion} is available. Capacities for this event stay as they are until you update.</span>{" "}
             <button type="button" className="secondary-button" disabled={busy} onClick={() => void run(() => call(`${base}/layout`, "POST", {}), "Updated to the latest property layout.")}>Update to latest property layout</button>
           </> : "This event uses the latest layout."}</p>
-        {view.nights.length === 0 ? <p>This event has no bookable nights.</p> : <div className="table-wrap"><table className="report-table">
+        {view.nights.length === 0 ? <p>This event has no bookable nights.</p> : <div className="table-wrap"><table className="report-table report-table-auto">
           <caption>People the inventory takes, by night</caption>
           <thead><tr><th scope="col">Night</th><th scope="col">Capacity in service</th></tr></thead>
           <tbody>{view.totalsByNight.map((row) => <tr key={row.night}><td>{row.night}</td><td>{row.capacity}{row.unlimited ? " plus tent camping (no fixed limit)" : ""}</td></tr>)}</tbody>
@@ -92,7 +92,7 @@ export function LodgingWorkspace({ eventName, initialView, canSetRates }: { even
 
       {view.buildings.map((building) => <section className="panel" key={building.key}>
         <h3>{building.name}</h3>
-        <div className="table-wrap"><table className="report-table">
+        <div className="table-wrap"><table className="report-table report-table-auto">
           <thead><tr><th scope="col">Unit</th><th scope="col">Details</th><th scope="col">Sleeps up to</th><th scope="col">Nights in service</th><th scope="col">Unavailable</th><th scope="col">Holds</th></tr></thead>
           <tbody>{building.units.map((unit) => <UnitRow key={unit.eventUnitId} unit={unit} nights={view.nights} base={base} busy={busy} run={run} />)}</tbody>
         </table></div>
@@ -101,7 +101,7 @@ export function LodgingWorkspace({ eventName, initialView, canSetRates }: { even
       <section className="panel">
         <h3>Lodging rates</h3>
         <p>No rate means lodging is included or free. A tent with power uses the tent rate unless it has its own.</p>
-        {canSetRates ? <div className="table-wrap"><table className="report-table">
+        {canSetRates ? <div className="table-wrap"><table className="report-table report-table-auto">
           <thead><tr><th scope="col">Category</th><th scope="col">Current rate</th><th scope="col">Set</th></tr></thead>
           <tbody>{lodgingCategories.map((category) => <RateRow key={category} category={category} view={view} base={base} busy={busy} run={run} />)}</tbody>
         </table></div> : <p>Only staff who manage finance can set rates.{" "}
