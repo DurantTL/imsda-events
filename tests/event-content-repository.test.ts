@@ -24,7 +24,8 @@ function mockPrisma(ownedAssetIds: string[]) {
   );
   const tx = {
     eventAsset: { findMany },
-    eventContentSection: { deleteMany, create },
+    // The stored custom-HTML check (#816) reads what is saved now: none here.
+    eventContentSection: { deleteMany, create, findMany: vi.fn().mockResolvedValue([]) },
     auditLog: { create: auditLogCreate },
   };
   const listedSections = vi.fn().mockResolvedValue([]);

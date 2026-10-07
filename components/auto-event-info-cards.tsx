@@ -9,7 +9,10 @@ export function AutoEventHeader({
   header,
   timeLabel,
   introLine,
+  titleAsH2 = false,
 }: {
+  /** True when a header banner on the page owns the h1 (#816). */
+  titleAsH2?: boolean;
   header: EventInfoCards["header"];
   /** Time range line, e.g. "Friday, 4:00 PM CDT – Sunday, 12:00 PM CDT". */
   timeLabel?: string;
@@ -19,7 +22,9 @@ export function AutoEventHeader({
   return (
     <section className="auto-info-header" aria-labelledby="auto-info-title">
       <p className="public-registration-eyebrow">{header.eyebrow}</p>
-      <h1 id="auto-info-title">{header.title}</h1>
+      {titleAsH2
+        ? <h2 id="auto-info-title" className="auto-info-demoted-title">{header.title}</h2>
+        : <h1 id="auto-info-title">{header.title}</h1>}
       {header.tagline && <p className="auto-info-tagline">{header.tagline}</p>}
       {header.meta && <p className="auto-info-meta">{header.meta}</p>}
       {timeLabel && <p className="auto-info-meta">{timeLabel}</p>}

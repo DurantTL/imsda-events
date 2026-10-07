@@ -7,6 +7,17 @@ import type { EventContentSectionRecord } from "@/modules/events/content-reposit
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EventInfoCards, eventContentToneLabels } from "@/components/event-info-cards";
 import {
+  BlockEditor,
+  BlockPreview,
+  blockKindLabels,
+  defaultBlockData,
+  isNewBlockKind,
+  newBlockKinds,
+} from "@/components/event-block-editors";
+import type { EventBlockEvent } from "@/components/event-content-blocks";
+import type { SanitizedHtml } from "@/modules/events/content-html";
+import {
+  canPlaceOnRegistrationForm,
   eventContentTones,
   isInfoCardKind,
   type EventContentPlacement,
@@ -15,8 +26,11 @@ import {
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import {
+  canMoveSection,
   localAssetImpact,
+  moveSection,
   quoteList,
+  sectionPayload,
   withoutAssetTiles,
   type SectionDraft,
 } from "@/components/event-content-asset-tiles";
@@ -96,6 +110,17 @@ const kindLabels: Record<SectionDraft["kind"], string> = {
   NOTICE: "Notice card",
   STEPS: "Steps card",
   CHECKLIST: "Checklist card",
+  HERO: "Header banner",
+  IMAGE: "Photo with text",
+  GALLERY: "Photo gallery",
+  FORMATTED_TEXT: "Formatted text",
+  EMBED: "Video or map",
+  FAQ: "Questions and answers",
+  CUSTOM_HTML: "Custom HTML",
+  SCHEDULE: "Schedule",
+  SPEAKERS: "Speaker cards",
+  CONTACT: "Contact card",
+  COUNTDOWN: "Countdown",
 };
 
 type UpdateSection = (index: number, patch: Partial<SectionDraft>) => void;
@@ -215,8 +240,13 @@ function ItemsEditor({
   );
 }
 
+let draftCounter = 0;
+const newDraftId = () => `draft-${(draftCounter += 1)}`;
+
 function draftsFrom(sections: EventContentSectionRecord[]): SectionDraft[] {
   return sections.map((section) => ({
+    cid: newDraftId(),
+    serverId: section.id,
     kind: section.kind,
     title: section.title,
     body: section.body,
@@ -225,17 +255,30 @@ function draftsFrom(sections: EventContentSectionRecord[]): SectionDraft[] {
     items: section.items.map((item) => ({ ...item })),
     isPublished: section.isPublished,
     links: section.links.map((link) => ({ ...link })),
+    // Only the #816 blocks carry data; the older kinds save exactly as before.
+    ...(isNewBlockKind(section.kind) && section.kind !== "CUSTOM_HTML" && section.kind !== "FORMATTED_TEXT"
+      ? { data: structuredClone(section.data) }
+      : {}),
   }));
 }
 
 export function EventContentWorkspace({
   eventId,
   eventName,
+  eventSlug,
+  eventTiming,
+  isSystemAdmin,
   initialSections,
+  initialSanitizedHtml,
   initialAssets,
 }: {
+  initialSanitizedHtml: Record<string, SanitizedHtml>;
   eventId: string;
   eventName: string;
+  eventSlug: string;
+  eventTiming: EventBlockEvent;
+  /** Custom HTML is editable only by a system administrator; the server enforces it too. */
+  isSystemAdmin: boolean;
   initialSections: EventContentSectionRecord[];
   initialAssets: EventAssetRecord[];
 }) {
@@ -260,7 +303,9 @@ export function EventContentWorkspace({
   }, [closeDeleteDialog, deleting]);
   const deleteDialogRef = useAccessibleDialog<HTMLElement>(pendingDelete !== null, dismissDeleteDialog);
   const [saved, setSaved] = useState(() => draftsFrom(initialSections));
-  const [sections, setSections] = useState(() => draftsFrom(initialSections));
+  // The same drafts (and ids) as `saved`, so nothing starts out looking edited.
+  const [sections, setSections] = useState(saved);
+  const [sanitizedHtml, setSanitizedHtml] = useState(initialSanitizedHtml);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -289,17 +334,16 @@ export function EventContentWorkspace({
   }
 
   function move(index: number, delta: number) {
-    const target = index + delta;
-    if (target < 0 || target >= sections.length) return;
-    setSections((current) => {
-      const next = [...current];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
+    setSections((current) => moveSection(current, index, delta));
   }
 
+  const hasHero = sections.some((section) => section.kind === "HERO");
+  const [blockToAdd, setBlockToAdd] = useState<(typeof newBlockKinds)[number]>("FORMATTED_TEXT");
+
   function addSection(kind: SectionDraft["kind"], tone?: EventContentTone) {
-    setSections((current) => [...current, {
+    if ((kind === "HERO" && hasHero) || (kind === "CUSTOM_HTML" && !isSystemAdmin)) return;
+    const added: SectionDraft = {
+      cid: newDraftId(),
       kind,
       title: "",
       body: "",
@@ -308,7 +352,13 @@ export function EventContentWorkspace({
       items: kind === "STEPS" || kind === "CHECKLIST" ? [{ title: "", text: "" }] : [],
       isPublished: false,
       links: kind === "RESOURCE_LINKS" ? [{ label: "", description: "", url: "", assetId: null }] : [],
-    }]);
+      ...(defaultBlockData(kind) ? { data: defaultBlockData(kind) } : {}),
+    };
+    // The banner always goes first; everything else goes last.
+    setSections((current) => (kind === "HERO" ? [added, ...current] : [...current, added]));
+    setBlockToAdd("FORMATTED_TEXT");
+    setError("");
+    setNotice("");
   }
 
   function addRetreatGuideStarter() {
@@ -316,6 +366,7 @@ export function EventContentWorkspace({
       ...current,
       ...retreatGuideStarterSections.map((section) => ({
         ...section,
+        cid: newDraftId(),
         links: section.links.map((link) => ({ ...link })),
       })),
     ]);
@@ -421,7 +472,7 @@ export function EventContentWorkspace({
       const response = await fetch(`/api/events/${eventId}/content`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sections }),
+        body: JSON.stringify({ sections: sections.map(sectionPayload) }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.sections) {
@@ -430,6 +481,7 @@ export function EventContentWorkspace({
       const next = draftsFrom(result.sections);
       setSections(next);
       setSaved(next);
+      if (result.sanitizedHtml) setSanitizedHtml(result.sanitizedHtml);
       allowNextNavigation();
       // Where each file is used just changed; refresh it for the file list and
       // delete dialog. Best effort: the server re-checks on delete anyway.
@@ -522,22 +574,28 @@ export function EventContentWorkspace({
         {sections.map((section, index) => (
           <section
             className={`panel event-content-section ${section.isPublished ? "" : "is-draft"}`}
-            key={index}
+            key={section.cid ?? index}
           >
             <div className="message-delivery-toolbar">
               <div>
                 <p className="eyebrow">
                   {kindLabels[section.kind]}
+                  {section.kind === "CUSTOM_HTML" && !isSystemAdmin ? " · system administrator only" : ""}
                   {section.isPublished ? "" : " · draft"}
                 </p>
               </div>
               <div className="form-actions">
-                <button className="secondary-button" type="button" onClick={() => move(index, -1)} disabled={index === 0}>Up</button>
-                <button className="secondary-button" type="button" onClick={() => move(index, 1)} disabled={index === sections.length - 1}>Down</button>
+                {section.kind !== "HERO" && (
+                  <>
+                    <button className="secondary-button" type="button" onClick={() => move(index, -1)} disabled={!canMoveSection(sections, index, -1)}>Up</button>
+                    <button className="secondary-button" type="button" onClick={() => move(index, 1)} disabled={!canMoveSection(sections, index, 1)}>Down</button>
+                  </>
+                )}
                 <button
                   className="secondary-button"
                   type="button"
                   onClick={() => setRemoveSectionIndex(index)}
+                  disabled={section.kind === "CUSTOM_HTML" && !isSystemAdmin}
                 >
                   <Trash2 size={15} aria-hidden="true" /> Remove
                 </button>
@@ -550,6 +608,7 @@ export function EventContentWorkspace({
                 value={section.title}
                 maxLength={120}
                 required
+                readOnly={section.kind === "CUSTOM_HTML" && !isSystemAdmin}
                 onChange={(event) => updateSection(index, { title: event.target.value })}
               />
             </label>
@@ -565,6 +624,17 @@ export function EventContentWorkspace({
                 />
                 <small>Leave a blank line between paragraphs. Formatting and links are not carried through.</small>
               </label>
+            ) : isNewBlockKind(section.kind) ? (
+              <BlockEditor
+                eventId={eventId}
+                eventSlug={eventSlug}
+                sanitizedHtml={sanitizedHtml}
+                section={section}
+                index={index}
+                assets={assets}
+                isSystemAdmin={isSystemAdmin}
+                updateSection={updateSection}
+              />
             ) : section.kind === "RESOURCE_LINKS" ? (
               <LinksEditor section={section} index={index} assets={assets} updateSection={updateSection} />
             ) : section.kind === "NOTICE" ? (
@@ -595,6 +665,28 @@ export function EventContentWorkspace({
               </>
             ) : (
               <ItemsEditor section={section} index={index} updateSection={updateSection} />
+            )}
+
+            {isNewBlockKind(section.kind) && section.kind !== "CUSTOM_HTML" && (
+              <>
+                {canPlaceOnRegistrationForm(section.kind) && (
+                  <label>
+                    Show this block
+                    <select
+                      value={section.placement ?? "PUBLIC_PAGE"}
+                      onChange={(event) => updateSection(index, { placement: event.target.value as EventContentPlacement })}
+                    >
+                      <option value="PUBLIC_PAGE">On the public event page</option>
+                      <option value="REGISTRATION_FORM">At the top of the registration form</option>
+                      <option value="BOTH">On both</option>
+                    </select>
+                  </label>
+                )}
+                <details className="event-info-card-preview">
+                  <summary>Preview this block</summary>
+                  <BlockPreview section={section} index={index} assets={assets} eventSlug={eventSlug} eventTiming={eventTiming} />
+                </details>
+              </>
             )}
 
             {isInfoCardKind(section.kind) && (
@@ -635,6 +727,7 @@ export function EventContentWorkspace({
               <input
                 type="checkbox"
                 checked={section.isPublished}
+                disabled={section.kind === "CUSTOM_HTML" && !isSystemAdmin}
                 onChange={(event) => updateSection(index, { isPublished: event.target.checked })}
               />
               <span>
@@ -660,6 +753,28 @@ export function EventContentWorkspace({
           </button>
           <button className="secondary-button" type="button" onClick={() => addSection("CHECKLIST")}>
             <SquareCheck size={15} aria-hidden="true" /> Add a checklist card
+          </button>
+        </div>
+
+        <div className="event-block-picker">
+          <label>
+            Add a block
+            <select value={blockToAdd} onChange={(event) => setBlockToAdd(event.target.value as typeof blockToAdd)}>
+              {newBlockKinds.map((kind) => (
+                <option
+                  value={kind}
+                  key={kind}
+                  disabled={(kind === "HERO" && hasHero) || (kind === "CUSTOM_HTML" && !isSystemAdmin)}
+                >
+                  {blockKindLabels[kind]}
+                  {kind === "HERO" && hasHero ? " (already on the page)" : ""}
+                  {kind === "CUSTOM_HTML" && !isSystemAdmin ? " (system administrators only)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button className="secondary-button" type="button" onClick={() => addSection(blockToAdd)}>
+            <Plus size={15} aria-hidden="true" /> Add block
           </button>
         </div>
 

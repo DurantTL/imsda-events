@@ -16,6 +16,13 @@ import {
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { EventInfoCards } from "@/components/event-info-cards";
+import {
+  EventContentBlocks,
+  EventHeroBanner,
+  publicEventAssetUrl,
+} from "@/components/event-content-blocks";
+import { EventEmbedFullLoad } from "@/components/event-embed-full-load";
+import { sanitizedHtmlBySection } from "@/modules/events/content-html";
 import { ClubDirectorSignInNotice } from "@/components/club-director-sign-in-notice";
 import { TranslateHint } from "@/components/translate-hint";
 import { AutoEventHeader, AutoEventInfoCards } from "@/components/auto-event-info-cards";
@@ -78,6 +85,8 @@ export default async function PublicEventPage({
     (section) => section.kind === "RICH_TEXT" && section.body.trim().length > 0,
   );
   const canChooseForm = landing.lifecycle.ctaEnabled && hasForms;
+  const heroSection = landing.contentSections.find((section) => section.kind === "HERO");
+  const assetUrl = (assetId: string) => publicEventAssetUrl(landing.event.slug, assetId);
   // Auto-built info cards (#651) are for club events only; every other event's
   // page renders exactly as before, without even reading the card data.
   const autoCards = landing.event.audience === "CLUB"
@@ -104,17 +113,23 @@ export default async function PublicEventPage({
       {/* One container (#720): every section below shares this width and left
           edge at every viewport, with the same side gutters on a phone. */}
       <div className="public-event-container">
+      {/* The header banner (#816) comes first and owns the page's h1; the event
+          header below then drops to an h2. Without a banner nothing changes. */}
+      {heroSection && <EventHeroBanner section={heroSection} assetUrl={assetUrl} />}
       {autoCards ? (
         <AutoEventHeader
           header={autoCards.header}
           timeLabel={landing.event.timeLabel}
           introLine={landing.lifecycle.heroTagline}
+          titleAsH2={Boolean(heroSection)}
         />
       ) : (
         <section className="public-registration-hero public-event-hero">
           <div>
             <p className="public-registration-eyebrow">Iowa-Missouri Conference event</p>
-            <h1>{landing.event.name}</h1>
+            {heroSection
+              ? <h2 className="public-event-demoted-title">{landing.event.name}</h2>
+              : <h1>{landing.event.name}</h1>}
             <p>{landing.lifecycle.heroTagline}</p>
           </div>
           <div className="public-registration-event-details">
@@ -223,6 +238,21 @@ export default async function PublicEventPage({
       })}
 
       {autoCards && <AutoEventInfoCards cards={autoCards} />}
+
+      {/* The #816 blocks, in the order staff set them. Custom HTML is
+          sanitized again here, at render, whatever was stored. */}
+      <EventContentBlocks
+        sections={landing.contentSections}
+        placement="page"
+        assetUrl={assetUrl}
+        event={landing.event}
+        nowMs={landing.renderedAtMs}
+        sanitizedHtml={sanitizedHtmlBySection(landing.contentSections)}
+      />
+      {/* The frames' Content-Security-Policy applies only to a full page load. */}
+      {landing.contentSections.some((section) => section.kind === "EMBED" && section.placement !== "REGISTRATION_FORM") && (
+        <EventEmbedFullLoad />
+      )}
 
       <div className="public-event-layout">
         <section className="public-event-main" aria-labelledby="registration-options-title">

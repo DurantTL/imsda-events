@@ -184,7 +184,7 @@ describe("replaceEventContent with info cards", () => {
     const create = vi.fn().mockResolvedValue({});
     const tx = {
       eventAsset: { findMany: vi.fn().mockResolvedValue([]) },
-      eventContentSection: { deleteMany: vi.fn(), create },
+      eventContentSection: { deleteMany: vi.fn(), create, findMany: vi.fn().mockResolvedValue([]) },
       auditLog: { create: vi.fn() },
     };
     dependencies.getPrisma.mockReturnValue({
@@ -266,7 +266,8 @@ describe("review follow-ups", () => {
       where: {
         event: { slug: "synthetic-event", isPublished: true },
         isPublished: true,
-        kind: { in: ["NOTICE", "STEPS", "CHECKLIST"] },
+        // The info cards, plus the text blocks of #816 that may sit on the form.
+        kind: { in: ["NOTICE", "STEPS", "CHECKLIST", "FORMATTED_TEXT", "FAQ", "CONTACT"] },
         placement: { in: ["REGISTRATION_FORM", "BOTH"] },
       },
     }));

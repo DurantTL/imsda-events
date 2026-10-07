@@ -4,6 +4,7 @@ import { AutoEventInfoCards } from "@/components/auto-event-info-cards";
 import { clubDirectorSignInNotice } from "@/modules/club-registrations/club-notices";
 import { ClubDirectorSignInNotice } from "@/components/club-director-sign-in-notice";
 import { EventInfoCards } from "@/components/event-info-cards";
+import { EventContentBlocks, publicEventAssetUrl } from "@/components/event-content-blocks";
 import { PublicRegistrationForm } from "@/components/public-registration-form";
 import { listPublishedRegistrationInfoCards } from "@/modules/events/content-repository";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
@@ -121,6 +122,12 @@ export default async function PublicRegistrationPage({
           <>
             <ClubDirectorSignInNotice event={clubNoticeEvent} />
             <EventInfoCards sections={editableCards} eventSlug={eventSlug} placement="registration" />
+            <EventContentBlocks
+              sections={editableCards}
+              placement="registration"
+              assetUrl={(assetId) => publicEventAssetUrl(eventSlug, assetId)}
+              idPrefix="registration-block"
+            />
             {autoCards ? <AutoEventInfoCards cards={autoCards} /> : null}
           </>
         ) : undefined

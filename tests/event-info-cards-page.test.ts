@@ -13,6 +13,8 @@ vi.mock("@/modules/event-info-cards/repository", () => ({
   getAutoEventInfoCards: mocks.getAutoEventInfoCards,
 }));
 vi.mock("next/navigation", () => ({ notFound: vi.fn() }));
+// The page sanitizes custom HTML (#816) through a server-only module.
+vi.mock("server-only", () => ({}));
 
 import PublicEventPage from "@/app/(public)/events/[eventSlug]/page";
 import { buildEventInfoCards } from "@/modules/event-info-cards/domain";

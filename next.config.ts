@@ -25,7 +25,16 @@ const skipBuildTypecheck = process.env.NEXT_SKIP_BUILD_TYPECHECK === "1";
 // church-location pin picker (#480) only.
 const mapTileOrigin = "https://tile.openstreetmap.org";
 
-function contentSecurityPolicy(frameAncestors: string, extraImageOrigins = "") {
+// The only origins a public event page's video or map block may frame (#816).
+// Keep in step with `embedFrameOrigins` in modules/events/content-embeds.ts;
+// tests/event-page-embed-csp.test.ts fails when the two drift apart.
+const embedFrameOrigins = [
+  "https://www.youtube-nocookie.com",
+  "https://player.vimeo.com",
+  "https://www.google.com",
+].join(" ");
+
+function contentSecurityPolicy(frameAncestors: string, extraImageOrigins = "", extraFrameOrigins = "") {
   return [
     "default-src 'self'",
     `script-src 'self' 'unsafe-inline' ${squareWebOrigins}${isDevelopment ? " 'unsafe-eval'" : ""}`,
@@ -33,7 +42,7 @@ function contentSecurityPolicy(frameAncestors: string, extraImageOrigins = "") {
     `img-src 'self' blob: data:${extraImageOrigins ? ` ${extraImageOrigins}` : ""}`,
     `font-src 'self' data: ${squareFontOrigins}`,
     `connect-src 'self' ${squareWebOrigins} ${squarePciOrigins} ${squareTelemetryOrigin}`,
-    `frame-src 'self' ${squareWebOrigins}`,
+    `frame-src 'self' ${squareWebOrigins}${extraFrameOrigins ? ` ${extraFrameOrigins}` : ""}`,
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
@@ -152,6 +161,20 @@ const nextConfig: NextConfig = {
           {
             key: "Content-Security-Policy",
             value: contentSecurityPolicy("'none'", mapTileOrigin),
+          },
+        ],
+      },
+      {
+        // A public event page's video or map block (#816) is the one place a
+        // third-party frame is allowed: the site policy plus the three embed
+        // origins in frame-src, nothing else. Exactly this path, so the
+        // registration pages and every other page keep the locked policy.
+        // Listed after the site-wide rule so this policy is the one sent.
+        source: "/events/:eventSlug",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: contentSecurityPolicy("'none'", "", embedFrameOrigins),
           },
         ],
       },

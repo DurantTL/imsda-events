@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
 import { EventInfoCards } from "@/components/event-info-cards";
+import { EventContentBlocks, publicEventAssetUrl } from "@/components/event-content-blocks";
 import { GroupRegistrationFlow } from "@/components/group-registration-flow";
 import { listPublishedRegistrationInfoCards } from "@/modules/events/content-repository";
 import { GROUP_LABEL } from "@/modules/group-registrations/domain";
@@ -63,7 +64,17 @@ export default async function GroupRegistrationPage({ params }: GroupRegistratio
       eventSlug={eventSlug}
       topContent={
         editableCards.length > 0
-          ? <EventInfoCards sections={editableCards} eventSlug={eventSlug} placement="registration" />
+          ? (
+            <>
+              <EventInfoCards sections={editableCards} eventSlug={eventSlug} placement="registration" />
+              <EventContentBlocks
+                sections={editableCards}
+                placement="registration"
+                assetUrl={(assetId) => publicEventAssetUrl(eventSlug, assetId)}
+                idPrefix="registration-block"
+              />
+            </>
+          )
           : undefined
       }
       ready={{

@@ -3,8 +3,13 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 
 import { getPrisma } from "@/lib/prisma";
+import { customHtmlAssetIds, sanitizeCustomHtml } from "@/modules/events/content-html";
 import {
+  blockAssetIds,
+  hasBlockData,
+  parseBlockData,
   parseEventContentItems,
+  registrationFormKinds,
   type EventContentInput,
   type EventContentItem,
   type EventContentKind,
@@ -15,7 +20,7 @@ import {
 /** Thrown when a content save cannot be honored as written. */
 export class EventContentError extends Error {
   constructor(
-    public readonly code: "ASSET_NOT_IN_EVENT",
+    public readonly code: "ASSET_NOT_IN_EVENT" | "ASSET_NOT_AN_IMAGE" | "CUSTOM_HTML_FORBIDDEN",
     message: string,
   ) {
     super(message);
@@ -42,6 +47,8 @@ export type EventContentSectionRecord = {
   placement: EventContentPlacement;
   /** STEPS and CHECKLIST entries; empty for every other kind. */
   items: EventContentItem[];
+  /** Per-kind block content (#816), as stored; `{}` for the older kinds. Parse with `parseBlockData`. */
+  data: Record<string, unknown>;
   isPublished: boolean;
   links: EventContentLinkRecord[];
 };
@@ -54,6 +61,7 @@ const sectionSelect = {
   tone: true,
   placement: true,
   items: true,
+  data: true,
   isPublished: true,
   links: {
     orderBy: { position: "asc" as const },
@@ -61,10 +69,13 @@ const sectionSelect = {
   },
 } as const;
 
-type StoredSection = Omit<EventContentSectionRecord, "items"> & { items: unknown };
+type StoredSection = Omit<EventContentSectionRecord, "items" | "data"> & { items: unknown; data: unknown };
 
 function toRecord(section: StoredSection): EventContentSectionRecord {
-  return { ...section, items: parseEventContentItems(section.items) };
+  const data = section.data && typeof section.data === "object" && !Array.isArray(section.data)
+    ? (section.data as Record<string, unknown>)
+    : {};
+  return { ...section, items: parseEventContentItems(section.items), data };
 }
 
 /** Every section, published or not. For staff. */
@@ -109,7 +120,7 @@ export async function listPublishedRegistrationInfoCards(
     where: {
       event: { slug: eventSlug, isPublished: true },
       isPublished: true,
-      kind: { in: ["NOTICE", "STEPS", "CHECKLIST"] },
+      kind: { in: [...registrationFormKinds] },
       placement: { in: ["REGISTRATION_FORM", "BOTH"] },
     },
     orderBy: { position: "asc" },
@@ -131,8 +142,29 @@ export async function replaceEventContent(
   eventId: string,
   input: EventContentInput,
   actorUserId: string,
+  options: { isSystemAdmin?: boolean } = {},
 ) {
   const prisma = getPrisma();
+  const isSystemAdmin = options.isSystemAdmin === true;
+
+  // Everything that reaches the database is prepared here, once. Custom HTML
+  // is sanitized here (and again whenever it renders); block data is re-parsed
+  // so only the schema's own fields are stored, never extra keys a client sent.
+  // The header banner is always first, whatever order the client sent.
+  const orderedSections = [...input.sections].sort(
+    (a, b) => Number(b.kind === "HERO") - Number(a.kind === "HERO"),
+  );
+  const prepared = orderedSections.map((section) => {
+    // Trimmed after sanitizing: the sanitizer can leave edge whitespace (for
+    // example after a removed comment), and the schema trims what comes back.
+    const body = section.kind === "CUSTOM_HTML" ? sanitizeCustomHtml(section.body).trim() : section.body;
+    const data = hasBlockData(section.kind) ? parseBlockData(section.kind, section.data) : null;
+    const blockAssets = section.kind === "CUSTOM_HTML"
+      ? customHtmlAssetIds(body)
+      : blockAssetIds(section.kind, data);
+    return { section, body, data, blockAssets };
+  });
+
   const linkedAssetIds = [...new Set(
     input.sections.flatMap((section) => (
       section.kind === "RESOURCE_LINKS" || section.kind === "NOTICE"
@@ -140,8 +172,37 @@ export async function replaceEventContent(
         : []
     )),
   )];
+  const imageAssetIds = [...new Set(prepared.flatMap((entry) => entry.blockAssets))];
+  const assetsToCheck = [...new Set([...linkedAssetIds, ...imageAssetIds])];
   try {
     await prisma.$transaction(async (tx) => {
+      // Custom HTML is system-administrator content. An event administrator's
+      // save may carry the existing HTML blocks back unchanged (the editor
+      // shows them read-only, publish state included) but may not add one,
+      // edit one, publish or unpublish one, or drop one. Reordering is allowed.
+      // Compared on the sanitized form, inside the transaction, against what
+      // is stored now.
+      if (!isSystemAdmin) {
+        const stored = await tx.eventContentSection.findMany({
+          where: { eventId, kind: "CUSTOM_HTML" },
+          select: { title: true, body: true, isPublished: true },
+        });
+        const fingerprint = (title: string, body: string, isPublished: boolean) => (
+          `${title}\u0000${isPublished}\u0000${sanitizeCustomHtml(body).trim()}`
+        );
+        const expected = stored.map((row) => fingerprint(row.title, row.body, row.isPublished)).sort();
+        const submitted = prepared
+          .filter((entry) => entry.section.kind === "CUSTOM_HTML")
+          .map((entry) => fingerprint(entry.section.title, entry.body, entry.section.isPublished))
+          .sort();
+        if (expected.length !== submitted.length || expected.some((value, index) => value !== submitted[index])) {
+          throw new EventContentError(
+            "CUSTOM_HTML_FORBIDDEN",
+            "Only a system administrator can add, change, or remove custom HTML blocks.",
+          );
+        }
+      }
+
       // Every linked file must belong to this event. Checked inside the same
       // transaction as the write, against the live table rather than a value
       // read earlier, so a file moved or removed between page load and save
@@ -158,16 +219,36 @@ export async function replaceEventContent(
           );
         }
       }
+      // A block's picture must be an image uploaded to this event.
+      if (imageAssetIds.length > 0) {
+        const images = await tx.eventAsset.findMany({
+          where: { id: { in: imageAssetIds }, eventId },
+          select: { id: true, contentType: true },
+        });
+        if (images.length !== imageAssetIds.length) {
+          throw new EventContentError(
+            "ASSET_NOT_IN_EVENT",
+            "One of the images does not belong to this event. Reload and try again.",
+          );
+        }
+        if (images.some((image) => !image.contentType.startsWith("image/"))) {
+          throw new EventContentError(
+            "ASSET_NOT_AN_IMAGE",
+            "A block can only show an uploaded PNG, JPEG, or WebP image, not a PDF.",
+          );
+        }
+      }
 
-      // Links go with their section: the foreign key cascades on delete.
+      // Links and image references go with their section: the foreign keys cascade on delete.
       await tx.eventContentSection.deleteMany({ where: { eventId } });
-      for (const [position, section] of input.sections.entries()) {
+      for (const [position, entry] of prepared.entries()) {
+        const { section, body, data, blockAssets } = entry;
         await tx.eventContentSection.create({
           data: {
             eventId,
             kind: section.kind,
             title: section.title,
-            body: section.kind === "RICH_TEXT" || section.kind === "NOTICE" ? section.body : "",
+            body: ["RICH_TEXT", "NOTICE", "FORMATTED_TEXT", "IMAGE", "CUSTOM_HTML"].includes(section.kind) ? body : "",
             tone: section.kind === "NOTICE" ? section.tone ?? "INFO" : null,
             placement: section.placement,
             items: section.kind === "STEPS" || section.kind === "CHECKLIST"
@@ -176,6 +257,7 @@ export async function replaceEventContent(
                 text: section.kind === "STEPS" ? item.text : "",
               }))
               : [],
+            data: data ?? {},
             isPublished: section.isPublished,
             position,
             links: section.kind === "RESOURCE_LINKS" || section.kind === "NOTICE"
@@ -190,10 +272,14 @@ export async function replaceEventContent(
                 })),
               }
               : undefined,
+            assets: blockAssets.length > 0
+              ? { create: blockAssets.map((assetId) => ({ assetId })) }
+              : undefined,
           },
         });
       }
       const publishedCount = input.sections.filter((section) => section.isPublished).length;
+      const customHtmlCount = input.sections.filter((section) => section.kind === "CUSTOM_HTML").length;
       await tx.auditLog.create({
         data: {
           eventId,
@@ -206,6 +292,7 @@ export async function replaceEventContent(
           metadata: {
             sectionCount: input.sections.length,
             publishedCount,
+            customHtmlCount,
             titles: input.sections.map((section) => section.title),
           },
         },
@@ -219,8 +306,8 @@ export async function replaceEventContent(
     if (
       error instanceof Prisma.PrismaClientKnownRequestError
       && error.code === "P2003"
-      && linkedAssetIds.length > 0
-      && await prisma.eventAsset.count({ where: { id: { in: linkedAssetIds }, eventId } }) < linkedAssetIds.length
+      && assetsToCheck.length > 0
+      && await prisma.eventAsset.count({ where: { id: { in: assetsToCheck }, eventId } }) < assetsToCheck.length
     ) {
       throw new EventContentError(
         "ASSET_NOT_IN_EVENT",

@@ -3,6 +3,7 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { BackLink } from "@/components/back-link";
 import { EventContentWorkspace } from "@/components/event-content-workspace";
 import { listEventAssets } from "@/modules/events/asset-repository";
+import { sanitizedHtmlBySection } from "@/modules/events/content-html";
 import { listEventContentSections } from "@/modules/events/content-repository";
 import { resolveEventContext } from "@/modules/events/selection";
 import { staffPageTitles } from "@/components/staff-navigation";
@@ -15,7 +16,7 @@ export default async function EventContentPage({
   searchParams: Promise<{ event?: string }>;
 }) {
   const { event: requested } = await searchParams;
-  const { event, permissions } = await resolveEventContext(requested);
+  const { event, permissions, user } = await resolveEventContext(requested);
   const back = <BackLink href={`/more?event=${event.id}`} variant="staff">Back to More</BackLink>;
   if (!permissions.includes("CONFIGURE_EVENT")) {
     return (
@@ -28,6 +29,7 @@ export default async function EventContentPage({
       </>
     );
   }
+  const sections = await listEventContentSections(event.id);
   return (
     <>
       {back}
@@ -35,7 +37,15 @@ export default async function EventContentPage({
         key={event.id}
         eventId={event.id}
         eventName={event.name}
-        initialSections={await listEventContentSections(event.id)}
+        eventSlug={event.slug}
+        eventTiming={{
+          startsAt: event.startsAt.toISOString(),
+          endsAt: event.endsAt.toISOString(),
+          timezone: event.timezone,
+        }}
+        isSystemAdmin={user.globalRole === "SYSTEM_ADMIN"}
+        initialSections={sections}
+        initialSanitizedHtml={sanitizedHtmlBySection(sections)}
         initialAssets={await listEventAssets(event.id)}
       />
     </>
