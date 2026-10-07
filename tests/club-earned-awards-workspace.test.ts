@@ -70,7 +70,7 @@ describe("the Earned awards screen (#532)", () => {
     const html = render(false);
     expect(html).toContain("Mark a class completed");
     expect(html).toContain("It orders nothing by itself.");
-    expect(html).toContain("<option value=\"MASTER_GUIDE\">Master Guide</option>");
+    expect(html).toContain(">Master Guide</li>");
     expect(html).toContain("Add by hand");
     expect(html).toContain('<optgroup label="Miscellaneous">');
     expect(html).toContain("Good Conduct Bar");

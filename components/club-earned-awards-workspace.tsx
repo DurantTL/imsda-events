@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AlertTriangle, Award, CheckCircle2, Download, Eye, GraduationCap, Plus, Search, Sparkles, Trash2, Trophy, X } from "lucide-react";
+import { HonorCombobox } from "@/components/honor-combobox";
 import styles from "@/components/club-orders.module.css";
 import { clubClassLevelLabels, clubClassLevels, type ClubClassLevel } from "@/modules/club-rosters/domain";
 import { awardEntryTooLarge, awardStatusLabels, MAX_AWARD_NEEDS_PER_ENTRY } from "@/modules/earned-awards/domain";
@@ -25,6 +26,9 @@ type ApiResult = {
   removed?: number;
   dismissed?: number;
 };
+
+/** The class levels as picker options (#827): the id is the level, the name its label. */
+const classLevelOptions = clubClassLevels.map((level) => ({ id: level, name: clubClassLevelLabels[level] }));
 
 /** The same bulk limit the order routes accept. */
 const BULK_LIMIT = 500;
@@ -474,10 +478,14 @@ export function ClubEarnedAwardsWorkspace({
           <p className={`field-help ${styles.helpText}`}>Records that members finished a class, which suggests that class&apos;s insignia above. It orders nothing by itself.</p>
           <div className={styles.pickerRow}>
             <span className={styles.pickerField}>
-              <label htmlFor="earned-class-level">Class</label>
-              <select className={styles.select} id="earned-class-level" onChange={(event) => setClassLevel(event.target.value as ClubClassLevel)} value={classLevel}>
-                {clubClassLevels.map((level) => <option key={level} value={level}>{clubClassLevelLabels[level]}</option>)}
-              </select>
+              <HonorCombobox
+                label="Class"
+                noun="class"
+                nounPlural="classes"
+                onChange={(id) => setClassLevel(id as ClubClassLevel)}
+                options={classLevelOptions}
+                value={classLevel}
+              />
             </span>
             <span className={styles.pickerField}>
               <label htmlFor="earned-class-date">Completed on</label>
