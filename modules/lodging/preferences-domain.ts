@@ -584,7 +584,7 @@ export type ChargeImpactFact = { promoCode: string | null; coversLodging: boolea
  * transaction as the staff edit, unless the church's invoice is already finalized (then it is flagged for the finance
  * office and nothing changes). Staff record only the registrant's share in Payments.
  */
-export const CHURCH_SHARE_AUTOMATIC = "The church's share is updated automatically when staff change the request; if the church's invoice is already finalized it is flagged for the finance office instead.";
+export const CHURCH_SHARE_AUTOMATIC = "The church's share is recalculated automatically when staff change the request (or an amendment changes the discount); if the church's invoice is already finalized it is flagged for the finance office instead.";
 
 /** A church-sponsored code whose sponsor share the change would move. */
 export function churchSponsorShareMoves(impact: { sponsored: boolean; discountDeltaCents: number } | null | undefined) {
@@ -594,6 +594,7 @@ export function churchSponsorShareMoves(impact: { sponsored: boolean; discountDe
 /** What happened to the church's share when staff saved the change (#813). */
 export type ChurchShareFact =
   | { status: "UPDATED"; deltaCents: number; churchName: string; registrationOwedCents: number }
+  | { status: "UNCHANGED"; churchName: string; registrationOwedCents: number }
   | { status: "FLAGGED"; deltaCents: number; churchName: string };
 
 export type ReviewFacts = {
@@ -670,11 +671,14 @@ export function chargeChangeSentence(result: { chargeDeltaCents?: number; regist
   const promo = result.promo;
   const context = result.originallyChargedCents !== undefined && result.requestNowCostsCents !== undefined ? ` Originally charged ${dollars(result.originallyChargedCents)} at submission; the request now costs ${dollars(result.requestNowCostsCents)}.` : "";
   const share = result.churchShare;
+  // The church's share for THIS registration, never the church's event total (that is finance data).
   const church = share?.status === "UPDATED"
-    ? ` The church's share (${signedDollars(share.deltaCents)}) was updated automatically; ${share.churchName} now owes ${dollars(share.registrationOwedCents)} for this registration.`
-    : share?.status === "FLAGGED"
-      ? ` The church's invoice is already finalized, so the church's share (${signedDollars(share.deltaCents)}) was not changed; the finance office has been flagged to review it.`
-      : "";
+    ? ` Church's share for this registration: ${dollars(share.registrationOwedCents)} (updated automatically, ${signedDollars(share.deltaCents)} with this change).`
+    : share?.status === "UNCHANGED"
+      ? ` No change to the church's share (still ${dollars(share.registrationOwedCents)} for this registration).`
+      : share?.status === "FLAGGED"
+        ? ` The church's invoice is already finalized, so the church's share (${signedDollars(share.deltaCents)}) was not changed; the finance office has been flagged to review it.`
+        : "";
   if (!promo) return `This edit changes the lodging charge by ${list}, but the registration's total was not changed.${context}`;
   if (!promo.coversLodging) return `This edit changes the lodging charge by ${list} at list price. Code ${promo.code} does not apply to the lodging line on this registration (it was submitted before codes covered lodging), so the registrant's change is ${list}. The registration's total was not changed.${context}`;
   const minimum = result.belowMinimumAfter ? ` After this edit the registration would be under code ${promo.code}'s minimum, so an amendment would refuse it and the code would no longer apply.` : "";
@@ -868,7 +872,7 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
     push({
       key: `price:${charge.registrationId}`, kind: "PRICE_DIFFERS", fingerprint: `${charge.chargedCents}:${charge.currentCents}:${charge.impact?.registrantDeltaCents ?? ""}`, registrationIds: [charge.registrationId],
       title: `${label(facts, charge.registrationId)} was charged ${dollars(charge.chargedCents)} for lodging; the request costs ${dollars(charge.currentCents)}`,
-      detail: `The charge is never changed automatically after submission. ${churchSponsorShareMoves(charge.impact) ? `If it should follow the request, record the registrant's share in Payments. ${CHURCH_SHARE_AUTOMATIC}` : "If it should follow the request, adjust it in Payments."}${impactWords(charge.impact)}`,
+      detail: `The charge is never changed automatically after submission. ${churchSponsorShareMoves(charge.impact) ? `If it should follow the request, record the registrant's share in Payments. The church's share follows staff edits of the request, not rate changes.` : "If it should follow the request, adjust it in Payments."}${impactWords(charge.impact)}`,
     });
   }
 

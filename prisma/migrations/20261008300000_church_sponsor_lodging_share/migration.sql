@@ -12,7 +12,7 @@ CREATE TABLE "ChurchSponsorFinanceReview" (
     "registrationId" TEXT NOT NULL,
     "churchId" TEXT NOT NULL,
     "invoiceVersionId" TEXT,
-    "lodgingRequestVersionId" TEXT NOT NULL,
+    "sourceKey" TEXT NOT NULL,
     "deltaCents" INTEGER NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "clearedAt" TIMESTAMP(3),
@@ -29,7 +29,7 @@ CREATE INDEX "ChurchSponsorFinanceReview_eventId_clearedAt_idx" ON "ChurchSponso
 CREATE INDEX "ChurchSponsorFinanceReview_churchId_idx" ON "ChurchSponsorFinanceReview"("churchId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "ChurchSponsorFinanceReview_registrationId_lodgingRequestVer_key" ON "ChurchSponsorFinanceReview"("registrationId", "lodgingRequestVersionId");
+CREATE INDEX "ChurchSponsorFinanceReview_registrationId_clearedAt_idx" ON "ChurchSponsorFinanceReview"("registrationId", "clearedAt");
 
 -- AddForeignKey
 ALTER TABLE "ChurchSponsorFinanceReview" ADD CONSTRAINT "ChurchSponsorFinanceReview_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE CASCADE ON UPDATE CASCADE;

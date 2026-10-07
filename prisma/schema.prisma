@@ -2713,7 +2713,7 @@ model PromoCodeRedemption {
 
 /// A lodging change that moved a church's share after the church's invoice was finalized (#813), raised for the finance office. The invoice is never
 /// revised automatically and the church's amount owed is not changed; the finance office sees this row (and clears it
-/// once they have dealt with it). Ids and amounts only. One row per lodging request version.
+/// once they have dealt with it). Ids and amounts only. One open row per registration.
 model ChurchSponsorFinanceReview {
   id                      String    @id @default(cuid())
   eventId                 String
@@ -2721,8 +2721,10 @@ model ChurchSponsorFinanceReview {
   churchId                String
   /// The finalized invoice version the change would have touched.
   invoiceVersionId        String?
-  lodgingRequestVersionId String
-  /// The signed change to the church's share that was NOT applied.
+  /// What last raised or updated it: "lodging:<request version id>" or "amendment:<id>".
+  sourceKey               String
+  /// The signed difference between what the church's share should be and what it is (and stays, while the invoice is
+  /// finalized): the amount the finance office is asked to review. Updated in place while the flag is open.
   deltaCents              Int
   createdAt               DateTime  @default(now())
   clearedAt               DateTime?
@@ -2733,7 +2735,7 @@ model ChurchSponsorFinanceReview {
   registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   church       Organization @relation("ChurchSponsorFinanceReviewChurch", fields: [churchId], references: [id], onDelete: Restrict)
 
-  @@unique([registrationId, lodgingRequestVersionId])
+  @@index([registrationId, clearedAt])
   @@index([eventId, clearedAt])
   @@index([churchId])
 }

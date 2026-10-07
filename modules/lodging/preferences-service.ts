@@ -49,7 +49,7 @@ import {
   type RoommateStatus,
   type RuleRow,
 } from "@/modules/lodging/preferences-domain";
-import { settleChurchShareForLodgingChange, type ChurchShareOutcome } from "@/modules/promo-codes/church-sponsor-lodging";
+import { setChurchShare, type ChurchShareOutcome } from "@/modules/promo-codes/church-sponsor-lodging";
 import { LODGING_LINE_KEY, lodgingCharge, lodgingChargeImpact, promoContextOf, type RedemptionFact } from "@/modules/lodging/pricing";
 import { isChurchBilledBillingMode } from "@/modules/club-registrations/per-person-price";
 import { lockEventLodgingUnits, lodgingTransactionTimeoutMs, nightsFor, touchEventLodgingCapacity } from "@/modules/lodging/service";
@@ -765,13 +765,10 @@ export async function saveLodgingRequest(
         data: { resolvedAt: now, resolvedByUserId: input.actor.kind === "STAFF" ? input.actor.userId : null, resolution: "Handled by staff" },
       });
     }
-    // A church-sponsored code's share of THIS edit moves the church's amount owed in this same transaction (#813), or, when the
-    // church's invoice is already finalized, is flagged for the finance office and changes nothing.
-    const churchShare = staff && chargeChanges && impact?.promo?.sponsored && impact.discountDeltaCents !== 0
-      ? await settleChurchShareForLodgingChange(tx, {
-        eventId: input.eventId, registrationId: input.registrationId, lodgingRequestVersionId: createdVersion.id,
-        deltaCents: impact.discountDeltaCents, actorUserId: input.actor.kind === "STAFF" ? input.actor.userId : null,
-      })
+    // The church's share is recomputed on every staff edit of a church-sponsored registration (#813), in this same transaction:
+    // a figure from the registration as it is now, never a running sum, so it corrects itself whatever happened before.
+    const churchShare = staff && promoContext?.promo?.sponsored
+      ? await recomputeChurchShare(tx, { eventId: input.eventId, registrationId: input.registrationId, sourceKey: `lodging:${createdVersion.id}`, actorUserId: input.actor.kind === "STAFF" ? input.actor.userId : null })
       : null;
     const costContext = promoContext && cumulative ? { originallyChargedCents: promoContext.lodgingCents, requestNowCostsCents: nextCents } : {};
     return { requestId: request.id, version, changed: true, afterDeadline: staff && pastDeadline, ...(staff && chargeChanges && impact
@@ -780,7 +777,7 @@ export async function saveLodgingRequest(
           sponsorDeltaCents: impact.promo?.sponsored ? impact.discountDeltaCents : 0, belowMinimumAfter: cumulative?.belowMinimumAfter ?? false,
           promo: impact.promo, ...(churchShare ? { churchShare } : {}), ...costContext,
         }
-      : {}) };
+      : churchShare && churchShare.status !== "UNCHANGED" ? { churchShare, promo: promoContext?.promo ? { code: promoContext.promo.code, coversLodging: promoContext.promo.coversLodging, sponsored: promoContext.promo.sponsored } : null } : {}) };
   }, { timeout: lodgingTransactionTimeoutMs });
 }
 
@@ -1058,13 +1055,68 @@ async function latestAmendmentPricing(client: Client, eventId: string, registrat
   return new Map(rows.map((row) => [row.registrationId, record(row.pricing)] as const));
 }
 
-async function loadPromoContext(client: Client, eventId: string, registrationId: string) {
+async function loadPromoContext(client: Client, eventId: string, registrationId: string, pricing?: Record<string, unknown>) {
+  if (pricing) {
+    const row = await client.promoCodeRedemption.findUnique({ where: { registrationId }, select: redemptionSelect });
+    return promoContextOf(pricing, row ? asRedemptionFact(row) : null);
+  }
   const [submission, amended, redemption] = await Promise.all([
     client.publicRegistrationSubmission.findFirst({ where: { eventId, registrationId }, select: { pricingSnapshot: true } }),
     latestAmendmentPricing(client, eventId, registrationId),
     client.promoCodeRedemption.findUnique({ where: { registrationId }, select: redemptionSelect }),
   ]);
   return promoContextOf(currentSnapshot(amended.get(registrationId), submission?.pricingSnapshot), redemption ? asRedemptionFact(redemption) : null);
+}
+
+/** The registration's lodging lock: a lodging edit and an amendment take it before they touch the redemption row. */
+export async function lockRegistrationLodging(tx: Prisma.TransactionClient, registrationId: string) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`lodging-request:${registrationId}`}))`;
+}
+
+/**
+ * The church's share of this registration's lodging, recomputed from the registration as it is now (#813), and stored (or,
+ * for a finalized invoice, flagged) by `setChurchShare`. Called on every staff lodging edit and on every amendment that
+ * recomputes the discount, in the caller's transaction, after the lodging lock is taken:
+ *
+ *   share = discount(other lines + current lodging charge) - discount(other lines + stored lodging line)
+ *
+ * with the code's real percent, cap and minimum (`lodgingChargeImpact`, the amendment's own formula). The current lodging
+ * charge is the stored line moved by what staff edits changed: the current request against the first (submitted) request,
+ * both priced at TODAY's rates. A rate change alone therefore moves nothing, a revert to the submitted request returns the
+ * share to exactly zero whatever the rates did in between, and the next edit or amendment starts from here. `pricing` is the
+ * amended pricing snapshot when an amendment has not written its operation row yet.
+ */
+export async function recomputeChurchShare(
+  tx: Prisma.TransactionClient,
+  input: { eventId: string; registrationId: string; sourceKey: string; actorUserId: string | null; pricing?: Record<string, unknown> },
+): Promise<ChurchShareOutcome | null> {
+  await lockRegistrationLodging(tx, input.registrationId);
+  const promoContext = await loadPromoContext(tx, input.eventId, input.registrationId, input.pricing);
+  if (!promoContext.promo?.sponsored) return null;
+  let currentLodgingCents = promoContext.lodgingCents;
+  const current = (await loadCurrentRequests(tx, input.eventId, { registrationId: input.registrationId }))[0];
+  if (current) {
+    const context = await loadContext(tx, input.eventId);
+    if (!context.churchBilled) {
+      const first = await tx.eventLodgingRequestVersion.findFirst({ where: { requestId: current.requestId, version: 1 } });
+      const rates = await loadRates(tx, context.eventLodgingId);
+      const { capacity } = await loadCategoryCapacity(tx, context);
+      const costOf = (row: { category: LodgingCategory | null; firstNight: string | null; lastNight: string | null; partySize: number; roomCount: number }) => {
+        if (!row.category) return 0;
+        const charge = lodgingCharge({ category: row.category, nights: requestNights(row, context.nights).length, partySize: row.partySize, rates, ignoreMinimum: true, units: capacity[row.category]?.roomBased ? row.roomCount : 1 });
+        return charge.kind === "CHARGE" ? charge.line.amountCents : 0;
+      };
+      const firstCost = first
+        ? costOf({ category: first.category, firstNight: first.firstNight ? toNight(first.firstNight) : null, lastNight: first.lastNight ? toNight(first.lastNight) : null, partySize: first.partySize, roomCount: first.roomCount })
+        : costOf(current);
+      currentLodgingCents = Math.max(0, promoContext.lodgingCents + costOf(current) - firstCost);
+    }
+  }
+  const impact = lodgingChargeImpact({ otherCents: promoContext.otherCents, promo: promoContext.promo, fromCents: promoContext.lodgingCents, toCents: currentLodgingCents });
+  return setChurchShare(tx, {
+    eventId: input.eventId, registrationId: input.registrationId, desiredCents: impact.discountDeltaCents, sourceKey: input.sourceKey,
+    basis: { currentLodgingCents, storedLodgingCents: promoContext.lodgingCents }, actorUserId: input.actorUserId,
+  });
 }
 
 // ---------------------------------------------------------------------------

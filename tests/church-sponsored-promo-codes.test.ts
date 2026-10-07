@@ -403,14 +403,13 @@ describe("sponsored promo code queries (#545)", () => {
     });
   });
 
-  it("counts a registration while either its discount or its lodging change is positive, and one church on request", async () => {
+  it("counts a registration while either its discount or its lodging change is positive", async () => {
     const prisma = redemptionPrisma({ audience: "GENERAL", billingMode: "ATTENDEE_PAY" });
     dependencies.getPrisma.mockReturnValue(prisma);
     prisma.promoCodeRedemption.findMany.mockResolvedValue([{ discountAmountCents: 0, sponsorLodgingChangeCents: 2_000 }]);
-    expect(await sumChurchSponsoredPromoCents("event_1", undefined, "church_1")).toBe(2_000 + 1_500);
+    expect(await sumChurchSponsoredPromoCents("event_1")).toBe(2_000 + 1_500);
     const where = prisma.promoCodeRedemption.findMany.mock.calls[0][0].where;
     expect(where.OR).toEqual([{ discountAmountCents: { gt: 0 } }, { sponsorLodgingChangeCents: { gt: 0 } }]);
-    expect(where.promoCode).toEqual({ sponsoringOrganizationId: "church_1" });
   });
 
   it("a line is the recorded discount plus the lodging change (#813)", async () => {

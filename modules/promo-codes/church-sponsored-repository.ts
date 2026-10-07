@@ -25,9 +25,9 @@ const activeRegistration = { status: { in: [...CHURCH_SPONSORED_BILLED_STATUSES]
  * discount plus what staff lodging edits have moved the share by (#813): the row counts while either is positive, and a
  * line whose total is not positive is dropped when the lines are summarized.
  */
-const sponsoredRedemptionWhere = (eventId: string, churchId?: string): Prisma.PromoCodeRedemptionWhereInput => ({
+const sponsoredRedemptionWhere = (eventId: string): Prisma.PromoCodeRedemptionWhereInput => ({
   eventId,
-  promoCode: { sponsoringOrganizationId: churchId ?? { not: null } },
+  promoCode: { sponsoringOrganizationId: { not: null } },
   registration: activeRegistration,
   OR: [{ discountAmountCents: { gt: 0 } }, { sponsorLodgingChangeCents: { gt: 0 } }],
 });
@@ -37,13 +37,13 @@ const sponsoredRedemptionWhere = (eventId: string, churchId?: string): Prisma.Pr
  * discount as a negative amount. An adjustment that was reversed, and the
  * reversal row itself, are both left out.
  */
-const sponsoredAdjustmentWhere = (eventId: string, churchId?: string): Prisma.RegistrationAdjustmentWhereInput => ({
+const sponsoredAdjustmentWhere = (eventId: string): Prisma.RegistrationAdjustmentWhereInput => ({
   eventId,
   kind: "PROMO_CODE",
   amountCents: { lt: 0 },
   reversesAdjustmentId: null,
   reversedBy: null,
-  promoCode: { sponsoringOrganizationId: churchId ?? { not: null } },
+  promoCode: { sponsoringOrganizationId: { not: null } },
   registration: activeRegistration,
 });
 
@@ -123,16 +123,15 @@ export async function listChurchSponsoredPromoLines(
 export async function sumChurchSponsoredPromoCents(
   eventId: string,
   client: Client = getPrisma(),
-  churchId?: string,
 ) {
   if (!await eventBillsSponsors(client, eventId)) return 0;
   const [redemptions, adjustments] = await Promise.all([
     client.promoCodeRedemption.findMany({
-      where: sponsoredRedemptionWhere(eventId, churchId),
+      where: sponsoredRedemptionWhere(eventId),
       select: { discountAmountCents: true, sponsorLodgingChangeCents: true },
     }),
     client.registrationAdjustment.aggregate({
-      where: sponsoredAdjustmentWhere(eventId, churchId),
+      where: sponsoredAdjustmentWhere(eventId),
       _sum: { amountCents: true },
     }),
   ]);

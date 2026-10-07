@@ -61,7 +61,7 @@ describe("what a lodging change costs a registrant who holds a promo code", () =
     expect(impact.promo).toEqual({ code: "CHURCH", coversLodging: true, sponsored: true });
     const sentence = chargeChangeSentence({ chargeDeltaCents: impact.listDeltaCents, registrantDeltaCents: impact.registrantDeltaCents, sponsorDeltaCents: impact.discountDeltaCents, churchShare: { status: "UPDATED", deltaCents: -4000, churchName: "Example Church", registrationOwedCents: 6000 }, promo: impact.promo });
     expect(sentence).toContain("The amount to record for the registrant is +$0.00.");
-    expect(sentence).toContain("The church's share (-$40.00) was updated automatically; Example Church now owes $60.00 for this registration.");
+    expect(sentence).toContain("Church's share for this registration: $60.00 (updated automatically, -$40.00 with this change).");
     expect(sentence).toContain("-$40.00 at list price");
     expect(sentence).toContain("the registrant's change is +$0.00");
     expect(sentence).toContain("the sponsor's share is -$40.00");
@@ -128,7 +128,10 @@ describe("church-sponsored lodging changes update the church automatically (#813
   it("tells staff the registrant's share is the amount to record and the church's share was updated automatically", () => {
     const updated = chargeChangeSentence({ chargeDeltaCents: -4000, registrantDeltaCents: -2000, sponsorDeltaCents: -2000, churchShare: { status: "UPDATED", deltaCents: -2000, churchName: "Example Church", registrationOwedCents: 2000 }, originallyChargedCents: 4000, requestNowCostsCents: 8000, promo: { code: "HALFOFF", coversLodging: true, sponsored: true } });
     expect(updated).toContain("The amount to record for the registrant is -$20.00.");
-    expect(updated).toContain("The church's share (-$20.00) was updated automatically; Example Church now owes $20.00 for this registration.");
+    expect(updated).toContain("Church's share for this registration: $20.00 (updated automatically, -$20.00 with this change).");
+    const unchanged = chargeChangeSentence({ chargeDeltaCents: 100, registrantDeltaCents: 100, sponsorDeltaCents: 0, churchShare: { status: "UNCHANGED", churchName: "Example Church", registrationOwedCents: 4500 }, promo: { code: "HALFOFF", coversLodging: true, sponsored: true } });
+    expect(unchanged).toContain("No change to the church's share");
+    expect(unchanged).not.toContain("updated automatically");
     expect(updated).toContain("Originally charged $40.00 at submission; the request now costs $80.00.");
     expect(updated).not.toMatch(/contact the finance office|does not change automatically/i);
     expect(chargeChangeSentence({ chargeDeltaCents: -4000, registrantDeltaCents: -2000, sponsorDeltaCents: 0, promo: { code: "FLAT", coversLodging: true, sponsored: false } })).not.toContain("church");
@@ -152,7 +155,8 @@ describe("church-sponsored lodging changes update the church automatically (#813
     expect(change?.detail).not.toMatch(/contact the finance office/i);
     expect(change).not.toHaveProperty("flags");
     const price = buildReviewItems(facts({ lodgingCharges: [{ registrationId: "r1", chargedCents: 4000, currentCents: 8000, impact: sponsored }] })).find((item) => item.kind === "PRICE_DIFFERS");
-    expect(price?.detail).toContain(CHURCH_SHARE_AUTOMATIC);
+    expect(price?.detail).not.toContain("updated automatically");
+    expect(price?.detail).toContain("The church's share follows staff edits of the request, not rate changes.");
     expect(price).not.toHaveProperty("flags");
     const plain = buildReviewItems(facts({ lodgingCharges: [{ registrationId: "r1", chargedCents: 4000, currentCents: 8000, impact: { ...sponsored, sponsored: false } }] })).find((item) => item.kind === "PRICE_DIFFERS");
     expect(plain?.detail).toContain("adjust it in Payments");

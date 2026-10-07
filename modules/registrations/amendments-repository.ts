@@ -38,6 +38,7 @@ import {
 } from "@/modules/promo-codes/domain";
 import { storedPromoDiscount } from "@/modules/promo-codes/stored-discount";
 import { adjustmentTotalCents } from "@/modules/registrations/adjustments";
+import { lockRegistrationLodging, recomputeChurchShare } from "@/modules/lodging/preferences-service";
 import { issuesOnChangedAnswers, sameAnswer, splitUnconfiguredAnswers } from "@/modules/registrations/amendment-answers";
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import { getRegistrationByIdWithClient } from "@/modules/registrations/repository";
@@ -1708,6 +1709,8 @@ export async function amendRegistration(
                 }
               ).discountAmountCents
             : 0;
+          // The lodging lock first, so an amendment and a staff lodging edit take their locks in one order (#813).
+          await lockRegistrationLodging(tx, registrationId);
           await tx.promoCodeRedemption.update({
             where: { registrationId },
             data: {
@@ -1715,6 +1718,15 @@ export async function amendRegistration(
                 + discountAmountCents,
               discountAmountCents,
             },
+          });
+          // A church-sponsored code's lodging share is recomputed against the new discount, so the church can never end up
+          // past the code's cap or minimum because the discount moved underneath it (#813).
+          await recomputeChurchShare(tx, {
+            eventId,
+            registrationId,
+            sourceKey: `amendment:${input.clientRequestId}`,
+            actorUserId: amendmentActorUserId(actor),
+            pricing: { ...prepared.nextPricingSnapshot } as Record<string, unknown>,
           });
         }
 

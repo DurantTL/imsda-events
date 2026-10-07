@@ -49,7 +49,7 @@ import {
 import { changeHold, createHold, selectEventProperty, setEventRate, updateEventUnit, getLodgingView } from "@/modules/lodging/service";
 import { getPublicPromoCodeQuote } from "@/modules/promo-codes/repository";
 import { syncLodgingTemplates } from "@/modules/lodging/sync";
-import { CHURCH_SHARE_AUTOMATIC, chargeChangeSentence } from "@/modules/lodging/preferences-domain";
+import { chargeChangeSentence } from "@/modules/lodging/preferences-domain";
 import { readFileSync } from "node:fs";
 
 loadEnvConfig(process.cwd());
@@ -719,7 +719,7 @@ async function main() {
   assert(priceItem && /After code HALFOFF the registrant's change is \+\$20\.00, and the sponsor's share \+\$20\.00/.test(priceItem.detail), `and the queue says so, got ${priceItem?.detail}`);
   assert(sponsored.churchShare?.status === "UPDATED" && sponsored.churchShare.deltaCents === 2000 && sponsored.belowMinimumAfter === false, "a sponsored code whose share moves updates the church's amount owed automatically (#813)");
   assert(chargeChangeSentence(sponsored).includes("The amount to record for the registrant is +$20.00.") && chargeChangeSentence(sponsored).includes("updated automatically"), "and the sentence gives the registrant's share to record and says the church was updated");
-  assert(priceItem.detail.includes(CHURCH_SHARE_AUTOMATIC) && !("flags" in priceItem), "and the queue item says the church share is automatic, with no review flag");
+  assert(!priceItem.detail.includes("updated automatically") && !("flags" in priceItem), "and the queue item says it does not claim an automatic update, with no review flag");
   await prisma.promoCode.create({ data: { eventId, code: "CHURCHFULL", normalizedCode: "CHURCHFULL", discountType: "PERCENT_BPS", discountValue: 10_000, sponsoringOrganizationId: sponsor } });
   const fullChurch = await submitForm({ people: 1, responses: { registration_fee: true, promo_code: "CHURCHFULL" }, lodging: { category: "TENT", partySize: 1 } });
   assert(fullChurch.snapshot.totalCents === 0, "a fully sponsored registration owes nothing");

@@ -370,40 +370,47 @@ night, 3 nights"):
     change would drop the subtotal under the code's minimum, the screen says an amendment would refuse it and the code would no
     longer apply.
   - **A church-sponsored registration's lodging change updates the church's bill automatically (#813, Caleb's decision of
-    Oct 6).** This replaces the interim `CHURCH_SPONSOR_REVIEW` "contact the finance office" warning of #806. When a **staff
-    edit** (which is also how a registrant's change request is approved: staff make the change and the request is resolved)
-    changes the lodging charge of a registration holding a church-sponsored registration-level code, the **sponsor's share of
-    that edit** (`lodgingChargeImpact.discountDeltaCents`, the per-edit figure) moves the church's amount owed **in the same
-    transaction** as the edit, through `settleChurchShareForLodgingChange` (`modules/promo-codes/church-sponsor-lodging.ts`).
-    A registrant's change request itself moves nothing.
-    - **How it is stored, and why.** `PromoCodeRedemption.sponsorLodgingChangeCents` (signed, default 0) adds up what lodging
-      edits moved the share by. The church owes `discountAmountCents + sponsorLodgingChangeCents`, and every church-owed view
-      (the "Owed by churches" lines and CSV, the overview tile) reads both. Neither alternative named on the issue keeps the
-      views, the registrant and the audit trail consistent: rewriting `discountAmountCents` is undone by the next amendment of the
-      registrant's answers (an amendment recomputes it from the form), and a signed sponsored `PROMO_CODE` adjustment is added
-      to the registrant's own total like every adjustment, so it would change what the registrant owes by the church's share
-      (staff record the registrant's share in Payments as before). A separate column survives amendments, never touches the
-      registrant, and a revert returns the church exactly to where it started. `sponsoredAdjustmentWhere` is unchanged: no
-      adjustment is written, and a positive non-reversal `PROMO_CODE` adjustment cannot exist today.
-    - **What staff see.** The registrant's share is "the amount to record" (the Payments link stays); the church's share reads
-      "updated automatically", with what the church now owes for this registration. The queue items say the church share is
-      automatic and carry no review flag. The percent and fixed math, minimums and caps are exactly the amendment formula, so a
-      50% code splits each edit in half and a 100% code gives the church the whole change.
-    - **Never below zero, never twice.** The change is clamped so a church never owes less than $0 for a registration. The
-      edit already runs under the registration's lodging lock and the redemption row is locked too (an amendment cannot
-      interleave); each edit's change is its own previous-to-next figure, so concurrent or repeated edits never double count.
-    - **Audit.** Every church amount change writes `CHURCH_SPONSOR_SHARE_CHANGED` with the registration, redemption, church and
-      lodging-version ids and the from, to and delta amounts, and nothing else.
-    - **The church's invoice is already finalized: flagged, never revised.** A finalized (not superseded) invoice version for the
-      church on the event means nothing moves and no invoice is touched, created, sent or revised. A `ChurchSponsorFinanceReview`
-      (one per lodging request version; the signed share that was NOT applied, ids and amounts only, audited as
-      `CHURCH_SPONSOR_SHARE_FLAGGED`) is raised instead. The finance office sees it on **Owed by churches** (a list with a
-      clear button, MANAGE_FINANCE), as a notice at the top of **Payments**, and on the **invoice** page of that church's
-      invoice; it is cleared once with an optional note (`CHURCH_SPONSOR_FLAG_CLEARED`). Clearing changes no amount and no
-      invoice. A staff save tells staff the church's share "was not changed; the finance office has been flagged". An invoice
-      DRAFT is not finalized: the church amount moves and the draft only changes by regeneration, as always. (Invoices today are
-      built for deferred-invoice events and do not carry sponsored-code lines; the church-owed lines are the sponsored view, so
-      the check keys on a finalized invoice of the sponsoring church on the same event.)
+    Oct 6).** This replaces the interim `CHURCH_SPONSOR_REVIEW` "contact the finance office" warning of #806. On **every staff
+    lodging edit** of a registration holding a church-sponsored registration-level code (approving a registrant's change
+    request is the same staff edit; the request itself moves nothing), and on **every amendment that recomputes the discount**,
+    the church's share of the lodging is **recomputed, never added up** (`recomputeChurchShare`, then `setChurchShare`, in the
+    caller's transaction, after the registration's lodging lock and the redemption row's `FOR UPDATE`):
+
+        sponsorLodgingChangeCents = discount(other lines + current lodging charge) - discount(other lines + stored lodging line)
+
+      using the code's real percent, cap and minimum (`lodgingChargeImpact`, the amendment's own `storedPromoDiscount`).
+      "Stored lodging line" is the lodging line in the registration's current pricing snapshot. "Current lodging charge" is
+      the stored line moved by what staff edits changed: **the current request against the first (submitted) request, both
+      priced at today's rates**. So a **rate change alone moves nothing**; a **revert** to the submitted request returns the
+      share to exactly zero whatever the rates did in between; a capped code can never take the church past its cap, because
+      an amendment recomputes the share against the discount it just rewrote; and a retry, a repeat or a race (an amendment
+      against a staff edit, both taking the lodging lock first) just recomputes from the registration as it is now.
+    - **How it is stored, and why.** `PromoCodeRedemption.sponsorLodgingChangeCents` (signed, default 0). The church owes
+      `discountAmountCents + sponsorLodgingChangeCents`; every church-owed reader (the "Owed by churches" lines and CSV, the
+      overview tile) reads both and floors each registration at $0 (there is no clamp when storing). Neither alternative on the
+      issue keeps the views, the registrant and the audit trail consistent: rewriting `discountAmountCents` is undone by the
+      next amendment (it recomputes it from the form), and a signed sponsored `PROMO_CODE` adjustment is added to the
+      registrant's own total like every adjustment, so it would change what the registrant owes by the church's share (staff
+      record the registrant's share in Payments as before). `sponsoredAdjustmentWhere` is unchanged: no adjustment is written.
+      The column is in the transfer/substitution snapshot of the redemption.
+    - **What staff see.** The registrant's share is "the amount to record" (the Payments link stays). For the church: "Church's
+      share for this registration: $X (updated automatically, +$Y with this change)", or "No change to the church's share" when
+      nothing moved; the figure is for this registration, never the church's event total (finance data; lodging staff may lack
+      MANAGE_FINANCE). The queue items carry no review flag; the "price differs" item does not claim an automatic update.
+    - **Audit.** Whenever the stored value changes, `CHURCH_SPONSOR_SHARE_CHANGED` records the registration, redemption, church
+      and a source key (`lodging:<version id>` or `amendment:<request id>`), the before and after of the stored share and of
+      what the church owes, the delta, and the basis (current and stored lodging amounts): ids and amounts only.
+    - **The church's invoice is already finalized: flagged, never revised.** Only on an event billed through invoices
+      (`DEFERRED_ORGANIZATION_INVOICE`, where invoices are the billing vehicle): a finalized (not superseded) invoice version
+      for the sponsoring church on the event means nothing is stored and no invoice is touched, created, sent or revised. One
+      open `ChurchSponsorFinanceReview` per registration (the difference from the invoiced amount; ids and amounts only;
+      audited as `CHURCH_SPONSOR_SHARE_FLAGGED`) is raised or updated in place instead, and closes itself if the share returns
+      to the invoiced amount. The finance office sees it on **Owed by churches** (a list with a clear button, MANAGE_FINANCE),
+      as a notice at the top of **Payments**, and on the **invoice** page; it is cleared with an optional note
+      (`CHURCH_SPONSOR_FLAG_CLEARED`). Clearing changes no amount and no invoice. On an **attendee-pay** event (where sponsored
+      codes live) there is no flag: an unrelated old invoice of the church can never freeze its share after a billing-mode
+      change. (Lodging is never charged on an invoiced event, so today the flag path is reached only through
+      `setChurchShare`; it is covered by the real-DB script and the unit tests so it works when sponsored amounts are invoiced.)
     For every other result (no code, or a code that is not church-sponsored) the Payments guidance below applies unchanged.
 - **After submission the charge is never changed by a lodging edit.** Nothing
   reprices, and nothing creates a payment, a refund or a new charge by itself.

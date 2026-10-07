@@ -10,7 +10,7 @@ import {
   ChurchSponsorFlagError,
   clearChurchSponsorFlag,
   listOpenChurchSponsorFlags,
-  settleChurchShareForLodgingChange,
+  setChurchShare,
 } from "@/modules/promo-codes/church-sponsor-lodging";
 import { lodgingChargeImpact, type RegistrationPromo } from "@/modules/lodging/pricing";
 
@@ -18,10 +18,10 @@ beforeEach(() => { dependencies.writeAuditLog.mockClear(); });
 
 type State = { discount: number; moved: number };
 
-/** A transaction double that behaves like the rows it replaces: an increment really adds, an upsert really stores. */
-function transaction(options: { sponsored?: boolean; finalized?: boolean; state?: State } = {}) {
+/** A transaction double that behaves like the rows it replaces: an update really stores, a flag really opens and closes. */
+function transaction(options: { sponsored?: boolean; deferred?: boolean; finalized?: boolean; state?: State } = {}) {
   const state = options.state ?? { discount: 4_500, moved: 0 };
-  const flags: Array<Record<string, unknown>> = [];
+  let open: { id: string; deltaCents: number; sourceKey: string } | null = null;
   const tx = {
     promoCodeRedemption: {
       findUnique: vi.fn().mockResolvedValue({
@@ -29,99 +29,118 @@ function transaction(options: { sponsored?: boolean; finalized?: boolean; state?
         promoCode: options.sponsored === false ? { sponsoringOrganizationId: null, sponsoringOrganization: null } : { sponsoringOrganizationId: "church_1", sponsoringOrganization: { name: "Synthetic Church" } },
       }),
       findUniqueOrThrow: vi.fn().mockImplementation(async () => ({ id: "red_1", discountAmountCents: state.discount, sponsorLodgingChangeCents: state.moved })),
-      update: vi.fn().mockImplementation(async ({ data }: { data: { sponsorLodgingChangeCents: { increment: number } } }) => {
-        state.moved += data.sponsorLodgingChangeCents.increment;
-        return { id: "red_1", discountAmountCents: state.discount, sponsorLodgingChangeCents: state.moved };
-      }),
+      update: vi.fn().mockImplementation(async ({ data }: { data: { sponsorLodgingChangeCents: number } }) => { state.moved = data.sponsorLodgingChangeCents; return {}; }),
     },
     $queryRaw: vi.fn().mockResolvedValue([]),
+    event: { findUnique: vi.fn().mockResolvedValue({ billingMode: options.deferred ? "DEFERRED_ORGANIZATION_INVOICE" : "ATTENDEE_PAY" }) },
     invoiceVersion: { findFirst: vi.fn().mockResolvedValue(options.finalized ? { id: "inv_v1" } : null) },
     churchSponsorFinanceReview: {
-      upsert: vi.fn().mockImplementation(async ({ create }: { create: Record<string, unknown> }) => { flags.push(create); return { id: `flag_${flags.length}` }; }),
+      findFirst: vi.fn().mockImplementation(async () => (open ? { id: open.id } : null)),
+      create: vi.fn().mockImplementation(async ({ data }: { data: { deltaCents: number; sourceKey: string } }) => { open = { id: "flag_1", deltaCents: data.deltaCents, sourceKey: data.sourceKey }; return { id: "flag_1" }; }),
+      update: vi.fn().mockImplementation(async ({ data }: { data: { deltaCents?: number; sourceKey?: string; clearedAt?: Date } }) => {
+        if (data.clearedAt) open = null;
+        else if (open) open = { ...open, deltaCents: data.deltaCents ?? open.deltaCents, sourceKey: data.sourceKey ?? open.sourceKey };
+        return { id: "flag_1" };
+      }),
     },
   };
-  return { tx, state, flags };
+  return { tx, state, flag: () => open };
 }
 
-const settle = (tx: unknown, deltaCents: number) => settleChurchShareForLodgingChange(tx as never, {
-  eventId: "event_1", registrationId: "reg_1", lodgingRequestVersionId: `ver_${Math.random()}`, deltaCents, actorUserId: "user_1",
-});
+const basis = { currentLodgingCents: 8_000, storedLodgingCents: 4_000 };
+const set = (tx: unknown, desiredCents: number, sourceKey = "lodging:ver_1") => setChurchShare(tx as never, { eventId: "event_1", registrationId: "reg_1", desiredCents, sourceKey, basis, actorUserId: "user_1" });
 
-describe("a lodging change moves the church's amount owed (#813)", () => {
-  it("applies an increase, a decrease and a revert, and lands exactly where it started", async () => {
+describe("the church's share is a recomputed figure, stored idempotently (#813)", () => {
+  it("stores the recomputed figure, whatever it was before, and returns exactly to zero on a revert", async () => {
     const { tx, state } = transaction();
-    const up = await settle(tx, 2_000);
-    expect(up).toEqual({ status: "UPDATED", deltaCents: 2_000, churchName: "Synthetic Church", registrationOwedCents: 6_500 });
-    expect(state).toEqual({ discount: 4_500, moved: 2_000 });
-    expect(await settle(tx, 2_000)).toMatchObject({ registrationOwedCents: 8_500 });
-    expect(await settle(tx, -2_000)).toMatchObject({ deltaCents: -2_000, registrationOwedCents: 6_500 });
-    expect(await settle(tx, -2_000)).toMatchObject({ registrationOwedCents: 4_500 });
+    expect(await set(tx, 2_000)).toEqual({ status: "UPDATED", deltaCents: 2_000, churchName: "Synthetic Church", registrationOwedCents: 6_500 });
+    expect(await set(tx, 4_000)).toMatchObject({ status: "UPDATED", deltaCents: 2_000, registrationOwedCents: 8_500 });
+    expect(await set(tx, 0)).toMatchObject({ status: "UPDATED", deltaCents: -4_000, registrationOwedCents: 4_500 });
     expect(state.moved).toBe(0);
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(4);
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(3);
   });
 
-  it("writes one audit row per change with ids and amounts only", async () => {
-    const { tx } = transaction();
-    await settle(tx, 2_000);
-    expect(dependencies.writeAuditLog).toHaveBeenCalledTimes(1);
-    const [entry] = dependencies.writeAuditLog.mock.calls[0]!;
-    expect(entry.action).toBe("CHURCH_SPONSOR_SHARE_CHANGED");
-    expect(Object.keys(entry.metadata).sort()).toEqual(["churchId", "deltaCents", "fromCents", "lodgingRequestVersionId", "redemptionId", "registrationId", "requestedDeltaCents", "toCents"]);
-    expect(entry.metadata).toMatchObject({ fromCents: 4_500, toCents: 6_500, deltaCents: 2_000, churchId: "church_1", redemptionId: "red_1", registrationId: "reg_1" });
-    expect(JSON.stringify(entry)).not.toMatch(/Synthetic Church|REG-|@/);
-    dependencies.writeAuditLog.mockClear();
-  });
-
-  it("never takes a registration below $0, and says what was really applied", async () => {
-    const { tx, state } = transaction({ state: { discount: 1_000, moved: 0 } });
-    const down = await settle(tx, -4_000);
-    expect(down).toMatchObject({ status: "UPDATED", deltaCents: -1_000, registrationOwedCents: 0 });
-    expect(state.moved).toBe(-1_000);
-    dependencies.writeAuditLog.mockClear();
-    const nothing = await settle(tx, -500);
-    expect(nothing).toMatchObject({ deltaCents: 0, registrationOwedCents: 0 });
-    expect(tx.promoCodeRedemption.update).toHaveBeenCalledTimes(1);
+  it("says nothing moved, and writes no audit row, when the stored value already equals the recomputed one", async () => {
+    const { tx } = transaction({ state: { discount: 4_500, moved: 2_000 } });
+    expect(await set(tx, 2_000)).toEqual({ status: "UNCHANGED", churchName: "Synthetic Church", registrationOwedCents: 6_500 });
+    expect(tx.promoCodeRedemption.update).not.toHaveBeenCalled();
     expect(dependencies.writeAuditLog).not.toHaveBeenCalled();
   });
 
-  it("does nothing for a registration with no church-sponsored code, or no change", async () => {
+  it("audits every stored change with before, after and the basis, ids and amounts only", async () => {
+    const { tx } = transaction();
+    await set(tx, 2_000);
+    const [entry] = dependencies.writeAuditLog.mock.calls[0]!;
+    expect(entry.action).toBe("CHURCH_SPONSOR_SHARE_CHANGED");
+    expect(Object.keys(entry.metadata).sort()).toEqual(["afterCents", "beforeCents", "churchId", "currentLodgingCents", "deltaCents", "fromCents", "redemptionId", "registrationId", "sourceKey", "storedLodgingCents", "toCents"]);
+    expect(entry.metadata).toMatchObject({ beforeCents: 0, afterCents: 2_000, fromCents: 4_500, toCents: 6_500, deltaCents: 2_000, currentLodgingCents: 8_000, storedLodgingCents: 4_000, sourceKey: "lodging:ver_1" });
+    expect(JSON.stringify(entry)).not.toMatch(/Synthetic Church|REG-|@/);
+  });
+
+  it("has no clamp: the stored figure is the recomputed one, and the readers floor the registration at $0", async () => {
+    const { tx, state } = transaction({ state: { discount: 1_000, moved: 0 } });
+    expect(await set(tx, -4_000)).toMatchObject({ status: "UPDATED", deltaCents: -4_000, registrationOwedCents: 0 });
+    expect(state.moved).toBe(-4_000);
+    expect(await set(tx, 0)).toMatchObject({ status: "UPDATED", registrationOwedCents: 1_000 });
+  });
+
+  it("does nothing for a registration with no church-sponsored code", async () => {
     const plain = transaction({ sponsored: false });
-    expect(await settle(plain.tx, 2_000)).toBeNull();
+    expect(await set(plain.tx, 2_000)).toBeNull();
     expect(plain.tx.promoCodeRedemption.update).not.toHaveBeenCalled();
-    const none = transaction();
-    expect(await settle(none.tx, 0)).toBeNull();
-    expect(none.tx.promoCodeRedemption.findUnique).not.toHaveBeenCalled();
     const noRedemption = transaction();
     noRedemption.tx.promoCodeRedemption.findUnique.mockResolvedValue(null);
-    expect(await settle(noRedemption.tx, 2_000)).toBeNull();
+    expect(await set(noRedemption.tx, 2_000)).toBeNull();
   });
 
-  it("follows the code's own math: a 50% code moves half the list change, a 100% code all of it", async () => {
-    const promo = (discountValue: number): RegistrationPromo => ({ code: "CHURCH", discountType: "PERCENT_BPS", discountValue, maximumDiscountCents: null, minimumSubtotalCents: null, coversLodging: true, sponsored: true });
-    const half = lodgingChargeImpact({ otherCents: 5_000, fromCents: 4_000, toCents: 8_000, promo: promo(5_000) });
-    const full = lodgingChargeImpact({ otherCents: 5_000, fromCents: 4_000, toCents: 8_000, promo: promo(10_000) });
-    const a = transaction({ state: { discount: 4_500, moved: 0 } });
-    expect(await settle(a.tx, half.discountDeltaCents)).toMatchObject({ deltaCents: 2_000, registrationOwedCents: 6_500 });
-    expect(half.registrantDeltaCents).toBe(2_000);
-    const b = transaction({ state: { discount: 9_000, moved: 0 } });
-    expect(await settle(b.tx, full.discountDeltaCents)).toMatchObject({ deltaCents: 4_000, registrationOwedCents: 13_000 });
-    expect(full.registrantDeltaCents).toBe(0);
-    dependencies.writeAuditLog.mockClear();
+  it("a capped code plus an amendment never takes the church past the cap, and a 50% code splits the change in half", () => {
+    const promo = (discountValue: number, maximumDiscountCents: number | null): RegistrationPromo => ({ code: "CHURCH", discountType: "PERCENT_BPS", discountValue, maximumDiscountCents, minimumSubtotalCents: null, coversLodging: true, sponsored: true });
+    const share = (other: number, stored: number, current: number, p: RegistrationPromo) => lodgingChargeImpact({ otherCents: other, fromCents: stored, toCents: current, promo: p }).discountDeltaCents;
+    // 50% code, no cap: half of the lodging change.
+    expect(share(5_000, 4_000, 8_000, promo(5_000, null))).toBe(2_000);
+    // 50% code capped at $60: the amendment recorded discount(other + stored); the share tops it up to the cap and no further.
+    const capped = promo(5_000, 6_000);
+    for (const other of [5_000, 9_000, 20_000]) {
+      for (const current of [0, 4_000, 8_000, 40_000]) {
+        const total = Math.min(6_000, Math.round((other + 4_000) * 0.5)) + share(other, 4_000, current, capped);
+        expect(total).toBeLessThanOrEqual(6_000);
+        expect(total).toBe(Math.min(6_000, Math.round((other + current) * 0.5)));
+      }
+    }
+    // A full revert is exactly zero whatever the cap does.
+    expect(share(20_000, 4_000, 4_000, capped)).toBe(0);
   });
+});
 
-  it("a finalized church invoice is flagged for the finance office and nothing moves", async () => {
-    const { tx, state, flags } = transaction({ finalized: true });
-    const outcome = await settle(tx, 2_000);
-    expect(outcome).toEqual({ status: "FLAGGED", deltaCents: 2_000, churchName: "Synthetic Church" });
+describe("the finalized-invoice rule (#813)", () => {
+  it("a finalized church invoice on an invoiced event is flagged for the finance office and nothing is stored", async () => {
+    const { tx, state, flag } = transaction({ deferred: true, finalized: true });
+    expect(await set(tx, 2_000, "lodging:ver_1")).toEqual({ status: "FLAGGED", deltaCents: 2_000, churchName: "Synthetic Church" });
     expect(state).toEqual({ discount: 4_500, moved: 0 });
     expect(tx.promoCodeRedemption.update).not.toHaveBeenCalled();
-    expect(flags).toHaveLength(1);
-    expect(flags[0]).toMatchObject({ eventId: "event_1", registrationId: "reg_1", churchId: "church_1", invoiceVersionId: "inv_v1", deltaCents: 2_000 });
+    expect(flag()).toMatchObject({ deltaCents: 2_000, sourceKey: "lodging:ver_1" });
     expect(tx.invoiceVersion.findFirst.mock.calls[0]![0].where).toMatchObject({ status: "FINALIZED", invoice: { partyKind: "ORGANIZATION", partyId: "church_1" } });
     const [entry] = dependencies.writeAuditLog.mock.calls.at(-1)!;
     expect(entry.action).toBe("CHURCH_SPONSOR_SHARE_FLAGGED");
     expect(JSON.stringify(entry)).not.toMatch(/Synthetic Church|REG-|@/);
-    dependencies.writeAuditLog.mockClear();
+  });
+
+  it("keeps one open flag per registration, updated in place, and closes it when the share returns to the invoiced amount", async () => {
+    const { tx, flag } = transaction({ deferred: true, finalized: true });
+    await set(tx, 2_000, "lodging:ver_1");
+    await set(tx, 4_000, "lodging:ver_2");
+    expect(tx.churchSponsorFinanceReview.create).toHaveBeenCalledTimes(1);
+    expect(flag()).toMatchObject({ deltaCents: 4_000, sourceKey: "lodging:ver_2" });
+    expect(await set(tx, 0, "lodging:ver_3")).toMatchObject({ status: "UNCHANGED" });
+    expect(flag()).toBeNull();
+  });
+
+  it("an attendee-pay event has no invoice vehicle: an old invoice of the church never freezes the share", async () => {
+    const { tx, state } = transaction({ deferred: false, finalized: true });
+    expect(await set(tx, 2_000)).toMatchObject({ status: "UPDATED", deltaCents: 2_000 });
+    expect(state.moved).toBe(2_000);
+    expect(tx.invoiceVersion.findFirst).not.toHaveBeenCalled();
+    expect(tx.churchSponsorFinanceReview.create).not.toHaveBeenCalled();
   });
 });
 

@@ -2,7 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import type { ChurchSponsorFinanceReviewRow } from "@/modules/promo-codes/church-sponsor-lodging";
+import type { ChurchSponsorFinanceFlagRow } from "@/modules/promo-codes/church-sponsor-lodging";
 
 function signedMoney(cents: number) {
   return `${cents < 0 ? "-" : "+"}${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Math.abs(cents) / 100)}`;
@@ -13,7 +13,7 @@ function signedMoney(cents: number) {
  * amount owed were left exactly as they were; the finance office reviews each one (through the invoice-revision path if the
  * invoice should change) and clears it. A confirmation code and amounts only, never an attendee name.
  */
-export function ChurchSponsorFlags({ eventId, flags }: { eventId: string; flags: ChurchSponsorFinanceReviewRow[] }) {
+export function ChurchSponsorFlags({ eventId, flags }: { eventId: string; flags: ChurchSponsorFinanceFlagRow[] }) {
   const router = useRouter();
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);

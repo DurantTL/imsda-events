@@ -172,6 +172,7 @@ const operationRegistrationInclude = {
       discountValueSnapshot: true,
       eligibleSubtotalCents: true,
       discountAmountCents: true,
+      sponsorLodgingChangeCents: true,
       pricingDate: true,
       createdAt: true,
     },

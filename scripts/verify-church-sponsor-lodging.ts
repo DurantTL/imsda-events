@@ -32,9 +32,9 @@ import { selectEventProperty, setEventRate } from "@/modules/lodging/service";
 import { syncLodgingTemplates } from "@/modules/lodging/sync";
 import { updateLodgingSettings } from "@/modules/lodging/preferences-service";
 import { chargeChangeSentence } from "@/modules/lodging/preferences-domain";
-import { listChurchSponsoredPromoLines, sumChurchSponsoredPromoCents } from "@/modules/promo-codes/church-sponsored-repository";
+import { listChurchSponsoredPromoLines } from "@/modules/promo-codes/church-sponsored-repository";
 import { billedSponsoredLines } from "@/modules/promo-codes/church-sponsored";
-import { ChurchSponsorFlagError, clearChurchSponsorFlag, countOpenChurchSponsorFlags, listOpenChurchSponsorFlags } from "@/modules/promo-codes/church-sponsor-lodging";
+import { ChurchSponsorFlagError, clearChurchSponsorFlag, countOpenChurchSponsorFlags, listOpenChurchSponsorFlags, setChurchShare } from "@/modules/promo-codes/church-sponsor-lodging";
 import { churchAmountsOwedCsvRows } from "@/modules/club-registrations/church-owed";
 import { getEventOverview } from "@/modules/events/repository";
 
@@ -142,7 +142,7 @@ async function owedFor(registrationId: string) {
   return { discount: row.discountAmountCents, moved: row.sponsorLodgingChangeCents, owed: row.discountAmountCents + row.sponsorLodgingChangeCents };
 }
 const lineFor = async (confirmationCode: string) => (await owedLines()).find((line) => line.confirmationCode === confirmationCode);
-const churchTotal = (churchId = church) => sumChurchSponsoredPromoCents(eventId, prisma, churchId);
+const churchTotal = async (churchId = church) => (await owedLines()).filter((line) => line.churchId === churchId).reduce((sum, line) => sum + line.amountCents, 0);
 const changeAudits = (registrationId: string) => prisma.auditLog.findMany({ where: { eventId, action: "CHURCH_SPONSOR_SHARE_CHANGED", metadata: { path: ["registrationId"], equals: registrationId } }, orderBy: { createdAt: "asc" } });
 
 /** A finalized invoice version for a church on this event (an invoice version starts as a draft and is then finalized). */
@@ -208,7 +208,7 @@ async function main() {
   assert(afterUp.discount === 4500 && afterUp.moved === 2000, "the registrant's recorded discount is untouched; the share is its own column");
   assert(Number((await prisma.registration.findUniqueOrThrow({ where: { id: half.id } })).totalAmount) === 45, "and the registrant's total is unchanged (staff record the registrant's share in Payments)");
   const sentence = chargeChangeSentence(up);
-  assert(sentence.includes("The amount to record for the registrant is +$20.00.") && sentence.includes("was updated automatically") && !/finance office/i.test(sentence), `staff are told the registrant's share to record and that the church was updated: ${sentence}`);
+  assert(sentence.includes("The amount to record for the registrant is +$20.00.") && sentence.includes("(updated automatically") && !/finance office/i.test(sentence), `staff are told the registrant's share to record and that the church was updated: ${sentence}`);
 
   const upAgain = await staffParty(half.id, 3);
   assert(upAgain.churchShare?.status === "UPDATED" && upAgain.churchShare.deltaCents === 2000 && upAgain.churchShare.registrationOwedCents === 8500, "a second increase moves only its own +$20");
@@ -221,15 +221,15 @@ async function main() {
   // Every church amount change is audited with ids and amounts only.
   const audits = await changeAudits(half.id);
   assert(audits.length === 4, `four edits, four audit rows, got ${audits.length}`);
-  const allowedKeys = ["registrationId", "redemptionId", "churchId", "lodgingRequestVersionId", "fromCents", "toCents", "deltaCents", "requestedDeltaCents"].sort();
+  const allowedKeys = ["registrationId", "redemptionId", "churchId", "sourceKey", "fromCents", "toCents", "beforeCents", "afterCents", "deltaCents", "currentLodgingCents", "storedLodgingCents"].sort();
   for (const row of audits) {
     const metadata = row.metadata as Record<string, unknown>;
     assert(JSON.stringify(Object.keys(metadata).sort()) === JSON.stringify(allowedKeys), `the audit row holds ids and amounts only: ${Object.keys(metadata).join()}`);
-    assert(Object.values(metadata).every((value) => typeof value === "number" || (typeof value === "string" && value.length > 0 && !/\s/.test(value))), "every value is an id or an amount, never text");
+    assert(Object.values(metadata).every((value) => typeof value === "number" || (typeof value === "string" && value.length > 0 && !/\s/.test(value))), "every value is an id, a source key or an amount, never text");
     assert(!JSON.stringify(row).includes(half.code) && !JSON.stringify(row).includes(surname), "no confirmation code, no name");
   }
   assert(audits.map((row) => (row.metadata as { deltaCents: number }).deltaCents).join() === "2000,2000,-2000,-2000", "in order, the audit rows are the four deltas");
-  assert((audits[0]!.metadata as { fromCents: number }).fromCents === 4500 && (audits[0]!.metadata as { toCents: number }).toCents === 6500, "from and to amounts are recorded");
+  assert((audits[0]!.metadata as { fromCents: number }).fromCents === 4500 && (audits[0]!.metadata as { toCents: number }).toCents === 6500 && (audits[0]!.metadata as { beforeCents: number }).beforeCents === 0 && (audits[0]!.metadata as { afterCents: number }).afterCents === 2000 && (audits[0]!.metadata as { currentLodgingCents: number }).currentLodgingCents === 8000 && (audits[0]!.metadata as { storedLodgingCents: number }).storedLodgingCents === 4000, "before, after and the basis figures are recorded");
 
   // A repeated edit changes nothing the second time.
   const repeated = await staffParty(half.id, 1);
@@ -276,6 +276,58 @@ async function main() {
   await staffParty(half.id, 1);
   assert((await owedFor(half.id)).moved === 0, "and a later revert still lands back at the start");
 
+  // ---- A rate change between edits, then a revert, returns exactly to the original (#813) ---------------------------------------
+  const rated = await submit("HALFCHURCH");
+  const ratedStart = await owedFor(rated.id);
+  await staffParty(rated.id, 2);
+  assert((await owedFor(rated.id)).moved === 2000, "an increase at the original rate: +$20");
+  await setEventRate(eventId, userId, { category: "TENT", rate: { amountCents: 5000, basis: "PER_PERSON_PER_EVENT", minimumNights: null } }, prisma);
+  assert((await owedFor(rated.id)).moved === 2000, "a rate change alone moves nothing");
+  const atNewRate = await staffParty(rated.id, 3);
+  // The charge is the stored line moved by the edits, both priced at today's rates: $40 + ($150 - $50) = $140 on 3 people.
+  assert(atNewRate.churchShare?.status === "UPDATED" && (await owedFor(rated.id)).moved === Math.round((5000 + 4000 + 2 * 5000) * 0.5) - 4500, `after the rate change the share is recomputed from the registration as it is now: ${JSON.stringify(await owedFor(rated.id))}`);
+  await staffParty(rated.id, 2);
+  const backAtOriginal = await staffParty(rated.id, 1);
+  assert(backAtOriginal.churchShare?.status === "UPDATED" && JSON.stringify(await owedFor(rated.id)) === JSON.stringify(ratedStart), `a revert after a rate change returns exactly to the original: ${JSON.stringify(await owedFor(rated.id))}`);
+  await setEventRate(eventId, userId, { category: "TENT", rate: { amountCents: 4000, basis: "PER_PERSON_PER_EVENT", minimumNights: null } }, prisma);
+  const noChange = await staffParty(rated.id, 1);
+  assert(noChange.changed === false, "an unchanged edit changes nothing");
+
+  // ---- A capped code plus an amendment never takes the church past the cap (#813) --------------------------------------------
+  await prisma.promoCode.create({ data: { eventId, code: "CAPPED", normalizedCode: "CAPPED", discountType: "PERCENT_BPS", discountValue: 5000, maximumDiscountCents: 6000, sponsoringOrganizationId: church } });
+  const capped = await submit("CAPPED");
+  assert((await owedFor(capped.id)).discount === 4500, "the capped code starts at $45 (under the $60 cap)");
+  await staffParty(capped.id, 3);
+  const cappedAfterEdit = await owedFor(capped.id);
+  assert(cappedAfterEdit.owed === 6000, `the church is held at the cap after the edit: ${JSON.stringify(cappedAfterEdit)}`);
+  async function amendFee(reg: Awaited<ReturnType<typeof submit>>, fee: boolean) {
+    const answers = await amendments.currentRegistrationAnswers(eventId, reg.id);
+    assert(answers, "the answers load");
+    const input = {
+      clientRequestId: randomUUID(), expectedUpdatedAt: answers.updatedAt, reason: "Fee choice", responses: { ...answers.responses, registration_fee: fee }, previewOnly: true as boolean,
+      attendees: reg.registration.attendees.map((row, index) => ({ attendeeId: row.id, clientId: `amend-${index}`, responses: { first_name: row.person.firstName, last_name: row.person.lastName } })),
+    };
+    const quote = await amendments.previewRegistrationAmendment(eventId, reg.id, input);
+    return amendments.amendRegistration(eventId, reg.id, { ...input, previewOnly: false, quoteFingerprint: quote.quoteFingerprint }, { kind: "STAFF", id: userId, displayName: "Sponsor verifier" }, before);
+  }
+  await amendFee(capped, false);
+  const cappedAfterAmend = await owedFor(capped.id);
+  assert(cappedAfterAmend.owed <= 6000 && cappedAfterAmend.owed === Math.min(6000, Math.round((0 + 12_000) * 0.5)), `after an amendment drops the other lines the church still pays exactly its percentage of what is charged, never past the cap: ${JSON.stringify(cappedAfterAmend)}`);
+  assert(cappedAfterAmend.discount === 2000 && cappedAfterAmend.moved === 4000, `the amendment rewrote the recorded discount and the share was recomputed on top: ${JSON.stringify(cappedAfterAmend)}`);
+  await amendFee(capped, true);
+  assert((await owedFor(capped.id)).owed === 6000, "and back again");
+  await staffParty(capped.id, 1);
+  assert((await owedFor(capped.id)).owed === 4500, "a revert after the amendments lands on the original $45");
+
+  // ---- An amendment racing a lodging edit ends consistent ---------------------------------------------------------------------
+  for (let round = 0; round < 3; round += 1) {
+    const racing = await submit("HALFCHURCH");
+    const outcomes = await Promise.all([amendFee(racing, false), staffParty(racing.id, 3)].map(caught));
+    assert(outcomes.every((outcome) => outcome === null), `both the amendment and the edit complete: ${outcomes.map(String).join()}`);
+    const racedOwed = await owedFor(racing.id);
+    assert(racedOwed.owed === Math.round((0 + 12_000) * 0.5), `round ${round}: whichever won, the church pays its percentage of exactly what is charged now (fee gone, 3 in a tent): ${JSON.stringify(racedOwed)}`);
+  }
+
   // ---- A registrant's change request moves nothing until staff apply it ---------------------------------------------
   const asked = await submit("HALFCHURCH");
   const askedBefore = await owedFor(asked.id);
@@ -302,7 +354,7 @@ async function main() {
   assert(racedNow.owed === expected, `after ${sizes.length} racing edits the church owes exactly the share of the final request (party ${finalVersion.partySize}): expected ${expected}, got ${racedNow.owed}`);
   const racedAudits = await changeAudits(raced.id);
   assert(racedAudits.reduce((sum, row) => sum + (row.metadata as { deltaCents: number }).deltaCents, 0) === racedNow.owed - racedStart, "and the audit rows add up to the same change");
-  assert(new Set(racedAudits.map((row) => (row.metadata as { lodgingRequestVersionId: string }).lodgingRequestVersionId)).size === racedAudits.length, "each request version moved the church's share once");
+  assert(new Set(racedAudits.map((row) => (row.metadata as { sourceKey: string }).sourceKey)).size === racedAudits.length, "each request version moved the church's share at most once");
   // The same edit sent twice at once changes the church once.
   const twice = await submit("HALFCHURCH");
   const twiceStart = (await owedFor(twice.id)).owed;
@@ -322,47 +374,60 @@ async function main() {
   const finalized = await invoiceFor(church, "F", true);
   const frozen = await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: finalized.version.id } });
   assert(frozen.status === "FINALIZED", "the church's invoice is finalized");
+  const sameInvoice = async () => JSON.stringify(await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: finalized.version.id } })) === JSON.stringify(frozen)
+    && await prisma.invoiceVersion.count({ where: { invoiceId: finalized.invoice.id } }) === 1 && await prisma.invoice.count({ where: { eventId, partyId: church } }) === 1;
+
+  // On an attendee-pay event (where sponsored codes live) invoices are not the billing vehicle: an old finalized invoice of
+  // the church never freezes its share, and no flag is raised.
+  const stillMoves = await staffParty(half.id, 2);
+  assert(stillMoves.churchShare?.status === "UPDATED" && stillMoves.churchShare.deltaCents === 2000, "an attendee-pay event moves the share even though the church has a finalized invoice");
+  assert(await countOpenChurchSponsorFlags(eventId, prisma) === 0 && await sameInvoice(), "no flag, and the invoice is untouched");
+  await staffParty(half.id, 1);
+
+  // On an event billed through invoices the finalized invoice is never revised and never moved: flagged for the finance office.
+  await prisma.event.update({ where: { id: eventId }, data: { billingMode: "DEFERRED_ORGANIZATION_INVOICE" } });
+  const settle = (registrationId: string, desiredCents: number, sourceKey: string) => prisma.$transaction((tx) => setChurchShare(tx, { eventId, registrationId, desiredCents, sourceKey, basis: { currentLodgingCents: 8000, storedLodgingCents: 4000 }, actorUserId: userId }));
   const beforeFlag = await owedFor(half.id);
   const totalBefore = await churchTotal();
-  const flagged = await staffParty(half.id, 2);
-  assert(flagged.priceNeedsReview === true && flagged.registrantDeltaCents === 2000 && flagged.sponsorDeltaCents === 2000, "the registrant's share is still told to staff");
-  assert(flagged.churchShare?.status === "FLAGGED" && flagged.churchShare.deltaCents === 2000, `the church's share is flagged, not applied: ${JSON.stringify(flagged.churchShare)}`);
+  const flagged = await settle(half.id, 2000, "lodging:verify-1");
+  assert(flagged?.status === "FLAGGED" && flagged.deltaCents === 2000, `the church's share is flagged, not applied: ${JSON.stringify(flagged)}`);
   assert(JSON.stringify(await owedFor(half.id)) === JSON.stringify(beforeFlag) && await churchTotal() === totalBefore, "the church's amount owed did not move");
-  const afterFinal = await prisma.invoiceVersion.findUniqueOrThrow({ where: { id: finalized.version.id } });
-  assert(JSON.stringify(afterFinal) === JSON.stringify(frozen), "the finalized invoice is exactly as it was");
-  assert(await prisma.invoiceVersion.count({ where: { invoiceId: finalized.invoice.id } }) === 1 && await prisma.invoice.count({ where: { eventId, partyId: church } }) === 1, "no revision, no new invoice");
-  const sentenceFlagged = chargeChangeSentence(flagged);
+  assert(await sameInvoice(), "the finalized invoice is exactly as it was: no revision, no new invoice");
+  const sentenceFlagged = chargeChangeSentence({ chargeDeltaCents: 4000, registrantDeltaCents: 2000, sponsorDeltaCents: 2000, churchShare: flagged, promo: { code: "HALFCHURCH", coversLodging: true, sponsored: true } });
   assert(sentenceFlagged.includes("already finalized") && sentenceFlagged.includes("flagged") && !sentenceFlagged.includes("updated automatically"), `staff are told: ${sentenceFlagged}`);
   const open = await listOpenChurchSponsorFlags(eventId, prisma);
   assert(open.length === 1 && open[0]!.churchId === church && open[0]!.confirmationCode === half.code && open[0]!.deltaCents === 2000 && open[0]!.invoiceVersionId === finalized.version.id, `the finance office sees one open flag: ${JSON.stringify(open)}`);
   assert(await countOpenChurchSponsorFlags(eventId, prisma) === 1, "and the notice count is one");
-  assert(await prisma.auditLog.count({ where: { eventId, action: "CHURCH_SPONSOR_SHARE_FLAGGED" } }) === 1, "the flag is audited");
   const flagAudit = await prisma.auditLog.findFirstOrThrow({ where: { eventId, action: "CHURCH_SPONSOR_SHARE_FLAGGED" } });
   assert(!JSON.stringify(flagAudit).includes(surname) && !JSON.stringify(flagAudit).includes(half.code), "the flag audit row holds ids and amounts only");
-  // Another edit after finalization is its own flag (the revert is a separate -$20); the amount never moves.
-  const flaggedRevert = await staffParty(half.id, 1);
-  assert(flaggedRevert.churchShare?.status === "FLAGGED" && flaggedRevert.churchShare.deltaCents === -2000 && (await owedFor(half.id)).moved === beforeFlag.moved, "a revert after finalization is flagged too and moves nothing");
-  assert((await listOpenChurchSponsorFlags(eventId, prisma)).length === 2 && (await listOpenChurchSponsorFlags(eventId, prisma)).reduce((sum, row) => sum + row.deltaCents, 0) === 0, "the two flags net to nothing for the finance office");
-  // The 100% church is flagged the same way.
-  const fullFlag = await staffParty(full.id, 2);
-  assert(fullFlag.churchShare?.status === "FLAGGED" && fullFlag.churchShare.deltaCents === 4000 && (await owedFor(full.id)).moved === 0, "a 100% code after finalization is flagged and unchanged");
-  await staffParty(full.id, 1);
-  // A different church is not blocked by this church's finalized invoice.
-  const otherStillMoves = await staffParty(draftChurch.id, 3);
-  assert(otherStillMoves.churchShare?.status === "UPDATED", "another church's draft is unaffected by this church's finalized invoice");
+  // Another recompute updates the same open flag in place (the difference from the invoiced amount), never a second row.
+  const worse = await settle(half.id, 4000, "lodging:verify-2");
+  assert(worse?.status === "FLAGGED" && worse.deltaCents === 4000 && (await listOpenChurchSponsorFlags(eventId, prisma)).length === 1 && (await listOpenChurchSponsorFlags(eventId, prisma))[0]!.deltaCents === 4000, "one open flag per registration, updated in place");
+  // A return to the invoiced amount leaves nothing to review: the flag closes itself.
+  const backToInvoiced = await settle(half.id, 0, "lodging:verify-3");
+  assert(backToInvoiced?.status === "UNCHANGED" && await countOpenChurchSponsorFlags(eventId, prisma) === 0, "a return to the invoiced amount closes the flag");
+  // The 100% church is flagged the same way, and a church with only a draft is not blocked by another church's finalized invoice.
+  const fullFlag = await settle(full.id, 4000, "lodging:verify-4");
+  assert(fullFlag?.status === "FLAGGED" && fullFlag.deltaCents === 4000 && (await owedFor(full.id)).moved === 0, "a 100% code after finalization is flagged and unchanged");
+  const otherStillMoves = await settle(draftChurch.id, 4000, "lodging:verify-5");
+  assert(otherStillMoves?.status === "UPDATED", "another church's draft is unaffected by this church's finalized invoice");
+  assert(await settle(draftChurch.id, 2000, "lodging:verify-6").then((outcome) => outcome?.status) === "UPDATED", "and goes back by recompute");
+  await settle(half.id, 2000, "lodging:verify-7");
 
   // The finance office clears a flag once, with a note; clearing changes no amount and no invoice.
   const [first, ...rest] = await listOpenChurchSponsorFlags(eventId, prisma);
+  assert(first && rest.length === 1, "two open flags to clear");
   const totalAtClear = await churchTotal();
-  await clearChurchSponsorFlag({ eventId, flagId: first!.id, actorUserId: userId, note: "Revised through the invoice revision path" }, prisma);
-  const cleared = await prisma.churchSponsorFinanceReview.findUniqueOrThrow({ where: { id: first!.id } });
+  await clearChurchSponsorFlag({ eventId, flagId: first.id, actorUserId: userId, note: "Revised through the invoice revision path" }, prisma);
+  const cleared = await prisma.churchSponsorFinanceReview.findUniqueOrThrow({ where: { id: first.id } });
   assert(cleared.clearedAt !== null && cleared.clearedByUserId === userId && cleared.clearNote === "Revised through the invoice revision path", "the flag records who cleared it and the note");
-  assert((await listOpenChurchSponsorFlags(eventId, prisma)).length === rest.length && await churchTotal() === totalAtClear, "it leaves the open list, and no amount moved");
-  const again = await caught(clearChurchSponsorFlag({ eventId, flagId: first!.id, actorUserId: userId }, prisma));
+  assert((await listOpenChurchSponsorFlags(eventId, prisma)).length === rest.length && await churchTotal() === totalAtClear && await sameInvoice(), "it leaves the open list, and no amount and no invoice moved");
+  const again = await caught(clearChurchSponsorFlag({ eventId, flagId: first.id, actorUserId: userId }, prisma));
   assert(again instanceof ChurchSponsorFlagError && again.code === "ALREADY_CLEARED", "a flag is cleared once");
   const otherEvent = await caught(clearChurchSponsorFlag({ eventId: `${P}_nope`, flagId: rest[0]!.id, actorUserId: userId }, prisma));
   assert(otherEvent instanceof ChurchSponsorFlagError && otherEvent.code === "FLAG_NOT_FOUND", "a flag of another event is not found");
-  assert(await prisma.auditLog.count({ where: { eventId, action: "CHURCH_SPONSOR_FLAG_CLEARED" } }) === 1, "clearing is audited");
+  assert(await prisma.auditLog.count({ where: { eventId, action: "CHURCH_SPONSOR_FLAG_CLEARED" } }) >= 1, "clearing is audited");
+  await prisma.event.update({ where: { id: eventId }, data: { billingMode: "ATTENDEE_PAY" } });
 
   // Flags and the redemption column go with their event.
   await clearLedger();
