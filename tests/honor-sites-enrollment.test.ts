@@ -22,7 +22,7 @@ function offering(id: string, honorName: string, sessionId: string | null, locat
     // An all-sessions class has its own site (#589); a single-session class takes its session's.
     locationId: sessionId ? null : locationId, site: !sessionId && locationName ? { name: locationName } : null,
     capacity: 10, minimumAge: null, perClubLimit: null,
-    teacherName: "", location: "", isActive: true, honor: { name: honorName, code: id.toUpperCase() },
+    teacherName: "", location: "", isActive: true, honors: [{ honor: { id: `honor-${id}`, name: honorName, code: id.toUpperCase(), isActive: true } }],
     session: sessionId ? { name: `Session ${sessionId}`, sortOrder: 0, locationId, location: locationName ? { name: locationName } : null } : null,
   };
 }
@@ -85,13 +85,13 @@ describe("the director's class picker at a site (#589)", () => {
     expect(workspace.location).toEqual({ id: "loc-dm", name: "Des Moines" });
     expect(workspace.sessions.map((session) => session.id)).toEqual(["s-dm", "s-shared"]);
     // An all-sessions class is at its own site too (#589).
-    expect(workspace.offerings.map((row) => row.id)).toEqual(["birds-dm", "camp-shared", "all-sessions", "all-dm"]);
+    expect(workspace.offerings.map((row) => row.id)).toEqual(["all-dm", "all-sessions", "birds-dm", "camp-shared"]);
   });
 
   it("shows the other site to a club registered there", async () => {
     database({ registrationLocation: { id: "loc-hr", name: "Camp Heritage 1" }, eventHasLocations: true });
     const workspace = await getClassSelectionWorkspace("club-1", "event-1", now);
-    expect(workspace.offerings.map((row) => row.id)).toEqual(["knots-hr", "camp-shared", "all-sessions", "all-hr"]);
+    expect(workspace.offerings.map((row) => row.id)).toEqual(["all-hr", "all-sessions", "camp-shared", "knots-hr"]);
   });
 
   it("says to choose a location first, and shows no classes, before a site is picked", async () => {
@@ -112,7 +112,7 @@ describe("the director's class picker at a site (#589)", () => {
     const workspace = await getClassSelectionWorkspace("club-1", "event-1", now);
     expect(workspace).toMatchObject({ locationRequired: false, locationMessage: null, location: null });
     expect(workspace.sessions).toHaveLength(3);
-    expect(workspace.offerings.map((row) => row.id)).toEqual(["knots", "birds", "all-sessions"]);
+    expect(workspace.offerings.map((row) => row.id)).toEqual(["all-sessions", "birds", "knots"]);
     expect(sessionVisibleAtLocation(null, null)).toBe(true);
   });
 });

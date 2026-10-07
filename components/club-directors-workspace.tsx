@@ -1,5 +1,6 @@
 "use client";
 
+import { cardCell } from "@/components/table-card-labels";
 import { useState } from "react";
 import { Ban, UserCog, UserPlus } from "lucide-react";
 import {
@@ -191,33 +192,33 @@ export function ClubDirectorsWorkspace({
           </div>
         ) : (
           <div className="report-table-wrap">
-          <table className="report-table">
-            <thead>
-              <tr>
-                <th>Person</th>
-                <th>Role</th>
-                <th>Dates</th>
-                <th>Status</th>
-                <th>Reason</th>
-                <th><span className="sr-only">Actions</span></th>
+          <table className="report-table table-cards" role="table">
+            <thead role="rowgroup">
+              <tr role="row">
+                <th role="columnheader" scope="col">Person</th>
+                <th role="columnheader" scope="col">Role</th>
+                <th role="columnheader" scope="col">Dates</th>
+                <th role="columnheader" scope="col">Status</th>
+                <th role="columnheader" scope="col">Reason</th>
+                <th role="columnheader" scope="col"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup">
               {grants.map((grant) => (
-                <tr key={grant.id}>
-                  <td>
+                <tr key={grant.id} role="row">
+                  <th role="rowheader" scope="row">
                     <strong translate="no">{grant.account.displayName}</strong>
                     <br />
                     <small translate="no">{grant.account.email}</small>
-                  </td>
-                  <td>{clubDirectorRoleLabels[grant.role]}</td>
-                  <td>{formatDate(grant.effectiveFrom)} – {formatDate(grant.effectiveTo)}</td>
-                  <td>
+                  </th>
+                  <td {...cardCell("Role")}>{clubDirectorRoleLabels[grant.role]}</td>
+                  <td {...cardCell("Dates")}>{formatDate(grant.effectiveFrom)} – {formatDate(grant.effectiveTo)}</td>
+                  <td {...cardCell("Status")}>
                     <span className={`status-chip ${statusTone[grant.status]}`}>
                       {directorGrantStatusLabels[grant.status]}
                     </span>
                   </td>
-                  <td>
+                  <td {...cardCell("Reason")}>
                     {grant.reason}
                     {grant.revokeReason && (
                       <>
@@ -226,7 +227,7 @@ export function ClubDirectorsWorkspace({
                       </>
                     )}
                   </td>
-                  <td>
+                  <td {...cardCell(null)}>
                     {grant.status !== "REVOKED" && (
                       <button
                         aria-label={`Revoke ${grant.account.displayName}`}

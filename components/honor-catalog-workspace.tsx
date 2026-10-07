@@ -1,5 +1,6 @@
 "use client";
 
+import { cardCell } from "@/components/table-card-labels";
 import { useState } from "react";
 import { Award, Pencil, Plus, Save, X } from "lucide-react";
 import { CsvImportDialog } from "@/components/csv-import-dialog";
@@ -156,31 +157,31 @@ export function HonorCatalogWorkspace({ initialHonors }: { initialHonors: HonorR
               />
             </label>
             <div className="report-table-wrap">
-              <table className="report-table">
-                <thead>
-                  <tr>
-                    <th>Code</th>
-                    <th>Name</th>
-                    <th>Status</th>
-                    <th>Offered at sites</th>
-                    <th><span className="sr-only">Actions</span></th>
+              <table className="report-table table-cards" role="table">
+                <thead role="rowgroup">
+                  <tr role="row">
+                    <th role="columnheader" scope="col">Code</th>
+                    <th role="columnheader" scope="col">Name</th>
+                    <th role="columnheader" scope="col">Status</th>
+                    <th role="columnheader" scope="col">Offered at sites</th>
+                    <th role="columnheader" scope="col"><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody role="rowgroup">
                   {visible.map((honor) => (
-                    <tr key={honor.id}>
-                      <td><code>{honor.code}</code></td>
-                      <td>
+                    <tr key={honor.id} role="row">
+                      <td {...cardCell("Code")}><code>{honor.code}</code></td>
+                      <th role="rowheader" scope="row">
                         <strong>{honor.name}</strong>
                         {honor.description && <><br /><small>{honor.description}</small></>}
-                      </td>
-                      <td>
+                      </th>
+                      <td {...cardCell("Status")}>
                         <span className={`status-chip ${honor.isActive ? "green" : "gold"}`}>
                           {honor.isActive ? "Active" : "Inactive"}
                         </span>
                       </td>
-                      <td>{honor.offeringCount}</td>
-                      <td>
+                      <td {...cardCell("Offered at sites")}>{honor.offeringCount}</td>
+                      <td {...cardCell(null)}>
                         <button
                           aria-label={`Edit ${honor.name}`}
                           className="secondary-button"

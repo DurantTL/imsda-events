@@ -16,6 +16,7 @@ import {
   selectionProblem,
   type SelectableOffering,
 } from "@/modules/honors/enrollment-domain";
+import { compareOfferingRows, offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
 import { picksByAttendeeId } from "@/modules/honors/registration-picks";
 
 /**
@@ -127,18 +128,21 @@ async function loadOfferings(client: Prisma.TransactionClient, eventId: string) 
       teacherName: true,
       location: true,
       isActive: true,
-      honor: { select: { name: true, code: true } },
+      honors: offeringHonorsSelect,
       session: { select: { name: true, sortOrder: true, locationId: true, location: { select: { name: true } } } },
     },
-    orderBy: [{ honor: { name: "asc" } }],
   });
-  return offerings.map((offering) => ({
+  // By the class's honor names in alphabetical order, so reordering a class's honors never moves it (#812).
+  return [...offerings].sort(compareOfferingRows).map((offering) => {
+    const taught = summarizeOfferingHonors(offering.honors);
+    return {
     // The site comes from the session; an all-sessions class has its own (#589).
     siteId: offeringSiteId(offering),
     siteName: offering.span === "ALL_SESSIONS" ? offering.site?.name ?? null : offering.session?.location?.name ?? null,
     id: offering.id,
-    honorName: offering.honor.name,
-    honorCode: offering.honor.code,
+    // A class can teach several honors (#812): enrolling is enrolling in each, so the picker names them all.
+    honorName: taught.honorName,
+    honorCode: taught.honorCode,
     span: offering.span,
     sessionId: offering.sessionId,
     sessionName: offering.session?.name ?? null,
@@ -149,7 +153,8 @@ async function loadOfferings(client: Prisma.TransactionClient, eventId: string) 
     teacherName: offering.teacherName,
     location: offering.location,
     isActive: offering.isActive,
-  }));
+    };
+  });
 }
 
 /** Seats held by active registrations; a cancelled club registration gives its seats back. */

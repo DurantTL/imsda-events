@@ -96,11 +96,11 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
         </select></label>
         <button className="primary-button" type="submit" disabled={busy}>Save settings</button>
       </form> : <p>{view.settings.collectsPreferences ? "Registrants choose a lodging type" : "Registrants do not choose lodging (staff assign)"}; changes close after {view.settings.effectiveDeadline}; a full type shows {view.settings.fullBehavior === "WAITLIST" ? "\"Full\" and guests can join a lodging waitlist" : "\"Full\""}. Event administrators change these.</p>}
-      <table>
+      <div className="table-wrap"><table className="report-table report-table-auto">
         <caption>Lodging types offered</caption>
         <thead><tr><th scope="col">Type</th><th scope="col">Units in service</th><th scope="col">Asking (rooms or people)</th><th scope="col">Rate</th></tr></thead>
         <tbody>{view.offered.map((row) => <tr key={row.category}><th scope="row">{row.label}</th><td>{row.unitsInService}</td><td>{row.requested} {row.inRooms ? (row.requested === 1 ? "room" : "rooms") : (row.requested === 1 ? "person" : "people")}</td><td>{row.rate ? formatRate(row.rate) : "Included or free"}</td></tr>)}</tbody>
-      </table>
+      </table></div>
     </section>
 
     <section className="panel" aria-labelledby="lodging-queue">
@@ -134,7 +134,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
 
     <section className="panel" aria-labelledby="lodging-requests-table">
       <h3 id="lodging-requests-table">Requests ({view.requests.length})</h3>
-      {view.requests.length === 0 ? <p>No one has asked for lodging yet.</p> : <div className="table-wrap"><table>
+      {view.requests.length === 0 ? <p>No one has asked for lodging yet.</p> : <div className="table-wrap"><table className="report-table report-table-auto">
         <thead><tr>
           <th scope="col">Registration</th><th scope="col">Type</th><th scope="col">Nights</th><th scope="col">People</th><th scope="col">Rooms</th>
           {view.canSeeSensitive ? <th scope="col">Ground floor</th> : null}{view.canSeeSensitive ? <th scope="col">Accessible room</th> : null}

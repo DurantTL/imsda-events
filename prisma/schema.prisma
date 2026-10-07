@@ -3930,6 +3930,9 @@ model Honor {
   updatedAt      DateTime       @updatedAt
 
   offerings       HonorOffering[]
+  /// Every class (offering) that teaches this honor (#812), primary or not.
+  offeringHonors  HonorOfferingHonor[]
+  weekendCompletionLinks HonorWeekendCompletionLink[]
   memberEntries   MemberHonorEntry[]
   clubSupplyItems ClubSupplyItem[]
   masterAwardGroupHonors MasterAwardRuleGroupHonor[]
@@ -4202,12 +4205,18 @@ model HonorSession {
   @@index([locationId])
 }
 
-/// An honor taught at a site: in one session, or across all sessions.
-/// `capacity` counts youth seats only. The migration adds CHECK constraints
-/// and a partial unique index for ALL_SESSIONS offerings.
+/// A class taught at a site: in one session, or across all sessions. A class
+/// teaches one or more catalog honors (#812), listed in `honors`
+/// (`HonorOfferingHonor`); a person enrolled in the class is enrolled in each.
+/// `capacity` counts youth seats only. The migration adds CHECK constraints.
 model HonorOffering {
   id           String            @id @default(cuid())
   eventId      String
+  /// The class's PRIMARY honor (#812): the first of its `honors`, kept so older
+  /// readers and a plain `honorId` filter still work. A trigger inserts its
+  /// `HonorOfferingHonor` row (position 0) with the class, and the repository
+  /// keeps the two in step on every change. Never read it to learn what the
+  /// class teaches: read `honors`.
   honorId      String
   sessionId    String?
   /// Site of an ALL_SESSIONS class (#589); a single-session class takes its
@@ -4233,13 +4242,42 @@ model HonorOffering {
   session     HonorSession?     @relation(fields: [sessionId], references: [id], onDelete: Restrict)
   site        EventLocation?    @relation(fields: [locationId], references: [id], onDelete: Restrict)
   enrollments HonorEnrollment[]
+  honors      HonorOfferingHonor[]
 
-  // The all-sessions uniqueness is two partial unique indexes the migration
-  // maintains (one per honor per site; one per honor with no site).
-  @@unique([sessionId, honorId])
+  // "No honor twice in a session" and the all-sessions rules now live on
+  // `HonorOfferingHonor`, one row per honor taught (#812).
   @@index([eventId, isActive])
   @@index([locationId])
   @@index([honorId])
+}
+
+/// One honor taught by one class (#812). `eventId`, `sessionId` and `locationId`
+/// copy the class's own, kept in step by triggers in the migration (insert fills
+/// them; a change to the class's session or site updates them), so the database
+/// itself can say "no honor twice in one session" and "one all-sessions class
+/// per honor per site": the same rules `HonorOffering` had when it held one
+/// honor, now per honor taught. `position` orders the honors on the class;
+/// position 0 is the primary honor, which is also `HonorOffering.honorId`.
+/// Besides the `@@unique`s below, the migration adds two partial unique
+/// indexes (all-sessions classes: one per honor per event with no site, one per
+/// honor per site), which Prisma can't model and `migrate diff` leaves alone.
+model HonorOfferingHonor {
+  id         String   @id @default(cuid())
+  offeringId String
+  honorId    String
+  eventId    String
+  sessionId  String?
+  locationId String?
+  position   Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  offering HonorOffering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+  honor    Honor         @relation(fields: [honorId], references: [id], onDelete: Restrict)
+
+  @@unique([offeringId, honorId])
+  @@unique([sessionId, honorId])
+  @@index([honorId])
+  @@index([eventId, honorId])
 }
 
 /// One person on one club's roster for one club year (#356). Birth dates are
@@ -4727,7 +4765,8 @@ model HonorEnrollment {
   registration         Registration         @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   registrationAttendee RegistrationAttendee @relation(fields: [registrationAttendeeId], references: [id], onDelete: Cascade)
   organization         Organization?        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  weekendCompletion    HonorWeekendCompletionLink?
+  /// One per honor the class teaches (#812), once written back.
+  weekendCompletions   HonorWeekendCompletionLink[]
 
   @@unique([registrationAttendeeId, offeringId])
   @@index([offeringId, consumesSeat])
@@ -4804,21 +4843,28 @@ model MemberHonorEntryVoid {
 
 /// Marks one Honors Weekend class enrollment (#357–#360) as already written
 /// back into the member's year-round honor record (#487, #486). Unique on
-/// `enrollmentId`, so writing back is idempotent: running the job again over
+/// (`enrollmentId`, `honorId`), one link per honor a class teaches (#812), so
+/// writing back is idempotent: running the job again over
 /// the same enrollments creates nothing new. Not unique on the entry: when
 /// the member's latest entry for that honor is already COMPLETED (recorded by
 /// hand, or by an earlier weekend), the enrollment links to that entry rather
 /// than appending a second one.
 model HonorWeekendCompletionLink {
   id                 String   @id @default(cuid())
-  enrollmentId       String   @unique
+  enrollmentId       String
+  /// The honor of the class this link completed (#812): a class can teach
+  /// several, and each gets its own link and its own member record.
+  honorId            String
   memberHonorEntryId String
   createdAt          DateTime @default(now())
 
   enrollment       HonorEnrollment  @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  honor            Honor            @relation(fields: [honorId], references: [id], onDelete: Restrict)
   memberHonorEntry MemberHonorEntry @relation(fields: [memberHonorEntryId], references: [id], onDelete: Cascade)
 
+  @@unique([enrollmentId, honorId])
   @@index([memberHonorEntryId])
+  @@index([honorId])
 }
 
 /// How a club member transfer (#489) was brought to a close.

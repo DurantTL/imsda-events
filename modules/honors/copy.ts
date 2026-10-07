@@ -4,9 +4,10 @@ import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { normalizeHonorText, offeringSlotConflict } from "@/modules/honors/domain";
+import { classSlotConflict, normalizeHonorText } from "@/modules/honors/domain";
+import { offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
 import { offeringSiteId } from "@/modules/honors/locations";
-import { requireNoTeams, HonorConfigurationError, getEventHonorSetup, serializable } from "@/modules/honors/repository";
+import { requireNoTeams, HonorConfigurationError, getEventHonorSetup, serializable, writeHonorRows } from "@/modules/honors/repository";
 
 /**
  * Copying one site's sessions and offerings into another site or next year's
@@ -90,12 +91,12 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
         additionalCostCents: true,
         requirementNote: true,
         updatedAt: true,
-        honor: { select: { code: true, name: true, isActive: true } },
+        honors: offeringHonorsSelect,
       },
     }),
     client.honorOffering.findMany({
       where: { eventId: targetEventId },
-      select: { id: true, honorId: true, span: true, sessionId: true, locationId: true, session: { select: { locationId: true } } },
+      select: { id: true, honors: { select: { honorId: true } }, span: true, sessionId: true, locationId: true, session: { select: { locationId: true } } },
     }),
     client.eventLocation.findMany({ where: { eventId: targetEventId }, select: { id: true, name: true, normalizedName: true } }),
   ]);
@@ -144,7 +145,7 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
   // Sessions that don't exist yet get a placeholder key, so conflicts between
   // offerings being copied are still caught before anything is written.
   const plannedSlots = targetOfferings.map((offering) => ({
-    honorId: offering.honorId,
+    honorIds: offering.honors.map((row) => row.honorId),
     span: offering.span,
     sessionId: offering.sessionId,
     locationId: offeringSiteId(offering),
@@ -162,10 +163,12 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
     const sessionRef = sourceSession
       ? targetSessionByKey.get(placements.get(sourceSession.id)!.key) ?? `new:${placements.get(sourceSession.id)!.key}`
       : null;
+    // A class that teaches several honors (#812) is copied whole, with all of them.
+    const taught = summarizeOfferingHonors(offering.honors);
     const base = {
       sourceOfferingId: offering.id,
-      honorName: offering.honor.name,
-      honorCode: offering.honor.code,
+      honorName: taught.honorName,
+      honorCode: taught.honorCode,
       sessionName: sourceSession?.name ?? null,
       siteName: null as string | null,
       capacity: offering.capacity,
@@ -176,19 +179,26 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
     const classSite = siteMatch && targetLocationIds.has(siteMatch.id) ? siteMatch.id : null;
     base.siteName = siteMatch?.name ?? null;
     if (siteLost) {
-      warnings.push(`${offering.honor.name} (all sessions): ${targetEvent.name} has no site named "${offering.site!.name}", so this class gets no site.`);
+      warnings.push(`${taught.honorName} (all sessions): ${targetEvent.name} has no site named "${offering.site!.name}", so this class gets no site.`);
     }
-    if (!offering.honor.isActive) {
-      offerings.push({ ...base, action: "SKIP", reason: "The honor is inactive in the catalog." });
+    const inactive = taught.honors.filter((honor) => !honor.isActive);
+    if (inactive.length > 0) {
+      offerings.push({
+        ...base,
+        action: "SKIP",
+        reason: inactive.length === 1 && taught.honors.length === 1
+          ? "The honor is inactive in the catalog."
+          : `${inactive.map((honor) => honor.name).join(", ")} ${inactive.length === 1 ? "is" : "are"} inactive in the catalog.`,
+      });
       continue;
     }
     const slot = {
-      honorId: offering.honorId,
+      honorIds: taught.honorIds,
       span: offering.span,
       sessionId: sessionRef,
       locationId: offering.span === "ALL_SESSIONS" ? classSite : sourceSession ? placements.get(sourceSession.id)!.locationId : null,
     };
-    const conflict = offeringSlotConflict(slot, plannedSlots);
+    const conflict = classSlotConflict(slot, plannedSlots, (honorId) => taught.honors.find((honor) => honor.id === honorId)?.name ?? "");
     if (conflict) {
       // Two sites' classes for one honor that both lost their site are the same slot: say so, rather than "already set up".
       const merged = siteLost || (sourceSession?.location && !placements.get(sourceSession.id)!.locationId);
@@ -270,10 +280,11 @@ export async function applyHonorCopy(
       const sessionId = sessionKey?.startsWith("new:")
         ? sessionIds.get(sessionKey.slice("new:".length)) ?? null
         : sessionKey;
-      await tx.honorOffering.create({
+      const honorIds = summarizeOfferingHonors(offering.honors).honorIds;
+      const created = await tx.honorOffering.create({
         data: {
           eventId: targetEventId,
-          honorId: offering.honorId,
+          honorId: honorIds[0]!,
           sessionId,
           locationId,
           span: offering.span,
@@ -285,7 +296,9 @@ export async function applyHonorCopy(
           additionalCostCents: offering.additionalCostCents,
           requirementNote: offering.requirementNote,
         },
+        select: { id: true },
       });
+      await writeHonorRows(tx, created.id, targetEventId, honorIds);
     }
 
     await writeAuditLog({

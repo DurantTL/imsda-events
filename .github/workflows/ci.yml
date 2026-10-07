@@ -185,6 +185,13 @@ jobs:
       # no-site rule, copying and cloning by site name with the no-match warning (#589).
       - run: npm run test:honor-sites
 
+      # Real-database check that one Honors Weekend class can teach several honors (#812): the
+      # migration's backfill, the database refusing an honor twice in a session or twice across
+      # all sessions at a site (whichever class teaches it), one seat per enrollment however many
+      # honors, adding and removing honors after clubs enroll (and the refusal after write-back), each honor completed once, and races on seats,
+      # honor edits and write-backs.
+      - run: npm run test:multi-honor-classes
+
       # Real-database check of deleting an event at any stage: a rich event
       # (registrations, payments, honors, forms, messages, locations, club forms,
       # amendment ledgers) is removed in one transaction with no leftover rows
