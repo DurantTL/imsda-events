@@ -182,6 +182,8 @@ async function loadPublicEventLanding(
     forms,
     links,
     contentSections: await listPublishedEventContentSections(event.id),
+    /** The server's clock for this render, so the countdown block paints the same on the client. */
+    renderedAtMs: now.getTime(),
   };
 }
 

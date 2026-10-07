@@ -119,3 +119,18 @@ const options: sanitizeHtml.IOptions = {
 export function sanitizeCustomHtml(html: string): SanitizedHtml {
   return sanitizeHtml(html, options) as SanitizedHtml;
 }
+
+/**
+ * The render-time pass: every custom HTML section's stored body, sanitized
+ * again, keyed by section id. The page hands this to the block renderer, which
+ * accepts nothing else for custom HTML.
+ */
+export function sanitizedHtmlBySection(
+  sections: Array<{ id: string; kind: string; body: string }>,
+): Record<string, SanitizedHtml> {
+  return Object.fromEntries(
+    sections
+      .filter((section) => section.kind === "CUSTOM_HTML")
+      .map((section) => [section.id, sanitizeCustomHtml(section.body)]),
+  );
+}
