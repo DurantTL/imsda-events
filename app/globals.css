@@ -6828,12 +6828,13 @@ select:focus-visible {
   .event-asset-list .icon-button { min-width: 44px; min-height: 44px; }
   .translate-hint a { display: inline-flex; min-height: 44px; align-items: center; }
 }
+.event-content-section .event-custom-html img { width: auto; max-width: 100%; height: 200px; object-fit: contain; }
 .event-block-picker { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
 .event-block-picker label { flex: 1 1 14rem; }
 .event-block-row { display: grid; gap: 10px; margin: 0; border: 1px solid #dbe7ed; border-radius: 12px; padding: 12px; min-width: 0; }
 .event-block-row > legend { padding: 0 6px; font-weight: 800; }
 .event-image-picker { display: grid; gap: 8px; }
-.event-image-picker-thumb { width: 100%; max-width: 220px; max-height: 140px; object-fit: cover; border-radius: 8px; border: 1px solid #dbe7ed; }
+.event-image-picker-thumb { display: block; width: 220px; max-width: 100%; height: 140px; object-fit: cover; border-radius: 8px; border: 1px solid #dbe7ed; }
 .event-html-source { max-width: 100%; max-height: 20rem; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid #dbe7ed; border-radius: 8px; background: #f6f9fb; padding: 10px; font-size: 0.8rem; }
 
 .event-asset-list { display: grid; gap: 6px; list-style: none; margin: 10px 0 0; padding: 0; }
