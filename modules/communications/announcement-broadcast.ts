@@ -16,6 +16,7 @@ import {
 import { buildSeminarPreferencesBlocks } from "@/modules/communications/seminar-preferences";
 import { BATCH_TRANSACTION_MAX_WAIT_MS, BATCH_TRANSACTION_TIMEOUT_MS } from "@/modules/communications/batch-transaction";
 import { linkQueuedMessageFiles } from "@/modules/communications/message-files";
+import { inlineImageSetIssue, messageFileIdsInMarkdown } from "@/modules/communications/message-file-rules";
 import type { AnnouncementBroadcastPreview } from "@/modules/communications/types";
 
 export class AnnouncementBroadcastError extends Error {
@@ -85,6 +86,7 @@ async function loadAnnouncementBroadcastState(
           take: 1,
           select: {
             id: true,
+            bodyTemplate: true,
             files: { orderBy: { position: "asc" }, select: { file: { select: { id: true, filename: true, sizeBytes: true } } } },
           },
         },
@@ -100,6 +102,22 @@ async function loadAnnouncementBroadcastState(
   const attachments: Array<{ id: string; filename: string; sizeBytes: number }> = [];
   for (const link of [...announcementFiles, ...(template?.versions[0]?.files ?? [])]) {
     if (!attachments.some((file) => file.id === link.file.id)) attachments.push(link.file);
+  }
+  // The pictures the message will embed: those in the announcement's own body and in the template's. They are checked
+  // here, in the review, so a send never fails on one (as the save checks them too).
+  const pictureIds = [...new Set([
+    ...messageFileIdsInMarkdown(announcement.body),
+    ...messageFileIdsInMarkdown(template?.versions[0]?.bodyTemplate ?? ""),
+  ])];
+  let pictureProblem: string | null = null;
+  if (pictureIds.length > 0) {
+    const pictures = await client.messageFile.findMany({
+      where: { id: { in: pictureIds }, eventId: input.eventId, isInlineImage: true },
+      select: { sizeBytes: true },
+    });
+    pictureProblem = pictures.length !== pictureIds.length
+      ? "A picture in this announcement or its template is no longer available. Edit it and insert the picture again."
+      : inlineImageSetIssue(pictures)?.message ?? null;
   }
   const candidates = registrations.map((registration) => ({
     registrationId: registration.id,
@@ -117,6 +135,8 @@ async function loadAnnouncementBroadcastState(
       templateEnabled: template?.isEnabled !== false,
       templateVersionId: template?.versions[0]?.id ?? null,
       attachments,
+      pictureIds,
+      pictureProblem,
     },
   );
   return { announcement, registrations, recipients, preview, attachments };
@@ -305,19 +325,8 @@ export async function broadcastPublishedAnnouncement(input: {
       replayed: false,
     };
   }, { timeout: BATCH_TRANSACTION_TIMEOUT_MS, maxWait: BATCH_TRANSACTION_MAX_WAIT_MS });
-  // Real email with attachments is delivered by the outbox worker (the sweep runs `processPendingMessages` for every
-  // event holding due messages), not inside this request: reading and sending several megabytes per recipient would
-  // hold the staff member's request open for the whole audience. Without files, the send goes out as it always has.
-  let inRequestIds = result.pendingMessageIds;
-  if (result.deliveryMode === "EXTERNAL_EMAIL" && inRequestIds.length > 0) {
-    const withFiles = new Set((await getPrisma().messageOutboxFile.findMany({
-      where: { messageOutboxId: { in: inRequestIds } },
-      select: { messageOutboxId: true },
-      distinct: ["messageOutboxId"],
-    })).map((row) => row.messageOutboxId));
-    inRequestIds = inRequestIds.filter((id) => !withFiles.has(id));
-  }
-  await processQueuedMessageIdsAfterCommit(inRequestIds);
+  // Real email with files is left to the outbox worker inside `processQueuedMessageIdsAfterCommit`.
+  await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
   return {
     broadcastId: input.batchId,
     announcementId: input.announcementId,

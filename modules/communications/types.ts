@@ -245,6 +245,8 @@ export type AnnouncementBroadcastPreview = {
   attachments: Array<{ filename: string; sizeBytes: number }>;
   /** Set when the files together are over the per-message limits, which blocks the send. */
   attachmentProblem: string | null;
+  /** True when any message carries an attachment or an embedded picture; real email then goes out through the background worker. */
+  carriesFiles: boolean;
   /** Echoed back by the send so the server can refuse a stale review. */
   fingerprint: string;
   sendTiming: "IMMEDIATE";

@@ -21,6 +21,7 @@ function preview(overrides: Partial<AnnouncementBroadcastPreview> = {}): Announc
     suppressed: false,
     attachments: [],
     attachmentProblem: null,
+    carriesFiles: false,
     fingerprint: "a".repeat(64),
     sendTiming: "IMMEDIATE",
     generatedAt: "2026-09-28T04:06:05.000Z",

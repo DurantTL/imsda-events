@@ -153,3 +153,61 @@ export async function buildEmailParts(
   const bodyHtml = rewriteEmailImages(input.bodyHtml, (src) => decided.get(src) ?? null);
   return { bodyHtml, attachments, unembeddedImageCount: unembedded };
 }
+
+/** What one delivery run may hold in memory of the files its messages share. */
+export const FILE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
+
+/**
+ * A least-recently-used cache of file reads, bounded by bytes, for one delivery run: an announcement to a few
+ * hundred registrations reads the same attachment once, but a run that touches many different large files cannot
+ * hold them all (a run could otherwise keep gigabytes). A read in flight is shared; a failed read is forgotten so
+ * the next message tries again; a file larger than the whole cap is passed through uncached.
+ */
+export class BoundedFileCache {
+  private readonly entries = new Map<string, { pending: Promise<Uint8Array>; bytes: number }>();
+  private heldBytes = 0;
+
+  constructor(private readonly maxBytes = FILE_CACHE_MAX_BYTES) {}
+
+  get size() {
+    return this.entries.size;
+  }
+
+  get bytes() {
+    return this.heldBytes;
+  }
+
+  read(key: string, load: () => Promise<Uint8Array>) {
+    const hit = this.entries.get(key);
+    if (hit) {
+      // Most recently used moves to the end.
+      this.entries.delete(key);
+      this.entries.set(key, hit);
+      return hit.pending;
+    }
+    const entry = { pending: load(), bytes: 0 };
+    this.entries.set(key, entry);
+    entry.pending.then(
+      (content) => {
+        if (this.entries.get(key) !== entry) return;
+        entry.bytes = content.byteLength;
+        this.heldBytes += entry.bytes;
+        this.evict();
+      },
+      () => {
+        if (this.entries.get(key) === entry) this.entries.delete(key);
+      },
+    );
+    return entry.pending;
+  }
+
+  private evict() {
+    for (const [key, entry] of this.entries) {
+      if (this.heldBytes <= this.maxBytes) return;
+      // Oldest first; an entry still loading holds nothing yet.
+      if (entry.bytes === 0 && this.entries.size > 0) continue;
+      this.entries.delete(key);
+      this.heldBytes -= entry.bytes;
+    }
+  }
+}

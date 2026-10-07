@@ -281,6 +281,33 @@ export async function listAnnouncementFiles(
   return byAnnouncement;
 }
 
+/**
+ * Whether an announcement, as it will be sent through the event's announcement template, fits the per-message limits:
+ * its own files plus the template's attachments, and the pictures in its body (`{{announcement_body}}` is trusted
+ * Markdown, so staff can put `![x](msgfile:id)` in it) plus the template's own. Throws `FILE_SET_INVALID` with a
+ * message staff can act on, so a send can never fail on something the save let through.
+ */
+export async function assertAnnouncementFits(
+  tx: FileClient,
+  eventId: string,
+  input: { body: string; fileIds: readonly string[] },
+) {
+  const bodyPictureIds = messageFileIdsInMarkdown(input.body);
+  if (input.fileIds.length === 0 && bodyPictureIds.length === 0) return;
+  const published = await tx.messageTemplateVersion.findFirst({
+    where: { template: { eventId, key: "EVENT_ANNOUNCEMENT" }, status: "PUBLISHED" },
+    orderBy: { versionNumber: "desc" },
+    select: { bodyTemplate: true, files: { select: { fileId: true } } },
+  });
+  if (input.fileIds.length > 0) {
+    await resolveAttachmentSet(tx, eventId, [...input.fileIds, ...(published?.files.map((row) => row.fileId) ?? [])]);
+  }
+  await assertBodyImagesBelongToEvent(tx, eventId, [
+    ...bodyPictureIds,
+    ...(published ? messageFileIdsInMarkdown(published.bodyTemplate) : []),
+  ]);
+}
+
 /** Replaces an announcement's attachments with exactly `fileIds`. */
 export async function setAnnouncementFiles(
   tx: Prisma.TransactionClient,
@@ -289,18 +316,6 @@ export async function setAnnouncementFiles(
   fileIds: readonly string[],
 ) {
   const ids = await resolveAttachmentSet(tx, eventId, fileIds);
-  // The announcement goes out through the event's announcement template, whose own files and pictures go with it.
-  const published = ids.length === 0
-    ? null
-    : await tx.messageTemplateVersion.findFirst({
-        where: { template: { eventId, key: "EVENT_ANNOUNCEMENT" }, status: "PUBLISHED" },
-        orderBy: { versionNumber: "desc" },
-        select: { bodyTemplate: true, files: { select: { fileId: true } } },
-      });
-  if (published) {
-    await resolveAttachmentSet(tx, eventId, [...ids, ...published.files.map((row) => row.fileId)]);
-    await assertBodyImagesBelongToEvent(tx, eventId, messageFileIdsInMarkdown(published.bodyTemplate));
-  }
   await tx.announcementFile.deleteMany({ where: { announcementId } });
   if (ids.length > 0) {
     await tx.announcementFile.createMany({

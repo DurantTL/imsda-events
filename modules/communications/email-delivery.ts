@@ -44,6 +44,7 @@ import {
 import { logError, logWarn } from "@/lib/logger";
 import { MessageFileDeliveryError } from "@/modules/communications/message-file-rules";
 import {
+  BoundedFileCache,
   buildEmailParts,
   type DeliveryFileLink,
   type EmailPartDependencies,
@@ -247,21 +248,12 @@ function resolvePrisma(dependencies: ExternalEmailDeliveryDependencies) {
  */
 function resolveEmailPartDependencies(
   dependencies: ExternalEmailDeliveryDependencies,
-  fileCache: Map<string, Promise<Uint8Array>>,
+  fileCache: BoundedFileCache,
 ): EmailPartDependencies {
   const overrides = dependencies.emailParts ?? {};
   const read = overrides.readFile ?? readMessageFileBytes;
   return {
-    readFile: (file) => {
-      let pending = fileCache.get(file.id);
-      if (!pending) {
-        pending = read(file);
-        fileCache.set(file.id, pending);
-        // A failure is not remembered: the next message tries again (a transient error may have passed).
-        pending.catch(() => fileCache.delete(file.id));
-      }
-      return pending;
-    },
+    readFile: (file) => fileCache.read(file.id, () => read(file)),
     renderQrPng: overrides.renderQrPng ?? (async (registrationAccessToken, attendeeId) => {
       const [{ createAuthorizedAttendeePass }, { renderAttendeePassQrPng }] = await Promise.all([
         import("@/modules/checkin/attendee-pass-repository"),
@@ -676,7 +668,7 @@ async function runDeliveryLoop(
   const configuration = resolveConfiguration(dependencies);
   const sendEmail = dependencies.sendEmail ?? sendEmailWithResend;
   const now = dependencies.now ?? (() => new Date());
-  const fileCache = new Map<string, Promise<Uint8Array>>();
+  const fileCache = new BoundedFileCache();
   const uniqueMessageIds = options.messageIds
     ? [...new Set(options.messageIds)]
     : undefined;

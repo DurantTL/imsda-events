@@ -1,5 +1,5 @@
 import { getPrisma } from "@/lib/prisma";
-import { describeFilesForAudit, listAnnouncementFiles, setAnnouncementFiles } from "@/modules/communications/message-files";
+import { announcementAttachmentIds, assertAnnouncementFits, describeFilesForAudit, listAnnouncementFiles, setAnnouncementFiles } from "@/modules/communications/message-files";
 import type { MessageFileRecord } from "@/modules/communications/message-file-rules";
 
 type AnnouncementRow = Awaited<ReturnType<ReturnType<typeof getPrisma>["announcement"]["findMany"]>>[number];
@@ -49,6 +49,7 @@ export async function createAnnouncement(
         status: "DRAFT",
       },
     });
+    await assertAnnouncementFits(tx, eventId, { body: input.body, fileIds: input.attachmentFileIds ?? [] });
     const fileIds = await setAnnouncementFiles(tx, eventId, announcement.id, input.attachmentFileIds ?? []);
     await tx.auditLog.create({
       data: {
@@ -126,6 +127,11 @@ export async function updateAnnouncementDraft(
     const announcement = await tx.announcement.findFirst({ where: { id: existing.id, eventId } });
     if (!announcement) return null;
     // Only a draft's attachments change; a published announcement's files are what was reviewed and sent.
+    // The body may now carry pictures, or the files may have changed: the whole message must still fit.
+    await assertAnnouncementFits(tx, eventId, {
+      body: input.body,
+      fileIds: input.attachmentFileIds ?? (/msgfile:/.test(input.body) ? await announcementAttachmentIds(tx, existing.id) : []),
+    });
     if (input.attachmentFileIds) await setAnnouncementFiles(tx, eventId, existing.id, input.attachmentFileIds);
     await tx.auditLog.create({
       data: {

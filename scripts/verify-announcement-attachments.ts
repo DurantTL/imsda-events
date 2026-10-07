@@ -152,7 +152,7 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>, st
   // Imported after the environment is set, as the delivery code reads it when it runs.
   const { createMessageFile, MessageFileError } = await import("@/modules/communications/message-files");
   const { createAnnouncement, publishAnnouncement } = await import("@/modules/communications/repository");
-  const { broadcastPublishedAnnouncement, previewAnnouncementBroadcast } = await import("@/modules/communications/announcement-broadcast");
+  const { AnnouncementBroadcastError, broadcastPublishedAnnouncement, previewAnnouncementBroadcast } = await import("@/modules/communications/announcement-broadcast");
   const { processExternalEmailQueue } = await import("@/modules/communications/email-delivery");
   const {
     enqueueSelectedAudienceBatch,
@@ -396,6 +396,7 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>, st
     `the review lists both files: ${JSON.stringify(preview.attachments)}`,
   );
   assert(preview.attachmentProblem === null, "no attachment problem");
+  assert(preview.carriesFiles, "the review says this send carries files");
   const batchId = randomUUID();
   const sent = await broadcastPublishedAnnouncement({
     eventId: ids.event, announcementId: announcement.id, batchId, previewFingerprint: preview.fingerprint, actorUserId: ids.staff,
@@ -518,6 +519,41 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>, st
     `a selected-audience send carries the template's file and picture: ${JSON.stringify(selectedMessage.files)}`,
   );
   assert(boAttendee.id !== annAttendee.id, "two attendees were used");
+
+  // 7b. Pictures in an announcement's own body (trusted Markdown) are checked when it is saved, and again in the review.
+  const saveWithBody = (body: string) => createAnnouncement(ids.event, ids.staff, { title: "Body pictures", body, priority: "NORMAL" });
+  const refusedBody = async (body: string) => {
+    try {
+      await saveWithBody(body);
+      return false;
+    } catch (error) {
+      return error instanceof MessageFileError && error.code === "FILE_SET_INVALID";
+    }
+  };
+  assert(await refusedBody(`Look: ![x](msgfile:${foreign.id})`), "another event's picture in an announcement body is refused when saved");
+  assert(await refusedBody(`Look: ![x](msgfile:${agendaFile.id})`), "an attachment used as a picture in an announcement body is refused when saved");
+  assert(await refusedBody(`Look: ![x](msgfile:cm0nonexistentfile0)`), "a picture that does not exist is refused when saved");
+  assert(await refusedBody(bigPictures.map((id) => `![x](msgfile:${id})`).join(" ")), "four 1.7 MB pictures in an announcement body are refused when saved");
+  // Fine on its own and with today's template; then the template changes so that, together, they are over 6 MB.
+  const edgeAnnouncement = await saveWithBody(`Look: ![x](msgfile:${bigPictures[3]})`);
+  await publishAnnouncement(ids.event, edgeAnnouncement.id, ids.staff);
+  const edgePreview = await previewAnnouncementBroadcast({ eventId: ids.event, announcementId: edgeAnnouncement.id });
+  assert(edgePreview.attachmentProblem === null && edgePreview.carriesFiles, "an announcement with a picture in its body carries files and has no problem yet");
+  await publish(undefined, bigPictures.slice(0, 3).map((id) => `![p](msgfile:${id})`).join("\n\n"));
+  const conflictPreview = await previewAnnouncementBroadcast({ eventId: ids.event, announcementId: edgeAnnouncement.id });
+  assert(
+    conflictPreview.attachmentProblem !== null && /6\.0 MB/.test(conflictPreview.attachmentProblem),
+    `the review reports the pictures over the limit: ${conflictPreview.attachmentProblem}`,
+  );
+  let blockedSend = false;
+  try {
+    await broadcastPublishedAnnouncement({
+      eventId: ids.event, announcementId: edgeAnnouncement.id, batchId: randomUUID(), previewFingerprint: conflictPreview.fingerprint, actorUserId: ids.staff,
+    });
+  } catch (error) {
+    blockedSend = error instanceof AnnouncementBroadcastError && error.code === "ATTACHMENTS_INVALID";
+  }
+  assert(blockedSend, "the send is refused with a plain error rather than failing while queueing");
 
   // 8. A file referenced by a template, an announcement or a message cannot be deleted at all: the keys are RESTRICT.
   let deleteRefused = false;

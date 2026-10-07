@@ -3245,6 +3245,8 @@ export async function processQueuedMessageIdsAfterCommit(
     failedIds: [] as string[],
     rescheduledIds: [] as string[],
     skippedIds: [] as string[],
+    /** Real email that carries files, left to the outbox worker (the sweep) rather than sent inside this request. */
+    deferredIds: [] as string[],
   };
   if (uniqueMessageIds.length === 0) return result;
 
@@ -3264,6 +3266,8 @@ export async function processQueuedMessageIdsAfterCommit(
           },
         },
       },
+      // Whether the message carries any file (attachment or picture), for the rule below.
+      files: { select: { fileId: true }, take: 1 },
     },
   });
   const externalByEvent = new Map<string, string[]>();
@@ -3282,6 +3286,14 @@ export async function processQueuedMessageIdsAfterCommit(
       continue;
     }
     if (mode === "EXTERNAL_EMAIL") {
+      // Reading and sending several megabytes per message must not hold a registrant's or a staff member's request
+      // open, so real email with files waits for the outbox worker (`sweepOutbox` runs `processPendingMessages` for
+      // every event holding due messages). Messages without files go out here, as they always have. Local capture
+      // sends nothing, so it is unaffected.
+      if ((message.files ?? []).length > 0) {
+        result.deferredIds.push(message.id);
+        continue;
+      }
       const ids = externalByEvent.get(message.eventId) ?? [];
       ids.push(message.id);
       externalByEvent.set(message.eventId, ids);

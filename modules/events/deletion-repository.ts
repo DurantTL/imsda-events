@@ -247,8 +247,12 @@ export async function deleteEvent(input: {
   }
 }
 
-/** Removes the event's rows, leaves shared records alone, and deletes the event last. */
-async function removeEventOwnedRows(tx: Db, eventId: string) {
+/**
+ * Removes the event's rows, leaves shared records alone, and deletes the event last. Exported so the real-database
+ * check can run it on an event that holds the rows a deletable event never has (announcements, sent messages and
+ * their file links), which the decision to delete otherwise keeps out of reach.
+ */
+export async function removeEventOwnedRows(tx: Db, eventId: string) {
   const inEvent = { eventId };
 
   // 1. Outbound email: cancel what has not gone out, then remove the rows.
