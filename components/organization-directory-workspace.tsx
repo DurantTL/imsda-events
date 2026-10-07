@@ -9,6 +9,7 @@ import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import {
   externalSystemLabels,
   organizationTypeLabels,
+  sponsorOptionLabel,
 } from "@/modules/organizations/domain";
 import type { OrganizationDeletionCheck, OrganizationRecord } from "@/modules/organizations/repository";
 import styles from "./organization-directory-workspace.module.css";
@@ -38,7 +39,8 @@ function identityLabel(
 }
 
 export type OrganizationSummary = { churches: number; clubs: number; identities: number; unlinked: number };
-export type ChurchOption = { id: string; name: string; isActive: boolean };
+/** A church, company or group that may sponsor a club (#822). */
+export type SponsorOption = { id: string; name: string; type: string; isActive: boolean };
 
 const kindOptions = [
   { value: "", label: "All kinds" },
@@ -53,12 +55,12 @@ const statusOptions = [
 
 /**
  * The Clubs and churches page. The list is one searched, filtered, server-paged
- * page (#723); the summary tiles and the sponsoring-church picker come from the
+ * page (#723); the summary tiles and the sponsoring church or company picker come from the
  * whole directory, so a search never changes them. After a save the page asks
  * the server for the list again.
  */
 export function OrganizationDirectoryWorkspace({
-  churchOptions,
+  sponsorOptions,
   filters,
   organizations,
   page,
@@ -66,7 +68,7 @@ export function OrganizationDirectoryWorkspace({
   summary,
   total,
 }: {
-  churchOptions: ChurchOption[];
+  sponsorOptions: SponsorOption[];
   filters: OrganizationListState;
   organizations: OrganizationRecord[];
   page: number;
@@ -81,7 +83,7 @@ export function OrganizationDirectoryWorkspace({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const dialogRef = useAccessibleDialog<HTMLElement>(Boolean(editor), closeEditor);
-  const activeChurches = churchOptions.filter((church) => church.isActive);
+  const activeSponsors = sponsorOptions.filter((sponsor) => sponsor.isActive);
   const searching = filters.q.trim() !== "" || filters.kind !== "" || filters.status !== "ALL";
 
   function closeEditor() {
@@ -346,7 +348,7 @@ export function OrganizationDirectoryWorkspace({
                     <small>
                       {organizationTypeLabels[organization.type]}
                       {organization.parentOrganization
-                        ? ` · ${organization.parentOrganization.name}`
+                        ? ` · ${sponsorOptionLabel(organization.parentOrganization)}`
                         : ""}
                     </small>
                   </span>
@@ -643,7 +645,7 @@ export function OrganizationDirectoryWorkspace({
                   ? editor.organization.type === "CLUB"
                   : createType === "CLUB") && (
                   <label>
-                    Sponsoring church
+                    Sponsoring church or company
                     <select
                       defaultValue={editor.kind === "edit"
                         ? editor.organization.parentOrganizationId ?? ""
@@ -651,22 +653,22 @@ export function OrganizationDirectoryWorkspace({
                       name="parentOrganizationId"
                       required
                     >
-                      <option disabled value="">Choose a church</option>
-                      {activeChurches.map((church) => (
-                        <option key={church.id} value={church.id}>{church.name}</option>
+                      <option disabled value="">Choose a church or company</option>
+                      {activeSponsors.map((sponsor) => (
+                        <option key={sponsor.id} value={sponsor.id}>{sponsorOptionLabel(sponsor)}</option>
                       ))}
-                      {/* Keep the club's current church selectable even when it
+                      {/* Keep the club's current sponsor selectable even when it
                           is inactive, so saving never quietly moves the club
                           (and its invoices) to another church. The server asks
                           staff to choose an active one. */}
                       {editor.kind === "edit"
                         && editor.organization.parentOrganizationId
-                        && !activeChurches.some((church) => church.id === editor.organization.parentOrganizationId)
+                        && !activeSponsors.some((sponsor) => sponsor.id === editor.organization.parentOrganizationId)
                         && (() => {
-                          const current = churchOptions.find((church) => church.id === editor.organization.parentOrganizationId);
+                          const current = sponsorOptions.find((sponsor) => sponsor.id === editor.organization.parentOrganizationId);
                           return (
                             <option value={editor.organization.parentOrganizationId}>
-                              {current?.name ?? "Current church"} (inactive)
+                              {current ? sponsorOptionLabel(current) : "Current sponsor"} (inactive)
                             </option>
                           );
                         })()}

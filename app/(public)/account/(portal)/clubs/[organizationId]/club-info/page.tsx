@@ -3,7 +3,7 @@ import { ClubProfileForm } from "@/components/club-profile-form";
 import { ClubTeamWorkspace } from "@/components/club-team-workspace";
 import { listPendingClubTeamInvites } from "@/modules/club-imports/invites";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
-import { getClubProfile, listChurchOptions } from "@/modules/organizations/club-profile-repository";
+import { getClubProfile, listSponsorOptions } from "@/modules/organizations/club-profile-repository";
 import { listClubTeam } from "@/modules/organizations/director-grants-repository";
 
 export const metadata: Metadata = { title: "Club settings" };
@@ -37,7 +37,7 @@ export default async function ClubInfoPage({ params }: { params: Promise<{ organ
       {profileSection && (
         <div id="club-profile">
           <ClubProfileForm
-            churches={profileSection.churches}
+            sponsors={profileSection.sponsors}
             endpoint={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/profile`}
             initialProfile={profileSection.profile}
           />
@@ -60,5 +60,5 @@ export default async function ClubInfoPage({ params }: { params: Promise<{ organ
 async function loadProfileSection(organizationId: string) {
   const profile = await getClubProfile(organizationId);
   if (!profile) return null;
-  return { profile, churches: await listChurchOptions(profile.sponsoringChurchId) };
+  return { profile, sponsors: await listSponsorOptions(profile.sponsoringChurchId) };
 }

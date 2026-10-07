@@ -1,8 +1,8 @@
 /**
  * Proves church-sponsored promo codes (#545) against a real PostgreSQL
- * database: staff link a code on a GENERAL event to an active CHURCH
- * organization (a club event, a club organization, and an inactive church are
- * refused) and both link and unlink are audited with ids only; a redemption
+ * database: staff link a code on a GENERAL event to an active CHURCH,
+ * COMPANY or GROUP organization (#822; a club event, a club organization, a
+ * school and an inactive church are refused) and both link and unlink are audited with ids only; a redemption
  * makes one owed line of exactly the recorded discount for the church; a
  * cancelled, waitlisted, or draft registration owes nothing, so cancelling
  * drops the line with nothing to delete; two redemptions at the same moment
@@ -48,6 +48,7 @@ const staffUserId = `${P}_staff`;
 const churchA = `${P}_church_a`;
 const churchB = `${P}_church_b`;
 const churchInactive = `${P}_church_inactive`;
+const schoolOrg = `${P}_school`;
 const clubOrg = `${P}_club`;
 const events = {
   general: `${P}_event_general`,
@@ -188,7 +189,8 @@ async function main() {
   await prisma.organization.createMany({
     data: [
       { id: churchA, type: "CHURCH", name: "Church Promo Check Church A", normalizedName: "church promo check church a" },
-      { id: churchB, type: "CHURCH", name: "Church Promo Check Church B", normalizedName: "church promo check church b" },
+      { id: churchB, type: "COMPANY", name: "Church Promo Check Church B", normalizedName: "church promo check church b" },
+      { id: schoolOrg, type: "SCHOOL", name: "Church Promo Check School", normalizedName: "church promo check school" },
       { id: churchInactive, type: "CHURCH", name: "Church Promo Check Closed Church", normalizedName: "church promo check closed church", isActive: false },
     ],
   });
@@ -209,6 +211,7 @@ async function main() {
   await expectCode(createPromoCode(events.club, { ...baseInput, code: "NOCLUB", sponsoringOrganizationId: churchA }, staffUserId), "PROMO_CODE_SPONSOR_INVALID", "club event cannot have a sponsor");
   await expectCode(createPromoCode(events.general, { ...baseInput, code: "NOCLUBORG", sponsoringOrganizationId: clubOrg }, staffUserId), "PROMO_CODE_SPONSOR_INVALID", "a club is not a sponsoring church");
   await expectCode(createPromoCode(events.general, { ...baseInput, code: "NOINACTIVE", sponsoringOrganizationId: churchInactive }, staffUserId), "PROMO_CODE_SPONSOR_INVALID", "an inactive church cannot sponsor");
+  await expectCode(createPromoCode(events.general, { ...baseInput, code: "NOSCHOOL", sponsoringOrganizationId: schoolOrg }, staffUserId), "PROMO_CODE_SPONSOR_INVALID", "a school cannot sponsor (church B is a company, which can: #822)");
   await expectCode(createPromoCode(events.general, { ...baseInput, code: "NOSUCH", sponsoringOrganizationId: `${P}_missing` }, staffUserId), "PROMO_CODE_SPONSOR_INVALID", "an unknown organization cannot sponsor");
   assert(await prisma.promoCode.count({ where: { eventId: { in: [events.club] } } }) === 0, "a refused create leaves no code behind");
 

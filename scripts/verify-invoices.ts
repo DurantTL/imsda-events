@@ -211,7 +211,8 @@ async function main() {
   ] });
   await prisma.organization.createMany({ data: [
     { id: ids.church1, type: "CHURCH", name: `Invoice Check Church One ${P}`, normalizedName: `invoice check church one ${P}` },
-    { id: ids.church2, type: "CHURCH", name: `Invoice Check Church Two ${P}`, normalizedName: `invoice check church two ${P}` },
+    // Church 2 is a company (#822): a company-sponsored club is billed, contacted and invoiced like a church.
+    { id: ids.church2, type: "COMPANY", name: `Invoice Check Church Two ${P}`, normalizedName: `invoice check church two ${P}` },
   ] });
   await prisma.organization.createMany({ data: [
     { id: ids.club1, type: "CLUB", name: `Invoice Check Club 1 ${P}`, normalizedName: `invoice check club 1 ${P}`, parentOrganizationId: ids.church1 },

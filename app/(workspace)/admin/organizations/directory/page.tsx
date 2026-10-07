@@ -112,6 +112,16 @@ export default async function OrganizationDirectoryPage({ searchParams }: { sear
                       </td>
                       <td {...cardCell(null)} className="org-cell-actions">
                         <OrganizationStatusButton isActive={organization.isActive} name={organization.name} organizationId={organization.id} />
+                        {/* A company or group can sponsor a club (#822), so it is billed like a church and needs a billing contact. This page is system administrators only. */}
+                        {(organization.type === "COMPANY" || organization.type === "GROUP") && (
+                          <Link
+                            aria-label={`Billing contact for ${organization.name}`}
+                            className="secondary-button"
+                            href={`/admin/organizations/${organization.id}/billing`}
+                          >
+                            Billing contact
+                          </Link>
+                        )}
                       </td>
                     </tr>
                   );

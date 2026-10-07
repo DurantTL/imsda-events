@@ -105,6 +105,20 @@ describe("linking a sponsoring church (#545)", () => {
     expect(JSON.stringify(linked)).not.toMatch(/name/i);
   });
 
+  it.each(["COMPANY", "GROUP"])("links an active %s as the sponsoring congregation (#822)", async (type) => {
+    const tx = txFor({ church: { type, isActive: true } });
+    await createPromoCode("event_1", { ...baseInput, sponsoringOrganizationId: "church_1" }, "user_1");
+    expect(tx.promoCode.create).toHaveBeenCalledWith({ data: expect.objectContaining({ sponsoringOrganizationId: "church_1" }) });
+  });
+
+  it.each([{ type: "SCHOOL", isActive: true }, { type: "COMPANY", isActive: false }])("rejects %j as a sponsor (#822)", async (church) => {
+    const tx = txFor({ church });
+    await expect(
+      createPromoCode("event_1", { ...baseInput, sponsoringOrganizationId: "church_1" }, "user_1"),
+    ).rejects.toMatchObject({ code: "PROMO_CODE_SPONSOR_INVALID" });
+    expect(tx.promoCode.create).not.toHaveBeenCalled();
+  });
+
   it("rejects a sponsor on a CLUB event", async () => {
     txFor({ audience: "CLUB" });
     await expect(

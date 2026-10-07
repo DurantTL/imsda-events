@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import { sponsorOptionLabel } from "@/modules/organizations/domain";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import {
   isPromoCodeEditorDraftDirty,
@@ -87,7 +88,7 @@ export function PromoCodeWorkspace({
   initialPromoCodes: PromoCodeRecord[];
   /** Only a GENERAL event's code may be sponsored by a church (#545). */
   canSponsorByChurch?: boolean;
-  sponsorChurches?: Array<{ id: string; name: string }>;
+  sponsorChurches?: Array<{ id: string; name: string; type: string }>;
   /** Whether the viewer may create codes; the empty state offers the action only then (#743). The server decides again. */
   canCreate?: boolean;
 }) {
@@ -365,7 +366,7 @@ export function PromoCodeWorkspace({
                   {promo.sponsoringOrganizationName && (
                     <div>
                       <dt>Sponsored by</dt>
-                      <dd>{promo.sponsoringOrganizationName} · billed to the church</dd>
+                      <dd>{promo.sponsoringOrganizationName} · billed to the church or company</dd>
                     </div>
                   )}
                   <div>
@@ -507,7 +508,7 @@ export function PromoCodeWorkspace({
               )}
               {canSponsorByChurch && (
                 <label>
-                  Sponsoring church <small>Optional · the church is billed for the discount on each active registration that uses this code</small>
+                  Sponsoring church or company <small>Optional · the church or company is billed for the discount on each active registration that uses this code</small>
                   <select
                     name="sponsoringOrganizationId"
                     defaultValue={editedPromo?.sponsoringOrganizationId ?? ""}
@@ -521,10 +522,10 @@ export function PromoCodeWorkspace({
                       </option>
                     )}
                     {sponsorChurches.map((church) => (
-                      <option key={church.id} value={church.id}>{church.name}</option>
+                      <option key={church.id} value={church.id}>{sponsorOptionLabel(church)}</option>
                     ))}
                   </select>
-                  {Boolean(editedPromo?.redeemedCount) && <small>Used codes cannot change their sponsoring church. Deactivate this one and create a new code instead.</small>}
+                  {Boolean(editedPromo?.redeemedCount) && <small>Used codes cannot change their sponsoring church or company. Deactivate this one and create a new code instead.</small>}
                 </label>
               )}
               <label className="public-registration-check">

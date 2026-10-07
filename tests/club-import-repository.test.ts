@@ -111,6 +111,38 @@ describe("club import (#376)", () => {
     expect(result.message).toBe("This club already has a 2026-27 import. Add the missing people on the roster, or move the earlier import to another year.");
   });
 
+  it("puts a club under a company or group chosen in the preview, and refuses a school (#822)", async () => {
+    mocks.orgFindUnique.mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(
+      where.id === "company-1" ? { type: "COMPANY", isActive: true }
+        : where.id === "group-1" ? { type: "GROUP", isActive: true }
+          : where.id === "school-1" ? { type: "SCHOOL", isActive: true } : null,
+    ));
+    const [underCompany] = await importClubs([item({ churchId: "company-1", newChurchName: "" })], "admin-1", now);
+    expect(underCompany).toMatchObject({ status: "IMPORTED", organizationId: "club-new" });
+    expect(mocks.orgCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "CLUB", parentOrganizationId: "company-1" }) }));
+    expect(mocks.orgCreate).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "CHURCH" }) }));
+
+    mocks.orgCreate.mockClear();
+    const [underGroup] = await importClubs([item({ sourceKey: "form-89:502", entryId: "502", churchId: "group-1", newChurchName: "" })], "admin-1", now);
+    expect(underGroup).toMatchObject({ status: "IMPORTED" });
+    expect(mocks.orgCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ parentOrganizationId: "group-1" }) }));
+
+    mocks.orgCreate.mockClear();
+    const [underSchool] = await importClubs([item({ sourceKey: "form-89:503", entryId: "503", churchId: "school-1", newChurchName: "" })], "admin-1", now);
+    expect(underSchool).toMatchObject({ status: "FAILED" });
+    expect(mocks.orgCreate).not.toHaveBeenCalled();
+  });
+
+  it("links a typed name to an existing company instead of adding a church of the same name (#822)", async () => {
+    mocks.orgFindFirst.mockImplementation(({ where }: { where: { type: unknown } }) => Promise.resolve(
+      typeof where.type === "object" ? { id: "company-1", isActive: true } : null,
+    ));
+    const [result] = await importClubs([item({ churchId: null, newChurchName: "Example Company Congregation" })], "admin-1", now);
+    expect(result).toMatchObject({ status: "IMPORTED" });
+    expect(mocks.orgCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.orgCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "CLUB", parentOrganizationId: "company-1" }) }));
+  });
+
   it("refuses a club with no sponsoring church, creating nothing", async () => {
     const [result] = await importClubs([item({ churchId: null, newChurchName: "" })], "admin-1", now);
     expect(result).toMatchObject({ status: "FAILED" });
@@ -224,6 +256,76 @@ describe("club import (#376)", () => {
     const [kept] = await importClubs([item({ people: [twins[0], { ...twins[1], keepBoth: true }] })], "admin-1", now);
     expect(kept).toMatchObject({ membersAdded: 2, membersSkipped: 0, skipped: [] });
     expect(mocks.rosterCreate.mock.calls.every(([call]) => !("keepBoth" in call.data))).toBe(true);
+  });
+});
+
+describe("the preview's sponsor matching (#822)", () => {
+  it("offers companies and groups with their kind, and matches a form that names a company", async () => {
+    mocks.identityFindMany.mockResolvedValue([]);
+    mocks.orgFindMany.mockImplementation(({ where }: { where: { type: unknown } }) => Promise.resolve(
+      typeof where.type === "object"
+        ? [{ id: "company-1", name: "Example Company Congregation", type: "COMPANY" }, { id: "church-1", name: "Another SDA Church", type: "CHURCH" }]
+        : [],
+    ));
+    const drafts = parseClubRegistrationExport([syntheticExportEntry({ id: 901 })], now).drafts.map((draft) => ({ ...draft, churchName: "Example Company Congregation" }));
+    const annotated = await annotateImportDrafts(drafts);
+    expect(mocks.orgFindMany).toHaveBeenCalledWith(expect.objectContaining({ where: { type: { in: ["CHURCH", "COMPANY", "GROUP"] }, isActive: true } }));
+    expect(annotated.churches).toEqual([
+      { id: "company-1", name: "Example Company Congregation", type: "COMPANY" },
+      { id: "church-1", name: "Another SDA Church", type: "CHURCH" },
+    ]);
+    expect(annotated.drafts[0]).toMatchObject({ churchId: "company-1", newChurchName: "" });
+  });
+});
+
+describe("the preview's sponsor matching when names overlap (#822)", () => {
+  const sponsors = [
+    { id: "church-1", name: "Sample Hills Church", normalizedName: "sample hills church", type: "CHURCH" },
+    { id: "company-1", name: "Sample Hills Company", normalizedName: "sample hills company", type: "COMPANY" },
+    { id: "church-2", name: "Lone Oak SDA Church", normalizedName: "lone oak sda church", type: "CHURCH" },
+    { id: "company-2", name: "Lone Oak Company", normalizedName: "lone oak company", type: "COMPANY" },
+    { id: "company-3", name: "River Bend Company", normalizedName: "river bend company", type: "COMPANY" },
+    { id: "church-3", name: "Twin Pines", normalizedName: "twin pines", type: "CHURCH" },
+    { id: "group-3", name: "Twin Pines", normalizedName: "twin pines", type: "GROUP" },
+  ];
+  const match = async (churchName: string) => {
+    mocks.identityFindMany.mockResolvedValue([]);
+    mocks.orgFindMany.mockImplementation(({ where }: { where: { type: unknown } }) => Promise.resolve(typeof where.type === "object" ? sponsors : []));
+    const drafts = parseClubRegistrationExport([syntheticExportEntry({ id: 902 })], now).drafts.map((draft) => ({ ...draft, churchName }));
+    return (await annotateImportDrafts(drafts)).drafts[0]!;
+  };
+
+  it("matches an exact name first, even when a company shares its stem", async () => {
+    expect(await match("Sample Hills Church")).toMatchObject({ churchId: "church-1", newChurchName: "" });
+    expect(await match("Sample Hills Company")).toMatchObject({ churchId: "company-1", newChurchName: "" });
+  });
+
+  it("leaves the draft unmatched when more than one sponsor shares its stem, instead of letting the first win", async () => {
+    expect(await match("Sample Hills")).toMatchObject({ churchId: null, newChurchName: "Sample Hills" });
+    // The stem of a differently worded name is shared by a church and a company too.
+    expect(await match("Lone Oak Seventh-day Adventist Church")).toMatchObject({ churchId: null });
+  });
+
+  it("matches by stem when exactly one sponsor has it", async () => {
+    expect(await match("River Bend SDA Church")).toMatchObject({ churchId: "company-3", newChurchName: "" });
+  });
+
+  it("prefers the church when a church and a company have exactly the same name", async () => {
+    expect(await match("Twin Pines")).toMatchObject({ churchId: "church-3", newChurchName: "" });
+  });
+});
+
+describe("saving a typed name that matches a church and a company (#822)", () => {
+  it("looks for the church first among equally active matches, and links to what it finds", async () => {
+    mocks.orgFindFirst.mockImplementation(({ where }: { where: { type: unknown } }) => Promise.resolve(
+      typeof where.type === "object" ? { id: "church-3", isActive: true } : null,
+    ));
+    const [result] = await importClubs([item({ churchId: null, newChurchName: "Twin Pines" })], "admin-1", now);
+    expect(result).toMatchObject({ status: "IMPORTED" });
+    const lookup = mocks.orgFindFirst.mock.calls.map(([call]) => call).find((call) => typeof call.where.type === "object")!;
+    // Enum order is CHURCH, COMPANY, GROUP, so an active church sorts ahead of a company of the same name.
+    expect(lookup.orderBy).toEqual([{ isActive: "desc" }, { type: "asc" }, { name: "asc" }]);
+    expect(mocks.orgCreate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ type: "CLUB", parentOrganizationId: "church-3" }) }));
   });
 });
 

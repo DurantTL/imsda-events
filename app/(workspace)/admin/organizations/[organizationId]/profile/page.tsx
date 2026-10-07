@@ -5,7 +5,7 @@ import { BackLink } from "@/components/back-link";
 import { ClubProfileForm } from "@/components/club-profile-form";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { allowedReturnTo } from "@/lib/return-to";
-import { getClubProfile, listChurchOptions } from "@/modules/organizations/club-profile-repository";
+import { getClubProfile, listSponsorOptions } from "@/modules/organizations/club-profile-repository";
 
 export const metadata: Metadata = { title: "Club profile" };
 
@@ -28,7 +28,7 @@ export default async function StaffClubProfilePage({
   const { from } = await searchParams;
   const profile = await getClubProfile(organizationId);
   if (!profile) notFound();
-  const churches = await listChurchOptions(profile.sponsoringChurchId);
+  const sponsors = await listSponsorOptions(profile.sponsoringChurchId);
   const clubHref = `/admin/organizations/${organizationId}/club`;
   const backHref = allowedReturnTo(from, [clubHref], "/admin/organizations");
   const backLabel = backHref === clubHref ? `Back to ${profile.name}` : "Back to Clubs and churches";
@@ -36,7 +36,7 @@ export default async function StaffClubProfilePage({
     <section className="page-stack">
       <BackLink href={backHref} variant="staff">{backLabel}</BackLink>
       <ClubProfileForm
-        churches={churches}
+        sponsors={sponsors}
         endpoint={`/api/admin/organizations/${encodeURIComponent(organizationId)}/profile`}
         initialProfile={profile}
         variant="staff"

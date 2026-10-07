@@ -18,6 +18,9 @@
  *   once: a second approval is refused, and two racing approvals make exactly
  *   one club and one invite. The invite is emailed and, accepted, gives the
  *   director the club.
+ * - A company or group can sponsor the club (#822): an application naming a
+ *   company is accepted and approved under it, a school is refused, and a
+ *   typed church can be matched to a company at approval.
  * - Declining emails the applicant with the reason and creates nothing.
  * - A private link is emailed with the token minted at delivery (only its hash
  *   is stored), opens the same application for the invited email, and works
@@ -88,7 +91,7 @@ async function cleanup(originalNotify: string | null | undefined) {
   await prisma.person.deleteMany({ where: { normalizedEmail: { startsWith: stamp } } });
   await prisma.backgroundCheckUpload.deleteMany({ where: { format: `${stamp}-test` } });
   await prisma.attendeeAccount.deleteMany({ where: { email: { startsWith: stamp } } });
-  await prisma.organization.deleteMany({ where: { type: "CHURCH", name: { startsWith: stamp } } });
+  await prisma.organization.deleteMany({ where: { type: { in: ["CHURCH", "COMPANY", "GROUP", "SCHOOL"] }, name: { startsWith: stamp } } });
   await prisma.platformSettings.updateMany({ where: { id: "platform" }, data: { newClubApplicationEmail: originalNotify ?? null } });
   rmSync(storageDir, { recursive: true, force: true });
 }
@@ -262,6 +265,31 @@ async function main() {
     await repo.decideNewClubApplication(sysAdmin, typed.id, { decision: "approve", sponsoringChurchId: churchB.id }, now);
     const typedClub = await prisma.organization.findFirstOrThrow({ where: { type: "CLUB", name: `${stamp} Fellowship` }, select: { parentOrganizationId: true } });
     assert(typedClub.parentOrganizationId === churchB.id, "the chosen church sponsors the club");
+
+    // #822: a company or group may sponsor the club; a school may not.
+    const companyOrg = await prisma.organization.create({ data: { type: "COMPANY", name: `${stamp} Youth Company`, normalizedName: `${stamp} youth company`, isActive: true }, select: { id: true } });
+    const groupOrg = await prisma.organization.create({ data: { type: "GROUP", name: `${stamp} Fellowship Group`, normalizedName: `${stamp} fellowship group`, isActive: true }, select: { id: true } });
+    const schoolOrg = await prisma.organization.create({ data: { type: "SCHOOL", name: `${stamp} Sample School`, normalizedName: `${stamp} sample school`, isActive: true }, select: { id: true } });
+    const sponsorOptions = await repo.listPublicSponsorOptions();
+    assert(sponsorOptions.some((option) => option.id === companyOrg.id && option.type === "COMPANY") && sponsorOptions.some((option) => option.id === groupOrg.id && option.type === "GROUP"), "the form's list offers companies and groups with their kind");
+    assert(!sponsorOptions.some((option) => option.id === schoolOrg.id), "the form's list does not offer a school");
+    await expectRefused(() => repo.submitNewClubApplication(application({ clubName: `${stamp} School Club`, sponsoringChurchId: schoolOrg.id, directorEmail: `${stamp}-school@imsda-events.test` }), { now }), (error) => (error as { code?: string }).code === "INVALID_CHURCH", "a school is refused as the sponsor");
+    const underCompany = await repo.submitNewClubApplication(application({ clubName: `${stamp} Company Club`, sponsoringChurchId: companyOrg.id, directorEmail: `${stamp}-company@imsda-events.test` }), { now });
+    const queueRow = (await repo.listNewClubApplications("SYSTEM_ADMIN", now)).find((row) => row.id === underCompany.id);
+    assert(queueRow?.church.id === companyOrg.id && !queueRow.church.needsChoice && !queueRow.church.unavailable, "the queue shows the company as the sponsor, with no choice needed");
+    await repo.decideNewClubApplication(sysAdmin, underCompany.id, { decision: "approve" }, now);
+    const companyClub = await prisma.organization.findFirstOrThrow({ where: { type: "CLUB", name: `${stamp} Company Club` }, select: { parentOrganizationId: true, isActive: true } });
+    assert(companyClub.parentOrganizationId === companyOrg.id && companyClub.isActive, "approving creates the club under the company");
+    const typedGroup = await repo.submitNewClubApplication(application({ clubName: `${stamp} Group Club`, sponsoringChurchId: null, sponsoringChurchOther: "Some Group", directorEmail: `${stamp}-group@imsda-events.test` }), { now });
+    await expectRefused(() => repo.decideNewClubApplication(sysAdmin, typedGroup.id, { decision: "approve", sponsoringChurchId: schoolOrg.id }, now), (error) => (error as { code?: string }).code === "INVALID_CHURCH", "a school can't be chosen at approval");
+    await repo.decideNewClubApplication(sysAdmin, typedGroup.id, { decision: "approve", sponsoringChurchId: groupOrg.id }, now);
+    const groupClub = await prisma.organization.findFirstOrThrow({ where: { type: "CLUB", name: `${stamp} Group Club` }, select: { parentOrganizationId: true } });
+    assert(groupClub.parentOrganizationId === groupOrg.id, "a group chosen at approval sponsors the club");
+    // A sponsor that closes after the application is sent must be chosen again.
+    const laterClosed = await repo.submitNewClubApplication(application({ clubName: `${stamp} Closing Club`, sponsoringChurchId: companyOrg.id, directorEmail: `${stamp}-closing@imsda-events.test` }), { now });
+    await prisma.organization.update({ where: { id: companyOrg.id }, data: { isActive: false } });
+    await expectRefused(() => repo.decideNewClubApplication(sysAdmin, laterClosed.id, { decision: "approve" }, now), (error) => (error as { code?: string }).code === "CHURCH_REQUIRED", "an inactive company must be replaced before approving");
+    await prisma.organization.update({ where: { id: companyOrg.id }, data: { isActive: true } });
 
     // 8. Declining emails the applicant and creates nothing.
     const declined = await repo.submitNewClubApplication(application({ clubName: `${stamp} Declined`, sponsoringChurchId: churchB.id, directorEmail: `${stamp}-declined@imsda-events.test` }), { now });

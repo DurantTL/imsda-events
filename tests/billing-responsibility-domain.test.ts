@@ -49,6 +49,13 @@ describe("resolveByRule (#165)", () => {
     });
   });
 
+  it("resolves a club registration to a company or group sponsor the same way (#822)", () => {
+    // The rule reads the club's sponsor id, whatever kind of organization it is.
+    expect(resolveByRule({ club: { organizationId: "club-1", parentOrganizationId: "company-1" }, groupBillingPersonId: null })).toEqual({
+      kind: "ORGANIZATION", organizationId: "company-1", personId: null, source: "CLUB_SPONSORING_CHURCH",
+    });
+  });
+
   it("leaves a club with no sponsoring church unresolved instead of guessing", () => {
     expect(resolveByRule({ club: { organizationId: "club-1", parentOrganizationId: null }, groupBillingPersonId: null })).toMatchObject({
       kind: "UNRESOLVED", organizationId: null, personId: null, source: "UNRESOLVED_CLUB_HAS_NO_CHURCH",
@@ -122,6 +129,17 @@ describe("groupBillingLines (#165)", () => {
     expect(alpha.billedCount).toBe(2);
     expect(alpha.readiness).toBe("READY");
     expect(groups.find((group) => group.title === "Beta SDA Church")!.readiness).toBe("NO_CONTACT");
+  });
+
+  it("invoices a company that sponsors two clubs as one party, like a church (#822)", () => {
+    const company: ResponsibleParty = { kind: "ORGANIZATION", id: "company-1", name: "Gamma Company Congregation" };
+    const companyLines = [
+      line({ registrationId: "c1", party: company, clubId: "club-g1", clubName: "Gamma Pathfinders" }),
+      line({ registrationId: "c2", party: company, clubId: "club-g2", clubName: "Gamma Adventurers" }),
+    ];
+    const groups = groupBillingLines(companyLines, "PER_CHURCH", new Map([["company-1", contact("2026-10-02T00:00:00.000Z")]]));
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ title: "Gamma Company Congregation", owedCents: 20_000, billedCount: 2, readiness: "READY" });
   });
 
   it("keeps a club's teams in one per-club group, titled with the club's name and with a line for each team (#809)", () => {

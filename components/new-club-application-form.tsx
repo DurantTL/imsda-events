@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Plus, X } from "lucide-react";
 import { ClubFormSectionTitle } from "@/components/club-form-section-title";
+import { sponsorOptionLabel } from "@/modules/organizations/domain";
 import {
   CHURCH_AGREEMENT,
   MAX_APPLICATION_ATTACHMENT_BYTES,
@@ -16,7 +17,7 @@ const OTHER = "__other__";
 const ACCEPT = "application/pdf,image/png,image/jpeg,image/webp";
 
 type Props = {
-  churches: Array<{ id: string; name: string }>;
+  churches: Array<{ id: string; name: string; type: string }>;
   /** Today in the conference time zone, as a readable date. The server stamps the real one when it saves. */
   todayLabel: string;
   /** The private link's token, when the page was opened from one. */
@@ -137,16 +138,16 @@ export function NewClubApplicationForm({ churches, todayLabel, inviteToken, pref
             </select>
           </label>
           <label>
-            Sponsoring church
+            Sponsoring church or company
             <select onChange={(event) => set("church", event.target.value)} required value={values.church}>
-              <option value="">Choose a church…</option>
-              {churches.map((church) => <option key={church.id} value={church.id}>{church.name}</option>)}
+              <option value="">Choose a church or company…</option>
+              {churches.map((church) => <option key={church.id} value={church.id}>{sponsorOptionLabel(church)}</option>)}
               <option value={OTHER}>Other (not in this list)</option>
             </select>
           </label>
           {values.church === OTHER && (
             <label>
-              Name of the church
+              Name of the church or company
               <input autoComplete="off" maxLength={160} onChange={(event) => set("churchOther", event.target.value)} required value={values.churchOther} />
               <small className="field-help">The conference will match it to its church directory.</small>
             </label>

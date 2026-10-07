@@ -36,6 +36,7 @@ import {
   type PromoCodeFailureReason,
   type PromoCodeRule,
 } from "@/modules/promo-codes/domain";
+import { SPONSOR_ORGANIZATION_TYPES, canSponsorClub } from "@/modules/organizations/domain";
 import { eventBillsSponsoredPromoCodes } from "@/modules/promo-codes/church-sponsored";
 import { isChurchBilledBillingMode, perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 import type {
@@ -176,7 +177,8 @@ export async function listPromoCodes(eventId: string, now = new Date()) {
 
 /**
  * Church-sponsored codes (#545): only a GENERAL, attendee-paid event's code
- * may name a sponsor, and the sponsor must be an active CHURCH organization.
+ * may name a sponsor, and the sponsor must be an active church, company or
+ * group (#822).
  * An event that bills churches or organizations already invoices them
  * directly (#409), so a sponsored code there would bill it twice. The event
  * row is locked so a concurrent settings change cannot slip past this check
@@ -210,20 +212,20 @@ async function assertSponsorAllowed(
     where: { id: sponsoringOrganizationId },
     select: { type: true, isActive: true },
   });
-  if (!church || church.type !== "CHURCH" || !church.isActive) {
+  if (!canSponsorClub(church)) {
     throw new PromoCodeOperationError(
       "PROMO_CODE_SPONSOR_INVALID",
-      "Choose an active church as the sponsor.",
+      "Choose an active church or company as the sponsor.",
     );
   }
 }
 
-/** Active churches staff may pick as a code's sponsor. Names only. */
+/** Active churches, companies and groups (#822) staff may pick as a code's sponsor. Names and kind only. */
 export async function listSponsorChurchOptions() {
   return getPrisma().organization.findMany({
-    where: { type: "CHURCH", isActive: true },
+    where: { type: { in: [...SPONSOR_ORGANIZATION_TYPES] }, isActive: true },
     orderBy: { name: "asc" },
-    select: { id: true, name: true },
+    select: { id: true, name: true, type: true },
   });
 }
 

@@ -251,6 +251,17 @@ describe("eAdventist import storage (#649)", () => {
     await expect(setDirectoryOrganizationActive("missing", true, "admin-1")).rejects.toMatchObject({ code: "ORGANIZATION_NOT_FOUND" });
   });
 
+  it.each(["Sample Creek Company", "Sample Ridge Group"])("refuses to switch %s off while it sponsors an active club, then allows it once the club is inactive (#822)", async (name) => {
+    await commitEadventistImport(fixture, "admin-1");
+    const sponsor = byName(name);
+    rows().push({ id: "club-9", type: "CLUB", name: "Sample Sponsored Club", isActive: true, eadventistId: null, affiliatedOrganizationId: null, parentOrganizationId: sponsor.id } as Row);
+    await expect(setDirectoryOrganizationActive(sponsor.id, false, "admin-1")).rejects.toMatchObject({ code: "ORGANIZATION_HAS_ACTIVE_CLUBS" });
+    expect(byName(name).isActive).toBe(true);
+    rows().find((row) => row.id === "club-9")!.isActive = false;
+    await setDirectoryOrganizationActive(sponsor.id, false, "admin-1");
+    expect(byName(name).isActive).toBe(false);
+  });
+
   it("audits each status change", async () => {
     await commitEadventistImport(fixture, "admin-1");
     await setDirectoryOrganizationActive(byName("Sample Pines Camp").id, false, "admin-2");

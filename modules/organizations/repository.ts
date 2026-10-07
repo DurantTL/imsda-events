@@ -7,7 +7,12 @@ import {
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { clampPage } from "@/lib/pagination";
-import { normalizeOrganizationName } from "@/modules/organizations/domain";
+import {
+  SPONSOR_ORGANIZATION_TYPES,
+  canSponsorClub,
+  isSponsorOrganizationType,
+  normalizeOrganizationName,
+} from "@/modules/organizations/domain";
 import { organizationSearchWhere } from "@/modules/organizations/search";
 import type {
   CreateOrganizationInput,
@@ -105,37 +110,38 @@ async function validateParentOrganization(
   parentOrganizationId: string | null,
   organizationId?: string,
 ) {
-  if (type === "CHURCH") {
+  // Only a club has a sponsor (#822); a church, company or group stands alone.
+  if (type !== "CLUB") {
     if (parentOrganizationId !== null) {
       throw new OrganizationOperationError(
         "ORGANIZATION_PARENT_NOT_ALLOWED",
-        "A church cannot be placed under another church or club.",
+        "This organization cannot be placed under another organization.",
       );
     }
     return;
   }
 
   if (parentOrganizationId === null) {
-    // Every club has a sponsoring church; church-billed events invoice it.
+    // Every club has a sponsoring church or company; church-billed events invoice it.
     throw new OrganizationOperationError(
       "ORGANIZATION_PARENT_REQUIRED",
-      "Choose the club's sponsoring church. Every club needs one.",
+      "Choose the club's sponsoring church or company. Every club needs one.",
     );
   }
   if (parentOrganizationId === organizationId) {
     throw new OrganizationOperationError(
       "ORGANIZATION_PARENT_INVALID",
-      "A club cannot be its own sponsoring church.",
+      "A club cannot be its own sponsoring church or company.",
     );
   }
   const parent = await tx.organization.findUnique({
     where: { id: parentOrganizationId },
     select: { type: true, isActive: true },
   });
-  if (!parent || parent.type !== "CHURCH" || !parent.isActive) {
+  if (!canSponsorClub(parent)) {
     throw new OrganizationOperationError(
       "ORGANIZATION_PARENT_INVALID",
-      "Choose an active church as the club's sponsoring organization.",
+      "Choose an active church or company as the club's sponsoring organization.",
     );
   }
 }
@@ -209,11 +215,11 @@ export async function getOrganizationSummary() {
   return { churches, clubs, identities, unlinked };
 }
 
-/** Every church, for the sponsoring-church picker. Small and not searched. */
-export async function listChurchOptions() {
+/** Every church, company and group, for the sponsoring church or company picker (#822). Small and not searched. */
+export async function listSponsorOptions() {
   return getPrisma().organization.findMany({
-    where: { type: "CHURCH" },
-    select: { id: true, name: true, isActive: true },
+    where: { type: { in: [...SPONSOR_ORGANIZATION_TYPES] } },
+    select: { id: true, name: true, type: true, isActive: true },
     orderBy: [{ name: "asc" }, { id: "asc" }],
   });
 }
@@ -277,7 +283,7 @@ export async function updateOrganization(
       organizationId,
     );
 
-    if (existing.type === "CHURCH" && existing.isActive && !input.isActive) {
+    if (isSponsorOrganizationType(existing.type) && existing.isActive && !input.isActive) {
       const activeClub = await tx.organization.findFirst({
         where: {
           parentOrganizationId: organizationId,
@@ -289,7 +295,7 @@ export async function updateOrganization(
       if (activeClub) {
         throw new OrganizationOperationError(
           "ORGANIZATION_HAS_ACTIVE_CLUBS",
-          "Move or deactivate this church's active clubs before deactivating the church.",
+          "Move or deactivate its active clubs before deactivating it.",
         );
       }
     }

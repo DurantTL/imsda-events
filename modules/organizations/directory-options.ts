@@ -2,7 +2,7 @@ import "server-only";
 
 import type { OrganizationType, Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { normalizeOrganizationName } from "@/modules/organizations/domain";
+import { SPONSOR_ORGANIZATION_TYPES, normalizeOrganizationName } from "@/modules/organizations/domain";
 
 /**
  * The live club/church directory a registration form can source choices from
@@ -60,7 +60,7 @@ export function listClubDirectoryNames(client: DirectoryReadClient = getPrisma()
 
 /** Churches, companies, and groups (#649): the congregations a member can belong to. */
 export function listChurchDirectoryNames(client: DirectoryReadClient = getPrisma()): Promise<string[]> {
-  return listDirectoryNames(client, ["CHURCH", "COMPANY", "GROUP"]);
+  return listDirectoryNames(client, [...SPONSOR_ORGANIZATION_TYPES]);
 }
 
 export function listSchoolDirectoryNames(client: DirectoryReadClient = getPrisma()): Promise<string[]> {

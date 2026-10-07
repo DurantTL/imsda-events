@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Paperclip, Send } from "lucide-react";
+import { sponsorOptionLabel } from "@/modules/organizations/domain";
 import {
   DECLINE_REASON_MAX,
   directorBackgroundLabels,
@@ -28,7 +29,7 @@ type Props = {
   applications: NewClubApplicationRecord[];
   /** System administrators decide and send links; Area Coordinators only read. */
   canDecide: boolean;
-  churches: Array<{ id: string; name: string }>;
+  churches: Array<{ id: string; name: string; type: string }>;
   invites?: NewClubInviteRecord[];
   emailConfigured?: boolean;
 };
@@ -127,7 +128,7 @@ export function NewClubApplicationsQueue({ applications, canDecide, churches, in
               {newClubTypeLabels[application.clubType]} · sponsored by{" "}
               {application.church.unavailable && !application.church.name
                 ? <em>the church is no longer in the directory</em>
-                : <span translate="no">{application.church.name}</span>}
+                : <span translate="no">{application.church.type ? sponsorOptionLabel({ name: application.church.name, type: application.church.type }) : application.church.name}</span>}
               {application.church.isOther && " (typed by the applicant, not in the directory)"}
               {application.church.unavailable && application.church.name && " (no longer an active church in the directory)"}
             </p>
@@ -213,14 +214,14 @@ export function NewClubApplicationsQueue({ applications, canDecide, churches, in
               </p>
               {application.church.needsChoice && (
                 <label>
-                  Sponsoring church from the directory
+                  Sponsoring church or company from the directory
                   <select required value={churchChoice} onChange={(event) => setChurchChoice(event.target.value)}>
-                    <option value="">Choose a church…</option>
-                    {churches.map((church) => <option key={church.id} value={church.id}>{church.name}</option>)}
+                    <option value="">Choose a church or company…</option>
+                    {churches.map((church) => <option key={church.id} value={church.id}>{sponsorOptionLabel(church)}</option>)}
                   </select>
                   <small>
                     {application.church.name
-                      ? <>The applicant&apos;s church, &ldquo;{application.church.name}&rdquo;, isn&apos;t an active church in the directory. </>
+                      ? <>The applicant&apos;s church, &ldquo;{application.church.name}&rdquo;, isn&apos;t an active church or company in the directory. </>
                       : "The applicant's church is no longer in the directory. "}
                     Every club needs one.
                   </small>

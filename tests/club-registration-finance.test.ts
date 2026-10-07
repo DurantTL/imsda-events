@@ -101,8 +101,38 @@ describe("what each church owes (#409)", () => {
     expect(summary.churches).toEqual([
       { churchKey: "church-a", churchName: "Ankeny SDA Church", clubCount: 2, amountOwedCents: 2200 },
       { churchKey: "church-z", churchName: "Zion SDA Church", clubCount: 1, amountOwedCents: 6300 },
-      { churchKey: "none", churchName: "No sponsoring church on file", clubCount: 1, amountOwedCents: 1800 },
+      { churchKey: "none", churchName: "No sponsoring church or company on file", clubCount: 1, amountOwedCents: 1800 },
     ]);
+  });
+
+  it("bills a club sponsored by a company to that company, alongside churches (#822)", async () => {
+    dependencies.getPrisma.mockReturnValue({
+      clubEventRegistration: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            organization: { id: "org-s", name: "Sample Company Pathfinders", parentOrganization: { id: "company-s", name: "Sample Company Congregation" } },
+            registration: registration("REG-S1", "CONFIRMED", "40", 4),
+          },
+          {
+            organization: { id: "org-s2", name: "Sample Company Adventurers", parentOrganization: { id: "company-s", name: "Sample Company Congregation" } },
+            registration: registration("REG-S2", "SUBMITTED", "20", 2),
+          },
+          churchRows[1],
+        ]),
+      },
+      event: { findUnique: vi.fn().mockResolvedValue({ billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB" }) },
+      groupEventRegistration: { findMany: vi.fn().mockResolvedValue([]) },
+      registration: { findMany: vi.fn().mockResolvedValue([]) },
+    });
+    const owed = await listChurchAmountsOwed("event-1");
+    expect(owed.find((row) => row.confirmationCode === "REG-S1")).toMatchObject({ churchId: "company-s", churchName: "Sample Company Congregation", isBilled: true, amountOwedCents: 4000 });
+    const summary = summarizeChurchAmountsOwed(owed);
+    expect(summary.churches).toEqual([
+      { churchKey: "church-a", churchName: "Ankeny SDA Church", clubCount: 1, amountOwedCents: 1300 },
+      { churchKey: "company-s", churchName: "Sample Company Congregation", clubCount: 2, amountOwedCents: 6000 },
+    ]);
+    expect(summary.churchCount).toBe(2);
+    expect(churchAmountsOwedCsvRows(owed).some((row) => row.includes("Sample Company Congregation"))).toBe(true);
   });
 
   it("shows the estimate per church and lists waitlisted and cancelled clubs separately at $0", async () => {

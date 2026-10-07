@@ -93,7 +93,7 @@ export const newClubApplicationInputSchema = z.strictObject({
   website: z.literal("").optional(),
 }).superRefine((value, context) => {
   if (!value.sponsoringChurchId && !value.sponsoringChurchOther) {
-    context.addIssue({ code: "custom", path: ["sponsoringChurchId"], message: "Choose the sponsoring church, or choose Other and type its name." });
+    context.addIssue({ code: "custom", path: ["sponsoringChurchId"], message: "Choose the sponsoring church or company, or choose Other and type its name." });
   }
   if (value.sponsoringChurchId && value.sponsoringChurchOther) {
     context.addIssue({ code: "custom", path: ["sponsoringChurchOther"], message: "Choose a church from the list, or Other, not both." });

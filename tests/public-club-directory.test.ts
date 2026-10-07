@@ -52,6 +52,10 @@ describe("public club directory privacy filter (#437)", () => {
       parentOrganization: {
         select: {
           name: true,
+          type: true,
+          city: true,
+          state: true,
+          postalCode: true,
           churchLocation: {
             select: { city: true, state: true, zip: true, latitude: true, longitude: true },
           },
@@ -62,6 +66,33 @@ describe("public club directory privacy filter (#437)", () => {
     for (const field of disallowedFields) {
       expect(flattened).not.toContain(field.toLowerCase());
     }
+  });
+
+  it("shows a company or group sponsor's own town, state and ZIP, never a street address (#822)", async () => {
+    mocks.findMany.mockResolvedValue([
+      {
+        id: "club-2", name: "Company Club", clubProfile: { meetingSchedule: "Mondays" },
+        parentOrganization: { name: "Sample Company", type: "COMPANY", city: "Sample Hills", state: "ZZ", postalCode: "00001", churchLocation: null },
+      },
+      {
+        id: "club-3", name: "Group Club", clubProfile: null,
+        parentOrganization: { name: "Sample Group", type: "GROUP", city: null, state: null, postalCode: null, churchLocation: null },
+      },
+      {
+        id: "club-4", name: "Church Club", clubProfile: null,
+        parentOrganization: { name: "Plain Church", type: "CHURCH", city: "Elsewhere", state: "ZZ", postalCode: "00002", churchLocation: null },
+      },
+    ]);
+    const clubs = await listPublicClubs();
+    expect(clubs[0]).toEqual({
+      id: "club-2", clubName: "Company Club", churchName: "Sample Company", town: "Sample Hills", state: "ZZ", zip: "00001",
+      meetingSchedule: "Mondays", latitude: null, longitude: null,
+    });
+    expect(clubs[1]).toMatchObject({ town: "", state: "", zip: "" });
+    // A church without a location is unchanged: no fallback.
+    expect(clubs[2]).toMatchObject({ town: "", state: "", zip: "" });
+    expect(JSON.stringify(clubs)).not.toMatch(/street/i);
+    expect(JSON.stringify(mocks.findMany.mock.calls[0][0].select).toLowerCase()).not.toContain("street");
   });
 
   it("shapes the DTO to only the allowed public fields", async () => {

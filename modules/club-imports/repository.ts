@@ -15,7 +15,7 @@ import {
   type ImportSkipReason,
 } from "@/modules/club-imports/domain";
 import type { ClubImportItem } from "@/modules/club-imports/schemas";
-import { normalizeOrganizationName } from "@/modules/organizations/domain";
+import { SPONSOR_ORGANIZATION_TYPES, canSponsorClub, normalizeOrganizationName } from "@/modules/organizations/domain";
 
 /**
  * Club import storage (#376). The export itself is never stored: the preview
@@ -28,18 +28,35 @@ import { normalizeOrganizationName } from "@/modules/organizations/domain";
 export async function annotateImportDrafts(drafts: ClubImportDraft[]) {
   const prisma = getPrisma();
   const [churches, clubs, identities] = await Promise.all([
-    prisma.organization.findMany({ where: { type: "CHURCH", isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+    // A church, company or group may sponsor a club (#822).
+    prisma.organization.findMany({ where: { type: { in: [...SPONSOR_ORGANIZATION_TYPES] }, isActive: true }, orderBy: { name: "asc" }, select: { id: true, name: true, normalizedName: true, type: true } }),
     prisma.organization.findMany({ where: { type: "CLUB" }, select: { id: true, name: true, normalizedName: true, isActive: true, parentOrganizationId: true } }),
     prisma.externalIdentity.findMany({
       where: { provider: "FLUENT_FORMS", externalId: { in: drafts.map((draft) => draft.entryId) } },
       select: { externalId: true, providerScope: true, organization: { select: { id: true, name: true } } },
     }),
   ]);
-  const churchByStem = new Map<string, { id: string; name: string }>();
+  type Sponsor = (typeof churches)[number];
+  // An exact name match comes first; a church wins an exact tie with a company or group.
+  const sponsorsByName = new Map<string, Sponsor[]>();
+  const sponsorsByStem = new Map<string, Sponsor[]>();
   for (const church of churches) {
+    const name = church.normalizedName || normalizeOrganizationName(church.name);
+    sponsorsByName.set(name, [...(sponsorsByName.get(name) ?? []), church]);
     const stem = churchStem(church.name);
-    if (stem && !churchByStem.has(stem)) churchByStem.set(stem, church);
+    if (stem) sponsorsByStem.set(stem, [...(sponsorsByStem.get(stem) ?? []), church]);
   }
+  const matchSponsor = (typedName: string): Sponsor | null => {
+    const exact = sponsorsByName.get(normalizeOrganizationName(typedName));
+    if (exact) {
+      if (exact.length === 1) return exact[0]!;
+      const exactChurches = exact.filter((sponsor) => sponsor.type === "CHURCH");
+      return exactChurches.length === 1 ? exactChurches[0]! : null;
+    }
+    // Two sponsors sharing a stem are ambiguous: leave the choice to staff rather than letting the first win.
+    const sharing = sponsorsByStem.get(churchStem(typedName));
+    return sharing?.length === 1 ? sharing[0]! : null;
+  };
   const clubByName = new Map(clubs.map((club) => [club.normalizedName, club]));
 
   return {
@@ -56,7 +73,7 @@ export async function annotateImportDrafts(drafts: ClubImportDraft[]) {
           importedYears[year] = { id: identity.organization.id, name: identity.organization.name };
         }
       }
-      const church = churchByStem.get(churchStem(draft.churchName)) ?? null;
+      const church = matchSponsor(draft.churchName);
       const club = clubByName.get(normalizeOrganizationName(draft.clubName)) ?? null;
       return {
         ...draft,
@@ -113,7 +130,7 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
       let club = await tx.organization.findFirst({ where: { type: "CLUB", normalizedName }, select: { id: true, isActive: true, parentOrganizationId: true } });
       if (club && !club.isActive) throw new ImportRefused("A club with that name is inactive. Reactivate it first, or give the import another name.");
 
-      // Every club has a sponsoring church; church-billed events invoice it.
+      // Every club has a sponsoring church or company; church-billed events invoice it.
       // An existing club keeps the church it has, so a choice here is only
       // used (or created) for a new club or one without a church yet.
       let churchId: string | null = null;
@@ -121,12 +138,13 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
       if (!club?.parentOrganizationId) {
         if (item.churchId) {
           const church = await tx.organization.findUnique({ where: { id: item.churchId }, select: { type: true, isActive: true } });
-          if (!church || church.type !== "CHURCH" || !church.isActive) throw new ImportRefused("The chosen church is no longer available.");
+          if (!canSponsorClub(church)) throw new ImportRefused("The chosen church or company is no longer available.");
           churchId = item.churchId;
         } else if (item.newChurchName) {
           const churchName = normalizeOrganizationName(item.newChurchName);
-          const existing = await tx.organization.findFirst({ where: { type: "CHURCH", normalizedName: churchName }, select: { id: true, isActive: true } });
-          if (existing && !existing.isActive) throw new ImportRefused("A church with that name is inactive. Reactivate it or choose another.");
+          // A name that is already a church, company or group links to it rather than adding a church of the same name. An active match wins, and a church wins a tie (enum order puts CHURCH first).
+          const existing = await tx.organization.findFirst({ where: { type: { in: [...SPONSOR_ORGANIZATION_TYPES] }, normalizedName: churchName }, orderBy: [{ isActive: "desc" }, { type: "asc" }, { name: "asc" }], select: { id: true, isActive: true } });
+          if (existing && !existing.isActive) throw new ImportRefused("A church or company with that name is inactive. Reactivate it or choose another.");
           if (existing) {
             churchId = existing.id;
           } else {
@@ -135,7 +153,7 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
             churchCreated = true;
           }
         }
-        if (!churchId) throw new ImportRefused("Choose or create the club's sponsoring church before importing.");
+        if (!churchId) throw new ImportRefused("Choose or create the club's sponsoring church or company before importing.");
       }
 
       const clubCreated = !club;

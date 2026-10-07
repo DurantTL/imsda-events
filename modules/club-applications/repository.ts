@@ -36,7 +36,7 @@ import {
   writeAsset,
 } from "@/modules/events/asset-storage";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
-import { normalizeOrganizationName } from "@/modules/organizations/domain";
+import { SPONSOR_ORGANIZATION_TYPES, canSponsorClub, normalizeOrganizationName } from "@/modules/organizations/domain";
 import { getPlatformSettings } from "@/modules/system-admin/platform-settings";
 
 /**
@@ -234,11 +234,11 @@ export async function cancelNewClubInvite(
 
 // --- Submitting ---------------------------------------------------------
 
-/** Every active church, for the public form's picker: ids and names, nothing else. */
-export async function listPublicChurchOptions() {
+/** Every active church, company and group (#822), for the public form's picker: ids, names and kind, nothing else. */
+export async function listPublicSponsorOptions() {
   return getPrisma().organization.findMany({
-    where: { type: "CHURCH", isActive: true },
-    select: { id: true, name: true },
+    where: { type: { in: [...SPONSOR_ORGANIZATION_TYPES] }, isActive: true },
+    select: { id: true, name: true, type: true },
     orderBy: [{ name: "asc" }, { id: "asc" }],
   });
 }
@@ -257,10 +257,10 @@ export async function submitNewClubApplication(
   let churchName: string | null = null;
   if (input.sponsoringChurchId) {
     const church = await prisma.organization.findFirst({
-      where: { id: input.sponsoringChurchId, type: "CHURCH", isActive: true },
+      where: { id: input.sponsoringChurchId, type: { in: [...SPONSOR_ORGANIZATION_TYPES] }, isActive: true },
       select: { name: true },
     });
-    if (!church) throw new NewClubApplicationError("INVALID_CHURCH", "Choose the sponsoring church from the list again.");
+    if (!church) throw new NewClubApplicationError("INVALID_CHURCH", "Choose the sponsoring church or company from the list again.");
     churchName = church.name;
   }
 
@@ -371,6 +371,8 @@ export type NewClubApplicationRecord = {
     id: string | null;
     name: string;
     isOther: boolean;
+    /** The directory sponsor's kind (#822); null for a typed name. */
+    type: string | null;
     /** A directory church was chosen but it is gone, inactive or no longer a church. */
     unavailable: boolean;
     /** Approving needs the admin to pick a directory church first. */
@@ -468,9 +470,9 @@ async function duplicateFlags(rows: Row[]): Promise<Map<string, DuplicateFlag[]>
   return flags;
 }
 
-/** No church to show: a directory church that is gone (the link was cleared), inactive, or not a church, and nothing typed instead. */
+/** No church to show: a directory sponsor that is gone (the link was cleared), inactive, or not a church, company or group, and nothing typed instead. */
 function churchUnavailable(row: Row) {
-  if (row.sponsoringChurchId) return !row.sponsoringChurch || row.sponsoringChurch.type !== "CHURCH" || !row.sponsoringChurch.isActive;
+  if (row.sponsoringChurchId) return !row.sponsoringChurch || !canSponsorClub(row.sponsoringChurch);
   return !row.sponsoringChurchOther;
 }
 
@@ -488,6 +490,8 @@ async function toRecords(rows: Row[], now: Date): Promise<NewClubApplicationReco
     church: {
       id: row.sponsoringChurchId,
       name: row.sponsoringChurch?.name ?? row.sponsoringChurchOther ?? "",
+      /** The directory sponsor's kind (#822); null for a typed name. */
+      type: row.sponsoringChurch?.type ?? null,
       isOther: !row.sponsoringChurchId && Boolean(row.sponsoringChurchOther),
       unavailable: churchUnavailable(row),
       needsChoice: !row.sponsoringChurchId || churchUnavailable(row),
@@ -594,16 +598,16 @@ export async function decideNewClubApplication(
     // Re-checked on every approval: the church may have been removed or deactivated since the applicant chose it.
     let churchId = application.sponsoringChurchId;
     if (decision.decision === "approve" && churchId) {
-      const stillThere = await tx.organization.findFirst({ where: { id: churchId, type: "CHURCH", isActive: true }, select: { id: true } });
+      const stillThere = await tx.organization.findFirst({ where: { id: churchId, type: { in: [...SPONSOR_ORGANIZATION_TYPES] }, isActive: true }, select: { id: true } });
       if (!stillThere) churchId = null;
     }
     if (decision.decision === "approve" && !churchId) {
       const chosen = decision.sponsoringChurchId;
       if (!chosen) {
-        throw new NewClubApplicationError("CHURCH_REQUIRED", "Choose the sponsoring church from the directory before approving. The applicant's church isn't in it (typed, removed or no longer active).");
+        throw new NewClubApplicationError("CHURCH_REQUIRED", "Choose the sponsoring church or company from the directory before approving. The applicant's sponsor isn't in it (typed, removed or no longer active).");
       }
-      const church = await tx.organization.findFirst({ where: { id: chosen, type: "CHURCH", isActive: true }, select: { id: true } });
-      if (!church) throw new NewClubApplicationError("INVALID_CHURCH", "Choose an active church from the directory.");
+      const church = await tx.organization.findFirst({ where: { id: chosen, type: { in: [...SPONSOR_ORGANIZATION_TYPES] }, isActive: true }, select: { id: true } });
+      if (!church) throw new NewClubApplicationError("INVALID_CHURCH", "Choose an active church or company from the directory.");
       churchId = church.id;
     }
 

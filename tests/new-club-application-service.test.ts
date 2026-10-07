@@ -92,6 +92,9 @@ function fakeDatabase() {
   const organizations = new Map<string, any>([
     ["church-1", { id: "church-1", type: "CHURCH", name: "Synthetic Church", isActive: true, parentOrganizationId: null, normalizedName: "synthetic church" }],
     ["church-2", { id: "church-2", type: "CHURCH", name: "Second Synthetic Church", isActive: true, parentOrganizationId: null, normalizedName: "second synthetic church" }],
+    ["company-1", { id: "company-1", type: "COMPANY", name: "Synthetic Company Congregation", isActive: true, parentOrganizationId: null, normalizedName: "synthetic company congregation" }],
+    ["group-1", { id: "group-1", type: "GROUP", name: "Synthetic Group Congregation", isActive: true, parentOrganizationId: null, normalizedName: "synthetic group congregation" }],
+    ["school-1", { id: "school-1", type: "SCHOOL", name: "Synthetic School", isActive: true, parentOrganizationId: null, normalizedName: "synthetic school" }],
   ]);
   const applications: any[] = [];
   const invites: any[] = [];
@@ -111,7 +114,9 @@ function fakeDatabase() {
 
   const tx: any = {
     organization: {
-      findFirst: vi.fn(async ({ where }: any) => [...organizations.values()].find((org) => org.id === where.id && org.type === where.type && org.isActive === where.isActive) ?? null),
+      findFirst: vi.fn(async ({ where }: any) => [...organizations.values()].find((org) => org.id === where.id
+        && (typeof where.type === "string" ? org.type === where.type : where.type.in.includes(org.type))
+        && org.isActive === where.isActive) ?? null),
       findMany: vi.fn(async ({ where }: any) => [...organizations.values()].filter((org) => org.type === where.type && where.parentOrganizationId.in.includes(org.parentOrganizationId))),
       create: vi.fn(async ({ data }: any) => {
         const row = { id: next("org"), ...data };
@@ -227,6 +232,15 @@ describe("submitting an application", () => {
     await expect(submitNewClubApplication(input({ sponsoringChurchId: "club-nope" }), { now: NOW })).rejects.toMatchObject({ code: "INVALID_CHURCH" });
     db.organizations.get("church-2").isActive = false;
     await expect(submitNewClubApplication(input({ sponsoringChurchId: "church-2" }), { now: NOW })).rejects.toMatchObject({ code: "INVALID_CHURCH" });
+  });
+
+  it("accepts a company or group as the sponsor, and refuses a school (#822)", async () => {
+    await submitNewClubApplication(input({ sponsoringChurchId: "company-1" }), { now: NOW });
+    await submitNewClubApplication(input({ clubName: "Group Club", sponsoringChurchId: "group-1" }), { now: NOW });
+    expect(db.applications.map((application) => application.sponsoringChurchId)).toEqual(["company-1", "group-1"]);
+    await expect(submitNewClubApplication(input({ sponsoringChurchId: "school-1" }), { now: NOW })).rejects.toMatchObject({ code: "INVALID_CHURCH" });
+    db.organizations.get("company-1").isActive = false;
+    await expect(submitNewClubApplication(input({ sponsoringChurchId: "company-1" }), { now: NOW })).rejects.toMatchObject({ code: "INVALID_CHURCH" });
   });
 
   it("takes a church typed as Other", async () => {
@@ -404,6 +418,20 @@ describe("approving", () => {
     expect(db.outbox[0]).toMatchObject({ templateKey: "CLUB_INVITE", recipientEmail: "dana.director@example.test" });
     expect(db.outbox[0].bodyTextSnapshot).toContain("approved your application");
     expect(mocks.processAccountEmailQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("approves a club under a company sponsor, and refuses a school chosen at approval (#822)", async () => {
+    await submitNewClubApplication(input({ clubName: "Company Club", sponsoringChurchId: "company-1" }), { now: NOW });
+    const record = (await listNewClubApplications("SYSTEM_ADMIN", NOW)).find((candidate) => candidate.clubName === "Company Club")!;
+    expect(record.church).toMatchObject({ id: "company-1", name: "Synthetic Company Congregation", type: "COMPANY", unavailable: false, needsChoice: false });
+    await decideNewClubApplication(systemAdmin, record.id, { decision: "approve" }, NOW);
+    expect([...db.organizations.values()].find((org) => org.name === "Company Club")).toMatchObject({ type: "CLUB", parentOrganizationId: "company-1", isActive: true });
+
+    await submitNewClubApplication(input({ clubName: "Typed Club", sponsoringChurchId: null, sponsoringChurchOther: "Somewhere Else" }), { now: NOW });
+    const typed = db.applications.find((application) => application.clubName === "Typed Club");
+    await expect(decideNewClubApplication(systemAdmin, typed.id, { decision: "approve", sponsoringChurchId: "school-1" }, NOW)).rejects.toMatchObject({ code: "INVALID_CHURCH" });
+    await decideNewClubApplication(systemAdmin, typed.id, { decision: "approve", sponsoringChurchId: "group-1" }, NOW);
+    expect([...db.organizations.values()].find((org) => org.name === "Typed Club")).toMatchObject({ parentOrganizationId: "group-1" });
   });
 
   it("makes an Adventurer application an Adventurer club", async () => {

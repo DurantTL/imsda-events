@@ -52,7 +52,7 @@ export function organizationApiError(error: unknown, action: string) {
   ) {
     return Response.json({
       error: "ORGANIZATION_RELATION_INVALID",
-      message: "The selected sponsoring church is no longer available.",
+      message: "The selected sponsoring church or company is no longer available.",
     }, { status: 409 });
   }
   logError(`${action} failed`, error);

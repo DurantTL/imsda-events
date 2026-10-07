@@ -3,13 +3,14 @@
 import { useState } from "react";
 import { CheckCircle2, CircleAlert, FileUp, Upload } from "lucide-react";
 import { confirmPayload } from "@/modules/club-imports/confirm-payload";
-import { earlierImportNotice, inFileDuplicateKeys, skipReasonLabel, submissionYearNote } from "@/modules/club-imports/domain";
+import { churchStem, earlierImportNotice, inFileDuplicateKeys, skipReasonLabel, submissionYearNote } from "@/modules/club-imports/domain";
 import type { AnnotatedImportDraft, ClubImportResult } from "@/modules/club-imports/repository";
 import { clubClassLevelLabels } from "@/modules/club-rosters/domain";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
+import { sponsorOptionLabel } from "@/modules/organizations/domain";
 
 type Draft = AnnotatedImportDraft & { include: boolean; expanded: boolean };
-type Church = { id: string; name: string };
+type Church = { id: string; name: string; type: string };
 type ApiError = { message?: string; issues?: Array<{ message?: string; path?: Array<string | number> }> };
 /** What the preview route returns for an uploaded export. */
 export type ClubImportPreview = { drafts: AnnotatedImportDraft[]; churches?: Church[]; clubYearChoices?: string[]; skipped?: number };
@@ -31,7 +32,7 @@ function draftProblems(draft: Draft) {
   if (draft.existingClub && !draft.existingClub.isActive) problems.push("A club with this name is inactive. Rename it or reactivate that club first.");
   if (draft.clubName.trim().length < 2) problems.push("Give the club a name.");
   if (!draft.churchId && !draft.newChurchName && !(draft.existingClub?.isActive && draft.existingClub.hasSponsoringChurch)) {
-    problems.push("Choose or create the club's sponsoring church.");
+    problems.push("Choose or create the club's sponsoring church or company.");
   }
   const missingLast = draft.people.filter((person) => person.include && !person.lastName.trim()).length;
   if (missingLast) problems.push(`${missingLast} ${missingLast === 1 ? "person has" : "people have"} no last name. Add one or skip them.`);
@@ -252,7 +253,7 @@ export function ClubImportWorkspace({ initialPreview }: { initialPreview?: ClubI
                     />
                   </label>
                   <label>
-                    Sponsoring church{draft.churchName ? ` (form: ${draft.churchName})` : ""}
+                    Sponsoring church or company{draft.churchName ? ` (form: ${draft.churchName})` : ""}
                     <select
                       required
                       onChange={(event) => {
@@ -265,11 +266,11 @@ export function ClubImportWorkspace({ initialPreview }: { initialPreview?: ClubI
                       }}
                       value={churchValue}
                     >
-                      <option disabled value="">Choose a church</option>
+                      <option disabled value="">Choose a church or company</option>
                       {(draft.newChurchName || draft.churchName) && (
                         <option value={NEW_CHURCH}>Create church: {draft.newChurchName || draft.churchName}</option>
                       )}
-                      {churches.map((church) => <option key={church.id} value={church.id}>{church.name}</option>)}
+                      {churches.map((church) => <option key={church.id} value={church.id}>{church.type !== "CHURCH" && churchStem(church.name) === churchStem(draft.churchName) ? `Use existing ${church.type === "GROUP" ? "group" : "company"}: ${church.name}` : sponsorOptionLabel(church)}</option>)}
                     </select>
                   </label>
                   <label>

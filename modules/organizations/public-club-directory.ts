@@ -20,6 +20,12 @@ const publicClubSelect = {
   parentOrganization: {
     select: {
       name: true,
+      type: true,
+      // A company or group (#822) has no church location; its own city, state and
+      // ZIP from the eAdventist record stand in. Never the street address.
+      city: true,
+      state: true,
+      postalCode: true,
       churchLocation: {
         select: { city: true, state: true, zip: true, latitude: true, longitude: true },
       },
@@ -50,15 +56,21 @@ export async function listPublicClubs(): Promise<PublicClubListing[]> {
     orderBy: [{ name: "asc" }],
     select: publicClubSelect,
   });
-  return clubs.map((club) => ({
-    id: club.id,
-    clubName: club.name,
-    churchName: club.parentOrganization?.name ?? "",
-    town: club.parentOrganization?.churchLocation?.city ?? "",
-    state: club.parentOrganization?.churchLocation?.state ?? "",
-    zip: club.parentOrganization?.churchLocation?.zip ?? "",
-    meetingSchedule: club.clubProfile?.meetingSchedule ?? "",
-    latitude: club.parentOrganization?.churchLocation?.latitude ?? null,
-    longitude: club.parentOrganization?.churchLocation?.longitude ?? null,
-  }));
+  return clubs.map((club) => {
+    const sponsor = club.parentOrganization;
+    const location = sponsor?.churchLocation ?? null;
+    // Only a company or group falls back to its own town; a church keeps the existing church-location path.
+    const ownTown = !location && sponsor && sponsor.type !== "CHURCH" ? sponsor : null;
+    return {
+      id: club.id,
+      clubName: club.name,
+      churchName: sponsor?.name ?? "",
+      town: location?.city ?? ownTown?.city ?? "",
+      state: location?.state ?? ownTown?.state ?? "",
+      zip: location?.zip ?? ownTown?.postalCode ?? "",
+      meetingSchedule: club.clubProfile?.meetingSchedule ?? "",
+      latitude: location?.latitude ?? null,
+      longitude: location?.longitude ?? null,
+    };
+  });
 }

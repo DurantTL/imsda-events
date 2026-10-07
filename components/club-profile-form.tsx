@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Save } from "lucide-react";
 import type { ClubProfileRecord } from "@/modules/organizations/club-profile-repository";
+import { sponsorOptionLabel } from "@/modules/organizations/domain";
 
 type ProfileResponse = { profile?: ClubProfileRecord; message?: string; issues?: Array<{ message?: string }> };
 
@@ -11,12 +12,12 @@ type ProfileResponse = { profile?: ClubProfileRecord; message?: string; issues?:
  * conference staff. The same form posts to whichever endpoint the page gives.
  */
 export function ClubProfileForm({
-  churches,
+  sponsors,
   endpoint,
   initialProfile,
   variant = "account",
 }: {
-  churches: Array<{ id: string; name: string }>;
+  sponsors: Array<{ id: string; name: string; type: string }>;
   endpoint: string;
   initialProfile: ClubProfileRecord;
   variant?: "account" | "staff";
@@ -78,10 +79,10 @@ export function ClubProfileForm({
           <input defaultValue={profile.name} maxLength={120} minLength={2} name="name" required translate="no" />
         </label>
         <label>
-          Sponsoring church
+          Sponsoring church or company
           <select defaultValue={profile.sponsoringChurchId ?? ""} name="sponsoringChurchId" required>
-            <option disabled value="">Choose a church</option>
-            {churches.map((church) => <option key={church.id} value={church.id}>{church.name}</option>)}
+            <option disabled value="">Choose a church or company</option>
+            {sponsors.map((sponsor) => <option key={sponsor.id} value={sponsor.id}>{sponsorOptionLabel(sponsor)}</option>)}
           </select>
         </label>
         <label>
