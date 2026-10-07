@@ -279,14 +279,14 @@ function EmbedEditor({ data, set }: { data: Data; set: (patch: Data) => void }) 
   );
 }
 
-/** Shows HTML the server's sanitizer produced (the saved body, or the preview route's answer). */
-function HtmlPreview({ html }: { html: string }) {
+/** Shows HTML the server's sanitizer produced; the type cannot be made on the client. */
+function HtmlPreview({ html }: { html: SanitizedHtml }) {
   return (
     <EventContentBlocks
       sections={[{ id: "html-preview", kind: "CUSTOM_HTML", title: "Custom HTML", body: "", placement: "BOTH", data: {} }]}
       placement="page"
       assetUrl={() => ""}
-      sanitizedHtml={{ "html-preview": html as SanitizedHtml }}
+      sanitizedHtml={{ "html-preview": html }}
       idPrefix="html-preview"
     />
   );
@@ -294,12 +294,17 @@ function HtmlPreview({ html }: { html: string }) {
 
 function CustomHtmlEditor({
   eventId,
+  eventSlug,
+  savedHtml,
   section,
   index,
   isSystemAdmin,
   updateSection,
 }: {
   eventId: string;
+  eventSlug: string;
+  /** The server's sanitized copy of the saved block; the only HTML rendered here. */
+  savedHtml: SanitizedHtml | undefined;
   section: SectionDraft;
   index: number;
   isSystemAdmin: boolean;
@@ -341,7 +346,7 @@ function CustomHtmlEditor({
           HTML (read-only)
           <textarea rows={6} readOnly value={section.body} />
         </label>
-        <HtmlPreview html={section.body} />
+        {savedHtml !== undefined && <HtmlPreview html={savedHtml} />}
       </div>
     );
   }
@@ -359,7 +364,9 @@ function CustomHtmlEditor({
         <small>
           Paragraphs, headings, lists, tables, links and images from this event&apos;s uploads. Script,
           style, frames, forms, event handlers and other sites&apos; images are removed when you save
-          and again when the page is shown.
+          and again when the page is shown. An uploaded image&apos;s address is
+          /api/public/events/{eventSlug}/assets/ followed by the file&apos;s id, so it includes this
+          event&apos;s slug ({eventSlug}).
         </small>
       </label>
       <div className="form-actions">
@@ -372,8 +379,12 @@ function CustomHtmlEditor({
         <div className="form-stack">
           <p className="field-help">This is what will be saved and published:</p>
           <pre className="event-html-source" tabIndex={0}>{shown}</pre>
-          <p className="field-help">And how it looks:</p>
-          <HtmlPreview html={shown} />
+        </div>
+      )}
+      {savedHtml !== undefined && (
+        <div className="form-stack">
+          <p className="field-help">The saved version, as it looks on the page:</p>
+          <HtmlPreview html={savedHtml} />
         </div>
       )}
     </div>
@@ -382,6 +393,8 @@ function CustomHtmlEditor({
 
 export function BlockEditor({
   eventId,
+  eventSlug,
+  sanitizedHtml,
   section,
   index,
   assets,
@@ -389,6 +402,9 @@ export function BlockEditor({
   updateSection,
 }: {
   eventId: string;
+  eventSlug: string;
+  /** Server-sanitized custom HTML by saved section id. */
+  sanitizedHtml: Record<string, SanitizedHtml>;
   section: SectionDraft;
   index: number;
   assets: EventAssetRecord[];
@@ -558,7 +574,7 @@ export function BlockEditor({
         </div>
       );
     case "CUSTOM_HTML":
-      return <CustomHtmlEditor eventId={eventId} section={section} index={index} isSystemAdmin={isSystemAdmin} updateSection={updateSection} />;
+      return <CustomHtmlEditor eventId={eventId} eventSlug={eventSlug} savedHtml={section.serverId ? sanitizedHtml[section.serverId] : undefined} section={section} index={index} isSystemAdmin={isSystemAdmin} updateSection={updateSection} />;
     default:
       return null;
   }

@@ -257,6 +257,7 @@ export function EventContentBlocks({
               src={src}
               title={data.title}
               loading="lazy"
+              allow="encrypted-media; picture-in-picture; fullscreen"
               allowFullScreen={data.provider !== "GOOGLE_MAPS"}
               referrerPolicy="strict-origin-when-cross-origin"
               sandbox="allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox"

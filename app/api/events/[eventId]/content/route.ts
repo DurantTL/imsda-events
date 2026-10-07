@@ -7,6 +7,7 @@ import {
   listEventContentSections,
   replaceEventContent,
 } from "@/modules/events/content-repository";
+import { sanitizedHtmlBySection } from "@/modules/events/content-html";
 import { eventContentInputSchema } from "@/modules/events/content-schemas";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
@@ -82,7 +83,7 @@ async function putHandler(request: Request, context: RouteContext) {
     const sections = await replaceEventContent(eventId, input, access.user.id, {
       isSystemAdmin: access.user.globalRole === "SYSTEM_ADMIN",
     });
-    return Response.json({ sections });
+    return Response.json({ sections, sanitizedHtml: sanitizedHtmlBySection(sections) });
   } catch (error) {
     return apiError(error, "Saving the event page content");
   }

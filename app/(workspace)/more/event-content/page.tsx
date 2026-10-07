@@ -3,6 +3,7 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { BackLink } from "@/components/back-link";
 import { EventContentWorkspace } from "@/components/event-content-workspace";
 import { listEventAssets } from "@/modules/events/asset-repository";
+import { sanitizedHtmlBySection } from "@/modules/events/content-html";
 import { listEventContentSections } from "@/modules/events/content-repository";
 import { resolveEventContext } from "@/modules/events/selection";
 import { staffPageTitles } from "@/components/staff-navigation";
@@ -28,6 +29,7 @@ export default async function EventContentPage({
       </>
     );
   }
+  const sections = await listEventContentSections(event.id);
   return (
     <>
       {back}
@@ -42,7 +44,8 @@ export default async function EventContentPage({
           timezone: event.timezone,
         }}
         isSystemAdmin={user.globalRole === "SYSTEM_ADMIN"}
-        initialSections={await listEventContentSections(event.id)}
+        initialSections={sections}
+        initialSanitizedHtml={sanitizedHtmlBySection(sections)}
         initialAssets={await listEventAssets(event.id)}
       />
     </>

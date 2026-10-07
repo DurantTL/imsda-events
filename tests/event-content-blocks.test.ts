@@ -78,6 +78,7 @@ describe("public page blocks render (#816)", () => {
     for (const frame of frames) {
       expect(frame).toMatch(/title="[^"]+"/);
       expect(frame).toContain('loading="lazy"');
+      expect(frame).toContain('allow="encrypted-media; picture-in-picture; fullscreen"');
     }
   });
 

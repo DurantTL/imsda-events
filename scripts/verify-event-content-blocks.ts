@@ -153,6 +153,37 @@ async function main() {
   assert(afterAdminSave[0].title === "Blocks check weekend, renamed", "an event administrator's save of other blocks goes through");
   assert(afterAdminSave.find((section) => section.kind === "CUSTOM_HTML")?.body === html.body, "the HTML block is unchanged");
 
+  // 5b. Edge whitespace or a trailing comment must not lock an event administrator out.
+  const commented = page();
+  const commentedHtml = commented.sections.find((section) => section.kind === "CUSTOM_HTML");
+  assert(commentedHtml, "the fixture has an HTML block");
+  commentedHtml.body = "<p>Hello</p>\n<!-- note -->";
+  const resaved = await replaceEventContent(eventId, commented, staffUserId, { isSystemAdmin: true });
+  const resavedHtml = resaved.find((section) => section.kind === "CUSTOM_HTML");
+  assert(resavedHtml && resavedHtml.body === resavedHtml.body.trim(), "custom HTML is stored trimmed");
+  await replaceEventContent(eventId, commented, staffUserId);
+  const carriedBack = page();
+  const carriedHtml = carriedBack.sections.find((section) => section.kind === "CUSTOM_HTML");
+  assert(carriedHtml, "the fixture has an HTML block");
+  carriedHtml.body = resavedHtml.body;
+  await replaceEventContent(eventId, carriedBack, staffUserId);
+
+  // 5c. Publish state of an HTML block is system-administrator only too.
+  const flipped = page();
+  const flippedHtml = flipped.sections.find((section) => section.kind === "CUSTOM_HTML");
+  assert(flippedHtml, "the fixture has an HTML block");
+  flippedHtml.body = resavedHtml.body;
+  flippedHtml.isPublished = false;
+  const beforeFlip = JSON.stringify(await listEventContentSections(eventId));
+  await expectCode(replaceEventContent(eventId, flipped, staffUserId), "CUSTOM_HTML_FORBIDDEN", "an event administrator cannot unpublish custom HTML");
+  assert(JSON.stringify(await listEventContentSections(eventId)) === beforeFlip, "a refused publish change changed nothing");
+
+  // 5d. The header banner is always saved first.
+  const heroLast = page();
+  heroLast.sections.push(heroLast.sections.shift()!);
+  const heroFirst = await replaceEventContent(eventId, heroLast, staffUserId, { isSystemAdmin: true });
+  assert(heroFirst[0].kind === "HERO", "the banner is normalised to first");
+
   // 6. Images must be this event's own uploaded images.
   const foreign = page();
   foreign.sections[1].data = { assetId: foreignImage.id, alt: "Not ours", caption: "", imageSide: "LEFT" };

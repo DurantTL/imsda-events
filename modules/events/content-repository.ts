@@ -150,8 +150,14 @@ export async function replaceEventContent(
   // Everything that reaches the database is prepared here, once. Custom HTML
   // is sanitized here (and again whenever it renders); block data is re-parsed
   // so only the schema's own fields are stored, never extra keys a client sent.
-  const prepared = input.sections.map((section) => {
-    const body = section.kind === "CUSTOM_HTML" ? sanitizeCustomHtml(section.body) : section.body;
+  // The header banner is always first, whatever order the client sent.
+  const orderedSections = [...input.sections].sort(
+    (a, b) => Number(b.kind === "HERO") - Number(a.kind === "HERO"),
+  );
+  const prepared = orderedSections.map((section) => {
+    // Trimmed after sanitizing: the sanitizer can leave edge whitespace (for
+    // example after a removed comment), and the schema trims what comes back.
+    const body = section.kind === "CUSTOM_HTML" ? sanitizeCustomHtml(section.body).trim() : section.body;
     const data = hasBlockData(section.kind) ? parseBlockData(section.kind, section.data) : null;
     const blockAssets = section.kind === "CUSTOM_HTML"
       ? customHtmlAssetIds(body)
@@ -172,19 +178,22 @@ export async function replaceEventContent(
     await prisma.$transaction(async (tx) => {
       // Custom HTML is system-administrator content. An event administrator's
       // save may carry the existing HTML blocks back unchanged (the editor
-      // shows them read-only) but may not add one, edit one, or drop one.
+      // shows them read-only, publish state included) but may not add one,
+      // edit one, publish or unpublish one, or drop one. Reordering is allowed.
       // Compared on the sanitized form, inside the transaction, against what
       // is stored now.
       if (!isSystemAdmin) {
         const stored = await tx.eventContentSection.findMany({
           where: { eventId, kind: "CUSTOM_HTML" },
-          select: { title: true, body: true },
+          select: { title: true, body: true, isPublished: true },
         });
-        const fingerprint = (title: string, body: string) => `${title}\u0000${sanitizeCustomHtml(body)}`;
-        const expected = stored.map((row) => fingerprint(row.title, row.body)).sort();
+        const fingerprint = (title: string, body: string, isPublished: boolean) => (
+          `${title}\u0000${isPublished}\u0000${sanitizeCustomHtml(body).trim()}`
+        );
+        const expected = stored.map((row) => fingerprint(row.title, row.body, row.isPublished)).sort();
         const submitted = prepared
           .filter((entry) => entry.section.kind === "CUSTOM_HTML")
-          .map((entry) => fingerprint(entry.section.title, entry.body))
+          .map((entry) => fingerprint(entry.section.title, entry.body, entry.section.isPublished))
           .sort();
         if (expected.length !== submitted.length || expected.some((value, index) => value !== submitted[index])) {
           throw new EventContentError(

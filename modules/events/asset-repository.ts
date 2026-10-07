@@ -259,7 +259,7 @@ export async function removeEventAsset(
           },
           blockRefs: {
             where: { section: { eventId } },
-            select: { section: { select: { title: true, isPublished: true } } },
+            select: { section: { select: { title: true, kind: true, isPublished: true } } },
           },
           badgeBackgroundEvents: { select: { id: true } },
           _count: { select: { merchandiseArtworkProducts: true } },
@@ -275,6 +275,12 @@ export async function removeEventAsset(
       if (blockRefs.length > 0) {
         const titles = [...new Set(blockRefs.map((ref) => ref.section.title))];
         const names = titles.map((title) => `"${title}"`).join(", ");
+        if (blockRefs.some((ref) => ref.section.kind === "CUSTOM_HTML")) {
+          throw new EventAssetError(
+            "ASSET_IN_USE",
+            `This image is shown by custom HTML in ${names}. Only a system administrator can remove it from that block, so ask one to remove the image and save before deleting it.`,
+          );
+        }
         throw new EventAssetError(
           "ASSET_IN_USE",
           `Remove this image from the block${titles.length === 1 ? "" : "s"} ${names} and save before deleting it.`,

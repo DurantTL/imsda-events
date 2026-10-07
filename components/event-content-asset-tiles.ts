@@ -9,6 +9,10 @@ import type {
 
 export type LinkDraft = { label: string; description: string; url: string | null; assetId: string | null };
 export type SectionDraft = {
+  /** Stable client-side id, so a block's editor state follows it when blocks are reordered. Never sent. */
+  cid?: string;
+  /** The saved section's id, used to look up its server-sanitized HTML. Never sent. */
+  serverId?: string;
   kind: EventContentKind;
   title: string;
   body: string;
@@ -53,4 +57,29 @@ export function localAssetImpact(sections: SectionDraft[], assetId: string) {
 
 export function quoteList(titles: string[]) {
   return titles.map((title) => `“${title}”`).join(", ");
+}
+
+/** Whether a block may move by `delta`. The header banner is pinned at the top and nothing moves above it. */
+export function canMoveSection(sections: Array<{ kind: string }>, index: number, delta: number) {
+  const target = index + delta;
+  if (target < 0 || target >= sections.length) return false;
+  if (sections[index]?.kind === "HERO") return false;
+  if (sections[target]?.kind === "HERO") return false;
+  return true;
+}
+
+/** Moves a block, carrying its identity with it; a no-op when the move is not allowed. */
+export function moveSection<T extends { kind: string }>(sections: T[], index: number, delta: number): T[] {
+  if (!canMoveSection(sections, index, delta)) return sections;
+  const next = [...sections];
+  [next[index], next[index + delta]] = [next[index + delta], next[index]];
+  return next;
+}
+
+/** What is sent to the server: the draft without its client-only ids (the schema refuses unknown keys). */
+export function sectionPayload(section: SectionDraft) {
+  const { cid, serverId, ...rest } = section;
+  void cid;
+  void serverId;
+  return rest;
 }

@@ -15,6 +15,7 @@ import {
   newBlockKinds,
 } from "@/components/event-block-editors";
 import type { EventBlockEvent } from "@/components/event-content-blocks";
+import type { SanitizedHtml } from "@/modules/events/content-html";
 import {
   canPlaceOnRegistrationForm,
   eventContentTones,
@@ -25,8 +26,11 @@ import {
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import {
+  canMoveSection,
   localAssetImpact,
+  moveSection,
   quoteList,
+  sectionPayload,
   withoutAssetTiles,
   type SectionDraft,
 } from "@/components/event-content-asset-tiles";
@@ -236,8 +240,13 @@ function ItemsEditor({
   );
 }
 
+let draftCounter = 0;
+const newDraftId = () => `draft-${(draftCounter += 1)}`;
+
 function draftsFrom(sections: EventContentSectionRecord[]): SectionDraft[] {
   return sections.map((section) => ({
+    cid: newDraftId(),
+    serverId: section.id,
     kind: section.kind,
     title: section.title,
     body: section.body,
@@ -260,8 +269,10 @@ export function EventContentWorkspace({
   eventTiming,
   isSystemAdmin,
   initialSections,
+  initialSanitizedHtml,
   initialAssets,
 }: {
+  initialSanitizedHtml: Record<string, SanitizedHtml>;
   eventId: string;
   eventName: string;
   eventSlug: string;
@@ -292,7 +303,9 @@ export function EventContentWorkspace({
   }, [closeDeleteDialog, deleting]);
   const deleteDialogRef = useAccessibleDialog<HTMLElement>(pendingDelete !== null, dismissDeleteDialog);
   const [saved, setSaved] = useState(() => draftsFrom(initialSections));
-  const [sections, setSections] = useState(() => draftsFrom(initialSections));
+  // The same drafts (and ids) as `saved`, so nothing starts out looking edited.
+  const [sections, setSections] = useState(saved);
+  const [sanitizedHtml, setSanitizedHtml] = useState(initialSanitizedHtml);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -321,13 +334,7 @@ export function EventContentWorkspace({
   }
 
   function move(index: number, delta: number) {
-    const target = index + delta;
-    if (target < 0 || target >= sections.length) return;
-    setSections((current) => {
-      const next = [...current];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
+    setSections((current) => moveSection(current, index, delta));
   }
 
   const hasHero = sections.some((section) => section.kind === "HERO");
@@ -336,6 +343,7 @@ export function EventContentWorkspace({
   function addSection(kind: SectionDraft["kind"], tone?: EventContentTone) {
     if ((kind === "HERO" && hasHero) || (kind === "CUSTOM_HTML" && !isSystemAdmin)) return;
     const added: SectionDraft = {
+      cid: newDraftId(),
       kind,
       title: "",
       body: "",
@@ -348,6 +356,7 @@ export function EventContentWorkspace({
     };
     // The banner always goes first; everything else goes last.
     setSections((current) => (kind === "HERO" ? [added, ...current] : [...current, added]));
+    setBlockToAdd("FORMATTED_TEXT");
     setError("");
     setNotice("");
   }
@@ -357,6 +366,7 @@ export function EventContentWorkspace({
       ...current,
       ...retreatGuideStarterSections.map((section) => ({
         ...section,
+        cid: newDraftId(),
         links: section.links.map((link) => ({ ...link })),
       })),
     ]);
@@ -462,7 +472,7 @@ export function EventContentWorkspace({
       const response = await fetch(`/api/events/${eventId}/content`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sections }),
+        body: JSON.stringify({ sections: sections.map(sectionPayload) }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.sections) {
@@ -471,6 +481,7 @@ export function EventContentWorkspace({
       const next = draftsFrom(result.sections);
       setSections(next);
       setSaved(next);
+      if (result.sanitizedHtml) setSanitizedHtml(result.sanitizedHtml);
       allowNextNavigation();
       // Where each file is used just changed; refresh it for the file list and
       // delete dialog. Best effort: the server re-checks on delete anyway.
@@ -563,7 +574,7 @@ export function EventContentWorkspace({
         {sections.map((section, index) => (
           <section
             className={`panel event-content-section ${section.isPublished ? "" : "is-draft"}`}
-            key={index}
+            key={section.cid ?? index}
           >
             <div className="message-delivery-toolbar">
               <div>
@@ -574,8 +585,12 @@ export function EventContentWorkspace({
                 </p>
               </div>
               <div className="form-actions">
-                <button className="secondary-button" type="button" onClick={() => move(index, -1)} disabled={index === 0}>Up</button>
-                <button className="secondary-button" type="button" onClick={() => move(index, 1)} disabled={index === sections.length - 1}>Down</button>
+                {section.kind !== "HERO" && (
+                  <>
+                    <button className="secondary-button" type="button" onClick={() => move(index, -1)} disabled={!canMoveSection(sections, index, -1)}>Up</button>
+                    <button className="secondary-button" type="button" onClick={() => move(index, 1)} disabled={!canMoveSection(sections, index, 1)}>Down</button>
+                  </>
+                )}
                 <button
                   className="secondary-button"
                   type="button"
@@ -612,6 +627,8 @@ export function EventContentWorkspace({
             ) : isNewBlockKind(section.kind) ? (
               <BlockEditor
                 eventId={eventId}
+                eventSlug={eventSlug}
+                sanitizedHtml={sanitizedHtml}
                 section={section}
                 index={index}
                 assets={assets}

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({
   session: null as null | { user: { id: string; email: string; displayName: string; globalRole: string; accountStatus: string } },
   membership: null as null | { role: string; status: string; permissions: string[] },
-  stored: [] as Array<{ title: string; body: string }>,
+  stored: [] as Array<{ title: string; body: string; isPublished: boolean }>,
   created: [] as Array<Record<string, unknown>>,
   deleted: 0,
 }));
@@ -14,7 +14,7 @@ vi.mock("@/modules/events/repository", () => ({ findActiveMembership: async () =
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: () => null }));
 vi.mock("@/lib/prisma", () => {
   const tx = {
-    eventAsset: { findMany: async () => [] },
+    eventAsset: { findMany: async ({ where }: { where: { id: { in: string[] } } }) => where.id.in.map((id) => ({ id, contentType: "image/png" })) },
     eventContentSection: {
       findMany: async () => state.stored,
       deleteMany: async () => { state.deleted += 1; },
@@ -81,21 +81,21 @@ describe("custom HTML is system-administrator only, on the server (#816)", () =>
   });
 
   it("refuses an event admin who edits an existing HTML block", async () => {
-    state.stored = [{ title: "Welcome banner", body: "<p>Original</p>" }];
+    state.stored = [{ title: "Welcome banner", body: "<p>Original</p>", isPublished: true }];
     const response = await put([htmlBlock({ body: "<p>Changed by an event admin</p>" })]);
     expect(response.status).toBe(403);
     expect(state.created).toHaveLength(0);
   });
 
   it("refuses an event admin who retitles or removes an existing HTML block", async () => {
-    state.stored = [{ title: "Welcome banner", body: "<p>Original</p>" }];
+    state.stored = [{ title: "Welcome banner", body: "<p>Original</p>", isPublished: true }];
     expect((await put([htmlBlock({ body: "<p>Original</p>", title: "New title" })])).status).toBe(403);
     expect((await put([textBlock])).status).toBe(403);
     expect(state.created).toHaveLength(0);
   });
 
   it("lets an event admin save other blocks and carry an existing HTML block back unchanged", async () => {
-    state.stored = [{ title: "Welcome banner", body: "<p>Original</p>" }];
+    state.stored = [{ title: "Welcome banner", body: "<p>Original</p>", isPublished: true }];
     const response = await put([textBlock, htmlBlock({ body: "<p>Original</p>" })]);
     expect(response.status).toBe(200);
     expect(state.created.map((row) => row.kind)).toEqual(["RICH_TEXT", "CUSTOM_HTML"]);
@@ -110,6 +110,52 @@ describe("custom HTML is system-administrator only, on the server (#816)", () =>
     const response = await put([{ ...textBlock, body: "<script>alert(1)</script>" }]);
     expect(response.status).toBe(200);
     expect(state.created[0].kind).toBe("RICH_TEXT");
+  });
+
+  it("refuses an event admin who publishes or unpublishes an existing HTML block, and writes nothing", async () => {
+    state.stored = [{ title: "Welcome banner", body: "<p>Original</p>", isPublished: true }];
+    const response = await put([htmlBlock({ body: "<p>Original</p>", isPublished: false })]);
+    expect(response.status).toBe(403);
+    expect(state.created).toHaveLength(0);
+    state.stored = [{ title: "Welcome banner", body: "<p>Original</p>", isPublished: false }];
+    expect((await put([htmlBlock({ body: "<p>Original</p>", isPublished: true })])).status).toBe(403);
+    expect(state.created).toHaveLength(0);
+  });
+
+  it("lets an event admin reorder an HTML block", async () => {
+    state.stored = [{ title: "Welcome banner", body: "<p>Original</p>", isPublished: true }];
+    const response = await put([htmlBlock({ body: "<p>Original</p>" }), textBlock]);
+    expect(response.status).toBe(200);
+    expect(state.created.map((row) => row.kind)).toEqual(["CUSTOM_HTML", "RICH_TEXT"]);
+  });
+
+  it("stores HTML trimmed, so an event admin can save the page unchanged afterwards (edge whitespace, trailing comment)", async () => {
+    state.session = user("SYSTEM_ADMIN");
+    state.membership = null;
+    for (const body of ["<p>Hello</p>\n<!-- note -->", "  \n<p>Hello</p>\n  ", "<!-- a --><p>Hello</p>\n<!-- b -->\n"]) {
+      state.created = [];
+      expect((await put([htmlBlock({ body })])).status).toBe(200);
+      const stored = String(state.created[0].body);
+      expect(stored).toBe(stored.trim());
+      // The event admin's editor sends back what was stored.
+      state.session = user("USER");
+      state.membership = { role: "EVENT_ADMIN", status: "ACTIVE", permissions: [] };
+      state.stored = [{ title: "Welcome banner", body: stored, isPublished: true }];
+      state.created = [];
+      expect((await put([htmlBlock({ body: stored })])).status, body).toBe(200);
+      // Rows saved before the trim fix may still carry edge whitespace.
+      state.stored = [{ title: "Welcome banner", body: `${stored}\n`, isPublished: true }];
+      expect((await put([htmlBlock({ body: stored })])).status, body).toBe(200);
+      state.session = user("SYSTEM_ADMIN");
+      state.membership = null;
+    }
+  });
+
+  it("keeps the header banner first, whatever order is sent", async () => {
+    const hero = { kind: "HERO", title: "Banner", isPublished: true, data: { assetId: "a1", alt: "x" } };
+    const response = await put([textBlock, hero]);
+    expect(response.status).toBe(200);
+    expect(state.created.map((row) => row.kind)).toEqual(["HERO", "RICH_TEXT"]);
   });
 
   it("lets a system administrator add an HTML block, and stores it sanitized", async () => {

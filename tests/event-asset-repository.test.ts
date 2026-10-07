@@ -154,6 +154,20 @@ describe("removeEventAsset", () => {
     expect(dependencies.deleteAsset).not.toHaveBeenCalled();
   });
 
+  it("tells staff that only a system administrator can free an image shown by custom HTML (#816)", async () => {
+    const { client, tx } = prismaClient();
+    tx.eventAsset.findFirst.mockResolvedValue({
+      ...unusedAsset(),
+      blockRefs: [{ section: { title: "Welcome banner", kind: "CUSTOM_HTML", isPublished: false } }],
+    });
+    dependencies.getPrisma.mockReturnValue(client);
+    const error = await removeEventAsset("event-1", "asset-1", "user-1").catch((caught) => caught);
+    expect(error).toBeInstanceOf(EventAssetError);
+    expect(error.code).toBe("ASSET_IN_USE");
+    expect(error.message).toContain("system administrator");
+    expect(error.message).toContain("Welcome banner");
+  });
+
   it("blocks deleting the event's active badge background, naming that use", async () => {
     const { client, tx } = prismaClient();
     tx.eventAsset.findFirst.mockResolvedValue({
