@@ -27,18 +27,21 @@ export function sessionEditPatch(
 }
 
 /**
- * The honor, span and session of a class being edited (#615), only when they
- * changed, so a class clubs have picked can still have its seats, teacher and
- * room edited without the server treating the request as a move.
+ * The honors, span and session of a class being edited (#615, #812), only when
+ * they changed, so a class clubs have picked can still have its seats, teacher
+ * and room edited without the server treating the request as a move. The honors
+ * count as changed when the set or its order differs.
  */
 export function offeringPlacementPatch(
-  current: { honorId: string; span: HonorOfferingSpan; sessionId: string | null },
-  form: { honorId: string; span: HonorOfferingSpan; sessionId: string | null },
+  current: { honorIds: readonly string[]; span: HonorOfferingSpan; sessionId: string | null },
+  form: { honorIds: readonly string[]; span: HonorOfferingSpan; sessionId: string | null },
 ) {
   const span = form.span;
   const sessionId = span === "SINGLE_SESSION" ? form.sessionId : null;
+  const sameHonors = form.honorIds.length === current.honorIds.length
+    && form.honorIds.every((id, index) => id === current.honorIds[index]);
   return {
-    ...(form.honorId === current.honorId ? {} : { honorId: form.honorId }),
+    ...(sameHonors ? {} : { honorIds: [...form.honorIds] }),
     ...(span === current.span ? {} : { span }),
     ...(sessionId === current.sessionId ? {} : { sessionId }),
   };
@@ -131,6 +134,30 @@ export function offeringSlotConflict(candidate: OfferingSlot, existing: readonly
   }
   if (sameHonor.some((offering) => offering.sessionId === candidate.sessionId)) {
     return "This honor is already offered in that session.";
+  }
+  return null;
+}
+
+type ClassSlot = { honorIds: readonly string[]; span: HonorOfferingSpan; sessionId: string | null; locationId?: string | null };
+
+/**
+ * Why a class that teaches `candidate.honorIds` can't sit beside the event's
+ * other classes, or null (#812). The rules are `offeringSlotConflict`'s, applied
+ * to each honor the class teaches against each honor the other classes teach:
+ * the same honor can't be taught twice in one session (or twice across all
+ * sessions at one site), whichever classes teach it. Two classes may still
+ * teach the same honor in different sessions. `nameOf` names the honor in the
+ * message when the class teaches several.
+ */
+export function classSlotConflict(
+  candidate: ClassSlot,
+  existing: readonly ClassSlot[],
+  nameOf: (honorId: string) => string = () => "",
+) {
+  for (const honorId of candidate.honorIds) {
+    const slots = existing.flatMap((offering) => (offering.honorIds.includes(honorId) ? [{ ...offering, honorId }] : []));
+    const conflict = offeringSlotConflict({ ...candidate, honorId }, slots);
+    if (conflict) return candidate.honorIds.length > 1 && nameOf(honorId) ? `${nameOf(honorId)}: ${conflict}` : conflict;
   }
   return null;
 }

@@ -57,8 +57,29 @@ const offeringDetails = {
   isActive: z.boolean().default(true),
 };
 
-export const honorOfferingInputSchema = z.object({
-  honorId: z.string().min(1, "Choose an honor."),
+/** The most honors one class can teach (#812): a bound on the form and the request, not a catalog rule. */
+export const MAX_HONORS_PER_CLASS = 12;
+
+/**
+ * The honors a class teaches (#812): one or more catalog honors, each once. The
+ * first is the class's primary honor. Staff screens send `honorIds`.
+ */
+const honorIdsField = z
+  .array(z.string().min(1, "Choose an honor.").max(64))
+  .min(1, "Choose at least one honor.")
+  .max(MAX_HONORS_PER_CLASS, `A class can teach at most ${MAX_HONORS_PER_CLASS} honors.`)
+  .refine((ids) => new Set(ids).size === ids.length, "Each honor can be chosen once.");
+
+/** A request that still sends the single `honorId` (an older screen or script) means `honorIds: [honorId]`. */
+function acceptSingleHonorId(value: unknown) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const { honorId, ...rest } = value as Record<string, unknown>;
+  if (honorId === undefined || "honorIds" in rest) return value;
+  return { ...rest, honorIds: [honorId] };
+}
+
+export const honorOfferingInputSchema = z.preprocess(acceptSingleHonorId, z.object({
+  honorIds: honorIdsField,
   span: z.enum(["SINGLE_SESSION", "ALL_SESSIONS"]),
   sessionId: z.string().min(1).nullable().default(null),
   /** The site of an all-sessions class (#589). A single-session class takes its session's site. */
@@ -74,14 +95,15 @@ export const honorOfferingInputSchema = z.object({
   if (input.span === "ALL_SESSIONS" && input.sessionId) {
     context.addIssue({ code: "custom", path: ["sessionId"], message: "An all-sessions honor isn't tied to one session." });
   }
-});
+}));
 
 /**
  * Every field set at creation can be edited (#615). The repository refuses a
- * change to the honor, span, session or site once clubs have picked the class.
+ * change to the honors, span, session or site once clubs have picked the class
+ * (#812: the set of honors is frozen once anyone is enrolled; their order isn't).
  */
-export const honorOfferingUpdateSchema = z.object({
-  honorId: z.string().min(1, "Choose an honor."),
+export const honorOfferingUpdateSchema = z.preprocess(acceptSingleHonorId, z.object({
+  honorIds: honorIdsField,
   span: z.enum(["SINGLE_SESSION", "ALL_SESSIONS"]),
   sessionId: z.string().min(1).nullable(),
   capacity: offeringDetails.capacity,
@@ -94,7 +116,7 @@ export const honorOfferingUpdateSchema = z.object({
   isActive: z.boolean(),
   /** Only for an all-sessions class (#589). */
   locationId: z.string().min(1).max(64).nullable(),
-}).partial().strict();
+}).partial().strict());
 
 /** `?confirmPicks=N` on a delete: the number of class picks the person was told would be removed. Absent means none were confirmed. */
 export const honorDeleteConfirmSchema = z.object({

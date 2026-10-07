@@ -30,6 +30,7 @@
     "test:church-promo-codes": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-church-promo-codes.ts",
     "test:group-registration": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-group-registration.ts",
     "test:honor-sites": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-sites.ts",
+    "test:multi-honor-classes": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-multi-honor-classes.ts",
     "test:event-locations": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-locations.ts",
     "test:calendar-bulk": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-calendar-bulk.ts",
     "test:club-form-roster-add": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-form-roster-add.ts",

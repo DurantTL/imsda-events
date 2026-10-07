@@ -33,7 +33,7 @@ function offering(id: string, honorName: string, sessionId: string | null, locat
     id, span: sessionId ? "SINGLE_SESSION" : "ALL_SESSIONS", sessionId,
     locationId: sessionId ? null : locationId, site: !sessionId && locationId ? { name: `Site ${locationId}` } : null,
     capacity: 10, minimumAge: null, perClubLimit: null,
-    teacherName: "", location: "", isActive: true, honor: { name: honorName, code: id.toUpperCase() },
+    teacherName: "", location: "", isActive: true, honors: [{ honor: { id: `honor-${id}`, name: honorName, code: id.toUpperCase(), isActive: true } }],
     session: sessionId ? { name: `Session ${sessionId}`, sortOrder: 0, locationId, location: locationId ? { name: `Site ${locationId}` } : null } : null,
     ...extra,
   };

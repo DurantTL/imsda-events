@@ -10,10 +10,11 @@ import { CONFERENCE_TIME_ZONE } from "@/modules/calendar/domain";
  * the honor, and it's written into the same year-round record `MemberHonorEntry`
  * keeps (#486) — the same record the club's own bulk marking writes to, so
  * the order list (`modules/honors/order-source.ts`) sees it exactly the same
- * way either way. `HonorWeekendCompletionLink` is unique on `enrollmentId`,
- * so an enrollment already linked is never written again: running this twice
- * over the same roster writes nothing the second time. A member whose latest
- * entry for that honor is already COMPLETED gets no second entry.
+ * way either way. A class can teach several honors (#812), and completing it
+ * completes each: one `HonorWeekendCompletionLink` per (enrollment, honor), unique
+ * on that pair, so a pair already linked is never written again: running this
+ * twice over the same roster writes nothing the second time. A member whose
+ * latest entry for that honor is already COMPLETED gets no second entry.
  */
 
 type Snapshot = { clubRosterMemberId?: string };
@@ -33,15 +34,15 @@ export class HonorsWeekendWriteBackError extends Error {
 const WRITE_BACK_TRANSACTION = { timeout: 60_000, maxWait: 10_000 };
 
 export type HonorsWeekendWriteBackResult = {
-  /** New COMPLETED entries appended to members' honor records. */
+  /** New COMPLETED entries appended to members' honor records (one per honor a class teaches). */
   written: number;
   /**
-   * Enrollments already reflected in the member's record: linked by an
+   * Enrollment honors already reflected in the member's record: linked by an
    * earlier (or concurrent) run, or the member's latest entry for that honor
    * was already COMPLETED (recorded by hand, say), so only the link was added.
    */
   alreadyRecorded: number;
-  /** Not checked in, or no roster member at the enrolling club to write to. */
+  /** Enrollment honors not checked in, or with no roster member at the enrolling club to write to. */
   skipped: number;
 };
 
@@ -83,15 +84,22 @@ async function writeBackOnce(eventId: string, completionDate: string, actorUserI
       select: {
         id: true,
         organizationId: true,
-        weekendCompletion: { select: { id: true } },
-        offering: { select: { honorId: true } },
+        weekendCompletions: { select: { honorId: true } },
+        offering: { select: { honors: { select: { honorId: true }, orderBy: { position: "asc" } } } },
         registrationAttendee: {
           select: { profileSnapshot: true, checkIns: { where: { undoneAt: null }, select: { id: true }, take: 1 } },
         },
       },
     });
-    const linkedAlready = enrollments.filter((enrollment) => enrollment.weekendCompletion !== null).length;
-    const candidates = enrollments.filter((enrollment) => enrollment.weekendCompletion === null);
+    // One candidate per (enrollment, honor the class teaches) not yet linked (#812).
+    const pairs = enrollments.flatMap((enrollment) => {
+      const linked = new Set(enrollment.weekendCompletions.map((link) => link.honorId));
+      return enrollment.offering.honors.map((row) => ({ enrollment, honorId: row.honorId, linked: linked.has(row.honorId) }));
+    });
+    const linkedAlready = pairs.filter((pair) => pair.linked).length;
+    const candidates = pairs
+      .filter((pair) => !pair.linked)
+      .map((pair) => ({ ...pair.enrollment, honorId: pair.honorId }));
     const eligible = candidates.filter((candidate) => candidate.registrationAttendee.checkIns.length > 0);
     const memberIds = eligible
       .map((candidate) => (candidate.registrationAttendee.profileSnapshot as Snapshot).clubRosterMemberId)
@@ -111,7 +119,7 @@ async function writeBackOnce(eventId: string, completionDate: string, actorUserI
         // The roster member must belong to the club that enrolled them: a
         // snapshot pointing at another club's roster never writes there.
         if (!member || member.organizationId !== candidate.organizationId) return null;
-        return { enrollmentId: candidate.id, organizationId: candidate.organizationId, honorId: candidate.offering.honorId, personId: member.personId! };
+        return { enrollmentId: candidate.id, organizationId: candidate.organizationId, honorId: candidate.honorId, personId: member.personId! };
       })
       .filter((row): row is WriteRow => row !== null);
 
@@ -132,7 +140,7 @@ async function writeBackOnce(eventId: string, completionDate: string, actorUserI
         select: { id: true, status: true },
       });
       if (latest?.status === "COMPLETED") {
-        await tx.honorWeekendCompletionLink.create({ data: { enrollmentId: row.enrollmentId, memberHonorEntryId: latest.id } });
+        await tx.honorWeekendCompletionLink.create({ data: { enrollmentId: row.enrollmentId, honorId: row.honorId, memberHonorEntryId: latest.id } });
         linkedToExisting += 1;
         continue;
       }
@@ -147,7 +155,7 @@ async function writeBackOnce(eventId: string, completionDate: string, actorUserI
         },
         select: { id: true },
       });
-      await tx.honorWeekendCompletionLink.create({ data: { enrollmentId: row.enrollmentId, memberHonorEntryId: entry.id } });
+      await tx.honorWeekendCompletionLink.create({ data: { enrollmentId: row.enrollmentId, honorId: row.honorId, memberHonorEntryId: entry.id } });
       await writeAuditLog({
         actorUserId,
         action: "HONORS_WEEKEND_COMPLETION_WRITTEN",

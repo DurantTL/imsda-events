@@ -6,10 +6,17 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import type { HonorImportStep } from "@/modules/honors/catalog-csv";
 import { eventHasActiveLocations, offeringSiteId } from "@/modules/honors/locations";
 import {
+  classSlotConflict,
   normalizeHonorCode,
   normalizeHonorText,
-  offeringSlotConflict,
 } from "@/modules/honors/domain";
+import {
+  honorSetChange,
+  honorSetLockMessage,
+  joinHonorNames,
+  offeringHonorsSelect,
+  summarizeOfferingHonors,
+} from "@/modules/honors/offering-honors";
 import type {
   HonorInput,
   HonorOfferingInput,
@@ -85,7 +92,8 @@ const honorSelect = {
   catalogNumber: true,
   category: true,
   updatedAt: true,
-  _count: { select: { offerings: true } },
+  // Classes that teach this honor, as one of several or alone (#812).
+  _count: { select: { offeringHonors: true } },
 } satisfies Prisma.HonorSelect;
 
 function serializeHonor(honor: Prisma.HonorGetPayload<{ select: typeof honorSelect }>) {
@@ -97,7 +105,7 @@ function serializeHonor(honor: Prisma.HonorGetPayload<{ select: typeof honorSele
     isActive: honor.isActive,
     catalogNumber: honor.catalogNumber,
     category: honor.category,
-    offeringCount: honor._count.offerings,
+    offeringCount: honor._count.offeringHonors,
     updatedAt: honor.updatedAt.toISOString(),
   };
 }
@@ -204,6 +212,7 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
         requirementNote: true,
         isActive: true,
         honor: { select: { code: true, name: true, isActive: true } },
+        honors: offeringHonorsSelect,
       },
     }),
     client.honorEnrollment.groupBy({
@@ -235,12 +244,19 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
       offeringCount: session._count.offerings,
       activeOfferingCount: offerings.filter((offering) => offering.sessionId === session.id && offering.isActive).length,
     })),
-    offerings: offerings.map((offering) => ({
+    offerings: offerings.map((offering) => {
+      const taught = summarizeOfferingHonors(offering.honors);
+      return {
       id: offering.id,
+      /** The primary (first) honor, kept for older readers (#812). */
       honorId: offering.honorId,
-      honorCode: offering.honor.code,
-      honorName: offering.honor.name,
-      honorIsActive: offering.honor.isActive,
+      /** Every honor the class teaches, in order (#812). */
+      honors: taught.honors,
+      honorIds: taught.honorIds,
+      /** The names and codes joined, standing in for the single honor's. */
+      honorCode: taught.honorCode,
+      honorName: taught.honorName,
+      honorIsActive: taught.honors.every((honor) => honor.isActive),
       sessionId: offering.sessionId,
       locationId: offering.locationId,
       span: offering.span,
@@ -254,7 +270,8 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
       isActive: offering.isActive,
       seatsTaken: seatsTaken.get(offering.id) ?? 0,
       enrolled: enrolled.get(offering.id) ?? 0,
-    })),
+      };
+    }),
   };
 }
 
@@ -395,7 +412,7 @@ const plural = (count: number, word: string) => `${count} ${word}${count === 1 ?
  */
 async function removeOfferings(
   tx: Prisma.TransactionClient,
-  offerings: Array<{ id: string; honorId: string }>,
+  offerings: Array<{ id: string; honorId: string; honorIds: string[] }>,
   confirmPicks: number | undefined,
   what: string,
   /** What to deactivate instead when written-back picks block the delete. */
@@ -417,7 +434,7 @@ async function removeOfferings(
     if (row.organizationId) perOrganization.set(row.organizationId, (perOrganization.get(row.organizationId) ?? 0) + 1);
   }
   const snapshot = {
-    offerings: offerings.map((offering) => ({ id: offering.id, honorId: offering.honorId, picks: perOffering.get(offering.id) ?? 0 })),
+    offerings: offerings.map((offering) => ({ id: offering.id, honorId: offering.honorId, honorIds: offering.honorIds, picks: perOffering.get(offering.id) ?? 0 })),
     organizations: [...perOrganization].map(([organizationId, count]) => ({ organizationId, picks: count })),
   };
   if (picks > 0) {
@@ -442,7 +459,7 @@ async function removeOfferings(
   return { picks, snapshot };
 }
 
-const emptyDeleteSnapshot = { offerings: [] as Array<{ id: string; honorId: string; picks: number }>, organizations: [] as Array<{ organizationId: string; picks: number }> };
+const emptyDeleteSnapshot = { offerings: [] as Array<{ id: string; honorId: string; honorIds: string[]; picks: number }>, organizations: [] as Array<{ organizationId: string; picks: number }> };
 
 export async function deleteHonorSession(eventId: string, sessionId: string, actorUserId: string, confirmPicks?: number) {
   await serializable(async (tx) => {
@@ -451,7 +468,10 @@ export async function deleteHonorSession(eventId: string, sessionId: string, act
       select: { id: true, name: true },
     });
     if (!session) throw new HonorConfigurationError("SESSION_NOT_FOUND", "That session could not be found.");
-    const offerings = await tx.honorOffering.findMany({ where: { sessionId, eventId }, select: { id: true, honorId: true } });
+    const offerings = (await tx.honorOffering.findMany({
+      where: { sessionId, eventId },
+      select: { id: true, honorId: true, honors: { select: { honorId: true }, orderBy: { position: "asc" } } },
+    })).map((offering) => ({ id: offering.id, honorId: offering.honorId, honorIds: offering.honors.map((row) => row.honorId) }));
     const { picks: removedPicks, snapshot } = await removeOfferings(
       tx,
       offerings,
@@ -477,21 +497,84 @@ export async function deleteHonorOffering(eventId: string, offeringId: string, a
   await serializable(async (tx) => {
     const offering = await tx.honorOffering.findFirst({
       where: { id: offeringId, eventId },
-      select: { id: true, honorId: true, honor: { select: { name: true } } },
+      select: { id: true, honorId: true, honors: offeringHonorsSelect },
     });
     if (!offering) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
-    const { picks: removedPicks, snapshot } = await removeOfferings(tx, [offering], confirmPicks, `the ${offering.honor.name} class`, "it");
+    const taught = summarizeOfferingHonors(offering.honors);
+    const { picks: removedPicks, snapshot } = await removeOfferings(
+      tx,
+      [{ id: offering.id, honorId: offering.honorId, honorIds: taught.honorIds }],
+      confirmPicks,
+      `the ${taught.honorName} class`,
+      "it",
+    );
     await writeAuditLog({
       eventId,
       actorUserId,
       action: "HONOR_OFFERING_DELETED",
       entityType: "HonorOffering",
       entityId: offeringId,
-      summary: `Removed the ${offering.honor.name} offering and ${plural(removedPicks, "pick")}.`,
+      summary: `Removed the ${taught.honorName} offering and ${plural(removedPicks, "pick")}.`,
       metadata: { picksRemoved: removedPicks, ...snapshot },
     }, tx);
   });
   return getEventHonorSetup(eventId);
+}
+
+/**
+ * The honors a class teaches (#812), each one a real, active catalog honor, in the order given.
+ * Names the honor that isn't, so staff know which choice to fix.
+ */
+async function requireTeachableHonors(
+  tx: Prisma.TransactionClient,
+  honorIds: readonly string[],
+  /** Honors the class already teaches stay allowed when the catalog has since turned them off. */
+  alreadyTeaching: ReadonlySet<string> = new Set(),
+) {
+  const honors = await tx.honor.findMany({ where: { id: { in: [...honorIds] } }, select: { id: true, code: true, name: true, isActive: true } });
+  const byId = new Map(honors.map((honor) => [honor.id, honor]));
+  return honorIds.map((id) => {
+    const honor = byId.get(id);
+    if (!honor) throw new HonorConfigurationError("HONOR_NOT_FOUND", "That honor could not be found.");
+    if (!honor.isActive && !alreadyTeaching.has(id)) {
+      throw new HonorConfigurationError("HONOR_INACTIVE", `${honor.name} is inactive in the catalog.`);
+    }
+    return honor;
+  });
+}
+
+/** Every other class of the event that teaches any of these honors, for the slot rules. */
+async function otherClassesTeaching(tx: Prisma.TransactionClient, eventId: string, honorIds: readonly string[], exceptOfferingId?: string) {
+  const others = await tx.honorOffering.findMany({
+    where: { eventId, ...(exceptOfferingId ? { id: { not: exceptOfferingId } } : {}), honors: { some: { honorId: { in: [...honorIds] } } } },
+    select: {
+      span: true,
+      sessionId: true,
+      locationId: true,
+      session: { select: { locationId: true } },
+      honors: { select: { honorId: true } },
+    },
+  });
+  return others.map((offering) => ({
+    honorIds: offering.honors.map((row) => row.honorId),
+    span: offering.span,
+    sessionId: offering.sessionId,
+    locationId: offeringSiteId(offering),
+  }));
+}
+
+/** Writes a class's honors in order. A trigger already gave the class its primary (position 0) row on insert. */
+export async function writeHonorRows(tx: Prisma.TransactionClient, offeringId: string, eventId: string, honorIds: readonly string[]) {
+  const existing = await tx.honorOfferingHonor.findMany({ where: { offeringId }, select: { id: true, honorId: true, position: true } });
+  const byHonor = new Map(existing.map((row) => [row.honorId, row]));
+  const wanted = new Set(honorIds);
+  const dropped = existing.filter((row) => !wanted.has(row.honorId)).map((row) => row.id);
+  if (dropped.length > 0) await tx.honorOfferingHonor.deleteMany({ where: { id: { in: dropped } } });
+  for (const [position, honorId] of honorIds.entries()) {
+    const row = byHonor.get(honorId);
+    if (row && row.position !== position) await tx.honorOfferingHonor.update({ where: { id: row.id }, data: { position } });
+    if (!row) await tx.honorOfferingHonor.create({ data: { offeringId, honorId, eventId, position } });
+  }
 }
 
 export async function createHonorOffering(eventId: string, input: HonorOfferingInput, actorUserId: string) {
@@ -499,14 +582,8 @@ export async function createHonorOffering(eventId: string, input: HonorOfferingI
     await serializable(async (tx) => {
       await requireEvent(tx, eventId);
       await requireNoTeams(tx, eventId);
-      const honor = await tx.honor.findUnique({
-        where: { id: input.honorId },
-        select: { id: true, name: true, isActive: true },
-      });
-      if (!honor) throw new HonorConfigurationError("HONOR_NOT_FOUND", "That honor could not be found.");
-      if (!honor.isActive) {
-        throw new HonorConfigurationError("HONOR_INACTIVE", "That honor is inactive in the catalog.");
-      }
+      const honors = await requireTeachableHonors(tx, input.honorIds);
+      const honorNames = new Map(honors.map((honor) => [honor.id, honor.name]));
       let sessionSite: string | null = null;
       if (input.sessionId) {
         const session = await tx.honorSession.findFirst({
@@ -523,42 +600,43 @@ export async function createHonorOffering(eventId: string, input: HonorOfferingI
         if (!input.locationId && await eventHasActiveLocations(tx, eventId)) throw siteRequired("all-sessions class");
         locationId = input.locationId;
       }
-      const existing = await tx.honorOffering.findMany({
-        where: { eventId, honorId: input.honorId },
-        select: { honorId: true, span: true, sessionId: true, locationId: true, session: { select: { locationId: true } } },
-      });
-      const conflict = offeringSlotConflict(
+      const conflict = classSlotConflict(
         { ...input, locationId: input.span === "ALL_SESSIONS" ? locationId : sessionSite },
-        existing.map((offering) => ({ ...offering, locationId: offeringSiteId(offering) })),
+        await otherClassesTeaching(tx, eventId, input.honorIds),
+        (honorId) => honorNames.get(honorId) ?? "",
       );
       if (conflict) throw new HonorConfigurationError("OFFERING_CONFLICT", conflict);
 
+      const { honorIds, ...details } = input;
       const offering = await tx.honorOffering.create({
         data: {
           eventId,
-          honorId: input.honorId,
-          sessionId: input.sessionId,
+          // The primary honor; a trigger gives it its position-0 row (#812).
+          honorId: honorIds[0]!,
+          sessionId: details.sessionId,
           locationId,
-          span: input.span,
-          capacity: input.capacity,
-          minimumAge: input.minimumAge,
-          perClubLimit: input.perClubLimit,
-          teacherName: input.teacherName,
-          location: input.location,
-          additionalCostCents: input.additionalCostCents,
-          requirementNote: input.requirementNote,
-          isActive: input.isActive,
+          span: details.span,
+          capacity: details.capacity,
+          minimumAge: details.minimumAge,
+          perClubLimit: details.perClubLimit,
+          teacherName: details.teacherName,
+          location: details.location,
+          additionalCostCents: details.additionalCostCents,
+          requirementNote: details.requirementNote,
+          isActive: details.isActive,
         },
       });
+      await writeHonorRows(tx, offering.id, eventId, honorIds);
       await writeAuditLog({
         eventId,
         actorUserId,
         action: "HONOR_OFFERING_CREATED",
         entityType: "HonorOffering",
         entityId: offering.id,
-        summary: `Offered ${honor.name} with ${offering.capacity} youth seats.`,
+        summary: `Offered ${joinHonorNames(honors.map((honor) => honor.name))} with ${offering.capacity} youth seats.`,
         metadata: {
-          honorId: honor.id,
+          honorId: honorIds[0],
+          honorIds,
           span: offering.span,
           sessionId: offering.sessionId,
           capacity: offering.capacity,
@@ -569,7 +647,7 @@ export async function createHonorOffering(eventId: string, input: HonorOfferingI
     });
   } catch (error) {
     if (isUniqueConstraint(error)) {
-      throw new HonorConfigurationError("OFFERING_CONFLICT", "This honor is already offered in that session.");
+      throw new HonorConfigurationError("OFFERING_CONFLICT", "One of these honors is already offered in that session.");
     }
     throw error;
   }
@@ -587,14 +665,16 @@ export async function updateHonorOffering(
     await serializable(async (tx) => {
       const existing = await tx.honorOffering.findFirst({
         where: { id: offeringId, eventId },
-        select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, honor: { select: { name: true } } },
+        select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, honors: offeringHonorsSelect },
       });
       if (!existing) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
+      const current = summarizeOfferingHonors(existing.honors);
 
-      const { honorId: nextHonorId, span: nextSpan, sessionId: nextSessionId, locationId: nextSiteInput, ...details } = input;
-      const honorId = nextHonorId ?? existing.honorId;
+      const { honorIds: nextHonorIds, span: nextSpan, sessionId: nextSessionId, locationId: nextSiteInput, ...details } = input;
+      const honorIds = nextHonorIds ?? current.honorIds;
       const span = nextSpan ?? existing.span;
-      const honorChanged = honorId !== existing.honorId;
+      const honorChange = honorSetChange(current.honorIds, honorIds);
+      const honorsChanged = honorChange.changed || honorChange.reordered;
       const spanChanged = span !== existing.span;
 
       // The final placement: an all-sessions class has its own site and no session; a single-session class has a session and takes its site.
@@ -618,35 +698,34 @@ export async function updateHonorOffering(
       const sessionChanged = sessionId !== existing.sessionId;
       const siteChanged = locationId !== existing.locationId;
 
-      let newHonorName: string | null = null;
-      if (honorChanged) {
-        const honor = await tx.honor.findUnique({ where: { id: honorId }, select: { id: true, name: true, isActive: true } });
-        if (!honor) throw new HonorConfigurationError("HONOR_NOT_FOUND", "That honor could not be found.");
-        if (!honor.isActive) throw new HonorConfigurationError("HONOR_INACTIVE", "That honor is inactive in the catalog.");
-        newHonorName = honor.name;
-      }
+      // An honor the class already teaches stays allowed if the catalog has since turned it off; a new one must be active.
+      const honors = honorsChanged ? await requireTeachableHonors(tx, honorIds, new Set(current.honorIds)) : current.honors;
+      const honorNames = new Map([...current.honors, ...honors].map((honor) => [honor.id, honor.name]));
       if (span === "ALL_SESSIONS" && (siteChanged || spanChanged)) {
         await requireSessionLocation(tx, eventId, locationId);
         if (!locationId && await eventHasActiveLocations(tx, eventId)) throw siteRequired("all-sessions class");
       }
 
-      if (honorChanged || spanChanged || sessionChanged || siteChanged) {
+      if (honorsChanged || spanChanged || sessionChanged || siteChanged) {
         // Clubs that picked this class would be stranded or hold a different class than they chose; nothing is removed silently.
-        if (await tx.honorEnrollment.count({ where: { offeringId } }) > 0) {
+        // The lock is per honor (#812): a change to which honors the class teaches (or where or when) is refused once anyone
+        // is enrolled, and the message names the honors; only their order is free.
+        const frozenChange = honorChange.changed || spanChanged || sessionChanged || siteChanged;
+        if (frozenChange && await tx.honorEnrollment.count({ where: { offeringId } }) > 0) {
+          const onlyHonors = honorChange.changed && !spanChanged && !sessionChanged && !siteChanged;
           throw new HonorConfigurationError(
             "OFFERING_HAS_PICKS",
-            siteChanged && !honorChanged && !spanChanged && !sessionChanged
-              ? "Clubs have already picked this class, so it can't move to another site."
-              : "Clubs have already picked this class, so its honor, session or span can't change. Delete it (which removes those picks) or add a new class.",
+            onlyHonors
+              ? honorSetLockMessage(honorChange, (id) => honorNames.get(id) ?? "that honor")!
+              : siteChanged && !honorChange.changed && !spanChanged && !sessionChanged
+                ? "Clubs have already picked this class, so it can't move to another site."
+                : "Clubs have already picked this class, so its honors, session or span can't change. Delete it (which removes those picks) or add a new class.",
           );
         }
-        const others = await tx.honorOffering.findMany({
-          where: { eventId, honorId, id: { not: offeringId } },
-          select: { honorId: true, span: true, sessionId: true, locationId: true, session: { select: { locationId: true } } },
-        });
-        const conflict = offeringSlotConflict(
-          { honorId, span, sessionId, locationId: span === "ALL_SESSIONS" ? locationId : sessionSite },
-          others.map((offering) => ({ ...offering, locationId: offeringSiteId(offering) })),
+        const conflict = classSlotConflict(
+          { honorIds, span, sessionId, locationId: span === "ALL_SESSIONS" ? locationId : sessionSite },
+          await otherClassesTeaching(tx, eventId, honorIds, offeringId),
+          (honorId) => honorNames.get(honorId) ?? "",
         );
         if (conflict) throw new HonorConfigurationError("OFFERING_CONFLICT", conflict);
       }
@@ -655,28 +734,29 @@ export async function updateHonorOffering(
         where: { id: offeringId },
         data: {
           ...details,
-          ...(honorChanged ? { honorId } : {}),
+          ...(honorIds[0] !== existing.honorId ? { honorId: honorIds[0] } : {}),
           ...(spanChanged ? { span } : {}),
           ...(sessionChanged ? { sessionId } : {}),
           ...(siteChanged ? { locationId } : {}),
         },
       });
+      if (honorsChanged) await writeHonorRows(tx, offeringId, eventId, honorIds);
       await writeAuditLog({
         eventId,
         actorUserId,
         action: "HONOR_OFFERING_UPDATED",
         entityType: "HonorOffering",
         entityId: offeringId,
-        summary: newHonorName
-          ? `Updated the ${existing.honor.name} offering and changed its honor to ${newHonorName}.`
-          : `Updated the ${existing.honor.name} offering.`,
+        summary: honorsChanged
+          ? `Updated the ${current.honorName} offering and changed its honors to ${joinHonorNames(honors.map((honor) => honor.name))}.`
+          : `Updated the ${current.honorName} offering.`,
         metadata: { changes: input },
       }, tx);
     });
   } catch (error) {
-    // Two classes can't be the same honor in the same session (the (sessionId, honorId) unique index).
+    // Two classes can't teach the same honor in the same session (the (sessionId, honorId) unique index on HonorOfferingHonor).
     if (isUniqueConstraint(error)) {
-      throw new HonorConfigurationError("OFFERING_CONFLICT", "This honor is already offered in that session.");
+      throw new HonorConfigurationError("OFFERING_CONFLICT", "One of these honors is already offered in that session.");
     }
     throw error;
   }

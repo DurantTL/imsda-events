@@ -22,7 +22,7 @@ function offering(id: string, honorName: string, sessionId: string | null, locat
     // An all-sessions class has its own site (#589); a single-session class takes its session's.
     locationId: sessionId ? null : locationId, site: !sessionId && locationName ? { name: locationName } : null,
     capacity: 10, minimumAge: null, perClubLimit: null,
-    teacherName: "", location: "", isActive: true, honor: { name: honorName, code: id.toUpperCase() },
+    teacherName: "", location: "", isActive: true, honors: [{ honor: { id: `honor-${id}`, name: honorName, code: id.toUpperCase(), isActive: true } }],
     session: sessionId ? { name: `Session ${sessionId}`, sortOrder: 0, locationId, location: locationName ? { name: locationName } : null } : null,
   };
 }
