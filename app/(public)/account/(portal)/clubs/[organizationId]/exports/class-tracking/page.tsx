@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { BackLink } from "@/components/back-link";
+import { cardCell } from "@/components/table-card-labels";
 import { PrintReportButton } from "@/components/print-report-button";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { rosterYearView } from "@/modules/club-rosters/domain";
+import { CLASS_TRACKING_EXPORT_HEADERS } from "@/modules/reporting/director-exports";
 import { loadClassTrackingExport } from "@/modules/reporting/director-exports-repository";
 
 export const metadata: Metadata = { title: "Class tracking report" };
@@ -44,21 +46,21 @@ export default async function ClubClassTrackingReportPage({
           <p className="muted">No active roster members for this club year. Add members on the Roster page first.</p>
         ) : (
           <div className="report-table-wrap">
-            <table aria-labelledby="class-report-heading" className="report-table">
-              <thead>
-                <tr>
-                  <th>Member</th><th>Class</th><th>Class insignia</th><th>Event patches</th><th>Good Conduct / TLT / other</th><th>Master Awards</th>
+            <table aria-labelledby="class-report-heading" className="report-table table-cards" role="table">
+              <thead role="rowgroup">
+                <tr role="row">
+                  {/* The same headings as the CSV (#811), with the member's two name columns shown as one. */}
+                  <th role="columnheader" scope="col">Member</th>
+                  {CLASS_TRACKING_EXPORT_HEADERS.slice(2).map((header) => <th key={header} role="columnheader" scope="col">{header}</th>)}
                 </tr>
               </thead>
-              <tbody>
+              <tbody role="rowgroup">
                 {rows.map((row) => (
-                  <tr key={row.personId}>
-                    <td>{row.lastName}, {row.firstName}</td>
-                    <td>{row.className}</td>
-                    <td>{cell(row.insignia)}</td>
-                    <td>{cell(row.eventPatches)}</td>
-                    <td>{cell(row.conductAndTlt)}</td>
-                    <td>{cell(row.masterAwards)}</td>
+                  <tr key={row.personId} role="row">
+                    <th role="rowheader" scope="row">{row.lastName}, {row.firstName}</th>
+                    {[row.className, cell(row.insignia), cell(row.eventPatches), cell(row.conductAndTlt), cell(row.masterAwards)].map((value, index) => (
+                      <td key={CLASS_TRACKING_EXPORT_HEADERS[index + 2]} {...cardCell(CLASS_TRACKING_EXPORT_HEADERS[index + 2])}>{value}</td>
+                    ))}
                   </tr>
                 ))}
               </tbody>

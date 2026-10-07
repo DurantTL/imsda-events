@@ -60,7 +60,7 @@ export default async function ClubSchedulePage({
             <thead>
               <tr>
                 <th scope="col">Name</th>
-                <th scope="col">Age</th>
+                <th scope="col">Age at event</th>
                 {schedule.sessions.map((session) => <th key={session.id} scope="col">{session.name}</th>)}
               </tr>
             </thead>
@@ -71,7 +71,7 @@ export default async function ClubSchedulePage({
                     <span translate="no">{row.person.lastName}, {row.person.firstName}</span>
                     <small>{rosterGroupLabels[rosterGroupOf(row.person.attendeeType)]}</small>
                   </th>
-                  <td data-label="Age">{row.person.ageOnEventDate ?? "—"}</td>
+                  <td data-label="Age at event">{row.person.ageOnEventDate ?? "—"}</td>
                   {schedule.sessions.map((session) => {
                     const offering = row.bySession[session.id];
                     return (

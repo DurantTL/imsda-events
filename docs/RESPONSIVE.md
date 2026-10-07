@@ -135,6 +135,35 @@ record the exception in `acceptedFindings`. Used by: roster
 (`.roster-card-table`), club reports, honors, area overview and points,
 invites, Sterling Volunteers, team, accounts, club forms, attendee listing.
 
+### Tables on a wide screen: padding, minimum widths, and no overlap (#811)
+
+- Every `<table>` carries a base class that gives its cells padding
+  (`report-table` for almost all of them). A bare table runs one column's text
+  into the next ("CONFIRMEDLisa Hickman"). `tests/tables-review-811.test.ts`
+  fails for a table with no such class.
+- A table with many columns (the attendee listing, the month-by-month club
+  grid) sits in a scroll box (`.table-scroll`, `.report-table-wrap`, `.table-wrap`)
+  and has a `min-width` at 601 px and over, so it scrolls inside its box and its
+  columns keep a readable width. A table with a column that can hold long text
+  (the Honors table) uses `table-layout: fixed` with a width on each column
+  (`.honors-col-*`) and `data-fit-width`, which the audit checks at 768-1024 px.
+- A `data-label` is the text of that column's `<th>`. `tests/table-data-labels.test.ts`
+  checks every literal label against its table's headers; the audit checks the
+  labels that are built at run time against the rendered DOM.
+- Honor pills: the name is cut with an ellipsis inside its pill, and the status
+  ("In progress" / "Completed") is its own `.honor-pill-status` span that never
+  shrinks. The Honors cell always shows its label above the pills, with or
+  without the "Show all" button, so every card stacks the same way.
+- The audit (`scripts/verify-mobile-layout.ts`) reports `table-cell` findings
+  for: text running into or over the next cell, text running out of its own
+  cell, two columns touching with no gap, a card label that is not its column
+  header, and a header that is not over its column. Text cut by an ellipsis only
+  counts inside the box that cuts it.
+- A list that has sort controls says how it is ordered (`SortOrderNote`); a CSV
+  starts with the same columns, in the same order, as the screen it comes from
+  (the club Honors page and CSV share `CLUB_HONORS_CSV_HEADERS`, the class
+  tracking report and CSV share `CLASS_TRACKING_EXPORT_HEADERS`).
+
 ### 44px tap targets
 
 `:root { --touch-target: 44px }` is set at 768 px and under; the rules this section lists apply at **600 px and under** (phones), the width the audit uses, so the registration form builder and other tablet layouts keep their sizes. At 600 px and under:

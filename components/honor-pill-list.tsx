@@ -16,8 +16,9 @@ import {
  * Honors page and the roster card, which the club portal, the admin club view
  * and the Area Coordinator view all render.
  *
- * `showStatus` adds "· In progress" / "· Completed" to each pill (the Honors
- * page); the roster keeps the compact icon form, where colour carries status.
+ * `showStatus` adds "In progress" / "Completed" to each pill, in its own span
+ * that never shrinks (the Honors page); the roster keeps the compact icon form,
+ * where colour carries status.
  */
 export function HonorPillList({
   honors,
@@ -54,7 +55,9 @@ export function HonorPillList({
               title={`${honor.honorName}: ${statusLabel}${honor.completionDate ? ` ${honor.completionDate}` : ""}`}
             >
               {withIcon && <Award aria-hidden="true" size={12} />}
-              <span className="honor-pill-text">{honor.honorName}{showStatus ? ` · ${statusLabel}` : ""}</span>
+              <span className="honor-pill-text">{honor.honorName}</span>
+              {/* Its own span, so a long name is what gets cut with an ellipsis, never the status. */}
+              {showStatus && <span className="honor-pill-status">{statusLabel}</span>}
             </span>
           );
         })}

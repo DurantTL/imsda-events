@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { CheckCircle2, Circle, PackageOpen, ShieldCheck } from "lucide-react";
 import { AccessRestricted } from "@/components/access-restricted";
+import { cardCell } from "@/components/table-card-labels";
 import { PrintReportButton } from "@/components/print-report-button";
 import { resolveEventContext } from "@/modules/events/selection";
 import { getRetreatPackets } from "@/modules/reporting/retreat-packets-repository";
@@ -100,14 +101,14 @@ export default async function RetreatPacketsPage({
 
           <section>
             <h2>Registration contacts</h2>
-            <table>
-              <thead><tr><th>Confirmation</th><th>Contact</th><th>Email / phone</th><th>Arrival</th></tr></thead>
-              <tbody>{group.registrations.map((registration) => (
-                <tr key={registration.id}>
-                  <td>{registration.confirmationCode}</td>
-                  <td>{registration.accountHolderName}</td>
-                  <td>{registration.email}<br />{registration.phone}</td>
-                  <td>{registration.checkedInCount}/{registration.attendeeCount}</td>
+            <table className="table-cards" role="table">
+              <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Confirmation</th><th role="columnheader" scope="col">Contact</th><th role="columnheader" scope="col">Email / phone</th><th role="columnheader" scope="col">Arrival</th></tr></thead>
+              <tbody role="rowgroup">{group.registrations.map((registration) => (
+                <tr key={registration.id} role="row">
+                  <th role="rowheader" scope="row">{registration.confirmationCode}</th>
+                  <td {...cardCell("Contact")}>{registration.accountHolderName}</td>
+                  <td {...cardCell("Email / phone")}>{registration.email}<br />{registration.phone}</td>
+                  <td {...cardCell("Arrival")}>{registration.checkedInCount}/{registration.attendeeCount}</td>
                 </tr>
               ))}</tbody>
             </table>
@@ -115,15 +116,15 @@ export default async function RetreatPacketsPage({
 
           <section>
             <h2>Attendee checklist</h2>
-            <table>
-              <thead><tr><th>Arrived</th><th>Attendee</th><th>Type</th><th>Shirt</th><th>Assigned sessions</th></tr></thead>
-              <tbody>{group.attendees.map((attendee) => (
-                <tr key={attendee.id}>
-                  <td>{attendee.checkedIn ? <CheckCircle2 size={16} aria-label="Checked in" /> : <Circle size={16} aria-label="Not checked in" />}</td>
-                  <td><strong>{attendee.lastName}, {attendee.firstName}</strong><br /><small>{attendee.confirmationCode}</small></td>
-                  <td>{attendee.attendeeType}</td>
-                  <td>{attendee.shirtSize ?? "Needed"}</td>
-                  <td>{attendee.assignments.length > 0
+            <table className="table-cards" role="table">
+              <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Arrived</th><th role="columnheader" scope="col">Attendee</th><th role="columnheader" scope="col">Type</th><th role="columnheader" scope="col">Shirt</th><th role="columnheader" scope="col">Assigned sessions</th></tr></thead>
+              <tbody role="rowgroup">{group.attendees.map((attendee) => (
+                <tr key={attendee.id} role="row">
+                  <td {...cardCell("Arrived")}>{attendee.checkedIn ? <CheckCircle2 size={16} aria-label="Checked in" /> : <Circle size={16} aria-label="Not checked in" />}</td>
+                  <th role="rowheader" scope="row"><strong>{attendee.lastName}, {attendee.firstName}</strong><br /><small>{attendee.confirmationCode}</small></th>
+                  <td {...cardCell("Type")}>{attendee.attendeeType}</td>
+                  <td {...cardCell("Shirt")}>{attendee.shirtSize ?? "Needed"}</td>
+                  <td {...cardCell("Assigned sessions")}>{attendee.assignments.length > 0
                     ? attendee.assignments.map((assignment) => <span className="packet-assignment" key={assignment.label}>{assignment.label}: <strong>{assignment.option}</strong></span>)
                     : "Not assigned"}</td>
                 </tr>

@@ -39,7 +39,7 @@ function enclosingMedia(source: string, needle: string): string | null {
 
 describe("tables that became phone cards (#447)", () => {
   it("the attendee listing is a table-cards table with labelled cells and the name as row header", () => {
-    expect(attendeeListing).toContain('role="table" className="table-cards attendee-listing-table"');
+    expect(attendeeListing).toContain('role="table" className="report-table table-cards attendee-listing-table"');
     expect(attendeeListing).toContain("{...cardCell(column.label)}");
     expect(attendeeListing).toMatch(/column\.key === "name"\s*\?\s*<th key=\{column\.key\} role="rowheader" scope="row">/);
     expect(attendeeListing).toContain('role="columnheader"');
@@ -56,7 +56,7 @@ describe("tables that became phone cards (#447)", () => {
   });
 
   it("the club honors table is table-cards with labelled cells and the member as row header", () => {
-    expect(honors).toContain('className="report-table table-cards" role="table"');
+    expect(honors).toContain('className="report-table table-cards honors-table" data-fit-width role="table"');
     expect(honors).toContain('cardCell("Current class")');
     expect(honors).toContain('cardCell("Honors")');
     expect(honors).toContain('<th role="rowheader" scope="row"><strong translate="no">');

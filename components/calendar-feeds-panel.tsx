@@ -280,7 +280,7 @@ export function CalendarFeedsPanel({
             <p>Nothing would change.</p>
           ) : (
             <div className="table-wrap">
-              <table className="table-cards">
+              <table className="report-table report-table-auto table-cards">
                 <thead>
                   <tr><th scope="col">What</th><th scope="col">Title</th><th scope="col">Dates</th><th scope="col">Time</th><th scope="col">Repeats</th></tr>
                 </thead>
