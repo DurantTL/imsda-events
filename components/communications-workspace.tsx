@@ -41,6 +41,7 @@ import {
 } from "@/modules/communications/manage-link";
 import {
   MESSAGE_TEMPLATE_TOKEN_KEYS,
+  MESSAGE_TEMPLATE_TOKEN_OPTIONS,
   renderMessageTemplate,
   withChurchBilledLinkWording,
   SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
@@ -120,6 +121,9 @@ function settingsDraftFromMessaging(
  * the kind of mismatch a preview exists to rule out.
  */
 const templateTokenKeys: readonly string[] = MESSAGE_TEMPLATE_TOKEN_KEYS;
+const templateTokenLabels: Readonly<Record<string, string>> = Object.fromEntries(
+  MESSAGE_TEMPLATE_TOKEN_OPTIONS.map((option) => [option.key, option.label]),
+);
 
 /**
  * A preview has no registration and mints no private token, so the delivery
@@ -1475,6 +1479,7 @@ export function CommunicationsWorkspace({
                   key={selectedTemplate.id}
                   value={templateBody}
                   tokens={templateTokenKeys}
+                  tokenLabels={templateTokenLabels}
                   onChange={setTemplateBody}
                 />
               </div>

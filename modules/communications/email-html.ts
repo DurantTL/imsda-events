@@ -61,6 +61,18 @@ const MARKDOWN_ESCAPE_PATTERN = /[!-/:-@[-`{-~]/g;
 const BACKSLASH_ESCAPE_PATTERN = /\\([!-/:-@[-`{-~])/g;
 
 /**
+ * The plain-text form of a Markdown block whose untrusted values were
+ * escaped with `escapeMarkdown`: bold wrappers dropped and every backslash
+ * escape removed, so the text part reads `Mary-Ann O'Neil (Sr.)`, not
+ * `Mary\-Ann`. Bold is stripped first so an escaped literal `*` survives.
+ */
+export function plainTextFromEscapedMarkdown(value: string) {
+  return value
+    .replace(/\*\*((?:\\\*|[^*\n])+)\*\*/g, "$1")
+    .replace(BACKSLASH_ESCAPE_PATTERN, "$1");
+}
+
+/**
  * Neutralise every Markdown construct in an untrusted value. Deliberately
  * escapes all ASCII punctuation rather than only the characters that start a
  * construct today: the alternative is a denylist that has to be revisited every

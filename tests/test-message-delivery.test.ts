@@ -140,6 +140,8 @@ function baseTransaction(settings = settingsWith()) {
       groupBy: vi.fn().mockResolvedValue([]),
     },
     messageDeliveryAttempt: { create: vi.fn().mockResolvedValue({}) },
+    // A real test fills the announcement tokens from the latest published one (#824).
+    announcement: { findFirst: vi.fn().mockResolvedValue(null) },
   };
 }
 
