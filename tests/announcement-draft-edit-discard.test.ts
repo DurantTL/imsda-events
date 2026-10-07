@@ -2,6 +2,8 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("server-only", () => ({}));
+
 /**
  * F-9 (#571): announcement draft Edit and Discard. Both are audited and
  * neither sends, publishes, or touches attendees. Synthetic data only.
@@ -67,6 +69,13 @@ function fakePrisma(initial: Partial<Row> | null) {
       }),
     },
     auditLog: { create: vi.fn<(args: unknown) => Promise<object>>(async () => ({})) },
+    // Announcement attachments (#824): this fake has none.
+    announcementFile: {
+      findMany: vi.fn(async () => []),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+      createMany: vi.fn(async () => ({ count: 0 })),
+    },
+    messageFile: { findMany: vi.fn(async () => []) },
   };
   return { tx, current: () => row, client: { $transaction: async (fn: (t: typeof tx) => unknown) => fn(tx) } };
 }

@@ -1,3 +1,4 @@
+import { formatFileSize } from "@/modules/communications/message-file-rules";
 import type { AnnouncementBroadcastPreview } from "@/modules/communications/types";
 
 export function deliveryTimingLabel(mode: AnnouncementBroadcastPreview["deliveryMode"]) {
@@ -28,6 +29,9 @@ export function announcementBroadcastConfirmState(
       canConfirm: false,
       reason: review.error ? "" : "The recipient review hasn't loaded.",
     };
+  }
+  if (review.preview.attachmentProblem) {
+    return { canConfirm: false, reason: review.preview.attachmentProblem };
   }
   if (review.preview.recipientCount === 0) {
     return {
@@ -67,6 +71,14 @@ export function AnnouncementBroadcastReviewFacts({
           </div>
         )}
         <div><dt>Delivery</dt><dd>{deliveryTimingLabel(preview.deliveryMode)}</dd></div>
+        <div>
+          <dt>Attachments</dt>
+          <dd>
+            {preview.attachments.length === 0
+              ? "None"
+              : preview.attachments.map((file) => `${file.filename} (${formatFileSize(file.sizeBytes)})`).join(", ")}
+          </dd>
+        </div>
       </dl>
       {!preview.templateEnabled && (
         <p className="form-error">

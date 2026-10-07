@@ -37,7 +37,14 @@ function fixture() {
     eventMessageTemplate: { findMany: vi.fn().mockResolvedValue([]) },
     event: { findUnique: vi.fn().mockResolvedValue({ supportContact: "office@example.test", paymentInstructionVersions: [] }) },
     registrationAttendee: { findMany: vi.fn().mockResolvedValue([{ id: "attendee-1" }, { id: "attendee-2" }]) },
-    messageOutbox: { create },
+    messageOutbox: { create, findMany: vi.fn().mockResolvedValue([]) },
+    // Message files (#824): a fake database with no files linked to any message.
+    messageOutboxFile: {
+      findMany: vi.fn().mockResolvedValue([]),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    messageTemplateVersionFile: { findMany: vi.fn().mockResolvedValue([]) },
+    messageFile: { findMany: vi.fn().mockResolvedValue([]) },
   };
   return { tx, create };
 }

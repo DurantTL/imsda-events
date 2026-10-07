@@ -23,6 +23,8 @@ import {
   type PaymentState,
 } from "@/modules/communications/message-blocks";
 import { buildRegistrationSeminarPreferences } from "@/modules/communications/seminar-preferences";
+import { linkQueuedMessageFiles } from "@/modules/communications/message-files";
+import { messageFileIdsInHtml } from "@/modules/communications/message-file-rules";
 
 type TransactionalTemplateKey =
   | "REGISTRATION_CONFIRMATION_PAID"
@@ -90,6 +92,13 @@ type TransactionalMessageInput = {
    * passes each one in, so the send transaction does not query per recipient.
    */
   seminarPreferencesBlock?: string;
+  /**
+   * A batch that links the files of all its messages in one go afterwards (`linkQueuedMessageFiles`) sets this, so
+   * the send transaction does not repeat the same lookups for every recipient.
+   */
+  deferFileLinking?: boolean;
+  /** An announcement's own attachments, sent alongside the template version's (#824). */
+  announcementFileIds?: readonly string[];
   metadata?: Record<string, string | number | boolean | null>;
 };
 
@@ -286,6 +295,7 @@ async function enqueueTransactionalMessage(
             id: true,
             subjectTemplate: true,
             bodyTemplate: true,
+            files: { select: { fileId: true } },
           },
         },
       },
@@ -625,6 +635,17 @@ async function enqueueTransactionalMessage(
       status: true,
     },
   });
+  // The template version's attachments, the announcement's, and the images the body embeds (#824).
+  const hasFiles = (source?.files?.length ?? 0) > 0
+    || (input.announcementFileIds?.length ?? 0) > 0
+    || messageFileIdsInHtml(rendered.bodyHtml).length > 0;
+  if (hasFiles && !input.deferFileLinking) {
+    await linkQueuedMessageFiles(tx, {
+      eventId: input.eventId,
+      messageIds: [message.id],
+      extraAttachmentFileIds: input.announcementFileIds ?? [],
+    });
+  }
   return {
     messageIds: [message.id],
     pendingMessageIds: message.status === "PENDING" ? [message.id] : [],

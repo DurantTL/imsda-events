@@ -43,6 +43,12 @@ import {
 } from "@/modules/health-records/link-email";
 import { logError } from "@/lib/logger";
 import {
+  buildEmailParts,
+  type DeliveryFileLink,
+  type EmailPartDependencies,
+} from "@/modules/communications/email-attachments";
+import { readMessageFileBytes } from "@/modules/communications/message-files";
+import {
   createStableRegistrationAccessToken,
   revokeRegistrationAccessToken,
 } from "@/modules/public-access/repository";
@@ -65,6 +71,8 @@ export type ExternalEmailDeliveryDependencies = {
   configuration?: ResendEmailConfiguration;
   sendEmail?: typeof sendEmailWithResend;
   prepareBodyText?: (input: EmailBodyPreparationInput) => Promise<PreparedEmailBody>;
+  /** How stored files and pass images are read for embedding (#824); the defaults read private storage and render in-process. */
+  emailParts?: Partial<EmailPartDependencies>;
 };
 
 export type ExternalEmailQueueResult = {
@@ -98,6 +106,8 @@ type ClaimedMessage = {
   bodyHtmlSnapshot: string | null;
   /** The one file sent with the message, when it has one (#168: an invoice PDF), read from the shared attachment row. */
   attachment?: { filename: string; contentType: string; sha256: string; content: Uint8Array } | null;
+  /** The files staff attached and the images embedded in the body (#824), from the outbox row's own references. */
+  files?: DeliveryFileLink[];
   attemptCount: number;
   lockToken: string;
   startedAt: Date;
@@ -224,6 +234,28 @@ export function normalizeEmailDeliveryError(error: unknown): NormalizedEmailDeli
 
 function resolvePrisma(dependencies: ExternalEmailDeliveryDependencies) {
   return dependencies.prisma ?? getPrisma();
+}
+
+function resolveEmailPartDependencies(dependencies: ExternalEmailDeliveryDependencies): EmailPartDependencies {
+  const overrides = dependencies.emailParts ?? {};
+  return {
+    readFile: overrides.readFile ?? readMessageFileBytes,
+    renderQrPng: overrides.renderQrPng ?? (async (registrationAccessToken, attendeeId) => {
+      const [{ createAuthorizedAttendeePass }, { renderAttendeePassQrPng }] = await Promise.all([
+        import("@/modules/checkin/attendee-pass-repository"),
+        import("@/modules/checkin/pass-qr-image"),
+      ]);
+      const pass = await createAuthorizedAttendeePass(registrationAccessToken, attendeeId);
+      return pass ? renderAttendeePassQrPng(pass.token) : null;
+    }),
+    appOrigin: overrides.appOrigin ?? (() => {
+      try {
+        return new URL(getServerEnv().APP_BASE_URL).origin;
+      } catch {
+        return null;
+      }
+    }),
+  };
 }
 
 function resolveConfiguration(dependencies: ExternalEmailDeliveryDependencies) {
@@ -434,6 +466,13 @@ async function claimNextMessage(
           bodyTextSnapshot: true,
           bodyHtmlSnapshot: true,
           attachment: { select: { filename: true, contentType: true, sha256: true, content: true } },
+          files: {
+            orderBy: [{ disposition: "asc" }, { position: "asc" }],
+            select: {
+              disposition: true,
+              file: { select: { id: true, filename: true, contentType: true, sizeBytes: true, sha256: true, storageKey: true } },
+            },
+          },
           attemptCount: true,
         },
       });
@@ -666,6 +705,12 @@ async function runDeliveryLoop(
       if (message.attachment && createHash("sha256").update(message.attachment.content).digest("hex") !== message.attachment.sha256) {
         throw new Error("The attachment no longer matches its recorded hash, so the message was not sent.");
       }
+      // Staff attachments and embedded images (#824). Built from the row's own file references on every attempt, so a
+      // retry sends exactly what the first attempt would have.
+      const parts = await buildEmailParts(
+        { bodyHtml: preparedBody.bodyHtml ?? null, files: message.files ?? [] },
+        resolveEmailPartDependencies(dependencies),
+      );
       // Checked again immediately before the provider call, so a revision that committed while the body was prepared cannot slip one out.
       if (await cancelIfInvoiceReplaced(prisma, message)) continue;
       if (await cancelIfLodgingStale(prisma, message, now())) continue;
@@ -681,15 +726,20 @@ async function runDeliveryLoop(
         // untrusted token spans were still distinguishable. A row queued before
         // HTML bodies existed has none, and goes out as text only rather than
         // being re-parsed as Markdown here.
-        bodyHtml: preparedBody.bodyHtml
+        bodyHtml: parts.bodyHtml
           ? renderEmailHtmlDocument({
             title: message.subjectSnapshot,
-            bodyHtml: preparedBody.bodyHtml,
+            bodyHtml: parts.bodyHtml,
             footer: message.senderNameSnapshot,
           })
           : null,
-        attachments: message.attachment
-          ? [{ filename: message.attachment.filename, contentType: message.attachment.contentType, content: message.attachment.content }]
+        attachments: message.attachment || parts.attachments.length > 0
+          ? [
+              ...(message.attachment
+                ? [{ filename: message.attachment.filename, contentType: message.attachment.contentType, content: message.attachment.content }]
+                : []),
+              ...parts.attachments,
+            ]
           : undefined,
         idempotencyKey: `outbox:${message.id}`,
         messageId: message.id,

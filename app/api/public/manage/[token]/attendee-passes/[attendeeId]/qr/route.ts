@@ -1,4 +1,4 @@
-import QRCode from "qrcode";
+import { renderAttendeePassQrPng, renderAttendeePassQrSvg } from "@/modules/checkin/pass-qr-image";
 import { createAuthorizedAttendeePass } from "@/modules/checkin/attendee-pass-repository";
 import {
   applyRateLimitHeaders,
@@ -57,20 +57,10 @@ async function getHandler(request: Request, context: RouteContext) {
       }, { status: 404 }, rateLimit);
     }
 
-    const renderOptions = {
-      errorCorrectionLevel: "M" as const,
-      margin: 2,
-      width: 280,
-      color: {
-        dark: "#003b5cff",
-        light: "#ffffffff",
-      },
-    };
-
     // Mail clients do not render SVG in an <img>, so a pass emailed into a
     // confirmation asks for PNG. The page keeps the sharper SVG.
     if (new URL(request.url).searchParams.get("format") === "png") {
-      const png = await QRCode.toBuffer(pass.token, { type: "png", ...renderOptions });
+      const png = await renderAttendeePassQrPng(pass.token);
       const pngResponse = new Response(new Uint8Array(png), {
         headers: {
           ...privateHeaders,
@@ -89,10 +79,7 @@ async function getHandler(request: Request, context: RouteContext) {
       return applyRateLimitHeaders(pngResponse, rateLimit);
     }
 
-    const svg = await QRCode.toString(pass.token, {
-      type: "svg",
-      ...renderOptions,
-    });
+    const svg = await renderAttendeePassQrSvg(pass.token);
     const response = new Response(svg, {
       headers: {
         ...privateHeaders,

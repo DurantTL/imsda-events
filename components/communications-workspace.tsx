@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
@@ -31,10 +31,12 @@ import {
   announcementBroadcastConfirmState,
 } from "@/components/announcement-broadcast-review";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { MessageAttachmentsField } from "@/components/message-attachments-field";
 import { MessageBodyEditor } from "@/components/message-body-editor";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { messageRetryRequestPayload } from "@/modules/communications/message-retry-client";
 import { renderEmailHtmlDocument } from "@/modules/communications/email-html";
+import { formatFileSize, type MessageFileRecord } from "@/modules/communications/message-file-rules";
 import {
   REGISTRATION_MANAGE_API_SENTINEL,
   REGISTRATION_MANAGE_LINK_SENTINEL,
@@ -252,6 +254,10 @@ export function CommunicationsWorkspace({
   const [view, setView] = useState<CommunicationsView>(canManage ? initialView : "announcements");
   const [announcements, setAnnouncements] = useState(initialAnnouncements);
   const [messaging, setMessaging] = useState(initialMessaging);
+  // Files for the announcement being composed, and pictures uploaded for message bodies (#824).
+  const [draftAttachments, setDraftAttachments] = useState<MessageFileRecord[]>([]);
+  const [uploadedImages, setUploadedImages] = useState<MessageFileRecord[]>([]);
+  const [imageData, setImageData] = useState<Record<string, string>>({});
   const [draftOpen, setDraftOpen] = useState(openNew && canManage);
   const [draftPrefill, setDraftPrefill] = useState<{ title: string; body: string; priority: string; editId?: string } | null>(null);
   const [discardTarget, setDiscardTarget] = useState<AnnouncementRecord | null>(null);
@@ -323,6 +329,9 @@ export function CommunicationsWorkspace({
   const [templateSubject, setTemplateSubject] = useState(selectedTemplate?.activeVersion?.subjectTemplate ?? "");
   const [templateBody, setTemplateBody] = useState(selectedTemplate?.activeVersion?.bodyTemplate ?? "");
   const [templateEnabled, setTemplateEnabled] = useState(selectedTemplate?.isEnabled ?? true);
+  const [templateAttachments, setTemplateAttachments] = useState<MessageFileRecord[]>(
+    selectedTemplate?.activeVersion?.attachments ?? [],
+  );
   const [settingsDraft, setSettingsDraft] = useState<MessagingSettingsDraft>(
     () => settingsDraftFromMessaging(messaging),
   );
@@ -342,11 +351,60 @@ export function CommunicationsWorkspace({
     () => renderPreview(templateSubject, templateBody, eventName, isChurchBilled),
     [templateSubject, templateBody, eventName, isChurchBilled],
   );
+  const libraryImages = useMemo(() => {
+    const known = new Set<string>();
+    return [...uploadedImages, ...(messaging?.inlineImages ?? [])].filter((image) => {
+      if (known.has(image.id)) return false;
+      known.add(image.id);
+      return true;
+    });
+  }, [uploadedImages, messaging?.inlineImages]);
+  // Pictures in a preview or a captured message load through the staff-only file route, as data, because the
+  // preview frame is sandboxed and carries no session.
+  const previewImageIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const html of [preview.bodyHtml, messaging?.messages.find((message) => message.id === selectedMessageId)?.bodyHtml ?? ""]) {
+      for (const match of html.matchAll(/<img src="msgfile:([A-Za-z0-9_-]{8,64})"/g)) ids.add(match[1]);
+    }
+    return [...ids];
+  }, [preview.bodyHtml, messaging?.messages, selectedMessageId]);
+  useEffect(() => {
+    const missing = previewImageIds.filter((id) => !(id in imageData));
+    if (missing.length === 0) return;
+    let cancelled = false;
+    void Promise.all(missing.map(async (id) => {
+      try {
+        const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/message-files/${encodeURIComponent(id)}?disposition=inline`);
+        if (!response.ok) return [id, ""] as const;
+        const blob = await response.blob();
+        const url = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+          reader.onerror = () => resolve("");
+          reader.readAsDataURL(blob);
+        });
+        return [id, url] as const;
+      } catch {
+        return [id, ""] as const;
+      }
+    })).then((entries) => {
+      if (cancelled) return;
+      setImageData((current) => ({ ...current, ...Object.fromEntries(entries) }));
+    });
+    return () => { cancelled = true; };
+  }, [previewImageIds, imageData, eventId]);
+  function withPreviewImages(html: string) {
+    return html.replace(/<img src="msgfile:([A-Za-z0-9_-]{8,64})"/g, (match, id: string) => (
+      imageData[id] ? `<img src="${imageData[id]}"` : match
+    ));
+  }
 
   const templateDirty = Boolean(selectedTemplate && (
     templateSubject !== (selectedTemplate.activeVersion?.subjectTemplate ?? "")
     || templateBody !== (selectedTemplate.activeVersion?.bodyTemplate ?? "")
     || templateEnabled !== selectedTemplate.isEnabled
+    || templateAttachments.map((file) => file.id).join(",")
+      !== (selectedTemplate.activeVersion?.attachments ?? []).map((file) => file.id).join(",")
   ));
   const savedSettingsDraft = settingsDraftFromMessaging(messaging);
   const settingsDirty = JSON.stringify(settingsDraft) !== JSON.stringify(savedSettingsDraft);
@@ -390,6 +448,7 @@ export function CommunicationsWorkspace({
     setTemplateSubject(selectedTemplate?.activeVersion?.subjectTemplate ?? "");
     setTemplateBody(selectedTemplate?.activeVersion?.bodyTemplate ?? "");
     setTemplateEnabled(selectedTemplate?.isEnabled ?? true);
+    setTemplateAttachments(selectedTemplate?.activeVersion?.attachments ?? []);
     setSettingsDraft(settingsDraftFromMessaging(messaging));
     setReminderConfirmed(false);
     setReminderBatchId("");
@@ -454,6 +513,7 @@ export function CommunicationsWorkspace({
           title: form.get("title"),
           body: form.get("body"),
           priority: form.get("priority"),
+          attachmentFileIds: draftAttachments.map((file) => file.id),
         }),
       });
       const result = await response.json().catch(() => ({})) as ApiResult;
@@ -488,6 +548,7 @@ export function CommunicationsWorkspace({
       priority: announcement.priority,
       editId: announcement.id,
     });
+    setDraftAttachments(announcement.attachments ?? []);
     setDraftOpen(true);
   }
 
@@ -679,6 +740,7 @@ export function CommunicationsWorkspace({
       body: announcement.body,
       priority: announcement.priority,
     });
+    setDraftAttachments([]);
     setDraftOpen(true);
   }
 
@@ -694,6 +756,7 @@ export function CommunicationsWorkspace({
           subjectTemplate: templateSubject,
           bodyTemplate: templateBody,
           isEnabled: templateEnabled,
+          attachmentFileIds: templateAttachments.map((file) => file.id),
         }),
       },
       "A new immutable template version was published for future messages.",
@@ -705,6 +768,7 @@ export function CommunicationsWorkspace({
         setTemplateSubject(refreshed.activeVersion?.subjectTemplate ?? "");
         setTemplateBody(refreshed.activeVersion?.bodyTemplate ?? "");
         setTemplateEnabled(refreshed.isEnabled);
+        setTemplateAttachments(refreshed.activeVersion?.attachments ?? []);
       }
     }
   }
@@ -1015,6 +1079,7 @@ export function CommunicationsWorkspace({
     setTemplateSubject(template?.activeVersion?.subjectTemplate ?? "");
     setTemplateBody(template?.activeVersion?.bodyTemplate ?? "");
     setTemplateEnabled(template?.isEnabled ?? true);
+    setTemplateAttachments(template?.activeVersion?.attachments ?? []);
     setQuery("templates", { template: id });
   }
 
@@ -1059,7 +1124,7 @@ export function CommunicationsWorkspace({
           <p>Manage attendee updates, registration confirmations, and delivery history for {eventName}.</p>
         </div>
         {canManage && view === "announcements" && (
-          <button className="primary-button" type="button" onClick={() => { setError(""); setNotice(""); setDraftOpen(true); }}>
+          <button className="primary-button" type="button" onClick={() => { setError(""); setNotice(""); setDraftAttachments([]); setDraftOpen(true); }}>
             <Plus aria-hidden="true" size={17} /> New announcement
           </button>
         )}
@@ -1480,9 +1545,21 @@ export function CommunicationsWorkspace({
                   value={templateBody}
                   tokens={templateTokenKeys}
                   tokenLabels={templateTokenLabels}
+                  imageLibrary={{
+                    eventId,
+                    images: libraryImages,
+                    onUploaded: (file) => setUploadedImages((current) => [file, ...current]),
+                  }}
                   onChange={setTemplateBody}
                 />
               </div>
+              <MessageAttachmentsField
+                eventId={eventId}
+                files={templateAttachments}
+                onChange={setTemplateAttachments}
+                disabled={saving}
+                help="Sent with every message made from this template. Publishing a new version carries them forward unless you remove them."
+              />
               <label className="message-enabled-toggle">
                 <input type="checkbox" checked={templateEnabled} onChange={(event) => setTemplateEnabled(event.target.checked)} />
                 <span><strong>Queue this message type</strong><small>When disabled, registrations retain a suppressed audit row instead of a pending message.</small></span>
@@ -1518,10 +1595,20 @@ export function CommunicationsWorkspace({
                   sandbox=""
                   srcDoc={renderEmailHtmlDocument({
                     title: preview.subject || "Template preview",
-                    bodyHtml: preview.bodyHtml,
+                    bodyHtml: withPreviewImages(preview.bodyHtml),
                     footer: messaging.settings.senderName,
                   })}
                 />
+                <div className="message-preview-attachments">
+                  <strong>Attachments</strong>
+                  {templateAttachments.length > 0 ? (
+                    <ul>
+                      {templateAttachments.map((file) => (
+                        <li key={file.id}>{file.filename} <small>({formatFileSize(file.sizeBytes)})</small></li>
+                      ))}
+                    </ul>
+                  ) : <p className="quiet-copy">None. Messages made from this template carry no files.</p>}
+                </div>
                 <details className="message-body-plain">
                   <summary>Plain-text fallback</summary>
                   <pre>{preview.body || "No message body"}</pre>
@@ -1535,6 +1622,11 @@ export function CommunicationsWorkspace({
                     ? "This sends one real email to the address below, from this event’s own sender and reply-to, so you can check what a registrant receives before a batch goes to everyone."
                     : "This creates a delivery-log row and attempt. It never contacts an email provider."}
                 </p>
+                {(selectedTemplate.activeVersion?.attachments.length ?? 0) > 0 && (
+                  <p className="message-test-attachments">
+                    The published version&apos;s attachments go with the test: {selectedTemplate.activeVersion?.attachments.map((file) => `${file.filename} (${formatFileSize(file.sizeBytes)})`).join(", ")}.
+                  </p>
+                )}
                 <label>Recipient name<input name="recipientName" defaultValue="Local Test Recipient" required /></label>
                 <label>
                   {testRealDelivery ? "Real recipient" : "Fictitious recipient"}
@@ -1653,6 +1745,18 @@ export function CommunicationsWorkspace({
                       <div><dt>Provider delivery</dt><dd>{selectedMessage.providerDeliveryStatus ? friendlyStatus(selectedMessage.providerDeliveryStatus) : selectedMessage.status === "CAPTURED" ? "Local preview only" : "Not reported"}</dd></div>
                       <div><dt>Provider message</dt><dd>{selectedMessage.providerMessageId ?? "Not assigned"}</dd></div>
                     </dl>
+                    {selectedMessage.files.length > 0 && (
+                      <div className="message-preview-attachments">
+                        <strong>Sent with this message</strong>
+                        <ul>
+                          {selectedMessage.files.map((file) => (
+                            <li key={file.id}>
+                              {file.filename} <small>({formatFileSize(file.sizeBytes)}{file.disposition === "INLINE" ? ", embedded picture" : ", attachment"})</small>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     <p className="message-body-note">The private link and pass image below are stand-ins. Delivery mints a fresh one-per-message link that is never stored here.</p>
                     {selectedMessage.bodyHtml ? (
                       <iframe
@@ -1664,7 +1768,7 @@ export function CommunicationsWorkspace({
                           // The fragment stored at enqueue, shown as-is. Re-rendering
                           // the text here would re-parse registrant values as Markdown
                           // long after the safe render already decided they were not.
-                          bodyHtml: withPreviewLinks(selectedMessage.bodyHtml),
+                          bodyHtml: withPreviewImages(withPreviewLinks(selectedMessage.bodyHtml)),
                           footer: selectedMessage.senderName,
                         })}
                       />
@@ -1849,6 +1953,13 @@ export function CommunicationsWorkspace({
               <label>Title<input name="title" minLength={3} maxLength={120} required placeholder="Friday arrival information" defaultValue={draftPrefill?.title ?? ""} /></label>
               <label>Message<textarea name="body" minLength={5} maxLength={2000} required rows={6} placeholder="Share the details attendees need…" defaultValue={draftPrefill?.body ?? ""} /></label>
               <label>Priority<select name="priority" defaultValue={draftPrefill?.priority ?? "NORMAL"}><option value="NORMAL">Normal</option><option value="IMPORTANT">Important</option><option value="URGENT">Urgent</option></select></label>
+              <MessageAttachmentsField
+                eventId={eventId}
+                files={draftAttachments}
+                onChange={setDraftAttachments}
+                disabled={saving}
+                help="Attached to the email when this announcement is sent. They are not shown in the attendee feed."
+              />
               <p className="field-help">Shown on the event page and as a banner on attendees&apos; accounts.</p>
               <div className="form-actions"><button className="secondary-button" type="button" onClick={() => { setDraftOpen(false); setDraftPrefill(null); }}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Saving…" : draftPrefill?.editId ? "Save changes" : "Save draft"}</button></div>
             </form>

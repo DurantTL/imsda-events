@@ -709,6 +709,7 @@ model User {
   createdPaymentInstructionVersions EventPaymentInstructionVersion[] @relation("PaymentInstructionVersionApprovedBy")
   platformSettingsUpdates   PlatformSettings[]        @relation("PlatformSettingsUpdatedBy")
   uploadedEventAssets       EventAsset[]              @relation("EventAssetUploadedBy")
+  uploadedMessageFiles      MessageFile[]             @relation("MessageFileUploadedBy")
   appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
   clubAssignmentUpdates     ClubEventAssignment[]     @relation("ClubEventAssignmentUpdatedBy")
   teamResultUpdates         ClubTeamResult[]          @relation("ClubTeamResultUpdatedBy")
@@ -1475,6 +1476,7 @@ model Event {
   memberships                         EventMembership[]
   contentSections                     EventContentSection[]
   assets                              EventAsset[]
+  messageFiles                        MessageFile[]
   registrations                       Registration[]
   attendees                           RegistrationAttendee[]
   payments                            Payment[]
@@ -3213,6 +3215,7 @@ model Announcement {
   event     Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
   createdBy User  @relation(fields: [createdByUserId], references: [id])
   pinnedBy  User? @relation("AnnouncementPinnedBy", fields: [pinnedByUserId], references: [id], onDelete: SetNull)
+  files     AnnouncementFile[]
 
   @@index([eventId, status, publishedAt])
   @@index([eventId, status, pinnedAt, publishedAt])
@@ -3672,6 +3675,7 @@ model MessageTemplateVersion {
   template  EventMessageTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   createdBy User?                @relation("MessageTemplateVersionCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
   messages  MessageOutbox[]
+  files     MessageTemplateVersionFile[]
 
   @@unique([templateId, versionNumber])
   @@index([templateId, status, versionNumber])
@@ -3739,6 +3743,7 @@ model MessageOutbox {
   attempts        MessageDeliveryAttempt[]
   providerEvents  MessageProviderEvent[]
   invoiceRecipients InvoiceDeliveryRecipient[]
+  files             MessageOutboxFile[]
 
   @@index([status, availableAt, createdAt])
   @@index([eventId, createdAt])
@@ -3768,6 +3773,81 @@ model MessageAttachment {
   invoiceDocument InvoiceVersionDocument?
 
   @@index([eventId])
+}
+
+/// How a stored message file travels with an email (#824). An ATTACHMENT is a download; an INLINE image is embedded
+/// by content id so a mail client shows it without "download pictures".
+enum MessageFileDisposition {
+  ATTACHMENT
+  INLINE
+}
+
+/// A file staff uploaded for email (#824): a template or announcement attachment, or an image inserted in a body.
+/// Stored privately on disk under a generated key (never the uploaded name) and immutable once written; `sha256`
+/// is checked again before every send. Read only by the delivery worker and by staff routes that check
+/// MANAGE_COMMUNICATIONS for the event.
+model MessageFile {
+  id               String   @id @default(cuid())
+  eventId          String
+  filename         String
+  contentType      String
+  sizeBytes        Int
+  sha256           String
+  storageKey       String   @unique
+  /// True for an image uploaded to be embedded in a body; false for a downloadable attachment.
+  isInlineImage    Boolean  @default(false)
+  uploadedByUserId String?
+  createdAt        DateTime @default(now())
+
+  event            Event                        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  uploadedBy       User?                        @relation("MessageFileUploadedBy", fields: [uploadedByUserId], references: [id], onDelete: SetNull)
+  templateVersions MessageTemplateVersionFile[]
+  announcements    AnnouncementFile[]
+  outboxLinks      MessageOutboxFile[]
+
+  @@index([eventId, createdAt])
+}
+
+model MessageTemplateVersionFile {
+  templateVersionId String
+  fileId            String
+  position          Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  templateVersion MessageTemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Cascade)
+  file            MessageFile            @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@id([templateVersionId, fileId])
+  @@index([fileId])
+}
+
+model AnnouncementFile {
+  announcementId String
+  fileId         String
+  position       Int      @default(0)
+  createdAt      DateTime @default(now())
+
+  announcement Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  file         MessageFile  @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@id([announcementId, fileId])
+  @@index([fileId])
+}
+
+/// The durable reference from an outbox row to the files it sends, written when the message is queued, so every
+/// delivery attempt, retry and staff resend sends the very same files.
+model MessageOutboxFile {
+  messageOutboxId String
+  fileId          String
+  disposition     MessageFileDisposition
+  position        Int                    @default(0)
+  createdAt       DateTime               @default(now())
+
+  message MessageOutbox @relation(fields: [messageOutboxId], references: [id], onDelete: Cascade)
+  file    MessageFile   @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@id([messageOutboxId, fileId])
+  @@index([fileId])
 }
 
 model MessageDeliveryAttempt {

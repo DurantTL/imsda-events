@@ -19,6 +19,19 @@ import {
   processExternalEmailQueue,
   type ExternalEmailDeliveryDependencies,
 } from "@/modules/communications/email-delivery";
+import {
+  announcementAttachmentIds,
+  assertBodyImagesBelongToEvent,
+  copyOutboxFiles,
+  describeFilesForAudit,
+  latestPublishedVersionFileIds,
+  linkQueuedMessageFiles,
+  listInlineImages,
+  listTemplateVersionFiles,
+  setTemplateVersionFiles,
+} from "@/modules/communications/message-files";
+import { BATCH_TRANSACTION_MAX_WAIT_MS, BATCH_TRANSACTION_TIMEOUT_MS } from "@/modules/communications/batch-transaction";
+import { messageFileIdsInMarkdown, type MessageFileRecord } from "@/modules/communications/message-file-rules";
 import type {
   BalanceReminderBatchInput,
   ClubAssignmentBatchInput,
@@ -95,7 +108,7 @@ import type {
   ShirtSizeRequestPreview,
 } from "@/modules/communications/types";
 import { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
-import { buildRegistrationSeminarPreferences, buildSubmittedSeminarPreferences } from "@/modules/communications/seminar-preferences";
+import { buildRegistrationSeminarPreferences, buildSeminarPreferencesBlocks, buildSubmittedSeminarPreferences } from "@/modules/communications/seminar-preferences";
 import { publicAttendeeName } from "@/modules/public-access/domain";
 import {
   buildHotelInformationBlock,
@@ -324,6 +337,7 @@ function serializeTemplate(
       createdBy: { displayName: string } | null;
     }>;
   },
+  filesByVersion: ReadonlyMap<string, MessageFileRecord[]> = new Map(),
 ): MessageTemplateRecord {
   const versions = template.versions.map((version) => ({
     id: version.id,
@@ -334,6 +348,7 @@ function serializeTemplate(
     publishedAt: version.publishedAt?.toISOString() ?? null,
     createdAt: version.createdAt.toISOString(),
     createdBy: version.createdBy?.displayName ?? null,
+    attachments: filesByVersion.get(version.id) ?? [],
   }));
   const definition = DEFAULT_MESSAGE_TEMPLATES[template.key];
   return {
@@ -377,6 +392,7 @@ function serializeMessage(message: {
   createdAt: Date;
   registration: { id: string; confirmationCode: string } | null;
   templateVersion: { id: string; versionNumber: number } | null;
+  files?: Array<{ disposition: "ATTACHMENT" | "INLINE"; file: { id: string; filename: string; sizeBytes: number } }>;
   attempts: Array<{
     id: string;
     attemptNumber: number;
@@ -432,6 +448,12 @@ function serializeMessage(message: {
     createdAt: message.createdAt.toISOString(),
     registration: message.registration,
     templateVersion: message.templateVersion,
+    files: (message.files ?? []).map((link) => ({
+      id: link.file.id,
+      filename: link.file.filename,
+      sizeBytes: link.file.sizeBytes,
+      disposition: link.disposition,
+    })),
     attempts: message.attempts.map((attempt) => ({
       ...attempt,
       startedAt: attempt.startedAt.toISOString(),
@@ -855,6 +877,10 @@ export async function getMessagingWorkspace(eventId: string): Promise<MessagingW
         registration: { select: { id: true, confirmationCode: true } },
         templateVersion: { select: { id: true, versionNumber: true } },
         attempts: { orderBy: { attemptNumber: "desc" } },
+        files: {
+          orderBy: [{ disposition: "asc" }, { position: "asc" }],
+          select: { disposition: true, file: { select: { id: true, filename: true, sizeBytes: true } } },
+        },
       },
     }),
     prisma.messageOutbox.groupBy({
@@ -869,16 +895,21 @@ export async function getMessagingWorkspace(eventId: string): Promise<MessagingW
   const counts = Object.fromEntries(outboxStatuses.map((status) => [status, 0])) as Record<MessageOutboxStatusValue, number>;
   for (const row of groupedCounts) counts[row.status] = row._count._all;
   const keyOrder = new Map(MESSAGE_TEMPLATE_KEYS.map((key, index) => [key, index]));
+  const [filesByVersion, inlineImages] = await Promise.all([
+    listTemplateVersionFiles(prisma, templates.flatMap((template) => template.versions.map((version) => version.id))),
+    listInlineImages(eventId, prisma),
+  ]);
 
   return {
     settings: settingsRecord(settings),
     templates: templates
       .filter(isEventTemplateRow)
-      .map(serializeTemplate)
+      .map((template) => serializeTemplate(template, filesByVersion))
       .sort((left, right) => (keyOrder.get(left.key) ?? 99) - (keyOrder.get(right.key) ?? 99)),
     messages: messages
       .filter(isEventScopedMessage)
       .map((message) => serializeMessage(message, settings.deliveryMode)),
+    inlineImages,
     counts,
     reminderPreview: reminderState.preview,
     shirtSizePreview: shirtSizeState.preview,
@@ -955,6 +986,10 @@ export async function publishMessageTemplateVersion(
     });
     if (!template) throw new MessagingError("TEMPLATE_NOT_FOUND", "That message template does not exist for this event.");
     const nextVersion = Math.max(0, ...template.versions.map((version) => version.versionNumber)) + 1;
+    // Attachments carry forward unless the author sent a list, which then is the whole set (#824).
+    const attachmentFileIds = input.attachmentFileIds
+      ?? await latestPublishedVersionFileIds(tx, templateId);
+    await assertBodyImagesBelongToEvent(tx, eventId, messageFileIdsInMarkdown(input.bodyTemplate));
     await tx.messageTemplateVersion.updateMany({
       where: { templateId, status: { in: ["DRAFT", "PUBLISHED"] } },
       data: { status: "ARCHIVED" },
@@ -970,6 +1005,7 @@ export async function publishMessageTemplateVersion(
         publishedAt: new Date(),
       },
     });
+    const linkedFileIds = await setTemplateVersionFiles(tx, eventId, version.id, attachmentFileIds);
     await tx.eventMessageTemplate.update({
       where: { id: templateId },
       data: { isEnabled: input.isEnabled },
@@ -983,7 +1019,14 @@ export async function publishMessageTemplateVersion(
         entityId: version.id,
         correlationId: randomUUID(),
         summary: `Published ${template.key.toLowerCase().replaceAll("_", " ")} message template version ${nextVersion}.`,
-        metadata: { templateId, templateKey: template.key, versionNumber: nextVersion, isEnabled: input.isEnabled },
+        metadata: {
+          templateId,
+          templateKey: template.key,
+          versionNumber: nextVersion,
+          isEnabled: input.isEnabled,
+          // File names and sizes only.
+          attachments: await describeFilesForAudit(tx, linkedFileIds),
+        },
       },
     });
   });
@@ -1430,7 +1473,7 @@ export async function sendTestMessage(
     ? await prisma.announcement.findFirst({
         where: { eventId, status: "PUBLISHED" },
         orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
-        select: { title: true, body: true },
+        select: { id: true, title: true, body: true },
       })
     : null;
 
@@ -1510,6 +1553,15 @@ export async function sendTestMessage(
         correlationId: randomUUID(),
       },
     });
+    // A test carries what the real message would (#824): the template version's files, the latest published
+    // announcement's when that is what the test shows, and the images the body embeds.
+    await linkQueuedMessageFiles(tx, {
+      eventId,
+      messageIds: [created.id],
+      extraAttachmentFileIds: template.key === "EVENT_ANNOUNCEMENT" && latestAnnouncement
+        ? await announcementAttachmentIds(tx, latestAnnouncement.id)
+        : [],
+    });
     await tx.auditLog.create({
       data: {
         eventId,
@@ -1526,6 +1578,12 @@ export async function sendTestMessage(
             ? `Created a local test capture for ${input.recipientEmail} from registration ${source.confirmationCode}.`
             : `Created a local test capture for ${input.recipientEmail}.`,
         metadata: {
+          // File names and sizes only (#824).
+          attachments: (await tx.messageOutboxFile.findMany({
+            where: { messageOutboxId: created.id, disposition: "ATTACHMENT" },
+            orderBy: { position: "asc" },
+            select: { file: { select: { filename: true, sizeBytes: true } } },
+          })).map((link) => link.file),
           templateId,
           templateVersionId: version.id,
           realDelivery: input.realDelivery,
@@ -1767,6 +1825,8 @@ export async function enqueueBalanceReminderBatch(
           if (message.status === "SUPPRESSED") suppressedCount += 1;
         }
 
+        // The template version's attachments and the images its body embeds travel with every queued message (#824).
+        await linkQueuedMessageFiles(tx, { eventId, messageIds });
         const audit = await tx.auditLog.createMany({
           data: [{
             eventId,
@@ -2061,6 +2121,8 @@ export async function enqueueShirtSizeRequestBatch(
           if (message.status === "SUPPRESSED") suppressedCount += 1;
         }
 
+        // The template version's attachments and the images its body embeds travel with every queued message (#824).
+        await linkQueuedMessageFiles(tx, { eventId, messageIds });
         const audit = await tx.auditLog.createMany({
           data: [{
             eventId,
@@ -2466,6 +2528,8 @@ export async function enqueueClubAssignmentBatch(
           }
         }
 
+        // The template version's attachments and the images its body embeds travel with every queued message (#824).
+        await linkQueuedMessageFiles(tx, { eventId, messageIds });
         const audit = await tx.auditLog.createMany({
           data: [{
             eventId,
@@ -2694,6 +2758,7 @@ export async function resendRegistrationConfirmation(
             : source.replyToEmailSnapshot,
           subjectSnapshot: source.subjectSnapshot,
           bodyTextSnapshot: source.bodyTextSnapshot,
+          bodyHtmlSnapshot: source.bodyHtmlSnapshot,
           metadata: {
             trigger: "STAFF_CONFIRMATION_RESEND",
             sourceMessageId: source.id,
@@ -2714,6 +2779,7 @@ export async function resendRegistrationConfirmation(
         },
         select: { id: true, status: true },
       });
+      await copyOutboxFiles(tx, source.id, message.id);
       await tx.auditLog.createMany({
         data: [{
           eventId,
@@ -2983,6 +3049,8 @@ export async function retryMessage(
             : source.replyToEmailSnapshot,
           subjectSnapshot: source.subjectSnapshot,
           bodyTextSnapshot: source.bodyTextSnapshot,
+          // The formatted part is carried over too, or a retry of a message with pictures and buttons would go out as plain text (#824).
+          bodyHtmlSnapshot: source.bodyHtmlSnapshot,
           // A retry carries the same stored file as its source (an invoice PDF, #168), never a copy without it.
           attachmentId: source.attachmentId,
           metadata: {
@@ -3004,6 +3072,8 @@ export async function retryMessage(
           status: true,
         },
       });
+      // The copy sends the same files as the message it replaces (#824).
+      await copyOutboxFiles(tx, source.id, created.id);
       await tx.auditLog.create({
         data: {
           eventId,
@@ -3501,6 +3571,7 @@ export async function enqueuePublicRegistrationMessages(
     if (recipient.kind === "REGISTRANT") registrantMessageIds.push(message.id);
     if (!suppressed) pendingMessageIds.push(message.id);
   }
+  await linkQueuedMessageFiles(tx, { eventId: input.event.id, messageIds });
   return {
     messageIds,
     registrantMessageIds,
@@ -3770,6 +3841,33 @@ export async function enqueueSelectedAudienceBatch(
           );
         }
 
+        // Seminar choices for every recipient in a few queries, and only when a template that will be sent uses the
+        // token, so the loop is one set of writes per recipient rather than a set of reads as well (as in the
+        // announcement broadcast).
+        const sentTemplateKeys = [...new Set(state.preview.recipients.map((recipient) => recipient.resolvedTemplateKey))];
+        const sentTemplates = sentTemplateKeys.length > 0
+          ? await tx.eventMessageTemplate.findMany({
+              where: { eventId, key: { in: sentTemplateKeys as PrismaMessageTemplateKey[] } },
+              select: {
+                versions: {
+                  where: { status: "PUBLISHED" },
+                  orderBy: { versionNumber: "desc" },
+                  take: 1,
+                  select: { subjectTemplate: true, bodyTemplate: true },
+                },
+              },
+            })
+          : [];
+        const usesSeminarToken = sentTemplates.some((template) => /\{\{\s*seminar_preferences\s*\}\}/.test(
+          `${template.versions[0]?.subjectTemplate ?? ""}\n${template.versions[0]?.bodyTemplate ?? ""}`,
+        ));
+        const seminarBlocks = usesSeminarToken
+          ? await buildSeminarPreferencesBlocks(tx, {
+              eventId,
+              registrationIds: state.preview.recipients.map((recipient) => recipient.registrationId),
+            })
+          : null;
+
         const messageIds: string[] = [];
         let queuedCount = 0;
         let suppressedCount = 0;
@@ -3784,6 +3882,9 @@ export async function enqueueSelectedAudienceBatch(
             correlationId: input.batchId,
             announcementTitle: input.announcementTitle || undefined,
             announcementBody: input.announcementBody || undefined,
+            ...(seminarBlocks
+              ? { seminarPreferencesBlock: seminarBlocks.get(recipient.registrationId) ?? "" }
+              : {}),
             metadata: {
               trigger: input.templateKey === "REGISTRATION_CONFIRMATION"
                 ? "STAFF_SELECTED_CONFIRMATION_BATCH"
@@ -3834,7 +3935,11 @@ export async function enqueueSelectedAudienceBatch(
           replayed: audit.count === 0,
           existingCapturedCount: 0,
         };
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        timeout: BATCH_TRANSACTION_TIMEOUT_MS,
+        maxWait: BATCH_TRANSACTION_MAX_WAIT_MS,
+      });
       break;
     } catch (error) {
       const retryable = error instanceof Prisma.PrismaClientKnownRequestError

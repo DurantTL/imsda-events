@@ -21,6 +21,7 @@ import {
   REGISTRATION_MANAGE_API_SENTINEL,
   REGISTRATION_MANAGE_LINK_SENTINEL,
 } from "@/modules/communications/manage-link";
+import { MESSAGE_FILE_ID_PATTERN, MESSAGE_FILE_SCHEME } from "@/modules/communications/message-file-rules";
 
 const ESCAPE_PATTERN = /[&<>"']/g;
 const ESCAPE_REPLACEMENTS: Readonly<Record<string, string>> = {
@@ -102,7 +103,12 @@ function safeUrl(rawUrl: string, schemes: readonly string[]) {
 }
 
 const IMAGE_PATTERN = /!\[([^\]]*)\]\(([^()\s]+)\)/g;
-const LINK_PATTERN = /\[([^\]]+)\]\(([^()\s]+)\)/g;
+/**
+ * A link may carry the button marker `{.button}`. Alone on its own line it becomes a button (see `parseBlocks`);
+ * anywhere else it is an ordinary link, and the marker is consumed rather than shown.
+ */
+const LINK_PATTERN = /\[([^\]]+)\]\(([^()\s]+)\)(?:\{\.button\})?/g;
+const BUTTON_LINE_PATTERN = /^\[([^\]]+)\]\(([^()\s]+)\)\{\.button\}$/;
 const BOLD_PATTERN = /\*\*([^*]+)\*\*/g;
 const ITALIC_PATTERN = /(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,;:!?]|$)/g;
 const CODE_PATTERN = /`([^`\n]+)`/g;
@@ -119,6 +125,11 @@ function safeLinkUrl(rawUrl: string) {
 function safeImageUrl(rawUrl: string) {
   const url = rawUrl.trim();
   if (INTERNAL_IMAGE_URL_PATTERN.test(url)) return url;
+  // An uploaded image, matched exactly (the scheme plus a generated id). Delivery swaps it for an embedded part, and
+  // drops it to its description when it cannot; a preview swaps it for the staff-only file route.
+  if (url.startsWith(MESSAGE_FILE_SCHEME) && MESSAGE_FILE_ID_PATTERN.test(url.slice(MESSAGE_FILE_SCHEME.length))) {
+    return url;
+  }
   return safeUrl(url, IMAGE_SCHEMES);
 }
 
@@ -154,6 +165,7 @@ type Block =
   | { kind: "heading"; level: 1 | 2 | 3; text: string }
   | { kind: "paragraph"; lines: string[] }
   | { kind: "list"; ordered: boolean; items: string[] }
+  | { kind: "button"; text: string; rawUrl: string }
   | { kind: "rule" };
 
 const HEADING_PATTERN = /^(#{1,3})\s+(.*)$/;
@@ -208,6 +220,14 @@ function parseBlocks(source: string): Block[] {
       continue;
     }
 
+    const button = BUTTON_LINE_PATTERN.exec(trimmed);
+    if (button) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "button", text: button[1].trim(), rawUrl: button[2] });
+      continue;
+    }
+
     const unordered = UNORDERED_PATTERN.exec(trimmed);
     const ordered = unordered ? null : ORDERED_PATTERN.exec(trimmed);
     if (unordered || ordered) {
@@ -235,6 +255,22 @@ const HEADING_STYLES: Readonly<Record<1 | 2 | 3, string>> = {
 const PARAGRAPH_STYLE = "margin:0 0 14px;font-size:15px;line-height:1.6;color:#22333b;";
 const LIST_STYLE = "margin:0 0 14px;padding-left:22px;font-size:15px;line-height:1.6;color:#22333b;";
 const RULE_STYLE = "border:0;border-top:1px solid #d9e2e6;margin:22px 0;";
+
+const BUTTON_COLOR = "#0f6f8c";
+
+/**
+ * A table-based button that holds its shape in Outlook, which ignores padding and background on a link: the cell
+ * carries the colour and the rounded corner (with `mso-padding-alt` for Word's engine), and the link inside
+ * carries the same padding for every other client. The destination is a validated URL; the text is already escaped.
+ */
+function renderButton(text: string, url: string) {
+  return [
+    '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 14px;">',
+    `<tr><td align="center" bgcolor="${BUTTON_COLOR}" style="background:${BUTTON_COLOR};border-radius:6px;mso-padding-alt:12px 24px;">`,
+    `<a href="${url}" target="_blank" style="display:inline-block;padding:12px 24px;font-size:15px;font-weight:700;line-height:1.2;color:#ffffff;text-decoration:none;border-radius:6px;">${text}</a>`,
+    "</td></tr></table>",
+  ].join("");
+}
 
 /**
  * Pull `\punctuation` out of the source before anything else looks at it, so an
@@ -278,6 +314,13 @@ export function renderEmailBodyHtml(body: string) {
   const html = parseBlocks(escapeHtml(text))
     .map((block) => {
       if (block.kind === "rule") return `<hr style="${RULE_STYLE}" />`;
+      if (block.kind === "button") {
+        const url = safeLinkUrl(block.rawUrl);
+        // A destination that fails the scheme check is neither a button nor a link: just the text, as for any link.
+        return url
+          ? renderButton(block.text, url)
+          : `<p style="${PARAGRAPH_STYLE}">${block.text}</p>`;
+      }
       if (block.kind === "heading") {
         return `<h${block.level} style="${HEADING_STYLES[block.level]}">${renderInline(block.text)}</h${block.level}>`;
       }
@@ -292,6 +335,33 @@ export function renderEmailBodyHtml(body: string) {
     })
     .join("\n");
   return restoreEscapedLiterals(html, literals);
+}
+
+export type EmailImageRewrite = { src: string } | { drop: true } | null;
+
+/**
+ * Rewrite the `<img>` tags this renderer produced. The callback gets each image's source and description and returns
+ * a new source, `{ drop: true }` to replace the image by its description, or null to leave it alone. Only the exact
+ * tag shape `renderInline` emits is matched, so nothing a body could contain is ever rewritten as an image.
+ */
+export function rewriteEmailImages(
+  html: string,
+  rewrite: (src: string, alt: string) => EmailImageRewrite,
+) {
+  return html.replace(
+    /<img src="([^"]*)" alt="([^"]*)"( style="[^"]*" \/>)/g,
+    (match, src: string, alt: string, rest: string) => {
+      const result = rewrite(src, alt);
+      if (!result) return match;
+      if ("drop" in result) return alt;
+      return `<img src="${result.src}" alt="${alt}"${rest}`;
+    },
+  );
+}
+
+/** The `src` of every image in a rendered body, in order. */
+export function emailImageSources(html: string) {
+  return [...html.matchAll(/<img src="([^"]*)" alt="[^"]*" style="[^"]*" \/>/g)].map((match) => match[1]);
 }
 
 export type EmailHtmlDocumentInput = {

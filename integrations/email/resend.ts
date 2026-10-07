@@ -21,7 +21,16 @@ export type EmailDeliveryInput = {
    * Files sent with the message (#168: an invoice PDF). Sent inline, base64 encoded, to Resend's `attachments`.
    * Small by design: the caller stores each file once and passes the same bytes on every send.
    */
-  attachments?: Array<{ filename: string; contentType: string; content: Uint8Array }>;
+  attachments?: Array<{
+    filename: string;
+    contentType: string;
+    content: Uint8Array;
+    /**
+     * Makes the part an inline image: the HTML refers to it as `cid:<contentId>`, so the client shows it without
+     * "download pictures". Sent to Resend as `content_id`.
+     */
+    contentId?: string;
+  }>;
   idempotencyKey: string;
   messageId: string;
 };
@@ -112,6 +121,7 @@ export async function sendEmailWithResend(
                 filename: cleanHeaderText(attachment.filename),
                 content: Buffer.from(attachment.content).toString("base64"),
                 content_type: attachment.contentType,
+                ...(attachment.contentId ? { content_id: cleanHeaderText(attachment.contentId) } : {}),
               })),
             }
           : {}),

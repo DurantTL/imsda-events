@@ -14,6 +14,8 @@ import {
   enqueueEventAnnouncementMessage,
 } from "@/modules/communications/transactional-messages";
 import { buildSeminarPreferencesBlocks } from "@/modules/communications/seminar-preferences";
+import { BATCH_TRANSACTION_MAX_WAIT_MS, BATCH_TRANSACTION_TIMEOUT_MS } from "@/modules/communications/batch-transaction";
+import { linkQueuedMessageFiles } from "@/modules/communications/message-files";
 import type { AnnouncementBroadcastPreview } from "@/modules/communications/types";
 
 export class AnnouncementBroadcastError extends Error {
@@ -23,21 +25,14 @@ export class AnnouncementBroadcastError extends Error {
       | "ANNOUNCEMENT_NOT_PUBLISHED"
       | "NO_ACTIVE_REGISTRATIONS"
       | "PREVIEW_REQUIRED"
-      | "PREVIEW_CHANGED",
+      | "PREVIEW_CHANGED"
+      | "ATTACHMENTS_INVALID",
     message: string,
   ) {
     super(message);
     this.name = "AnnouncementBroadcastError";
   }
 }
-
-/**
- * One transaction enqueues every recipient, so Prisma's 5-second default would
- * roll back a large send. Sized from the timed check in
- * scripts/verify-announcement-email.ts, with wide headroom.
- */
-const BROADCAST_TRANSACTION_TIMEOUT_MS = 120_000;
-const BROADCAST_TRANSACTION_MAX_WAIT_MS = 15_000;
 
 type BroadcastDatabaseClient = Prisma.TransactionClient | ReturnType<typeof getPrisma>;
 
@@ -66,7 +61,7 @@ async function loadAnnouncementBroadcastState(
       "Publish the announcement to the attendee feed before emailing it.",
     );
   }
-  const [registrations, settings, template] = await Promise.all([
+  const [registrations, settings, template, announcementFiles] = await Promise.all([
     client.registration.findMany({
       where: { eventId: input.eventId, status: { in: ["SUBMITTED", "CONFIRMED"] } },
       orderBy: [{ submittedAt: "asc" }, { id: "asc" }],
@@ -88,11 +83,24 @@ async function loadAnnouncementBroadcastState(
           where: { status: "PUBLISHED" },
           orderBy: { versionNumber: "desc" },
           take: 1,
-          select: { id: true },
+          select: {
+            id: true,
+            files: { orderBy: { position: "asc" }, select: { file: { select: { id: true, filename: true, sizeBytes: true } } } },
+          },
         },
       },
     }),
+    client.announcementFile.findMany({
+      where: { announcementId: input.announcementId },
+      orderBy: { position: "asc" },
+      select: { file: { select: { id: true, filename: true, sizeBytes: true } } },
+    }),
   ]);
+  // The announcement's own files first, then the template version's, each once.
+  const attachments: Array<{ id: string; filename: string; sizeBytes: number }> = [];
+  for (const link of [...announcementFiles, ...(template?.versions[0]?.files ?? [])]) {
+    if (!attachments.some((file) => file.id === link.file.id)) attachments.push(link.file);
+  }
   const candidates = registrations.map((registration) => ({
     registrationId: registration.id,
     contactSnapshot: registration.contactSnapshot,
@@ -108,9 +116,10 @@ async function loadAnnouncementBroadcastState(
       // Matches the send: a missing template row is not suppressed.
       templateEnabled: template?.isEnabled !== false,
       templateVersionId: template?.versions[0]?.id ?? null,
+      attachments,
     },
   );
-  return { announcement, registrations, recipients, preview };
+  return { announcement, registrations, recipients, preview, attachments };
 }
 
 /**
@@ -184,12 +193,15 @@ export async function broadcastPublishedAnnouncement(input: {
       };
     }
 
-    const { announcement, registrations, recipients, preview } = await loadAnnouncementBroadcastState(tx, input);
+    const { announcement, registrations, recipients, preview, attachments } = await loadAnnouncementBroadcastState(tx, input);
     if (preview.fingerprint !== input.previewFingerprint) {
       throw new AnnouncementBroadcastError(
         "PREVIEW_CHANGED",
         "The recipients, template, or announcement changed since you reviewed it. Review it again before sending.",
       );
+    }
+    if (preview.attachmentProblem) {
+      throw new AnnouncementBroadcastError("ATTACHMENTS_INVALID", preview.attachmentProblem);
     }
     if (preview.recipientCount === 0) {
       throw new AnnouncementBroadcastError(
@@ -234,6 +246,8 @@ export async function broadcastPublishedAnnouncement(input: {
         recipientEmail: recipient.recipientEmail,
         correlationId: input.batchId,
         transitionKey: `announcement-broadcast:${announcement.id}:${input.batchId}`,
+        // Files are linked for the whole batch below, in one pass.
+        deferFileLinking: true,
         announcementTitle: announcement.title,
         announcementBody: announcement.body,
         ...(seminarBlocks
@@ -250,6 +264,16 @@ export async function broadcastPublishedAnnouncement(input: {
       pendingMessageIds.push(...queued.pendingMessageIds);
       if (queued.skippedReason) skippedCount += 1;
     }
+    // The template version's attachments, the announcement's own, and each message's embedded images.
+    await linkQueuedMessageFiles(tx, {
+      eventId: input.eventId,
+      messageIds,
+      extraAttachmentFileIds: (await tx.announcementFile.findMany({
+        where: { announcementId: announcement.id },
+        orderBy: { position: "asc" },
+        select: { fileId: true },
+      })).map((row) => row.fileId),
+    });
     await tx.auditLog.create({
       data: {
         eventId: input.eventId,
@@ -267,6 +291,8 @@ export async function broadcastPublishedAnnouncement(input: {
           messageCount: messageIds.length,
           skippedCount,
           deliveryMode,
+          // File names and sizes only (#824).
+          attachments: attachments.map((file) => ({ filename: file.filename, sizeBytes: file.sizeBytes })),
         },
       },
     });
@@ -278,7 +304,7 @@ export async function broadcastPublishedAnnouncement(input: {
       deliveryMode,
       replayed: false,
     };
-  }, { timeout: BROADCAST_TRANSACTION_TIMEOUT_MS, maxWait: BROADCAST_TRANSACTION_MAX_WAIT_MS });
+  }, { timeout: BATCH_TRANSACTION_TIMEOUT_MS, maxWait: BATCH_TRANSACTION_MAX_WAIT_MS });
   await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
   return {
     broadcastId: input.batchId,

@@ -2,6 +2,7 @@ import { AccessDeniedError, requirePermission } from "@/modules/access/authoriza
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { z } from "zod";
+import { MessageFileError } from "@/modules/communications/message-files";
 import { discardAnnouncementDraft, publishAnnouncement, updateAnnouncementDraft } from "@/modules/communications/repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
@@ -11,6 +12,7 @@ const draftSchema = z.object({
   title: z.string().trim().min(3).max(120),
   body: z.string().trim().min(5).max(2000),
   priority: z.enum(["NORMAL", "IMPORTANT", "URGENT"]).default("NORMAL"),
+  attachmentFileIds: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
 });
 
 async function patchHandler(request: Request, context: { params: Promise<{ eventId: string; announcementId: string }> }) {
@@ -40,6 +42,7 @@ async function putHandler(request: Request, context: { params: Promise<{ eventId
     return announcement ? Response.json({ announcement }) : Response.json({ error: "DRAFT_NOT_FOUND", message: "That draft no longer exists or was already published." }, { status: 404 });
   } catch (error) {
     if (error instanceof z.ZodError) return Response.json({ error: "INVALID_ANNOUNCEMENT", issues: error.issues }, { status: 400 });
+    if (error instanceof MessageFileError) return Response.json({ error: error.code, message: error.message }, { status: 400 });
     if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
     logError("Announcement draft edit failed", error);
     return Response.json({ error: "ANNOUNCEMENT_UPDATE_FAILED" }, { status: 500 });

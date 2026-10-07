@@ -20,6 +20,7 @@ const emptyMessaging: MessagingWorkspaceData = {
   },
   templates: [],
   messages: [],
+  inlineImages: [],
   counts: {
     PENDING: 0,
     PROCESSING: 0,

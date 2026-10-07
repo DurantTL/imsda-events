@@ -194,8 +194,11 @@ export async function deleteEvent(input: {
         // Lets the two append-only ledger tables accept this transaction's deletes (see the migration).
         await tx.$executeRaw`SELECT set_config('imsda.event_deletion', 'on', true)`;
 
-        const storageKeys = (await tx.eventAsset.findMany({ where: { eventId: input.eventId }, select: { storageKey: true } }))
-          .map((asset) => asset.storageKey);
+        const storageKeys = [
+          ...(await tx.eventAsset.findMany({ where: { eventId: input.eventId }, select: { storageKey: true } })),
+          // Files staff attached to messages (#824) are stored the same way and go with the event.
+          ...(await tx.messageFile.findMany({ where: { eventId: input.eventId }, select: { storageKey: true } })),
+        ].map((asset) => asset.storageKey);
         await removeEventOwnedRows(tx, input.eventId);
 
         // The event's own audit history is kept (its eventId becomes null when

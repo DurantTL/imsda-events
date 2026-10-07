@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { attachmentSetIssue } from "@/modules/communications/message-file-rules";
 import type { AnnouncementBroadcastPreview, MessagingSettingsRecord } from "@/modules/communications/types";
 
 /**
@@ -29,6 +30,8 @@ export type AnnouncementBroadcastPreviewContext = {
   deliveryMode: MessagingSettingsRecord["deliveryMode"];
   templateEnabled: boolean;
   templateVersionId: string | null;
+  /** Every file each email carries (#824): announcement's own first, then the template version's. */
+  attachments?: ReadonlyArray<{ id: string; filename: string; sizeBytes: number }>;
 };
 
 export const ANNOUNCEMENT_BROADCAST_AUDIENCE_LABEL =
@@ -84,6 +87,7 @@ export function computeAnnouncementBroadcastPreview(
   now = new Date(),
 ): AnnouncementBroadcastPreview {
   const { recipients, skippedRegistrationIds } = resolveAnnouncementBroadcastAudience(candidates);
+  const attachments = context.attachments ?? [];
 
   const fingerprint = createHash("sha256").update(JSON.stringify({
     version: 1,
@@ -94,6 +98,7 @@ export function computeAnnouncementBroadcastPreview(
     deliveryMode: context.deliveryMode,
     templateEnabled: context.templateEnabled,
     templateVersionId: context.templateVersionId,
+    attachments: attachments.map((file) => file.id),
     recipients,
     skippedRegistrationIds,
   })).digest("hex");
@@ -108,6 +113,8 @@ export function computeAnnouncementBroadcastPreview(
     deliveryMode: context.deliveryMode,
     templateEnabled: context.templateEnabled,
     suppressed: context.deliveryMode === "DISABLED" || !context.templateEnabled,
+    attachments: attachments.map((file) => ({ filename: file.filename, sizeBytes: file.sizeBytes })),
+    attachmentProblem: attachmentSetIssue(attachments)?.message ?? null,
     fingerprint,
     sendTiming: "IMMEDIATE",
     generatedAt: now.toISOString(),

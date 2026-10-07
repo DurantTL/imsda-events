@@ -66,6 +66,31 @@ describe("Resend email adapter", () => {
     expect(JSON.parse(String(request.mock.calls[1][1]?.body))).not.toHaveProperty("attachments");
   });
 
+  it("sends an inline image with a content_id and a plain attachment without one (#824)", async () => {
+    const request = vi.fn<typeof fetch>(async () => new Response(
+      JSON.stringify({ id: "email_provider_123" }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    ));
+    const configuration = { apiKey: "re_test_only", apiUrl: "https://api.resend.test" };
+    const pdf = Buffer.from("%PDF-1.7 synthetic");
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+
+    await sendEmailWithResend({
+      ...input,
+      bodyHtml: '<img src="cid:abc@imsda-events" alt="QR" />',
+      attachments: [
+        { filename: "Agenda.pdf", contentType: "application/pdf", content: pdf },
+        { filename: "check-in-qr.png", contentType: "image/png", content: png, contentId: "abc@imsda-events" },
+      ],
+    }, configuration, request);
+    const body = JSON.parse(String(request.mock.calls[0][1]?.body));
+    expect(body.attachments).toEqual([
+      { filename: "Agenda.pdf", content: pdf.toString("base64"), content_type: "application/pdf" },
+      { filename: "check-in-qr.png", content: png.toString("base64"), content_type: "image/png", content_id: "abc@imsda-events" },
+    ]);
+    expect(body.html).toContain("cid:abc@imsda-events");
+  });
+
   it("sends an HTML part alongside the text fallback, and omits it when absent", async () => {
     const request = vi.fn<typeof fetch>(async () => new Response(
       JSON.stringify({ id: "email_provider_123" }),

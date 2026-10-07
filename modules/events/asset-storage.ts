@@ -113,9 +113,21 @@ export async function writeAsset(
 ): Promise<StoredAsset> {
   // The event id partitions the directory; the file name is generated. Neither
   // comes from the upload.
+  return writeStoredFile(eventId, ALLOWED_ASSET_TYPES[type].extension, bytes);
+}
+
+/**
+ * Writes bytes under `<partition>/<generated name>.<extension>`. The partition and extension come from the caller's
+ * own code, never from a request, and the file name is always generated here.
+ */
+export async function writeStoredFile(
+  partition: string,
+  extension: string,
+  bytes: Uint8Array,
+): Promise<StoredAsset> {
   const storageKey = path.join(
-    /*turbopackIgnore: true*/ eventId,
-    `${randomUUID()}.${ALLOWED_ASSET_TYPES[type].extension}`,
+    /*turbopackIgnore: true*/ partition,
+    `${randomUUID()}.${extension}`,
   );
   const destination = resolveStoragePath(storageKey);
   await mkdir(/*turbopackIgnore: true*/ path.dirname(destination), { recursive: true });

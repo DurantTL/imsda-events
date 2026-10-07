@@ -130,6 +130,13 @@ function retryFixture() {
     messageTemplateVersion: {
       create: vi.fn(),
     },
+    // Message files (#824): a fake database with no files linked to any message.
+    messageOutboxFile: {
+      findMany: vi.fn().mockResolvedValue([]),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    messageTemplateVersionFile: { findMany: vi.fn().mockResolvedValue([]) },
+    messageFile: { findMany: vi.fn().mockResolvedValue([]) },
     messageOutbox: {
       findUnique: vi.fn(async (args: {
         where: { idempotencyKey?: string; id?: string };
