@@ -46,6 +46,7 @@ export class MfaError extends Error {
       | "MFA_ALREADY_ACTIVE"
       | "MFA_CHALLENGE_INVALID"
       | "MFA_CODE_INVALID"
+      | "MFA_CODE_ALREADY_USED"
       | "MFA_LOCKED"
       | "MFA_REQUIRED_BY_ROLE",
     message: string,
@@ -265,7 +266,7 @@ async function consumeSecondFactor(
   enrollment: EnrollmentRecord,
   presented: string,
   now: Date,
-): Promise<{ valid: boolean; usedRecoveryCode?: boolean }> {
+): Promise<{ valid: boolean; usedRecoveryCode?: boolean; alreadyUsed?: boolean }> {
   const verification = verifyTotp(openSecret(enrollment.sealedSecret, SECRET_PURPOSE), presented, {
     at: now,
     lastUsedStep: enrollment.lastUsedStep === null ? null : Number(enrollment.lastUsedStep),
@@ -286,9 +287,17 @@ async function consumeSecondFactor(
         lockedUntil: null,
       },
     });
-    // Losing the race means the same step was spent by a concurrent request.
-    return { valid: claimed.count === 1 };
+    // Losing the race means the same step was spent by a concurrent request:
+    // a correct code that another device got to first, not a wrong one (#825).
+    return claimed.count === 1 ? { valid: true } : { valid: false, alreadyUsed: true };
   }
+  // A code that is genuinely correct for a step this account already spent
+  // (inside the accepted window) is not a guess: several devices signing in
+  // within one 30 seconds read the same code. It is still refused, but kept
+  // apart from a wrong code (#825). Only an exact match to a real code for a
+  // spent step lands here, so it tells a guesser nothing beyond what a correct
+  // code already proves, and the per-challenge attempt cap still bounds it.
+  if (verification.reason === "ALREADY_USED") return { valid: false, alreadyUsed: true };
 
   const spent = await getPrisma().mfaRecoveryCode.updateMany({
     where: {
@@ -307,6 +316,17 @@ async function consumeSecondFactor(
   }
 
   return { valid: false };
+}
+
+/**
+ * Gives back the guess `reserveCodeAttempt` took, for a correct code that was
+ * already spent (#825). The counter never goes below zero.
+ */
+async function releaseCodeAttempt(enrollmentId: string) {
+  await getPrisma().userMfaEnrollment.updateMany({
+    where: { id: enrollmentId, failedAttempts: { gt: 0 } },
+    data: { failedAttempts: { decrement: 1 } },
+  });
 }
 
 /** No lock, or one that has already expired: the "no live lock" predicate. */
@@ -573,7 +593,7 @@ export async function completeMfaChallenge(
   }
 
   let recoveryCodes: string[] | undefined;
-  let accepted: { valid: boolean; usedRecoveryCode?: boolean };
+  let accepted: { valid: boolean; usedRecoveryCode?: boolean; alreadyUsed?: boolean };
 
   if (enrollment.status === "PENDING") {
     // Confirming and signing in are one step here: the person has just scanned
@@ -594,6 +614,16 @@ export async function completeMfaChallenge(
     accepted = await consumeSecondFactor(enrollment, code, now);
   }
 
+  if (!accepted.valid && accepted.alreadyUsed) {
+    // Not a failure: no lock, no lockout email, and the challenge stays live so
+    // this device can enter the next code. (Its own attempt count still ticks,
+    // which bounds how often this answer can be asked for.)
+    await releaseCodeAttempt(enrollment.id);
+    throw new MfaError(
+      "MFA_CODE_ALREADY_USED",
+      "That code was just used on another device. Wait for the next code, then enter it.",
+    );
+  }
   if (!accepted.valid) {
     await claimCodeLock(challenge.userId, enrollment.id, now, { notify });
     throw new MfaError("MFA_CODE_INVALID", "That code is not right. Try the next one.");

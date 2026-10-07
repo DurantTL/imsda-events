@@ -288,7 +288,7 @@ describe("the sign-in challenge", () => {
     prismaFixture({ enrollment: { lastUsedStep: BigInt(totpStep(now)) } });
 
     await expect(completeMfaChallenge("token", totpCode(SECRET, now), { now }))
-      .rejects.toMatchObject({ code: "MFA_CODE_INVALID" });
+      .rejects.toMatchObject({ code: "MFA_CODE_ALREADY_USED" });
     expect(dependencies.createDatabaseSession).not.toHaveBeenCalled();
   });
 

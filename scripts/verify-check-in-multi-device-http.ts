@@ -17,7 +17,7 @@ import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
 import { assertLocalDatabase, assertLocalUrl } from "./support/local-only-guard";
 import { hashPassword } from "../modules/access/passwords";
-import { totpCode } from "../modules/access/totp";
+import { totpCode, totpCodeForStep, totpStep } from "../modules/access/totp";
 import { createOpaqueToken, hashOpaqueToken } from "../modules/access/tokens";
 
 loadEnvConfig(process.cwd());
@@ -107,16 +107,18 @@ async function main() {
   const startedAt = new Date(Date.now() - 1_000).toISOString();
 
   // 1. Sign in from four separate jars. The first enrols the authenticator; the
-  //    other three sign in at the same moment with recovery codes (a 6-digit code
-  //    can only be spent once, so a desk's second, third and fourth phone use
-  //    recovery codes or wait for the next code). Their password steps overlap, so
+  //    other three sign in at the same moment (a 6-digit code can only be spent
+  //    once; a phone that reads the same code is told to wait, and signs in with
+  //    the next code or a recovery code). Their password steps overlap, so
   //    one device's sign-in must not retire another's second-step challenge.
   let secret = "";
   let recoveryCodes: string[] = [];
+  let sharedCode = "";
   await signIn(devices[0], async (challengeToken) => {
     const offer = await call(devices[0], "POST", "/api/auth/mfa/challenge", { challengeToken, action: "begin-enrollment" });
     secret = String(offer.json?.secret);
-    const done = await call(devices[0], "POST", "/api/auth/mfa/challenge", { challengeToken, action: "verify", code: totpCode(secret, new Date()) });
+    sharedCode = totpCode(secret, new Date());
+    const done = await call(devices[0], "POST", "/api/auth/mfa/challenge", { challengeToken, action: "verify", code: sharedCode });
     devices[0].cookie = sessionCookie(done.response);
     recoveryCodes = (done.json?.recoveryCodes as string[]) ?? [];
     return done.json ?? {};
@@ -126,10 +128,24 @@ async function main() {
   for (const [index, step] of passwordSteps.entries()) {
     assert.equal(step.status, 200, `${devices[index + 1].name} password step: ${step.text}`);
   }
-  const secondSteps = await Promise.all(devices.slice(1).map((device, index) => {
-    const challengeToken = (passwordSteps[index].json?.mfa as { challengeToken: string }).challengeToken;
-    return call(device, "POST", "/api/auth/mfa/challenge", { challengeToken, action: "verify", code: recoveryCodes[index] });
-  }));
+  const challengeTokens = passwordSteps.map((step) => (step.json?.mfa as { challengeToken: string }).challengeToken);
+  // The other three read the SAME authenticator code the first device just used (one 30-second step):
+  // each is told to wait for the next code, none counts as a wrong guess, and no challenge is lost.
+  const shared = await Promise.all(devices.slice(1).map((device, index) => call(device, "POST", "/api/auth/mfa/challenge", { challengeToken: challengeTokens[index], action: "verify", code: sharedCode })));
+  for (const [index, answer] of shared.entries()) {
+    assert.equal(answer.status, 400, `${devices[index + 1].name} shared code: ${answer.status}`);
+    assert.equal(answer.json?.error, "MFA_CODE_ALREADY_USED");
+    assert.match(String(answer.json?.message), /just used on another device/);
+  }
+  const enrolment = await prisma.userMfaEnrollment.findUniqueOrThrow({ where: { userId } });
+  assert.equal(enrolment.failedAttempts, 0, "a spent code is not a wrong guess");
+  assert.equal(enrolment.lockedUntil, null, "no lock");
+  // Device two enters the next step's code; devices three and four use recovery codes.
+  const secondSteps = await Promise.all(devices.slice(1).map((device, index) => call(device, "POST", "/api/auth/mfa/challenge", {
+    challengeToken: challengeTokens[index],
+    action: "verify",
+    code: index === 0 ? totpCodeForStep(secret, totpStep(new Date()) + 1) : recoveryCodes[index],
+  })));
   for (const [index, step] of secondSteps.entries()) {
     assert.equal(step.status, 200, `${devices[index + 1].name} second step survived the other sign-ins: ${step.text}`);
     devices[index + 1].cookie = sessionCookie(step.response);
@@ -233,6 +249,18 @@ async function main() {
     assert.equal((await call(device, "GET", "/api/auth/sessions")).status, 200, `${device.name} is still signed in`);
   }
   assert.equal(await prisma.userSession.count({ where: { userId, revokedAt: null } }), 4, "no session was revoked by another sign-in");
+  // 10. Polling is not activity: it never advances the idle clock, and an idle tablet's poll is refused.
+  const tablet = devices[3];
+  const tabletHash = hashOpaqueToken(tablet.cookie.slice("imsda_session=".length));
+  const twoMinutesAgo = new Date(Date.now() - 120_000);
+  await prisma.userSession.update({ where: { tokenHash: tabletHash }, data: { lastSeenAt: twoMinutesAgo } });
+  const polled = await call(tablet, "GET", `/api/events/${eventId}/check-ins?since=${encodeURIComponent(startedAt)}`);
+  assert.equal(polled.status, 200);
+  assert.equal((await prisma.userSession.findUniqueOrThrow({ where: { tokenHash: tabletHash } })).lastSeenAt.getTime(), twoMinutesAgo.getTime(), "a poll does not touch lastSeenAt");
+  await prisma.userSession.update({ where: { tokenHash: tabletHash }, data: { lastSeenAt: new Date(Date.now() - 2 * 3_600_000) } });
+  const idlePoll = await call(tablet, "GET", `/api/events/${eventId}/check-ins?since=${encodeURIComponent(startedAt)}`);
+  assert.equal(idlePoll.status, 401, "an idle session's poll is refused");
+  statuses.pop();
   const anonymous = await call({ name: "anon", cookie: "", agent: "x", address: "203.0.113.99" }, "POST", `/api/events/${eventId}/attendees/${registrations[0].attendeeIds[0]}/check-in`, { idempotencyKey: randomUUID() });
   assert.equal(anonymous.status, 401);
   statuses.pop();

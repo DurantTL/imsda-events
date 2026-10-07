@@ -135,6 +135,11 @@ venue Wi-Fi.
   carrier-grade NAT and venue Wi-Fi.
 - **Sessions**: sign-in only adds a session; nothing is tied to the client IP;
   up to `MAX_LIVE_CHALLENGES` second-step challenges per account may be open
-  at once. A 6-digit authenticator code is single-use, so devices signing in
-  within the same 30 s should use passkeys, recovery codes, or wait for the
-  next code.
+  at once. A 6-digit authenticator code is single-use, but a correct code that
+  was already spent (several phones reading the same code within one 30 s
+  step) is not a wrong guess: it answers `MFA_CODE_ALREADY_USED` ("That code
+  was just used on another device. Wait for the next code, then enter it."),
+  releases the reserved attempt, sends no lockout email and leaves the
+  challenge live. Wrong codes still count and still lock after 3. Volunteers
+  just wait for the next code; no recovery codes need handing out. The
+  per-challenge attempt cap (5) and the sign-in rate limit still bound it.
