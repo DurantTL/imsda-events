@@ -55,11 +55,9 @@ export function honorSetChange(current: readonly string[], next: readonly string
   return { added, removed, reordered, changed: added.length > 0 || removed.length > 0 };
 }
 
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
-
 /**
  * What staff are asked to confirm before honors change on a class people are
- * enrolled in: "12 students are enrolled. They will now take: Birds + Knots."
+ * enrolled in: "12 people are enrolled. They will now take: Birds + Knots."
  */
 export function honorsNeedConfirmationMessage(enrolled: number, honorNames: readonly string[]) {
   return `${enrolled === 1 ? "1 person is" : `${enrolled} people are`} enrolled. They will now take: ${joinHonorNames(honorNames)}.`;
