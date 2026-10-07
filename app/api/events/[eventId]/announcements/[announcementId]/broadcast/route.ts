@@ -7,6 +7,7 @@ import {
   broadcastPublishedAnnouncement,
   previewAnnouncementBroadcast,
 } from "@/modules/communications/announcement-broadcast";
+import { MessageFileError } from "@/modules/communications/message-files";
 import { findActiveMembership } from "@/modules/events/repository";
 import { withRequestContext } from "@/lib/request-context";
 
@@ -74,6 +75,10 @@ async function postHandler(request: Request, context: Context) {
         { error: "INVALID_REQUEST", message: "A valid broadcast batch ID and review fingerprint are required." },
         { status: 400 },
       );
+    }
+    // A file problem found while queueing (a picture that is gone, a set over the limits) is the staff member's to fix.
+    if (error instanceof MessageFileError) {
+      return Response.json({ error: error.code, message: error.message }, { status: 409 });
     }
     if (error instanceof AnnouncementBroadcastError) {
       const status = error.code === "ANNOUNCEMENT_NOT_FOUND" ? 404 : 409;

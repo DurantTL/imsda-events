@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AccessDeniedError, requirePermission } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
+import { MessageFileError } from "@/modules/communications/message-files";
 import { createAnnouncement, listAnnouncements } from "@/modules/communications/repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
@@ -11,10 +12,12 @@ const announcementSchema = z.object({
   title: z.string().trim().min(3).max(120),
   body: z.string().trim().min(5).max(2000),
   priority: z.enum(["NORMAL", "IMPORTANT", "URGENT"]).default("NORMAL"),
+  attachmentFileIds: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
 });
 
 function apiError(error: unknown) {
   if (error instanceof z.ZodError) return Response.json({ error: "INVALID_ANNOUNCEMENT", issues: error.issues }, { status: 400 });
+  if (error instanceof MessageFileError) return Response.json({ error: error.code, message: error.message }, { status: 400 });
   if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
   logError("Announcement request failed", error);
   return Response.json({ error: "ANNOUNCEMENT_REQUEST_FAILED" }, { status: 500 });

@@ -29,6 +29,11 @@ export const messageTemplateInputSchema = z.object({
   subjectTemplate: z.string().trim().min(1).max(180),
   bodyTemplate: z.string().trim().min(1).max(12_000),
   isEnabled: z.boolean(),
+  /**
+   * The attachments the new version carries (#824). Omitted, the version carries the previous version's forward;
+   * given, it is exactly this list, so removing an attachment is sending the list without it.
+   */
+  attachmentFileIds: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
 }).strict().superRefine((input, context) => {
   const validation = validateMessageTemplate({
     subject: input.subjectTemplate,

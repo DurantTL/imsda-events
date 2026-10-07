@@ -1,9 +1,19 @@
+import { formatFileSize } from "@/modules/communications/message-file-rules";
 import type { AnnouncementBroadcastPreview } from "@/modules/communications/types";
 
 export function deliveryTimingLabel(mode: AnnouncementBroadcastPreview["deliveryMode"]) {
   if (mode === "EXTERNAL_EMAIL") return "Sends immediately by email";
   if (mode === "LOCAL_CAPTURE") return "Captured locally — immediately, no email sent";
   return "Recorded as suppressed — immediately, delivery is off";
+}
+
+/** The background mailer sends 50 a pass and passes run every 5 minutes. */
+export const WORKER_BATCH_SIZE = 50;
+export const WORKER_SWEEP_MINUTES = 5;
+
+export function workerDeliveryLabel(recipientCount: number) {
+  const minutes = Math.max(1, Math.ceil(recipientCount / WORKER_BATCH_SIZE)) * WORKER_SWEEP_MINUTES;
+  return `Sent by the background mailer in batches of ${WORKER_BATCH_SIZE} every few minutes (this message carries files) — about ${minutes} minutes for this audience`;
 }
 
 export type AnnouncementBroadcastReviewState = {
@@ -28,6 +38,9 @@ export function announcementBroadcastConfirmState(
       canConfirm: false,
       reason: review.error ? "" : "The recipient review hasn't loaded.",
     };
+  }
+  if (review.preview.attachmentProblem) {
+    return { canConfirm: false, reason: review.preview.attachmentProblem };
   }
   if (review.preview.recipientCount === 0) {
     return {
@@ -66,7 +79,22 @@ export function AnnouncementBroadcastReviewFacts({
             </dd>
           </div>
         )}
-        <div><dt>Delivery</dt><dd>{deliveryTimingLabel(preview.deliveryMode)}</dd></div>
+        <div>
+          <dt>Delivery</dt>
+          <dd>
+            {preview.deliveryMode === "EXTERNAL_EMAIL" && preview.carriesFiles
+              ? workerDeliveryLabel(preview.recipientCount)
+              : deliveryTimingLabel(preview.deliveryMode)}
+          </dd>
+        </div>
+        <div>
+          <dt>Attachments</dt>
+          <dd>
+            {preview.attachments.length === 0
+              ? "None"
+              : preview.attachments.map((file) => `${file.filename} (${formatFileSize(file.sizeBytes)})`).join(", ")}
+          </dd>
+        </div>
       </dl>
       {!preview.templateEnabled && (
         <p className="form-error">

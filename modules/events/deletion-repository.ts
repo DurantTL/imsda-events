@@ -194,8 +194,11 @@ export async function deleteEvent(input: {
         // Lets the two append-only ledger tables accept this transaction's deletes (see the migration).
         await tx.$executeRaw`SELECT set_config('imsda.event_deletion', 'on', true)`;
 
-        const storageKeys = (await tx.eventAsset.findMany({ where: { eventId: input.eventId }, select: { storageKey: true } }))
-          .map((asset) => asset.storageKey);
+        const storageKeys = [
+          ...(await tx.eventAsset.findMany({ where: { eventId: input.eventId }, select: { storageKey: true } })),
+          // Files staff attached to messages (#824) are stored the same way and go with the event.
+          ...(await tx.messageFile.findMany({ where: { eventId: input.eventId }, select: { storageKey: true } })),
+        ].map((asset) => asset.storageKey);
         await removeEventOwnedRows(tx, input.eventId);
 
         // The event's own audit history is kept (its eventId becomes null when
@@ -244,8 +247,12 @@ export async function deleteEvent(input: {
   }
 }
 
-/** Removes the event's rows, leaves shared records alone, and deletes the event last. */
-async function removeEventOwnedRows(tx: Db, eventId: string) {
+/**
+ * Removes the event's rows, leaves shared records alone, and deletes the event last. Exported so the real-database
+ * check can run it on an event that holds the rows a deletable event never has (announcements, sent messages and
+ * their file links), which the decision to delete otherwise keeps out of reach.
+ */
+export async function removeEventOwnedRows(tx: Db, eventId: string) {
   const inEvent = { eventId };
 
   // 1. Outbound email: cancel what has not gone out, then remove the rows.
@@ -340,6 +347,10 @@ async function removeEventOwnedRows(tx: Db, eventId: string) {
   await tx.eventAttendeeClassification.deleteMany({ where: inEvent });
   await tx.eventTag.deleteMany({ where: inEvent });
   await tx.eventMessageTemplate.deleteMany({ where: inEvent });
+  // Message files (#824): the foreign keys to them are RESTRICT, so they go only once nothing refers to them: the
+  // outbox rows are gone (step 1), the announcements and the template versions with their file links just now.
+  await tx.announcement.deleteMany({ where: inEvent });
+  await tx.messageFile.deleteMany({ where: inEvent });
 
   // 12. Content and files: links RESTRICT assets, and the event RESTRICTs its badge artwork.
   await tx.event.update({ where: { id: eventId }, data: { badgeBackgroundAssetId: null } });

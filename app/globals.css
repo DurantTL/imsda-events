@@ -5510,6 +5510,32 @@ select:focus-visible {
 .message-editor-code { border-radius: 3px; background: #f1f5f7; padding: 1px 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .message-editor-token { display: inline-block; border: 1px solid #d2c1e1; border-radius: 6px; background: var(--imsda-purple-soft); color: var(--imsda-purple); padding: 1px 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; font-weight: 700; }
 .message-editor-email hr { border: 0; border-top: 1px solid #d9e2e6; margin: 22px 0; }
+.message-editor-image { background: #e8f3f7; border-color: #b9d6e0; color: #0b4a60; font-family: inherit; }
+.message-editor-button { display: inline-block; border-radius: 6px; background: #0f6f8c; color: #ffffff; padding: 6px 14px; font-size: 14px; font-weight: 700; }
+.message-editor-panel { display: grid; gap: 9px; border-bottom: 1px solid var(--line); background: #f7fafb; padding: 11px 12px; }
+.message-editor-panel label { display: grid; gap: 4px; min-width: 0; color: var(--ink); font-size: max(var(--type-body-floor, 0px), 0.58rem); font-weight: 800; }
+.message-editor-panel input:not([type="file"]) { width: 100%; min-width: 0; max-width: 100%; }
+.message-editor-panel input[type="file"] { max-width: 100%; }
+.message-editor-panel small { color: var(--muted); font-size: max(var(--type-floor, 0px), 0.54rem); font-weight: 500; line-height: 1.45; overflow-wrap: anywhere; }
+.message-editor-panel > button { justify-self: start; }
+.message-editor-image-list ul { display: grid; gap: 6px; margin: 6px 0 0; padding: 0; list-style: none; }
+.message-editor-image-list li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.message-editor-image-list li span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.message-editor-image-list img { flex: none; border-radius: 4px; object-fit: cover; }
+.message-attachments-field { display: grid; gap: 7px; min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: white; padding: 11px 12px; }
+.message-attachments-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.message-attachments-head strong { display: inline-flex; align-items: center; gap: 6px; }
+.message-attachments-field ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.message-attachments-field li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.message-attachments-field li a { min-width: 0; overflow-wrap: anywhere; }
+.message-attachments-field li small { flex: 1 1 auto; color: var(--muted); }
+.message-attachments-field input[type="file"] { max-width: 100%; }
+.message-attachments-field small { color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
+.message-preview-attachments { display: grid; gap: 4px; border-top: 1px solid var(--line); padding: 10px 0 2px; }
+.message-preview-attachments ul { margin: 0; padding-left: 18px; }
+.message-preview-attachments li { overflow-wrap: anywhere; }
+.message-test-attachments { overflow-wrap: anywhere; }
+
 .message-editor-source { display: grid; gap: 7px; background: white; padding: 14px; }
 .message-editor-source label { color: var(--ink); font-size: max(var(--type-body-floor, 0px), 0.6rem); font-weight: 800; }
 .message-editor-source textarea { min-height: 520px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.6; }
@@ -10471,3 +10497,20 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 .honor-multi-chosen li.field-help { border: 0; background: none; padding: 0; }
 .honor-multi-chosen .text-button { min-height: 32px; }
 @media (max-width: 640px), (pointer: coarse) { .honor-multi-chosen .text-button { min-height: 44px; min-width: 44px; } }
+
+/* Email editor on a phone (#824): the toolbar, the attachment list and the picture and button forms are 44px targets. */
+@media (max-width: 600px) {
+  .message-editor-mode button { min-height: 44px; }
+  /* Fifteen 44px buttons wrap to several rows; sticky, they would cover a third of the screen. */
+  .message-editor-toolbar { position: static; }
+  .message-editor-toolbar button { min-width: 44px; height: 44px; }
+  .message-editor-token-control select { height: 44px; max-width: 100%; }
+  .message-editor-token-control button { min-height: 44px; }
+  .message-editor-panel input:not([type="file"]) { min-height: 44px; }
+  .message-editor-panel > button, .message-editor-image-list button { min-height: 44px; }
+  .message-attachments-field label { display: flex; min-height: 44px; align-items: center; }
+  .message-attachments-field li a { display: inline-flex; min-height: 44px; align-items: center; }
+  .message-attachments-field .icon-button { min-width: 44px; min-height: 44px; }
+  .message-template-editor .builder-actions .primary-button { min-height: 44px; }
+  .modal-head .modal-close-button { min-width: 44px; min-height: 44px; }
+}

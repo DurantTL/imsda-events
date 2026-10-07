@@ -1,9 +1,11 @@
 import { getPrisma } from "@/lib/prisma";
+import { announcementAttachmentIds, assertAnnouncementFits, describeFilesForAudit, listAnnouncementFiles, setAnnouncementFiles } from "@/modules/communications/message-files";
+import type { MessageFileRecord } from "@/modules/communications/message-file-rules";
 
 type AnnouncementRow = Awaited<ReturnType<ReturnType<typeof getPrisma>["announcement"]["findMany"]>>[number];
 
 /** The client-facing shape: no internal user IDs. */
-function toAnnouncementRecord(row: AnnouncementRow) {
+function toAnnouncementRecord(row: AnnouncementRow, attachments: MessageFileRecord[] = []) {
   return {
     id: row.id,
     title: row.title,
@@ -15,21 +17,24 @@ function toAnnouncementRecord(row: AnnouncementRow) {
     publishedAt: row.publishedAt?.toISOString() ?? null,
     pinnedAt: row.pinnedAt?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
+    attachments,
   };
 }
 
 export async function listAnnouncements(eventId: string) {
-  const rows = await getPrisma().announcement.findMany({
+  const prisma = getPrisma();
+  const rows = await prisma.announcement.findMany({
     where: { eventId },
     orderBy: [{ status: "desc" }, { pinnedAt: "desc" }, { updatedAt: "desc" }],
   });
-  return rows.map(toAnnouncementRecord);
+  const files = await listAnnouncementFiles(prisma, rows.map((row) => row.id));
+  return rows.map((row) => toAnnouncementRecord(row, files.get(row.id) ?? []));
 }
 
 export async function createAnnouncement(
   eventId: string,
   createdByUserId: string,
-  input: { title: string; body: string; priority: "NORMAL" | "IMPORTANT" | "URGENT" },
+  input: { title: string; body: string; priority: "NORMAL" | "IMPORTANT" | "URGENT"; attachmentFileIds?: string[] },
 ) {
   return getPrisma().$transaction(async (tx) => {
     const announcement = await tx.announcement.create({
@@ -44,6 +49,8 @@ export async function createAnnouncement(
         status: "DRAFT",
       },
     });
+    await assertAnnouncementFits(tx, eventId, { body: input.body, fileIds: input.attachmentFileIds ?? [] });
+    const fileIds = await setAnnouncementFiles(tx, eventId, announcement.id, input.attachmentFileIds ?? []);
     await tx.auditLog.create({
       data: {
         eventId,
@@ -53,9 +60,11 @@ export async function createAnnouncement(
         entityId: announcement.id,
         correlationId: crypto.randomUUID(),
         summary: `Created announcement draft: ${input.title}.`,
+        // File names and sizes only (#824).
+        metadata: { attachments: await describeFilesForAudit(tx, fileIds) },
       },
     });
-    return announcement;
+    return toAnnouncementRecord(announcement, (await listAnnouncementFiles(tx, [announcement.id])).get(announcement.id) ?? []);
   });
 }
 
@@ -89,7 +98,7 @@ export async function publishAnnouncement(eventId: string, announcementId: strin
         summary: `Published announcement: ${existing.title}.`,
       },
     });
-    return toAnnouncementRecord(announcement);
+    return toAnnouncementRecord(announcement, (await listAnnouncementFiles(tx, [announcement.id])).get(announcement.id) ?? []);
   });
 }
 
@@ -102,7 +111,7 @@ export async function updateAnnouncementDraft(
   eventId: string,
   announcementId: string,
   actorUserId: string,
-  input: { title: string; body: string; priority: "NORMAL" | "IMPORTANT" | "URGENT" },
+  input: { title: string; body: string; priority: "NORMAL" | "IMPORTANT" | "URGENT"; attachmentFileIds?: string[] },
 ) {
   return getPrisma().$transaction(async (tx) => {
     const existing = await tx.announcement.findFirst({
@@ -117,6 +126,13 @@ export async function updateAnnouncementDraft(
     if (updated.count === 0) return null;
     const announcement = await tx.announcement.findFirst({ where: { id: existing.id, eventId } });
     if (!announcement) return null;
+    // Only a draft's attachments change; a published announcement's files are what was reviewed and sent.
+    // The body may now carry pictures, or the files may have changed: the whole message must still fit.
+    await assertAnnouncementFits(tx, eventId, {
+      body: input.body,
+      fileIds: input.attachmentFileIds ?? (/msgfile:/.test(input.body) ? await announcementAttachmentIds(tx, existing.id) : []),
+    });
+    if (input.attachmentFileIds) await setAnnouncementFiles(tx, eventId, existing.id, input.attachmentFileIds);
     await tx.auditLog.create({
       data: {
         eventId,
@@ -126,10 +142,14 @@ export async function updateAnnouncementDraft(
         entityId: announcement.id,
         correlationId: crypto.randomUUID(),
         summary: `Edited announcement draft: ${input.title}.`,
-        metadata: { previousTitle: existing.title },
+        metadata: {
+          previousTitle: existing.title,
+          // File names and sizes only (#824).
+          attachments: await describeFilesForAudit(tx, (await listAnnouncementFiles(tx, [announcement.id])).get(announcement.id)?.map((file) => file.id) ?? []),
+        },
       },
     });
-    return toAnnouncementRecord(announcement);
+    return toAnnouncementRecord(announcement, (await listAnnouncementFiles(tx, [announcement.id])).get(announcement.id) ?? []);
   });
 }
 

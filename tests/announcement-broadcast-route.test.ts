@@ -23,8 +23,14 @@ const mocks = vi.hoisted(() => {
       super(message);
     }
   }
+  class MockMessageFileError extends Error {
+    constructor(public readonly code: string, message: string) {
+      super(message);
+    }
+  }
   return {
     AccessDeniedError: MockAccessDeniedError,
+    MessageFileError: MockMessageFileError,
     AnnouncementBroadcastError: MockAnnouncementBroadcastError,
     requirePermission: vi.fn(),
     getCurrentSession: vi.fn(),
@@ -48,6 +54,7 @@ vi.mock("@/modules/access/request-security", () => ({
 vi.mock("@/modules/events/repository", () => ({
   findActiveMembership: mocks.findActiveMembership,
 }));
+vi.mock("@/modules/communications/message-files", () => ({ MessageFileError: mocks.MessageFileError }));
 vi.mock("@/modules/communications/announcement-broadcast", () => ({
   AnnouncementBroadcastError: mocks.AnnouncementBroadcastError,
   broadcastPublishedAnnouncement: mocks.broadcastPublishedAnnouncement,
@@ -213,5 +220,17 @@ describe("announcement broadcast route", () => {
     expect(mocks.broadcastPublishedAnnouncement).toHaveBeenCalledWith(
       expect.objectContaining({ batchId, previewFingerprint }),
     );
+  });
+
+  it("answers a file problem found while queueing with a 409 and its safe message, not a 500 (#824)", async () => {
+    mocks.broadcastPublishedAnnouncement.mockRejectedValueOnce(
+      new mocks.MessageFileError("FILE_SET_INVALID", "A picture in the message is not one of this event's uploaded images, so the message was not queued."),
+    );
+    const response = await POST(request({ batchId, previewFingerprint }), context);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "FILE_SET_INVALID",
+      message: "A picture in the message is not one of this event's uploaded images, so the message was not queued.",
+    });
   });
 });

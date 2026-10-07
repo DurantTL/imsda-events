@@ -216,6 +216,9 @@ const pages: PageSpec[] = [
   staff("team-results", "/more/team-results"),
   staff("check-in", "/check-in"),
   staff("communications", "/communications"),
+  // The template editor with attachments, a picture and a button (#824), and a draft announcement with attachments.
+  staff("communications-editor", `/communications?event=${blocksEventId}&view=templates`, "system-admin"),
+  staff("communications-announcement-attachments", `/communications?event=${blocksEventId}`, "system-admin"),
   staff("registration-builder", "/registration-builder"),
   // Staff, as a system administrator.
   staff("system-home", "/admin", "system-admin"),
@@ -374,6 +377,44 @@ async function seedBlocksEvent(prisma: PrismaClient) {
 }
 
 /**
+ * The Emails editor with attachments (#824): on the blocks event, a published announcement template with two
+ * attachments (one with a long unbroken name), an uploaded picture and a button in its body, and a draft
+ * announcement with an attachment, all saved through the real repository functions.
+ */
+async function seedMessageFiles(prisma: PrismaClient) {
+  const { createMessageFile } = await import("../modules/communications/message-files");
+  const { ensureEventMessagingDefaults, publishMessageTemplateVersion } = await import("../modules/communications/messaging-repository");
+  const { createAnnouncement } = await import("../modules/communications/repository");
+  const existing = await prisma.messageFile.count({ where: { eventId: blocksEventId } });
+  if (existing > 0) return;
+  await ensureEventMessagingDefaults(blocksEventId);
+  const template = await prisma.eventMessageTemplate.findUniqueOrThrow({
+    where: { eventId_key: { eventId: blocksEventId, key: "EVENT_ANNOUNCEMENT" } },
+    select: { id: true },
+  });
+  const long = "Supercalifragilisticexpialidocious-and-an-extremely-long-unbroken-synthetic-file-name";
+  const pdf = (label: string) => Buffer.from(`%PDF-1.7\n% ${label}\n${" ".repeat(400)}`);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  const upload = (bytes: Buffer, name: string, type: string, purpose: "attachment" | "inline-image") =>
+    createMessageFile(blocksEventId, new File([new Uint8Array(bytes)], name, { type }), "usr_system_admin", purpose, prisma);
+  const agenda = await upload(pdf("agenda"), `${long}.pdf`, "application/pdf", "attachment");
+  const terms = await upload(pdf("terms"), "Terms and conditions.pdf", "application/pdf", "attachment");
+  const picture = await upload(png, "mobilecheck-picture.png", "image/png", "inline-image");
+  await publishMessageTemplateVersion(blocksEventId, template.id, {
+    subjectTemplate: "{{event_name}}: {{announcement_title}}",
+    bodyTemplate: `# {{announcement_title}}\n\n{{announcement_body}}\n\n![A synthetic picture](msgfile:${picture.id})\n\n[Open my check-in pass]({{checkin_qr_url}}){.button}\n\n![Check-in QR code]({{checkin_qr_image}})`,
+    isEnabled: true,
+    attachmentFileIds: [agenda.id, terms.id],
+  }, "usr_system_admin");
+  await createAnnouncement(blocksEventId, "usr_system_admin", {
+    title: "Mobilecheck draft with attachments",
+    body: "A draft announcement that carries two files.",
+    priority: "NORMAL",
+    attachmentFileIds: [agenda.id, terms.id],
+  });
+}
+
+/**
  * The More launcher offers Turn off only for a module with a stored row that its data
  * does not keep on (#810). The seeded event has none, so this adds one switchable
  * module row (Attendee community, no data behind it) and the audit removes it again
@@ -391,6 +432,9 @@ async function seedLauncherModule(prisma: PrismaClient) {
 async function cleanupSynthetic(prisma: PrismaClient) {
   const orgs = { organizationId: { in: [clubA, clubB] } };
   const accountIds = [`${P}_account_director`, `${P}_account_area`];
+  // The message files' bytes (#824) live on disk, outside the database; their keys are read before the rows go.
+  const messageFileKeys = (await prisma.messageFile.findMany({ where: { eventId: blocksEventId }, select: { storageKey: true } }))
+    .map((file) => file.storageKey);
   await prisma.$transaction([
     prisma.attendeeSession.deleteMany({ where: { accountId: { in: accountIds } } }),
     prisma.clubInvite.deleteMany({ where: { OR: [orgs, { id: { startsWith: `${P}_` } }] } }),
@@ -416,6 +460,10 @@ async function cleanupSynthetic(prisma: PrismaClient) {
     prisma.honorOffering.deleteMany({ where: { id: multiHonorOfferingId } }),
     prisma.honorSession.deleteMany({ where: { id: multiHonorSessionId } }),
     prisma.honor.deleteMany({ where: { id: { in: multiHonorIds } } }),
+    prisma.announcement.deleteMany({ where: { eventId: blocksEventId } }),
+    prisma.messageOutbox.deleteMany({ where: { eventId: blocksEventId } }),
+    prisma.eventMessageTemplate.deleteMany({ where: { eventId: blocksEventId } }),
+    prisma.messageFile.deleteMany({ where: { eventId: blocksEventId } }),
     prisma.eventContentSection.deleteMany({ where: { eventId: blocksEventId } }),
     prisma.eventAsset.deleteMany({ where: { eventId: blocksEventId } }),
     prisma.auditLog.deleteMany({ where: { eventId: blocksEventId } }),
@@ -423,6 +471,8 @@ async function cleanupSynthetic(prisma: PrismaClient) {
     prisma.organization.deleteMany({ where: { id: { in: [clubA, clubB] } } }),
     prisma.organization.deleteMany({ where: { id: { in: [churchA, churchB] } } }),
   ]);
+  const { deleteAsset } = await import("../modules/events/asset-storage");
+  for (const key of messageFileKeys) await deleteAsset(key).catch(() => undefined);
   console.log("Deleted the synthetic mobilecheck rows.");
 }
 
@@ -642,6 +692,7 @@ async function seedSynthetic(prisma: PrismaClient) {
 
   await seedHonorsAndRegistrations(prisma);
   await seedBlocksEvent(prisma);
+  await seedMessageFiles(prisma);
   await seedMultiHonorClass(prisma);
   await seedLauncherModule(prisma);
 }
@@ -875,6 +926,8 @@ function auditInPage(args: { touch: boolean; cards: boolean; minTarget: number; 
       if (el instanceof HTMLInputElement && el.type === "file") {
         target = el.closest("label") ?? el;
       }
+      // A link in text being edited (the email editor's rich-text box) is text, not a control: tapping it places the caret.
+      if (el.tagName === "A" && el.closest('[contenteditable="true"]')) continue;
       // A link inside a sentence is exempt (WCAG 2.5.8 inline exception).
       if (el.tagName === "A" && style.display === "inline") {
         const parent = el.parentElement;
@@ -1397,6 +1450,67 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
       record("dialog-open-failed", `${spec.name} (several honors)`, width, (error as Error).message.split("\n")[0] ?? "failed");
     }
     if (page.url() !== builderBefore) await page.goto(builderBefore, { waitUntil: "load" });
+  }
+
+  // The template editor with attachments (#824): the attachments list, the picture picker and the button form each
+  // open, and with each open nothing may stick out sideways and every control must be a big enough tap target.
+  if (spec.name === "staff-communications-editor") {
+    const editorBefore = page.url();
+    const auditEditor = async (state: string, shot: string) => {
+      const stateName = `${spec.name} (${state})`;
+      const open = await page.evaluate(auditInPage, { touch, cards: width <= cardsMaxWidth, minTarget: touchTarget, tolerance: touchTolerance });
+      if (open.scrollWidth > open.innerWidth) record("horizontal-scroll", stateName, width, `page is ${open.scrollWidth}px wide in a ${open.innerWidth}px window; sticking out: ${open.overflowers.join("; ") || "(nothing identified)"}`);
+      for (const target of open.smallTargets) record("small-tap-target", stateName, width, target);
+      if (takeShots) await page.screenshot({ path: `${prefix}-${shot}.jpg`, type: "jpeg", quality: 60 });
+    };
+    try {
+      // The page opens on the first template; the one with attachments is the event announcement.
+      await page.locator('.message-template-list button:has-text("Event announcement"):visible').first().click({ timeout: 5000 });
+      await page.waitForTimeout(300);
+      const attachments = page.locator(".message-attachments-field:visible").first();
+      await attachments.scrollIntoViewIfNeeded({ timeout: 5000 });
+      const listed = await attachments.locator("li").count();
+      if (listed !== 2) record("dialog-open-failed", `${spec.name} (attachments)`, width, `the attachments list showed ${listed} files, expected the template's 2`);
+      await auditEditor("attachments listed", "attachments");
+      await page.locator('button[aria-label="Insert image"]:visible').first().click({ timeout: 5000 });
+      await page.waitForTimeout(150);
+      const pictures = await page.locator(".message-editor-image-list li:visible").count();
+      if (pictures < 1) record("dialog-open-failed", `${spec.name} (picture picker)`, width, "the picker listed no uploaded picture");
+      await auditEditor("picture picker open", "picture-picker");
+      await page.locator('button[aria-label="Insert image"]:visible').first().click({ timeout: 5000 });
+      await page.locator('button[aria-label="Button link"]:visible').first().click({ timeout: 5000 });
+      await page.waitForTimeout(150);
+      await page.locator('.message-editor-panel input:visible').first().fill("A long button label that has to wrap on a very small phone screen");
+      await auditEditor("button form open", "button-form");
+    } catch (error) {
+      record("dialog-open-failed", `${spec.name} (attachments editor)`, width, (error as Error).message.split("\n")[0] ?? "failed");
+    }
+    if (page.url() !== editorBefore) await page.goto(editorBefore, { waitUntil: "load" });
+  }
+
+  // A draft announcement with attachments (#824): the edit dialog lists them and fits the screen.
+  if (spec.name === "staff-communications-announcement-attachments") {
+    const draftBefore = page.url();
+    try {
+      const edit = page.locator('button:has-text("Edit draft"):visible').first();
+      await edit.scrollIntoViewIfNeeded({ timeout: 5000 });
+      await edit.click({ timeout: 5000 });
+      await page.waitForTimeout(250);
+      const listed = await page.locator('[role="dialog"] .message-attachments-field li:visible').count();
+      if (listed !== 2) record("dialog-open-failed", `${spec.name} (draft attachments)`, width, `the draft's dialog listed ${listed} attachments, expected 2`);
+      const fit = await page.evaluate(dialogFitInPage);
+      dialogsOpened += fit.count;
+      for (const problem of fit.problems) record("dialog-too-tall", `${spec.name} (draft attachments)`, width, problem);
+      const open = await page.evaluate(auditInPage, { touch, cards: width <= cardsMaxWidth, minTarget: touchTarget, tolerance: touchTolerance });
+      if (open.scrollWidth > open.innerWidth) record("horizontal-scroll", `${spec.name} (draft attachments)`, width, `page is ${open.scrollWidth}px wide in a ${open.innerWidth}px window; sticking out: ${open.overflowers.join("; ") || "(nothing identified)"}`);
+      for (const target of open.smallTargets) record("small-tap-target", `${spec.name} (draft attachments)`, width, target);
+      if (takeShots) await page.screenshot({ path: `${prefix}-draft-attachments.jpg`, type: "jpeg", quality: 60 });
+    } catch (error) {
+      record("dialog-open-failed", `${spec.name} (draft attachments)`, width, (error as Error).message.split("\n")[0] ?? "failed");
+    }
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.waitForTimeout(100);
+    if (page.url() !== draftBefore) await page.goto(draftBefore, { waitUntil: "load" });
   }
 
   if (takeShots) {

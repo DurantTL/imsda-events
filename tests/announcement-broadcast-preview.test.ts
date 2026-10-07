@@ -83,6 +83,14 @@ function prismaFor(overrides: {
       findFirst: vi.fn().mockResolvedValue(overrides.existingAudit ?? null),
     },
     messageOutbox: { findMany: vi.fn().mockResolvedValue([]) },
+    announcementFile: { findMany: vi.fn().mockResolvedValue([]) },
+    // Message files (#824): a fake database with no files linked to any message.
+    messageOutboxFile: {
+      findMany: vi.fn().mockResolvedValue([]),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    messageTemplateVersionFile: { findMany: vi.fn().mockResolvedValue([]) },
+    messageFile: { findMany: vi.fn().mockResolvedValue([]) },
     $queryRaw: vi.fn().mockResolvedValue([{ id: "announcement-1" }]),
   };
   return {

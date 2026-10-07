@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AccessDeniedError } from "@/modules/access/authorization";
+import { MessageFileError } from "@/modules/communications/message-files";
 import { MessagingError } from "@/modules/communications/messaging-repository";
 import { logError } from "@/lib/logger";
 
@@ -24,6 +25,12 @@ export function messagingApiError(error: unknown, operation: string) {
     return Response.json(
       { error: error.code, message: error.message },
       { status: error.status }
+    );
+  }
+  if (error instanceof MessageFileError) {
+    return Response.json(
+      { error: error.code, message: error.message },
+      { status: error.code === "FILE_NOT_FOUND" ? 404 : error.code === "FILE_TOO_LARGE" ? 413 : 400 }
     );
   }
   if (error instanceof MessagingError) {

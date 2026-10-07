@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { attachmentSetIssue } from "@/modules/communications/message-file-rules";
 import type { AnnouncementBroadcastPreview, MessagingSettingsRecord } from "@/modules/communications/types";
 
 /**
@@ -29,6 +30,11 @@ export type AnnouncementBroadcastPreviewContext = {
   deliveryMode: MessagingSettingsRecord["deliveryMode"];
   templateEnabled: boolean;
   templateVersionId: string | null;
+  /** Every file each email carries (#824): announcement's own first, then the template version's. */
+  attachments?: ReadonlyArray<{ id: string; filename: string; sizeBytes: number }>;
+  /** Uploaded pictures the message embeds (the announcement body's and the template's), and why they cannot be sent, if so. */
+  pictureIds?: readonly string[];
+  pictureProblem?: string | null;
 };
 
 export const ANNOUNCEMENT_BROADCAST_AUDIENCE_LABEL =
@@ -84,6 +90,7 @@ export function computeAnnouncementBroadcastPreview(
   now = new Date(),
 ): AnnouncementBroadcastPreview {
   const { recipients, skippedRegistrationIds } = resolveAnnouncementBroadcastAudience(candidates);
+  const attachments = context.attachments ?? [];
 
   const fingerprint = createHash("sha256").update(JSON.stringify({
     version: 1,
@@ -94,6 +101,8 @@ export function computeAnnouncementBroadcastPreview(
     deliveryMode: context.deliveryMode,
     templateEnabled: context.templateEnabled,
     templateVersionId: context.templateVersionId,
+    attachments: attachments.map((file) => file.id),
+    pictures: [...(context.pictureIds ?? [])],
     recipients,
     skippedRegistrationIds,
   })).digest("hex");
@@ -108,6 +117,10 @@ export function computeAnnouncementBroadcastPreview(
     deliveryMode: context.deliveryMode,
     templateEnabled: context.templateEnabled,
     suppressed: context.deliveryMode === "DISABLED" || !context.templateEnabled,
+    attachments: attachments.map((file) => ({ filename: file.filename, sizeBytes: file.sizeBytes })),
+    attachmentProblem: attachmentSetIssue(attachments)?.message ?? context.pictureProblem ?? null,
+    // The one answer to "does this send carry files?", for the dialog and the delivery rule alike: attachments or pictures.
+    carriesFiles: attachments.length > 0 || (context.pictureIds ?? []).length > 0,
     fingerprint,
     sendTiming: "IMMEDIATE",
     generatedAt: now.toISOString(),

@@ -113,6 +113,13 @@ function baseTransaction() {
       findFirst: vi.fn().mockResolvedValue(null),
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
+    // Message files (#824): a fake database with no files linked to any message.
+    messageOutboxFile: {
+      findMany: vi.fn().mockResolvedValue([]),
+      createMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    messageTemplateVersionFile: { findMany: vi.fn().mockResolvedValue([]) },
+    messageFile: { findMany: vi.fn().mockResolvedValue([]) },
     messageOutbox: {
       upsert: vi.fn().mockResolvedValue({
         id: "message-balance-1",

@@ -8,6 +8,9 @@ import {
   $exportEmailMarkdown,
   $importEmailMarkdown,
   hasStandaloneCheckinQrUrl,
+  isAllowedEmailLinkTarget,
+  MessageButtonNode,
+  MessageImageNode,
   MessageTokenNode,
 } from "@/components/message-body-editor";
 import { renderEmailBodyHtml } from "@/modules/communications/email-html";
@@ -22,6 +25,8 @@ function loadMarkdown(source: string) {
       LinkNode,
       HorizontalRuleNode,
       MessageTokenNode,
+      MessageImageNode,
+      MessageButtonNode,
     ],
     onError(error) {
       throw error;
@@ -151,5 +156,44 @@ describe("check-in link warning", () => {
     expect(hasStandaloneCheckinQrUrl("[Open my pass]({{checkin_qr_url}})")).toBe(false);
     expect(hasStandaloneCheckinQrUrl("![QR]({{checkin_qr_image}})")).toBe(false);
     expect(hasStandaloneCheckinQrUrl("No tokens here")).toBe(false);
+  });
+});
+
+
+describe("message body editor buttons and images (#824)", () => {
+  it("round-trips a button link as [text](url){.button} on its own paragraph", () => {
+    const source = "Hello.\n\n[Open my check-in pass]({{checkin_qr_url}}){.button}\n\nSee you soon.";
+    expect(exportMarkdown(source)).toBe(source);
+  });
+
+  it("round-trips a button with a web address, beside an ordinary link", () => {
+    const source = "[Register](https://events.example.test/register){.button}\n\nOr use [this link](https://example.test).";
+    expect(exportMarkdown(source)).toBe(source);
+  });
+
+  it("round-trips an uploaded image as ![alt](msgfile:id)", () => {
+    const source = "Welcome.\n\n![Map of the grounds](msgfile:cm9abc123def456)\n\nBring a coat.";
+    expect(exportMarkdown(source)).toBe(source);
+  });
+
+  it("keeps a QR image token and an uploaded image apart", () => {
+    const source = "![Check-in QR code]({{checkin_qr_image}})\n\n![Logo](msgfile:cm9abc123def456)";
+    expect(exportMarkdown(source)).toBe(source);
+  });
+
+  it("renders what the editor exports as a button and an embedded-image reference", () => {
+    const html = renderEmailBodyHtml(exportMarkdown("[Open](https://example.test/a){.button}\n\n![Map](msgfile:cm9abc123def456)"));
+    expect(html).toContain('<a href="https://example.test/a"');
+    expect(html).toContain('bgcolor="#0f6f8c"');
+    expect(html).toContain('<img src="msgfile:cm9abc123def456" alt="Map"');
+  });
+
+  it("accepts only link targets the renderer accepts", () => {
+    for (const ok of ["https://example.test/x", "http://example.test", "mailto:team@example.test", "tel:+15555550100", "{{portal_url}}"]) {
+      expect(isAllowedEmailLinkTarget(ok), ok).toBe(true);
+    }
+    for (const bad of ["", "javascript:alert(1)", "data:text/html,x", "example.test", "https://a b", "ftp://example.test", "{{portal url}}", "https://x.test/a(b)"]) {
+      expect(isAllowedEmailLinkTarget(bad), bad).toBe(false);
+    }
   });
 });

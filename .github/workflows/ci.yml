@@ -181,6 +181,12 @@ jobs:
       # Real-database check of invoice delivery (#168): one stored, hash-checked PDF per finalized version, sends with the exact recipients and the same attachment on every resend, superseded versions refused, bounce and suppression recorded, append-only AR postings and payments (partial, void, overpaid, carried across a revision), statements scoped to the event, a formula-safe treasurer CSV, and no audit row holding an address or a contact name.
       - run: npm run test:invoice-delivery
 
+      # Real-database check of announcement emails (#824): each attendee's own seminar choices in ranked order, one labelled QR per attendee, paragraph spacing, and a real test naming a registration showing no sample value.
+      - run: npm run test:announcement-email
+
+      # Real-database check of attachments, embedded pictures and button links in announcement emails (#824), through a local stand-in for the email provider: files stored under generated names after a byte check, the 10 MB and 20 MB limits, attachments carried forward between template versions, the announcement's and the template's files and an inline part for the picture and each attendee's QR reaching the adapter with the HTML rewritten to cid:, a retry and a staff retry copy sending the same parts, and an audit trail of file names and sizes only.
+      - run: npm run test:announcement-attachments
+
       # Real-database check of module requests: one pending per event and module under concurrent submits, approve enables in one transaction, decline needs a reason, audit holds ids only, and free text cannot become an email placeholder (#741).
       - run: npm run test:module-requests
 

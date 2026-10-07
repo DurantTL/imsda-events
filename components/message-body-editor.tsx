@@ -65,15 +65,24 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  ImagePlus,
   Italic,
   Link2,
   List,
   ListOrdered,
   Minus,
   Pilcrow,
+  RectangleHorizontal,
   Redo2,
   Undo2,
 } from "lucide-react";
+import {
+  formatFileSize,
+  MAX_INLINE_IMAGE_BYTES,
+  MESSAGE_IMAGE_ACCEPT,
+  messageFileUrl,
+  type MessageFileRecord,
+} from "@/modules/communications/message-file-rules";
 
 type SerializedMessageTokenNode = Spread<
   { type: "message-token"; version: 1 },
@@ -151,6 +160,200 @@ const MESSAGE_TOKEN_TRANSFORMER: TextMatchTransformer = {
   type: "text-match",
 };
 
+type SerializedMessageImageNode = Spread<
+  { type: "message-image"; version: 1; fileId: string; alt: string },
+  SerializedTextNode
+>;
+
+/**
+ * An uploaded image in the body, written in Markdown as `![description](msgfile:<id>)`. In the editor it is one
+ * atomic chip, so a stray keystroke cannot damage the reference.
+ */
+export class MessageImageNode extends TextNode {
+  __fileId: string;
+  __alt: string;
+
+  static getType() {
+    return "message-image";
+  }
+
+  static clone(node: MessageImageNode) {
+    return new MessageImageNode(node.__fileId, node.__alt, node.__key);
+  }
+
+  static importJSON(serializedNode: SerializedMessageImageNode) {
+    return $createMessageImageNode(serializedNode.fileId, serializedNode.alt).updateFromJSON(serializedNode);
+  }
+
+  constructor(fileId: string, alt: string, key?: NodeKey) {
+    super(`Image: ${alt.trim() || "picture"}`, key);
+    this.__fileId = fileId;
+    this.__alt = alt;
+  }
+
+  getFileId() {
+    return this.getLatest().__fileId;
+  }
+
+  getAlt() {
+    return this.getLatest().__alt;
+  }
+
+  createDOM(config: EditorConfig) {
+    const element = super.createDOM(config);
+    element.classList.add("message-editor-token", "message-editor-image");
+    element.dataset.messageImage = this.__fileId;
+    element.title = "Uploaded image";
+    return element;
+  }
+
+  exportJSON(): SerializedMessageImageNode {
+    return {
+      ...super.exportJSON(),
+      type: "message-image",
+      version: 1,
+      fileId: this.__fileId,
+      alt: this.__alt,
+    };
+  }
+
+  isTextEntity() {
+    return true;
+  }
+
+  canInsertTextBefore() {
+    return false;
+  }
+
+  canInsertTextAfter() {
+    return false;
+  }
+}
+
+export function $createMessageImageNode(fileId: string, alt: string) {
+  return $applyNodeReplacement(new MessageImageNode(fileId, alt)).setMode("token");
+}
+
+export function $isMessageImageNode(node: LexicalNode | null | undefined): node is MessageImageNode {
+  return node instanceof MessageImageNode;
+}
+
+const MESSAGE_IMAGE_TRANSFORMER: TextMatchTransformer = {
+  dependencies: [MessageImageNode],
+  export: (node) => (
+    $isMessageImageNode(node) ? `![${node.getAlt()}](msgfile:${node.getFileId()})` : null
+  ),
+  getEndIndex: (node, match) => (
+    $isMessageImageNode(node) ? false : (match.index ?? 0) + match[0].length
+  ),
+  importRegExp: /!\[([^\]]*)\]\(msgfile:([A-Za-z0-9_-]{8,64})\)/,
+  regExp: /!\[([^\]]*)\]\(msgfile:([A-Za-z0-9_-]{8,64})\)$/,
+  replace: (textNode, match) => {
+    const imageNode = $createMessageImageNode(match[2], match[1]);
+    textNode.replace(imageNode);
+    return imageNode;
+  },
+  trigger: ")",
+  type: "text-match",
+};
+
+type SerializedMessageButtonNode = Spread<
+  { type: "message-button"; version: 1; url: string },
+  SerializedTextNode
+>;
+
+/**
+ * A button-style link, written in Markdown as `[Button text](url){.button}`. The renderer turns a button on a line
+ * of its own into a table-based email button; anywhere else it is an ordinary link.
+ */
+export class MessageButtonNode extends TextNode {
+  __url: string;
+
+  static getType() {
+    return "message-button";
+  }
+
+  static clone(node: MessageButtonNode) {
+    return new MessageButtonNode(node.__text, node.__url, node.__key);
+  }
+
+  static importJSON(serializedNode: SerializedMessageButtonNode) {
+    return $createMessageButtonNode(serializedNode.text, serializedNode.url).updateFromJSON(serializedNode);
+  }
+
+  constructor(label: string, url: string, key?: NodeKey) {
+    super(label, key);
+    this.__url = url;
+  }
+
+  getUrl() {
+    return this.getLatest().__url;
+  }
+
+  createDOM(config: EditorConfig) {
+    const element = super.createDOM(config);
+    element.classList.add("message-editor-button");
+    element.dataset.messageButton = "true";
+    element.title = `Button linking to ${this.__url}`;
+    return element;
+  }
+
+  exportJSON(): SerializedMessageButtonNode {
+    return {
+      ...super.exportJSON(),
+      type: "message-button",
+      version: 1,
+      url: this.__url,
+    };
+  }
+
+  isTextEntity() {
+    return true;
+  }
+
+  canInsertTextBefore() {
+    return false;
+  }
+
+  canInsertTextAfter() {
+    return false;
+  }
+}
+
+export function $createMessageButtonNode(label: string, url: string) {
+  return $applyNodeReplacement(new MessageButtonNode(label, url)).setMode("token");
+}
+
+export function $isMessageButtonNode(node: LexicalNode | null | undefined): node is MessageButtonNode {
+  return node instanceof MessageButtonNode;
+}
+
+const MESSAGE_BUTTON_TRANSFORMER: TextMatchTransformer = {
+  dependencies: [MessageButtonNode],
+  export: (node) => (
+    $isMessageButtonNode(node) ? `[${node.getTextContent()}](${node.getUrl()}){.button}` : null
+  ),
+  getEndIndex: (node, match) => (
+    $isMessageButtonNode(node) ? false : (match.index ?? 0) + match[0].length
+  ),
+  importRegExp: /\[([^\]]+)\]\(([^()\s]+)\)\{\.button\}/,
+  regExp: /\[([^\]]+)\]\(([^()\s]+)\)\{\.button\}$/,
+  replace: (textNode, match) => {
+    const buttonNode = $createMessageButtonNode(match[1], match[2]);
+    textNode.replace(buttonNode);
+    return buttonNode;
+  },
+  trigger: "}",
+  type: "text-match",
+};
+
+/** Whether a button or link destination is one the renderer will accept: a web, mail or phone link, or a link token. */
+export function isAllowedEmailLinkTarget(value: string) {
+  const url = value.trim();
+  if (!url || /[\s()<>"']/.test(url)) return false;
+  return /^(https?:\/\/|mailto:|tel:)\S+$/i.test(url) || /^\{\{[a-z0-9_]+\}\}$/.test(url);
+}
+
 const HORIZONTAL_RULE_TRANSFORMER: ElementTransformer = {
   dependencies: [HorizontalRuleNode],
   export: (node) => ($isHorizontalRuleNode(node) ? "---" : null),
@@ -163,6 +366,9 @@ const HORIZONTAL_RULE_TRANSFORMER: ElementTransformer = {
 
 export const EMAIL_MARKDOWN_TRANSFORMERS: Transformer[] = [
   HORIZONTAL_RULE_TRANSFORMER,
+  // Both before LINK, which would otherwise take the same text first.
+  MESSAGE_IMAGE_TRANSFORMER,
+  MESSAGE_BUTTON_TRANSFORMER,
   HEADING,
   UNORDERED_LIST,
   ORDERED_LIST,
@@ -236,9 +442,18 @@ export function hasStandaloneCheckinQrUrl(source: string) {
   return /\{\{\s*checkin_qr_url\s*\}\}/.test(source.replace(MARKDOWN_LINK_PATTERN, ""));
 }
 
+/** What the editor needs to place uploaded pictures in a body: where they live and how to add one. */
+export type MessageImageLibrary = {
+  eventId: string;
+  images: readonly MessageFileRecord[];
+  onUploaded: (file: MessageFileRecord) => void;
+};
+
 type MessageBodyEditorProps = {
   value: string;
   tokens: readonly string[];
+  /** Enables the toolbar's image button (#824). */
+  imageLibrary?: MessageImageLibrary;
   /** Plain-language picker names, keyed by token. */
   tokenLabels?: Readonly<Record<string, string>>;
   maxLength?: number;
@@ -248,12 +463,93 @@ type MessageBodyEditorProps = {
 type EditorToolbarProps = {
   tokens: readonly string[];
   tokenLabels?: Readonly<Record<string, string>>;
+  imageLibrary?: MessageImageLibrary;
   markChanged: () => void;
 };
 
-function EditorToolbar({ tokens, tokenLabels, markChanged }: EditorToolbarProps) {
+const BUTTON_LINK_SUGGESTIONS = ["{{portal_url}}", "{{checkin_qr_url}}"];
+
+function EditorToolbar({ tokens, tokenLabels, imageLibrary, markChanged }: EditorToolbarProps) {
   const [editor] = useLexicalComposerContext();
   const [token, setToken] = useState(tokens[0] ?? "");
+  const [panel, setPanel] = useState<"image" | "button" | null>(null);
+  const [buttonText, setButtonText] = useState("");
+  const [buttonUrl, setButtonUrl] = useState("");
+  const [buttonError, setButtonError] = useState("");
+  const [imageAlt, setImageAlt] = useState("");
+  const [imageError, setImageError] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  function insertButton() {
+    const text = buttonText.trim();
+    const url = buttonUrl.trim();
+    if (!text) {
+      setButtonError("Enter the words on the button.");
+      return;
+    }
+    if (/[[\]]/.test(text)) {
+      setButtonError("Button text cannot contain square brackets.");
+      return;
+    }
+    if (!isAllowedEmailLinkTarget(url)) {
+      setButtonError("Enter a web address (https://…), a mailto: or tel: link, or a link token such as {{portal_url}}.");
+      return;
+    }
+    markChanged();
+    editor.update(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) return;
+      const node = $createMessageButtonNode(text, url);
+      selection.insertNodes([node, $createTextNode(" ")]);
+      node.selectNext();
+    });
+    setButtonText("");
+    setButtonUrl("");
+    setButtonError("");
+    setPanel(null);
+  }
+
+  function insertImage(file: MessageFileRecord) {
+    markChanged();
+    const alt = imageAlt.trim().replace(/[[\]()]/g, "") || file.filename.replace(/\.[^.]+$/, "");
+    editor.update(() => {
+      const selection = $getSelection();
+      if (!$isRangeSelection(selection)) return;
+      const node = $createMessageImageNode(file.id, alt);
+      selection.insertNodes([node, $createTextNode(" ")]);
+      node.selectNext();
+    });
+    setImageAlt("");
+    setImageError("");
+    setPanel(null);
+  }
+
+  async function uploadImage(file: File | undefined) {
+    if (!file || !imageLibrary) return;
+    if (file.size > MAX_INLINE_IMAGE_BYTES) {
+      setImageError(`Images must be ${formatFileSize(MAX_INLINE_IMAGE_BYTES)} or smaller.`);
+      return;
+    }
+    setUploading(true);
+    setImageError("");
+    try {
+      const form = new FormData();
+      form.set("file", file);
+      form.set("purpose", "inline-image");
+      const response = await fetch(`/api/events/${encodeURIComponent(imageLibrary.eventId)}/message-files`, {
+        method: "POST",
+        body: form,
+      });
+      const result = await response.json().catch(() => ({})) as { file?: MessageFileRecord; message?: string };
+      if (!response.ok || !result.file) throw new Error(result.message ?? "The image could not be uploaded.");
+      imageLibrary.onUploaded(result.file);
+      insertImage(result.file);
+    } catch (caught) {
+      setImageError(caught instanceof Error ? caught.message : "The image could not be uploaded.");
+    } finally {
+      setUploading(false);
+    }
+  }
 
   function setBlock(tag: "p" | "h1" | "h2" | "h3") {
     markChanged();
@@ -308,6 +604,7 @@ function EditorToolbar({ tokens, tokenLabels, markChanged }: EditorToolbarProps)
   );
 
   return (
+    <>
     <div className="message-editor-toolbar" role="toolbar" aria-label="Message formatting">
       <div>
         {button("Paragraph", <Pilcrow size={16} />, () => setBlock("p"))}
@@ -320,6 +617,10 @@ function EditorToolbar({ tokens, tokenLabels, markChanged }: EditorToolbarProps)
         {button("Italic", <Italic size={16} />, () => formatText("italic"))}
         {button("Inline code", <Code2 size={16} />, () => formatText("code"))}
         {button("Link", <Link2 size={16} />, editLink)}
+        {button("Button link", <RectangleHorizontal size={16} />, () => setPanel(panel === "button" ? null : "button"))}
+        {imageLibrary
+          ? button("Insert image", <ImagePlus size={16} />, () => setPanel(panel === "image" ? null : "image"))
+          : null}
       </div>
       <div>
         {button("Bulleted list", <List size={16} />, () => {
@@ -354,10 +655,74 @@ function EditorToolbar({ tokens, tokenLabels, markChanged }: EditorToolbarProps)
         <button type="button" onClick={insertToken}>Insert token</button>
       </div>
     </div>
+    {panel === "button" && (
+      <div className="message-editor-panel" role="group" aria-label="Insert a button link">
+        <label>
+          Button text
+          <input value={buttonText} maxLength={60} placeholder="Open my check-in pass" onChange={(event) => setButtonText(event.target.value)} />
+        </label>
+        <label>
+          Button link
+          <input
+            value={buttonUrl}
+            list="message-editor-button-links"
+            placeholder="https://… or {{portal_url}}"
+            onChange={(event) => setButtonUrl(event.target.value)}
+          />
+          <datalist id="message-editor-button-links">
+            {BUTTON_LINK_SUGGESTIONS.map((suggestion) => <option value={suggestion} key={suggestion} />)}
+          </datalist>
+        </label>
+        <button type="button" className="secondary-button" onClick={insertButton}>Insert button</button>
+        {buttonError ? <p className="form-error" role="alert">{buttonError}</p> : null}
+        <small>A button on a line of its own is sent as a button; inside a sentence it is an ordinary link. Stored as [text](link){"{.button}"}.</small>
+      </div>
+    )}
+    {panel === "image" && imageLibrary && (
+      <div className="message-editor-panel" role="group" aria-label="Insert an image">
+        <label>
+          Description (shown if the picture is blocked)
+          <input value={imageAlt} maxLength={120} placeholder="Map of the retreat grounds" onChange={(event) => setImageAlt(event.target.value)} />
+        </label>
+        <label>
+          Upload a picture
+          <input
+            type="file"
+            accept={MESSAGE_IMAGE_ACCEPT}
+            disabled={uploading}
+            onChange={(event) => {
+              const input = event.currentTarget;
+              const file = input.files?.[0];
+              input.value = "";
+              void uploadImage(file);
+            }}
+          />
+          <small>PNG, JPEG or WebP, {formatFileSize(MAX_INLINE_IMAGE_BYTES)} or smaller. Sent inside the email, so it shows without &quot;download pictures&quot;.</small>
+        </label>
+        {uploading ? <p role="status">Uploading…</p> : null}
+        {imageError ? <p className="form-error" role="alert">{imageError}</p> : null}
+        {imageLibrary.images.length > 0 && (
+          <div className="message-editor-image-list">
+            <strong>Or choose one already uploaded</strong>
+            <ul>
+              {imageLibrary.images.map((image) => (
+                <li key={image.id}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={messageFileUrl(imageLibrary.eventId, image.id, "inline")} alt="" width={40} height={40} />
+                  <span>{image.filename}</span>
+                  <button type="button" className="secondary-button" onClick={() => insertImage(image)}>Insert</button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    )}
+    </>
   );
 }
 
-function VisualEditor({ value, tokens, tokenLabels, onChange }: MessageBodyEditorProps) {
+function VisualEditor({ value, tokens, tokenLabels, imageLibrary, onChange }: MessageBodyEditorProps) {
   const [mounted, setMounted] = useState(false);
   const userEdited = useRef(false);
 
@@ -382,6 +747,8 @@ function VisualEditor({ value, tokens, tokenLabels, onChange }: MessageBodyEdito
           LinkNode,
           HorizontalRuleNode,
           MessageTokenNode,
+          MessageImageNode,
+          MessageButtonNode,
         ],
         editorState: () => {
           $importEmailMarkdown(value);
@@ -411,7 +778,7 @@ function VisualEditor({ value, tokens, tokenLabels, onChange }: MessageBodyEdito
         },
       }}
     >
-      <EditorToolbar tokens={tokens} tokenLabels={tokenLabels} markChanged={() => { userEdited.current = true; }} />
+      <EditorToolbar tokens={tokens} tokenLabels={tokenLabels} imageLibrary={imageLibrary} markChanged={() => { userEdited.current = true; }} />
       <div className="message-editor-email">
         <div className="message-editor-email-header">IMSDA Events</div>
         <div className="message-editor-email-body">
@@ -449,6 +816,7 @@ export function MessageBodyEditor({
   value,
   tokens,
   tokenLabels,
+  imageLibrary,
   maxLength = 12000,
   onChange,
 }: MessageBodyEditorProps) {
@@ -475,7 +843,7 @@ export function MessageBodyEditor({
         </button>
       </div>
       {mode === "visual" ? (
-        <VisualEditor value={value} tokens={tokens} tokenLabels={tokenLabels} onChange={onChange} />
+        <VisualEditor value={value} tokens={tokens} tokenLabels={tokenLabels} imageLibrary={imageLibrary} onChange={onChange} />
       ) : (
         <div className="message-editor-source">
           <label htmlFor="message-body-source">Markdown source</label>
@@ -489,7 +857,7 @@ export function MessageBodyEditor({
             onChange={(event) => onChange(event.target.value)}
           />
           <small id="message-body-source-help">
-            Source mode supports headings, bold, italic, lists, links, inline code, rules, and template tokens.
+            Source mode supports headings, bold, italic, lists, links, inline code, rules, and template tokens. A link alone on its own line with {"{.button}"} after it, [Text](https://…){"{.button}"}, is sent as a button. An uploaded picture is ![description](msgfile:…); insert it from the visual editor.
           </small>
         </div>
       )}

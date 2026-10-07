@@ -105,6 +105,10 @@ async function cleanup() {
   await prisma.memberTransfer.deleteMany({ where: { fromOrganizationId: { startsWith: `${P}_` } } });
   await prisma.registration.deleteMany({ where: inEvents });
   await prisma.eventLocation.deleteMany({ where: inEvents });
+  // Message files (#824) are RESTRICTed by what refers to them, so the templates (and their file links) go first.
+  await prisma.eventMessageTemplate.deleteMany({ where: inEvents });
+  await prisma.announcement.deleteMany({ where: inEvents });
+  await prisma.messageFile.deleteMany({ where: inEvents });
   await prisma.event.deleteMany({ where: events });
   await prisma.clubSupplyItem.deleteMany({ where: { name: { startsWith: "Evdel" } } });
   await prisma.clubYearEndReport.deleteMany({ where: { organizationId: { startsWith: `${P}_` } } });
@@ -124,7 +128,7 @@ const eventBase = {
 };
 
 async function main() {
-  const { deleteEvent, getEventDeletionPreview, EventDeletionError } = await import("../modules/events/deletion-repository");
+  const { deleteEvent, getEventDeletionPreview, EventDeletionError, removeEventOwnedRows } = await import("../modules/events/deletion-repository");
 
   await cleanup();
 
@@ -555,7 +559,13 @@ async function main() {
   const setupSession = await prisma.honorSession.create({ data: { eventId: setupEventId, name: "Evdel Setup Session", normalizedName: "evdel setup session", locationId: setupLocation.id } });
   await prisma.honorOffering.create({ data: { eventId: setupEventId, honorId: honor.id, span: "SINGLE_SESSION", capacity: 10, sessionId: setupSession.id } });
   const setupTemplate = await prisma.eventMessageTemplate.create({ data: { eventId: setupEventId, key: "PAYMENT_RECEIPT" } });
-  await prisma.messageTemplateVersion.create({ data: { templateId: setupTemplate.id, versionNumber: 1, subjectTemplate: "Receipt", bodyTemplate: "Thanks." } });
+  const setupVersion = await prisma.messageTemplateVersion.create({ data: { templateId: setupTemplate.id, versionNumber: 1, subjectTemplate: "Receipt", bodyTemplate: "Thanks." } });
+  // Message files (#824): linked to a template version, with RESTRICT keys. Deleting the event
+  // removes the links first and then the files.
+  const setupMessageFile = await prisma.messageFile.create({
+    data: { eventId: setupEventId, filename: "terms.pdf", contentType: "application/pdf", sizeBytes: 10, sha256: "abc", storageKey: id("setup_message_file_key") },
+  });
+  await prisma.messageTemplateVersionFile.create({ data: { templateVersionId: setupVersion.id, fileId: setupMessageFile.id } });
   const setupAsset = await prisma.eventAsset.create({
     data: { eventId: setupEventId, displayName: "setup.pdf", contentType: "application/pdf", byteSize: 10, checksum: "abc", storageKey: id("setup_asset_key") },
   });
@@ -662,6 +672,7 @@ async function main() {
 
   // Uploaded-file rows are gone (the file itself is removed by the service after commit).
   assert(await prisma.eventAsset.count({ where: { storageKey: id("setup_asset_key") } }) === 0, "asset rows are gone");
+  assert(await prisma.messageFile.count({ where: { storageKey: id("setup_message_file_key") } }) === 0, "message file rows are gone");
 
   // The audit row: who, which event, dates and counts, no personal data.
   const auditRows = await prisma.auditLog.findMany({ where: { action: "EVENT_DELETED", entityId: setupEventId } });
@@ -681,6 +692,49 @@ async function main() {
   assert(await prisma.auditLog.count({ where: { action: "EVENT_DELETED", entityId: draftEventId, actorUserId: adminId } }) === 1, "the draft deletion is audited");
   await deleteEvent({ eventId: publishedBareEventId, actor: sysAdmin, confirmName: "Evdel Published" });
   assert(await prisma.event.count({ where: { id: publishedBareEventId } }) === 0, "a system admin deletes an empty published event");
+
+  // Message files (#824), every kind of link. The decision to delete refuses an event with announcements or sent
+  // messages, so this runs the removal itself on one: the keys to a file are RESTRICT, so the links (outbox rows,
+  // announcements, template versions) must go first and the files after, and the file rows must be gone at the end.
+  const mfEventId = id("msgfile_event");
+  await prisma.event.create({ data: { id: mfEventId, slug: `${P}-msgfile`, name: "Evdel Message Files 2028", ...eventBase } });
+  const mfTemplate = await prisma.eventMessageTemplate.create({ data: { eventId: mfEventId, key: "EVENT_ANNOUNCEMENT" } });
+  const mfVersion = await prisma.messageTemplateVersion.create({ data: { templateId: mfTemplate.id, versionNumber: 1, subjectTemplate: "S", bodyTemplate: "B" } });
+  const mfAttachment = await prisma.messageFile.create({
+    data: { eventId: mfEventId, filename: "terms.pdf", contentType: "application/pdf", sizeBytes: 10, sha256: "abc", storageKey: id("msgfile_attachment_key") },
+  });
+  const mfPicture = await prisma.messageFile.create({
+    data: { eventId: mfEventId, filename: "map.png", contentType: "image/png", sizeBytes: 10, sha256: "abc", storageKey: id("msgfile_picture_key"), isInlineImage: true },
+  });
+  await prisma.messageTemplateVersionFile.create({ data: { templateVersionId: mfVersion.id, fileId: mfAttachment.id } });
+  const mfAnnouncement = await prisma.announcement.create({
+    data: { eventId: mfEventId, createdByUserId: adminId, title: "Evdel files note", body: "Synthetic.", audience: { type: "ALL_ATTENDEES" }, placement: "HOME_BANNER" },
+  });
+  await prisma.announcementFile.create({ data: { announcementId: mfAnnouncement.id, fileId: mfAttachment.id } });
+  const mfMessage = await prisma.messageOutbox.create({
+    data: {
+      eventId: mfEventId, templateVersionId: mfVersion.id, templateKey: "EVENT_ANNOUNCEMENT", recipientKind: "REGISTRANT",
+      recipientEmail: "evdel.files@example.test", senderNameSnapshot: "IMSDA Events", subjectSnapshot: "S", bodyTextSnapshot: "B",
+      idempotencyKey: id("msgfile_outbox"), correlationId: id("msgfile_corr"), status: "CAPTURED",
+    },
+  });
+  await prisma.messageOutboxFile.createMany({
+    data: [
+      { messageOutboxId: mfMessage.id, fileId: mfAttachment.id, disposition: "ATTACHMENT" },
+      { messageOutboxId: mfMessage.id, fileId: mfPicture.id, disposition: "INLINE" },
+    ],
+  });
+  const refusedWhileLinked = await caught(prisma.messageFile.delete({ where: { id: mfAttachment.id } }));
+  assert(refusedWhileLinked, "a message file that anything links to cannot be deleted");
+  await prisma.$transaction((tx) => removeEventOwnedRows(tx, mfEventId), { timeout: 60_000 });
+  assert(await prisma.event.count({ where: { id: mfEventId } }) === 0, "the event with message file links is deleted");
+  assert(await prisma.messageFile.count({ where: { storageKey: { startsWith: id("msgfile_") } } }) === 0, "its message file rows are gone");
+  assert(
+    (await prisma.announcementFile.count({ where: { announcementId: mfAnnouncement.id } }))
+      + (await prisma.messageOutboxFile.count({ where: { messageOutboxId: mfMessage.id } }))
+      + (await prisma.messageTemplateVersionFile.count({ where: { templateVersionId: mfVersion.id } })) === 0,
+    "and so are the links from announcements, outbox rows and template versions",
+  );
 
   console.log("Event deletion verified: refusal with records attached changes nothing, setup-only event deleted cleanly, shared records kept, permissions, audit row, rollback, large setup.");
 }

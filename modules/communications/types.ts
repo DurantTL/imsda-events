@@ -1,3 +1,5 @@
+import type { MessageFileRecord } from "@/modules/communications/message-file-rules";
+
 export type MessageTemplateKeyValue =
   | "REGISTRATION_CONFIRMATION_PAID"
   | "REGISTRATION_CONFIRMATION_UNPAID"
@@ -40,6 +42,8 @@ export type MessageTemplateVersionRecord = {
   publishedAt: string | null;
   createdAt: string;
   createdBy: string | null;
+  /** Files staff attached to this version (#824); each message built from it carries them. */
+  attachments: MessageFileRecord[];
 };
 
 export type MessageTemplateRecord = {
@@ -106,6 +110,8 @@ export type MessageOutboxRecord = {
   createdAt: string;
   registration: { id: string; confirmationCode: string } | null;
   templateVersion: { id: string; versionNumber: number } | null;
+  /** What the message sends besides its text (#824): names and sizes only. */
+  files: Array<{ id: string; filename: string; sizeBytes: number; disposition: "ATTACHMENT" | "INLINE" }>;
   attempts: MessageAttemptRecord[];
 };
 
@@ -123,6 +129,8 @@ export type MessagingWorkspaceData = {
   settings: MessagingSettingsRecord;
   templates: MessageTemplateRecord[];
   messages: MessageOutboxRecord[];
+  /** Images already uploaded for message bodies, for the editor's picker (#824). */
+  inlineImages: MessageFileRecord[];
   counts: Record<MessageOutboxStatusValue, number>;
   reminderPreview: BalanceReminderPreview;
   shirtSizePreview: ShirtSizeRequestPreview;
@@ -208,6 +216,8 @@ export type AnnouncementRecord = {
   publishedAt: string | null;
   pinnedAt: string | null;
   updatedAt: string;
+  /** Files attached to the announcement (#824), sent with its email. */
+  attachments: MessageFileRecord[];
 };
 
 /**
@@ -231,6 +241,12 @@ export type AnnouncementBroadcastPreview = {
   templateEnabled: boolean;
   /** True when every message will be recorded as SUPPRESSED, not delivered. */
   suppressed: boolean;
+  /** Every file each email will carry (#824): the announcement's own and the template's. Names and sizes. */
+  attachments: Array<{ filename: string; sizeBytes: number }>;
+  /** Set when the files together are over the per-message limits, which blocks the send. */
+  attachmentProblem: string | null;
+  /** True when any message carries an attachment or an embedded picture; real email then goes out through the background worker. */
+  carriesFiles: boolean;
   /** Echoed back by the send so the server can refuse a stale review. */
   fingerprint: string;
   sendTiming: "IMMEDIATE";

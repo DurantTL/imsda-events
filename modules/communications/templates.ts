@@ -1,4 +1,5 @@
 import { escapeMarkdown, plainTextFromEscapedMarkdown, renderEmailBodyHtml } from "@/modules/communications/email-html";
+import { plainTextFromMessageSource } from "@/modules/communications/message-file-rules";
 
 export const MESSAGE_TEMPLATE_KEYS = [
   "REGISTRATION_CONFIRMATION_PAID",
@@ -1080,6 +1081,26 @@ export type RenderTemplateTextOptions = {
   escapeUntrustedMarkdown?: boolean;
 };
 
+/**
+ * Blocks whose heading belongs to them: when the block has nothing to say, the heading line placed directly above
+ * its token goes too, so a message never shows a "Your seminars" heading over nothing.
+ */
+const TOKENS_THAT_TAKE_THEIR_HEADING = ["seminar_preferences"] as const;
+
+function withoutEmptyBlockHeadings(template: string, context: MessageTemplateContext) {
+  let source = template;
+  for (const token of TOKENS_THAT_TAKE_THEIR_HEADING) {
+    const value = context[token];
+    if (value !== null && value !== undefined && value.trim() !== "") continue;
+    // A heading, at most one blank line, then the token alone on its line.
+    source = source.replace(
+      new RegExp(`^[ \\t]*#{1,6}[ \\t][^\\n]*\\n(?:[ \\t]*\\n)?[ \\t]*\\{\\{\\s*${token}\\s*\\}\\}[ \\t]*$`, "gm"),
+      "",
+    );
+  }
+  return source;
+}
+
 export function renderTemplateText(
   template: string,
   context: MessageTemplateContext,
@@ -1088,7 +1109,7 @@ export function renderTemplateText(
   const missingTokens: MessageTemplateToken[] = [];
   const unresolvedTokens: string[] = [];
 
-  const text = template.replace(templateTokenPattern, (placeholder, rawToken: string) => {
+  const text = withoutEmptyBlockHeadings(template, context).replace(templateTokenPattern, (placeholder, rawToken: string) => {
     const token = rawToken.trim();
     if (!ALLOWED_MESSAGE_TEMPLATE_TOKENS.has(token as MessageTemplateToken)) {
       unresolvedTokens.push(token);
@@ -1195,7 +1216,9 @@ export function renderMessageTemplate(
   context: MessageTemplateContext,
 ): RenderedMessageTemplate {
   const subject = renderTemplateText(template.subject, context);
-  const body = renderTemplateText(template.body, context);
+  // The text part has no use for the image and button markers (see `plainTextFromMessageSource`); only the
+  // template's own source is touched, never a token value.
+  const body = renderTemplateText(plainTextFromMessageSource(template.body), context);
   const missingTokens = uniqueInOrder([...subject.missingTokens, ...body.missingTokens]);
   const unresolvedTokens = uniqueInOrder([
     ...subject.unresolvedTokens,
