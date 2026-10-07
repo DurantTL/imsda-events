@@ -306,6 +306,7 @@ function redemptionPrisma(event: { audience: string; billingMode: string } | nul
           id: "red_1",
           codeSnapshot: "CHURCH25",
           discountAmountCents: 2_500,
+          sponsorLodgingChangeCents: 0,
           promoCode: { sponsoringOrganization: { id: "church_1", name: "Synthetic Church" } },
           registration: { confirmationCode: "SYN-0001", status: "CONFIRMED" },
         },
@@ -313,11 +314,12 @@ function redemptionPrisma(event: { audience: string; billingMode: string } | nul
           id: "red_2",
           codeSnapshot: "CHURCH25",
           discountAmountCents: 900,
+          sponsorLodgingChangeCents: 0,
           promoCode: { sponsoringOrganization: null },
           registration: { confirmationCode: "SYN-0002", status: "CONFIRMED" },
         },
       ]),
-      aggregate: vi.fn().mockResolvedValue({ _sum: { discountAmountCents: 5_000 } }),
+      aggregate: vi.fn(),
     },
     registrationAdjustment: {
       findMany: vi.fn().mockResolvedValue([
@@ -388,11 +390,36 @@ describe("sponsored promo code queries (#545)", () => {
   it("sums the same active, sponsored redemptions for the overview tile", async () => {
     const prisma = redemptionPrisma({ audience: "GENERAL", billingMode: "ATTENDEE_PAY" });
     dependencies.getPrisma.mockReturnValue(prisma);
+    // A recorded discount plus what lodging edits moved the church's share by (#813), per registration and never below zero.
+    prisma.promoCodeRedemption.findMany.mockResolvedValue([
+      { discountAmountCents: 4_000, sponsorLodgingChangeCents: 1_000 },
+      { discountAmountCents: 500, sponsorLodgingChangeCents: -800 },
+    ]);
     expect(await sumChurchSponsoredPromoCents("event_1")).toBe(6_500);
-    expect(prisma.promoCodeRedemption.aggregate.mock.calls[0][0].where).toMatchObject({
+    expect(prisma.promoCodeRedemption.findMany.mock.calls[0][0].where).toMatchObject({
       eventId: "event_1",
       promoCode: { sponsoringOrganizationId: { not: null } },
       registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } },
     });
+  });
+
+  it("counts a registration while either its discount or its lodging change is positive, and one church on request", async () => {
+    const prisma = redemptionPrisma({ audience: "GENERAL", billingMode: "ATTENDEE_PAY" });
+    dependencies.getPrisma.mockReturnValue(prisma);
+    prisma.promoCodeRedemption.findMany.mockResolvedValue([{ discountAmountCents: 0, sponsorLodgingChangeCents: 2_000 }]);
+    expect(await sumChurchSponsoredPromoCents("event_1", undefined, "church_1")).toBe(2_000 + 1_500);
+    const where = prisma.promoCodeRedemption.findMany.mock.calls[0][0].where;
+    expect(where.OR).toEqual([{ discountAmountCents: { gt: 0 } }, { sponsorLodgingChangeCents: { gt: 0 } }]);
+    expect(where.promoCode).toEqual({ sponsoringOrganizationId: "church_1" });
+  });
+
+  it("a line is the recorded discount plus the lodging change (#813)", async () => {
+    const prisma = redemptionPrisma({ audience: "GENERAL", billingMode: "ATTENDEE_PAY" });
+    dependencies.getPrisma.mockReturnValue(prisma);
+    prisma.promoCodeRedemption.findMany.mockResolvedValue([
+      { id: "red_1", codeSnapshot: "CHURCH25", discountAmountCents: 2_500, sponsorLodgingChangeCents: 2_000, promoCode: { sponsoringOrganization: { id: "church_1", name: "Synthetic Church" } }, registration: { confirmationCode: "SYN-0001", status: "CONFIRMED" } },
+    ]);
+    const lines = await listChurchSponsoredPromoLines("event_1");
+    expect(lines.find((line) => line.lineId === "redemption:red_1")?.amountCents).toBe(4_500);
   });
 });

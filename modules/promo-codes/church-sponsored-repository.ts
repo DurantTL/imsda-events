@@ -20,12 +20,16 @@ async function eventBillsSponsors(client: Client, eventId: string) {
 
 const activeRegistration = { status: { in: [...CHURCH_SPONSORED_BILLED_STATUSES] } };
 
-/** A code entered for the whole registration (a `PromoCodeRedemption`). */
-const sponsoredRedemptionWhere = (eventId: string): Prisma.PromoCodeRedemptionWhereInput => ({
+/**
+ * A code entered for the whole registration (a `PromoCodeRedemption`). What the church owes for it is the recorded
+ * discount plus what staff lodging edits have moved the share by (#813): the row counts while either is positive, and a
+ * line whose total is not positive is dropped when the lines are summarized.
+ */
+const sponsoredRedemptionWhere = (eventId: string, churchId?: string): Prisma.PromoCodeRedemptionWhereInput => ({
   eventId,
-  promoCode: { sponsoringOrganizationId: { not: null } },
+  promoCode: { sponsoringOrganizationId: churchId ?? { not: null } },
   registration: activeRegistration,
-  discountAmountCents: { gt: 0 },
+  OR: [{ discountAmountCents: { gt: 0 } }, { sponsorLodgingChangeCents: { gt: 0 } }],
 });
 
 /**
@@ -33,13 +37,13 @@ const sponsoredRedemptionWhere = (eventId: string): Prisma.PromoCodeRedemptionWh
  * discount as a negative amount. An adjustment that was reversed, and the
  * reversal row itself, are both left out.
  */
-const sponsoredAdjustmentWhere = (eventId: string): Prisma.RegistrationAdjustmentWhereInput => ({
+const sponsoredAdjustmentWhere = (eventId: string, churchId?: string): Prisma.RegistrationAdjustmentWhereInput => ({
   eventId,
   kind: "PROMO_CODE",
   amountCents: { lt: 0 },
   reversesAdjustmentId: null,
   reversedBy: null,
-  promoCode: { sponsoringOrganizationId: { not: null } },
+  promoCode: { sponsoringOrganizationId: churchId ?? { not: null } },
   registration: activeRegistration,
 });
 
@@ -62,6 +66,7 @@ export async function listChurchSponsoredPromoLines(
         id: true,
         codeSnapshot: true,
         discountAmountCents: true,
+        sponsorLodgingChangeCents: true,
         promoCode: {
           select: { sponsoringOrganization: { select: { id: true, name: true } } },
         },
@@ -93,7 +98,8 @@ export async function listChurchSponsoredPromoLines(
       promoCode: row.codeSnapshot,
       confirmationCode: row.registration.confirmationCode,
       status: row.registration.status,
-      amountCents: row.discountAmountCents,
+      // The recorded discount plus what staff lodging edits moved the church's share by (#813).
+      amountCents: row.discountAmountCents + row.sponsorLodgingChangeCents,
     });
   }
   for (const row of adjustments) {
@@ -117,17 +123,24 @@ export async function listChurchSponsoredPromoLines(
 export async function sumChurchSponsoredPromoCents(
   eventId: string,
   client: Client = getPrisma(),
+  churchId?: string,
 ) {
   if (!await eventBillsSponsors(client, eventId)) return 0;
   const [redemptions, adjustments] = await Promise.all([
-    client.promoCodeRedemption.aggregate({
-      where: sponsoredRedemptionWhere(eventId),
-      _sum: { discountAmountCents: true },
+    client.promoCodeRedemption.findMany({
+      where: sponsoredRedemptionWhere(eventId, churchId),
+      select: { discountAmountCents: true, sponsorLodgingChangeCents: true },
     }),
     client.registrationAdjustment.aggregate({
-      where: sponsoredAdjustmentWhere(eventId),
+      where: sponsoredAdjustmentWhere(eventId, churchId),
       _sum: { amountCents: true },
     }),
   ]);
-  return (redemptions._sum.discountAmountCents ?? 0) - (adjustments._sum.amountCents ?? 0);
+  // Per row, like the lines (`billedSponsoredLines` drops a line that is not positive), so a registration whose share was
+  // moved below zero by a later amendment never subtracts from another's.
+  const redeemed = redemptions.reduce(
+    (total, row) => total + Math.max(0, row.discountAmountCents + row.sponsorLodgingChangeCents),
+    0,
+  );
+  return redeemed - (adjustments._sum.amountCents ?? 0);
 }

@@ -3,7 +3,9 @@
  * Pure, so the staff finance screen, its CSV, and the overview tile agree on
  * one rule. Nothing is stored per redemption: like church-billed club
  * registrations (#409), the amount is worked out when someone looks, from the
- * immutable `PromoCodeRedemption.discountAmountCents`.
+ * `PromoCodeRedemption`: `discountAmountCents` (recorded when the code was used and
+ * rewritten only by an amendment of the answers) plus `sponsorLodgingChangeCents`
+ * (what staff lodging edits have moved the church's share by, #813).
  *
  * One line per redemption: a whole-registration code is one line
  * (`PromoCodeRedemption`), and a per-person or staff-applied code is one line

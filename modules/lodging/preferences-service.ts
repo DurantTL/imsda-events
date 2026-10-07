@@ -49,6 +49,7 @@ import {
   type RoommateStatus,
   type RuleRow,
 } from "@/modules/lodging/preferences-domain";
+import { settleChurchShareForLodgingChange, type ChurchShareOutcome } from "@/modules/promo-codes/church-sponsor-lodging";
 import { LODGING_LINE_KEY, lodgingCharge, lodgingChargeImpact, promoContextOf, type RedemptionFact } from "@/modules/lodging/pricing";
 import { isChurchBilledBillingMode } from "@/modules/club-registrations/per-person-price";
 import { lockEventLodgingUnits, lodgingTransactionTimeoutMs, nightsFor, touchEventLodgingCapacity } from "@/modules/lodging/service";
@@ -470,7 +471,8 @@ export type SaveRequestResult =
       chargeDeltaCents?: number;
       /**
        * The same change after the registration's saved promo code (#803): what the registrant pays differently, and for a
-       * church-sponsored code the sponsor's share. For a church-sponsored code the church's bill does not follow a lodging edit: see CHURCH_SPONSOR_WARNING.
+       * church-sponsored code the sponsor's share. For a church-sponsored code the sponsor's share moves the church's amount
+       * owed in the same transaction (`churchShare`, #813); the figure staff record is the registrant's share only.
        */
       registrantDeltaCents?: number;
       sponsorDeltaCents?: number;
@@ -479,8 +481,12 @@ export type SaveRequestResult =
       requestNowCostsCents?: number;
       /** After the change the registration would be under its saved code's minimum (an amendment would refuse it). */
       belowMinimumAfter?: boolean;
-      /** A church-sponsored code whose share would move: the church's bill does not follow a lodging edit; contact the finance office. */
-      churchSponsorReview?: boolean;
+      /**
+       * A church-sponsored code whose share moved (#813): UPDATED means the church's amount owed was changed by `deltaCents`
+       * in the same transaction (and what it now owes for this registration); FLAGGED means the church's invoice is already
+       * finalized, so nothing was changed and the finance office was flagged.
+       */
+      churchShare?: ChurchShareOutcome;
       promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null;
     }
   /** The event's edit policy kept the change from applying itself; it waits in the staff review queue. */
@@ -502,7 +508,9 @@ export type SaveRequestResult =
  * registration exists, a registrant's change that would alter the lodging charge (the request at today's rates, before
  * and after) is not applied: it becomes a change request for staff. A staff change is saved, the result says the charge
  * needs adjusting (`priceNeedsReview`), and staff do that through the Payments adjustment flow. Neither touches the
- * registration's total or its pricing snapshot, and nothing creates a payment or a refund. A church-billed event's
+ * registration's total or its pricing snapshot, and nothing creates a payment or a refund. The one thing a staff edit does
+ * move, in the same transaction, is a church-sponsored code's share of the change in the church's amount owed (#813), unless
+ * the church's invoice is already finalized, when the change is flagged for the finance office and nothing is revised. A church-billed event's
  * expected lodging charge is always 0.
  *
  * A registrant is also refused fewer nights than a rate's minimum (BELOW_MINIMUM_NIGHTS); staff may make the exception.
@@ -703,7 +711,8 @@ export async function saveLodgingRequest(
       ? await tx.eventLodgingRequest.update({ where: { id: previous.requestId }, data: { currentVersion: previous.version + 1 } })
       : await tx.eventLodgingRequest.create({ data: { eventId: input.eventId, registrationId: input.registrationId, currentVersion: 1 } });
     const version = request.currentVersion;
-    await tx.eventLodgingRequestVersion.create({
+    const createdVersion = await tx.eventLodgingRequestVersion.create({
+      select: { id: true },
       data: {
         eventId: input.eventId,
         requestId: request.id,
@@ -756,18 +765,22 @@ export async function saveLodgingRequest(
         data: { resolvedAt: now, resolvedByUserId: input.actor.kind === "STAFF" ? input.actor.userId : null, resolution: "Handled by staff" },
       });
     }
-    // The church's bill does not follow a lodging edit, so the warning stays up while this edit moves the sponsor's share OR the
-    // cumulative share differs from the original (a return to the start after an earlier change still needs the finance office).
-    const sponsorMoved = Boolean(impact?.promo?.sponsored && impact.discountDeltaCents !== 0);
-    const sponsorDiffers = Boolean(cumulative?.promo?.sponsored && cumulative.discountDeltaCents !== 0);
+    // A church-sponsored code's share of THIS edit moves the church's amount owed in this same transaction (#813), or, when the
+    // church's invoice is already finalized, is flagged for the finance office and changes nothing.
+    const churchShare = staff && chargeChanges && impact?.promo?.sponsored && impact.discountDeltaCents !== 0
+      ? await settleChurchShareForLodgingChange(tx, {
+        eventId: input.eventId, registrationId: input.registrationId, lodgingRequestVersionId: createdVersion.id,
+        deltaCents: impact.discountDeltaCents, actorUserId: input.actor.kind === "STAFF" ? input.actor.userId : null,
+      })
+      : null;
     const costContext = promoContext && cumulative ? { originallyChargedCents: promoContext.lodgingCents, requestNowCostsCents: nextCents } : {};
     return { requestId: request.id, version, changed: true, afterDeadline: staff && pastDeadline, ...(staff && chargeChanges && impact
       ? {
           priceNeedsReview: true, chargeDeltaCents: impact.listDeltaCents, registrantDeltaCents: impact.registrantDeltaCents,
           sponsorDeltaCents: impact.promo?.sponsored ? impact.discountDeltaCents : 0, belowMinimumAfter: cumulative?.belowMinimumAfter ?? false,
-          churchSponsorReview: sponsorMoved || sponsorDiffers, promo: impact.promo, ...costContext,
+          promo: impact.promo, ...(churchShare ? { churchShare } : {}), ...costContext,
         }
-      : staff && sponsorDiffers ? { churchSponsorReview: true, promo: cumulative!.promo, ...costContext } : {}) };
+      : {}) };
   }, { timeout: lodgingTransactionTimeoutMs });
 }
 
@@ -1190,7 +1203,7 @@ export type StaffLodgingRequestView = {
   /** Rooms the registrant chose (1 for a site, a tent or no type) and whether they acknowledged bringing sleeping bags or air mattresses (#803). */
   roomCount: number;
   bringsExtraBedding: boolean;
-  /** The registration holds a church-sponsored promo code: a lodging edit does not change what the church is billed. */
+  /** The registration holds a church-sponsored promo code: a staff lodging edit moves the church's share automatically (#813). */
   churchSponsored: boolean;
   /** What the registrant asked for that the edit policy held for staff (the open change request), if any. */
   openChange: { category: LodgingCategory | null; firstNight: string | null; lastNight: string | null; partySize: number; roomCount: number; bringsExtraBedding: boolean } | null;

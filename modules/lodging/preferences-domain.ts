@@ -580,18 +580,21 @@ export type RegistrationFact = { confirmationCode: string; label: string; active
 export type ChargeImpactFact = { promoCode: string | null; coversLodging: boolean; sponsored: boolean; registrantDeltaCents: number; discountDeltaCents: number; belowMinimumAfter?: boolean };
 
 /**
- * What a church owes is computed from the registration's redemption (the discount recorded when the code was used) and any
- * promo-code adjustments, none of which a lodging edit or a manual Payments adjustment moves. So a sponsored registration whose
- * sponsor share would change needs the finance office before anyone adjusts anything. Interim guidance (#803): nothing here
- * changes a church's bill.
+ * A church-sponsored code's share of a lodging change moves the church's amount owed automatically (#813), in the same
+ * transaction as the staff edit, unless the church's invoice is already finalized (then it is flagged for the finance
+ * office and nothing changes). Staff record only the registrant's share in Payments.
  */
-export const CHURCH_SPONSOR_CONTACT_LEAD = "Contact the finance office before changing anything in Payments.";
-export const CHURCH_SPONSOR_WARNING = "This registration's church sponsorship does not change automatically. The church's bill still reflects the original lodging. Contact the finance office before adjusting.";
+export const CHURCH_SHARE_AUTOMATIC = "The church's share is updated automatically when staff change the request; if the church's invoice is already finalized it is flagged for the finance office instead.";
 
 /** A church-sponsored code whose sponsor share the change would move. */
-export function churchSponsorNeedsReview(impact: { sponsored: boolean; discountDeltaCents: number } | null | undefined) {
+export function churchSponsorShareMoves(impact: { sponsored: boolean; discountDeltaCents: number } | null | undefined) {
   return Boolean(impact?.sponsored && impact.discountDeltaCents !== 0);
 }
+
+/** What happened to the church's share when staff saved the change (#813). */
+export type ChurchShareFact =
+  | { status: "UPDATED"; deltaCents: number; churchName: string; registrationOwedCents: number }
+  | { status: "FLAGGED"; deltaCents: number; churchName: string };
 
 export type ReviewFacts = {
   /** The event's bookable nights. */
@@ -628,8 +631,6 @@ export type ReviewItem = {
   sensitive: boolean;
   /** For a one-sided roommate request: the row staff approve or decline. */
   roommateRequestId: string | null;
-  /** Extra flags on the item. CHURCH_SPONSOR_REVIEW: a church-sponsored code's share would move; contact the finance office. */
-  flags?: Array<"CHURCH_SPONSOR_REVIEW">;
 };
 
 /** The nights a request covers: its own window, else every bookable night. */
@@ -657,31 +658,36 @@ function signedDollars(cents: number) {
 /**
  * What staff are told after saving a lodging change that alters the charge (#803): the list change and, when the
  * registration holds a saved promo code, what the registrant really pays differently (and the sponsor's share for a
- * church-sponsored code), and, for a sponsored code whose share is in play, the finance-office warning. The figures are the
- * change THIS edit makes; the cumulative picture ("originally charged X, now costs Y") is context, never the figure to record.
- * For a church-flagged result nothing says to adjust Payments: the church's bill does not follow a lodging edit (see
- * `CHURCH_SPONSOR_WARNING`).
+ * church-sponsored code), and, for a sponsored code, what happened to the church's share (#813): the registrant's share is
+ * the amount to record, the church's share was "updated automatically" with the church's new amount owed for the
+ * registration, or, when the church's invoice is already finalized, it was not changed and the finance office was flagged.
+ * The figures are the change THIS edit makes; the cumulative picture ("originally charged X, now costs Y") is context,
+ * never the figure to record.
  */
-export function chargeChangeSentence(result: { chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; belowMinimumAfter?: boolean; churchSponsorReview?: boolean; originallyChargedCents?: number; requestNowCostsCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null }) {
+export function chargeChangeSentence(result: { chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; belowMinimumAfter?: boolean; churchShare?: ChurchShareFact; originallyChargedCents?: number; requestNowCostsCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null }) {
   const dollars = (cents: number) => `$${(cents / 100).toFixed(2)}`;
   const list = signedDollars(result.chargeDeltaCents ?? 0);
   const promo = result.promo;
   const context = result.originallyChargedCents !== undefined && result.requestNowCostsCents !== undefined ? ` Originally charged ${dollars(result.originallyChargedCents)} at submission; the request now costs ${dollars(result.requestNowCostsCents)}.` : "";
-  const review = result.churchSponsorReview === true && promo?.sponsored === true;
-  const lead = review ? `${CHURCH_SPONSOR_CONTACT_LEAD} ` : "";
-  const warning = review ? ` ${CHURCH_SPONSOR_WARNING}` : "";
+  const share = result.churchShare;
+  const church = share?.status === "UPDATED"
+    ? ` The church's share (${signedDollars(share.deltaCents)}) was updated automatically; ${share.churchName} now owes ${dollars(share.registrationOwedCents)} for this registration.`
+    : share?.status === "FLAGGED"
+      ? ` The church's invoice is already finalized, so the church's share (${signedDollars(share.deltaCents)}) was not changed; the finance office has been flagged to review it.`
+      : "";
   if (!promo) return `This edit changes the lodging charge by ${list}, but the registration's total was not changed.${context}`;
   if (!promo.coversLodging) return `This edit changes the lodging charge by ${list} at list price. Code ${promo.code} does not apply to the lodging line on this registration (it was submitted before codes covered lodging), so the registrant's change is ${list}. The registration's total was not changed.${context}`;
   const minimum = result.belowMinimumAfter ? ` After this edit the registration would be under code ${promo.code}'s minimum, so an amendment would refuse it and the code would no longer apply.` : "";
   const figures = result.chargeDeltaCents === undefined ? "" : `This edit changes the lodging charge by ${list} at list price. A promo code applies: after ${promo.code} the registrant's change is ${signedDollars(result.registrantDeltaCents ?? 0)}${promo.sponsored ? ` and the sponsor's share is ${signedDollars(result.sponsorDeltaCents ?? 0)}` : ""}.`;
-  return `${lead}${figures}${minimum}${warning}${figures ? " The registration's total was not changed." : ""}${context}`.trim();
+  const record = figures && promo.sponsored ? ` The amount to record for the registrant is ${signedDollars(result.registrantDeltaCents ?? 0)}.` : "";
+  return `${figures}${record}${church}${minimum}${figures ? " The registration's total was not changed." : ""}${context}`.trim();
 }
 
 /** The list change, and the change after the registration's promo code, in words. Empty when no code is involved. */
 function impactWords(impact: ChargeImpactFact | undefined) {
   if (!impact?.promoCode) return "";
   if (!impact.coversLodging) return ` Code ${impact.promoCode} does not apply to the lodging line on this registration (it was submitted before codes covered lodging), so the registrant's change is the list change.`;
-  return ` After code ${impact.promoCode} the registrant's change is ${signedDollars(impact.registrantDeltaCents)}${impact.sponsored ? `, and the sponsor's share ${signedDollars(impact.discountDeltaCents)}` : `, with ${signedDollars(impact.discountDeltaCents)} more or less discount`}.${impact.belowMinimumAfter ? ` The registration would then be under the code's minimum, so an amendment would refuse it and the code would no longer apply.` : ""}${churchSponsorNeedsReview(impact) ? ` ${CHURCH_SPONSOR_WARNING}` : ""}`;
+  return ` After code ${impact.promoCode} the registrant's change is ${signedDollars(impact.registrantDeltaCents)}${impact.sponsored ? `, and the sponsor's share ${signedDollars(impact.discountDeltaCents)}` : `, with ${signedDollars(impact.discountDeltaCents)} more or less discount`}.${impact.belowMinimumAfter ? ` The registration would then be under the code's minimum, so an amendment would refuse it and the code would no longer apply.` : ""}`;
 }
 
 export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
@@ -851,8 +857,7 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
     push({
       key: `change:${change.id}`, kind: "CHANGE_REQUESTED", fingerprint: `${change.id}:${change.chargedCents ?? ""}:${change.requestedCents ?? ""}:${change.impact?.registrantDeltaCents ?? ""}`, registrationIds: [change.registrationId],
       title: `${label(facts, change.registrationId)}: lodging charge change requested${change.chargedCents !== undefined && change.requestedCents !== undefined ? ` (list ${signedDollars(change.requestedCents - change.chargedCents)})` : ""}${change.category ? `, to ${lodgingCategoryLabels[change.category].toLowerCase()}` : ""}${change.partySize !== undefined ? `: ${change.partySize} ${change.partySize === 1 ? "person" : "people"}${change.category && change.roomCount !== undefined ? `, ${change.roomCount} ${change.roomCount === 1 ? "room" : "rooms"}` : ""}${change.bringsExtraBedding ? ", bringing sleeping bags or air mattresses" : ""}` : ""}`,
-      detail: `A registrant's change that alters the lodging charge is never applied by itself. ${churchSponsorNeedsReview(change.impact) ? `${CHURCH_SPONSOR_CONTACT_LEAD} Make the change for them only if it is right.` : "Make the change for them if it is right, then adjust the charge in Payments."}${impactWords(change.impact)}`,
-      ...(churchSponsorNeedsReview(change.impact) ? { flags: ["CHURCH_SPONSOR_REVIEW" as const] } : {}),
+      detail: `A registrant's change that alters the lodging charge is never applied by itself. ${churchSponsorShareMoves(change.impact) ? `Make the change for them if it is right, then record the registrant's share in Payments. ${CHURCH_SHARE_AUTOMATIC}` : "Make the change for them if it is right, then adjust the charge in Payments."}${impactWords(change.impact)}`,
     });
   }
 
@@ -863,8 +868,7 @@ export function buildReviewItems(facts: ReviewFacts): ReviewItem[] {
     push({
       key: `price:${charge.registrationId}`, kind: "PRICE_DIFFERS", fingerprint: `${charge.chargedCents}:${charge.currentCents}:${charge.impact?.registrantDeltaCents ?? ""}`, registrationIds: [charge.registrationId],
       title: `${label(facts, charge.registrationId)} was charged ${dollars(charge.chargedCents)} for lodging; the request costs ${dollars(charge.currentCents)}`,
-      detail: `The charge is never changed automatically after submission. ${churchSponsorNeedsReview(charge.impact) ? CHURCH_SPONSOR_CONTACT_LEAD : "If it should follow the request, adjust it in Payments."}${impactWords(charge.impact)}`,
-      ...(churchSponsorNeedsReview(charge.impact) ? { flags: ["CHURCH_SPONSOR_REVIEW" as const] } : {}),
+      detail: `The charge is never changed automatically after submission. ${churchSponsorShareMoves(charge.impact) ? `If it should follow the request, record the registrant's share in Payments. ${CHURCH_SHARE_AUTOMATIC}` : "If it should follow the request, adjust it in Payments."}${impactWords(charge.impact)}`,
     });
   }
 

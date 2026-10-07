@@ -9,7 +9,7 @@ import { getEventOverview } from "@/modules/events/repository";
 
 function prismaFor(billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE", sponsoredCents = 0) {
   return {
-    promoCodeRedemption: { aggregate: vi.fn().mockResolvedValue({ _sum: { discountAmountCents: sponsoredCents || null } }) },
+    promoCodeRedemption: { findMany: vi.fn().mockResolvedValue(sponsoredCents ? [{ discountAmountCents: sponsoredCents, sponsorLodgingChangeCents: 0 }] : []) },
     event: {
       findUnique: vi.fn().mockResolvedValue({
         id: "event-1",
@@ -88,7 +88,7 @@ describe("event overview metrics (#409)", () => {
     dependencies.getPrisma.mockReturnValue(prisma);
     const overview = await getEventOverview("event-1");
     expect(overview?.metrics).toMatchObject({ churchBilledCents: 7_600, churchSponsoredCents: 0 });
-    expect(prisma.promoCodeRedemption.aggregate).not.toHaveBeenCalled();
+    expect(prisma.promoCodeRedemption.findMany).not.toHaveBeenCalled();
   });
 
   it("keeps attendee-pay balances as pending payment", async () => {

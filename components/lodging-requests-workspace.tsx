@@ -3,7 +3,8 @@
 import { useState, type FormEvent } from "react";
 import { describeRate, lodgingCategories, lodgingCategoryLabels } from "@/modules/lodging/domain";
 import {
-  CHURCH_SPONSOR_WARNING,
+  CHURCH_SHARE_AUTOMATIC,
+  type ChurchShareFact,
   chargeChangeSentence,
   fullBehaviors,
   lodgingRuleKindLabels,
@@ -12,7 +13,7 @@ import {
 } from "@/modules/lodging/preferences-domain";
 import type { StaffLodgingRequestView, StaffLodgingRequestsView } from "@/modules/lodging/preferences-service";
 
-type ChargeResult = { priceNeedsReview?: boolean; belowMinimumAfter?: boolean; churchSponsorReview?: boolean; chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; originallyChargedCents?: number; requestNowCostsCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null };
+type ChargeResult = { priceNeedsReview?: boolean; belowMinimumAfter?: boolean; churchShare?: ChurchShareFact; chargeDeltaCents?: number; registrantDeltaCents?: number; sponsorDeltaCents?: number; originallyChargedCents?: number; requestNowCostsCents?: number; promo?: { code: string; coversLodging: boolean; sponsored: boolean } | null };
 type Reply = { requests?: StaffLodgingRequestsView; result?: ChargeResult };
 type Run = (action: () => Promise<Reply>, success: string) => Promise<void>;
 
@@ -51,7 +52,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
       // The settings route sends the staff view only to someone who may read it; otherwise keep what is on screen.
       if (result.requests) setView(result.requests);
       setNotice(success);
-      if (result.result?.priceNeedsReview || result.result?.churchSponsorReview) setChargeChange(result.result);
+      if (result.result?.priceNeedsReview) setChargeChange(result.result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That could not be saved.");
     } finally { setBusy(false); }
@@ -71,8 +72,8 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
     {notice ? <p className="usage-note" role="status">{notice}</p> : null}
     {chargeChange !== null ? <p className="form-error" role="status" data-testid="charge-change">
       {chargeChangeSentence(chargeChange)}{" "}
-      {chargeChange.churchSponsorReview ? "Nothing is charged or refunded automatically." : <>Record the difference as an adjustment in{" "}
-      <a href={`/finance?event=${encodeURIComponent(view.eventId)}`}>Payments</a>; nothing is charged or refunded automatically.</>}
+      Record the registrant&apos;s difference as an adjustment in{" "}
+      <a href={`/finance?event=${encodeURIComponent(view.eventId)}`}>Payments</a>; nothing is charged or refunded automatically.
     </p> : null}
 
     <section className="panel" aria-labelledby="lodging-settings">
@@ -108,7 +109,6 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
       {queue.length === 0 ? <p>Nothing needs review.</p> : <ul>{queue.map((item) => <li key={`${item.key}:${item.fingerprint}`}>
         <strong>{reviewKindLabels[item.kind]}</strong>{item.sensitive ? " (restricted)" : ""}{item.acknowledged ? " (acknowledged)" : ""}
         <p>{item.title}. {item.detail}</p>
-        {item.flags?.includes("CHURCH_SPONSOR_REVIEW") ? <p role="note"><strong>Church sponsorship needs review.</strong> {CHURCH_SPONSOR_WARNING}</p> : null}
         {item.roommateRequestId && !item.acknowledged ? <form onSubmit={(event: FormEvent<HTMLFormElement>) => {
           event.preventDefault();
           const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
@@ -224,7 +224,7 @@ function RequestRow({ request, view, base, busy, run }: { request: StaffLodgingR
           </form> : null}
         </li>)}</ul>
       </> : null}
-      {request.churchSponsored ? <p role="note" className="form-error"><strong>Church-sponsored registration.</strong> {CHURCH_SPONSOR_WARNING}</p> : null}
+      {request.churchSponsored ? <p role="note" className="usage-note"><strong>Church-sponsored registration.</strong> {CHURCH_SHARE_AUTOMATIC} Record only the registrant&apos;s share in Payments.</p> : null}
       <h4>Change this request (staff)</h4>
       <form onSubmit={(event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
