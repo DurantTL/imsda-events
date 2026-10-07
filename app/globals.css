@@ -9269,7 +9269,7 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 /* The type-to-search honor picker (#819). The list sits in the flow, not over the page, so a dialog never clips it. */
 .honor-combobox { display: grid; gap: 4px; min-width: min(100%, 220px); }
 .honor-combobox > label { color: var(--ink); font-size: var(--text-helper-min, 0.8rem); font-weight: 700; }
-.honor-combobox > input[role="combobox"] { width: 100%; min-width: 0; border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 8px 10px; font-size: var(--text-helper-min, 0.8rem); }
+.honor-combobox > input[role="combobox"] { width: 100%; min-height: 44px; min-width: 0; border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 8px 10px; font-size: var(--text-helper-min, 0.8rem); }
 .honor-combobox-list { list-style: none; margin: 0; padding: 4px; max-height: 14rem; overflow-y: auto; border: 1px solid #cbdbe2; border-radius: 10px; background: #fff; overscroll-behavior: contain; }
 .honor-combobox-list[hidden] { display: none; }
 .honor-combobox-list li { padding: 8px 10px; border-radius: 8px; cursor: pointer; overflow-wrap: anywhere; }
@@ -9283,16 +9283,17 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .honors-report-panel .report-actions label { min-width: 0; max-width: 100%; }
 .honors-report-panel .report-actions select { min-width: 0; max-width: 100%; width: 100%; }
 /* The print report's controls (#827): a segmented mode switch, then year, member and the buttons in one row that wraps. */
-.honors-report-modes { display: inline-flex; max-width: 100%; border: 1px solid #cbdbe2; border-radius: 10px; overflow: hidden; margin: 8px 0 12px; }
+.honors-report-modes { display: inline-flex; max-width: 100%; border: 1px solid #cbdbe2; border-radius: 10px; margin: 8px 0 12px; }
 .honors-report-mode { flex: 1 1 auto; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 8px 16px; background: #fff; color: var(--ink); font-weight: 700; text-decoration: none; text-align: center; }
 .honors-report-mode + .honors-report-mode { border-left: 1px solid #cbdbe2; }
+.honors-report-mode:first-child { border-radius: 9px 0 0 9px; }
+.honors-report-mode:last-child { border-radius: 0 9px 9px 0; }
 .honors-report-mode[aria-current="page"] { background: var(--imsda-purple, #5b3a8c); color: #fff; }
-.honors-report-controls { align-items: flex-end; gap: 12px; margin-bottom: 12px; }
+.honors-report-panel .honors-report-controls { flex-direction: row; align-items: flex-end; gap: 12px; margin-bottom: 12px; }
 .honors-report-controls > label { display: grid; gap: 4px; flex: 0 1 160px; min-width: 0; font-weight: 700; }
 .honors-report-controls > label.honors-report-member { flex: 1 1 240px; }
 .honors-report-controls select { min-height: 44px; }
 .honors-report-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
-.honors-report-controls { flex-direction: row !important; }
 @media print { .honors-report-modes { display: none !important; } }
 @media (max-width: 640px) {
   .honors-report-modes { display: flex; }

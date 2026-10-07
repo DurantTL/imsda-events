@@ -252,13 +252,18 @@ describe("the club print report holds honor names and counts only (#819)", () =>
       expect(club).toContain("Club year");
       expect(club.match(/primary-button/g)).toHaveLength(1);
       expect(club).toContain("Show report");
-      expect(club).toContain("Print");
+      expect(club).toContain('report-print-button');
+      expect(club).toMatch(/aria-current="page"[^>]*>Whole club</);
+      expect(club).not.toMatch(/aria-current="page"[^>]*>One person</);
       const person = await render({ view: "person", member: "m1" });
       expect(person).toContain("Member");
       expect(person.match(/primary-button/g)).toHaveLength(1);
       expect(person).toContain("Show report");
-      expect(person).toContain("Print");
+      expect(person).toContain('report-print-button');
+      expect(person).toMatch(/aria-current="page"[^>]*>One person</);
+      expect(person).not.toMatch(/aria-current="page"[^>]*>Whole club</);
       const asking = await render({ view: "person" });
+      expect(asking).not.toContain("report-print-button");
       expect(asking.match(/primary-button/g)).toHaveLength(1);
     });
 

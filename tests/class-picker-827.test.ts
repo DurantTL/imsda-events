@@ -44,6 +44,8 @@ describe("class tracking class picker (#827)", () => {
     expect(classes).toContain('value="Guide"');
     const honors = renderToStaticMarkup(createElement(HonorCombobox, { label: "Honor", onChange: () => {}, options: [], value: "" }));
     expect(honors).toContain("Type to search honors");
+    expect(honors).toContain("No honor matches");
+    expect(classes).not.toContain("No honor matches");
   });
 
   it("still posts the chosen class level with the shown, selected members", () => {
