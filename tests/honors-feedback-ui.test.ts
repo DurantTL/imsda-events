@@ -33,8 +33,8 @@ describe("HonorPillList (#790)", () => {
   });
 
   it("names the status in the pill only when asked", () => {
-    expect(pill({ honors: honors(1), showStatus: true })).toContain("Honor 1 · Completed");
-    expect(pill({ honors: honors(1) })).not.toContain("· Completed</span>");
+    expect(pill({ honors: honors(1), showStatus: true })).toContain('<span class="honor-pill-text">Honor 1</span><span class="honor-pill-status">Completed</span>');
+    expect(pill({ honors: honors(1) })).not.toContain("Completed</span>");
   });
 });
 

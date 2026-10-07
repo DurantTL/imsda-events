@@ -3,6 +3,7 @@ import {
   type ClubHonorsRow,
   type MemberHonorEntryRecord,
   clubHonorsCsv,
+  CLUB_HONORS_CSV_HEADERS,
   currentHonorsFromHistory,
   filterClubHonorsRows,
   honorSummaryByMemberId,
@@ -128,6 +129,14 @@ describe("filterClubHonorsRows and clubHonorsCsv", () => {
     expect(csv).toContain("Basic Rescue");
     expect(csv).toContain("Completed");
     expect(csv).not.toMatch(/birth|dietary|allerg|medical|insurance/i);
+  });
+
+  it("starts with the page's own columns (name, current class) and names the class as the screen does (#811)", () => {
+    const lines = clubHonorsCsv(rows).split(/\r?\n/);
+    expect(lines[0]).toBe(CLUB_HONORS_CSV_HEADERS.map((header) => `"${header}"`).join(","));
+    expect(lines[1]).toContain("Explorer");
+    // A member with no honors still has a line, with the honor columns empty.
+    expect(lines.some((line) => line.includes("Diaz") && line.includes("Explorer"))).toBe(true);
   });
 
   it("maps current honors by roster member id for the roster card", () => {
