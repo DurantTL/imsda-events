@@ -146,6 +146,8 @@ const pages: PageSpec[] = [
   club("monthly-records", "/records"),
   club("monthly-report-form", `/records?month=${reportMonth}`),
   club("orders", "/orders"),
+  // Meeting notes: the add popup is opened, saved and checked for the pinned "Saved" banner (#810).
+  club("meeting-notes", "/notes"),
   club("club-info", "/club-info"),
   club("forms", "/forms"),
   club("health", "/health"),
@@ -177,6 +179,8 @@ const pages: PageSpec[] = [
   staff("lodging-assignments", "/more/lodging/assignments"),
   staff("kitchen-report", "/more/kitchen-report"),
   staff("more-menu", "/more"),
+  // The More launcher as a system administrator: every switchable module card has Turn off, and its confirm must fit (#810).
+  staff("more-launcher-admin", "/overview", "system-admin"),
   staff("reports", "/more/reports"),
   staff("reports-clubs", "/more/reports/clubs"),
   staff("clubs-oversight", "/more/clubs"),
@@ -216,6 +220,8 @@ const pages: PageSpec[] = [
  * page (the first visible match); opening is harmless, and Escape closes it unsubmitted.
  */
 const dialogOpeners = [
+  // The More launcher trigger is a link, not a button (#741, #810).
+  'a[aria-haspopup="dialog"]',
   "[data-monthly-report-open]",
   "[data-meeting-note-add]",
   'button:has-text("Add to roster")',
@@ -963,6 +969,69 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
     await page.keyboard.press("Escape").catch(() => undefined);
     await page.waitForTimeout(100);
     if (page.url() !== bulkBefore) await page.goto(bulkBefore, { waitUntil: "load" });
+  }
+
+  // The More launcher's Turn off confirm (#810): open the launcher, press the first Turn off, and the
+  // confirm must fit, say the data is kept, and every control in it must be a big enough tap target.
+  // It is cancelled, never confirmed, so no module is changed.
+  if (spec.name === "staff-more-launcher-admin") {
+    const launcherName = `${spec.name} (turn off confirm)`;
+    try {
+      await page.locator('a[aria-haspopup="dialog"]:visible').first().click({ timeout: 3000 });
+      await page.waitForTimeout(250);
+      const toggle = page.locator(".more-launcher [data-module-toggle]:visible").first();
+      if ((await toggle.count()) === 0) {
+        record("dialog-open-failed", launcherName, width, "a system administrator sees no Turn off control in the More launcher");
+      } else {
+        await toggle.scrollIntoViewIfNeeded({ timeout: 3000 });
+        await toggle.click({ timeout: 3000 });
+        await page.waitForTimeout(250);
+        const confirmText = await page.locator(".more-launcher-confirm:visible").innerText({ timeout: 3000 }).catch(() => "");
+        if (!/data is kept/i.test(confirmText)) record("dialog-open-failed", launcherName, width, "the Turn off confirm did not say the data is kept");
+        const fit = await page.evaluate(dialogFitInPage);
+        dialogsOpened += fit.count;
+        for (const problem of fit.problems) record("dialog-too-tall", launcherName, width, problem);
+        const open = await page.evaluate(auditInPage, { touch, cards: width <= cardsMaxWidth, minTarget: touchTarget, tolerance: touchTolerance });
+        if (open.scrollWidth > open.innerWidth) record("horizontal-scroll", launcherName, width, `page is ${open.scrollWidth}px wide in a ${open.innerWidth}px window; sticking out: ${open.overflowers.join("; ") || "(nothing identified)"}`);
+        for (const target of open.smallTargets) record("small-tap-target", launcherName, width, target);
+        if (takeShots) await page.screenshot({ path: `${prefix}-launcher-confirm.jpg`, type: "jpeg", quality: 60 });
+      }
+    } catch (error) {
+      record("dialog-open-failed", launcherName, width, (error as Error).message.split("\n")[0] ?? "failed");
+    }
+    // First Escape cancels the confirm, the second closes the launcher.
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.waitForTimeout(100);
+  }
+
+  // The meeting-note popup after a save (#810): the green Saved banner is pinned at the top of the popup.
+  if (spec.name === "club-meeting-notes") {
+    const savedName = `${spec.name} (saved popup)`;
+    try {
+      const opener = page.locator("[data-meeting-note-add]:visible").first();
+      await opener.scrollIntoViewIfNeeded({ timeout: 3000 });
+      await opener.click({ timeout: 3000 });
+      await page.waitForTimeout(250);
+      await page.locator('[role="dialog"] textarea:visible').first().fill("Synthetic layout check note.");
+      await page.locator('[role="dialog"] button[type="submit"]:visible').first().click({ timeout: 3000 });
+      const banner = page.locator("[data-meeting-note-saved]:visible").first();
+      await banner.waitFor({ state: "visible", timeout: 8000 });
+      const box = await banner.boundingBox();
+      if (!box || box.y < -1 || box.y > 120) record("dialog-too-tall", savedName, width, `the Saved banner is not at the top of the popup (y=${box ? Math.round(box.y) : "none"})`);
+      if (!/^Saved$/.test((await banner.innerText()).trim())) record("dialog-open-failed", savedName, width, "the banner does not say Saved");
+      const fit = await page.evaluate(dialogFitInPage);
+      dialogsOpened += fit.count;
+      for (const problem of fit.problems) record("dialog-too-tall", savedName, width, problem);
+      const open = await page.evaluate(auditInPage, { touch, cards: width <= cardsMaxWidth, minTarget: touchTarget, tolerance: touchTolerance });
+      if (open.scrollWidth > open.innerWidth) record("horizontal-scroll", savedName, width, `page is ${open.scrollWidth}px wide in a ${open.innerWidth}px window; sticking out: ${open.overflowers.join("; ") || "(nothing identified)"}`);
+      for (const target of open.smallTargets) record("small-tap-target", savedName, width, target);
+      if (takeShots) await page.screenshot({ path: `${prefix}-note-saved.jpg`, type: "jpeg", quality: 60 });
+    } catch (error) {
+      record("dialog-open-failed", savedName, width, (error as Error).message.split("\n")[0] ?? "failed");
+    }
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.waitForTimeout(100);
   }
 
   if (takeShots) {

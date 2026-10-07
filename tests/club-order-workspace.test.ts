@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ADVENTSOURCE_URL, ClubOrderWorkspace, type ClubOrderWorkspaceData } from "@/components/club-order-workspace";
+import { ADVENTSOURCE_URL, ClubOrderWorkspace, ORDER_SECTION_IDS, orderSectionLinks, type ClubOrderWorkspaceData } from "@/components/club-order-workspace";
 import type { ClubStockRow } from "@/modules/club-supplies/repository";
 
 /**
@@ -200,5 +200,37 @@ describe("ClubOrderWorkspace (#654)", () => {
   it("shows names and items only, no other personal field", () => {
     const html = render(false);
     expect(html).not.toMatch(/birth|phone|email|guardian|allerg|medical|address/i);
+  });
+});
+
+describe("Orders page jump links (#810)", () => {
+  const nav = (html: string) => html.slice(html.indexOf('<nav aria-label="Jump to a part of this page"'), html.indexOf("</nav>", html.indexOf('<nav aria-label="Jump to a part of this page"')));
+
+  it("puts a short anchor nav at the top, before the order list, in page order", () => {
+    const html = render(false);
+    expect(html.indexOf('id="club-order-sections"')).toBeGreaterThan(html.indexOf("<h2>Orders</h2>"));
+    expect(html.indexOf('id="club-order-sections"')).toBeLessThan(html.indexOf("Your order list"));
+    const links = [...nav(html).matchAll(/href="#([^"]+)"/g)].map((match) => match[1]);
+    expect(links).toEqual(["club-order-list", "inventory", "club-order-waiting", "club-order-ready", "club-uniforms"]);
+  });
+
+  it("points every link at an element that exists, with the stable ids", () => {
+    const html = render(false);
+    for (const id of Object.values(ORDER_SECTION_IDS)) expect(html.match(new RegExp(`id="${id}"`, "g")), id).toHaveLength(1);
+    // The older supplies redirects land on #inventory and #club-uniforms, so those never change.
+    expect(ORDER_SECTION_IDS.supplies).toBe("inventory");
+    expect(ORDER_SECTION_IDS.uniforms).toBe("club-uniforms");
+  });
+
+  it("leaves out Orders waiting to arrive when none is waiting, and still resolves every link", () => {
+    const none = { ...data, batches: [] };
+    const html = render(false, none);
+    expect(nav(html)).not.toContain("club-order-waiting");
+    expect(orderSectionLinks(false).map((link) => link.label)).toEqual(["Order list", "Supplies", "Ready to hand out", "Uniforms"]);
+    for (const link of orderSectionLinks(false)) expect(html).toContain(`id="${link.id}"`);
+  });
+
+  it("shows the same nav to a view-only registrar", () => {
+    expect(render(true)).toContain('href="#club-uniforms"');
   });
 });

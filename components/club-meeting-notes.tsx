@@ -108,9 +108,12 @@ export function ClubMeetingNotes({
   const [baseline, setBaseline] = useState(() => JSON.stringify(emptyDraft(newMeetingDate)));
   const [confirmingDiscard, setConfirmingDiscard] = useState(false);
   const dirty = JSON.stringify(draft) !== baseline;
+  // The green "Saved" banner pinned to the top of the popup (#810): it appears after a save and goes away when the draft changes again.
+  const [justSaved, setJustSaved] = useState(false);
   const dialogRef = useAccessibleDialog<HTMLElement>(editorOpen, requestClose);
 
   function startAdd() {
+    setJustSaved(false);
     setBaseline(JSON.stringify(emptyDraft(newMeetingDate)));
     setConfirmingDiscard(false);
     setDraft(emptyDraft(newMeetingDate));
@@ -121,6 +124,7 @@ export function ClubMeetingNotes({
   }
 
   function startEdit(note: ClubMeetingNoteRecord) {
+    setJustSaved(false);
     setBaseline(JSON.stringify(draftFromNote(note)));
     setConfirmingDiscard(false);
     setDraft(draftFromNote(note));
@@ -132,6 +136,7 @@ export function ClubMeetingNotes({
 
   function cancel() {
     if (saving) return;
+    setJustSaved(false);
     setConfirmingDiscard(false);
     setAdding(false);
     setEditingId(null);
@@ -220,8 +225,12 @@ export function ClubMeetingNotes({
         return [...withoutThis, result.note!].sort((a, b) => (a.meetingDate < b.meetingDate ? 1 : -1));
       });
       setNotice(editingId ? "Meeting note updated." : "Meeting note added.");
+      // The popup stays open on the saved note so the confirmation is seen where the person is looking (#810).
+      setEditingId(result.note.id);
       setAdding(false);
-      setEditingId(null);
+      setBaseline(JSON.stringify(draft));
+      setConfirmingDiscard(false);
+      setJustSaved(true);
       // The report below prefills from this month's notes.
       router.refresh();
     } catch (caught) {
@@ -320,6 +329,7 @@ export function ClubMeetingNotes({
         <div className="modal-backdrop" role="presentation">
         <section aria-labelledby="meeting-note-dialog-title" aria-modal="true" className="modal-card modal-card-wide" ref={dialogRef} role="dialog" tabIndex={-1}>
         <form className="form-stack" onSubmit={save}>
+          {justSaved && !dirty && <div className="inline-notice success meeting-note-saved" data-meeting-note-saved="" role="status">Saved</div>}
           <div className="modal-head">
             <div>
               <p className="public-registration-eyebrow">{editingId ? "Edit meeting note" : "New meeting note"}</p>
@@ -404,7 +414,7 @@ export function ClubMeetingNotes({
 
           <div className="intro-actions">
             <button className="primary-button" disabled={saving} type="submit">{editingId ? "Save changes" : "Add meeting note"}</button>
-            <button className="secondary-button" disabled={saving} onClick={requestClose} type="button">Cancel</button>
+            <button className="secondary-button" disabled={saving} onClick={requestClose} type="button">{justSaved && !dirty ? "Close" : "Cancel"}</button>
           </div>
         </form>
         </section>

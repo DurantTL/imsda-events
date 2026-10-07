@@ -52,7 +52,8 @@ describe("staff page names (#685)", () => {
     expect(staffSubpageTitle("/more/lodging/requests")).toBe("Lodging requests");
     expect(staffSubpageTitle("/more/lodging/assignments")).toBe("Lodging assignments");
     expect(staffSubpageTitle("/more/program-assignments/run_1")).toBe("Assignment roster");
-    expect(staffSubpageTitle("/more")).toBeNull();
+    // /more is the Event modules page (#810): its header names it, while the tab keeps "More".
+    expect(staffSubpageTitle("/more")).toBe("Event modules");
     expect(staffSubpageTitle("/people")).toBeNull();
   });
 
@@ -60,7 +61,7 @@ describe("staff page names (#685)", () => {
     const pages: Record<string, string> = {
       overview: "overview", registrations: "people", attendeeList: "people/attendees", kitchenReport: "more/kitchen-report", payments: "finance", registrationForm: "registration-builder",
       emails: "communications", team: "staff", imports: "imports", systemManagement: "admin", checkIn: "check-in",
-      more: "more", honors: "more/honors", honorsRosters: "more/honors/rosters", promoCodes: "more/promo-codes",
+      more: "more", eventModules: "more", honors: "more/honors", honorsRosters: "more/honors/rosters", promoCodes: "more/promo-codes",
       attendeeSetup: "more/attendee-configuration", tags: "more/tags", eventSettings: "more/event-settings",
       clubPacket: "more/reports/clubs/packet/[organizationId]", checkInBook: "more/reports/clubs/check-in-book",
       clubReports: "more/reports/clubs", groupedPackets: "more/reports/packets", operationalReports: "more/reports",
@@ -75,7 +76,8 @@ describe("staff page names (#685)", () => {
     for (const [key, path] of Object.entries(pages)) {
       const file = pageFile(path);
       expect(existsSync(file), file).toBe(true);
-      expect(readFileSync(file, "utf8"), file).toContain(`title: staffPageTitles.${key}`);
+      // "more" is the nav label; the /more page itself is titled eventModules.
+      expect(readFileSync(file, "utf8"), file).toContain(`title: staffPageTitles.${key === "more" ? "eventModules" : key}`);
     }
   });
 });

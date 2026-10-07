@@ -58,7 +58,7 @@ export default async function ClubFormBuilderPage({ params }: { params: Promise<
           <ClubFormDraftDiscard templateKey={view.key} />
         ) : view.needsSync ? (
           <div className="inline-notice error" role="alert">
-            This form is behind the code and needs a sync first. An operator must run <code>npm run club-forms:sync</code>, then reload this page.
+            This form is behind the code and needs a sync first. Use the Sync templates button on the <Link href="/admin/club-forms">club forms page</Link>, then reload this page.
             {(view.draft !== null || view.draftBaseVersion !== null) && <ClubFormDraftDiscard templateKey={view.key} />}
           </div>
         ) : (

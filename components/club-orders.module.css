@@ -2,6 +2,10 @@
 .block { display: grid; gap: 10px; margin-top: 16px; }
 .block h3 { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--imsda-navy); font-size: max(var(--type-body-floor, 0px), .86rem); font-weight: 800; line-height: 1.35; }
 .block h3 svg { flex: 0 0 auto; }
+.jumpNav { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 12px; }
+.jumpLink { display: inline-flex; min-height: 44px; align-items: center; border: 1px solid var(--line); border-radius: 999px; color: var(--imsda-purple); padding: 6px 14px; font-size: max(var(--type-body-floor, 0px), .8rem); font-weight: 700; text-decoration: none; }
+.jumpLink:hover { background: var(--imsda-navy-soft); }
+.block, #club-uniforms { scroll-margin-top: 16px; }
 .list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; }
 .text { display: grid; flex: 1 1 200px; gap: 2px; min-width: 0; }

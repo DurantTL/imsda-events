@@ -205,6 +205,64 @@ describe("launcher panel markup", () => {
   });
 });
 
+describe("turning a module off from the launcher (#810)", () => {
+  const renderWith = (isSystemAdmin: boolean, eventId: string | null = "event_1") => renderToStaticMarkup(
+    createElement(MoreLauncherPanel, { cards: cardsFor({ isSystemAdmin }), isSystemAdmin, eventQuery: "?event=event_1", eventId: eventId ?? undefined, variant: "sidebar" }),
+  );
+
+  it("gives a system administrator a Turn off control on each switchable module card, and none on the universal tools", () => {
+    const markup = renderWith(true);
+    const switchable = eventModuleCatalog.filter((definition) => !definition.alwaysOn && definition.cardKey);
+    expect(switchable.length).toBeGreaterThan(0);
+    for (const definition of switchable) {
+      if (markup.includes(`data-card="${definition.cardKey}"`)) expect(markup).toContain(`aria-label="Turn off ${definition.title}"`);
+    }
+    expect(markup).toContain('data-module-toggle="merchandise"');
+    // Event settings and the other universal tools are never switchable.
+    expect(markup).toContain('data-card="event-settings"');
+    expect(markup).not.toContain('aria-label="Turn off Event settings"');
+    for (const definition of eventModuleCatalog.filter((entry) => entry.alwaysOn)) {
+      expect(markup).not.toContain(`aria-label="Turn off ${definition.title}"`);
+    }
+  });
+
+  it("shows an Event Admin the enabled modules with no toggles at all", () => {
+    const markup = renderWith(false);
+    expect(markup).toContain('data-card="merchandise"');
+    expect(markup).not.toContain("more-launcher-toggle");
+    expect(markup).not.toContain("data-module-toggle");
+    expect(markup).not.toContain("Turn off");
+  });
+
+  it("shows no toggle without a selected event, even to a system administrator", () => {
+    expect(renderWith(true, null)).not.toContain("data-module-toggle");
+  });
+
+  it("asks first, says the data is kept, and reuses the existing disable route and its audit", () => {
+    const source = readFileSync("components/more-launcher.tsx", "utf8");
+    expect(source).toContain('role="alertdialog"');
+    expect(source).toContain("The data is kept");
+    expect(source).toMatch(/modules\/\$\{encodeURIComponent\(confirming\.moduleKey\)\}`, \{ method: "DELETE" \}/);
+    // Cancel is the first focus, and Escape closes the confirm before the launcher.
+    expect(source).toContain("cancelRef.current?.focus()");
+  });
+
+  it("leaves an Event Admin without a toggle in the shell too", () => {
+    const AppShellElement = AppShell as ComponentType<Omit<Parameters<typeof AppShell>[0], "children">>;
+    const markup = renderToStaticMarkup(
+      createElement(
+        AppShellElement,
+        {
+          events: [{ id: "event_1", slug: "club-camporee", name: "Club Camporee", permissions: allPermissions, clubEvent: true, clubOversight: true }],
+          user: { displayName: "Riley Event Admin", email: "riley@imsda-events.test" },
+        },
+        createElement("p", null, "Workspace content"),
+      ),
+    );
+    expect(markup).not.toContain("more-launcher-toggle");
+  });
+});
+
 describe("launcher in the shell", () => {
   const AppShellElement = AppShell as ComponentType<Omit<Parameters<typeof AppShell>[0], "children">>;
   const shell = (extra: Record<string, unknown> = {}, user: { globalRole?: "SYSTEM_ADMIN" | null } = {}) => renderToStaticMarkup(

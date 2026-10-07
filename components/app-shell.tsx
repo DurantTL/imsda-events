@@ -298,6 +298,7 @@ export function AppShell({
                   isSystemAdmin={isSystemAdmin}
                   canRequestFeature={canRequestFeature}
                   eventQuery={eventQuery}
+                  eventId={selectedEventId || undefined}
                   userId={user.id ?? ""}
                   tipProps={tipProps(label)}
                 >
@@ -400,6 +401,7 @@ export function AppShell({
                 isSystemAdmin={isSystemAdmin}
                 canRequestFeature={canRequestFeature}
                 eventQuery={eventQuery}
+                eventId={selectedEventId || undefined}
                 userId={user.id ?? ""}
               >
                 <Icon aria-hidden="true" size={22} /><span>{mobileNavigationLabels[href] ?? label}</span>
