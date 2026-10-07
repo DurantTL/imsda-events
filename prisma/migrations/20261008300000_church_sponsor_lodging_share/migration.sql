@@ -14,10 +14,12 @@ CREATE TABLE "ChurchSponsorFinanceReview" (
     "invoiceVersionId" TEXT,
     "sourceKey" TEXT NOT NULL,
     "deltaCents" INTEGER NOT NULL,
+    "desiredShareCents" INTEGER NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "clearedAt" TIMESTAMP(3),
     "clearedByUserId" TEXT,
     "clearNote" TEXT,
+    "reviewedShareCents" INTEGER,
 
     CONSTRAINT "ChurchSponsorFinanceReview_pkey" PRIMARY KEY ("id")
 );

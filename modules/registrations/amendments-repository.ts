@@ -1445,6 +1445,9 @@ export async function amendRegistration(
     try {
       const permissionMessageIds: string[] = [];
       const amended = await prisma.$transaction(async (tx) => {
+        // The registration's lodging lock is the FIRST statement, before any read, so an amendment and a staff lodging edit take
+        // their locks in one order: lodging lock, then units, then the redemption row FOR UPDATE (#813).
+        await lockRegistrationLodging(tx, registrationId);
         const existing = await tx.registrationOperation.findUnique({
           where: {
             eventId_clientRequestId: {
@@ -1709,8 +1712,6 @@ export async function amendRegistration(
                 }
               ).discountAmountCents
             : 0;
-          // The lodging lock first, so an amendment and a staff lodging edit take their locks in one order (#813).
-          await lockRegistrationLodging(tx, registrationId);
           await tx.promoCodeRedemption.update({
             where: { registrationId },
             data: {

@@ -52,7 +52,7 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
       // The settings route sends the staff view only to someone who may read it; otherwise keep what is on screen.
       if (result.requests) setView(result.requests);
       setNotice(success);
-      if (result.result?.priceNeedsReview) setChargeChange(result.result);
+      if (result.result?.priceNeedsReview || result.result?.churchShare) setChargeChange(result.result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "That could not be saved.");
     } finally { setBusy(false); }
@@ -72,8 +72,8 @@ export function LodgingRequestsWorkspace({ eventName, initialView, canConfigure,
     {notice ? <p className="usage-note" role="status">{notice}</p> : null}
     {chargeChange !== null ? <p className="form-error" role="status" data-testid="charge-change">
       {chargeChangeSentence(chargeChange)}{" "}
-      Record the registrant&apos;s difference as an adjustment in{" "}
-      <a href={`/finance?event=${encodeURIComponent(view.eventId)}`}>Payments</a>; nothing is charged or refunded automatically.
+      {chargeChange.priceNeedsReview ? <>Record the registrant&apos;s difference as an adjustment in{" "}
+      <a href={`/finance?event=${encodeURIComponent(view.eventId)}`}>Payments</a>; nothing is charged or refunded automatically.</> : "Nothing is charged or refunded automatically."}
     </p> : null}
 
     <section className="panel" aria-labelledby="lodging-settings">

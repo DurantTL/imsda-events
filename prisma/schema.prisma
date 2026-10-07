@@ -2726,10 +2726,15 @@ model ChurchSponsorFinanceReview {
   /// The signed difference between what the church's share should be and what it is (and stays, while the invoice is
   /// finalized): the amount the finance office is asked to review. Updated in place while the flag is open.
   deltaCents              Int
+  /// What the church's share should be (the recompute) when this flag was last raised or updated.
+  desiredShareCents       Int
   createdAt               DateTime  @default(now())
   clearedAt               DateTime?
   clearedByUserId         String?
   clearNote               String?
+  /// Set when the finance office clears the flag: the share they reviewed. A later recompute raises a new flag only if it
+  /// differs from this figure. A flag that closes itself (the share returned to the invoiced amount) leaves it null.
+  reviewedShareCents      Int?
 
   event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
   registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)

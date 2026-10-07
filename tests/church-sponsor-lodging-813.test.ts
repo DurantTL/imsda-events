@@ -19,7 +19,7 @@ beforeEach(() => { dependencies.writeAuditLog.mockClear(); });
 type State = { discount: number; moved: number };
 
 /** A transaction double that behaves like the rows it replaces: an update really stores, a flag really opens and closes. */
-function transaction(options: { sponsored?: boolean; deferred?: boolean; finalized?: boolean; state?: State } = {}) {
+function transaction(options: { sponsored?: boolean; deferred?: boolean; finalized?: boolean; state?: State; reviewedShareCents?: number | null } = {}) {
   const state = options.state ?? { discount: 4_500, moved: 0 };
   let open: { id: string; deltaCents: number; sourceKey: string } | null = null;
   const tx = {
@@ -35,7 +35,9 @@ function transaction(options: { sponsored?: boolean; deferred?: boolean; finaliz
     event: { findUnique: vi.fn().mockResolvedValue({ billingMode: options.deferred ? "DEFERRED_ORGANIZATION_INVOICE" : "ATTENDEE_PAY" }) },
     invoiceVersion: { findFirst: vi.fn().mockResolvedValue(options.finalized ? { id: "inv_v1" } : null) },
     churchSponsorFinanceReview: {
-      findFirst: vi.fn().mockImplementation(async () => (open ? { id: open.id } : null)),
+      findFirst: vi.fn().mockImplementation(async ({ where }: { where: { reviewedShareCents?: unknown } }) => (
+        where.reviewedShareCents !== undefined ? (options.reviewedShareCents === undefined || options.reviewedShareCents === null ? null : { reviewedShareCents: options.reviewedShareCents }) : open ? { id: open.id } : null
+      )),
       create: vi.fn().mockImplementation(async ({ data }: { data: { deltaCents: number; sourceKey: string } }) => { open = { id: "flag_1", deltaCents: data.deltaCents, sourceKey: data.sourceKey }; return { id: "flag_1" }; }),
       update: vi.fn().mockImplementation(async ({ data }: { data: { deltaCents?: number; sourceKey?: string; clearedAt?: Date } }) => {
         if (data.clearedAt) open = null;
@@ -63,7 +65,9 @@ describe("the church's share is a recomputed figure, stored idempotently (#813)"
   it("says nothing moved, and writes no audit row, when the stored value already equals the recomputed one", async () => {
     const { tx } = transaction({ state: { discount: 4_500, moved: 2_000 } });
     expect(await set(tx, 2_000)).toEqual({ status: "UNCHANGED", churchName: "Synthetic Church", registrationOwedCents: 6_500 });
-    expect(tx.promoCodeRedemption.update).not.toHaveBeenCalled();
+    // The row is touched (same value) so a racing amendment on an older snapshot conflicts and retries; nothing is audited.
+    expect(tx.promoCodeRedemption.update).toHaveBeenCalledTimes(1);
+    expect(tx.promoCodeRedemption.update.mock.calls[0]![0].data).toEqual({ sponsorLodgingChangeCents: 2_000 });
     expect(dependencies.writeAuditLog).not.toHaveBeenCalled();
   });
 
@@ -135,6 +139,15 @@ describe("the finalized-invoice rule (#813)", () => {
     expect(flag()).toBeNull();
   });
 
+  it("once finance has cleared a flag, only a recompute that differs from the reviewed share raises another", async () => {
+    const same = transaction({ deferred: true, finalized: true, reviewedShareCents: 2_000 });
+    expect(await set(same.tx, 2_000)).toMatchObject({ status: "UNCHANGED" });
+    expect(same.tx.churchSponsorFinanceReview.create).not.toHaveBeenCalled();
+    const different = transaction({ deferred: true, finalized: true, reviewedShareCents: 2_000 });
+    expect(await set(different.tx, 2_500)).toEqual({ status: "FLAGGED", deltaCents: 500, churchName: "Synthetic Church" });
+    expect(different.tx.churchSponsorFinanceReview.create.mock.calls[0]![0].data).toMatchObject({ deltaCents: 500, desiredShareCents: 2_500 });
+  });
+
   it("an attendee-pay event has no invoice vehicle: an old invoice of the church never freezes the share", async () => {
     const { tx, state } = transaction({ deferred: false, finalized: true });
     expect(await set(tx, 2_000)).toMatchObject({ status: "UPDATED", deltaCents: 2_000 });
@@ -163,7 +176,7 @@ describe("the finance office's flags (#813)", () => {
   function clearPrisma(flag: { clearedAt: Date | null } | null, updated = 1) {
     const tx = {
       churchSponsorFinanceReview: {
-        findFirst: vi.fn().mockResolvedValue(flag && { id: "flag_1", churchId: "church_1", registrationId: "reg_1", deltaCents: 2_000, ...flag }),
+        findFirst: vi.fn().mockResolvedValue(flag && { id: "flag_1", churchId: "church_1", registrationId: "reg_1", deltaCents: 2_000, desiredShareCents: 4_000, ...flag }),
         updateMany: vi.fn().mockResolvedValue({ count: updated }),
       },
     };
@@ -173,7 +186,7 @@ describe("the finance office's flags (#813)", () => {
   it("clears a flag once, audited, changing no amount", async () => {
     const { tx, prisma } = clearPrisma({ clearedAt: null });
     await clearChurchSponsorFlag({ eventId: "event_1", flagId: "flag_1", actorUserId: "user_1", note: "  Revised through the invoice revision path  " }, prisma as never);
-    expect(tx.churchSponsorFinanceReview.updateMany.mock.calls[0]![0]).toMatchObject({ where: { id: "flag_1", clearedAt: null }, data: { clearedByUserId: "user_1", clearNote: "Revised through the invoice revision path" } });
+    expect(tx.churchSponsorFinanceReview.updateMany.mock.calls[0]![0]).toMatchObject({ where: { id: "flag_1", clearedAt: null }, data: { clearedByUserId: "user_1", clearNote: "Revised through the invoice revision path", reviewedShareCents: 4_000 } });
     const [entry] = dependencies.writeAuditLog.mock.calls.at(-1)!;
     expect(entry.action).toBe("CHURCH_SPONSOR_FLAG_CLEARED");
     dependencies.writeAuditLog.mockClear();

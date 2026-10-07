@@ -50,7 +50,8 @@ import {
   type RuleRow,
 } from "@/modules/lodging/preferences-domain";
 import { setChurchShare, type ChurchShareOutcome } from "@/modules/promo-codes/church-sponsor-lodging";
-import { LODGING_LINE_KEY, lodgingCharge, lodgingChargeImpact, promoContextOf, type RedemptionFact } from "@/modules/lodging/pricing";
+import { LODGING_LINE_KEY, currentLodgingChargeCents, lodgingCharge, lodgingChargeImpact, promoContextOf, type RedemptionFact } from "@/modules/lodging/pricing";
+import { isSerializationFailure, pauseBeforeRetry } from "@/lib/prisma-errors";
 import { isChurchBilledBillingMode } from "@/modules/club-registrations/per-person-price";
 import { lockEventLodgingUnits, lodgingTransactionTimeoutMs, nightsFor, touchEventLodgingCapacity } from "@/modules/lodging/service";
 
@@ -523,8 +524,25 @@ export async function saveLodgingRequest(
   const staff = input.actor.kind === "STAFF";
   const parsed = staff ? staffLodgingRequestSchema.parse(input.raw) : lodgingRequestSchema.parse(input.raw);
   const reason: string | null = "reason" in parsed && typeof parsed.reason === "string" ? parsed.reason : null;
+  // A deadlock or serialization failure (40P01, 40001, P2034) wrote nothing: retry, the way an amendment does, rather than a 500.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await saveLodgingRequestOnce(input, client, { staff, parsed, reason, now });
+    } catch (error) {
+      if (!isSerializationFailure(error) || attempt >= 5) throw error;
+      await pauseBeforeRetry(attempt);
+    }
+  }
+}
+
+async function saveLodgingRequestOnce(
+  input: { eventId: string; registrationId: string; actor: Actor; raw: unknown; sourceFormVersionId?: string | null },
+  client: PrismaClient,
+  prepared: { staff: boolean; parsed: ReturnType<typeof staffLodgingRequestSchema.parse> | ReturnType<typeof lodgingRequestSchema.parse>; reason: string | null; now: Date },
+): Promise<SaveRequestResult> {
+  const { staff, parsed, reason, now } = prepared;
   return client.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`lodging-request:${input.registrationId}`}))`;
+    await lockRegistrationLodging(tx, input.registrationId);
     const context = await loadContext(tx, input.eventId);
     const registration = await loadRegistration(tx, input.eventId, input.registrationId);
     assertActiveRegistration(registration.status);
@@ -770,11 +788,16 @@ export async function saveLodgingRequest(
     const churchShare = staff && promoContext?.promo?.sponsored
       ? await recomputeChurchShare(tx, { eventId: input.eventId, registrationId: input.registrationId, sourceKey: `lodging:${createdVersion.id}`, actorUserId: input.actor.kind === "STAFF" ? input.actor.userId : null })
       : null;
+    // One computation for both figures (#813): for a church-sponsored code the sponsor's share of this edit is the recompute's own
+    // change to the church's share, and the registrant's amount to record is the list change less that, so staff never see two
+    // different numbers. (A flagged share did not move; it keeps the per-edit figure.)
+    const sponsorDelta = churchShare?.status === "UPDATED" ? churchShare.deltaCents : churchShare?.status === "UNCHANGED" ? 0 : null;
     const costContext = promoContext && cumulative ? { originallyChargedCents: promoContext.lodgingCents, requestNowCostsCents: nextCents } : {};
     return { requestId: request.id, version, changed: true, afterDeadline: staff && pastDeadline, ...(staff && chargeChanges && impact
       ? {
-          priceNeedsReview: true, chargeDeltaCents: impact.listDeltaCents, registrantDeltaCents: impact.registrantDeltaCents,
-          sponsorDeltaCents: impact.promo?.sponsored ? impact.discountDeltaCents : 0, belowMinimumAfter: cumulative?.belowMinimumAfter ?? false,
+          priceNeedsReview: true, chargeDeltaCents: impact.listDeltaCents,
+          registrantDeltaCents: sponsorDelta === null ? impact.registrantDeltaCents : impact.listDeltaCents - sponsorDelta,
+          sponsorDeltaCents: sponsorDelta ?? (impact.promo?.sponsored ? impact.discountDeltaCents : 0), belowMinimumAfter: cumulative?.belowMinimumAfter ?? false,
           promo: impact.promo, ...(churchShare ? { churchShare } : {}), ...costContext,
         }
       : churchShare && churchShare.status !== "UNCHANGED" ? { churchShare, promo: promoContext?.promo ? { code: promoContext.promo.code, coversLodging: promoContext.promo.coversLodging, sponsored: promoContext.promo.sponsored } : null } : {}) };
@@ -1073,49 +1096,68 @@ export async function lockRegistrationLodging(tx: Prisma.TransactionClient, regi
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`lodging-request:${registrationId}`}))`;
 }
 
+export type ChurchShareFigures = {
+  promo: NonNullable<ReturnType<typeof promoContextOf>["promo"]>;
+  otherCents: number;
+  storedLodgingCents: number;
+  currentLodgingCents: number;
+  /** What the church's share should be now. */
+  desiredCents: number;
+};
+
 /**
- * The church's share of this registration's lodging, recomputed from the registration as it is now (#813), and stored (or,
- * for a finalized invoice, flagged) by `setChurchShare`. Called on every staff lodging edit and on every amendment that
- * recomputes the discount, in the caller's transaction, after the lodging lock is taken:
+ * The church's share of this registration's lodging as it should be now (#813): read-only, so the deploy report can use it.
  *
  *   share = discount(other lines + current lodging charge) - discount(other lines + stored lodging line)
  *
  * with the code's real percent, cap and minimum (`lodgingChargeImpact`, the amendment's own formula). The current lodging
- * charge is the stored line moved by what staff edits changed: the current request against the first (submitted) request,
- * both priced at TODAY's rates. A rate change alone therefore moves nothing, a revert to the submitted request returns the
- * share to exactly zero whatever the rates did in between, and the next edit or amendment starts from here. `pricing` is the
- * amended pricing snapshot when an amendment has not written its operation row yet.
+ * charge is the stored line plus what the current request costs against the request that was priced into the stored line
+ * (the `REGISTRATION_FORM` version; none means the registration was submitted without lodging, whose baseline is 0), both
+ * priced at TODAY's rates. A rate change alone therefore moves nothing; a revert returns the share to zero whatever the
+ * rates did in between; lodging added after submission counts in full. `pricing` is the amended pricing snapshot when an
+ * amendment has not written its operation row yet. Null when the registration has no church-sponsored registration-level code.
+ */
+export async function computeChurchShare(client: Client, input: { eventId: string; registrationId: string; pricing?: Record<string, unknown> }): Promise<ChurchShareFigures | null> {
+  const promoContext = await loadPromoContext(client, input.eventId, input.registrationId, input.pricing);
+  if (!promoContext.promo?.sponsored) return null;
+  let currentLodgingCents = promoContext.lodgingCents;
+  const current = (await loadCurrentRequests(client, input.eventId, { registrationId: input.registrationId }))[0];
+  if (current) {
+    const context = await loadContext(client, input.eventId);
+    if (!context.churchBilled) {
+      const priced = await client.eventLodgingRequestVersion.findFirst({ where: { requestId: current.requestId, source: "REGISTRATION_FORM" }, orderBy: { version: "asc" } });
+      const rates = await loadRates(client, context.eventLodgingId);
+      const { capacity } = await loadCategoryCapacity(client, context);
+      const costOf = (row: { category: LodgingCategory | null; firstNight: string | null; lastNight: string | null; partySize: number; roomCount: number }) => {
+        if (!row.category) return 0;
+        const charge = lodgingCharge({ category: row.category, nights: requestNights(row, context.nights).length, partySize: row.partySize, rates, ignoreMinimum: true, units: capacity[row.category]?.roomBased ? row.roomCount : 1 });
+        return charge.kind === "CHARGE" ? charge.line.amountCents : 0;
+      };
+      const baselineCents = priced
+        ? costOf({ category: priced.category, firstNight: priced.firstNight ? toNight(priced.firstNight) : null, lastNight: priced.lastNight ? toNight(priced.lastNight) : null, partySize: priced.partySize, roomCount: priced.roomCount })
+        : 0;
+      currentLodgingCents = currentLodgingChargeCents({ storedCents: promoContext.lodgingCents, currentRequestCents: costOf(current), baselineRequestCents: baselineCents });
+    }
+  }
+  const impact = lodgingChargeImpact({ otherCents: promoContext.otherCents, promo: promoContext.promo, fromCents: promoContext.lodgingCents, toCents: currentLodgingCents });
+  return { promo: promoContext.promo, otherCents: promoContext.otherCents, storedLodgingCents: promoContext.lodgingCents, currentLodgingCents, desiredCents: impact.discountDeltaCents };
+}
+
+/**
+ * Recompute the church's share (`computeChurchShare`) and store it, or flag it for a finalized invoice (`setChurchShare`).
+ * Called on every staff lodging edit and on every amendment that recomputes the discount, in the caller's transaction, with
+ * the registration's lodging lock taken first.
  */
 export async function recomputeChurchShare(
   tx: Prisma.TransactionClient,
   input: { eventId: string; registrationId: string; sourceKey: string; actorUserId: string | null; pricing?: Record<string, unknown> },
 ): Promise<ChurchShareOutcome | null> {
   await lockRegistrationLodging(tx, input.registrationId);
-  const promoContext = await loadPromoContext(tx, input.eventId, input.registrationId, input.pricing);
-  if (!promoContext.promo?.sponsored) return null;
-  let currentLodgingCents = promoContext.lodgingCents;
-  const current = (await loadCurrentRequests(tx, input.eventId, { registrationId: input.registrationId }))[0];
-  if (current) {
-    const context = await loadContext(tx, input.eventId);
-    if (!context.churchBilled) {
-      const first = await tx.eventLodgingRequestVersion.findFirst({ where: { requestId: current.requestId, version: 1 } });
-      const rates = await loadRates(tx, context.eventLodgingId);
-      const { capacity } = await loadCategoryCapacity(tx, context);
-      const costOf = (row: { category: LodgingCategory | null; firstNight: string | null; lastNight: string | null; partySize: number; roomCount: number }) => {
-        if (!row.category) return 0;
-        const charge = lodgingCharge({ category: row.category, nights: requestNights(row, context.nights).length, partySize: row.partySize, rates, ignoreMinimum: true, units: capacity[row.category]?.roomBased ? row.roomCount : 1 });
-        return charge.kind === "CHARGE" ? charge.line.amountCents : 0;
-      };
-      const firstCost = first
-        ? costOf({ category: first.category, firstNight: first.firstNight ? toNight(first.firstNight) : null, lastNight: first.lastNight ? toNight(first.lastNight) : null, partySize: first.partySize, roomCount: first.roomCount })
-        : costOf(current);
-      currentLodgingCents = Math.max(0, promoContext.lodgingCents + costOf(current) - firstCost);
-    }
-  }
-  const impact = lodgingChargeImpact({ otherCents: promoContext.otherCents, promo: promoContext.promo, fromCents: promoContext.lodgingCents, toCents: currentLodgingCents });
+  const figures = await computeChurchShare(tx, input);
+  if (!figures) return null;
   return setChurchShare(tx, {
-    eventId: input.eventId, registrationId: input.registrationId, desiredCents: impact.discountDeltaCents, sourceKey: input.sourceKey,
-    basis: { currentLodgingCents, storedLodgingCents: promoContext.lodgingCents }, actorUserId: input.actorUserId,
+    eventId: input.eventId, registrationId: input.registrationId, desiredCents: figures.desiredCents, sourceKey: input.sourceKey,
+    basis: { currentLodgingCents: figures.currentLodgingCents, storedLodgingCents: figures.storedLodgingCents }, actorUserId: input.actorUserId,
   });
 }
 

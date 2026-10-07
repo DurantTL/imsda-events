@@ -75,7 +75,15 @@ export async function setChurchShare(
     })
     : null;
   if (finalized) {
-    const difference = desired - stored;
+    // What the finance office last reviewed is the baseline once they have cleared a flag; before that, the stored share (the
+    // invoiced amount). Only a recompute that differs from it raises a flag, so a cleared flag does not come straight back.
+    const reviewed = await tx.churchSponsorFinanceReview.findFirst({
+      where: { registrationId: input.registrationId, reviewedShareCents: { not: null } },
+      orderBy: { clearedAt: "desc" },
+      select: { reviewedShareCents: true },
+    });
+    const baseline = reviewed?.reviewedShareCents ?? stored;
+    const difference = desired - baseline;
     const open = await tx.churchSponsorFinanceReview.findFirst({ where: { registrationId: input.registrationId, clearedAt: null }, select: { id: true } });
     if (difference === 0) {
       // Back at the invoiced amount: nothing is left for the finance office to review.
@@ -91,9 +99,9 @@ export async function setChurchShare(
       return { status: "UNCHANGED", churchName, registrationOwedCents: owed(stored) };
     }
     const flag = open
-      ? await tx.churchSponsorFinanceReview.update({ where: { id: open.id }, data: { deltaCents: difference, sourceKey: input.sourceKey, invoiceVersionId: finalized.id }, select: { id: true } })
+      ? await tx.churchSponsorFinanceReview.update({ where: { id: open.id }, data: { deltaCents: difference, desiredShareCents: desired, sourceKey: input.sourceKey, invoiceVersionId: finalized.id }, select: { id: true } })
       : await tx.churchSponsorFinanceReview.create({
-        data: { eventId: input.eventId, registrationId: input.registrationId, churchId, invoiceVersionId: finalized.id, sourceKey: input.sourceKey, deltaCents: difference },
+        data: { eventId: input.eventId, registrationId: input.registrationId, churchId, invoiceVersionId: finalized.id, sourceKey: input.sourceKey, deltaCents: difference, desiredShareCents: desired },
         select: { id: true },
       });
     await writeAuditLog({
@@ -108,7 +116,13 @@ export async function setChurchShare(
     return { status: "FLAGGED", deltaCents: difference, churchName };
   }
 
-  if (desired === stored) return { status: "UNCHANGED", churchName, registrationOwedCents: owed(stored) };
+  if (desired === stored) {
+    // Rewrite the row with the same value (no audit row: nothing changed). An amendment runs at Serializable and may hold a
+    // snapshot older than this edit's request version; its own write to this row then fails as a serialization conflict and is
+    // retried against the new request, instead of storing a figure recomputed from a request that is no longer current.
+    await tx.promoCodeRedemption.update({ where: { id: redemption.id }, data: { sponsorLodgingChangeCents: stored } });
+    return { status: "UNCHANGED", churchName, registrationOwedCents: owed(stored) };
+  }
   await tx.promoCodeRedemption.update({ where: { id: redemption.id }, data: { sponsorLodgingChangeCents: desired } });
   await writeAuditLog({
     eventId: input.eventId, actorUserId: input.actorUserId ?? undefined, action: "CHURCH_SPONSOR_SHARE_CHANGED",
@@ -172,19 +186,19 @@ export async function clearChurchSponsorFlag(
   return client.$transaction(async (tx) => {
     const flag = await tx.churchSponsorFinanceReview.findFirst({
       where: { id: input.flagId, eventId: input.eventId },
-      select: { id: true, churchId: true, registrationId: true, deltaCents: true, clearedAt: true },
+      select: { id: true, churchId: true, registrationId: true, deltaCents: true, desiredShareCents: true, clearedAt: true },
     });
     if (!flag) throw new ChurchSponsorFlagError("That flag was not found.", "FLAG_NOT_FOUND");
     const cleared = await tx.churchSponsorFinanceReview.updateMany({
       where: { id: flag.id, clearedAt: null },
-      data: { clearedAt: new Date(), clearedByUserId: input.actorUserId, clearNote: note },
+      data: { clearedAt: new Date(), clearedByUserId: input.actorUserId, clearNote: note, reviewedShareCents: flag.desiredShareCents },
     });
     if (cleared.count === 0) throw new ChurchSponsorFlagError("That flag was already cleared.", "ALREADY_CLEARED");
     await writeAuditLog({
       eventId: input.eventId, actorUserId: input.actorUserId, action: "CHURCH_SPONSOR_FLAG_CLEARED",
       entityType: "ChurchSponsorFinanceReview", entityId: flag.id,
       summary: "The finance office cleared a church sponsorship flag.",
-      metadata: { registrationId: flag.registrationId, churchId: flag.churchId, deltaCents: flag.deltaCents },
+      metadata: { registrationId: flag.registrationId, churchId: flag.churchId, deltaCents: flag.deltaCents, reviewedShareCents: flag.desiredShareCents },
     }, tx);
     return { id: flag.id };
   });

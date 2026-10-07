@@ -380,8 +380,10 @@ night, 3 nights"):
 
       using the code's real percent, cap and minimum (`lodgingChargeImpact`, the amendment's own `storedPromoDiscount`).
       "Stored lodging line" is the lodging line in the registration's current pricing snapshot. "Current lodging charge" is
-      the stored line moved by what staff edits changed: **the current request against the first (submitted) request, both
-      priced at today's rates**. So a **rate change alone moves nothing**; a **revert** to the submitted request returns the
+      the stored line moved by what staff edits changed: **the current request against the request that was priced into the
+      stored line (the `REGISTRATION_FORM` version), both priced at today's rates**. A registration submitted **without**
+      lodging has no such version: its stored line and baseline are both 0, so lodging added later by staff (or by an approved
+      change request) counts in full. So a **rate change alone moves nothing**; a **revert** to the submitted request returns the
       share to exactly zero whatever the rates did in between; a capped code can never take the church past its cap, because
       an amendment recomputes the share against the discount it just rewrote; and a retry, a repeat or a race (an amendment
       against a staff edit, both taking the lodging lock first) just recomputes from the registration as it is now.
@@ -393,6 +395,14 @@ night, 3 nights"):
       registrant's own total like every adjustment, so it would change what the registrant owes by the church's share (staff
       record the registrant's share in Payments as before). `sponsoredAdjustmentWhere` is unchanged: no adjustment is written.
       The column is in the transfer/substitution snapshot of the redemption.
+    - **Amendments racing edits.** An amendment takes the registration's lodging lock as the first statement of its transaction
+      (the same order as a staff edit: lodging lock, units, then the redemption row `FOR UPDATE`), and a staff edit rewrites the
+      redemption row even when the share does not change, so an amendment on an older snapshot conflicts and is retried against
+      the new request. Both the amendment and the lodging edit retry on deadlock and serialization errors (40P01, 40001, P2034).
+    - **One computation, two figures.** The sponsor's share of an edit is the recompute's own change to the church's share, and
+      the registrant's amount to record is the list change less that, so staff never see two different numbers. The church
+      sentence shows on **any** staff edit that moves the share, priced or not (an edit made under the #806 interim rule
+      is corrected the next time the registration is touched).
     - **What staff see.** The registrant's share is "the amount to record" (the Payments link stays). For the church: "Church's
       share for this registration: $X (updated automatically, +$Y with this change)", or "No change to the church's share" when
       nothing moved; the figure is for this registration, never the church's event total (finance data; lodging staff may lack
@@ -407,7 +417,9 @@ night, 3 nights"):
       audited as `CHURCH_SPONSOR_SHARE_FLAGGED`) is raised or updated in place instead, and closes itself if the share returns
       to the invoiced amount. The finance office sees it on **Owed by churches** (a list with a clear button, MANAGE_FINANCE),
       as a notice at the top of **Payments**, and on the **invoice** page; it is cleared with an optional note
-      (`CHURCH_SPONSOR_FLAG_CLEARED`). Clearing changes no amount and no invoice. On an **attendee-pay** event (where sponsored
+      (`CHURCH_SPONSOR_FLAG_CLEARED`). Clearing changes no amount and no invoice, and stores the share the finance office reviewed
+      (`reviewedShareCents`): a later recompute raises a new flag only if it differs from that figure, and the flag then shows
+      the difference from the reviewed (else the invoiced) amount. On an **attendee-pay** event (where sponsored
       codes live) there is no flag: an unrelated old invoice of the church can never freeze its share after a billing-mode
       change. (Lodging is never charged on an invoiced event, so today the flag path is reached only through
       `setChurchShare`; it is covered by the real-DB script and the unit tests so it works when sponsored amounts are invoiced.)
@@ -909,6 +921,19 @@ written by the shared CSV writer, so spreadsheet formulas are defused.
 | Registrant waitlist route (`/api/public/manage/<token>/lodging/waitlist`): join, accept, decline | a valid private registration link, for that registration only; rate limited like the other private-link edits |
 
 Every audit entry carries counts and ids, no names, and never an accessibility value.
+
+## Deploy notes: church shares of registrations edited before #813
+
+Before #813 a lodging edit never moved a church's bill, and #806 told staff to ask the finance office. After the deploy, the
+first staff lodging edit or amendment of such a registration recomputes the church's share, so its bill can move. **A human
+runs the read-only report before deploying** so finance can see what will move:
+
+    npm run report:church-share-drift
+
+It lists, for every church-sponsored registration-level redemption whose stored `sponsorLodgingChangeCents` differs from what
+the recompute gives, the registration id, event id, promo code id, church id and the stored, recomputed and difference amounts
+in cents, and the net change. Ids and amounts only; the whole run is one `READ ONLY` transaction (the database refuses a write),
+and it needs only `DATABASE_URL`. Nothing moves until a staff lodging edit or an amendment touches that registration.
 
 ## Checks
 

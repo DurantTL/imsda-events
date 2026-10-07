@@ -10,6 +10,7 @@ import { registrationFormDefinitionSchema, type FormCalculation } from "@/module
 import { priceAmendedRegistration } from "@/modules/registrations/amendments-repository";
 import { lodgingChargeImpact, promoContextOf, type RegistrationPromo } from "@/modules/lodging/pricing";
 import { storedPromoDiscount } from "@/modules/promo-codes/stored-discount";
+import { currentLodgingChargeCents } from "@/modules/lodging/pricing";
 import { CHURCH_SHARE_AUTOMATIC, buildReviewItems, chargeChangeSentence, churchSponsorShareMoves, type ReviewFacts } from "@/modules/lodging/preferences-domain";
 
 /** Synthetic amounts only (#803): what a lodging change really costs a registration that holds a saved promo code. */
@@ -259,5 +260,24 @@ describe("the figure for this edit is previous to next, not cumulative (#803 rou
     const sentence = chargeChangeSentence({ chargeDeltaCents: 2000, registrantDeltaCents: 1000, sponsorDeltaCents: 1000, originallyChargedCents: 4000, requestNowCostsCents: 10000, promo: { code: "HALF", coversLodging: true, sponsored: true } });
     expect(sentence).toContain("This edit changes the lodging charge by +$20.00");
     expect(sentence).toContain("Originally charged $40.00 at submission; the request now costs $100.00.");
+  });
+});
+
+describe("the current lodging charge the church's share is recomputed from (#813)", () => {
+  it("lodging added after submission counts in full: the baseline is 0 when no request was priced into the stored line", () => {
+    expect(currentLodgingChargeCents({ storedCents: 0, currentRequestCents: 4000, baselineRequestCents: 0 })).toBe(4000);
+    const promo = percent(5000, { sponsored: true, code: "CHURCH" });
+    // A $50 fee, a 50% church code, then staff add a $40 tent: the church share is $20, not $0.
+    const current = currentLodgingChargeCents({ storedCents: 0, currentRequestCents: 4000, baselineRequestCents: 0 });
+    expect(lodgingChargeImpact({ otherCents: 5000, fromCents: 0, toCents: current, promo }).discountDeltaCents).toBe(2000);
+  });
+
+  it("a request priced into the stored line moves it only by what edits changed, whatever the rates did", () => {
+    // Submitted with a $40 tent (stored $40), the tent now costs $50 a person: unchanged request, unchanged charge.
+    expect(currentLodgingChargeCents({ storedCents: 4000, currentRequestCents: 5000, baselineRequestCents: 5000 })).toBe(4000);
+    // Two people at the new rate: +$50 over the priced request.
+    expect(currentLodgingChargeCents({ storedCents: 4000, currentRequestCents: 10_000, baselineRequestCents: 5000 })).toBe(9000);
+    // Never below zero.
+    expect(currentLodgingChargeCents({ storedCents: 1000, currentRequestCents: 0, baselineRequestCents: 5000 })).toBe(0);
   });
 });
