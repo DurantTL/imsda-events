@@ -10,7 +10,8 @@ import { registrationFormDefinitionSchema, type FormCalculation } from "@/module
 import { priceAmendedRegistration } from "@/modules/registrations/amendments-repository";
 import { lodgingChargeImpact, promoContextOf, type RegistrationPromo } from "@/modules/lodging/pricing";
 import { storedPromoDiscount } from "@/modules/promo-codes/stored-discount";
-import { CHURCH_SPONSOR_CONTACT_LEAD, CHURCH_SPONSOR_WARNING, buildReviewItems, chargeChangeSentence, churchSponsorNeedsReview, type ReviewFacts } from "@/modules/lodging/preferences-domain";
+import { currentLodgingChargeCents } from "@/modules/lodging/pricing";
+import { CHURCH_SHARE_AUTOMATIC, buildReviewItems, chargeChangeSentence, churchSponsorShareMoves, type ReviewFacts } from "@/modules/lodging/preferences-domain";
 
 /** Synthetic amounts only (#803): what a lodging change really costs a registration that holds a saved promo code. */
 
@@ -59,13 +60,13 @@ describe("what a lodging change costs a registrant who holds a promo code", () =
     expect(impact.registrantDeltaCents).toBe(0);
     expect(impact.discountDeltaCents).toBe(-4000);
     expect(impact.promo).toEqual({ code: "CHURCH", coversLodging: true, sponsored: true });
-    const sentence = chargeChangeSentence({ chargeDeltaCents: impact.listDeltaCents, registrantDeltaCents: impact.registrantDeltaCents, sponsorDeltaCents: impact.discountDeltaCents, churchSponsorReview: true, promo: impact.promo });
-    expect(sentence.startsWith(CHURCH_SPONSOR_CONTACT_LEAD)).toBe(true);
+    const sentence = chargeChangeSentence({ chargeDeltaCents: impact.listDeltaCents, registrantDeltaCents: impact.registrantDeltaCents, sponsorDeltaCents: impact.discountDeltaCents, churchShare: { status: "UPDATED", deltaCents: -4000, churchName: "Example Church", registrationOwedCents: 6000 }, promo: impact.promo });
+    expect(sentence).toContain("The amount to record for the registrant is +$0.00.");
+    expect(sentence).toContain("Church's share for this registration: $60.00 (updated automatically, -$40.00 with this change).");
     expect(sentence).toContain("-$40.00 at list price");
     expect(sentence).toContain("the registrant's change is +$0.00");
     expect(sentence).toContain("the sponsor's share is -$40.00");
-    expect(sentence).not.toContain("Adjust Payments");
-    expect(sentence).toContain(CHURCH_SPONSOR_WARNING);
+    expect(sentence).not.toMatch(/finance office/i);
   });
 
   it("an older registration, whose code never covered lodging, keeps the old math: the registrant feels the list change", () => {
@@ -118,37 +119,49 @@ describe("the review queue shows the discounted figure beside the list one", () 
   });
 });
 
-describe("interim church-sponsor guidance (#803): nothing here changes a church's bill", () => {
-  it("warns, with the finance-office wording, only for a sponsored code whose share would move", () => {
-    expect(CHURCH_SPONSOR_WARNING).toBe("This registration's church sponsorship does not change automatically. The church's bill still reflects the original lodging. Contact the finance office before adjusting.");
-    expect(churchSponsorNeedsReview({ sponsored: true, discountDeltaCents: -2000 })).toBe(true);
-    expect(churchSponsorNeedsReview({ sponsored: true, discountDeltaCents: 0 })).toBe(false);
-    expect(churchSponsorNeedsReview({ sponsored: false, discountDeltaCents: -2000 })).toBe(false);
-    const sponsored = chargeChangeSentence({ chargeDeltaCents: -4000, registrantDeltaCents: -2000, sponsorDeltaCents: -2000, churchSponsorReview: true, originallyChargedCents: 4000, requestNowCostsCents: 8000, promo: { code: "HALFOFF", coversLodging: true, sponsored: true } });
-    expect(sponsored.startsWith(CHURCH_SPONSOR_CONTACT_LEAD)).toBe(true);
-    expect(sponsored).toContain("Originally charged $40.00 at submission; the request now costs $80.00.");
-    expect(sponsored).toContain(CHURCH_SPONSOR_WARNING);
-    expect(sponsored).toContain("-$20.00");
-    expect(sponsored).not.toContain("Adjust Payments");
-    expect(chargeChangeSentence({ chargeDeltaCents: -4000, registrantDeltaCents: -2000, sponsorDeltaCents: 0, promo: { code: "FLAT", coversLodging: true, sponsored: false } })).not.toContain(CHURCH_SPONSOR_WARNING);
+describe("church-sponsored lodging changes update the church automatically (#813)", () => {
+  it("knows when a sponsored code's share moves, and only then", () => {
+    expect(churchSponsorShareMoves({ sponsored: true, discountDeltaCents: -2000 })).toBe(true);
+    expect(churchSponsorShareMoves({ sponsored: true, discountDeltaCents: 0 })).toBe(false);
+    expect(churchSponsorShareMoves({ sponsored: false, discountDeltaCents: -2000 })).toBe(false);
   });
 
-  it("flags the queue item CHURCH_SPONSOR_REVIEW, on a requested change and on a charge that differs, and not otherwise", () => {
+  it("tells staff the registrant's share is the amount to record and the church's share was updated automatically", () => {
+    const updated = chargeChangeSentence({ chargeDeltaCents: -4000, registrantDeltaCents: -2000, sponsorDeltaCents: -2000, churchShare: { status: "UPDATED", deltaCents: -2000, churchName: "Example Church", registrationOwedCents: 2000 }, originallyChargedCents: 4000, requestNowCostsCents: 8000, promo: { code: "HALFOFF", coversLodging: true, sponsored: true } });
+    expect(updated).toContain("The amount to record for the registrant is -$20.00.");
+    expect(updated).toContain("Church's share for this registration: $20.00 (updated automatically, -$20.00 with this change).");
+    const unchanged = chargeChangeSentence({ chargeDeltaCents: 100, registrantDeltaCents: 100, sponsorDeltaCents: 0, churchShare: { status: "UNCHANGED", churchName: "Example Church", registrationOwedCents: 4500 }, promo: { code: "HALFOFF", coversLodging: true, sponsored: true } });
+    expect(unchanged).toContain("No change to the church's share");
+    expect(unchanged).not.toContain("updated automatically");
+    expect(updated).toContain("Originally charged $40.00 at submission; the request now costs $80.00.");
+    expect(updated).not.toMatch(/contact the finance office|does not change automatically/i);
+    expect(chargeChangeSentence({ chargeDeltaCents: -4000, registrantDeltaCents: -2000, sponsorDeltaCents: 0, promo: { code: "FLAT", coversLodging: true, sponsored: false } })).not.toContain("church");
+  });
+
+  it("a finalized church invoice is not changed: the sentence says it was flagged for the finance office", () => {
+    const flagged = chargeChangeSentence({ chargeDeltaCents: 4000, registrantDeltaCents: 2000, sponsorDeltaCents: 2000, churchShare: { status: "FLAGGED", deltaCents: 2000, churchName: "Example Church" }, promo: { code: "HALFOFF", coversLodging: true, sponsored: true } });
+    expect(flagged).toContain("The amount to record for the registrant is +$20.00.");
+    expect(flagged).toContain("The church's invoice is already finalized, so the church's share (+$20.00) was not changed; the finance office has been flagged to review it.");
+    expect(flagged).not.toContain("updated automatically");
+  });
+
+  it("queue items say the church share is automatic, carry no review flag, and still tell staff to record the registrant's share", () => {
     const nights = ["2027-06-15"];
     const registrations: ReviewFacts["registrations"] = new Map([["r1", { confirmationCode: "REG-1", label: "REG-1 (Alex Example)", active: true }]]);
     const facts = (overrides: Partial<ReviewFacts>): ReviewFacts => ({ nights, registrations, people: [], requests: [], roommates: [], rules: [], guardians: [], capacity: {}, ...overrides });
     const sponsored = { promoCode: "CHURCH", coversLodging: true, sponsored: true, registrantDeltaCents: 0, discountDeltaCents: 4000 };
     const [change] = buildReviewItems(facts({ changeRequests: [{ id: "c1", registrationId: "r1", category: "DORM_ROOM", chargedCents: 4000, requestedCents: 8000, impact: sponsored }] }));
-    expect(change?.flags).toEqual(["CHURCH_SPONSOR_REVIEW"]);
-    expect(change?.detail).toContain(CHURCH_SPONSOR_WARNING);
-    expect(change?.detail).toContain(CHURCH_SPONSOR_CONTACT_LEAD);
-    expect(change?.detail).not.toMatch(/adjust the charge in Payments/i);
+    expect(change?.detail).toContain(CHURCH_SHARE_AUTOMATIC);
+    expect(change?.detail).toContain("record the registrant's share in Payments");
+    expect(change?.detail).not.toMatch(/contact the finance office/i);
+    expect(change).not.toHaveProperty("flags");
     const price = buildReviewItems(facts({ lodgingCharges: [{ registrationId: "r1", chargedCents: 4000, currentCents: 8000, impact: sponsored }] })).find((item) => item.kind === "PRICE_DIFFERS");
-    expect(price?.flags).toEqual(["CHURCH_SPONSOR_REVIEW"]);
-    expect(price?.detail).toContain(CHURCH_SPONSOR_CONTACT_LEAD);
-    expect(price?.detail).not.toMatch(/adjust it in Payments/i);
+    expect(price?.detail).not.toContain("updated automatically");
+    expect(price?.detail).toContain("The church's share follows staff edits of the request, not rate changes.");
+    expect(price).not.toHaveProperty("flags");
     const plain = buildReviewItems(facts({ lodgingCharges: [{ registrationId: "r1", chargedCents: 4000, currentCents: 8000, impact: { ...sponsored, sponsored: false } }] })).find((item) => item.kind === "PRICE_DIFFERS");
-    expect(plain?.flags).toBeUndefined();
+    expect(plain?.detail).toContain("adjust it in Payments");
+    expect(plain?.detail).not.toContain(CHURCH_SHARE_AUTOMATIC);
   });
 
   it("says when a change would put the registration under the code's minimum", () => {
@@ -244,13 +257,40 @@ describe("the figure for this edit is previous to next, not cumulative (#803 rou
     expect(edit(4000, 8000)).toMatchObject({ registrantDeltaCents: 2000, discountDeltaCents: 2000 });
   });
   it("the cumulative picture is context only, and is worded as such", () => {
-    const sentence = chargeChangeSentence({ chargeDeltaCents: 2000, registrantDeltaCents: 1000, sponsorDeltaCents: 1000, churchSponsorReview: true, originallyChargedCents: 4000, requestNowCostsCents: 10000, promo: { code: "HALF", coversLodging: true, sponsored: true } });
+    const sentence = chargeChangeSentence({ chargeDeltaCents: 2000, registrantDeltaCents: 1000, sponsorDeltaCents: 1000, originallyChargedCents: 4000, requestNowCostsCents: 10000, promo: { code: "HALF", coversLodging: true, sponsored: true } });
     expect(sentence).toContain("This edit changes the lodging charge by +$20.00");
     expect(sentence).toContain("Originally charged $40.00 at submission; the request now costs $100.00.");
   });
-  it("a church-flagged result with no figures for this edit still leads with the contact line", () => {
-    const sentence = chargeChangeSentence({ churchSponsorReview: true, originallyChargedCents: 4000, requestNowCostsCents: 4000, promo: { code: "HALF", coversLodging: true, sponsored: true } });
-    expect(sentence.startsWith(CHURCH_SPONSOR_CONTACT_LEAD)).toBe(true);
-    expect(sentence).toContain(CHURCH_SPONSOR_WARNING);
+});
+
+describe("the current lodging charge the church's share is recomputed from (#813)", () => {
+  it("lodging added after submission counts in full: the baseline is 0 when no request was priced into the stored line", () => {
+    expect(currentLodgingChargeCents({ storedCents: 0, currentRequestCents: 4000, baselineRequestCents: 0 })).toBe(4000);
+    const promo = percent(5000, { sponsored: true, code: "CHURCH" });
+    // A $50 fee, a 50% church code, then staff add a $40 tent: the church share is $20, not $0.
+    const current = currentLodgingChargeCents({ storedCents: 0, currentRequestCents: 4000, baselineRequestCents: 0 });
+    expect(lodgingChargeImpact({ otherCents: 5000, fromCents: 0, toCents: current, promo }).discountDeltaCents).toBe(2000);
+  });
+
+  it("a request priced into the stored line moves it only by what edits changed, whatever the rates did", () => {
+    // Submitted with a $40 tent (stored $40), the tent now costs $50 a person: unchanged request, unchanged charge.
+    expect(currentLodgingChargeCents({ storedCents: 4000, currentRequestCents: 5000, baselineRequestCents: 5000 })).toBe(4000);
+    // Two people at the new rate: +$50 over the priced request.
+    expect(currentLodgingChargeCents({ storedCents: 4000, currentRequestCents: 10_000, baselineRequestCents: 5000 })).toBe(9000);
+    // Never below zero.
+    expect(currentLodgingChargeCents({ storedCents: 1000, currentRequestCents: 0, baselineRequestCents: 5000 })).toBe(0);
+  });
+});
+
+describe("a church correction for an earlier change is shown apart (#813)", () => {
+  it("names the correction and keeps it out of this edit's registrant amount", () => {
+    const sentence = chargeChangeSentence({
+      chargeDeltaCents: 4000, registrantDeltaCents: 2000, sponsorDeltaCents: 2000, churchCorrectionCents: 2000,
+      churchShare: { status: "UPDATED", deltaCents: 4000, churchName: "Example Church", registrationOwedCents: 6500 },
+      promo: { code: "HALFOFF", coversLodging: true, sponsored: true },
+    });
+    expect(sentence).toContain("The amount to record for the registrant is +$20.00.");
+    expect(sentence).toContain("Church share corrected by +$20.00 for an earlier change.");
+    expect(chargeChangeSentence({ churchShare: { status: "UPDATED", deltaCents: 2000, churchName: "Example Church", registrationOwedCents: 4500 }, promo: { code: "HALFOFF", coversLodging: true, sponsored: true } })).not.toContain("corrected");
   });
 });

@@ -197,6 +197,7 @@ function fixture({
   ].filter((row) => activeMembers.includes(row.id));
   const operations = new Map<string, Record<string, unknown>>();
   const prisma = {
+    $executeRaw: vi.fn(async () => 0),
     // Opening seats at a location looks at the event's waitlist settings (#599); this event has none.
     event: { findUnique: vi.fn(async () => ({ id: "event-1", name: "Honors Weekend", capacity: null, waitlistEnabled: false, autoPromoteWaitlist: false })), findFirst: vi.fn(async () => ({
       id: "event-1", name: "Honors Weekend", startsAt: new Date("2026-12-05T15:00:00Z"), endsAt: new Date("2026-12-06T20:00:00Z"),

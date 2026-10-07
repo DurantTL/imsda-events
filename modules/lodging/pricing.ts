@@ -154,3 +154,13 @@ export function lodgingChargeImpact(input: { otherCents: number; fromCents: numb
     promo: { code: promo.code, coversLodging: promo.coversLodging, sponsored: promo.sponsored },
   };
 }
+
+/**
+ * The lodging charge a registration is actually charged now (#813): the stored lodging line moved by what the current request
+ * costs against the request that was priced into that line, both at today's rates. Submitted without lodging, the baseline is 0
+ * and the stored line is 0, so lodging added later counts in full; a rate change alone, or a revert to the priced request, moves
+ * nothing. Never below zero.
+ */
+export function currentLodgingChargeCents(input: { storedCents: number; currentRequestCents: number; baselineRequestCents: number }) {
+  return Math.max(0, input.storedCents + input.currentRequestCents - input.baselineRequestCents);
+}
