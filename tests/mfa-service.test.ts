@@ -23,6 +23,7 @@ import {
   confirmMfaEnrollment,
   disableMfa,
   issueMfaChallenge,
+  MAX_LIVE_CHALLENGES,
 } from "@/modules/access/mfa-service";
 import { hashOpaqueToken } from "@/modules/access/tokens";
 import { decodeBase32, totpCode, totpStep } from "@/modules/access/totp";
@@ -138,6 +139,7 @@ function prismaFixture(fixture: Fixture = {}) {
         return {};
       }),
       updateMany: vi.fn(async () => ({ count: 0 })),
+      findMany: vi.fn(async () => []),
     },
     $transaction: vi.fn(async (operations: unknown) => (
       Array.isArray(operations) ? Promise.all(operations) : (operations as () => unknown)()
@@ -220,6 +222,29 @@ describe("the sign-in challenge", () => {
     expect(JSON.stringify(created)).not.toContain(issued.challengeToken);
   });
 
+  it("keeps other devices' pending challenges and retires only the surplus beyond the cap (#825)", async () => {
+    const { prisma } = prismaFixture();
+    prisma.mfaChallenge.findMany.mockResolvedValue([{ id: "oldest-1" }, { id: "oldest-2" }] as never[]);
+
+    await issueMfaChallenge("user-1", "challenge", { now });
+
+    expect(prisma.mfaChallenge.findMany).toHaveBeenCalledWith(expect.objectContaining({ skip: MAX_LIVE_CHALLENGES }));
+    expect(MAX_LIVE_CHALLENGES).toBeGreaterThanOrEqual(4);
+    expect(prisma.mfaChallenge.updateMany).toHaveBeenCalledTimes(1);
+    expect(prisma.mfaChallenge.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["oldest-1", "oldest-2"] }, consumedAt: null },
+      data: { consumedAt: now },
+    });
+  });
+
+  it("retires nothing when 4 devices are signing in", async () => {
+    const { prisma } = prismaFixture();
+
+    await issueMfaChallenge("user-1", "challenge", { now });
+
+    expect(prisma.mfaChallenge.updateMany).not.toHaveBeenCalled();
+  });
+
   it("issues a session only after a valid code", async () => {
     prismaFixture();
 
@@ -263,7 +288,7 @@ describe("the sign-in challenge", () => {
     prismaFixture({ enrollment: { lastUsedStep: BigInt(totpStep(now)) } });
 
     await expect(completeMfaChallenge("token", totpCode(SECRET, now), { now }))
-      .rejects.toMatchObject({ code: "MFA_CODE_INVALID" });
+      .rejects.toMatchObject({ code: "MFA_CODE_ALREADY_USED" });
     expect(dependencies.createDatabaseSession).not.toHaveBeenCalled();
   });
 
