@@ -9,8 +9,10 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({ getPrisma: dependencies.getPrisma }));
 
 import {
+  CHECK_IN_MAX_ATTEMPTS,
   CheckInOperationError,
   checkInAttendee,
+  undoCheckIn,
 } from "@/modules/checkin/repository";
 
 const idempotencyKey = "d67776d0-f79d-4e8f-bec2-ee61abb7337c";
@@ -45,6 +47,7 @@ function fixture() {
     },
     auditLog: {
       create: vi.fn().mockResolvedValue({ id: "audit_1" }),
+      findFirst: vi.fn().mockResolvedValue({ actor: { displayName: "Dana Staff" } }),
     },
   };
   const prisma = {
@@ -75,6 +78,7 @@ describe("check-in repository", () => {
       checkIn: created,
       disposition: "CREATED",
       checkedIn: true,
+      checkedInBy: null,
     });
     expect(tx.checkIn.create).toHaveBeenCalledWith({
       data: {
@@ -107,6 +111,7 @@ describe("check-in repository", () => {
       checkIn: replay,
       disposition: "IDEMPOTENT_REPLAY",
       checkedIn: true,
+      checkedInBy: "Dana Staff",
     });
     expect(tx.registrationAttendee.findFirst).not.toHaveBeenCalled();
     expect(tx.checkIn.create).not.toHaveBeenCalled();
@@ -153,6 +158,7 @@ describe("check-in repository", () => {
       checkIn: active,
       disposition: "ALREADY_CHECKED_IN",
       checkedIn: true,
+      checkedInBy: "Dana Staff",
     });
     expect(tx.checkIn.create).not.toHaveBeenCalled();
     expect(tx.auditLog.create).not.toHaveBeenCalled();
@@ -216,6 +222,7 @@ describe("check-in repository", () => {
       checkIn: winner,
       disposition: "ALREADY_CHECKED_IN",
       checkedIn: true,
+      checkedInBy: "Dana Staff",
     });
     expect(prisma.$transaction).toHaveBeenCalledTimes(2);
     expect(tx.auditLog.create).not.toHaveBeenCalled();
@@ -240,6 +247,87 @@ describe("check-in repository", () => {
       checkedIn: false,
     });
     expect(tx.checkIn.create).not.toHaveBeenCalled();
+  });
+
+  it("only trusts an audit entry written with or after the active check-in", async () => {
+    const { prisma, tx } = fixture();
+    const active = checkInRecord({ id: "checkin_other" });
+    tx.registrationAttendee.findFirst.mockResolvedValue({
+      id: "attendee_123",
+      registration: { status: "CONFIRMED" },
+      checkIns: [active],
+    });
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await checkInAttendee("event_123", "attendee_123", "staff_1", idempotencyKey);
+
+    expect(tx.auditLog.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ createdAt: { gte: active.checkedInAt } }),
+    }));
+  });
+
+  it("names no one when the audit entry has no staff member", async () => {
+    const { prisma, tx } = fixture();
+    tx.auditLog.findFirst.mockResolvedValue(null);
+    tx.registrationAttendee.findFirst.mockResolvedValue({
+      id: "attendee_123",
+      registration: { status: "CONFIRMED" },
+      checkIns: [checkInRecord({ id: "checkin_other" })],
+    });
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await expect(checkInAttendee("event_123", "attendee_123", "staff_1", idempotencyKey))
+      .resolves.toMatchObject({ disposition: "ALREADY_CHECKED_IN", checkedInBy: null });
+  });
+
+  it("keeps retrying a serialization race with a pause, then reports a conflict", async () => {
+    const { prisma, tx } = fixture();
+    tx.checkIn.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError(
+        "Transaction failed due to a write conflict",
+        { code: "P2034", clientVersion: "6.19.3" },
+      ),
+    );
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await expect(checkInAttendee("event_123", "attendee_123", "staff_1", idempotencyKey))
+      .rejects.toMatchObject({ code: "CHECK_IN_OPERATION_CONFLICT" });
+    expect(prisma.$transaction).toHaveBeenCalledTimes(CHECK_IN_MAX_ATTEMPTS);
+    expect(CHECK_IN_MAX_ATTEMPTS).toBeGreaterThanOrEqual(6);
+  });
+
+  it("lets only one of two simultaneous undos write an audit entry", async () => {
+    const active = checkInRecord();
+    const tx = {
+      checkIn: {
+        findFirst: vi.fn().mockResolvedValue(active),
+        updateMany: vi.fn().mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 }),
+        findUniqueOrThrow: vi.fn().mockResolvedValue({ ...active, undoneAt: new Date() }),
+      },
+      auditLog: { create: vi.fn().mockResolvedValue({ id: "audit_1" }) },
+    };
+    const prisma = { $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)) };
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    const [first, second] = await Promise.all([
+      undoCheckIn("event_123", "attendee_123", "staff_1"),
+      undoCheckIn("event_123", "attendee_123", "staff_2"),
+    ]);
+
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns null when there is nothing active to undo", async () => {
+    const tx = {
+      checkIn: { findFirst: vi.fn().mockResolvedValue(null) },
+      auditLog: { create: vi.fn() },
+    };
+    const prisma = { $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)) };
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await expect(undoCheckIn("event_123", "attendee_123", "staff_1")).resolves.toBeNull();
+    expect(tx.auditLog.create).not.toHaveBeenCalled();
   });
 
   it("uses typed operation errors for conflict handling", () => {
