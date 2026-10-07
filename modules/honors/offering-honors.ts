@@ -39,11 +39,12 @@ export function summarizeOfferingHonors(rows: readonly HonorRow[]) {
 export type OfferingHonorSummary = ReturnType<typeof summarizeOfferingHonors>;
 
 /**
- * How a class's set of honors changes (#812). Once anyone is enrolled the set is
- * frozen, honor by honor: an honor can't be dropped (enrollees and written-back
- * records name it) and one can't be added (enrollees chose the class for the
- * honors it listed, so a new honor would enroll them in something they never
- * saw). Reordering the same honors changes nothing anyone is enrolled in.
+ * How a class's set of honors changes (#812). Staff can add or remove honors even
+ * after people enroll: enrollment is per class, so adding an honor gives the
+ * enrollees that honor (and the write-back includes it), and removing one takes
+ * it from them. The one exception is an honor already written back as completed
+ * for an enrollee of the class (`writtenBackRemovalMessage`). Reordering the same
+ * honors changes nothing anyone takes.
  */
 export function honorSetChange(current: readonly string[], next: readonly string[]) {
   const currentSet = new Set(current);
@@ -54,16 +55,33 @@ export function honorSetChange(current: readonly string[], next: readonly string
   return { added, removed, reordered, changed: added.length > 0 || removed.length > 0 };
 }
 
-/** Why a change to a class's honors is refused once clubs are enrolled, or null. Names the honors that block it. */
-export function honorSetLockMessage(
-  change: Pick<ReturnType<typeof honorSetChange>, "added" | "removed">,
-  nameOf: (honorId: string) => string,
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/**
+ * What staff are asked to confirm before honors change on a class people are
+ * enrolled in: "12 students are enrolled. They will now take: Birds + Knots."
+ */
+export function honorsNeedConfirmationMessage(enrolled: number, honorNames: readonly string[]) {
+  return `${plural(enrolled, "student")} ${enrolled === 1 ? "is" : "are"} enrolled. They will now take: ${joinHonorNames(honorNames)}.`;
+}
+
+/** Why an honor can't come off a class: it was already recorded as completed for enrollees. */
+export function writtenBackRemovalMessage(honorName: string, students: number) {
+  return `${honorName} was already recorded as completed for ${plural(students, "student")} in this class, so it can't be removed. Void those records first.`;
+}
+
+/**
+ * A stable order for lists of classes: by the class's honor names sorted
+ * alphabetically, so reordering the honors of a class never moves it.
+ */
+export function offeringSortKey(honors: ReadonlyArray<{ name: string }>) {
+  return honors.map((honor) => honor.name).sort((a, b) => a.localeCompare(b)).join(honorNameSeparator);
+}
+
+/** Compares two classes as the repositories load them (`honors` rows with their honor). */
+export function compareOfferingRows(
+  a: { id: string; honors: ReadonlyArray<HonorRow> },
+  b: { id: string; honors: ReadonlyArray<HonorRow> },
 ) {
-  if (change.removed.length === 0 && change.added.length === 0) return null;
-  const names = (ids: readonly string[]) => ids.map(nameOf).join(", ");
-  const parts = [
-    change.removed.length ? `${names(change.removed)} can't be removed` : "",
-    change.added.length ? `${names(change.added)} can't be added` : "",
-  ].filter(Boolean).join(" and ");
-  return `Clubs have already picked this class, so its honors are locked: ${parts}. Their order can still change. Delete the class (which removes those picks) or add a new one.`;
+  return offeringSortKey(a.honors.map((row) => row.honor)).localeCompare(offeringSortKey(b.honors.map((row) => row.honor))) || a.id.localeCompare(b.id);
 }

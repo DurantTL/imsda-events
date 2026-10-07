@@ -41,6 +41,8 @@ function fakeDatabase() {
     failNextOfferingUpdateWithUnique: false,
     /** Offerings whose picks were already written back into members' honor records. */
     writtenBackOfferingIds: [] as string[],
+    /** Honors written back as completed for enrollees of a class, with how many students (#812). */
+    writtenBackHonors: [] as Array<{ offeringId: string; honorId: string; count: number }>,
     /** Events where a club registers several teams (#809). */
     teamEvents: [] as string[],
   };
@@ -90,6 +92,9 @@ function fakeDatabase() {
       },
     },
     honorWeekendCompletionLink: {
+      groupBy: async ({ where }: { where: { honorId: { in: string[] }; enrollment: { offeringId: string } } }) => db.writtenBackHonors
+        .filter((row) => row.offeringId === where.enrollment.offeringId && where.honorId.in.includes(row.honorId))
+        .map((row) => ({ honorId: row.honorId, _count: { _all: row.count } })),
       count: async ({ where }: { where: { enrollment: { offeringId: { in: string[] } } } }) =>
         db.pickedOfferingIds.filter((offeringId) => where.enrollment.offeringId.in.includes(offeringId) && db.writtenBackOfferingIds.includes(offeringId)).length,
     },
@@ -196,8 +201,11 @@ function fakeDatabase() {
         return row;
       },
       update: async ({ where, data }: { where: Row; data: Row }) => Object.assign(db.offeringHonors.find((row) => row.id === where.id)!, data),
-      deleteMany: async ({ where }: { where: { id: { in: string[] } } }) => {
-        db.offeringHonors = db.offeringHonors.filter((row) => !where.id.in.includes(row.id));
+      deleteMany: async ({ where }: { where: { id?: { in: string[] }; offeringId?: string; honorId?: { notIn: string[] } } }) => {
+        db.offeringHonors = db.offeringHonors.filter((row) => {
+          if (where.id) return !where.id.in.includes(row.id);
+          return !(row.offeringId === where.offeringId && !where.honorId!.notIn.includes(row.honorId as string));
+        });
       },
     },
   };
@@ -836,30 +844,58 @@ describe("a class that teaches several honors (#812)", () => {
     expect(fake.db.offeringHonors.filter((row) => row.offeringId === knots)).toHaveLength(1);
   });
 
-  describe("once clubs have picked the class, per honor", () => {
+  describe("after people enrolled in the class", () => {
     let offeringId: string;
     beforeEach(async () => {
       await createHonorOffering("site-a", offeringInput({ honorId: undefined, honorIds: ["honor-knots", "honor-birds"] }), "staff-1");
       offeringId = fake.db.offerings[0].id as string;
-      fake.db.pickedOfferingIds.push(offeringId);
+      fake.db.pickedOfferingIds.push(offeringId, offeringId);
     });
+    const honorsOf = () => fake.db.offeringHonors.filter((row) => row.offeringId === offeringId).map((row) => row.honorId).sort();
 
-    it("can't drop an honor, and names it", async () => {
-      await expect(updateHonorOffering("site-a", offeringId, { honorIds: ["honor-knots"] }, "staff-1"))
-        .rejects.toMatchObject({ code: "OFFERING_HAS_PICKS", message: expect.stringContaining("Birds can't be removed") });
-      expect(fake.db.offeringHonors.filter((row) => row.offeringId === offeringId)).toHaveLength(2);
-    });
-
-    it("can't add an honor either, because enrollees would be enrolled in something they never saw", async () => {
+    it("asks for the enrolled count before the honors change, and says who will take what", async () => {
       await expect(updateHonorOffering("site-a", offeringId, { honorIds: ["honor-knots", "honor-birds", "honor-fire"] }, "staff-1"))
-        .rejects.toMatchObject({ code: "OFFERING_HAS_PICKS", message: expect.stringContaining("Fire Building can't be added") });
-      await expect(updateHonorOffering("site-a", offeringId, { honorIds: ["honor-knots", "honor-fire"] }, "staff-1"))
-        .rejects.toMatchObject({ message: expect.stringMatching(/Birds can't be removed and Fire Building can't be added/) });
+        .rejects.toMatchObject({
+          code: "HONORS_NEED_CONFIRMATION",
+          picks: 2,
+          message: "2 students are enrolled. They will now take: Knot Tying + Birds + Fire Building.",
+        });
+      await expect(updateHonorOffering("site-a", offeringId, { honorIds: ["honor-knots", "honor-birds", "honor-fire"], confirmEnrolled: 1 }, "staff-1"))
+        .rejects.toMatchObject({ code: "HONORS_NEED_CONFIRMATION", picks: 2 });
+      expect(honorsOf()).toEqual(["honor-birds", "honor-knots"]);
     });
 
-    it("still allows the same honors in another order, and seats, teacher and room", async () => {
+    it("adds an honor once the count is confirmed", async () => {
+      await updateHonorOffering("site-a", offeringId, { honorIds: ["honor-knots", "honor-birds", "honor-fire"], confirmEnrolled: 2 }, "staff-1");
+      expect(honorsOf()).toEqual(["honor-birds", "honor-fire", "honor-knots"]);
+    });
+
+    it("removes an honor once the count is confirmed", async () => {
+      await updateHonorOffering("site-a", offeringId, { honorIds: ["honor-knots"], confirmEnrolled: 2 }, "staff-1");
+      expect(honorsOf()).toEqual(["honor-knots"]);
+      expect(fake.db.offerings[0]).toMatchObject({ honorId: "honor-knots" });
+    });
+
+    it("refuses removing an honor already recorded as completed, with the number of students", async () => {
+      fake.db.writtenBackHonors.push({ offeringId, honorId: "honor-birds", count: 2 });
+      await expect(updateHonorOffering("site-a", offeringId, { honorIds: ["honor-knots"], confirmEnrolled: 2 }, "staff-1"))
+        .rejects.toMatchObject({
+          code: "HAS_WRITTEN_BACK_COMPLETIONS",
+          message: "Birds was already recorded as completed for 2 students in this class, so it can't be removed. Void those records first.",
+        });
+      expect(honorsOf()).toEqual(["honor-birds", "honor-knots"]);
+      // Another honor can still be removed, and honors can still be added.
+      await updateHonorOffering("site-a", offeringId, { honorIds: ["honor-birds", "honor-fire"], confirmEnrolled: 2 }, "staff-1");
+      expect(honorsOf()).toEqual(["honor-birds", "honor-fire"]);
+    });
+
+    it("needs no confirmation to reorder the same honors, or to change seats, teacher and room", async () => {
       await updateHonorOffering("site-a", offeringId, { honorIds: ["honor-birds", "honor-knots"], capacity: 30, teacherName: "A. Teacher" }, "staff-1");
       expect(fake.db.offerings[0]).toMatchObject({ honorId: "honor-birds", capacity: 30, teacherName: "A. Teacher" });
+    });
+
+    it("still refuses moving the class to another session or span", async () => {
+      await expect(updateHonorOffering("site-a", offeringId, { sessionId: "sun-a" }, "staff-1")).rejects.toMatchObject({ code: "OFFERING_HAS_PICKS" });
     });
 
     it("keeps an honor the catalog has since turned off", async () => {

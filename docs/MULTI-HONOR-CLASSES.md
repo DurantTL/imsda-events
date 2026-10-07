@@ -19,8 +19,11 @@ seat, and completing the class completes each honor. Honors Weekend only.
 - `HonorWeekendCompletionLink` gains `honorId` and is unique on
   (`enrollmentId`, `honorId`): one link, and one member honor record, per honor.
 - Migration `20261009100000_honor_offering_multiple_honors` is additive. It
-  backfills one row per existing class (and `honorId` on every existing link),
-  then moves the uniqueness rules. The partial indexes and triggers are
+  backfills one row per existing class, then moves the uniqueness rules. The
+  backfill statement skips a class that already has a row, so it is safe to run
+  again (the verify script runs the migration's own statement twice). Each
+  existing completion link takes its `honorId` from the member record it points
+  at, falling back to the class's honor only if that record were missing. The partial indexes and triggers are
   hand-written and are left alone by `prisma migrate diff`.
 
 ## Uniqueness rules (what changed and why)
@@ -38,24 +41,38 @@ class (`classSlotConflict`): an all-sessions honor can't also be in a single
 session at the same site, and two sites may teach the same honor. The same honor
 may still be taught in different sessions by different classes.
 
-## Lock once clubs have enrolled
+## Changing a class's honors after people enrolled
 
-The lock that freezes a class once anyone is enrolled is applied per honor:
+Decision (Caleb, Oct 7): staff can add or remove the honors a class teaches even
+after students have enrolled. Enrollment is per class, so the honors follow.
 
-- No honor can be **removed** (enrollees and written-back records name it).
-- No honor can be **added**. Adding was considered, because enrollment is per
-  class and the new honor would reach enrollees automatically. It is refused
-  because those enrollees chose the class for the honors it listed (and, after
-  the weekend, would be completed in an honor they never saw), and a human would
-  have to decide that. The refusal names the honors, for example "Birds can't be
-  removed and Fire Building can't be added".
-- The **order** of the same honors, and the seats, teacher, room, cost and
-  notes, can still change.
-- An honor the catalog has since turned off stays on a class that already
-  teaches it; a new inactive honor can't be added.
+- **Adding** an honor gives it to everyone enrolled, and the completion
+  write-back includes it for them.
+- **Removing** an honor takes it from them. The one refusal: an honor already
+  written back as completed for any enrollee of the class (a completion link)
+  can't be removed. The message says it "was already recorded as completed for N
+  students in this class" and tells staff to void those records first.
+- **Confirmation.** When the honors change on a class people are enrolled in, the
+  editor asks "12 students are enrolled. They will now take: Birds + Knots." and
+  sends that count back as `confirmEnrolled`. The server counts the enrollments
+  inside its serializable transaction and refuses a missing or stale number with
+  `HONORS_NEED_CONFIRMATION` and the live count, which the editor asks about
+  again. So an honor edit racing an enrollment either applies or asks again; it
+  never applies silently to a different number of students.
+- A class keeps at least one honor and at most 12.
+- Reordering the same honors, and seats, teacher, room, cost and notes, need no
+  confirmation.
+- **Still fixed once anyone is enrolled:** the class's session, span and site
+  (unchanged from before). An honor the catalog has since turned off stays on a
+  class that already teaches it; a new inactive honor can't be added.
+- An edit that both moves a class and changes its honors drops the removed honor
+  rows first, then moves the class (its remaining rows follow it), then adds the
+  new ones, so swapping the honor a destination session already teaches works.
 
 ## Enrollment, capacity and exports
 
+- Lists of classes (staff setup, the club picker) are ordered by the class's honor
+  names in alphabetical order, so reordering a class's honors never moves it.
 - Enrollment stays per class (`HonorEnrollment.offeringId`): one seat, one
   per-club-limit count, however many honors. The picker, rosters and exports show
   the class by its honors joined with " + " (`honorName`, `honorCode`).
@@ -75,4 +92,7 @@ second. Running it again, or twice at once, writes nothing twice.
 ## Checks
 
 `npm run test:multi-honor-classes` (real PostgreSQL) covers the backfill, the
-database rules, multi-honor enrollment, the lock, completion, exports and races.
+database rules, multi-honor enrollment, adding and removing honors after
+enrollment (including the refusal after write-back), editing honors while moving a
+class, completion, exports and races (seats, honor edits, an honor edit against an
+enrollment, write-backs).

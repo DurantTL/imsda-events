@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, TriangleAlert, X } from "lucide-react";
 import { honorOfferingSpanLabels, offeringPlacementPatch, sessionEditPatch } from "@/modules/honors/domain";
+import { honorSetChange, honorsNeedConfirmationMessage } from "@/modules/honors/offering-honors";
 import { HonorMultiSelect } from "@/components/honor-multi-select";
 import { siteChangePatch } from "@/modules/honors/locations";
 import type { HonorCopyPlan } from "@/modules/honors/copy";
@@ -228,8 +229,7 @@ export function HonorsSetupWorkspace({
       ...(editing
         ? {
           ...offeringPlacementPatch(editing, {
-            // A class clubs have picked keeps its honors; the server refuses any change to the set.
-            honorIds: editing.enrolled > 0 ? editing.honorIds : editHonorIds,
+            honorIds: editHonorIds,
             span: editSpan,
             // A disabled select (a class clubs picked) isn't submitted: fall back to the current session so it isn't read as a change.
             sessionId: editSpan === "SINGLE_SESSION" && !form.has("sessionId")
@@ -244,12 +244,12 @@ export function HonorsSetupWorkspace({
       setError("Choose at least one honor for the class.");
       return;
     }
-    if (editing && editing.enrolled === 0 && editHonorIds.length === 0) {
+    if (editing && editHonorIds.length === 0) {
       setError("Choose at least one honor for the class.");
       return;
     }
     const result = editing
-      ? await call(`${base}/offerings/${encodeURIComponent(editing.id)}`, "PATCH", details, "Class updated.")
+      ? await saveEditedOffering(editing, details)
       : await call(`${base}/offerings`, "POST", {
         honorIds: newHonorIds,
         span,
@@ -262,6 +262,44 @@ export function HonorsSetupWorkspace({
       formElement.reset();
     }
   }
+
+  /**
+   * Changing the honors of a class people are enrolled in asks first: "12 students are enrolled. They will now take:
+   * Birds + Knots." The count is sent back as the confirmation, and the server refuses a stale one with the live
+   * count, which is asked about again (#812).
+   */
+  async function saveEditedOffering(offering: Offering, details: Record<string, unknown>) {
+    const url = `${base}/offerings/${encodeURIComponent(offering.id)}`;
+    const names = editHonorIds.map((id) => honorOptions(offering).find((honor) => honor.id === id)?.name ?? id);
+    const ask = (enrolled: number) => window.confirm(`${honorsNeedConfirmationMessage(enrolled, names)} Save this change?`);
+    const changed = honorSetChange(offering.honorIds, editHonorIds).changed;
+    let confirmed: number | undefined;
+    if (changed && offering.enrolled > 0) {
+      if (!ask(offering.enrolled)) return null;
+      confirmed = offering.enrolled;
+    }
+    const pending: { enrolled: number | null } = { enrolled: null };
+    const needsConfirmation = (result: ApiResult) => {
+      if (result.error !== "HONORS_NEED_CONFIRMATION" || typeof result.picks !== "number") return false;
+      pending.enrolled = result.picks;
+      return true;
+    };
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      pending.enrolled = null;
+      const result = await call(url, "PATCH", { ...details, ...(confirmed === undefined ? {} : { confirmEnrolled: confirmed }) }, "Class updated.", needsConfirmation);
+      if (result || pending.enrolled === null) return result;
+      if (!ask(pending.enrolled)) return null;
+      confirmed = pending.enrolled;
+    }
+    setError("The number of enrolled students kept changing, so nothing was saved. Try again.");
+    return null;
+  }
+
+  /** The catalog plus the honors the class already teaches, even ones the catalog has since turned off. */
+  const honorOptions = (offering: Offering) => [
+    ...catalog,
+    ...offering.honors.filter((honor) => !catalog.some((entry) => entry.id === honor.id)),
+  ];
 
   async function toggleOffering(offering: Offering) {
     await call(
@@ -446,14 +484,13 @@ export function HonorsSetupWorkspace({
         </div>
         {editing && (
           <div className="form-grid two-column">
-            <HonorMultiSelect
-              label="Honors taught"
-              locked={editing.enrolled > 0}
-              lockedNote="Clubs have picked this class, so the honors it teaches are fixed: none can be removed or added. Its seats, teacher and room can still change."
-              onChange={setEditHonorIds}
-              options={[...catalog, ...editing.honors.filter((honor) => !catalog.some((entry) => entry.id === honor.id))]}
-              value={editing.enrolled > 0 ? editing.honorIds : editHonorIds}
-            />
+            <HonorMultiSelect label="Honors taught" onChange={setEditHonorIds} options={honorOptions(editing)} value={editHonorIds} />
+            {editing.enrolled > 0 && (
+              <p className="field-help">
+                {editing.enrolled} student{editing.enrolled === 1 ? " is" : "s are"} enrolled. Adding an honor gives it to them; removing one takes it
+                from them (unless it was already recorded as completed). You will be asked to confirm.
+              </p>
+            )}
             <label>
               Taught in
               <select disabled={editing.enrolled > 0} name="span" onChange={(event) => setEditSpan(event.target.value as typeof editSpan)} value={editSpan}>

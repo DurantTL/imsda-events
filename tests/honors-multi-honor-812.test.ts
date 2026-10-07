@@ -12,7 +12,9 @@ import { HonorMultiSelect } from "@/components/honor-multi-select";
 import { classSlotConflict, offeringPlacementPatch } from "@/modules/honors/domain";
 import {
   honorSetChange,
-  honorSetLockMessage,
+  honorsNeedConfirmationMessage,
+  writtenBackRemovalMessage,
+  compareOfferingRows,
   joinHonorNames,
   summarizeOfferingHonors,
 } from "@/modules/honors/offering-honors";
@@ -37,12 +39,19 @@ describe("how a class's set of honors changes", () => {
     expect(honorSetChange(["a", "b"], ["b", "c"])).toMatchObject({ added: ["c"], removed: ["a"], changed: true });
   });
 
-  it("words the lock per honor, and says nothing for a reorder", () => {
-    const names: Record<string, string> = { a: "Knots", b: "Fire", c: "Birds" };
-    const nameOf = (id: string) => names[id]!;
-    expect(honorSetLockMessage(honorSetChange(["a", "b"], ["b", "a"]), nameOf)).toBeNull();
-    expect(honorSetLockMessage(honorSetChange(["a", "b"], ["a"]), nameOf)).toContain("Fire can't be removed");
-    expect(honorSetLockMessage(honorSetChange(["a"], ["a", "c"]), nameOf)).toContain("Birds can't be added");
+  it("words the confirmation staff see, and the refusal for an honor already recorded as completed", () => {
+    expect(honorsNeedConfirmationMessage(12, ["Birds", "Knots"])).toBe("12 students are enrolled. They will now take: Birds + Knots.");
+    expect(honorsNeedConfirmationMessage(1, ["Birds"])).toBe("1 student is enrolled. They will now take: Birds.");
+    expect(writtenBackRemovalMessage("Birds", 3)).toBe("Birds was already recorded as completed for 3 students in this class, so it can't be removed. Void those records first.");
+  });
+
+  it("orders classes by their honor names alphabetically, so reordering a class's honors never moves it", () => {
+    const rows = (id: string, ...names: string[]) => ({ id, honors: names.map((name) => ({ honor: { id: name, code: name, name, isActive: true } })) });
+    const a = rows("1", "Knots", "Birds");
+    const reordered = rows("1", "Birds", "Knots");
+    const other = rows("2", "Camping");
+    expect([a, other].sort(compareOfferingRows).map((row) => row.id)).toEqual(["1", "2"]);
+    expect([reordered, other].sort(compareOfferingRows).map((row) => row.id)).toEqual(["1", "2"]);
   });
 });
 
@@ -93,6 +102,8 @@ describe("the class form's patch and the request schemas", () => {
     expect(honorOfferingInputSchema.safeParse({ ...base, honorIds: Array.from({ length: MAX_HONORS_PER_CLASS + 1 }, (_, index) => `h${index}`) }).success).toBe(false);
     expect(honorOfferingUpdateSchema.safeParse({ honorIds: [] }).success).toBe(false);
     expect(honorOfferingUpdateSchema.safeParse({ honorIds: [""] }).success).toBe(false);
+    expect(honorOfferingUpdateSchema.parse({ honorIds: ["a"], confirmEnrolled: 3 })).toEqual({ honorIds: ["a"], confirmEnrolled: 3 });
+    expect(honorOfferingUpdateSchema.safeParse({ confirmEnrolled: -1 }).success).toBe(false);
   });
 });
 
@@ -209,14 +220,6 @@ describe("the honor multi-select on the class form", () => {
     expect(html.match(/type="checkbox"/g)).toHaveLength(3);
     expect(html.match(/checked=""/g)).toHaveLength(2);
     expect(html).toContain('placeholder="Type to search honors"');
-  });
-
-  it("offers no way to change the set when it is locked, and still names the honors", () => {
-    const html = render({ locked: true, lockedNote: "Clubs have picked this class." });
-    expect(html).not.toContain('type="checkbox"');
-    expect(html).not.toContain('type="search"');
-    expect(html).toContain("Fire Building (RE-001)");
-    expect(html).toContain("Clubs have picked this class.");
   });
 
   it("says when nothing is chosen yet", () => {

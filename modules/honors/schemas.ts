@@ -99,8 +99,9 @@ export const honorOfferingInputSchema = z.preprocess(acceptSingleHonorId, z.obje
 
 /**
  * Every field set at creation can be edited (#615). The repository refuses a
- * change to the honors, span, session or site once clubs have picked the class
- * (#812: the set of honors is frozen once anyone is enrolled; their order isn't).
+ * change to the span, session or site once clubs have picked the class. The
+ * honors can change after people enroll (#812), with `confirmEnrolled`, unless an honor to remove was already
+ * written back as completed.
  */
 export const honorOfferingUpdateSchema = z.preprocess(acceptSingleHonorId, z.object({
   honorIds: honorIdsField,
@@ -116,6 +117,11 @@ export const honorOfferingUpdateSchema = z.preprocess(acceptSingleHonorId, z.obj
   isActive: z.boolean(),
   /** Only for an all-sessions class (#589). */
   locationId: z.string().min(1).max(64).nullable(),
+  /**
+   * The number of enrolled people staff were told would take the changed honors (#812). Needed when the set of honors
+   * changes on a class people are enrolled in; a stale number is refused with the live count, like `confirmPicks`.
+   */
+  confirmEnrolled: z.int().min(0).max(100_000),
 }).partial().strict());
 
 /** `?confirmPicks=N` on a delete: the number of class picks the person was told would be removed. Absent means none were confirmed. */

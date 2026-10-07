@@ -16,7 +16,7 @@ import {
   selectionProblem,
   type SelectableOffering,
 } from "@/modules/honors/enrollment-domain";
-import { offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
+import { compareOfferingRows, offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
 import { picksByAttendeeId } from "@/modules/honors/registration-picks";
 
 /**
@@ -131,9 +131,9 @@ async function loadOfferings(client: Prisma.TransactionClient, eventId: string) 
       honors: offeringHonorsSelect,
       session: { select: { name: true, sortOrder: true, locationId: true, location: { select: { name: true } } } },
     },
-    orderBy: [{ honor: { name: "asc" } }],
   });
-  return offerings.map((offering) => {
+  // By the class's honor names in alphabetical order, so reordering a class's honors never moves it (#812).
+  return [...offerings].sort(compareOfferingRows).map((offering) => {
     const taught = summarizeOfferingHonors(offering.honors);
     return {
     // The site comes from the session; an all-sessions class has its own (#589).

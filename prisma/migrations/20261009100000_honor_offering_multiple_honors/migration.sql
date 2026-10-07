@@ -30,9 +30,11 @@ ALTER TABLE "HonorOfferingHonor" ADD CONSTRAINT "HonorOfferingHonor_offeringId_f
 ALTER TABLE "HonorOfferingHonor" ADD CONSTRAINT "HonorOfferingHonor_honorId_fkey" FOREIGN KEY ("honorId") REFERENCES "Honor"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- Backfill: every existing class teaches exactly its one honor, as position 0.
+-- A class that already has a row is skipped, so the statement is safe to run again.
 INSERT INTO "HonorOfferingHonor" ("id", "offeringId", "honorId", "eventId", "sessionId", "locationId", "position")
 SELECT 'hoh_' || o."id", o."id", o."honorId", o."eventId", o."sessionId", o."locationId", 0
-FROM "HonorOffering" o;
+FROM "HonorOffering" o
+WHERE NOT EXISTS (SELECT 1 FROM "HonorOfferingHonor" h WHERE h."offeringId" = o."id");
 
 -- Uniqueness moves from the class (one honor) to the honors a class teaches.
 -- The rules are the ones the class had, applied per honor: no honor twice in
@@ -98,15 +100,16 @@ CREATE TRIGGER "HonorOfferingHonor_copy_placement"
   BEFORE INSERT ON "HonorOfferingHonor"
   FOR EACH ROW EXECUTE FUNCTION "honor_offering_honor_copy_placement"();
 
--- Completion links: one per honor a class teaches. Existing links belong to the
--- class's one honor.
+-- Completion links: one per honor a class teaches. An existing link is for the
+-- honor of the member record it points at; only if that record were somehow
+-- missing does it fall back to the class's one honor.
 ALTER TABLE "HonorWeekendCompletionLink" ADD COLUMN "honorId" TEXT;
 
 UPDATE "HonorWeekendCompletionLink" l
-SET "honorId" = o."honorId"
-FROM "HonorEnrollment" e
-JOIN "HonorOffering" o ON o."id" = e."offeringId"
-WHERE e."id" = l."enrollmentId";
+SET "honorId" = COALESCE(
+  (SELECT m."honorId" FROM "MemberHonorEntry" m WHERE m."id" = l."memberHonorEntryId"),
+  (SELECT o."honorId" FROM "HonorEnrollment" e JOIN "HonorOffering" o ON o."id" = e."offeringId" WHERE e."id" = l."enrollmentId")
+);
 
 ALTER TABLE "HonorWeekendCompletionLink" ALTER COLUMN "honorId" SET NOT NULL;
 

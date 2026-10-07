@@ -13,24 +13,19 @@ const MAX_LISTED = 80;
  * Choose one or more honors from the catalog for one class (#812): a
  * type-to-search box (the #819 word-prefix rule) over a checkbox list. The
  * chosen honors stay listed above the search in the order they were chosen;
- * the first is the class's primary honor. With `locked`, the set can't change
- * (clubs have picked the class) and the boxes are gone, but the chosen honors
- * still show. The parent owns `value`; nothing is posted by the field.
+ * the first is the class's primary honor. The parent owns `value`; nothing is
+ * posted by the field.
  */
 export function HonorMultiSelect({
   options,
   value,
   onChange,
   label = "Honors",
-  locked = false,
-  lockedNote,
 }: {
   options: readonly HonorMultiSelectOption[];
   value: readonly string[];
   onChange: (ids: string[]) => void;
   label?: string;
-  locked?: boolean;
-  lockedNote?: string;
 }) {
   const baseId = useId();
   const [query, setQuery] = useState("");
@@ -53,53 +48,45 @@ export function HonorMultiSelect({
             <li key={id}>
               <span translate="no">{option ? `${option.name} (${option.code})` : id}</span>
               {index === 0 && value.length > 1 && <small>primary</small>}
-              {!locked && (
-                <button aria-label={`Remove ${option?.name ?? "honor"}`} className="text-button" onClick={() => toggle(id)} type="button">Remove</button>
-              )}
+              <button aria-label={`Remove ${option?.name ?? "honor"}`} className="text-button" onClick={() => toggle(id)} type="button">Remove</button>
             </li>
           );
         })}
         {value.length === 0 && <li className="field-help">No honor chosen yet.</li>}
       </ul>
-      {locked ? (
-        lockedNote ? <p className="field-help">{lockedNote}</p> : null
-      ) : (
-        <>
-          <div className="honor-bulk-members-tools">
-            <label className="honor-name-search">
-              <span className="sr-only">Search the honor catalog</span>
-              <span className="honor-name-search-field">
-                <Search aria-hidden="true" size={14} />
-                <input
-                  autoComplete="off"
-                  id={`${baseId}-search`}
-                  onChange={(event) => setQuery(event.target.value)}
-                  // Enter in the search box must not submit the class form.
-                  onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }}
-                  placeholder="Type to search honors"
-                  type="search"
-                  value={query}
-                />
-              </span>
-            </label>
-          </div>
-          <ul className="honor-bulk-member-list" data-testid="honor-multi-options">
-            {listed.map((honor) => (
-              <li key={honor.id}>
-                <label className="checkbox-hit">
-                  <input checked={chosen.has(honor.id)} onChange={() => toggle(honor.id)} type="checkbox" />
-                  <span>
-                    <strong translate="no">{honor.name}</strong>
-                    <small translate="no">{honor.code}</small>
-                  </span>
-                </label>
-              </li>
-            ))}
-            {matches.length === 0 && <li className="field-help">No honor matches that search.</li>}
-            {matches.length > listed.length && <li className="field-help">Showing the first {listed.length} of {matches.length}. Type more to narrow the list.</li>}
-          </ul>
-        </>
-      )}
+        <div className="honor-bulk-members-tools">
+          <label className="honor-name-search">
+            <span className="sr-only">Search the honor catalog</span>
+            <span className="honor-name-search-field">
+              <Search aria-hidden="true" size={14} />
+              <input
+                autoComplete="off"
+                id={`${baseId}-search`}
+                onChange={(event) => setQuery(event.target.value)}
+                // Enter in the search box must not submit the class form.
+                onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }}
+                placeholder="Type to search honors"
+                type="search"
+                value={query}
+              />
+            </span>
+          </label>
+        </div>
+        <ul className="honor-bulk-member-list" data-testid="honor-multi-options">
+          {listed.map((honor) => (
+            <li key={honor.id}>
+              <label className="checkbox-hit">
+                <input checked={chosen.has(honor.id)} onChange={() => toggle(honor.id)} type="checkbox" />
+                <span>
+                  <strong translate="no">{honor.name}</strong>
+                  <small translate="no">{honor.code}</small>
+                </span>
+              </label>
+            </li>
+          ))}
+          {matches.length === 0 && <li className="field-help">No honor matches that search.</li>}
+          {matches.length > listed.length && <li className="field-help">Showing the first {listed.length} of {matches.length}. Type more to narrow the list.</li>}
+        </ul>
     </fieldset>
   );
 }

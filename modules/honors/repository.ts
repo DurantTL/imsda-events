@@ -11,9 +11,11 @@ import {
   normalizeHonorText,
 } from "@/modules/honors/domain";
 import {
+  compareOfferingRows,
   honorSetChange,
-  honorSetLockMessage,
+  honorsNeedConfirmationMessage,
   joinHonorNames,
+  writtenBackRemovalMessage,
   offeringHonorsSelect,
   summarizeOfferingHonors,
 } from "@/modules/honors/offering-honors";
@@ -42,6 +44,7 @@ export type HonorErrorCode =
   | "OFFERING_CONFLICT"
   | "PICKS_NEED_CONFIRMATION"
   | "HAS_WRITTEN_BACK_COMPLETIONS"
+  | "HONORS_NEED_CONFIRMATION"
   | "COPY_SAME_EVENT"
   | "COPY_SOURCE_CHANGED"
   | "EVENT_HAS_TEAMS";
@@ -196,7 +199,6 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
     }),
     client.honorOffering.findMany({
       where: { eventId },
-      orderBy: [{ honor: { name: "asc" } }],
       select: {
         id: true,
         honorId: true,
@@ -244,7 +246,8 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
       offeringCount: session._count.offerings,
       activeOfferingCount: offerings.filter((offering) => offering.sessionId === session.id && offering.isActive).length,
     })),
-    offerings: offerings.map((offering) => {
+    // By the class's honor names in alphabetical order, so reordering a class's honors never moves it (#812).
+    offerings: [...offerings].sort(compareOfferingRows).map((offering) => {
       const taught = summarizeOfferingHonors(offering.honors);
       return {
       id: offering.id,
@@ -563,6 +566,15 @@ async function otherClassesTeaching(tx: Prisma.TransactionClient, eventId: strin
   }));
 }
 
+/**
+ * Deletes the honor rows a class no longer teaches. On an edit this runs BEFORE the class row is updated: a move of
+ * the class (its session or site) moves every row it still has, so a dropped honor that the destination already
+ * teaches would otherwise collide on the way (#812).
+ */
+async function dropHonorRows(tx: Prisma.TransactionClient, offeringId: string, honorIds: readonly string[]) {
+  await tx.honorOfferingHonor.deleteMany({ where: { offeringId, honorId: { notIn: [...honorIds] } } });
+}
+
 /** Writes a class's honors in order. A trigger already gave the class its primary (position 0) row on insert. */
 export async function writeHonorRows(tx: Prisma.TransactionClient, offeringId: string, eventId: string, honorIds: readonly string[]) {
   const existing = await tx.honorOfferingHonor.findMany({ where: { offeringId }, select: { id: true, honorId: true, position: true } });
@@ -670,7 +682,7 @@ export async function updateHonorOffering(
       if (!existing) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
       const current = summarizeOfferingHonors(existing.honors);
 
-      const { honorIds: nextHonorIds, span: nextSpan, sessionId: nextSessionId, locationId: nextSiteInput, ...details } = input;
+      const { honorIds: nextHonorIds, span: nextSpan, sessionId: nextSessionId, locationId: nextSiteInput, confirmEnrolled, ...details } = input;
       const honorIds = nextHonorIds ?? current.honorIds;
       const span = nextSpan ?? existing.span;
       const honorChange = honorSetChange(current.honorIds, honorIds);
@@ -708,19 +720,31 @@ export async function updateHonorOffering(
 
       if (honorsChanged || spanChanged || sessionChanged || siteChanged) {
         // Clubs that picked this class would be stranded or hold a different class than they chose; nothing is removed silently.
-        // The lock is per honor (#812): a change to which honors the class teaches (or where or when) is refused once anyone
-        // is enrolled, and the message names the honors; only their order is free.
-        const frozenChange = honorChange.changed || spanChanged || sessionChanged || siteChanged;
-        if (frozenChange && await tx.honorEnrollment.count({ where: { offeringId } }) > 0) {
-          const onlyHonors = honorChange.changed && !spanChanged && !sessionChanged && !siteChanged;
+        // Where and when a class is taught is fixed once anyone is enrolled. Which honors it teaches is not (#812): adding
+        // one gives the enrollees that honor, removing one takes it from them.
+        if ((spanChanged || sessionChanged || siteChanged) && await tx.honorEnrollment.count({ where: { offeringId } }) > 0) {
           throw new HonorConfigurationError(
             "OFFERING_HAS_PICKS",
-            onlyHonors
-              ? honorSetLockMessage(honorChange, (id) => honorNames.get(id) ?? "that honor")!
-              : siteChanged && !honorChange.changed && !spanChanged && !sessionChanged
-                ? "Clubs have already picked this class, so it can't move to another site."
-                : "Clubs have already picked this class, so its honors, session or span can't change. Delete it (which removes those picks) or add a new class.",
+            siteChanged && !honorChange.changed && !spanChanged && !sessionChanged
+              ? "Clubs have already picked this class, so it can't move to another site."
+              : "Clubs have already picked this class, so its session or span can't change. Delete it (which removes those picks) or add a new class.",
           );
+        }
+        // An honor already written back as completed can't be taken off the class: the records name it.
+        if (honorChange.removed.length > 0) {
+          const recorded = await tx.honorWeekendCompletionLink.groupBy({
+            by: ["honorId"],
+            where: { honorId: { in: honorChange.removed }, enrollment: { offeringId } },
+            _count: { _all: true },
+          });
+          const first = recorded[0];
+          if (first) {
+            throw new HonorConfigurationError(
+              "HAS_WRITTEN_BACK_COMPLETIONS",
+              writtenBackRemovalMessage(honorNames.get(first.honorId) ?? "That honor", first._count._all),
+              first._count._all,
+            );
+          }
         }
         const conflict = classSlotConflict(
           { honorIds, span, sessionId, locationId: span === "ALL_SESSIONS" ? locationId : sessionSite },
@@ -728,8 +752,22 @@ export async function updateHonorOffering(
           (honorId) => honorNames.get(honorId) ?? "",
         );
         if (conflict) throw new HonorConfigurationError("OFFERING_CONFLICT", conflict);
+        // Changing which honors enrolled students take needs the count staff were shown, like a delete does with picks.
+        if (honorChange.changed) {
+          const enrolled = await tx.honorEnrollment.count({ where: { offeringId } });
+          if (enrolled > 0 && confirmEnrolled !== enrolled) {
+            throw new HonorConfigurationError(
+              "HONORS_NEED_CONFIRMATION",
+              honorsNeedConfirmationMessage(enrolled, honors.map((honor) => honor.name)),
+              enrolled,
+            );
+          }
+        }
       }
 
+      // Rows the class drops go first, so moving the class can't collide with them; then the class, which carries its
+      // remaining rows to its new session or site; then the new and reordered rows.
+      if (honorsChanged) await dropHonorRows(tx, offeringId, honorIds);
       await tx.honorOffering.update({
         where: { id: offeringId },
         data: {

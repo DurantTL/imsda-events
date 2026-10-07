@@ -113,10 +113,10 @@ describe("the honors step of a club registration (#618)", () => {
   it("shows only the registered location's classes, plus classes with no site (#589)", async () => {
     database();
     const { offerings: all } = await getRegistrationHonorsCatalog("club-1", "event-1");
-    expect(offeringsAtLocation(all, "loc-hr").map((row) => row.id)).toEqual(["knots-hr", "camp-shared", "all-hr", "adults-only"]);
-    expect(offeringsAtLocation(all, "loc-dm").map((row) => row.id)).toEqual(["birds-dm", "camp-shared", "adults-only"]);
+    expect(offeringsAtLocation(all, "loc-hr").map((row) => row.id)).toEqual(["adults-only", "all-hr", "camp-shared", "knots-hr"]);
+    expect(offeringsAtLocation(all, "loc-dm").map((row) => row.id)).toEqual(["adults-only", "birds-dm", "camp-shared"]);
     // Before a location is picked only classes with no site show.
-    expect(offeringsAtLocation(all, null).map((row) => row.id)).toEqual(["camp-shared", "adults-only"]);
+    expect(offeringsAtLocation(all, null).map((row) => row.id)).toEqual(["adults-only", "camp-shared"]);
   });
 
   it("sends only the known site's classes, plus those with no site, and everything when the site isn't known", async () => {
@@ -124,11 +124,11 @@ describe("the honors step of a club registration (#618)", () => {
     const everything = await getRegistrationHonorsCatalog("club-1", "event-1");
     expect(everything.offerings.map((row) => row.id)).toContain("birds-dm");
     const heritage = await getRegistrationHonorsCatalog("club-1", "event-1", "loc-hr");
-    expect(heritage.offerings.map((row) => row.id)).toEqual(["knots-hr", "camp-shared", "all-hr", "adults-only"]);
+    expect(heritage.offerings.map((row) => row.id)).toEqual(["adults-only", "all-hr", "camp-shared", "knots-hr"]);
     expect(heritage.sessions.map((session) => session.id)).toEqual(["s-hr", "s-shared"]);
     // An event with no sites: only classes with no site.
     const none = await getRegistrationHonorsCatalog("club-1", "event-1", null);
-    expect(none.offerings.map((row) => row.id)).toEqual(["camp-shared", "adults-only"]);
+    expect(none.offerings.map((row) => row.id)).toEqual(["adults-only", "camp-shared"]);
   });
 
   it("gives the registered page no class picker, instead of crashing, for a waitlisted registration", async () => {

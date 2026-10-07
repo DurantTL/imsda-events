@@ -186,7 +186,7 @@ jobs:
       # Real-database check that one Honors Weekend class can teach several honors (#812): the
       # migration's backfill, the database refusing an honor twice in a session or twice across
       # all sessions at a site (whichever class teaches it), one seat per enrollment however many
-      # honors, the per-honor lock once clubs enroll, each honor completed once, and races on seats,
+      # honors, adding and removing honors after clubs enroll (and the refusal after write-back), each honor completed once, and races on seats,
       # honor edits and write-backs.
       - run: npm run test:multi-honor-classes
 
