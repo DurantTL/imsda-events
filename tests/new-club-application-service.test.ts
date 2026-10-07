@@ -38,6 +38,7 @@ vi.mock("@/modules/background-checks/repository", () => ({ directorBackgroundSta
 
 import { AccessDeniedError, type AuthenticatedUser } from "@/modules/access/authorization";
 import { hashOpaqueToken } from "@/modules/access/tokens";
+import { directorMatchKey } from "@/modules/background-checks/director-match";
 import { newClubApplicationInputSchema } from "@/modules/club-applications/domain";
 import {
   cancelNewClubInvite,
@@ -101,7 +102,9 @@ function fakeDatabase() {
 
   const applicationShape = (row: any) => ({
     ...row,
-    sponsoringChurch: row.sponsoringChurchId ? { name: organizations.get(row.sponsoringChurchId)?.name } : null,
+    sponsoringChurch: row.sponsoringChurchId && organizations.get(row.sponsoringChurchId)
+      ? { name: organizations.get(row.sponsoringChurchId).name, type: organizations.get(row.sponsoringChurchId).type, isActive: organizations.get(row.sponsoringChurchId).isActive }
+      : null,
     decidedBy: row.decidedByUserId ? { displayName: "Alex Admin" } : null,
   });
   const matchesStatus = (row: any, status: any) => (status === undefined ? true : typeof status === "string" ? row.status === status : row.status !== status.not);
@@ -338,13 +341,23 @@ describe("who can see applications and the attachment", () => {
 describe("the review flags", () => {
   it("shows the director's Sterling Volunteers status, as a flag and never a block", async () => {
     await submitNewClubApplication(input(), { now: NOW });
-    mocks.directorStates.mockResolvedValue(new Map([["dana.director@example.test", "FLAGGED"]]));
+    mocks.directorStates.mockResolvedValue(new Map([[directorMatchKey("dana.director@example.test", "Dana Director"), { state: "FLAGGED", ambiguous: false, nameMismatch: false }]]));
     const [record] = await listNewClubApplications("SYSTEM_ADMIN", NOW);
-    expect(mocks.directorStates).toHaveBeenCalledWith(["dana.director@example.test"], NOW);
+    expect(mocks.directorStates).toHaveBeenCalledWith([{ email: "dana.director@example.test", name: "Dana Director" }], NOW);
     expect(record!.sterling).toBe("FLAGGED");
     // Approval still goes through for a director who isn't clear.
-    mocks.directorStates.mockResolvedValue(new Map([["dana.director@example.test", "NOT_COMPLIANT"]]));
+    mocks.directorStates.mockResolvedValue(new Map([[directorMatchKey("dana.director@example.test", "Dana Director"), { state: "NOT_COMPLIANT", ambiguous: false, nameMismatch: false }]]));
     await expect(decideNewClubApplication(systemAdmin, record!.id, { decision: "approve" }, NOW)).resolves.toMatchObject({ status: "APPROVED" });
+  });
+
+  it("carries the ambiguous and name-mismatch marks through to the queue", async () => {
+    await submitNewClubApplication(input(), { now: NOW });
+    mocks.directorStates.mockResolvedValue(new Map([[directorMatchKey("dana.director@example.test", "Dana Director"), { state: "NO_RECORD", ambiguous: true, nameMismatch: true }]]));
+    const [record] = await listNewClubApplications("SYSTEM_ADMIN", NOW);
+    expect(record).toMatchObject({ sterling: "NO_RECORD", sterlingAmbiguous: true, sterlingNameMismatch: true });
+    mocks.directorStates.mockResolvedValue(new Map());
+    const [plain] = await listNewClubApplications("SYSTEM_ADMIN", NOW);
+    expect(plain).toMatchObject({ sterlingAmbiguous: false, sterlingNameMismatch: false });
   });
 
   it("says No record for a director matched to nobody", async () => {
@@ -452,6 +465,75 @@ describe("approving", () => {
     expect(entries[1].metadata).toMatchObject({ applicationId: db.applications[0].id, sponsoringChurchId: "church-1" });
     const flat = JSON.stringify(entries);
     for (const secret of ["Dana", "dana.director", "555-0100", "Example Road", "Trailblazers", "We meet"]) expect(flat, secret).not.toContain(secret);
+  });
+});
+
+describe("the church at approval", () => {
+  beforeEach(async () => {
+    await submitNewClubApplication(input(), { now: NOW });
+  });
+
+  it("is checked again: an inactive church needs another one picked", async () => {
+    const id = db.applications[0].id;
+    db.organizations.get("church-1").isActive = false;
+    const [record] = await listNewClubApplications("SYSTEM_ADMIN", NOW);
+    expect(record!.church).toMatchObject({ unavailable: true, needsChoice: true, name: "Synthetic Church" });
+    await expect(decideNewClubApplication(systemAdmin, id, { decision: "approve" }, NOW)).rejects.toMatchObject({ code: "CHURCH_REQUIRED" });
+    await expect(decideNewClubApplication(systemAdmin, id, { decision: "approve", sponsoringChurchId: "church-1" }, NOW)).rejects.toMatchObject({ code: "INVALID_CHURCH" });
+    expect(db.applications[0].status).toBe("PENDING");
+    await decideNewClubApplication(systemAdmin, id, { decision: "approve", sponsoringChurchId: "church-2" }, NOW);
+    expect([...db.organizations.values()].find((org) => org.name === "Synthetic Trailblazers")).toMatchObject({ parentOrganizationId: "church-2" });
+  });
+
+  it("treats a church that is gone (the link cleared, nothing typed) as unavailable, not as an empty name", async () => {
+    db.applications[0].sponsoringChurchId = null;
+    const [record] = await listNewClubApplications("SYSTEM_ADMIN", NOW);
+    expect(record!.church).toMatchObject({ id: null, name: "", isOther: false, unavailable: true, needsChoice: true });
+    await expect(decideNewClubApplication(systemAdmin, db.applications[0].id, { decision: "approve" }, NOW)).rejects.toMatchObject({ code: "CHURCH_REQUIRED" });
+  });
+
+  it("still approves with no choice when the church is fine", async () => {
+    const [record] = await listNewClubApplications("SYSTEM_ADMIN", NOW);
+    expect(record!.church).toMatchObject({ unavailable: false, needsChoice: false });
+    await expect(decideNewClubApplication(systemAdmin, db.applications[0].id, { decision: "approve" }, NOW)).resolves.toMatchObject({ status: "APPROVED" });
+  });
+
+  it("neutralizes template braces a stranger typed into the club and director names in the invite email", async () => {
+    await submitNewClubApplication(input({ clubName: "Club {{account_action_link}}", directorName: "Dana {{account_action_link}} Director" }), { now: NOW });
+    db.outbox.length = 0;
+    await decideNewClubApplication(systemAdmin, db.applications[1].id, { decision: "approve" }, NOW);
+    const message = db.outbox.find((entry) => entry.templateKey === "CLUB_INVITE");
+    expect(message).toBeDefined();
+    const text = `${message!.subjectSnapshot}\n${message!.bodyTextSnapshot}`;
+    expect(text).not.toContain("{{");
+    expect(text).toContain("account_action_link");
+  });
+});
+
+describe("a private link's invited address", () => {
+  it("is kept on the application, and flagged when the director's email differs", async () => {
+    await createNewClubInvite(systemAdmin, { email: "invited@example.test", name: "Ivy" }, NOW);
+    const message = db.outbox.find((entry) => entry.templateKey === "NEW_CLUB_APPLICATION_INVITE");
+    const prepared = await prepareNewClubInviteBodyForDelivery({ messageId: db.invites[0].messageId, bodyText: message.bodyTextSnapshot, now: NOW });
+    const token = /\/clubs\/register\/([A-Za-z0-9_-]+)/.exec(prepared.bodyText)![1]!;
+    await submitNewClubApplication(input({ directorEmail: "someone.else@example.test" }), { inviteToken: token, now: NOW });
+    expect(db.applications[0].invitedEmail).toBe("invited@example.test");
+    const [record] = await listNewClubApplications("SYSTEM_ADMIN", NOW);
+    expect(record).toMatchObject({ source: "INVITE", invitedEmail: "invited@example.test", invitedEmailDiffers: true });
+    // Never a hard rejection: the application was saved and can be decided.
+    expect(db.applications).toHaveLength(1);
+  });
+
+  it("isn't flagged when the addresses agree, and is empty for a public application", async () => {
+    await createNewClubInvite(systemAdmin, { email: "dana.director@example.test" }, NOW);
+    const message = db.outbox.find((entry) => entry.templateKey === "NEW_CLUB_APPLICATION_INVITE");
+    const prepared = await prepareNewClubInviteBodyForDelivery({ messageId: db.invites[0].messageId, bodyText: message.bodyTextSnapshot, now: NOW });
+    const token = /\/clubs\/register\/([A-Za-z0-9_-]+)/.exec(prepared.bodyText)![1]!;
+    await submitNewClubApplication(input(), { inviteToken: token, now: NOW });
+    await submitNewClubApplication(input({ clubName: "Public Club" }), { now: NOW });
+    const records = await listNewClubApplications("SYSTEM_ADMIN", NOW);
+    expect(records.find((record) => record.source === "INVITE")).toMatchObject({ invitedEmailDiffers: false });
+    expect(records.find((record) => record.source === "PUBLIC")).toMatchObject({ invitedEmail: null, invitedEmailDiffers: false });
   });
 });
 

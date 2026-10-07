@@ -6,6 +6,7 @@ import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { ACT_AS_OWN_ACCOUNT_MESSAGE, isActingAdminsOwnEmail } from "@/modules/organizations/act-as-own-account";
+import { neutralizePlaceholders } from "@/modules/club-applications/email";
 import { getAccountEmailSender, isAccountEmailConfigured } from "@/modules/communications/account-email";
 import {
   clubAssignableRoles,
@@ -97,13 +98,18 @@ export function clubInviteSignUpUrl(email: string) {
   return url.toString();
 }
 
-function inviteEmail(input: {
+function inviteEmail(rawInput: {
   name: string;
   email: string;
   clubName: string;
   role: "DIRECTOR" | "DEPUTY" | "REGISTRAR" | "REPORTER";
   source: "IMPORT" | "CLUB" | "APPLICATION";
 }) {
+  // An application's club and director names are typed by a stranger and the body is scanned for `{{...}}` sentinels at
+  // delivery (the account link one would throw): break any braces up (#817).
+  const input = rawInput.source === "APPLICATION"
+    ? { ...rawInput, name: neutralizePlaceholders(rawInput.name), clubName: neutralizePlaceholders(rawInput.clubName) }
+    : rawInput;
   const signUpUrl = clubInviteSignUpUrl(input.email);
   const role = clubDirectorRoleLabels[input.role].toLocaleLowerCase("en-US");
   const invitedBy = input.source === "CLUB"

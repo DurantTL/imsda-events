@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   createInvite: vi.fn(),
   listInvites: vi.fn(),
   submitLimit: vi.fn(),
+  emailLimit: vi.fn(),
   linkLimit: vi.fn(),
   readAsset: vi.fn(),
   isSameOrigin: vi.fn(),
@@ -31,6 +32,7 @@ vi.mock("@/lib/request-context", () => ({ withRequestContext: (handler: unknown)
 vi.mock("@/modules/events/asset-storage", async (importOriginal) => ({ ...(await importOriginal<object>()), readAsset: mocks.readAsset }));
 vi.mock("@/modules/rate-limit/service", () => ({
   checkNewClubApplicationSubmitRateLimit: mocks.submitLimit,
+  checkNewClubApplicationEmailRateLimit: mocks.emailLimit,
   checkNewClubApplicationLinkRateLimit: mocks.linkLimit,
 }));
 vi.mock("@/modules/club-applications/repository", async (importOriginal) => ({
@@ -97,6 +99,7 @@ beforeEach(() => {
   mocks.getCurrentSession.mockResolvedValue({ user: null });
   mocks.currentAreaCoordinatorViewerActive.mockResolvedValue(false);
   mocks.submitLimit.mockResolvedValue(allowed);
+  mocks.emailLimit.mockResolvedValue(allowed);
   mocks.linkLimit.mockResolvedValue(allowed);
   mocks.submit.mockResolvedValue({ id: "app-1" });
   mocks.decide.mockResolvedValue({ status: "APPROVED", organizationId: "org-1" });
@@ -104,7 +107,18 @@ beforeEach(() => {
 });
 
 describe("POST /api/public/club-applications", () => {
-  const post = (body: BodyInit, headers: Record<string, string> = origin) => publicSubmit(new Request("https://events.imsda.test/api/public/club-applications", { method: "POST", headers, body }));
+  /** Sends like a browser does: the body is serialized first so the request states its own Content-Length. */
+  const post = async (body: BodyInit, headers: Record<string, string> = origin) => {
+    const probe = new Request("https://events.imsda.test/x", { method: "POST", body });
+    const bytes = await probe.arrayBuffer();
+    const type = probe.headers.get("content-type");
+    return publicSubmit(new Request("https://events.imsda.test/api/public/club-applications", {
+      method: "POST",
+      headers: { ...(type ? { "content-type": type } : {}), "content-length": String(bytes.byteLength), ...headers },
+      body: bytes,
+    }));
+  };
+  const postRaw = (headers: Record<string, string>, body?: BodyInit) => publicSubmit(new Request("https://events.imsda.test/api/public/club-applications", { method: "POST", headers: { ...origin, ...headers }, body }));
 
   it("takes an application from anyone, signed out, and does not echo an id", async () => {
     const response = await post(formWith(validData));
@@ -131,12 +145,14 @@ describe("POST /api/public/club-applications", () => {
     expect(mocks.submit).not.toHaveBeenCalled();
   });
 
-  it("is rate limited, by client and then by director email", async () => {
+  it("is rate limited, by client and then by director email, charging the client once per submit", async () => {
     mocks.submitLimit.mockResolvedValueOnce({ allowed: false, decisions: [] });
     expect((await post(formWith(validData))).status).toBe(429);
-    mocks.submitLimit.mockResolvedValueOnce(allowed).mockResolvedValueOnce({ allowed: false, decisions: [] });
+    mocks.submitLimit.mockClear();
+    mocks.emailLimit.mockResolvedValueOnce({ allowed: false, decisions: [] });
     expect((await post(formWith(validData))).status).toBe(429);
-    expect(mocks.submitLimit.mock.calls[2]![1]).toBe("dana.director@example.test");
+    expect(mocks.submitLimit).toHaveBeenCalledTimes(1);
+    expect(mocks.emailLimit).toHaveBeenCalledWith("dana.director@example.test");
     expect(mocks.submit).not.toHaveBeenCalled();
   });
 
@@ -155,10 +171,31 @@ describe("POST /api/public/club-applications", () => {
     expect((await post(formWith(validData))).status).toBe(410);
   });
 
-  it("refuses a body that isn't the expected form, and an oversized one", async () => {
+  it("refuses a form with no answers, and an oversized one", async () => {
     expect((await post(new FormData())).status).toBe(400);
     const response = await post(formWith(validData), { ...origin, "content-length": String(40 * 1024 * 1024) });
     expect(response.status).toBe(413);
+  });
+
+  it("refuses a request that doesn't say how big it is", async () => {
+    const response = await postRaw({ "content-type": "text/plain" }, "hello");
+    expect(response.status).toBe(411);
+    expect(mocks.submit).not.toHaveBeenCalled();
+    expect((await postRaw({ "content-type": "text/plain", "content-length": "abc" }, "hello")).status).toBe(411);
+  });
+
+  it("answers a JSON body or a text body with 400 INVALID_REQUEST, not a server error", async () => {
+    for (const [type, body] of [["application/json", JSON.stringify(validData)], ["text/plain", "just some text"]] as const) {
+      const response = await postRaw({ "content-type": type, "content-length": String(Buffer.byteLength(body)) }, body);
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toBe("INVALID_REQUEST");
+    }
+    const badJson = new FormData();
+    badJson.set("data", "{not json");
+    const notJson = await post(badJson);
+    expect(notJson.status).toBe(400);
+    expect((await notJson.json()).error).toBe("INVALID_REQUEST");
+    expect(mocks.submit).not.toHaveBeenCalled();
   });
 
   it("never shows an unexpected failure's details", async () => {

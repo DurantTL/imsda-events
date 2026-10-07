@@ -11,8 +11,6 @@ import { isAccountEmailConfigured } from "@/modules/communications/account-email
 export const metadata: Metadata = { title: "New club applications" };
 export const dynamic = "force-dynamic";
 
-const publicFormHref = "/clubs/register";
-
 /**
  * The new club application queue (#817) for system administrators, who approve
  * and decline. Area Coordinators read the same list, view only, from their
@@ -31,7 +29,7 @@ export default async function NewClubApplicationsAdminPage() {
     <>
       <div className="intro-actions club-admin-links">
         <BackLink href="/admin/organizations" variant="staff">Back to Clubs and churches</BackLink>
-        <Link className="secondary-button" href={publicFormHref}>View the public form</Link>
+        <Link className="secondary-button" href="/clubs/register">View the public form</Link>
         <Link className="secondary-button" href="/admin/settings">Notification address</Link>
       </div>
       <div className="page-intro">

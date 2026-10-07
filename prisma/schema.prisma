@@ -6964,6 +6964,8 @@ model NewClubApplication {
   attachmentChecksum    String?
   attachmentStorageKey  String?                  @unique
   inviteId              String?                  @unique
+  /// The address the private link was sent to, kept so the queue can flag a director email that differs from it.
+  invitedEmail          String?
   decidedByUserId       String?
   decidedAt             DateTime?
   /// Why it was declined; goes to the applicant in the email only, never into audit metadata.

@@ -120,8 +120,8 @@ describe("/clubs is only reached by a full page load (#437)", () => {
     ));
     const offenders = files.filter((file) => {
       const source = readFileSync(path.join(root, file), "utf8");
-      return /<Link[^>]*href=\{?["'`]\/clubs(?:[?#"'`/])/.test(source)
-        || /router\.(push|replace)\(\s*["'`]\/clubs(?:[?#"'`/])/.test(source);
+      return /<Link[^>]*href=\{?["'`]\/clubs(?:[?#"'`]|\/["'`])/.test(source)
+        || /router\.(push|replace)\(\s*["'`]\/clubs(?:[?#"'`]|\/["'`])/.test(source);
     });
     expect(offenders).toEqual([]);
   });

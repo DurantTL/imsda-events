@@ -195,15 +195,19 @@ async function main() {
     // 4. Sterling Volunteers: No record, then Clear once the director matches a person with a current check. A flag only.
     const noRecord = (await repo.listNewClubApplications("SYSTEM_ADMIN", now)).find((row) => row.id === first.id);
     assert(noRecord?.sterling === "NO_RECORD", "a director with no person on file shows No record");
-    const person = await prisma.person.create({ data: { firstName: "Dana", lastName: `${stamp}Director`, normalizedEmail: directorEmail }, select: { id: true } });
+    const person = await prisma.person.create({ data: { firstName: "Dana", lastName: "Director", normalizedEmail: directorEmail }, select: { id: true } });
     const upload = await prisma.backgroundCheckUpload.create({ data: { format: `${stamp}-test`, rowCount: 1, added: 1, changed: 0, dropped: 0, uploadedByUserId: admin.id }, select: { id: true } });
     const entry = await prisma.backgroundCheckEntry.create({
-      data: { uploadId: upload.id, line: 1, firstName: "Dana", lastName: `${stamp}Director`, identityKey: `${stamp}-entry`, checkedOn: "2026-01-02", expiresOn: "2030-01-02" },
+      data: { uploadId: upload.id, line: 1, firstName: "Dana", lastName: "Director", identityKey: `${stamp}-entry`, checkedOn: "2026-01-02", expiresOn: "2030-01-02" },
       select: { id: true },
     });
     await prisma.backgroundCheckMatch.create({ data: { personId: person.id, entryId: entry.id, matchedBy: "MANUAL" } });
     const clear = (await repo.listNewClubApplications("AREA_COORDINATOR", now)).find((row) => row.id === first.id);
-    assert(clear?.sterling === "CLEAR", "a director with a current Sterling Volunteers check shows Clear");
+    assert(clear?.sterling === "CLEAR" && !clear.sterlingNameMismatch && !clear.sterlingAmbiguous, "a director with a current Sterling Volunteers check shows Clear, unambiguously, under the same name");
+    const stranger = await repo.submitNewClubApplication(application({ clubName: `${stamp} Mismatch`, directorName: "Someone Else", directorSignature: "Someone Else" }), { now });
+    const mismatch = (await repo.listNewClubApplications("SYSTEM_ADMIN", now)).find((row) => row.id === stranger.id);
+    assert(mismatch?.sterlingNameMismatch, "an email matched to a person with a different name is marked as a name mismatch");
+    await repo.decideNewClubApplication(sysAdmin, stranger.id, { decision: "decline" }, now);
     await prisma.backgroundCheckEntry.update({ where: { id: entry.id }, data: { expiresOn: "2020-01-02" } });
     const expired = (await repo.listNewClubApplications("SYSTEM_ADMIN", now)).find((row) => row.id === first.id);
     assert(expired?.sterling === "NOT_COMPLIANT", "an expired check shows Not in compliance");
@@ -283,7 +287,8 @@ async function main() {
     const prefill = await repo.resolveNewClubInvite(token, now);
     assert(prefill?.email === invitedEmail, "the link opens the application with the invited email");
     const viaLink = await repo.submitNewClubApplication(application({ clubName: `${stamp} Invited Club`, sponsoringChurchId: churchB.id, directorEmail: invitedEmail }), { inviteToken: token, now });
-    assert((await prisma.newClubApplication.findUniqueOrThrow({ where: { id: viaLink.id } })).source === "INVITE", "an application from the link is marked INVITE");
+    const viaLinkRow = await prisma.newClubApplication.findUniqueOrThrow({ where: { id: viaLink.id } });
+    assert(viaLinkRow.source === "INVITE" && viaLinkRow.invitedEmail === invitedEmail, "an application from the link is marked INVITE and keeps the invited address");
     assert(await repo.resolveNewClubInvite(token, now) === null, "the link no longer opens once used");
     await expectRefused(() => repo.submitNewClubApplication(application({ clubName: `${stamp} Invited Again`, directorEmail: invitedEmail }), { inviteToken: token, now }), (error) => (error as { code?: string }).code === "INVITE_UNAVAILABLE", "a used link can't submit again");
     await expectRefused(() => repo.createNewClubInvite(otherStaff, { email: `${stamp}-x@imsda-events.test` }, now), (error) => (error as { status?: number }).status === 403, "only a system administrator can send a link");

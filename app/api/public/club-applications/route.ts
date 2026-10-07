@@ -4,7 +4,7 @@ import { MAX_APPLICATION_ATTACHMENT_BYTES, newClubApplicationInputSchema } from 
 import { newClubApplicationApiError } from "@/modules/club-applications/api-errors";
 import { submitNewClubApplication } from "@/modules/club-applications/repository";
 import { applyRateLimitHeaders, mergeRateLimitOutcomes, type RateLimitOutcome } from "@/modules/rate-limit/domain";
-import { checkNewClubApplicationLinkRateLimit, checkNewClubApplicationSubmitRateLimit } from "@/modules/rate-limit/service";
+import { checkNewClubApplicationEmailRateLimit, checkNewClubApplicationLinkRateLimit, checkNewClubApplicationSubmitRateLimit } from "@/modules/rate-limit/service";
 
 /**
  * The public "Register a new club" submit (#817), open to anyone. It creates
@@ -32,18 +32,42 @@ async function postHandler(request: Request) {
   try {
     rateLimit = await checkNewClubApplicationSubmitRateLimit(request);
     if (!rateLimit.allowed) return limited(rateLimit);
-    if (Number(request.headers.get("content-length") ?? 0) > maximumBodyBytes) {
+    // The size cap needs a declared length: a request that doesn't say how big it is (chunked) is refused before anything is read.
+    const declaredLength = request.headers.get("content-length");
+    if (declaredLength === null || !/^\d+$/.test(declaredLength)) {
+      return applyRateLimitHeaders(
+        Response.json({ error: "LENGTH_REQUIRED", message: "The request must state its size." }, { status: 411, headers }),
+        rateLimit,
+      );
+    }
+    if (Number(declaredLength) > maximumBodyBytes) {
       return applyRateLimitHeaders(
         Response.json({ error: "REQUEST_TOO_LARGE", message: "The application is too large. Attach a file of 10 MB or less." }, { status: 413, headers }),
         rateLimit,
       );
     }
-    const form = await request.formData();
+    const invalid = () => applyRateLimitHeaders(
+      Response.json({ error: "INVALID_REQUEST", message: "Send the application form as a multipart form." }, { status: 400, headers }),
+      rateLimit!,
+    );
+    let form: FormData;
+    try {
+      form = await request.formData();
+    } catch {
+      // Not a multipart body (JSON, plain text, or a broken form): a bad request, not a server fault.
+      return invalid();
+    }
     const data = form.get("data");
-    if (typeof data !== "string") throw new SyntaxError("Missing form data.");
-    const input = newClubApplicationInputSchema.parse(JSON.parse(data));
-    // Once the director's email is known, the per-address budget applies too.
-    const emailLimit = await checkNewClubApplicationSubmitRateLimit(request, input.directorEmail);
+    if (typeof data !== "string") return invalid();
+    let parsedData: unknown;
+    try {
+      parsedData = JSON.parse(data);
+    } catch {
+      return invalid();
+    }
+    const input = newClubApplicationInputSchema.parse(parsedData);
+    // Once the director's email is known, its own per-address budget applies (the client budget was already charged once above).
+    const emailLimit = await checkNewClubApplicationEmailRateLimit(input.directorEmail);
     rateLimit = mergeRateLimitOutcomes(rateLimit, emailLimit);
     if (!emailLimit.allowed) return limited(rateLimit);
 

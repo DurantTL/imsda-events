@@ -124,8 +124,12 @@ export function NewClubApplicationsQueue({ applications, canDecide, churches, in
           <div>
             <h3 translate="no">{application.clubName}</h3>
             <p>
-              {newClubTypeLabels[application.clubType]} · sponsored by <span translate="no">{application.church.name}</span>
+              {newClubTypeLabels[application.clubType]} · sponsored by{" "}
+              {application.church.unavailable && !application.church.name
+                ? <em>the church is no longer in the directory</em>
+                : <span translate="no">{application.church.name}</span>}
               {application.church.isOther && " (typed by the applicant, not in the directory)"}
+              {application.church.unavailable && application.church.name && " (no longer an active church in the directory)"}
             </p>
           </div>
           <span className={`status-chip ${statusTone[application.status]}`}>{newClubApplicationStatusLabels[application.status]}</span>
@@ -135,7 +139,18 @@ export function NewClubApplicationsQueue({ applications, canDecide, churches, in
           <span className={`status-chip ${sterlingTone[application.sterling]}`} title="Sterling Volunteers status of the applying director. A flag to review, not a block.">
             Sterling Volunteers: {directorBackgroundLabels[application.sterling]}
           </span>
-          {application.source === "INVITE" && <span className="status-chip purple">Came from a private link</span>}
+          {application.sterlingAmbiguous && (
+            <span className="status-chip gold" title="The director's email matches more than one person; the least favorable status is shown.">Email matches more than one person</span>
+          )}
+          {application.sterlingNameMismatch && (
+            <span className="status-chip gold" title="A person was found by the director's email, but with a different name. Check before relying on the status.">Matched by email to a different name</span>
+          )}
+          {application.source === "INVITE" && (
+            <span className="status-chip purple">
+              {application.invitedEmail ? <>Came by private link sent to <span translate="no">{application.invitedEmail}</span></> : "Came from a private link"}
+            </span>
+          )}
+          {application.invitedEmailDiffers && <span className="status-chip gold">Director email differs from the invited address</span>}
         </div>
         {application.duplicates.length > 0 && (
           <ul className="nca-duplicates" aria-label="Possible duplicates">
@@ -190,24 +205,29 @@ export function NewClubApplicationsQueue({ applications, canDecide, churches, in
               className="nca-decision"
               onSubmit={(event) => {
                 event.preventDefault();
-                void decide(application, application.church.isOther ? { decision: "approve", sponsoringChurchId: churchChoice } : { decision: "approve" });
+                void decide(application, application.church.needsChoice ? { decision: "approve", sponsoringChurchId: churchChoice } : { decision: "approve" });
               }}
             >
               <p>
                 Approving creates the club and emails <strong translate="no">{application.director.email}</strong> the club director invite. It can&apos;t be undone from here.
               </p>
-              {application.church.isOther && (
+              {application.church.needsChoice && (
                 <label>
                   Sponsoring church from the directory
                   <select required value={churchChoice} onChange={(event) => setChurchChoice(event.target.value)}>
                     <option value="">Choose a church…</option>
                     {churches.map((church) => <option key={church.id} value={church.id}>{church.name}</option>)}
                   </select>
-                  <small>The applicant typed &ldquo;{application.church.name}&rdquo;. Every club needs a church from the directory.</small>
+                  <small>
+                    {application.church.name
+                      ? <>The applicant&apos;s church, &ldquo;{application.church.name}&rdquo;, isn&apos;t an active church in the directory. </>
+                      : "The applicant's church is no longer in the directory. "}
+                    Every club needs one.
+                  </small>
                 </label>
               )}
               <div className="nca-actions">
-                <button className="primary-button" disabled={busy || (application.church.isOther && !churchChoice)} type="submit">Approve and send invite</button>
+                <button className="primary-button" disabled={busy || (application.church.needsChoice && !churchChoice)} type="submit">Approve and send invite</button>
                 <button className="secondary-button" disabled={busy} onClick={() => setMode(null)} type="button">Cancel</button>
               </div>
             </form>

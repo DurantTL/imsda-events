@@ -7,9 +7,6 @@ import { listPublicClubs } from "@/modules/organizations/public-club-directory";
 
 export const dynamic = "force-dynamic";
 
-/** A different page with its own headers (not the map page), so an in-app link to it is fine (#817). */
-const registerNewClubHref = "/clubs/register";
-
 export const metadata: Metadata = {
   title: "Find a club",
   description: "Pathfinder and Adventurer clubs across the Iowa-Missouri Conference that have chosen to be listed publicly.",
@@ -43,7 +40,7 @@ export default async function PublicClubsPage() {
           <p className="public-registration-eyebrow">Iowa-Missouri Conference</p>
           <h1>Find a club</h1>
           <p>Pathfinder and Adventurer clubs that have chosen to be listed publicly.</p>
-          <p><Link href={registerNewClubHref}>Register a new club</Link>: applications are open all year.</p>
+          <p><Link href="/clubs/register">Register a new club</Link>: applications are open all year.</p>
         </div>
       </section>
 

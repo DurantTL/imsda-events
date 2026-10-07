@@ -7,6 +7,7 @@ import { AccessDeniedError, type AuthenticatedUser } from "@/modules/access/auth
 import { hashOpaqueToken } from "@/modules/access/tokens";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { directorBackgroundStatesByEmail } from "@/modules/background-checks/repository";
+import { directorMatchKey } from "@/modules/background-checks/director-match";
 import {
   DECLINE_REASON_MAX,
   MAX_APPLICATION_ATTACHMENT_BYTES,
@@ -263,16 +264,16 @@ export async function submitNewClubApplication(
     churchName = church.name;
   }
 
-  let invite: { id: string } | null = null;
+  let invite: { id: string; email: string } | null = null;
   if (options.inviteToken) {
     const found = await prisma.newClubApplicationInvite.findUnique({
       where: { tokenHash: hashOpaqueToken(options.inviteToken) },
-      select: { id: true, usedAt: true, cancelledAt: true, expiresAt: true },
+      select: { id: true, email: true, usedAt: true, cancelledAt: true, expiresAt: true },
     });
     if (!found || !inviteIsOpen(found, now)) {
       throw new NewClubApplicationError("INVITE_UNAVAILABLE", "This link can't be used any more. Ask the conference for a new one, or use the public form.");
     }
-    invite = { id: found.id };
+    invite = { id: found.id, email: found.email };
   }
 
   const settings = await getPlatformSettings();
@@ -322,6 +323,7 @@ export async function submitNewClubApplication(
               }
             : {}),
           inviteId: invite?.id ?? null,
+          invitedEmail: invite?.email ?? null,
         },
         select: { id: true },
       });
@@ -365,7 +367,15 @@ export type NewClubApplicationRecord = {
   source: "PUBLIC" | "INVITE";
   clubName: string;
   clubType: NewClubTypeValue;
-  church: { id: string | null; name: string; isOther: boolean };
+  church: {
+    id: string | null;
+    name: string;
+    isOther: boolean;
+    /** A directory church was chosen but it is gone, inactive or no longer a church. */
+    unavailable: boolean;
+    /** Approving needs the admin to pick a directory church first. */
+    needsChoice: boolean;
+  };
   pastorName: string;
   director: { name: string; email: string; address: string; homePhone: string | null; workPhone: string | null };
   signatures: { pastor: string; headElder: string; clerk: string; director: string };
@@ -379,6 +389,13 @@ export type NewClubApplicationRecord = {
   declineReason: string | null;
   createdOrganizationId: string | null;
   sterling: DirectorBackgroundState;
+  /** The director's email reached more than one person; the least favorable status is shown. */
+  sterlingAmbiguous: boolean;
+  /** The person matched by email has a different name than the director typed. */
+  sterlingNameMismatch: boolean;
+  /** Set for an application from a private link: the address the link was sent to. */
+  invitedEmail: string | null;
+  invitedEmailDiffers: boolean;
   duplicates: DuplicateFlag[];
 };
 
@@ -410,7 +427,8 @@ const recordSelect = {
   decidedAt: true,
   declineReason: true,
   createdOrganizationId: true,
-  sponsoringChurch: { select: { name: true } },
+  invitedEmail: true,
+  sponsoringChurch: { select: { name: true, type: true, isActive: true } },
   decidedBy: { select: { displayName: true } },
 } satisfies Prisma.NewClubApplicationSelect;
 
@@ -450,9 +468,15 @@ async function duplicateFlags(rows: Row[]): Promise<Map<string, DuplicateFlag[]>
   return flags;
 }
 
+/** No church to show: a directory church that is gone (the link was cleared), inactive, or not a church, and nothing typed instead. */
+function churchUnavailable(row: Row) {
+  if (row.sponsoringChurchId) return !row.sponsoringChurch || row.sponsoringChurch.type !== "CHURCH" || !row.sponsoringChurch.isActive;
+  return !row.sponsoringChurchOther;
+}
+
 async function toRecords(rows: Row[], now: Date): Promise<NewClubApplicationRecord[]> {
   const [states, duplicates] = await Promise.all([
-    directorBackgroundStatesByEmail(rows.map((row) => row.directorEmail), now),
+    directorBackgroundStatesByEmail(rows.map((row) => ({ email: row.directorEmail, name: row.directorName })), now),
     duplicateFlags(rows),
   ]);
   return rows.map((row) => ({
@@ -464,7 +488,9 @@ async function toRecords(rows: Row[], now: Date): Promise<NewClubApplicationReco
     church: {
       id: row.sponsoringChurchId,
       name: row.sponsoringChurch?.name ?? row.sponsoringChurchOther ?? "",
-      isOther: !row.sponsoringChurchId,
+      isOther: !row.sponsoringChurchId && Boolean(row.sponsoringChurchOther),
+      unavailable: churchUnavailable(row),
+      needsChoice: !row.sponsoringChurchId || churchUnavailable(row),
     },
     pastorName: row.pastorName,
     director: {
@@ -486,7 +512,11 @@ async function toRecords(rows: Row[], now: Date): Promise<NewClubApplicationReco
     decidedByName: row.decidedBy?.displayName ?? null,
     declineReason: row.declineReason,
     createdOrganizationId: row.createdOrganizationId,
-    sterling: states.get(row.directorEmail) ?? "NO_RECORD",
+    sterling: states.get(directorMatchKey(row.directorEmail, row.directorName))?.state ?? "NO_RECORD",
+    sterlingAmbiguous: states.get(directorMatchKey(row.directorEmail, row.directorName))?.ambiguous ?? false,
+    sterlingNameMismatch: states.get(directorMatchKey(row.directorEmail, row.directorName))?.nameMismatch ?? false,
+    invitedEmail: row.invitedEmail,
+    invitedEmailDiffers: Boolean(row.invitedEmail && row.invitedEmail.trim().toLowerCase() !== row.directorEmail),
     duplicates: duplicates.get(row.id) ?? [],
   }));
 }
@@ -561,11 +591,16 @@ export async function decideNewClubApplication(
     if (!application) throw new NewClubApplicationError("APPLICATION_NOT_FOUND", "That application could not be found.");
     if (application.status !== "PENDING") throw new NewClubApplicationError("ALREADY_DECIDED", "That application was already decided.");
 
+    // Re-checked on every approval: the church may have been removed or deactivated since the applicant chose it.
     let churchId = application.sponsoringChurchId;
+    if (decision.decision === "approve" && churchId) {
+      const stillThere = await tx.organization.findFirst({ where: { id: churchId, type: "CHURCH", isActive: true }, select: { id: true } });
+      if (!stillThere) churchId = null;
+    }
     if (decision.decision === "approve" && !churchId) {
       const chosen = decision.sponsoringChurchId;
       if (!chosen) {
-        throw new NewClubApplicationError("CHURCH_REQUIRED", "Choose the sponsoring church from the directory before approving. The applicant typed a church that isn't in it.");
+        throw new NewClubApplicationError("CHURCH_REQUIRED", "Choose the sponsoring church from the directory before approving. The applicant's church isn't in it (typed, removed or no longer active).");
       }
       const church = await tx.organization.findFirst({ where: { id: chosen, type: "CHURCH", isActive: true }, select: { id: true } });
       if (!church) throw new NewClubApplicationError("INVALID_CHURCH", "Choose an active church from the directory.");
