@@ -60,6 +60,18 @@ export type EventModulesView = {
   canToggle: boolean;
 };
 
+/**
+ * The modules a system administrator may turn off for an event: a stored row, not
+ * always on, and not kept on by the event's data. The Event modules page and the
+ * More launcher both read this, so their Turn off controls always agree, and it
+ * matches what `disableModule` accepts.
+ */
+export function removableModuleKeys(state: { stored: ReadonlySet<EventModuleKey>; dataForced: ReadonlySet<EventModuleKey> }): EventModuleKey[] {
+  return eventModuleCatalog
+    .filter((definition) => !definition.alwaysOn && state.stored.has(definition.key) && !state.dataForced.has(definition.key))
+    .map((definition) => definition.key);
+}
+
 export function buildEventModulesView({
   cards,
   stored,
@@ -92,7 +104,7 @@ export function buildEventModulesView({
     enabledEntries.push({
       definition,
       card,
-      canToggle: isSystemAdmin && !definition.alwaysOn && hasRow && !dataForced.has(definition.key),
+      canToggle: isSystemAdmin && removableModuleKeys({ stored, dataForced }).includes(definition.key),
       dataReason: dataForced.has(definition.key) || !hasRow ? dataDrivenReasons[definition.key] : undefined,
     });
   }

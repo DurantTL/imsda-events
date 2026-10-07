@@ -1766,6 +1766,9 @@ select:focus-visible {
 /* The meeting-note and monthly-report forms (#789) are long; give them room. */
 .modal-card.modal-card-wide { width: min(860px, 100%); }
 
+/* #810: the "Saved" confirmation stays pinned to the top of the meeting-note popup while its form scrolls. */
+.meeting-note-saved { position: sticky; top: 0; z-index: 2; box-shadow: 0 4px 10px rgba(0, 25, 40, 0.12); }
+
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .modal-head h2 { margin: 0; color: var(--ink); font-size: 1.3rem; }
 .form-stack { display: grid; gap: 15px; }
@@ -9163,6 +9166,15 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .more-launcher-item svg { flex: none; color: var(--imsda-purple); }
 .more-launcher-item:hover { background: var(--imsda-navy-soft); }
 .more-launcher-item:focus-visible { background: var(--imsda-navy-soft); outline: 2px solid var(--imsda-purple); outline-offset: -2px; }
+/* #810: system administrators turn a module off from its launcher card; a confirm says the data is kept. */
+.more-launcher-row { display: flex; align-items: center; gap: 4px; }
+.more-launcher-row .more-launcher-item { flex: 1; min-width: 0; }
+.more-launcher-toggle { flex: none; min-height: 32px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--muted); padding: 4px 8px; font: inherit; font-size: max(var(--type-floor, 0px), 0.72rem); font-weight: 700; cursor: pointer; }
+.more-launcher-toggle:hover { background: var(--imsda-navy-soft); color: var(--imsda-navy); }
+.more-launcher-confirm { position: sticky; bottom: 0; margin: 8px 0 4px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); box-shadow: 0 -6px 18px rgba(0, 43, 69, 0.16); padding: 12px; }
+.more-launcher-confirm h3 { margin: 0 0 4px; font-size: 1rem; }
+.more-launcher-confirm p { margin: 0 0 8px; }
+.more-launcher-confirm-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .more-launcher-footer { margin-top: 4px; border-top: 1px solid var(--line); padding: 8px 0 4px; }
 .more-launcher-footer-link { color: var(--imsda-purple); font-weight: 700; }
 .more-launcher-scrim { position: fixed; z-index: 65; inset: 0 0 calc(67px + env(safe-area-inset-bottom, 0px)); background: rgba(0, 43, 69, 0.42); }
@@ -9181,6 +9193,7 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
     padding-bottom: 6px;
   }
   .more-launcher-tab .more-launcher-item { min-height: 44px; }
+  .more-launcher-tab .more-launcher-toggle { min-height: 44px; min-width: 44px; }
 }
 @media (max-width: 520px) {
   .more-launcher-columns { columns: 1; }
@@ -9219,7 +9232,6 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .session-show-all { margin-top: 12px; }
 
 /* #741 slice 2 review: visible page heading, data-driven reason, left-over modules. */
-.event-modules-heading { margin: 0; color: var(--ink); font-size: var(--heading-section, 1.3rem); }
 .event-module-reason { margin: 10px 0 0; }
 .event-modules-leftover { border-left: 5px solid var(--imsda-gold); }
 .event-modules-leftover .foundation-grid { margin-top: 14px; }

@@ -388,7 +388,7 @@ export async function runClubFormTemplateSync(actorUserId: string): Promise<Club
 }
 
 function needsSync() {
-  return new ClubFormError("TEMPLATE_NEEDS_SYNC", "This form needs to be synced before it can be turned on. Use Sync templates on the Club forms page (or run npm run club-forms:sync), then try again.");
+  return new ClubFormError("TEMPLATE_NEEDS_SYNC", "This form needs to be synced before it can be turned on. Use Sync templates on the Club forms page, then try again.");
 }
 
 /** Turns one template on or off. The caller has already checked for a system administrator. */

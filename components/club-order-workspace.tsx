@@ -39,6 +39,30 @@ const BULK_LIMIT = 500;
 
 export const ADVENTSOURCE_URL = "https://www.adventsource.org";
 
+/**
+ * Stable anchors for the Orders page's sections (#810). "inventory" and
+ * "club-uniforms" already existed (the old supplies redirects land on
+ * `#inventory`), so the ids never change; the jump links at the top use them.
+ */
+export const ORDER_SECTION_IDS = {
+  list: "club-order-list",
+  supplies: "inventory",
+  waiting: "club-order-waiting",
+  ready: "club-order-ready",
+  uniforms: "club-uniforms",
+} as const;
+
+/** The jump links at the top of Orders, in page order. "Orders waiting to arrive" is listed only while one exists. */
+export function orderSectionLinks(hasWaiting: boolean): { id: string; label: string }[] {
+  return [
+    { id: ORDER_SECTION_IDS.list, label: "Order list" },
+    { id: ORDER_SECTION_IDS.supplies, label: "Supplies" },
+    ...(hasWaiting ? [{ id: ORDER_SECTION_IDS.waiting, label: "Waiting to arrive" }] : []),
+    { id: ORDER_SECTION_IDS.ready, label: "Ready to hand out" },
+    { id: ORDER_SECTION_IDS.uniforms, label: "Uniforms" },
+  ];
+}
+
 /** Most items the "add an item" picker lists at once. */
 const PICKER_LIMIT = 100;
 
@@ -330,6 +354,12 @@ export function ClubOrderWorkspace({
         </div>
         <span className="count-badge">{onList.length} {onList.length === 1 ? "line" : "lines"}</span>
       </div>
+      <nav aria-label="Jump to a part of this page" className={styles.jumpNav} id="club-order-sections">
+        {orderSectionLinks(waitingBatches.length > 0).map((link) => (
+          <a className={styles.jumpLink} href={`#${link.id}`} key={link.id}>{link.label}</a>
+        ))}
+      </nav>
+
       <p className="inline-notice" id="club-order-helper-notice" role="note">
         This is a helper to build your list — it is <strong>not</strong> an official order form. You still need to order the items from{" "}
         <a href={ADVENTSOURCE_URL} rel="noopener noreferrer" target="_blank">AdventSource</a>.
@@ -379,7 +409,7 @@ export function ClubOrderWorkspace({
         </section>
       )}
 
-      <section className={styles.block}>
+      <section className={styles.block} id={ORDER_SECTION_IDS.list}>
         <h3>Your order list</h3>
         {unmatchedCount > 0 && (
           <p className={styles.flag} role="status">
@@ -541,7 +571,7 @@ export function ClubOrderWorkspace({
         {onList.length === 0 && <p className={`field-help ${styles.helpText}`} id="club-order-nothing">Nothing on the list to export yet.</p>}
       </section>
 
-      <section className={styles.block} id="inventory">
+      <section className={styles.block} id={ORDER_SECTION_IDS.supplies}>
         <ClubSupplyStockWorkspace
           embedded
           initialStock={stock}
@@ -552,7 +582,7 @@ export function ClubOrderWorkspace({
       </section>
 
       {waitingBatches.length > 0 && (
-        <section className={styles.block}>
+        <section className={styles.block} id={ORDER_SECTION_IDS.waiting}>
           <h3>Orders waiting to arrive</h3>
           <p className={`field-help ${styles.helpText}`}>Earlier orders, from before this helper list. Mark one received when it arrives and its items join your stock. New orders can&apos;t be placed here.</p>
           <ul className={styles.list}>
@@ -578,7 +608,7 @@ export function ClubOrderWorkspace({
         </section>
       )}
 
-      <section className={styles.block}>
+      <section className={styles.block} id={ORDER_SECTION_IDS.ready}>
         <h3>Ready to hand out</h3>
         {awardGroups.length === 0 ? (
           <p className="quiet-copy">Nothing in stock covers a need yet.</p>
