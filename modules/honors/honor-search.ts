@@ -11,6 +11,8 @@ const wordsOf = (value: string) =>
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
     .toLocaleLowerCase("en-US")
+    // An apostrophe joins, not splits: "Hiker's Guide" is the words "hikers" and "guide".
+    .replace(/['’]/g, "")
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
 

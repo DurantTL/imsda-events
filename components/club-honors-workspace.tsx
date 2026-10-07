@@ -99,6 +99,8 @@ export function ClubHonorsWorkspace({
   const base = staff
     ? `/api/admin/organizations/${encodeURIComponent(organizationId)}`
     : `/api/attendee/clubs/${encodeURIComponent(organizationId)}`;
+  // Staff may be looking at another club year (#819); the reload must ask for the same one.
+  const listUrl = staff ? `${base}/honors?year=${encodeURIComponent(clubYear)}` : `${base}/honors`;
   const [nameDirection, setNameDirection] = useState<SortDirection>("asc");
   const visible = useMemo(
     () => sortByName(filterRowsByPersonName(filterClubHonorsRows(rows, {
@@ -162,6 +164,7 @@ export function ClubHonorsWorkspace({
       setSelected(new Set());
       setBulkNote("");
       setBulkHonorId("");
+      setBulkStatus("IN_PROGRESS");
       setBulkDate("");
       setMemberSearch("");
       setConfirmingBulk(false);
@@ -228,7 +231,7 @@ export function ClubHonorsWorkspace({
         setHistory(result);
         setHistoryError("");
       }
-      const refreshed = await fetch(`${base}/honors`);
+      const refreshed = await fetch(listUrl);
       const refreshedBody = await refreshed.json().catch(() => ({})) as { rows?: ClubHonorsRow[] };
       if (refreshedBody.rows) setRows(refreshedBody.rows);
       formElement.reset();
@@ -269,7 +272,7 @@ export function ClubHonorsWorkspace({
         setHistory(result);
         setHistoryError("");
       }
-      const refreshed = await fetch(`${base}/honors`);
+      const refreshed = await fetch(listUrl);
       const refreshedBody = await refreshed.json().catch(() => ({})) as { rows?: ClubHonorsRow[] };
       if (refreshedBody.rows) setRows(refreshedBody.rows);
       setNotice("Entry voided. It is kept in the audit record.");
@@ -489,7 +492,7 @@ export function ClubHonorsWorkspace({
           <strong>{bulkScopeSummary({ count: selected.size, singular: "person", plural: "people", scope: `the ${clubYear} roster` })}</strong>
           {selectedNames.length > 0 && <>: {selectedNames.slice(0, 5).join(", ")}{selectedNames.length > 5 ? `, and ${selectedNames.length - 5} more` : ""}</>}.
         </p>
-        <p>Each will be marked <strong>{memberHonorStatusLabels[bulkStatus]}</strong>{bulkStatus === "COMPLETED" && bulkDate ? ` on ${bulkDate}` : ""}.{bulkStatus === "COMPLETED" ? " An in-progress entry for the same honor is replaced, and stays in the history." : ""} Nothing is recorded until you confirm; a wrong entry can be voided afterwards.</p>
+        <p>Each will be marked <strong>{memberHonorStatusLabels[bulkStatus]}</strong>{bulkStatus === "COMPLETED" && bulkDate ? ` on ${bulkDate}` : ""}.{bulkStatus === "COMPLETED" ? " An in-progress entry for the same honor is replaced; it is kept in the audit record." : ""} Nothing is recorded until you confirm; a wrong entry can be voided afterwards.</p>
       </ConfirmDialog>
 
       {historyFor && (

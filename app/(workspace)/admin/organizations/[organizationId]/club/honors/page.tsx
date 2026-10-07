@@ -6,7 +6,7 @@ import { BackLink } from "@/components/back-link";
 import { ClubHonorsWorkspace } from "@/components/club-honors-workspace";
 import { getCurrentSession } from "@/modules/access/current-session";
 import { getPrisma } from "@/lib/prisma";
-import { clubYearFor } from "@/modules/club-rosters/domain";
+import { rosterYearView } from "@/modules/club-rosters/domain";
 import { listActiveHonorOptions, listClubHonorsPage } from "@/modules/honors/member-honor-repository";
 
 export const metadata: Metadata = { title: "Club honors" };
@@ -17,7 +17,13 @@ export const dynamic = "force-dynamic";
  * system administrator can void a mistaken entry from a member's history,
  * whichever club recorded it and whether or not that club is still active.
  */
-export default async function StaffClubHonorsPage({ params }: { params: Promise<{ organizationId: string }> }) {
+export default async function StaffClubHonorsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ organizationId: string }>;
+  searchParams?: Promise<{ year?: string | string[] }>;
+}) {
   const { user } = await getCurrentSession();
   if (!user) redirect(await staffLoginRedirectPath());
   if (user.globalRole !== "SYSTEM_ADMIN") redirect("/no-access");
@@ -27,7 +33,8 @@ export default async function StaffClubHonorsPage({ params }: { params: Promise<
     select: { type: true, name: true, isActive: true },
   });
   if (!club || club.type !== "CLUB") notFound();
-  const clubYear = clubYearFor(new Date());
+  // The roster's year, carried by its Honors link (#819); an unlisted year falls back to the current one.
+  const clubYear = rosterYearView((await searchParams)?.year).clubYear;
   const [rows, honors] = await Promise.all([
     listClubHonorsPage(organizationId, clubYear),
     listActiveHonorOptions(),

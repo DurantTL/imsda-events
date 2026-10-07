@@ -94,6 +94,15 @@ describe("POST club honors (bulk entry)", () => {
     expect(mocks.recordMemberHonorEntries).not.toHaveBeenCalled();
   });
 
+  it("answers 404 when a selected member is on another club's roster, and returns no rows", async () => {
+    mocks.requireHonorsEditAccess.mockResolvedValue({ accountId: "acct-1" });
+    mocks.recordMemberHonorEntries.mockRejectedValue(new MemberHonorError("MEMBER_NOT_FOUND", "That member isn't on this club's roster."));
+    const response = await CLUB_HONORS_POST(postRequest({ memberIds: ["m1", "member-of-club-2"], honorId: "honor-1", status: "IN_PROGRESS", completionDate: "", note: "" }), ctx());
+    expect(response.status).toBe(404);
+    expect(mocks.recordMemberHonorEntries).toHaveBeenCalledWith("club-1", ["m1", "member-of-club-2"], expect.anything(), { accountId: "acct-1" });
+    expect(mocks.listClubHonorsPage).not.toHaveBeenCalled();
+  });
+
   it("rejects an empty selection before ever calling the repository", async () => {
     mocks.requireHonorsEditAccess.mockResolvedValue({ accountId: "acct-1" });
     const response = await CLUB_HONORS_POST(postRequest({ memberIds: [], honorId: "honor-1", status: "IN_PROGRESS" }), ctx());

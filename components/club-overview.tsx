@@ -64,8 +64,8 @@ export async function ClubOverview({
   complianceCounts?: boolean;
   /**
    * The club's own Honors page, for a caller with one (an Area Coordinator,
-   * #486). Omitted callers (staff, an event manager) have no separate Honors
-   * page here, so the tile points at the roster's own honor chips instead.
+   * #486). Staff pass `staffHonorsHref` instead; an event manager has no Honors
+   * page here, so the Honors tile has no link (#819).
    */
   honorsHref?: string;
   /** The conference staff's Honors page for this club: the roster's Honors button links there (#819). */
@@ -86,6 +86,8 @@ export async function ClubOverview({
     listClubHonorsPage(organizationId, shownRosterYear),
   ]);
   const honors = honorYearSummary(honorRows, shownRosterYear);
+  // The staff link carries a non-current roster year, so the Honors page opens on the same year (#819).
+  const staffHonorsHrefForYear = staffHonorsHref && (otherYear ? `${staffHonorsHref}?year=${encodeURIComponent(shownRosterYear)}` : staffHonorsHref);
   const registered = events.filter((event) => event.registration);
   const open = events.filter((event) => !event.registration && event.available && event.phase === "OPEN");
   // A club's own draft isn't shown here as filed (#426); staff open the report itself to see or edit one.
@@ -108,7 +110,7 @@ export async function ClubOverview({
         events={{ open: open.length, registered: registered.length }}
         eventsHref="#open-club-events"
         honors={honors}
-        honorsHref={honorsHref ?? staffHonorsHref ?? "#open-club-roster"}
+        honorsHref={honorsHref ?? staffHonorsHrefForYear}
         reports={reportProgress}
         reportsHref="#open-club-reports"
         roster={roster}
@@ -148,7 +150,7 @@ export async function ClubOverview({
           canSeeBirthDates={Boolean(birthDatesEndpoint) && !otherYear}
           clubYear={shownRosterYear}
           complianceStatuses={compliance?.statuses}
-          honorsHref={staffHonorsHref}
+          honorsHref={staffHonorsHrefForYear}
           honorsPopup={honorsHref ? { canRecord: false } : undefined}
           // No class history link here (#791): it opens on the club portal's gate, and the id stays off this view.
           initialMembers={members.map((member) => ({ ...member, personId: undefined }))}

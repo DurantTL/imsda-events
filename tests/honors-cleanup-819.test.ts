@@ -68,6 +68,13 @@ describe("honor type-to-search (#819)", () => {
     expect(filterHonorsByWordPrefix(honors, "bseil")).toEqual([]);
   });
 
+  it("treats an apostrophe as part of the word", () => {
+    const named = [{ id: "a", name: "Hiker's Guide" }, { id: "b", name: "Hikers’ Camp" }];
+    expect(filterHonorsByWordPrefix(named, "hikers").map((honor) => honor.id)).toEqual(["a", "b"]);
+    expect(filterHonorsByWordPrefix(named, "hiker's g").map((honor) => honor.id)).toEqual(["a"]);
+    expect(filterHonorsByWordPrefix(named, "s guide")).toEqual([]);
+  });
+
   it("keeps everything for a blank search and never changes the input", () => {
     const input = [...honors];
     expect(filterHonorsByWordPrefix(input, "")).toHaveLength(honors.length);
@@ -237,6 +244,13 @@ describe("the club print report holds honor names and counts only (#819)", () =>
       expect(mocks.loadHonorsExport).toHaveBeenCalledWith("org-1", expect.any(String), { memberId: "m1" });
       expect(report).toContain("Completed honors:");
       expect(report).toContain("Fixture-Aaa, Pat");
+    });
+
+    it("one person: a member id that isn't on the club's list never reaches the export and asks for a member", async () => {
+      const html = await render({ view: "person", member: "member-of-another-club" });
+      expect(mocks.loadHonorsExport).not.toHaveBeenCalled();
+      expect(html).toContain("Choose a member");
+      expect(html).not.toContain("Knots");
     });
   });
 });

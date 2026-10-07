@@ -36,7 +36,8 @@ export function ClubYearTiles({
   rosterHref: string;
   /** Null hides the tile: honors are visible to anyone who can view the roster, but a caller may not have loaded them. */
   honors: HonorYearSummary | null;
-  honorsHref: string;
+  /** Where "Open honors" goes; no link when the viewer has no Honors page (#819). */
+  honorsHref?: string;
   /** Null hides the tile: the viewer isn't allowed Sterling Volunteers information at all. */
   compliance: ComplianceTileSummary | null;
   complianceHref: string;
@@ -75,7 +76,7 @@ export function ClubYearTiles({
               {honors.completedThisYear > 0 && <li>{honors.completedThisYear} completed this year</li>}
             </ul>
           )}
-          <Link className="secondary-button club-year-tile-link" href={honorsHref}>Open honors</Link>
+          {honorsHref && <Link className="secondary-button club-year-tile-link" href={honorsHref}>Open honors</Link>}
         </div>
       )}
 

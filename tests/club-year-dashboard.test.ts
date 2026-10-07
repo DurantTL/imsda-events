@@ -272,8 +272,8 @@ describe("the shared club overview gives staff and Area Coordinators the same re
     expect(props.compliance).toEqual({ notInCompliance: 1, expiringSoon: 2, missing: 3 });
     expect(mocks.clubComplianceReminderCounts).not.toHaveBeenCalled();
     expect(props.honors).toEqual({ inProgress: 1, completedThisYear: 1 });
-    // No dedicated staff Honors page for this club — the tile points at the honor chips already on this page.
-    expect(props.honorsHref).toBe("#open-club-roster");
+    // No Honors page for this viewer, and the roster no longer lists honors, so the tile has no link (#819).
+    expect(props.honorsHref).toBeUndefined();
     expect(props.events).toEqual({ open: 1, registered: 1 });
     expect(props.reports).toEqual({ filed: 1, missing: 1, dueSoon: { count: 1, dueDate: "2026-12-10" } });
   });
@@ -314,7 +314,7 @@ describe("the shared club overview gives staff and Area Coordinators the same re
     expect(mocks.clubComplianceReminderCounts).not.toHaveBeenCalled();
     // Honors are visible to anyone who can view the roster (#486), even without background-check access.
     expect(props.honors).toEqual({ inProgress: 1, completedThisYear: 1 });
-    expect(props.honorsHref).toBe("#open-club-roster");
+    expect(props.honorsHref).toBeUndefined();
   });
 });
 
