@@ -1072,7 +1072,7 @@ select:focus-visible {
 .person-list { display: grid; }
 .person-row,
 .arrival-row { display: grid; align-items: center; gap: 12px; border-top: 1px solid #edf2f4; padding: 12px 0; }
-.person-row { grid-template-columns: auto 1fr auto; }
+.person-row { grid-template-columns: auto minmax(0, 1fr) auto; }
 .linked-row { color: inherit; text-decoration: none; }
 .linked-row:hover strong { color: var(--imsda-purple); }
 .person-row:first-child,
@@ -1231,7 +1231,7 @@ select:focus-visible {
 .selected-audience-recipients small { display: block; overflow-wrap: anywhere; }
 .selected-audience-recipients strong { color: var(--ink); font-size: max(var(--type-floor, 0px), 0.7rem); }
 .selected-audience-recipients small { margin-top: 2px; color: var(--muted); font-size: max(var(--type-floor, 0px), 0.61rem); }
-.record-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 13px; border-radius: 16px; padding: 16px; }
+.record-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 13px; border-radius: 16px; padding: 16px; }
 .record-card h3 { margin: 0; font-size: 0.84rem; }
 .record-card p,
 .record-card small { margin: 3px 0 0; color: var(--muted); font-size: max(var(--type-floor, 0px), 0.66rem); }
@@ -2522,7 +2522,7 @@ select:focus-visible {
   .intro-actions .primary-button { width: 100%; }
   .toolbar { align-items: stretch; flex-direction: column; }
   .secondary-button { width: 100%; }
-  .record-card { grid-template-columns: auto 1fr; }
+  .record-card { grid-template-columns: auto minmax(0, 1fr); }
   .record-card .status-chip { grid-column: 2; width: fit-content; }
   .checkin-tallies { margin-top: 19px; }
   .checkin-tallies { flex-wrap: wrap; }
@@ -10383,3 +10383,65 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 .nca-invite-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); gap: 12px; align-items: end; margin: 8px 0 12px; }
 .nca-invite-form label { display: grid; gap: 6px; font-weight: 700; min-width: 0; }
 .nca-invite-form input { width: 100%; min-width: 0; }
+
+/* Issue #811 - table review. Every table keeps a width it can read at (a minimum width inside its
+   own scroll box), and no cell lets its text run into the next column. */
+
+/* Honors: the status is its own span that never shrinks, so only the honor name is cut with an ellipsis. */
+.honor-pill-status { flex: 0 0 auto; font-weight: 700; white-space: nowrap; }
+.honor-pill-status::before { content: "\00b7"; margin-right: 4px; font-weight: 400; }
+.honor-pill-list.expanded .honor-pill { flex-wrap: wrap; }
+/* The Honors page table: fixed column widths from 601px up, so one long pill can never widen the table
+   (768-1024px included). The pill list fills its column and long names are cut inside their pill. */
+.honors-table { min-width: 34rem; }
+@media screen and (min-width: 601px) {
+  .honors-table { table-layout: fixed; width: 100%; }
+  .honors-table .honors-col-name { width: 22%; }
+  .honors-table .honors-col-class { width: 14%; }
+  .honors-table .honors-col-add { width: 6.5rem; }
+  .honors-table th, .honors-table td { overflow-wrap: anywhere; word-break: normal; }
+  .honors-table td.honors-col-honors { width: auto; }
+  .report-table.honors-table td:last-child { width: 6.5rem; }
+}
+
+/* Attendee listing: 12 columns, so it scrolls inside its box with a readable minimum width (it had no
+   cell padding at all, which ran "CONFIRMED" into the name beside it). */
+@media screen and (min-width: 601px) {
+  .attendee-listing-table { min-width: 78rem; }
+  .attendee-listing-table th, .attendee-listing-table td { overflow-wrap: anywhere; word-break: normal; }
+  .attendee-listing-table td:last-child { width: auto; min-width: 14rem; }
+  .attendee-listing-table th:nth-child(1), .attendee-listing-table td:nth-child(1) { min-width: 8rem; }
+  .attendee-listing-table th:nth-child(2), .attendee-listing-table td:nth-child(2) { min-width: 7rem; }
+  .attendee-listing-table th:nth-child(3) { min-width: 11rem; }
+}
+
+/* The month-by-month club grid: 15 columns scroll inside the box instead of squeezing into each other. */
+@media screen and (min-width: 601px) {
+  .club-reports-grid table.report-table { min-width: 62rem; }
+  .club-reports-grid .report-table td:last-child { width: auto; }
+  .club-reports-grid .report-table th:first-child { min-width: 12rem; }
+  .club-reports-grid .report-table td, .club-reports-grid .report-table th:not(:first-child) { white-space: nowrap; }
+}
+
+/* The member honors popup: a person with dozens of honors scrolls the list inside the popup, long names
+   wrap (never cut), and the status stays on its own line under the name. */
+.member-honors-list { max-height: min(45vh, 22rem); overflow-y: auto; padding-right: 4px; overscroll-behavior: contain; }
+.member-honors-list li > span { min-width: 0; }
+.member-honors-list strong { overflow-wrap: anywhere; }
+.member-honors-list small { overflow-wrap: anywhere; }
+.member-honors-list:focus-visible { outline: 2px solid var(--imsda-purple, #5b3a8c); outline-offset: 2px; }
+.member-honor-status { font-weight: 700; }
+
+/* Registration cards and people rows (#811): a long unbroken name wraps inside its card instead of
+   pushing the status chip, and the page, sideways. */
+.person-row > span, .record-copy { min-width: 0; overflow-wrap: anywhere; }
+.record-card-shell { grid-template-columns: minmax(0, 1fr); }
+
+/* Phone tap targets found by the table review (#811). */
+@media screen and (max-width: 600px) {
+  .roster-export-column-actions .text-button { min-width: var(--touch-target, 44px); min-height: var(--touch-target, 44px); }
+  .retreat-packet-selector a { display: inline-flex; align-items: center; min-height: var(--touch-target, 44px); }
+  /* The retreat packet's tables become cards like the other lists; each sheet keeps its print layout. */
+  .retreat-packet-sheet table.table-cards td, .retreat-packet-sheet table.table-cards th { border: 0; }
+  .retreat-packet-sheet table.table-cards.table-cards > tbody > tr > th[scope="row"] { background: transparent; border-bottom: 1px solid #eaf0f2; }
+}

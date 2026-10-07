@@ -130,13 +130,13 @@ export function ClubMemberHonorsDialog({
         ) : current.length === 0 ? (
           <p className="public-manage-empty">No honors recorded yet.</p>
         ) : (
-          <ul className="public-manage-club-list" aria-label="Recorded honors">
+          <ul className="public-manage-club-list member-honors-list" aria-label="Recorded honors" tabIndex={0}>
             {current.map((entry) => (
               <li key={entry.honorId}>
                 <span>
                   <strong translate="no">{entry.honorName}</strong>
                   <small>
-                    {memberHonorStatusLabels[entry.status]}{entry.completionDate ? ` · ${entry.completionDate}` : ""}
+                    <span className="member-honor-status">{memberHonorStatusLabels[entry.status]}</span>{entry.completionDate ? ` · ${entry.completionDate}` : ""}
                   </small>
                 </span>
               </li>
