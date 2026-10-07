@@ -573,7 +573,7 @@ export function CheckInWorkspace({
           <span>
             Signed out for inactivity &mdash;{" "}
             <Link href={`/login?next=${encodeURIComponent(`/check-in?event=${eventId}`)}`}>sign in again</Link>.
-            Check-ins saved on this device stay queued.
+            Check-ins saved on this device stay queued and retry on their own once you are signed in.
           </span>
         </div>
       )}

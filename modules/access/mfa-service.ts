@@ -47,6 +47,7 @@ export class MfaError extends Error {
       | "MFA_CHALLENGE_INVALID"
       | "MFA_CODE_INVALID"
       | "MFA_CODE_ALREADY_USED"
+      | "MFA_TRY_AGAIN"
       | "MFA_LOCKED"
       | "MFA_REQUIRED_BY_ROLE",
     message: string,
@@ -322,11 +323,32 @@ async function consumeSecondFactor(
  * Gives back the guess `reserveCodeAttempt` took, for a correct code that was
  * already spent (#825). The counter never goes below zero.
  */
-async function releaseCodeAttempt(enrollmentId: string) {
+async function releaseCodeAttempt(enrollmentId: string, requestStartedAt: Date) {
   await getPrisma().userMfaEnrollment.updateMany({
-    where: { id: enrollmentId, failedAttempts: { gt: 0 } },
+    where: {
+      id: enrollmentId,
+      failedAttempts: { gt: 0 },
+      // Only this request's own reservation. A successful verification that
+      // landed after this request started has already reset the counter, and
+      // what is there now belongs to other requests, not to us.
+      OR: [{ lastVerifiedAt: null }, { lastVerifiedAt: { lte: requestStartedAt } }],
+    },
     data: { failedAttempts: { decrement: 1 } },
   });
+}
+
+/**
+ * Whether the presented code is exactly right for a step this account already
+ * spent (#825). Checked BEFORE a guess slot is reserved, so a burst of devices
+ * reading the same just-used code never takes a slot and can never push the
+ * counter into a false lock.
+ */
+function isSpentCorrectCode(enrollment: EnrollmentRecord, presented: string, now: Date) {
+  const verification = verifyTotp(openSecret(enrollment.sealedSecret, SECRET_PURPOSE), presented, {
+    at: now,
+    lastUsedStep: enrollment.lastUsedStep === null ? null : Number(enrollment.lastUsedStep),
+  });
+  return !verification.valid && verification.reason === "ALREADY_USED";
 }
 
 /** No lock, or one that has already expired: the "no live lock" predicate. */
@@ -392,6 +414,7 @@ async function claimCodeLock(
       now,
     });
   }
+  return claimed.count === 1;
 }
 
 /**
@@ -584,8 +607,27 @@ export async function completeMfaChallenge(
 
   // A typo while confirming a new authenticator counts, but is not announced.
   const notify = enrollment.status !== "PENDING";
+  const alreadyUsedError = () => new MfaError(
+    "MFA_CODE_ALREADY_USED",
+    "That code was just used on another device. Wait for the next code, then enter it.",
+  );
+  // A correct code for a spent step takes no guess slot at all (#825).
+  if (enrollment.status !== "PENDING" && isSpentCorrectCode(enrollment, code, now)) {
+    throw alreadyUsedError();
+  }
   if (!await reserveCodeAttempt(enrollment.id, now)) {
-    await claimCodeLock(challenge.userId, enrollment.id, now, { notify, staleOnly: true });
+    const locked = await claimCodeLock(challenge.userId, enrollment.id, now, { notify, staleOnly: true });
+    if (!locked) {
+      // Refused while a burst of other requests is still being counted, and no
+      // lock was set: say "a moment", not "wait fifteen minutes".
+      const current = await getPrisma().userMfaEnrollment.findUnique({
+        where: { userId: challenge.userId },
+        select: { lockedUntil: true },
+      });
+      if (!current?.lockedUntil || current.lockedUntil <= now) {
+        throw new MfaError("MFA_TRY_AGAIN", "Please try again in a moment.");
+      }
+    }
     throw new MfaError(
       "MFA_LOCKED",
       "Too many incorrect codes. Wait a few minutes and try again.",
@@ -615,14 +657,12 @@ export async function completeMfaChallenge(
   }
 
   if (!accepted.valid && accepted.alreadyUsed) {
-    // Not a failure: no lock, no lockout email, and the challenge stays live so
-    // this device can enter the next code. (Its own attempt count still ticks,
-    // which bounds how often this answer can be asked for.)
-    await releaseCodeAttempt(enrollment.id);
-    throw new MfaError(
-      "MFA_CODE_ALREADY_USED",
-      "That code was just used on another device. Wait for the next code, then enter it.",
-    );
+    // Lost a race to another device that spent the step just now. Not a
+    // failure: no lock, no lockout email, and the challenge stays live so this
+    // device can enter the next code. (Its own attempt count still ticks, which
+    // bounds how often this answer can be asked for.)
+    await releaseCodeAttempt(enrollment.id, now);
+    throw alreadyUsedError();
   }
   if (!accepted.valid) {
     await claimCodeLock(challenge.userId, enrollment.id, now, { notify });

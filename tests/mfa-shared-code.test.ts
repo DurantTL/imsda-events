@@ -34,8 +34,10 @@ function world() {
     lastUsedStep: null as bigint | null,
     lockedUntil: null as Date | null,
     failedAttempts: 0,
+    lastVerifiedAt: null as Date | null,
     updatedAt: new Date(0),
   };
+  const hooks: { afterReserve?: () => void } = {};
   const challenges = new Map<string, { id: string; userId: string; expiresAt: Date; consumedAt: Date | null; attempts: number; userAgent: string | null }>();
   for (const name of ["a", "b", "c", "d"]) {
     challenges.set(hashOpaqueToken(`token-${name}`), { id: `challenge-${name}`, userId: "user-1", expiresAt: new Date(t0.getTime() + 600_000), consumedAt: null, attempts: 0, userAgent: null });
@@ -61,7 +63,11 @@ function world() {
         if (attempts?.gte !== undefined && !(enrollment.failedAttempts >= attempts.gte)) return { count: 0 };
         if (Array.isArray(where.OR)) {
           const spentGuard = (where.OR as Array<Record<string, unknown>>).some((clause) => "lastUsedStep" in clause);
-          if (spentGuard) {
+          const verifiedGuard = (where.OR as Array<Record<string, unknown>>).some((clause) => "lastVerifiedAt" in clause);
+          if (verifiedGuard) {
+            const limit = ((where.OR as Array<{ lastVerifiedAt: { lte?: Date } | null }>)[1].lastVerifiedAt!.lte) as Date;
+            if (enrollment.lastVerifiedAt !== null && enrollment.lastVerifiedAt > limit) return { count: 0 };
+          } else if (spentGuard) {
             const ok = enrollment.lastUsedStep === null || enrollment.lastUsedStep < ((where.OR as Array<{ lastUsedStep: { lt?: bigint } | null }>)[1].lastUsedStep!.lt as bigint);
             if (!ok) return { count: 0 };
           } else if (!noLiveLock(now)) {
@@ -74,6 +80,7 @@ function world() {
           else if (value && typeof value === "object" && "decrement" in value) enrollment.failedAttempts -= (value as { decrement: number }).decrement;
           else (enrollment as Record<string, unknown>)[field] = value;
         }
+        if (data.failedAttempts && typeof data.failedAttempts === "object" && "increment" in data.failedAttempts) hooks.afterReserve?.();
         return { count: 1 };
       }),
     },
@@ -81,7 +88,7 @@ function world() {
     authCredential: { findUnique: vi.fn(async () => ({ disabledAt: null, user: { globalRole: null } })) },
   };
   dependencies.getPrisma.mockReturnValue(prisma);
-  return { enrollment, challenges };
+  return { enrollment, challenges, hooks };
 }
 
 let currentNow = t0;
@@ -177,5 +184,61 @@ describe("devices sharing one authenticator code (#825)", () => {
       await expect(signIn("b", spent, t0)).rejects.toMatchObject({ code: "MFA_CODE_ALREADY_USED" });
     }
     await expect(signIn("b", spent, t0)).rejects.toMatchObject({ code: "MFA_CHALLENGE_INVALID" });
+  });
+
+  it("a burst of the just-used code takes no guess slot, even with the counter at 1: all say 'already used', none say locked", async () => {
+    const { enrollment } = world();
+    const shared = totpCodeForStep(SECRET, step0);
+    await signIn("a", shared, t0);
+    enrollment.failedAttempts = 1;
+
+    const burst = await Promise.allSettled(["b", "c", "d"].map((name) => signIn(name, shared, t0)));
+
+    for (const outcome of burst) {
+      expect(outcome.status).toBe("rejected");
+      expect((outcome as PromiseRejectedResult).reason).toMatchObject({ code: "MFA_CODE_ALREADY_USED" });
+    }
+    expect(enrollment.failedAttempts).toBe(1);
+    expect(enrollment.lockedUntil).toBeNull();
+    expect(dependencies.scheduleLockoutEmails).not.toHaveBeenCalled();
+  });
+
+  it("a refused slot with no lock set says 'try again in a moment', not the fifteen-minute lock", async () => {
+    const { enrollment } = world();
+    enrollment.failedAttempts = 3;
+    enrollment.updatedAt = new Date(t0.getTime());
+
+    await expect(signIn("a", totpCodeForStep(SECRET, step0 + 40), t0)).rejects.toMatchObject({
+      code: "MFA_TRY_AGAIN",
+      message: "Please try again in a moment.",
+    });
+    expect(enrollment.lockedUntil).toBeNull();
+  });
+
+  it("gives back its reservation only when it is its own", async () => {
+    const { enrollment, hooks } = world();
+    const code = totpCodeForStep(SECRET, step0);
+    // Another device spends the step between this request's check and its claim,
+    // and a successful verification (newer than this request's start) resets the counter.
+    hooks.afterReserve = () => {
+      hooks.afterReserve = undefined;
+      enrollment.lastUsedStep = BigInt(step0);
+      enrollment.lastVerifiedAt = new Date(t0.getTime() + 1_000);
+      enrollment.failedAttempts = 1; // someone else's slot, taken after that reset
+    };
+
+    await expect(signIn("a", code, t0)).rejects.toMatchObject({ code: "MFA_CODE_ALREADY_USED" });
+    expect(enrollment.failedAttempts, "another request's slot is left alone").toBe(1);
+  });
+
+  it("does release its own reservation when nothing newer has verified", async () => {
+    const { enrollment, hooks } = world();
+    hooks.afterReserve = () => {
+      hooks.afterReserve = undefined;
+      enrollment.lastUsedStep = BigInt(step0);
+    };
+
+    await expect(signIn("a", totpCodeForStep(SECRET, step0), t0)).rejects.toMatchObject({ code: "MFA_CODE_ALREADY_USED" });
+    expect(enrollment.failedAttempts).toBe(0);
   });
 });

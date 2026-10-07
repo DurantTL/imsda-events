@@ -234,7 +234,11 @@ export function useOfflineCheckInQueue({
       }
 
       const errorCode = responseErrorCode(response, payload);
-      const retryLater = errorCode === "SERVER_UNAVAILABLE";
+      // A 401 means the staff session ended (idle sign-out), not that the
+      // check-in is wrong: keep it queued so it retries on its own once staff
+      // sign back in (#825). A 403 is a real refusal and still needs review.
+      const retryLater = errorCode === "SERVER_UNAVAILABLE"
+        || (errorCode === "AUTHORIZATION_REQUIRED" && response.status === 401);
       upsertQueueItem(updateQueuedCheckIn(item, {
         state: retryLater ? "QUEUED" : "CONFLICT",
         lastErrorCode: errorCode,
@@ -357,12 +361,19 @@ export function useOfflineCheckInQueue({
   useEffect(() => {
     let saved: OfflineCheckInQueueItem[] = [];
     let invalidItemCount = 0;
+    // Saved before this change, or by an older build: an item that failed only
+    // because the session had ended is retried automatically after sign-in.
+    const requeueSignedOut = (items: OfflineCheckInQueueItem[]) => items.map((item) => (
+      item.state === "CONFLICT" && item.lastErrorCode === "AUTHORIZATION_REQUIRED"
+        ? { ...item, state: "QUEUED" as const }
+        : item
+    ));
     let storageReadFailed = false;
     try {
       const inspection = inspectOfflineCheckInQueue(
         window.localStorage.getItem(storageKey),
       );
-      saved = inspection.items;
+      saved = requeueSignedOut(inspection.items);
       invalidItemCount = inspection.invalidItemCount;
     } catch {
       storageReadFailed = true;

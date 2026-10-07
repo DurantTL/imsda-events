@@ -56,6 +56,15 @@ describe("one staff account on several devices (#825)", () => {
     expect(source).toMatch(/window\.clearTimeout\(timer\);\s*if \(!cancelled\) timer = /);
   });
 
+  it("saved check-ins that failed only because the session ended are retried on their own after sign-in", () => {
+    const source = readFileSync("components/use-offline-check-in-queue.ts", "utf8");
+    // A 401 stays queued (a 403 is a real refusal and still needs review)...
+    expect(source).toMatch(/errorCode === "AUTHORIZATION_REQUIRED" && response\.status === 401/);
+    // ...and older items parked for review by a sign-out are re-queued when the page loads.
+    expect(source).toMatch(/item\.state === "CONFLICT" && item\.lastErrorCode === "AUTHORIZATION_REQUIRED"/);
+    expect(readFileSync("components/check-in-workspace.tsx", "utf8")).toContain("retry on their own once you are signed in");
+  });
+
   it("revokes other sessions only on explicit security events, never on sign-in", () => {
     const signInFiles = ["modules/access/auth-service.ts", "modules/access/mfa-service.ts", "modules/access/passkeys.ts", "app/api/auth/login/route.ts", "app/api/auth/mfa/challenge/route.ts"];
     for (const file of signInFiles) {
