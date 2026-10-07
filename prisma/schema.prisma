@@ -566,6 +566,12 @@ enum MessageTemplateKey {
   LODGING_WAITLIST_OFFER
   /// A room notice (#200), sent to one registration by an explicit staff action. Not an event template.
   LODGING_ASSIGNMENT_NOTICE
+  /// A new club application arrived (#817): sent to the configured notification address. Club name, church and director name plus a link, nothing else.
+  NEW_CLUB_APPLICATION_SUBMITTED
+  /// A new club application was declined (#817): sent to the applicant, with the reason when one was given.
+  NEW_CLUB_APPLICATION_DECLINED
+  /// A system administrator invited someone to apply for a new club (#817). The body carries a sentinel; the link is minted at delivery.
+  NEW_CLUB_APPLICATION_INVITE
 }
 
 enum MessageTemplateStatus {
@@ -727,6 +733,8 @@ model User {
   grantedClubDirectorships       ClubDirectorGrant[]              @relation("ClubDirectorGrantGrantedBy")
   revokedClubDirectorships       ClubDirectorGrant[]              @relation("ClubDirectorGrantRevokedBy")
   createdClubInvites             ClubInvite[]                     @relation("ClubInviteCreatedBy")
+  decidedNewClubApplications     NewClubApplication[]             @relation("NewClubApplicationDecider")
+  createdNewClubApplicationInvites NewClubApplicationInvite[]     @relation("NewClubApplicationInviteCreator")
   passkeys                       UserPasskey[]
   driverVerificationsReviewed    DriverVerification[]              @relation("DriverVerificationReviewedByUser")
   /// The person this staff account is explicitly linked to, if any. Grants
@@ -1382,6 +1390,8 @@ model PlatformSettings {
   /// Mailing address, one line per row.
   invoiceHeaderAddress      String?
   invoiceHeaderPhone        String?
+  /// Where "a new club applied" notices go (#817), e.g. the youth department administrative assistant. Blank means no notice is sent; applications still wait in the queue.
+  newClubApplicationEmail   String?
   updatedAt                 DateTime           @updatedAt
   updatedByUserId           String?
 
@@ -2125,6 +2135,8 @@ model Organization {
   honorEnrollments   HonorEnrollment[]
   clubProfile        ClubProfile?
   clubInvites        ClubInvite[]
+  newClubApplicationsAsChurch NewClubApplication[] @relation("NewClubApplicationChurch")
+  newClubApplicationCreated   NewClubApplication?  @relation("NewClubApplicationCreatedClub")
   monthlyReports     ClubMonthlyReport[]
   yearEndReports     ClubYearEndReport[]
   meetingNotes       ClubMeetingNote[]
@@ -6894,4 +6906,101 @@ model ClubTeamMemberPermission {
 
   @@unique([clubEventRegistrationId, personId])
   @@index([eventId, status])
+}
+
+// ---------------------------------------------------------------------------
+// New club applications (#817)
+
+enum NewClubApplicationStatus {
+  PENDING
+  APPROVED
+  DECLINED
+}
+
+enum NewClubApplicationType {
+  PATHFINDER
+  ADVENTURER
+}
+
+/// How the applicant arrived: the public "Register a new club" page, or a private link a system administrator sent.
+enum NewClubApplicationSource {
+  PUBLIC
+  INVITE
+}
+
+/// A request to start a new club, mirroring the paper Pathfinder Program Club Application. It creates nothing until a
+/// system administrator approves it; approving makes the club (an Organization of type CLUB) and sends its director the
+/// ordinary club invite, once. The attachment (signed paper page or church board minutes) is a private file seen only by
+/// system administrators and Area Coordinators. Free text (names, address, phones, signatures, the note) never goes into
+/// audit metadata or the notification email.
+model NewClubApplication {
+  id                    String                   @id @default(cuid())
+  status                NewClubApplicationStatus @default(PENDING)
+  source                NewClubApplicationSource
+  clubName              String
+  clubType              NewClubApplicationType
+  /// The sponsoring church from the directory, or null when the applicant typed one instead (`sponsoringChurchOther`).
+  sponsoringChurchId    String?
+  sponsoringChurchOther String?
+  pastorName            String
+  directorName          String
+  directorAddress       String
+  /// Lower-cased. Matched to an existing account or person for the Sterling Volunteers flag, and the invite goes here.
+  directorEmail         String
+  directorHomePhone     String?
+  directorWorkPhone     String?
+  philosophyAgreed      Boolean
+  pastorSignature       String
+  headElderSignature    String
+  clerkSignature        String
+  directorSignature     String
+  otherBoardMembers     String[]
+  /// The day it was submitted, in the conference time zone.
+  applicationDate       DateTime                 @db.Date
+  note                  String?
+  attachmentName        String?
+  attachmentContentType String?
+  attachmentByteSize    Int?
+  attachmentChecksum    String?
+  attachmentStorageKey  String?                  @unique
+  inviteId              String?                  @unique
+  decidedByUserId       String?
+  decidedAt             DateTime?
+  /// Why it was declined; goes to the applicant in the email only, never into audit metadata.
+  declineReason         String?
+  /// Set once, in the same transaction that approves: the claim that makes a second approval impossible.
+  createdOrganizationId String?                  @unique
+  createdAt             DateTime                 @default(now())
+  updatedAt             DateTime                 @updatedAt
+
+  sponsoringChurch    Organization?             @relation("NewClubApplicationChurch", fields: [sponsoringChurchId], references: [id], onDelete: SetNull)
+  createdOrganization Organization?             @relation("NewClubApplicationCreatedClub", fields: [createdOrganizationId], references: [id], onDelete: SetNull)
+  decidedBy           User?                     @relation("NewClubApplicationDecider", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+  invite              NewClubApplicationInvite? @relation(fields: [inviteId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([directorEmail])
+  @@index([sponsoringChurchId])
+}
+
+/// A private link a system administrator sends to a prospective director (#817). Single use: submitting the application
+/// uses it up. Like the club form link, the email body holds a sentinel and the token is minted when the message is
+/// delivered; only its SHA-256 is stored.
+model NewClubApplicationInvite {
+  id              String    @id @default(cuid())
+  email           String
+  name            String    @default("")
+  tokenHash       String?   @unique
+  /// The outbox message that carries the link, for delivery-time minting.
+  messageId       String?   @unique
+  expiresAt       DateTime
+  usedAt          DateTime?
+  cancelledAt     DateTime?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+
+  createdBy   User?               @relation("NewClubApplicationInviteCreator", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  application NewClubApplication?
+
+  @@index([email])
 }

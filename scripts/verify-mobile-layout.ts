@@ -84,6 +84,8 @@ const clubB = `${P}_club_b`;
 // A published public event page with one of every content block kind (#816).
 const blocksEventId = `${P}_blocks_event`;
 const blocksEventSlug = `${P}-blocks-weekend`;
+// A new club application waiting for a decision, and a private link that opens the form (#817).
+const applicationLinkToken = `${P}-application-link-token-0123456789-abcdefghijklmnopqrstuv`;
 const churchA = `${P}_church_a`;
 const churchB = `${P}_church_b`;
 const reportMonth = "2026-09";
@@ -123,6 +125,9 @@ const club = (name: string, suffix: string, clubId = clubA): PageSpec => ({
 const area = (name: string, route: string): PageSpec => ({ name: `area-${name}`, path: route, role: "area" });
 
 const pages: PageSpec[] = [
+  // Register a new club (#817), signed out: the public form and the private link's form.
+  { name: "public-register-new-club", path: "/clubs/register", role: "visitor" },
+  { name: "public-register-new-club-invited", path: `/clubs/register/${applicationLinkToken}`, role: "visitor" },
   // The public event page with one of each content block (#816), signed out.
   { name: "public-event-page-all-blocks", path: `/events/${blocksEventSlug}`, role: "visitor" },
   // Club portal (a director of two clubs).
@@ -148,6 +153,7 @@ const pages: PageSpec[] = [
   area("overview", "/account/area-clubs/overview"),
   area("events", "/account/area-clubs/events"),
   area("team-permissions", "/account/area-clubs/team-permissions"),
+  area("new-club-applications", "/account/area-clubs/applications"),
   area("points", "/account/area-clubs/points"),
   area("reports", "/account/area-clubs/reports"),
   area("club-home", `/account/area/${clubA}`),
@@ -190,6 +196,7 @@ const pages: PageSpec[] = [
   staff("churches-clubs", "/admin/organizations", "system-admin"),
   staff("churches-clubs-directory", "/admin/organizations/directory", "system-admin"),
   staff("club-invites", "/admin/clubs/invites", "system-admin"),
+  staff("club-applications", "/admin/clubs/applications", "system-admin"),
   staff("club-reports-summary", "/admin/clubs/summary", "system-admin"),
   staff("club-reports", "/admin/clubs/reports", "system-admin"),
   staff("club-transfers", "/admin/clubs/transfers", "system-admin"),
@@ -322,6 +329,8 @@ async function cleanupSynthetic(prisma: PrismaClient) {
   await prisma.$transaction([
     prisma.attendeeSession.deleteMany({ where: { accountId: { in: accountIds } } }),
     prisma.clubInvite.deleteMany({ where: { OR: [orgs, { id: { startsWith: `${P}_` } }] } }),
+    prisma.newClubApplication.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
+    prisma.newClubApplicationInvite.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
     prisma.clubMonthlyReport.deleteMany({ where: orgs }),
     prisma.clubRosterMember.deleteMany({ where: orgs }),
     prisma.person.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
@@ -456,6 +465,39 @@ async function seedSynthetic(prisma: PrismaClient) {
         id, organizationId: index === 2 ? clubB : clubA, email: `${P}.invite${index}.with-a-long-address@example.test`,
         name: index === 0 ? "Pat Mobilecheck-Longsurname-Invitee" : `Invitee ${index}`, role: index === 1 ? "DEPUTY" : "DIRECTOR", status,
         ...(status === "SENT" ? { sentAt: now, sentCount: 1, expiresAt: new Date(now.getTime() + 14 * 86_400_000) } : {}),
+      },
+    });
+  }
+
+  // New club applications (#817): one waiting at a church that already has a club (a duplicate flag), one typed church, one declined; plus a private link.
+  const { hashOpaqueToken } = await import("../modules/access/tokens");
+  await prisma.newClubApplicationInvite.upsert({
+    where: { id: `${P}_application_invite` },
+    update: { tokenHash: hashOpaqueToken(applicationLinkToken), usedAt: null, cancelledAt: null, expiresAt: new Date(now.getTime() + 30 * 86_400_000) },
+    create: {
+      id: `${P}_application_invite`, email: `${P}.invited.director-with-a-long-address@example.test`, name: "Ivy Mobilecheck-Invitee",
+      tokenHash: hashOpaqueToken(applicationLinkToken), expiresAt: new Date(now.getTime() + 30 * 86_400_000),
+    },
+  });
+  for (const [index, spec] of ([
+    { status: "PENDING", church: churchA, other: null, name: "Mobilecheck Saint Bartholomew-Montgomery Trailblazers Pathfinder Club of the Western Prairie", type: "PATHFINDER" },
+    { status: "PENDING", church: null, other: "Mobilecheck Fellowship of the Riverside Valley Congregation", name: "Mobilecheck Little Lambs Adventurers", type: "ADVENTURER" },
+    { status: "DECLINED", church: churchB, other: null, name: "Mobilecheck Declined Club", type: "PATHFINDER" },
+  ] as const).entries()) {
+    await prisma.newClubApplication.upsert({
+      where: { id: `${P}_application_${index}` },
+      update: {},
+      create: {
+        id: `${P}_application_${index}`, status: spec.status, source: index === 1 ? "INVITE" : "PUBLIC", clubName: spec.name, clubType: spec.type,
+        sponsoringChurchId: spec.church, sponsoringChurchOther: spec.other,
+        pastorName: "Pat Mobilecheck-Pastorsson", directorName: "Dana Mobilecheck-Directorsson-Applicant",
+        directorAddress: "1234 Mobilecheck Boulevard of the Extremely Long Street Name, Testville, ZZ 00000",
+        directorEmail: `${P}.applicant.with-a-very-long-address-for-wrapping@example.test`,
+        directorHomePhone: "555-0100", directorWorkPhone: "555-0101", philosophyAgreed: true,
+        pastorSignature: "Pat Mobilecheck-Pastorsson", headElderSignature: "Hal Mobilecheck-Elder", clerkSignature: "Cleo Mobilecheck-Clerk", directorSignature: "Dana Mobilecheck-Directorsson-Applicant",
+        otherBoardMembers: ["Ben Mobilecheck-Board", "Bea Mobilecheck-Board"], applicationDate: new Date("2026-10-07T00:00:00Z"),
+        note: "A synthetic note long enough to wrap on a narrow phone screen without causing the page to scroll sideways.",
+        ...(spec.status === "DECLINED" ? { decidedAt: now, decidedByUserId: "usr_system_admin", declineReason: "A synthetic reason." } : {}),
       },
     });
   }

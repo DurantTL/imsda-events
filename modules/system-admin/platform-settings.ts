@@ -53,6 +53,11 @@ export const platformSettingsInputSchema = z.object({
    */
   securityAlertEmail: optionalEmail,
   /**
+   * Where "a new club applied" notices go (#817), such as the youth department's administrative assistant. Blank means
+   * no notice is sent (applications still wait in the queue). Never hard-coded: staff change it here.
+   */
+  newClubApplicationEmail: optionalEmail,
+  /**
    * The header block of the church invoice PDF (#780): the department line, the organization name, the mailing
    * address (one line per row) and the phone. All blank means the PDF prints the platform organization name alone.
    */
@@ -98,6 +103,7 @@ export async function getPlatformSettings(): Promise<PlatformSettingsRecord> {
     defaultAttendeeEditPolicy: row.defaultAttendeeEditPolicy,
     passkeyRpId: row.passkeyRpId,
     securityAlertEmail: row.securityAlertEmail,
+    newClubApplicationEmail: row.newClubApplicationEmail,
     invoiceHeaderDepartment: row.invoiceHeaderDepartment,
     invoiceHeaderOrganization: row.invoiceHeaderOrganization,
     invoiceHeaderAddress: row.invoiceHeaderAddress,
@@ -186,6 +192,7 @@ export async function updatePlatformSettings(
               defaultAttendeeEditPolicy: before.defaultAttendeeEditPolicy,
               passkeyRpId: before.passkeyRpId,
               securityAlertEmail: before.securityAlertEmail,
+              newClubApplicationEmail: before.newClubApplicationEmail,
               invoiceHeaderDepartment: before.invoiceHeaderDepartment,
               invoiceHeaderOrganization: before.invoiceHeaderOrganization,
               invoiceHeaderAddress: before.invoiceHeaderAddress,
@@ -200,6 +207,7 @@ export async function updatePlatformSettings(
             defaultAttendeeEditPolicy: input.defaultAttendeeEditPolicy,
             passkeyRpId: input.passkeyRpId ?? null,
             securityAlertEmail: input.securityAlertEmail ?? null,
+            newClubApplicationEmail: input.newClubApplicationEmail ?? null,
             invoiceHeaderDepartment: input.invoiceHeaderDepartment ?? null,
             invoiceHeaderOrganization: input.invoiceHeaderOrganization ?? null,
             invoiceHeaderAddress: input.invoiceHeaderAddress ?? null,

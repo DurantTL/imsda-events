@@ -876,3 +876,59 @@ export async function checkModuleRequestRateLimit(request: Request, userId: stri
     },
   ], configuration);
 }
+
+/**
+ * The public "Register a new club" form (#817). Submitting writes a row and
+ * emails the conference, so it is held tight: a handful an hour from one
+ * address, and only a few a day naming the same director email. Read once
+ * before the body is parsed (client only), and again with the director's email
+ * once it is known.
+ */
+export async function checkNewClubApplicationSubmitRateLimit(
+  request: Request,
+  directorEmail?: string,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const rules: RuleInput[] = [{
+    policy: "club-application.submit.client",
+    limit: 6,
+    windowSeconds: oneHour,
+    identifierHashes: [client],
+  }];
+  if (directorEmail) {
+    const email = hashRateLimitIdentifier(
+      "club-application-director-email",
+      directorEmail.trim().toLowerCase(),
+      configuration,
+    );
+    rules.push({
+      policy: "club-application.submit.email",
+      limit: 3,
+      windowSeconds: 24 * oneHour,
+      identifierHashes: [email],
+    });
+  }
+  return evaluate(rules, configuration);
+}
+
+/** Opening an invite's private link (#817): the token is a 256-bit secret, so this only stops scripted guessing. */
+export async function checkNewClubApplicationLinkRateLimit(request: Request, token: string) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const tokenHash = hashRateLimitIdentifier("club-application-link-token", token, configuration);
+  return evaluate([
+    {
+      policy: "club-application.link.client",
+      limit: 60,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [client],
+    },
+    {
+      policy: "club-application.link.token",
+      limit: 60,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [tokenHash],
+    },
+  ], configuration);
+}

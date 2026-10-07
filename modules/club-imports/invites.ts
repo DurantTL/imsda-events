@@ -102,18 +102,20 @@ function inviteEmail(input: {
   email: string;
   clubName: string;
   role: "DIRECTOR" | "DEPUTY" | "REGISTRAR" | "REPORTER";
-  source: "IMPORT" | "CLUB";
+  source: "IMPORT" | "CLUB" | "APPLICATION";
 }) {
   const signUpUrl = clubInviteSignUpUrl(input.email);
   const role = clubDirectorRoleLabels[input.role].toLocaleLowerCase("en-US");
   const invitedBy = input.source === "CLUB"
     ? `${input.clubName}'s director or deputy has invited you as the club's ${role} on IMSDA Events.`
-    : `The Iowa-Missouri Conference has set up ${input.clubName} on IMSDA Events and invited you as the club's ${role}.`;
-  const context = input.source === "CLUB"
+    : input.source === "APPLICATION"
+      ? `Good news: the Iowa-Missouri Conference approved your application, and ${input.clubName} is now set up on IMSDA Events. You're invited as the club's ${role}.`
+      : `The Iowa-Missouri Conference has set up ${input.clubName} on IMSDA Events and invited you as the club's ${role}.`;
+  const context = input.source === "CLUB" || input.source === "APPLICATION"
     ? "Once you accept, you'll see this club under My club when you sign in."
     : "Your club's roster from this year's registration is already there. Please add each person's birth date as you go; until then they're marked \"birth date needed\".";
-  // Only club-created invites (#425) expire; a staff import invite (reusing this flow, #376) never did.
-  const expiryLine = input.source === "CLUB" ? [`This invite expires in ${CLUB_INVITE_LIFETIME_DAYS} days.`, ""] : [];
+  // Club-created (#425) and application (#817) invites expire; a staff import invite (reusing this flow, #376) never did.
+  const expiryLine = input.source !== "IMPORT" ? [`This invite expires in ${CLUB_INVITE_LIFETIME_DAYS} days.`, ""] : [];
   return {
     subject: `You're invited to help run ${input.clubName} on IMSDA Events`,
     bodyText: [
@@ -169,7 +171,7 @@ export async function sendClubInvites(
       email: invite.email,
       clubName: invite.organization.name,
       role: invite.role,
-      source: invite.source === "CLUB" ? "CLUB" : "IMPORT",
+      source: invite.source === "CLUB" || invite.source === "APPLICATION" ? invite.source : "IMPORT",
     });
     const messageId = await prisma.$transaction(async (tx) => {
       const message = await tx.messageOutbox.create({
@@ -193,7 +195,7 @@ export async function sendClubInvites(
       });
       // Staff import invites (#376) reuse this flow's model and email but keep their prior, unexpiring behavior;
       // only club-created invites (#425) get the 14-day expiry.
-      const expiresAt = invite.source === "CLUB" ? clubInviteExpiry(now) : null;
+      const expiresAt = invite.source === "CLUB" || invite.source === "APPLICATION" ? clubInviteExpiry(now) : null;
       await tx.clubInvite.update({
         where: { id: invite.id },
         data: { status: "SENT", sentAt: now, sentCount: { increment: 1 }, lastMessageId: message.id, expiresAt },
@@ -368,6 +370,61 @@ export async function createClubTeamInvite(
     }, tx);
     return { inviteId: invite.id, messageId: message.id };
   });
+}
+
+/**
+ * The director invite that approving a new club application sends (#817), made
+ * inside the approval's transaction so the club, the invite and the approval
+ * stand or fall together. It is the ordinary invite (accepting creates the
+ * ordinary director grant) with source APPLICATION. When account email isn't
+ * set up the invite is left PENDING, for an administrator to send from
+ * /admin/clubs/invites, rather than failing the approval; nothing is lost.
+ * Returns the queued message id (null when none was queued).
+ */
+export async function createApplicationDirectorInvite(
+  tx: Prisma.TransactionClient,
+  input: { organizationId: string; clubName: string; email: string; name: string; actorUserId: string },
+  now = new Date(),
+) {
+  const email = input.email.trim().toLowerCase();
+  const name = input.name.trim();
+  const canSend = isAccountEmailConfigured();
+  const invite = await tx.clubInvite.create({
+    data: {
+      organizationId: input.organizationId,
+      email,
+      name,
+      role: "DIRECTOR",
+      source: "APPLICATION",
+      createdByUserId: input.actorUserId,
+      ...(canSend ? { status: "SENT" as const, sentAt: now, sentCount: 1, expiresAt: clubInviteExpiry(now) } : {}),
+    },
+    select: { id: true },
+  });
+  if (!canSend) return { inviteId: invite.id, messageId: null as string | null };
+  const sender = getAccountEmailSender();
+  const content = inviteEmail({ name, email, clubName: input.clubName, role: "DIRECTOR", source: "APPLICATION" });
+  const message = await tx.messageOutbox.create({
+    data: {
+      eventId: null,
+      templateKey: "CLUB_INVITE",
+      recipientKind: "ACCOUNT",
+      recipientEmail: email,
+      recipientName: name || null,
+      senderNameSnapshot: sender.name,
+      senderEmailSnapshot: sender.address,
+      replyToEmailSnapshot: sender.replyTo,
+      subjectSnapshot: content.subject,
+      bodyTextSnapshot: content.bodyText,
+      metadata: { trigger: "CLUB_INVITE_SENT", accountEmail: true, realDelivery: true, clubInviteId: invite.id },
+      idempotencyKey: `club-invite:${invite.id}:${randomUUID()}`,
+      correlationId: randomUUID(),
+      status: "PENDING",
+    },
+    select: { id: true },
+  });
+  await tx.clubInvite.update({ where: { id: invite.id }, data: { lastMessageId: message.id } });
+  return { inviteId: invite.id, messageId: message.id as string | null };
 }
 
 /** Statuses from which an invite can still be resent, cancelled, or accepted. */

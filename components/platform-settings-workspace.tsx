@@ -16,6 +16,7 @@ type Draft = {
   defaultAttendeeEditPolicy: "TIERED" | "VERIFY_EVERY_EDIT";
   passkeyRpId: string;
   securityAlertEmail: string;
+  newClubApplicationEmail: string;
   invoiceHeaderDepartment: string;
   invoiceHeaderOrganization: string;
   invoiceHeaderAddress: string;
@@ -35,6 +36,7 @@ function draftFrom(settings: PlatformSettingsRecord): Draft {
     defaultAttendeeEditPolicy: settings.defaultAttendeeEditPolicy,
     passkeyRpId: settings.passkeyRpId ?? "",
     securityAlertEmail: settings.securityAlertEmail ?? "",
+    newClubApplicationEmail: settings.newClubApplicationEmail ?? "",
     invoiceHeaderDepartment: settings.invoiceHeaderDepartment ?? "",
     invoiceHeaderOrganization: settings.invoiceHeaderOrganization ?? "",
     invoiceHeaderAddress: settings.invoiceHeaderAddress ?? "",
@@ -156,6 +158,23 @@ export function PlatformSettingsWorkspace({
             <small>
               Gets a short alert whenever a staff, club leader, or attendee sign-in locks after too many wrong passwords
               or wrong two-step codes, in addition to the account holder. Leave blank to notify only the account holder.
+            </small>
+          </label>
+        </section>
+
+        <section className="panel">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow"><Mail aria-hidden="true" size={14} /> Clubs</p>
+              <h2>New club applications</h2>
+            </div>
+          </div>
+          <label>
+            New club application notifications
+            <input type="email" placeholder="youth-assistant@example.org" {...field("newClubApplicationEmail")} />
+            <small>
+              Gets a short notice (club name, church and director name, with a link) whenever someone applies to start a new club.
+              No phone, address or attachment is ever emailed. Leave blank to send no notice; applications still wait in the queue.
             </small>
           </label>
         </section>

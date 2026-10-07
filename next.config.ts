@@ -213,6 +213,20 @@ const nextConfig: NextConfig = {
         headers: privateRegistrationHeaders,
       },
       {
+        // A new club application's single-use private link (#817): never cached, never indexed, no referrer.
+        source: "/clubs/register/:token",
+        headers: privateRegistrationHeaders,
+      },
+      {
+        source: "/api/public/club-applications",
+        headers: privateRegistrationHeaders,
+      },
+      {
+        // Applications carry a director's contact details and a private attachment (#817).
+        source: "/account/area-clubs/applications",
+        headers: privateRegistrationHeaders,
+      },
+      {
         // Pages that open a health record (#611): never cached, never indexed, no referrer.
         source: "/account/clubs/:organizationId/roster/:memberId/health",
         headers: privateRegistrationHeaders,

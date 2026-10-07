@@ -2284,3 +2284,59 @@ export async function clubPortalComplianceStatuses(
 }
 
 export { ROSTER_IMPORT_PROVIDER };
+
+/**
+ * The Sterling Volunteers status of each applying director (#817), keyed by
+ * lower-cased email: Clear, Expiring soon, Not in compliance or No record, the
+ * same labels a club roster shows. A director is matched to an existing person
+ * by email: the person's own email, or the email of an attendee account linked
+ * to them. Someone who matches nobody is "No record". The check is the cached
+ * match, else the same read-time match the rosters use. It is a flag for staff
+ * to review, never a block, and it returns no names, notes or dates.
+ */
+export async function directorBackgroundStatesByEmail(
+  emails: string[],
+  now = new Date(),
+  prisma: PrismaLike = getPrisma(),
+): Promise<Map<string, ClubComplianceState>> {
+  const wanted = [...new Set(emails.map((email) => email.trim().toLowerCase()).filter(Boolean))];
+  const states = new Map<string, ClubComplianceState>(wanted.map((email) => [email, "NO_RECORD"]));
+  if (wanted.length === 0) return states;
+  const today = calendarDateInEventTimeZone(now, "America/Chicago");
+  const people = await prisma.person.findMany({
+    where: {
+      OR: [
+        { normalizedEmail: { in: wanted } },
+        { attendeeAccountLinks: { some: { account: { email: { in: wanted } } } } },
+      ],
+    },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      ...personEmailSelect,
+      backgroundCheckMatch: { select: { entry: { select: { complianceStatus: true, expiresOn: true } } } },
+    },
+  });
+  const uncached = await lookupUncachedChecks(prisma, people
+    .filter((person) => !person.backgroundCheckMatch)
+    .map((person) => ({
+      personId: person.id,
+      firstName: person.firstName,
+      lastName: person.lastName,
+      emails: personEmails(person),
+      birthDates: [],
+      sites: [],
+    })), now);
+  // The most favorable record wins when one email reaches more than one person.
+  const rank: Record<ClubComplianceState, number> = { NO_RECORD: 0, NOT_COMPLIANT: 1, FLAGGED: 2, CLEAR: 3 };
+  for (const person of people) {
+    const check: StoredCheck | null = person.backgroundCheckMatch?.entry ?? uncached.get(person.id) ?? null;
+    const state = clubComplianceState(check, today);
+    for (const email of personEmails(person)) {
+      if (!states.has(email)) continue;
+      if (rank[state] > rank[states.get(email)!]) states.set(email, state);
+    }
+  }
+  return states;
+}
