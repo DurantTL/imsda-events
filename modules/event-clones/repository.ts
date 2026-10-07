@@ -27,7 +27,8 @@ import {
   type SourceConfiguration,
   isEmptyAfterClone,
 } from "@/modules/event-clones/domain";
-import { normalizeHonorText, offeringSlotConflict } from "@/modules/honors/domain";
+import { classSlotConflict, normalizeHonorText } from "@/modules/honors/domain";
+import { offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
 import { calendarDayDifference, normalizeLocationName, shiftLocationsForClone } from "@/modules/event-locations/domain";
 import { activeCoordinatorAccountIds } from "@/modules/event-locations/coordinators";
 import { parseEventContentItems } from "@/modules/events/content-schemas";
@@ -106,7 +107,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     }),
     await db.honorOffering.findMany({
       where: { eventId }, orderBy: [{ sessionId: "asc" }, { honorId: "asc" }],
-      include: { honor: { select: { name: true } }, session: { select: { name: true } }, site: { select: { name: true, normalizedName: true } } },
+      include: { honors: offeringHonorsSelect, session: { select: { name: true } }, site: { select: { name: true, normalizedName: true } } },
     }),
     await db.merchandiseProduct.count({ where: { eventId } }),
     await db.eventPaymentInstructionVersion.count({ where: { eventId } }),
@@ -194,7 +195,8 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
       locationName: session.location?.name ?? null, locationNormalizedName: session.location?.normalizedName ?? null,
     })),
     honorOfferings: honorOfferings.map((offering) => ({
-      id: offering.id, honorId: offering.honorId, honorName: offering.honor.name, sessionId: offering.sessionId,
+      id: offering.id, honorId: offering.honorId, honorIds: summarizeOfferingHonors(offering.honors).honorIds,
+      honorName: summarizeOfferingHonors(offering.honors).honorName, sessionId: offering.sessionId,
       sessionName: offering.session?.name ?? null, span: offering.span, capacity: offering.capacity,
       minimumAge: offering.minimumAge, perClubLimit: offering.perClubLimit, teacherName: offering.teacherName,
       location: offering.location, isActive: offering.isActive,
@@ -535,8 +537,10 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
         if (sessionRows.length > 0) await tx.honorSession.createMany({ data: sessionRows });
         const reviewedOfferings = new Map(input.honorOfferingCapacities.map((entry) => [entry.offeringId, entry]));
         // The same slot rules as setup and copy, per site; a true duplicate is skipped and counted, never thrown.
-        const slots: Array<{ honorId: string; span: "SINGLE_SESSION" | "ALL_SESSIONS"; sessionId: string | null; locationId: string | null }> = [];
+        const slots: Array<{ honorIds: string[]; span: "SINGLE_SESSION" | "ALL_SESSIONS"; sessionId: string | null; locationId: string | null }> = [];
         const offeringRows: Prisma.HonorOfferingCreateManyInput[] = [];
+        // A class that teaches several honors (#812) keeps them all; the primary's row comes from the trigger.
+        const extraHonorRows: Prisma.HonorOfferingHonorCreateManyInput[] = [];
         let offeringsCopied = 0;
         let offeringsSkipped = 0;
         for (const offering of config.honorOfferings) {
@@ -546,16 +550,22 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
             locationId = offering.locationNormalizedName ? newLocations.get(offering.locationNormalizedName) ?? null : null;
             if (offering.locationNormalizedName && !locationId) sessionsWithoutSite += 1;
           }
+          const honorIds = offering.honorIds ?? [offering.honorId];
           const slot = {
-            honorId: offering.honorId,
+            honorIds,
             span: offering.span,
             sessionId,
             locationId: offering.span === "ALL_SESSIONS" ? locationId : offering.sessionId ? sessionSites.get(offering.sessionId) ?? null : null,
           };
-          if (offeringSlotConflict(slot, slots)) { offeringsSkipped += 1; continue; }
+          if (classSlotConflict(slot, slots)) { offeringsSkipped += 1; continue; }
           slots.push(slot);
+          const newOfferingId = randomUUID();
+          for (const [position, honorId] of honorIds.entries()) {
+            if (position > 0) extraHonorRows.push({ offeringId: newOfferingId, honorId, eventId: event.id, position });
+          }
           offeringRows.push({
-            eventId: event.id, honorId: offering.honorId,
+            id: newOfferingId,
+            eventId: event.id, honorId: honorIds[0]!,
             sessionId, locationId,
             span: offering.span, capacity: reviewedOfferings.get(offering.id)!.capacity,
             perClubLimit: reviewedOfferings.get(offering.id)!.perClubLimit,
@@ -567,6 +577,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           offeringsCopied += 1;
         }
         if (offeringRows.length > 0) await tx.honorOffering.createMany({ data: offeringRows });
+        if (extraHonorRows.length > 0) await tx.honorOfferingHonor.createMany({ data: extraHonorRows });
         if (sessionsWithoutSite > 0) skipped.honorSessionsWithoutSite = sessionsWithoutSite;
         if (offeringsSkipped > 0) skipped.honorOfferingsDuplicate = offeringsSkipped;
         copied.honors = offeringsCopied;

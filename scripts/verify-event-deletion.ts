@@ -286,7 +286,7 @@ async function main() {
   const enrollment = await prisma.honorEnrollment.create({
     data: { eventId, offeringId: offering.id, registrationId: registration.id, registrationAttendeeId: attendees[0].id, organizationId: club.id, consumesSeat: true },
   });
-  await prisma.honorWeekendCompletionLink.create({ data: { enrollmentId: enrollment.id, memberHonorEntryId: memberHonorEntry.id } });
+  await prisma.honorWeekendCompletionLink.create({ data: { enrollmentId: enrollment.id, honorId: offering.honorId, memberHonorEntryId: memberHonorEntry.id } });
 
   // Forms: submission and capacity reservation (RESTRICT the form version)
   await prisma.publicRegistrationSubmission.create({

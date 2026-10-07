@@ -154,7 +154,7 @@ function rosterDatabase() {
   const db = {
     event: { findUnique: vi.fn().mockResolvedValue({ id: "e1", name: "Honors", startsAt: at, endsAt: at, timezone: "America/Chicago", location: null }) },
     honorSession: { findMany: vi.fn().mockResolvedValue([{ id: "s1", name: "Sabbath", locationId: null, sortOrder: 0, createdAt: at, location: null }]) },
-    honorOffering: { findMany: vi.fn().mockResolvedValue([{ id: "o1", span: "SINGLE_SESSION", sessionId: "s1", locationId: null, site: null, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Birds", code: "B" } }]) },
+    honorOffering: { findMany: vi.fn().mockResolvedValue([{ id: "o1", span: "SINGLE_SESSION", sessionId: "s1", locationId: null, site: null, capacity: 5, teacherName: "", location: "", isActive: true, honors: [{ honor: { id: "honor-b", name: "Birds", code: "B", isActive: true } }] }]) },
     clubEventRegistration: {
       findMany: vi.fn().mockResolvedValue([{ organizationId: "club-1", organization: { name: "Iowa Club" }, registration: registrationShape("club-att", "Clubby") }]),
     },
