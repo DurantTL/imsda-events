@@ -175,19 +175,83 @@ export const EMAIL_MARKDOWN_TRANSFORMERS: Transformer[] = [
   MESSAGE_TOKEN_TRANSFORMER,
 ];
 
+const LIST_ITEM_LINE = /^\s*(?:[-*]\s+|\d+[.)]\s+)/;
+const HARD_BREAK_LINE = /[ \t]{2,}$/;
+
+/**
+ * Bodies saved before paragraphs were separated by a blank line hold one
+ * paragraph per line. Insert the missing blank line so the editor loads each
+ * line as its own paragraph. A line ending in two spaces is a deliberate
+ * in-paragraph line break (shift+enter) and stays joined to the next line.
+ */
+export function normalizeEmailMarkdownForEditor(source: string) {
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  const out: string[] = [];
+  lines.forEach((line, index) => {
+    out.push(line);
+    const next = lines[index + 1];
+    if (next === undefined || !line.trim() || !next.trim()) return;
+    const bothListItems = LIST_ITEM_LINE.test(line) && LIST_ITEM_LINE.test(next);
+    const hardBreak = HARD_BREAK_LINE.test(line)
+      && !LIST_ITEM_LINE.test(line)
+      && !LIST_ITEM_LINE.test(next);
+    if (!bothListItems && !hardBreak) out.push("");
+  });
+  return out.join("\n");
+}
+
+/** Load a stored Markdown body into the current editor. Call inside update(). */
+export function $importEmailMarkdown(source: string) {
+  $convertFromMarkdownString(
+    normalizeEmailMarkdownForEditor(source),
+    EMAIL_MARKDOWN_TRANSFORMERS,
+    undefined,
+    false,
+  );
+}
+
+/**
+ * Export the current editor as Markdown with a blank line between blocks, so
+ * each block renders as its own paragraph. A line break inside a paragraph is
+ * written as two trailing spaces and a newline. Call inside read().
+ */
+export function $exportEmailMarkdown() {
+  return $convertToMarkdownString(EMAIL_MARKDOWN_TRANSFORMERS, undefined, false)
+    .split("\n\n")
+    .map((block) => (
+      LIST_ITEM_LINE.test(block) ? block : block.replace(/[ \t]*\n/g, "  \n")
+    ))
+    .join("\n\n");
+}
+
+const MARKDOWN_LINK_PATTERN = /!?\[[^\]]*\]\([^)]*\)/g;
+
+/**
+ * True when `{{checkin_qr_url}}` appears outside a Markdown link. The token is
+ * a page link, so on its own it prints the web address in the email instead of
+ * showing a QR code. Written as [text]({{checkin_qr_url}}) it is a button, and
+ * the QR code itself is the `checkin_qr_image` token.
+ */
+export function hasStandaloneCheckinQrUrl(source: string) {
+  return /\{\{\s*checkin_qr_url\s*\}\}/.test(source.replace(MARKDOWN_LINK_PATTERN, ""));
+}
+
 type MessageBodyEditorProps = {
   value: string;
   tokens: readonly string[];
+  /** Plain-language picker names, keyed by token. */
+  tokenLabels?: Readonly<Record<string, string>>;
   maxLength?: number;
   onChange: (value: string) => void;
 };
 
 type EditorToolbarProps = {
   tokens: readonly string[];
+  tokenLabels?: Readonly<Record<string, string>>;
   markChanged: () => void;
 };
 
-function EditorToolbar({ tokens, markChanged }: EditorToolbarProps) {
+function EditorToolbar({ tokens, tokenLabels, markChanged }: EditorToolbarProps) {
   const [editor] = useLexicalComposerContext();
   const [token, setToken] = useState(tokens[0] ?? "");
 
@@ -281,7 +345,9 @@ function EditorToolbar({ tokens, markChanged }: EditorToolbarProps) {
           <span className="sr-only">Template token</span>
           <select value={token} onChange={(event) => setToken(event.target.value)}>
             {tokens.map((candidate) => (
-              <option value={candidate} key={candidate}>{`{{${candidate}}}`}</option>
+              <option value={candidate} key={candidate}>
+                {tokenLabels?.[candidate] ? `${tokenLabels[candidate]} — {{${candidate}}}` : `{{${candidate}}}`}
+              </option>
             ))}
           </select>
         </label>
@@ -291,7 +357,7 @@ function EditorToolbar({ tokens, markChanged }: EditorToolbarProps) {
   );
 }
 
-function VisualEditor({ value, tokens, onChange }: MessageBodyEditorProps) {
+function VisualEditor({ value, tokens, tokenLabels, onChange }: MessageBodyEditorProps) {
   const [mounted, setMounted] = useState(false);
   const userEdited = useRef(false);
 
@@ -318,7 +384,7 @@ function VisualEditor({ value, tokens, onChange }: MessageBodyEditorProps) {
           MessageTokenNode,
         ],
         editorState: () => {
-          $convertFromMarkdownString(value, EMAIL_MARKDOWN_TRANSFORMERS, undefined, true);
+          $importEmailMarkdown(value);
         },
         onError(error) {
           throw error;
@@ -345,7 +411,7 @@ function VisualEditor({ value, tokens, onChange }: MessageBodyEditorProps) {
         },
       }}
     >
-      <EditorToolbar tokens={tokens} markChanged={() => { userEdited.current = true; }} />
+      <EditorToolbar tokens={tokens} tokenLabels={tokenLabels} markChanged={() => { userEdited.current = true; }} />
       <div className="message-editor-email">
         <div className="message-editor-email-header">IMSDA Events</div>
         <div className="message-editor-email-body">
@@ -371,9 +437,7 @@ function VisualEditor({ value, tokens, onChange }: MessageBodyEditorProps) {
         ignoreSelectionChange
         onChange={(editorState) => {
           if (!userEdited.current) return;
-          const markdown = editorState.read(() => (
-            $convertToMarkdownString(EMAIL_MARKDOWN_TRANSFORMERS, undefined, true)
-          ));
+          const markdown = editorState.read(() => $exportEmailMarkdown());
           if (markdown !== value) onChange(markdown);
         }}
       />
@@ -384,6 +448,7 @@ function VisualEditor({ value, tokens, onChange }: MessageBodyEditorProps) {
 export function MessageBodyEditor({
   value,
   tokens,
+  tokenLabels,
   maxLength = 12000,
   onChange,
 }: MessageBodyEditorProps) {
@@ -410,7 +475,7 @@ export function MessageBodyEditor({
         </button>
       </div>
       {mode === "visual" ? (
-        <VisualEditor value={value} tokens={tokens} onChange={onChange} />
+        <VisualEditor value={value} tokens={tokens} tokenLabels={tokenLabels} onChange={onChange} />
       ) : (
         <div className="message-editor-source">
           <label htmlFor="message-body-source">Markdown source</label>
@@ -428,6 +493,13 @@ export function MessageBodyEditor({
           </small>
         </div>
       )}
+      {hasStandaloneCheckinQrUrl(value) ? (
+        <p className="message-editor-warning" role="status">
+          <strong>{"{{checkin_qr_url}}"} is a page link, not a QR code.</strong>{" "}
+          On its own it prints a web address in the email. Write it as a link, for example
+          [Open my check-in pass]({"{{checkin_qr_url}}"}), or use the Check-in QR code (image) token to show the code itself.
+        </p>
+      ) : null}
       <div className="message-editor-footer">
         <span>Visual formatting is converted to the Markdown stored by existing template versions.</span>
         <span>{value.length.toLocaleString()} / {maxLength.toLocaleString()}</span>

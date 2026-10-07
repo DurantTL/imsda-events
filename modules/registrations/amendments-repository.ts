@@ -38,6 +38,7 @@ import {
 } from "@/modules/promo-codes/domain";
 import { storedPromoDiscount } from "@/modules/promo-codes/stored-discount";
 import { adjustmentTotalCents } from "@/modules/registrations/adjustments";
+import { lockRegistrationLodging, recomputeChurchShare } from "@/modules/lodging/preferences-service";
 import { issuesOnChangedAnswers, sameAnswer, splitUnconfiguredAnswers } from "@/modules/registrations/amendment-answers";
 import { registrationOperationFingerprint } from "@/modules/registrations/operations-domain";
 import { getRegistrationByIdWithClient } from "@/modules/registrations/repository";
@@ -1444,6 +1445,9 @@ export async function amendRegistration(
     try {
       const permissionMessageIds: string[] = [];
       const amended = await prisma.$transaction(async (tx) => {
+        // The registration's lodging lock is the FIRST statement, before any read, so an amendment and a staff lodging edit take
+        // their locks in one order: lodging lock, then units, then the redemption row FOR UPDATE (#813).
+        await lockRegistrationLodging(tx, registrationId);
         const existing = await tx.registrationOperation.findUnique({
           where: {
             eventId_clientRequestId: {
@@ -1716,6 +1720,15 @@ export async function amendRegistration(
               discountAmountCents,
             },
           });
+          // A church-sponsored code's lodging share is recomputed against the new discount, so the church can never end up
+          // past the code's cap or minimum because the discount moved underneath it (#813).
+          await recomputeChurchShare(tx, {
+            eventId,
+            registrationId,
+            sourceKey: `amendment:${input.clientRequestId}`,
+            actorUserId: amendmentActorUserId(actor),
+            pricing: { ...prepared.nextPricingSnapshot } as Record<string, unknown>,
+          });
         }
 
         const amendmentId = randomUUID();
@@ -1785,18 +1798,21 @@ export async function amendRegistration(
                   attendeeName: attendee.identity
                     ? `${attendee.identity.firstName} ${attendee.identity.lastName}`.trim()
                     : "Attendee",
-                  seminarLabels: prepared.definition.sections
+                  fields: prepared.definition.sections
                     .flatMap((section) => section.fields)
                     .filter(isSeminarPreferenceField)
-                    .flatMap((field) => {
+                    .map((field) => {
                       const value = attendee.responses[field.key];
-                      return Array.isArray(value)
-                        ? value.flatMap((label) => (
-                            typeof label === "string" && field.options.includes(label)
-                              ? [label]
-                              : []
-                          ))
-                        : [];
+                      return {
+                        label: field.label,
+                        choices: Array.isArray(value)
+                          ? value.flatMap((label) => (
+                              typeof label === "string" && field.options.includes(label)
+                                ? [field.optionLabels?.[label] ?? label]
+                                : []
+                            ))
+                          : [],
+                      };
                     }),
                 }))
               : undefined,

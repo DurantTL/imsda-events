@@ -173,7 +173,7 @@ describe("tiered attendee answer updates", () => {
         transitionKey: "seminar-preferences:a2f15c6b-c2e7-45fe-8d49-e8e8e80d41de",
         seminarPreferences: [{
           attendeeName: "Retreat Guest",
-          seminarLabels: ["Service", "Prayer"],
+          fields: [expect.objectContaining({ choices: ["Service", "Prayer"] })],
         }],
       }),
     );

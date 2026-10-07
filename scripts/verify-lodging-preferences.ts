@@ -49,7 +49,7 @@ import {
 import { changeHold, createHold, selectEventProperty, setEventRate, updateEventUnit, getLodgingView } from "@/modules/lodging/service";
 import { getPublicPromoCodeQuote } from "@/modules/promo-codes/repository";
 import { syncLodgingTemplates } from "@/modules/lodging/sync";
-import { CHURCH_SPONSOR_CONTACT_LEAD, CHURCH_SPONSOR_WARNING, chargeChangeSentence } from "@/modules/lodging/preferences-domain";
+import { chargeChangeSentence } from "@/modules/lodging/preferences-domain";
 import { readFileSync } from "node:fs";
 
 loadEnvConfig(process.cwd());
@@ -717,9 +717,9 @@ async function main() {
   assert(sponsored.priceNeedsReview === true && sponsored.chargeDeltaCents === 4000 && sponsored.registrantDeltaCents === 2000 && sponsored.sponsorDeltaCents === 2000 && sponsored.promo?.sponsored === true && sponsored.promo.coversLodging === true, `a church-sponsored 50% code: the list change is +$40, the registrant's +$20, the sponsor's +$20, got ${JSON.stringify(sponsored)}`);
   const priceItem = (await staffView()).queue.find((item) => item.kind === "PRICE_DIFFERS" && item.registrationIds.includes(promoted.reg.id));
   assert(priceItem && /After code HALFOFF the registrant's change is \+\$20\.00, and the sponsor's share \+\$20\.00/.test(priceItem.detail), `and the queue says so, got ${priceItem?.detail}`);
-  assert(sponsored.churchSponsorReview === true && sponsored.belowMinimumAfter === false, "a sponsored code whose share moves is flagged for the finance office");
-  assert(chargeChangeSentence(sponsored).includes(CHURCH_SPONSOR_WARNING) && !chargeChangeSentence(sponsored).includes("Adjust Payments by"), "and the sentence says so instead of telling staff what to adjust");
-  assert(priceItem.flags?.includes("CHURCH_SPONSOR_REVIEW") && priceItem.detail.includes(CHURCH_SPONSOR_WARNING), "and the queue item carries the CHURCH_SPONSOR_REVIEW flag and the warning");
+  assert(sponsored.churchShare?.status === "UPDATED" && sponsored.churchShare.deltaCents === 2000 && sponsored.belowMinimumAfter === false, "a sponsored code whose share moves updates the church's amount owed automatically (#813)");
+  assert(chargeChangeSentence(sponsored).includes("The amount to record for the registrant is +$20.00.") && chargeChangeSentence(sponsored).includes("updated automatically"), "and the sentence gives the registrant's share to record and says the church was updated");
+  assert(!priceItem.detail.includes("updated automatically") && !("flags" in priceItem), "and the queue item says it does not claim an automatic update, with no review flag");
   await prisma.promoCode.create({ data: { eventId, code: "CHURCHFULL", normalizedCode: "CHURCHFULL", discountType: "PERCENT_BPS", discountValue: 10_000, sponsoringOrganizationId: sponsor } });
   const fullChurch = await submitForm({ people: 1, responses: { registration_fee: true, promo_code: "CHURCHFULL" }, lodging: { category: "TENT", partySize: 1 } });
   assert(fullChurch.snapshot.totalCents === 0, "a fully sponsored registration owes nothing");
@@ -729,7 +729,7 @@ async function main() {
   assert(fixedDelta.chargeDeltaCents === 4000 && fixedDelta.registrantDeltaCents === 0 && fixedDelta.promo?.sponsored === false, `a large fixed code covers the whole subtotal either way: the registrant's change is $0, got ${JSON.stringify(fixedDelta)}`);
   const legacyDelta = await toDorm(legacy);
   assert(legacyDelta.chargeDeltaCents === 4000 && legacyDelta.registrantDeltaCents === 4000 && legacyDelta.promo?.coversLodging === false, `an older registration's code never covered lodging: the registrant feels the list change, got ${JSON.stringify(legacyDelta)}`);
-  assert(fixedDelta.churchSponsorReview === false, "a code that is not church-sponsored carries no sponsor warning");
+  assert(fixedDelta.churchShare === undefined, "a code that is not church-sponsored moves no church amount");
   // A change that drops the subtotal under the code's minimum says the code would no longer apply (what an amendment would refuse).
   const underMinimum = await saveAny(minimum.reg, { category: "CONFERENCE_CENTER_ROOM", partySize: 1, reason: "Moved to an unpriced room" }, staff);
   if (underMinimum.changeRequested) throw new Error("FAILED: a staff change was held for staff");
@@ -747,31 +747,31 @@ async function main() {
   const staffSaved = async (reg: Reg, raw: unknown) => { const result = await saveAny(reg, raw, staff); if (result.changeRequested) throw new Error("FAILED: a staff change was held for staff"); return result; };
   const stepTo = (party: number) => staffSaved(stepReg.reg, { category: "TENT", partySize: party, reason: `Party of ${party}` });
   const step1 = await stepTo(2);
-  assert(step1.chargeDeltaCents === 4000 && step1.registrantDeltaCents === 2000 && step1.sponsorDeltaCents === 2000 && step1.originallyChargedCents === 4000 && step1.requestNowCostsCents === 8000 && step1.churchSponsorReview === true, `first edit (+$40, split 50/50): ${JSON.stringify(step1)}`);
+  assert(step1.chargeDeltaCents === 4000 && step1.registrantDeltaCents === 2000 && step1.sponsorDeltaCents === 2000 && step1.originallyChargedCents === 4000 && step1.requestNowCostsCents === 8000 && step1.churchShare?.status === "UPDATED", `first edit (+$40, split 50/50): ${JSON.stringify(step1)}`);
   const step2 = await stepTo(3);
   assert(step2.chargeDeltaCents === 4000 && step2.registrantDeltaCents === 2000 && step2.sponsorDeltaCents === 2000 && step2.originallyChargedCents === 4000 && step2.requestNowCostsCents === 12000, `second edit reports its own +$40, not the +$80 since submission: ${JSON.stringify(step2)}`);
   const step3 = await stepTo(2);
-  assert(step3.chargeDeltaCents === -4000 && step3.registrantDeltaCents === -2000 && step3.sponsorDeltaCents === -2000 && step3.requestNowCostsCents === 8000 && step3.churchSponsorReview === true, `a revert reports the reverse: ${JSON.stringify(step3)}`);
+  assert(step3.chargeDeltaCents === -4000 && step3.registrantDeltaCents === -2000 && step3.sponsorDeltaCents === -2000 && step3.requestNowCostsCents === 8000 && step3.churchShare?.status === "UPDATED", `a revert reports the reverse: ${JSON.stringify(step3)}`);
   const step4 = await stepTo(1);
-  assert(step4.chargeDeltaCents === -4000 && step4.sponsorDeltaCents === -2000 && step4.requestNowCostsCents === 4000 && step4.churchSponsorReview === true, `a return to the original still moves the sponsor's share this edit, so it warns: ${JSON.stringify(step4)}`);
-  assert(chargeChangeSentence(step4).startsWith(CHURCH_SPONSOR_CONTACT_LEAD) && !/adjust the charge in Payments/i.test(chargeChangeSentence(step4)), "and leads with the finance-office line");
+  assert(step4.chargeDeltaCents === -4000 && step4.sponsorDeltaCents === -2000 && step4.requestNowCostsCents === 4000 && step4.churchShare?.status === "UPDATED", `a return to the original moves the sponsor's share back this edit: ${JSON.stringify(step4)}`);
+  assert(!/contact the finance office/i.test(chargeChangeSentence(step4)), "and no longer sends staff to the finance office");
   // A registrant's own change request records this request's list change in the audit trail (previous to next).
   const askReg = await submitForm({ people: 3, responses: { registration_fee: true, promo_code: "HALFOFF" }, lodging: { category: "TENT", partySize: 1 } });
   const askedChange = await saveAny(askReg.reg, { category: "TENT", partySize: 2 });
   assert(askedChange.changeRequested === true, "a registrant's priced change is held for staff");
   const askedAudit = await prisma.auditLog.findFirstOrThrow({ where: { action: "LODGING_CHANGE_REQUESTED", metadata: { path: ["registrationId"], equals: askReg.reg.id } } });
   assert((askedAudit.metadata as { deltaCents?: number }).deltaCents === 4000 && (askedAudit.metadata as { registrantDeltaCents?: number }).registrantDeltaCents === 2000, `the audit delta is this request's change: ${JSON.stringify(askedAudit.metadata)}`);
-  // An edit that changes nothing about the price, after a change that moved the sponsor's share, still warns (cumulative differs).
+  // An edit that changes nothing about the price moves nothing, even after a change that moved the sponsor's share (#813).
   await stepTo(2);
   const quiet = await staffSaved(stepReg.reg, { category: "TENT", partySize: 2, privateRoomRequested: true, reason: "Wants privacy" });
-  assert(quiet.priceNeedsReview !== true && quiet.churchSponsorReview === true && quiet.originallyChargedCents === 4000 && quiet.requestNowCostsCents === 8000 && chargeChangeSentence(quiet).startsWith(CHURCH_SPONSOR_CONTACT_LEAD), `an unrelated edit keeps the church warning while the cumulative share differs: ${JSON.stringify(quiet)}`);
+  assert(quiet.priceNeedsReview !== true && quiet.churchShare === undefined, `an unrelated edit moves no church amount: ${JSON.stringify(quiet)}`);
   await stepTo(1);
   const plainReg = await submitForm({ people: 3, responses: { registration_fee: true }, lodging: { category: "TENT", partySize: 1 } });
   const plainTo = (party: number) => staffSaved(plainReg.reg, { category: "TENT", partySize: party, reason: `Party of ${party}` });
   const plain1 = await plainTo(2);
   const plain2 = await plainTo(3);
   const plain3 = await plainTo(2);
-  assert(plain1.chargeDeltaCents === 4000 && plain2.chargeDeltaCents === 4000 && plain3.chargeDeltaCents === -4000 && [plain1, plain2, plain3].every((entry) => entry.churchSponsorReview === false && entry.promo === null), `with no code each edit is its own list change: ${JSON.stringify([plain1.chargeDeltaCents, plain2.chargeDeltaCents, plain3.chargeDeltaCents])}`);
+  assert(plain1.chargeDeltaCents === 4000 && plain2.chargeDeltaCents === 4000 && plain3.chargeDeltaCents === -4000 && [plain1, plain2, plain3].every((entry) => entry.churchShare === undefined && entry.promo === null), `with no code each edit is its own list change: ${JSON.stringify([plain1.chargeDeltaCents, plain2.chargeDeltaCents, plain3.chargeDeltaCents])}`);
   await prisma.registration.updateMany({ where: { id: { in: [stepReg.reg.id, plainReg.reg.id, askReg.reg.id] } }, data: { status: "CANCELLED" } });
 
   // A church-billed event: lodging is recorded and never charged, at submit and after a save.

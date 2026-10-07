@@ -105,3 +105,20 @@ describe("a hidden field is not offered on the director's new-fill page (#712)",
     expect(keys).toContain("child_name");
   });
 });
+
+describe("a form behind the code points to Sync templates, not a terminal (#810)", () => {
+  it("tells the system administrator to use the in-app Sync templates button", async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    mocks.getCurrentSession.mockResolvedValue({ user: { id: "user-1", globalRole: "SYSTEM_ADMIN" } });
+    const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === "off_premises_permission_slip")!;
+    mocks.getClubFormBuilderView.mockResolvedValue({
+      key: seed.key, version: 1, needsSync: true, draftStale: false, draftBaseVersion: null, draft: null, draftUnreadable: false,
+      customized: false, published: { name: seed.name, definition: seed.definition },
+    });
+    const markup = renderToStaticMarkup((await ClubFormBuilderPage({ params })) as React.ReactElement);
+    expect(markup).toContain("Sync templates");
+    expect(markup).toContain('href="/admin/club-forms"');
+    expect(markup).not.toContain("npm run");
+    expect(markup).not.toContain("club-forms:sync");
+  });
+});
