@@ -170,7 +170,7 @@ export async function moveImportYear(organizationId: string, fromYear: string, t
       }, tx);
       return { result: { ...preview, rowsMoved: moved.count }, personIds };
     });
-    // #527: moved roster adults on the background-check list are matched after commit; best effort.
+    // #527: moved roster adults on the Sterling Volunteers list are matched after commit; best effort.
     await refreshBackgroundCheckMatchesSafely(personIds);
     return result;
   } catch (error) {

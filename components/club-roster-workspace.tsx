@@ -44,7 +44,7 @@ type RosterResponse = {
   issues?: Array<{ message?: string }>;
 };
 
-/** A background check's mark on a club page (#427): status only, or status and note for staff. */
+/** A person's Sterling Volunteers mark on a club page (#427): status only, or status and note for staff. */
 export type RosterComplianceInfo = {
   state: "CLEAR" | "FLAGGED" | "NOT_COMPLIANT" | "NO_RECORD";
   note: string | null;
@@ -86,7 +86,7 @@ export function ClubRosterWorkspace({
   /** Where "Show birth dates" asks; staff use their own audited route. */
   birthDatesEndpoint?: string;
   /**
-   * Background check status per roster member id (#427). Omitted entirely
+   * Sterling Volunteers status per roster member id (#427). Omitted entirely
    * where no one is allowed to see it; `note` is already blank unless the
    * caller is allowed to see it (club directors never get a note).
    */
@@ -374,7 +374,7 @@ export function ClubRosterWorkspace({
         )}
         {complianceStatuses && (notInCompliance > 0 || expiringSoon > 0) && (
           <p className="inline-notice roster-compliance-notice" role="status">
-            {notInCompliance} adult{notInCompliance === 1 ? "" : "s"} not in compliance
+            {notInCompliance} adult{notInCompliance === 1 ? "" : "s"} not in compliance with Sterling Volunteers
             {expiringSoon > 0 && ` · ${expiringSoon} expiring soon`}
           </p>
         )}
@@ -422,7 +422,7 @@ export function ClubRosterWorkspace({
             title={complianceFilter && complianceStatuses ? "No one matches this filter" : "No one is on the roster yet"}
           >
             {complianceFilter && complianceStatuses
-              ? "Choose a different background-check filter to see the rest of the roster."
+              ? "Choose a different Sterling Volunteers filter to see the rest of the roster."
               : readOnly
                 ? "This club's roster has no one on it yet."
                 : "Add regular members one at a time or import a CSV. You can add event-only guests when registering."}
@@ -450,7 +450,7 @@ export function ClubRosterWorkspace({
                   <th>Role</th>
                   <th>Gender</th>
                   <th>Flags</th>
-                  {complianceStatuses && <th>Background check</th>}
+                  {complianceStatuses && <th>Sterling Volunteers</th>}
                   {honorSummaries && <th>Honors</th>}
                   {!readOnly && <th><span className="sr-only">Actions</span></th>}
                 </tr>
@@ -503,7 +503,7 @@ export function ClubRosterWorkspace({
                               </div>
                             </td>
                             {complianceStatuses && (
-                              <td data-label="Background check">
+                              <td data-label="Sterling Volunteers">
                                 {complianceStatuses[member.id] ? (
                                   <>
                                     <span className={`status-chip ${complianceTone[complianceStatuses[member.id]!.state]}`}>

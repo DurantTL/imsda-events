@@ -1,4 +1,4 @@
-# Background-check list migration (#527)
+# Sterling Volunteers list migration (#527)
 
 Migration `20260928240000_background_check_list` replaces the old
 one-row-per-person `BackgroundCheck` table with the stored list

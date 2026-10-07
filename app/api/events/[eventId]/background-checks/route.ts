@@ -6,7 +6,7 @@ import { backgroundFlagsCsv } from "@/modules/background-checks/domain";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
 import { withRequestContext } from "@/lib/request-context";
 
-/** Adults at a youth or children's event with no current background check (#388), as CSV. */
+/** Adults at a youth or children's event with no current Sterling Volunteers (#388), as CSV. */
 async function getHandler(_request: Request, context: { params: Promise<{ eventId: string }> }) {
   try {
     const { eventId } = await context.params;
@@ -22,13 +22,13 @@ async function getHandler(_request: Request, context: { params: Promise<{ eventI
     return new Response(backgroundFlagsCsv(flags.people), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="${safeEventId}-background-checks-needed.csv"`,
+        "Content-Disposition": `attachment; filename="${safeEventId}-sterling-volunteers-needed.csv"`,
         "Cache-Control": "private, no-store, max-age=0",
         "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (error) {
-    return backgroundCheckApiError(error, "Downloading the background check list");
+    return backgroundCheckApiError(error, "Downloading the Sterling Volunteers list");
   }
 }
 

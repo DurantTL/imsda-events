@@ -62,7 +62,7 @@ export class MemberHonorError extends Error {
 /**
  * A bulk entry covers up to 500 members (the schema's cap), each one an entry
  * plus an audit row. Like the roster import (`ROSTER_IMPORT_TRANSACTION` in
- * background-checks), it gets an explicit window instead of Prisma's 5-second
+ * the Sterling Volunteers repository), it gets an explicit window instead of Prisma's 5-second
  * interactive-transaction default.
  */
 const BULK_HONOR_TRANSACTION = { timeout: 60_000, maxWait: 10_000 };

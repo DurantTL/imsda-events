@@ -22,7 +22,7 @@ async function postHandler(request: Request) {
     await matchRejectedBackgroundCheckPairing(entryId, personId, actor.id);
     return Response.json({ ok: true });
   } catch (error) {
-    return backgroundCheckApiError(error, "Matching a rejected background check pair by hand");
+    return backgroundCheckApiError(error, "Matching a rejected Sterling Volunteers pair by hand");
   }
 }
 

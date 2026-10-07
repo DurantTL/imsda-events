@@ -85,7 +85,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
       }
     }
     // #527: everyone touched by this import is matched against the
-    // background check list right away, without waiting on the next upload.
+    // Sterling Volunteers list right away, without waiting on the next upload.
     await refreshBackgroundCheckMatchesSafely(touchedPersonIds);
     await writeAuditLog({
       ...("userId" in actor ? { actorUserId: actor.userId } : {}),

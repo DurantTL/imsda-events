@@ -45,7 +45,7 @@ async function deleteHandler(request: Request, context: RouteContext) {
     const access = await requireRosterAccess(organizationId);
     rosterRemoveSchema.parse(await readRosterJson(request));
     const removed = await removeRosterMember(organizationId, memberId, actorAttribution(access.actor));
-    // #527: leaving a roster can change who a background-check entry matches.
+    // #527: leaving a roster can change who a Sterling Volunteers entry matches.
     await refreshBackgroundCheckMatchesSafely([removed?.personId]);
     return Response.json({ ...(await roster(access, organizationId)), nameKept: removed?.nameKept ?? false });
   } catch (error) {

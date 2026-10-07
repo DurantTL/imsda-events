@@ -54,7 +54,7 @@ export function clubReporterNavItems({ base, capabilities }: { base: string; cap
  * editing-only screens (Class tracking, Club settings, Health, Monthly Records
  * entry) are never listed. Every item stays inside this club: Roster, Events
  * and Monthly Records are sections of the club's Home page (ages only), and
- * the background-check counts are on its roster tile.
+ * the Sterling Volunteers status, counts and note are on its roster.
  *
  * Anchor items (`#open-club-...`) can't show an active state: the nav reads
  * `usePathname`, which has no hash. Monthly Records is active on the report

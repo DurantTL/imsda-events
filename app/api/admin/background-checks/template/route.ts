@@ -4,7 +4,7 @@ import { rosterBackgroundCsvTemplate, sterlingCsvTemplate } from "@/modules/back
 import { withRequestContext } from "@/lib/request-context";
 
 /**
- * The background check CSV template (#388, #427): the real roster export by
+ * The Sterling Volunteers CSV template (#388, #427): the real roster export by
  * default, or the older Sterling Volunteers layout with `?format=sterling`.
  */
 async function getHandler(request: Request) {
@@ -14,13 +14,13 @@ async function getHandler(request: Request) {
     return new Response(sterling ? sterlingCsvTemplate() : rosterBackgroundCsvTemplate(), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="background-checks-${sterling ? "sterling" : "roster"}-template.csv"`,
+        "Content-Disposition": `attachment; filename="sterling-volunteers-${sterling ? "export" : "roster"}-template.csv"`,
         "Cache-Control": "private, no-store, max-age=0",
         "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (error) {
-    return backgroundCheckApiError(error, "Downloading the background check template");
+    return backgroundCheckApiError(error, "Downloading the Sterling Volunteers template");
   }
 }
 

@@ -69,7 +69,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
     listClubEvents(organizationId),
     access.capabilities.submitReports ? getClubReportYear(organizationId, clubYear) : Promise.resolve(null),
     allMyClubsLink(access.actor),
-    // Only for roles that already see the roster's background-check column (#479).
+    // Only for roles that already see the roster's Sterling Volunteers column (#479).
     clubPortalComplianceReminderCounts(organizationId, clubYear, access.capabilities),
     // Honors are visible to anyone who reaches this page: the roster's own gate already applies (#486).
     listClubHonorsPage(organizationId, clubYear),
@@ -119,7 +119,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
       steps.push({ key: reminder.key, text: reminder.text, href: reminder.href, action: "Open roster", danger: true });
     }
   }
-  // Picked after every step is in, so a red background-check item can be the next task (#743).
+  // Picked after every step is in, so a red Sterling Volunteers item can be the next task (#743).
   const nextTask = pickClubNextTask(steps, deadlines);
 
   return (
@@ -128,7 +128,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
       {/* The next task and its deadline come before the statistics (#743). */}
       <ClubNextTaskCard next={nextTask} />
       <ClubYearTiles
-        // Background-check problems live only in "What's next" below, in red (#644); no tile.
+        // Sterling Volunteers problems live only in "What's next" below, in red (#644); no tile.
         compliance={null}
         complianceHref={`${base}/roster`}
         events={{ open: open.length, registered: registered.length }}
@@ -152,7 +152,7 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
               <li className={step.danger ? "club-step-danger" : undefined} key={step.key}>
                 <CircleAlert size={17} aria-hidden="true" />
                 <span>
-                  {step.danger && <small className="club-step-flag">Background check</small>}
+                  {step.danger && <small className="club-step-flag">Sterling Volunteers</small>}
                   <strong>{step.text}</strong>
                 </span>
                 <Link className="secondary-button club-event-action" href={step.href}>

@@ -1,5 +1,5 @@
 /**
- * Display constants and types for background checks. Client-safe: this file
+ * Display constants and types for Sterling Volunteers. Client-safe: this file
  * must never import a module that reaches `node:` (#550), because client
  * components (the club roster, the flag badges) import it. The rules that
  * read a check live in `domain.ts`, which re-exports everything here.
@@ -22,7 +22,7 @@ export const complianceFilterState: Record<ComplianceFilterValue, ClubCompliance
 
 /** How the roster's active filter reads back to whoever followed the link. */
 export const complianceFilterLabels: Record<ComplianceFilterValue, string> = {
-  missing: "missing a current background check",
+  missing: "with no Sterling Volunteers record",
   expired: "expired or not in compliance",
   expiring: "expiring within 60 days",
 };

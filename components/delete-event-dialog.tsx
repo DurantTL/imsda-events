@@ -147,7 +147,7 @@ export function DeleteEventDialogView({
           <p>
             This permanently deletes <strong translate="no">{eventName}</strong>. It has no registrations, payments, imports,
             form submissions, club drafts, posts, announcements or messages, so only its setup (the locations and forms listed
-            below, plus its settings) is removed. It cannot be undone. People, accounts, clubs and background checks
+            below, plus its settings) is removed. It cannot be undone. People, accounts, clubs and Sterling Volunteers
             are shared with other events and are kept.
           </p>
           <ul>

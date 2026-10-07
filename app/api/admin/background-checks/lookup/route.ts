@@ -15,7 +15,7 @@ async function getHandler(request: Request) {
     const name = new URL(request.url).searchParams.get("name") ?? "";
     return Response.json({ lookup: await lookupBackgroundCheckName(name) });
   } catch (error) {
-    return backgroundCheckApiError(error, "Looking up a background check name");
+    return backgroundCheckApiError(error, "Looking up a Sterling Volunteers name");
   }
 }
 

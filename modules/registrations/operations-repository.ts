@@ -671,7 +671,7 @@ export async function transferRegistration(
     });
     return { response, pendingMessageIds: notices.pendingMessageIds };
   });
-  // #527: the new person is matched against the background-check list after commit; best effort.
+  // #527: the new person is matched against the Sterling Volunteers list after commit; best effort.
   await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
   return result;
 }
@@ -961,7 +961,7 @@ export async function substituteRegistrationAttendee(
     });
     return { response, pendingMessageIds: notices.pendingMessageIds };
   });
-  // #527: the new person is matched against the background-check list after commit; best effort.
+  // #527: the new person is matched against the Sterling Volunteers list after commit; best effort.
   await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
   return result;
 }

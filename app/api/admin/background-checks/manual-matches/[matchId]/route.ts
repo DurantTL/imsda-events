@@ -7,7 +7,7 @@ import { withRequestContext } from "@/lib/request-context";
 type RouteContext = { params: Promise<{ matchId: string }> };
 
 /**
- * Undo a background-check match made by hand (#527): the automatic rules
+ * Undo a Sterling Volunteers match made by hand (#527): the automatic rules
  * apply to that person again. 404 for a match that no longer exists, 400 for
  * one that wasn't made by hand. Staff-only.
  */
@@ -20,7 +20,7 @@ async function deleteHandler(request: Request, context: RouteContext) {
     await undoManualBackgroundCheckMatch(matchId, actor.id);
     return Response.json({ matches: await listManualBackgroundCheckMatches() });
   } catch (error) {
-    return backgroundCheckApiError(error, "Undoing a background check match");
+    return backgroundCheckApiError(error, "Undoing a Sterling Volunteers match");
   }
 }
 

@@ -236,7 +236,7 @@ export async function confirmAddToRoster(viewer: ClubFormsViewer, input: RosterA
       }, tx);
       return added;
     });
-    // Same as a person added on the roster screen (#527): matched against the background check list right away.
+    // Same as a person added on the roster screen (#527): matched against the Sterling Volunteers list right away.
     await refreshBackgroundCheckMatchesSafely([result.personId]);
     return { action: "ADDED", rosterMemberId: result.memberId, clubYear };
   } catch (error) {

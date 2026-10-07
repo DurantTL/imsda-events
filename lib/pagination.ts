@@ -1,6 +1,6 @@
 /**
  * Pure paging helpers shared by the long staff lists (#702): the delivery log,
- * the check-in roster, the unmatched background-check rows and the Square
+ * the check-in roster, the unmatched Sterling Volunteers rows and the Square
  * payment-match candidates. Kept free of React so the page maths is
  * unit-testable without a DOM.
  */

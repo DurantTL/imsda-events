@@ -704,7 +704,7 @@ async function resolveNewAttendeePerson(
 /**
  * Whether a Person is used by this one registration attendee and nothing else
  * (#650): not a contact or billing person, not on another registration, not
- * linked to an account, household, roster, background check, transfer, honor
+ * linked to an account, household, roster, Sterling Volunteers, transfer, honor
  * record, or anything else that holds a Person id. Anything that might hold the
  * person makes the answer no, so a shared identity is never edited.
  */
@@ -741,7 +741,7 @@ async function personIsOnlyThisAttendee(tx: Prisma.TransactionClient, personId: 
   const { registrationEvents, ...others } = person._count;
   if (Object.values(others).some((count) => count > 0)) return false;
   if (person.backgroundCheckMatch || person.driverVerification || person.pendingMemberTransfer) return false;
-  // The retired pre-#527 background-check table is hidden from the client.
+  // The retired pre-#527 Sterling Volunteers table is hidden from the client.
   const [legacy] = await tx.$queryRaw<Array<{ count: bigint }>>`
     SELECT count(*)::bigint AS count FROM "BackgroundCheck_pre527" WHERE "personId" = ${personId}
   `;
@@ -1858,7 +1858,7 @@ export async function amendRegistration(
         // The registration's location row lock may be waited on for up to 5s (#413).
         timeout: locationTransactionTimeoutMs,
       });
-      // #527: a new or renamed attendee on the background-check list is
+      // #527: a new or renamed attendee on the Sterling Volunteers list is
       // matched after commit; best effort, never fails the amendment.
       await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
       return amended;
