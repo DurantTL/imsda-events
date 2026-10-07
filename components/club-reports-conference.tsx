@@ -80,7 +80,7 @@ export function ClubReportsConference({
               <tr role="row">
                 <th role="columnheader" scope="col">Club</th>
                 {months.map((month) => <th key={month} role="columnheader" scope="col">{shortMonth(month)}</th>)}
-                <th role="columnheader" scope="col">Registration</th>
+                <th role="columnheader" scope="col">Yearly registration</th>
                 <th role="columnheader" scope="col">Year to date</th>
               </tr>
             </thead>
@@ -109,7 +109,7 @@ export function ClubReportsConference({
                       </td>
                     );
                   })}
-                  <td {...cardCell("Registration")}>
+                  <td {...cardCell("Yearly registration")}>
                     {viewOnly
                       ? (club.registrationOnTime ? "On time" : "—")
                       : (

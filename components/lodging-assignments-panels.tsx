@@ -86,7 +86,7 @@ export function WaitlistPanel({ view, base, run, busy, canConfigure }: { view: A
       <h3 id="la-waitlist">Lodging waitlist ({view.waitlist.length})</h3>
       <p className="field-hint">Offers are sent one email per entry, only when you confirm here. Nothing offers or promotes on its own. An offer reserves its places until it expires; placing the party in a room is a separate step after they accept. Nothing here changes a registration&apos;s charge.</p>
       {offerResult ? <p className="usage-note" role="status">{offerResult}</p> : null}
-      {view.waitlist.length === 0 ? <p>Nobody is on the lodging waitlist.</p> : <div className="table-wrap"><table>
+      {view.waitlist.length === 0 ? <p>Nobody is on the lodging waitlist.</p> : <div className="table-wrap"><table className="report-table report-table-auto">
         <caption className="sr-only">Lodging waitlist</caption>
         <thead><tr>
           {canConfigure ? <th scope="col"><span className="sr-only">Choose</span></th> : null}
@@ -147,11 +147,11 @@ export function WaitlistPanel({ view, base, run, busy, canConfigure }: { view: A
           }, "Check the list below, then confirm.");
         }}>Preview offers for {selected.length} {selected.length === 1 ? "entry" : "entries"}</button>
         {preview ? <div>
-          <table>
+          <div className="table-wrap"><table className="report-table report-table-auto">
             <caption>Who would be emailed (nothing is sent yet)</caption>
             <thead><tr><th scope="col">Registration</th><th scope="col">Email goes to</th><th scope="col">Result</th></tr></thead>
             <tbody>{preview.map((row) => <tr key={row.entryId}><th scope="row">{row.registrationCode}</th><td>{row.recipientMasked ?? "No address"}</td><td>{row.alreadyOffered ? "Already holds a live offer: no new email" : row.eligible ? "Will be offered" : row.reason}</td></tr>)}</tbody>
-          </table>
+          </table></div>
           <button type="button" className="primary-button" disabled={busy || preview.every((row) => !row.eligible || row.alreadyOffered)} onClick={() => {
             void run(async () => {
               const result = await callLodging(`${base}/waitlist`, "POST", { action: "offer", entryIds: preview.map((row) => row.entryId), expiresInHours: hours, confirm: true });
@@ -219,7 +219,7 @@ export function PlanPanel({ view, base, run, busy, canExport }: { view: Assignme
         <p role="status"><strong>{preview.counts.new} new, {preview.counts.move} moved, {preview.counts.unchanged} unchanged, {preview.counts.problems} with problems, {preview.counts.unplaced} could not be placed.</strong> Nothing has been applied.</p>
         {preview.problems.length > 0 ? <ul className="form-error">{preview.problems.slice(0, 40).map((problem, index) => <li key={index}>{problem.line ? `Line ${problem.line}: ` : ""}{problem.message}</li>)}</ul> : null}
         {preview.unplaced.length > 0 ? <details><summary>{preview.unplaced.length} not placed</summary><ul>{preview.unplaced.map((row) => <li key={row.occupantId}>{row.name}: {row.reason}</li>)}</ul></details> : null}
-        <div className="table-wrap"><table>
+        <div className="table-wrap"><table className="report-table report-table-auto">
           <caption className="sr-only">Preview of the changes</caption>
           <thead><tr><th scope="col">Who</th><th scope="col">Place</th><th scope="col">Nights</th><th scope="col">Result</th></tr></thead>
           <tbody>{preview.rows.slice(0, 300).map((row, index) => <tr key={`${row.occupantId}-${index}`}><th scope="row">{row.name}</th><td>{row.place}</td><td>{nightRange(row.firstNight, row.lastNight)}</td><td>{row.outcome === "PROBLEM" ? row.message : row.outcome === "MOVE" ? "Moves them" : row.outcome === "NEW" ? "New" : "Already there"}</td></tr>)}</tbody>
@@ -274,7 +274,7 @@ export function ReportsPanel({ eventId }: { eventId: string }) {
   return <div className="lodging-assign-panels">
     <section className="panel" aria-labelledby="la-occ">
       <h3 id="la-occ">Occupancy by night</h3>
-      <div className="table-wrap"><table>
+      <div className="table-wrap"><table className="report-table report-table-auto">
         <caption className="sr-only">Occupancy by night</caption>
         <thead><tr><th scope="col">Night</th><th scope="col">Places</th><th scope="col">Placed</th><th scope="col">Free</th><th scope="col">Rooms in service</th><th scope="col">Housing elsewhere</th><th scope="col">In closed rooms</th><th scope="col">Rooms and people</th></tr></thead>
         <tbody>{reports.occupancy.map((row) => <tr key={row.night}>
@@ -300,7 +300,7 @@ export function ReportsPanel({ eventId }: { eventId: string }) {
     <section className="panel" aria-labelledby="la-keys">
       <h3 id="la-keys">Key hand-off inputs</h3>
       <p className="field-hint">What the person handing out keys needs. Key issuance itself is a separate feature.</p>
-      {reports.keyHandoff.length === 0 ? <p>No rooms are assigned.</p> : <div className="table-wrap"><table>
+      {reports.keyHandoff.length === 0 ? <p>No rooms are assigned.</p> : <div className="table-wrap"><table className="report-table report-table-auto">
         <thead><tr><th scope="col">Room or site</th><th scope="col">People</th><th scope="col">Arrives</th><th scope="col">Leaves</th><th scope="col">Name on the registration</th></tr></thead>
         <tbody>{reports.keyHandoff.map((row) => <tr key={row.placeKey}><th scope="row">{row.building} {row.place}</th><td>{row.people}</td><td>{shortNight(row.arrival)}</td><td>{shortNight(row.departure)}</td><td>{row.holder}</td></tr>)}</tbody>
       </table></div>}

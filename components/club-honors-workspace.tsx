@@ -356,13 +356,13 @@ export function ClubHonorsWorkspace({
         ) : (
           <div className="report-table-wrap">
             <SortOrderNote>{sortOrderText(nameSortLabel, nameDirection)}</SortOrderNote>
-            <table aria-labelledby="club-honors-heading" className="report-table table-cards" role="table">
+            <table aria-labelledby="club-honors-heading" className="report-table table-cards honors-table" data-fit-width role="table">
               <thead role="rowgroup">
                 <tr role="row">
-                  <SortableHeader active direction={nameDirection} label="Name" onSort={() => setNameDirection(flipDirection(nameDirection))} />
-                  <th role="columnheader" scope="col">Current class</th>
-                  <th role="columnheader" scope="col">Honors</th>
-                  <th role="columnheader" scope="col"><span className="sr-only">Add honor and history</span></th>
+                  <SortableHeader active className="honors-col-name" direction={nameDirection} label="Name" onSort={() => setNameDirection(flipDirection(nameDirection))} />
+                  <th className="honors-col-class" role="columnheader" scope="col">Current class</th>
+                  <th className="honors-col-honors" role="columnheader" scope="col">Honors</th>
+                  <th className="honors-col-add" role="columnheader" scope="col"><span className="sr-only">Add honor and history</span></th>
                 </tr>
               </thead>
               <tbody role="rowgroup">
@@ -370,7 +370,7 @@ export function ClubHonorsWorkspace({
                   <tr key={row.memberId} role="row">
                     <th role="rowheader" scope="row"><strong translate="no">{row.lastName}, {row.firstName}</strong></th>
                     <td {...cardCell("Current class")}>{row.classLevel ? clubClassLevelLabels[row.classLevel as keyof typeof clubClassLevelLabels] : "—"}</td>
-                    <td {...cardCell("Honors")}>
+                    <td {...cardCell("Honors")} className="honors-col-honors" data-label-long="">
                       <HonorPillList honors={row.honors} showStatus />
                     </td>
                     <td {...cardCell(null)}>
