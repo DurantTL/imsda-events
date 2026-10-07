@@ -12,7 +12,7 @@ import {
 } from "@/modules/access/session-store";
 import { hashOpaqueToken } from "@/modules/access/tokens";
 
-export const getCurrentSession = cache(async (): Promise<Session> => {
+async function loadCurrentSession(touch: boolean): Promise<Session> {
   const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
   if (!token) return { user: null };
 
@@ -53,7 +53,7 @@ export const getCurrentSession = cache(async (): Promise<Session> => {
   // after the person walked away from a shared check-in tablet.
   if (isSessionIdle(session.lastSeenAt, now)) return { user: null };
 
-  if (shouldTouchSession(session.lastSeenAt, now)) {
+  if (touch && shouldTouchSession(session.lastSeenAt, now)) {
     await touchDatabaseSession(tokenHash, session.lastSeenAt, now);
   }
 
@@ -66,4 +66,16 @@ export const getCurrentSession = cache(async (): Promise<Session> => {
     },
     sessionId: session.id,
   };
-});
+}
+
+/** The signed-in staff member for this request; a real request counts as activity and advances the idle clock. */
+export const getCurrentSession = cache(() => loadCurrentSession(true));
+
+/**
+ * The same answer, but reading it never advances the idle clock (#825). For
+ * background polling only (the live check-in list): a tablet left open on the
+ * desk keeps asking for changes every few seconds, and that must not keep its
+ * session alive past the idle timeout. Only a person's own actions count as
+ * activity. An idle or expired session answers signed-out, as usual.
+ */
+export const getCurrentSessionPassive = cache(() => loadCurrentSession(false));

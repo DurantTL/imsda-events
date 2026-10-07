@@ -450,7 +450,7 @@ export async function issueMfaChallenge(
   // enrolment's lock (MAX_VERIFY_FAILURES). Only the oldest beyond the cap retire.
   const surplus = await prisma.mfaChallenge.findMany({
     where: { userId, consumedAt: null, expiresAt: { gt: now } },
-    orderBy: { createdAt: "desc" },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     skip: MAX_LIVE_CHALLENGES,
     select: { id: true },
   });

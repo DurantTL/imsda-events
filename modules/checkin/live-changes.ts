@@ -25,6 +25,8 @@ export type LiveCheckInChanges = {
   /** The server's clock when the answer was read; the next poll starts from here. */
   now: string;
   changes: LiveCheckInChange[];
+  /** More rows changed than one answer carries; the client reloads the roster instead of trusting a partial list. */
+  truncated?: boolean;
 };
 
 type ChangedRow = {
@@ -60,7 +62,7 @@ export function nextLiveSince(serverNow: string) {
 /** Parses a server answer defensively; anything unexpected is ignored rather than trusted. */
 export function parseLiveCheckInChanges(value: unknown): LiveCheckInChanges | null {
   if (!value || typeof value !== "object") return null;
-  const { now, changes } = value as { now?: unknown; changes?: unknown };
+  const { now, changes, truncated } = value as { now?: unknown; changes?: unknown; truncated?: unknown };
   if (typeof now !== "string" || Number.isNaN(Date.parse(now)) || !Array.isArray(changes)) return null;
   const parsed: LiveCheckInChange[] = [];
   for (const change of changes) {
@@ -73,7 +75,7 @@ export function parseLiveCheckInChanges(value: unknown): LiveCheckInChanges | nu
       parsed.push([change[0], change[1]] as const);
     }
   }
-  return { now, changes: parsed };
+  return truncated === true ? { now, changes: parsed, truncated: true } : { now, changes: parsed };
 }
 
 /**

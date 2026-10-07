@@ -249,6 +249,23 @@ describe("check-in repository", () => {
     expect(tx.checkIn.create).not.toHaveBeenCalled();
   });
 
+  it("only trusts an audit entry written with or after the active check-in", async () => {
+    const { prisma, tx } = fixture();
+    const active = checkInRecord({ id: "checkin_other" });
+    tx.registrationAttendee.findFirst.mockResolvedValue({
+      id: "attendee_123",
+      registration: { status: "CONFIRMED" },
+      checkIns: [active],
+    });
+    dependencies.getPrisma.mockReturnValue(prisma);
+
+    await checkInAttendee("event_123", "attendee_123", "staff_1", idempotencyKey);
+
+    expect(tx.auditLog.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ createdAt: { gte: active.checkedInAt } }),
+    }));
+  });
+
   it("names no one when the audit entry has no staff member", async () => {
     const { prisma, tx } = fixture();
     tx.auditLog.findFirst.mockResolvedValue(null);

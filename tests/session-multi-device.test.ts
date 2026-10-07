@@ -47,6 +47,15 @@ describe("one staff account on several devices (#825)", () => {
     expect(readFileSync("modules/access/current-session.ts", "utf8")).not.toMatch(/userAgent/i);
   });
 
+  it("the live list stops polling and says why when the idle timeout has signed the device out", () => {
+    const source = readFileSync("components/check-in-workspace.tsx", "utf8");
+    expect(source).toMatch(/response\.status === 401/);
+    expect(source).toContain("Signed out for inactivity");
+    // One loop only: a poll in flight blocks a second one, and every timer is replaced, not stacked.
+    expect(source).toMatch(/if \(cancelled \|\| inFlight\) return;/);
+    expect(source).toMatch(/window\.clearTimeout\(timer\);\s*if \(!cancelled\) timer = /);
+  });
+
   it("revokes other sessions only on explicit security events, never on sign-in", () => {
     const signInFiles = ["modules/access/auth-service.ts", "modules/access/mfa-service.ts", "modules/access/passkeys.ts", "app/api/auth/login/route.ts", "app/api/auth/mfa/challenge/route.ts"];
     for (const file of signInFiles) {

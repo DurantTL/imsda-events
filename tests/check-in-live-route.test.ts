@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => {
   return {
     AccessDeniedError: MockAccessDeniedError,
     requirePermission: vi.fn(),
-    getCurrentSession: vi.fn(),
+    getCurrentSessionPassive: vi.fn(),
     findActiveMembership: vi.fn(),
     listCheckInChanges: vi.fn(),
   };
@@ -23,7 +23,7 @@ vi.mock("@/modules/access/authorization", () => ({
   AccessDeniedError: mocks.AccessDeniedError,
   requirePermission: mocks.requirePermission,
 }));
-vi.mock("@/modules/access/current-session", () => ({ getCurrentSession: mocks.getCurrentSession }));
+vi.mock("@/modules/access/current-session", () => ({ getCurrentSessionPassive: mocks.getCurrentSessionPassive }));
 vi.mock("@/modules/events/repository", () => ({ findActiveMembership: mocks.findActiveMembership }));
 vi.mock("@/modules/checkin/live-repository", () => ({ listCheckInChanges: mocks.listCheckInChanges }));
 
@@ -34,7 +34,7 @@ const get = (query: string) => GET(new Request(`https://events.imsda.test/api/ev
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getCurrentSession.mockResolvedValue({ user: { id: "staff_1" } });
+  mocks.getCurrentSessionPassive.mockResolvedValue({ user: { id: "staff_1" } });
   mocks.requirePermission.mockResolvedValue({ user: { id: "staff_1" } });
   mocks.listCheckInChanges.mockResolvedValue({ now: "2026-10-09T14:00:00.000Z", changes: [["a", null]] });
 });
@@ -53,6 +53,17 @@ describe("live check-in changes route (#825)", () => {
     const response = await get("?since=2026-10-09T13:59:00.000Z");
     expect(response.status).toBe(403);
     expect(mocks.listCheckInChanges).not.toHaveBeenCalled();
+  });
+
+  it("reads the session without advancing its idle clock, and answers 401 once it has gone idle", async () => {
+    mocks.requirePermission.mockRejectedValue(new mocks.AccessDeniedError("UNAUTHENTICATED", 401, "Sign in."));
+    const response = await get("?since=2026-10-09T13:59:00.000Z");
+    expect(response.status).toBe(401);
+    expect(mocks.getCurrentSessionPassive).toHaveBeenCalled();
+    expect(mocks.listCheckInChanges).not.toHaveBeenCalled();
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("app/api/events/[eventId]/check-ins/route.ts", "utf8");
+    expect(source).not.toMatch(/getCurrentSession\b/);
   });
 
   it("requires a valid since time", async () => {

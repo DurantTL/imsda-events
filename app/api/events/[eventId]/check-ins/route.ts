@@ -1,5 +1,5 @@
 import { AccessDeniedError, requirePermission } from "@/modules/access/authorization";
-import { getCurrentSession } from "@/modules/access/current-session";
+import { getCurrentSessionPassive } from "@/modules/access/current-session";
 import { listCheckInChanges } from "@/modules/checkin/live-repository";
 import { findActiveMembership } from "@/modules/events/repository";
 import { logError } from "@/lib/logger";
@@ -24,7 +24,7 @@ const MAXIMUM_LOOKBACK_MS = 6 * 60 * 60 * 1_000;
 async function getHandler(request: Request, context: { params: Promise<{ eventId: string }> }) {
   try {
     const { eventId } = await context.params;
-    await requirePermission(await getCurrentSession(), eventId, "MANAGE_CHECK_IN", findActiveMembership);
+    await requirePermission(await getCurrentSessionPassive(), eventId, "MANAGE_CHECK_IN", findActiveMembership);
     const raw = new URL(request.url).searchParams.get("since");
     const parsed = raw ? Date.parse(raw) : Number.NaN;
     if (Number.isNaN(parsed)) {

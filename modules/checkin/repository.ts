@@ -57,13 +57,16 @@ type Reader = Pick<Prisma.TransactionClient, "auditLog">;
  * check-in row itself carries no actor, so this reads the audit entry written
  * in the same transaction. Null when there is none (e.g. an imported row).
  */
-async function checkedInByName(reader: Reader, eventId: string, attendeeId: string) {
+async function checkedInByName(reader: Reader, eventId: string, attendeeId: string, checkedInAt: Date) {
   const entry = await reader.auditLog.findFirst({
     where: {
       eventId,
       action: "ATTENDEE_CHECKED_IN",
       entityType: "RegistrationAttendee",
       entityId: attendeeId,
+      // Only an entry written with (or after) this check-in; an older one
+      // belongs to an earlier, undone check-in by someone else. No match, no name.
+      createdAt: { gte: checkedInAt },
     },
     orderBy: { createdAt: "desc" },
     select: { actor: { select: { displayName: true } } },
@@ -98,7 +101,7 @@ export async function checkInAttendee(
             disposition: "IDEMPOTENT_REPLAY" as const,
             checkedIn: replay.undoneAt === null,
             checkedInBy: replay.undoneAt === null
-              ? await checkedInByName(tx, eventId, attendeeId)
+              ? await checkedInByName(tx, eventId, attendeeId, replay.checkedInAt)
               : null,
           };
         }
@@ -125,7 +128,7 @@ export async function checkInAttendee(
             checkIn: attendee.checkIns[0],
             disposition: "ALREADY_CHECKED_IN" as const,
             checkedIn: true,
-            checkedInBy: await checkedInByName(tx, eventId, attendeeId),
+            checkedInBy: await checkedInByName(tx, eventId, attendeeId, attendee.checkIns[0].checkedInAt),
           };
         }
 

@@ -120,8 +120,8 @@ describe("private manage-link budgets", () => {
     ]);
     expect(pass).toEqual([
       ["public.manage.pass.client", 3000],
-      ["public.manage.pass.token", 240],
-      ["public.manage.pass.client-token", 120],
+      ["public.manage.pass.token", 600],
+      ["public.manage.pass.client-token", 300],
     ]);
   });
 });
@@ -142,7 +142,9 @@ describe("check-in desk limiter sizes (#825)", () => {
     expect(publicManageBudgets.pass.client).toBeGreaterThanOrEqual(500 * 3);
     expect(publicManageBudgets.read.client).toBeGreaterThanOrEqual(500);
     // One private link stays at a few loads a minute (15-minute window).
-    expect(publicManageBudgets.pass.token / 15).toBeLessThanOrEqual(30);
+    // An announcement email embeds up to 8 attendee pass images per open (#824).
+    expect(publicManageBudgets.pass.token).toBeGreaterThanOrEqual(8 * 60);
+    expect(publicManageBudgets.pass.token / 15).toBeLessThanOrEqual(60);
     expect(publicManageBudgets.pass.clientToken).toBeLessThanOrEqual(publicManageBudgets.pass.token);
     expect(publicManageBudgets.update.client).toBeLessThanOrEqual(30);
   });

@@ -77,7 +77,7 @@ async function signIn(device: Device, secondStep: (challengeToken: string, gate:
   const mfa = login.json?.mfa as { challengeToken: string; gate: string } | undefined;
   assert.ok(mfa?.challengeToken, `${device.name} is asked for the second step`);
   const verify = await secondStep(mfa.challengeToken, mfa.gate);
-  assert.equal(verify.ok, true, `${device.name} second step: ${JSON.stringify(verify)}`);
+  assert.equal(verify.ok, true, `${device.name} second step failed (${String(verify.error ?? "no error code")})`);
 }
 
 async function main() {

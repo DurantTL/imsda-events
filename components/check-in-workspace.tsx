@@ -135,18 +135,27 @@ export function CheckInWorkspace({
   // acted on, so a poll that was already in flight cannot overwrite them.
   const localActionsRef = useRef(new Set<string>());
   const [liveStale, setLiveStale] = useState(false);
+  const [signedOutByIdle, setSignedOutByIdle] = useState(false);
   useEffect(() => {
     if (!loadedAt) return;
     let cancelled = false;
+    // One poll at a time, one timer at a time: coming back to the tab while a
+    // poll is in flight must not start a second loop.
+    let inFlight = false;
     let timer: number | undefined;
     let failures = 0;
     let since = nextLiveSince(loadedAt);
-    const poll = async () => {
-      if (cancelled) return;
+    const schedule = (milliseconds: number) => {
+      window.clearTimeout(timer);
+      if (!cancelled) timer = window.setTimeout(poll, milliseconds);
+    };
+    async function poll() {
+      if (cancelled || inFlight) return;
       if (document.visibilityState === "hidden" || !navigator.onLine || !since) {
-        timer = window.setTimeout(poll, nextLivePollDelay(failures));
+        schedule(nextLivePollDelay(failures));
         return;
       }
+      inFlight = true;
       const touchedBefore = new Set(localActionsRef.current);
       try {
         const response = await fetch(
@@ -158,9 +167,30 @@ export function CheckInWorkspace({
               : undefined,
           },
         );
+        if (response.status === 401) {
+          // The poll does not count as activity (it never extends the session),
+          // so an unattended tablet reaches the idle timeout like any other page.
+          cancelled = true;
+          setSignedOutByIdle(true);
+          return;
+        }
         const live = response.ok ? parseLiveCheckInChanges(await response.json()) : null;
         if (!live) throw new Error("live list unavailable");
         if (cancelled) return;
+        if (live.truncated) {
+          // More changed than one answer carries: reload the roster once, rather than show a partial list.
+          let recent = false;
+          try {
+            const last = Number(window.sessionStorage.getItem("imsda-check-in-live-reload") ?? 0);
+            recent = Date.now() - last < 60_000;
+            if (!recent) window.sessionStorage.setItem("imsda-check-in-live-reload", String(Date.now()));
+          } catch { /* storage may be unavailable; reload anyway */ }
+          if (!recent) {
+            cancelled = true;
+            window.location.reload();
+            return;
+          }
+        }
         const skip = new Set([...touchedBefore, ...localActionsRef.current]);
         setArrivals((current) => applyLiveCheckInChanges(current, live.changes, skip) as Arrival[]);
         since = nextLiveSince(live.now);
@@ -170,15 +200,14 @@ export function CheckInWorkspace({
         failures = Math.min(failures + 1, 4);
         // One missed poll is normal on cellular; say so only when it persists.
         if (failures >= 3) setLiveStale(true);
+      } finally {
+        inFlight = false;
       }
-      timer = window.setTimeout(poll, nextLivePollDelay(failures));
-    };
-    timer = window.setTimeout(poll, nextLivePollDelay(0));
+      schedule(nextLivePollDelay(failures));
+    }
+    schedule(nextLivePollDelay(0));
     const wake = () => {
-      if (document.visibilityState === "visible") {
-        window.clearTimeout(timer);
-        timer = window.setTimeout(poll, 250);
-      }
+      if (document.visibilityState === "visible" && !inFlight) schedule(250);
     };
     document.addEventListener("visibilitychange", wake);
     return () => {
@@ -538,7 +567,18 @@ export function CheckInWorkspace({
         )}
       </div>
 
-      {liveStale && (
+      {signedOutByIdle && (
+        <div className="inline-notice error" role="alert">
+          <AlertTriangle aria-hidden="true" size={17} />
+          <span>
+            Signed out for inactivity &mdash;{" "}
+            <Link href={`/login?next=${encodeURIComponent(`/check-in?event=${eventId}`)}`}>sign in again</Link>.
+            Check-ins saved on this device stay queued.
+          </span>
+        </div>
+      )}
+
+      {liveStale && !signedOutByIdle && (
         <div className="inline-notice" role="status">
           <WifiOff aria-hidden="true" size={17} />
           <span>

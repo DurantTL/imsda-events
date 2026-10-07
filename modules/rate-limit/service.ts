@@ -573,7 +573,7 @@ export async function checkPublicPromoQuoteRateLimit(
 export const publicManageBudgets = {
   read: { client: 600, token: 120, clientToken: 60 },
   update: { client: 30, token: 20, clientToken: 10 },
-  pass: { client: 3000, token: 240, clientToken: 120 },
+  pass: { client: 3000, token: 600, clientToken: 300 },
 } as const;
 
 export async function checkPublicManageRateLimit(

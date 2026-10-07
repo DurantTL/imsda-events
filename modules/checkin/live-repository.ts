@@ -20,7 +20,13 @@ export async function listCheckInChanges(eventId: string, since: Date): Promise<
     },
     select: { registrationAttendeeId: true, checkedInAt: true, undoneAt: true },
     orderBy: { checkedInAt: "desc" },
-    take: LIVE_CHANGES_LIMIT,
+    take: LIVE_CHANGES_LIMIT + 1,
   });
-  return { now: now.toISOString(), changes: collapseCheckInChanges(rows) };
+  // One row past the limit means the answer is incomplete: say so, and the
+  // client reloads the roster instead of showing a partial list.
+  const truncated = rows.length > LIVE_CHANGES_LIMIT;
+  const changes = collapseCheckInChanges(truncated ? rows.slice(0, LIVE_CHANGES_LIMIT) : rows);
+  return truncated
+    ? { now: now.toISOString(), changes, truncated: true }
+    : { now: now.toISOString(), changes };
 }
