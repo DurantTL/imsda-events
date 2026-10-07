@@ -34,7 +34,7 @@ export default async function ClubSummaryAdminPage({ searchParams }: { searchPar
         <div>
           <p className="eyebrow">Clubs · {clubYear}</p>
           <h2>Club summary</h2>
-          <p>Every active club&apos;s reports and points, as Area Coordinators see them. Background checks are counts only.</p>
+          <p>Every active club&apos;s reports and points, as Area Coordinators see them. Sterling Volunteers shows counts only.</p>
         </div>
         <AreaExportLinks
           basePath="/api/admin/club-reports/area-export"

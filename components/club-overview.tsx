@@ -48,15 +48,16 @@ export async function ClubOverview({
   /** Staff can open and file a month with no report yet; others only view. */
   reportsEditable: boolean;
   /**
-   * Show each adult's background check status (#427). Omitted for callers who
-   * aren't allowed to see it at all (Area Coordinators, event managers).
-   * `includeNotes` is true only for staff who may also see the staff-only note.
+   * Show each adult's Sterling Volunteers status (#427). Omitted for callers who
+   * aren't allowed to see it at all (event managers). `includeNotes` is true only
+   * for the viewers `notes-access.ts` allows: staff, and an Area Coordinator for a
+   * club in their scope (#443). A club director never gets the note.
    */
   backgroundChecks?: { includeNotes: boolean };
   /**
    * Counts only, no names or notes (#479): for a viewer who isn't allowed the
    * full `backgroundChecks` column but should still see whether the club has
-   * anything outstanding (an Area Coordinator). Ignored when `backgroundChecks`
+   * anything outstanding. Ignored when `backgroundChecks`
    * is set, since that caller already gets the fuller per-member view.
    */
   complianceCounts?: boolean;

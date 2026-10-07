@@ -9,11 +9,11 @@ import { BackgroundCheckReviewPanel } from "@/components/background-check-review
 import { getCurrentSession } from "@/modules/access/current-session";
 import { backgroundCheckSummary } from "@/modules/background-checks/repository";
 
-export const metadata: Metadata = { title: "Background checks" };
+export const metadata: Metadata = { title: "Sterling Volunteers" };
 export const dynamic = "force-dynamic";
 
 /**
- * Background checks (#388, #427): the upload, what's on file, and which
+ * Sterling Volunteers (#388, #427): the upload, what's on file, and which
  * youth or children's events have adults still needing a check. Moved under
  * Clubs and churches (#427); `/admin/background-checks` redirects here.
  */
@@ -34,7 +34,7 @@ export default async function BackgroundChecksPage() {
       <div className="page-intro">
         <div>
           <p className="eyebrow">Clubs and churches</p>
-          <h2>Background checks</h2>
+          <h2>Sterling Volunteers</h2>
           <p>
             Upload the roster export (matched by name and club or church; no email or birth date needed) or the
             older Sterling Volunteers list. The newest upload replaces whatever was on file for a person. At events
@@ -54,7 +54,7 @@ export default async function BackgroundChecksPage() {
         <BackgroundCheckImportPanel />
       </div>
 
-      <section className="report-summary-grid" aria-label="Background checks on file">
+      <section className="report-summary-grid" aria-label="Sterling Volunteers on file">
         {cards.map((card) => (
           <article className={`metric-card report-summary-card accent-${card.tone}`} key={card.label}>
             <strong>{card.value}</strong><p>{card.label}</p><small>{card.detail}</small>

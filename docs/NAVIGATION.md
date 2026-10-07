@@ -172,7 +172,7 @@ visibility condition is exactly what gated that destination before.
     when at least one of its cards is visible.
 - **System Command Center (`app/(workspace)/admin/page.tsx`):** its header
   actions (Create event, Team, Accounts, Platform settings, Churches and
-  clubs, Honor catalog, Public calendar, Background checks, Refresh) now wrap
+  clubs, Honor catalog, Public calendar, Sterling Volunteers, Refresh) now wrap
   onto additional lines instead of being clipped by the hero's rounded
   corners, on both desktop and phone widths
   (`app/(workspace)/admin/system-admin.module.css`).

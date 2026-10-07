@@ -73,7 +73,7 @@ export function AreaCoordinatorCardView({ card }: { card: AreaCoordinatorCard })
       <p className="field-help">
         {needingAttention.either === 0
           ? `No clubs need attention for ${needingAttention.clubYear}.`
-          : `${needingAttention.overdueReports} with overdue monthly reports · ${needingAttention.backgroundCheckReminders} with background-check reminders (${needingAttention.clubYear}).`}
+          : `${needingAttention.overdueReports} with overdue monthly reports · ${needingAttention.backgroundCheckReminders} with Sterling Volunteers reminders (${needingAttention.clubYear}).`}
       </p>
       {areaCardLinks().map((link) => (
         <Link className="secondary-button account-overview-link" href={link.href} key={link.href}>

@@ -260,7 +260,7 @@ async function importOne(item: ClubImportItem, actorUserId: string, now: Date): 
         invitesCreated,
       };
     });
-    // #527: imported roster adults on the background-check list are matched after commit; best effort.
+    // #527: imported roster adults on the Sterling Volunteers list are matched after commit; best effort.
     await refreshBackgroundCheckMatchesSafely(addedPersonIds);
     return result;
   } catch (error) {

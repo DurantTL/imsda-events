@@ -21,7 +21,7 @@ async function deleteHandler(request: Request, context: RouteContext) {
     await rejectNameOnlyBackgroundCheckMatch(matchId, actor.id);
     return Response.json({ matches: await listNameOnlyBackgroundCheckMatches() });
   } catch (error) {
-    return backgroundCheckApiError(error, "Rejecting a background check name-only match");
+    return backgroundCheckApiError(error, "Rejecting a Sterling Volunteers name-only match");
   }
 }
 

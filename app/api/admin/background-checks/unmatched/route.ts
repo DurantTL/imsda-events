@@ -23,7 +23,7 @@ async function getHandler() {
       })),
     });
   } catch (error) {
-    return backgroundCheckApiError(error, "Loading unmatched background check entries");
+    return backgroundCheckApiError(error, "Loading unmatched Sterling Volunteers entries");
   }
 }
 

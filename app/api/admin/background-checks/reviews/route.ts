@@ -4,9 +4,9 @@ import { listBackgroundCheckReviews } from "@/modules/background-checks/reposito
 import { withRequestContext } from "@/lib/request-context";
 
 /**
- * The background-check staff review list (#527): entries, or people, an
+ * The Sterling Volunteers staff review list (#527): entries, or people, an
  * upload couldn't match with confidence. Staff-only, like the rest of
- * background-check data.
+ * Sterling Volunteers data.
  */
 async function getHandler() {
   try {
@@ -14,7 +14,7 @@ async function getHandler() {
     const reviews = await listBackgroundCheckReviews();
     return Response.json({ reviews });
   } catch (error) {
-    return backgroundCheckApiError(error, "Loading the background check review list");
+    return backgroundCheckApiError(error, "Loading the Sterling Volunteers review list");
   }
 }
 

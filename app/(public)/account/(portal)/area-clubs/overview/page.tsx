@@ -20,7 +20,7 @@ export default async function AreaOverviewPage({ searchParams }: { searchParams:
   return (
     <section className="public-manage-card page-stack area-overview-page">
       <h2>Overview, {clubYear}</h2>
-      <p className="field-help">Every active club. Background checks show counts only, never names or notes.</p>
+      <p className="field-help">Every active club. Sterling Volunteers shows counts only here; open a club to see its adults.</p>
       <AreaExportLinks
         basePath="/api/attendee/area-clubs/export"
         clubYear={clubYear}

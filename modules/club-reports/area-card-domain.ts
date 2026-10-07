@@ -44,7 +44,7 @@ export type ClubReportRow = {
 /**
  * Counts of clubs with a past-due monthly report (a month neither filed nor a
  * draft once its due date passed, the same rule as the overview's "Missing"),
- * and of clubs with any background-check reminder. Counts only, never a name.
+ * and of clubs with any Sterling Volunteers reminder. Counts only, never a name.
  */
 export function clubsNeedingAttention(input: {
   clubIds: readonly string[];

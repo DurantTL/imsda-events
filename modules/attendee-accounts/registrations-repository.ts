@@ -241,7 +241,7 @@ export async function updateTieredAttendeeAnswers(input: {
   });
   if (!result) return null;
   await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
-  // #527: a changed answer (a birth date, say) is background-check matching evidence.
+  // #527: a changed answer (a birth date, say) is Sterling Volunteers matching evidence.
   await refreshBackgroundCheckMatchesForRegistrations([result.registrationId]);
   return {
     expectedUpdatedAt: result.expectedUpdatedAt,

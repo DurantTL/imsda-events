@@ -147,7 +147,7 @@ const clubOnlyNoisePrefixes = ["CLUB_ASSIGNMENTS_BATCH"] as const;
 /**
  * Never filtered, whatever the type: refunds and payments, registration
  * access and private links, public registration and attendee actions, deletes,
- * staff and permission changes, and background checks. Checked before the
+ * staff and permission changes, and Sterling Volunteers. Checked before the
  * allowlist so a future prefix can't hide them.
  */
 const neverFilteredPattern =

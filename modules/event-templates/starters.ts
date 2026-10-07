@@ -14,7 +14,7 @@ import type { TeamSettingsInputValues } from "@/modules/club-teams/domain";
  * defaults (event message templates are generic in code, none is specific to
  * one event). Module switches are set only where the form or the legacy
  * document clearly implies them: shirt sizes when the form asks for a shirt
- * size, adult background checks for the club events.
+ * size, adult Sterling Volunteers for the club events.
  */
 export type StarterEventTemplate = {
   starterKey: string;
@@ -135,7 +135,7 @@ export function starterDescription(starter: StarterEventTemplate) {
   }
   if (starter.locations?.length) {
     const names = starter.locations.map((location) => location.name).join(" and ");
-    return `Starter set: created from the built-in "${form?.name ?? starter.name}" form (${starter.formTemplateKey}) with church billing and adult background checks on. It creates two locations, ${names}, with no dates. Fill in the sites and dates under Event settings > Locations. This template sets no prices or capacity: set the Fall Camporee fee on the draft event before publishing.`;
+    return `Starter set: created from the built-in "${form?.name ?? starter.name}" form (${starter.formTemplateKey}) with church billing and the adult Sterling Volunteers requirement on. It creates two locations, ${names}, with no dates. Fill in the sites and dates under Event settings > Locations. This template sets no prices or capacity: set the Fall Camporee fee on the draft event before publishing.`;
   }
   const source = form ? `the built-in "${form.name}" form (${starter.formTemplateKey})` : `the ${starter.formTemplateKey} form`;
   const features = formPriceFeatures(starter.formTemplateKey);

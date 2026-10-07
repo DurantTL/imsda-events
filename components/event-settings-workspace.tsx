@@ -557,10 +557,10 @@ export function EventSettingsWorkspace({
         onChange={(event) => update("checksAdultBackgrounds", event.target.checked)}
       />
       <span>
-        <strong>Youth or children&apos;s event: check adults&apos; background checks</strong>
+        <strong>Youth or children&apos;s event: check adults&apos; Sterling Volunteers</strong>
         <small>
           For events where parents aren&apos;t normally there. Every adult registered, club
-          staff or not, is flagged until a current Sterling Volunteers check is on file.
+          staff or not, is flagged until they are in compliance with Sterling Volunteers.
           Registration and check-in are never blocked.
         </small>
       {fieldNote("checksAdultBackgrounds")}</span>

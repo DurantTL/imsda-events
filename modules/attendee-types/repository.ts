@@ -168,7 +168,7 @@ export async function backfillAttendeeTypes(eventId: string, apply = false) {
         for (const attendee of legacyAttendees) if (matchingIds.includes(attendee.id)) touchedPersonIds.add(attendee.personId);
       }
     });
-    // #527: an attendee type is background-check evidence (who is an adult); refresh after commit, best effort.
+    // #527: an attendee type is Sterling Volunteers evidence (who is an adult); refresh after commit, best effort.
     await refreshBackgroundCheckMatchesSafely(touchedPersonIds);
   }
   return { eventId, dryRun: !apply, updatedCount, rows };

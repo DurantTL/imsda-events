@@ -4,7 +4,7 @@ import { listNameOnlyBackgroundCheckMatches } from "@/modules/background-checks/
 import { withRequestContext } from "@/lib/request-context";
 
 /**
- * Background-check rows matched on the name alone because the site didn't
+ * Sterling Volunteers rows matched on the name alone because the site didn't
  * match (#598), for a staff spot check. Staff-only.
  */
 async function getHandler() {
@@ -12,7 +12,7 @@ async function getHandler() {
     await requireSystemAdministrator();
     return Response.json({ matches: await listNameOnlyBackgroundCheckMatches() });
   } catch (error) {
-    return backgroundCheckApiError(error, "Loading background check matches made on the name alone");
+    return backgroundCheckApiError(error, "Loading Sterling Volunteers matches made on the name alone");
   }
 }
 

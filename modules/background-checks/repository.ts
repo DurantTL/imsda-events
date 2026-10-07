@@ -32,7 +32,7 @@ import {
 } from "@/modules/background-checks/domain";
 
 /**
- * Background checks (#388, #427, #527): one stored list, fed by either CSV
+ * Sterling Volunteers (#388, #427, #527): one stored list, fed by either CSV
  * format, replaced wholesale on every upload. Matching a person to a list
  * entry happens at lookup:
  *
@@ -1045,7 +1045,7 @@ export async function refreshBackgroundCheckMatches(personIds: Iterable<string>,
       return true;
     }, { timeout: 30_000, maxWait: 10_000 });
     if (!refreshed) {
-      logInfo("Background check match refresh skipped while a list upload is in progress", { people: ids.length });
+      logInfo("Sterling Volunteers match refresh skipped while a list upload is in progress", { people: ids.length });
       return;
     }
   }
@@ -1075,7 +1075,7 @@ async function tryExclusiveListLock(tx: PrismaLike) {
 
 async function requireListLock(tx: PrismaLike) {
   if (!(await tryListLock(tx))) {
-    throw new BackgroundCheckOperationError("UPLOAD_IN_PROGRESS", "A background-check list upload is in progress. Try again in a moment.");
+    throw new BackgroundCheckOperationError("UPLOAD_IN_PROGRESS", "A Sterling Volunteers list upload is in progress. Try again in a moment.");
   }
 }
 
@@ -1162,7 +1162,7 @@ export async function applyBackgroundCheckUpload(
       action: "BACKGROUND_CHECK_LIST_UPLOADED",
       entityType: "BackgroundCheckUpload",
       entityId: upload.id,
-      summary: `Uploaded a background-check list of ${deduped.length} row${deduped.length === 1 ? "" : "s"} (${format === "ROSTER" ? "roster" : "Sterling"} format): ${counts.added} added, ${counts.changed} changed, ${counts.dropped} dropped.`,
+      summary: `Uploaded a Sterling Volunteers list of ${deduped.length} row${deduped.length === 1 ? "" : "s"} (${format === "ROSTER" ? "roster" : "Sterling"} format): ${counts.added} added, ${counts.changed} changed, ${counts.dropped} dropped.`,
       metadata: { format, rowCount: deduped.length, added: counts.added, changed: counts.changed, dropped: counts.dropped, manualMatchesKept: kept.entryIds.size, ...memoryCounts },
     }, tx);
     return counts;
@@ -1287,7 +1287,7 @@ export async function resolveBackgroundCheckReview(
       action: decision.type === "match" ? "BACKGROUND_CHECK_REVIEW_MATCHED" : "BACKGROUND_CHECK_REVIEW_DISMISSED",
       entityType: "BackgroundCheckReview",
       entityId: review.id,
-      summary: decision.type === "match" ? "Staff matched a background-check row to a person by hand." : "Staff dismissed a background-check review; none of the candidates was right.",
+      summary: decision.type === "match" ? "Staff matched a Sterling Volunteers row to a person by hand." : "Staff dismissed a Sterling Volunteers review; none of the candidates was right.",
       metadata: { entryId: review.entryId },
     }, tx);
   }).catch((error: unknown) => {
@@ -1321,7 +1321,7 @@ export async function restoreDismissedBackgroundCheckReview(reviewId: string, ac
       action: "BACKGROUND_CHECK_REVIEW_RESTORED",
       entityType: "BackgroundCheckReview",
       entityId: review.id,
-      summary: "Staff undid a background-check review dismissal; the review is open again.",
+      summary: "Staff undid a Sterling Volunteers review dismissal; the review is open again.",
       metadata: { entryId: review.entryId },
     }, tx);
   }).catch((error: unknown) => {
@@ -1395,7 +1395,7 @@ export async function undoManualBackgroundCheckMatch(matchId: string, actorUserI
       action: "BACKGROUND_CHECK_MANUAL_MATCH_UNDONE",
       entityType: "BackgroundCheckMatch",
       entityId: match.id,
-      summary: "Staff undid a background-check match made by hand.",
+      summary: "Staff undid a Sterling Volunteers match made by hand.",
       metadata: { entryId: match.entryId },
     }, tx);
     return match.personId;
@@ -1406,7 +1406,7 @@ export async function undoManualBackgroundCheckMatch(matchId: string, actorUserI
   try {
     await refreshBackgroundCheckMatches([personId]);
   } catch (error) {
-    logError("Background check match refresh after undo failed", error);
+    logError("Sterling Volunteers match refresh after undo failed", error);
   }
 }
 
@@ -1436,7 +1436,7 @@ export async function rematchBackgroundCheckList(now = new Date(), actorUserId?:
         action: "BACKGROUND_CHECK_LIST_REFRESHED",
         entityType: "BackgroundCheckUpload",
         entityId: current.id,
-        summary: "Staff re-matched the background-check list.",
+        summary: "Staff re-matched the Sterling Volunteers list.",
         metadata: { ...memoryCounts },
       }, tx);
     }
@@ -1538,7 +1538,7 @@ export async function rejectNameOnlyBackgroundCheckMatch(matchId: string, actorU
       action: "BACKGROUND_CHECK_NAME_ONLY_MATCH_REJECTED",
       entityType: "BackgroundCheckMatch",
       entityId: match.id,
-      summary: "Staff said a background-check row matched on the name alone is not the same person.",
+      summary: "Staff said a Sterling Volunteers row matched on the name alone is not the same person.",
       metadata: { entryId: match.entryId, forgotRemembered: forgotten.count },
     }, tx);
   }).catch((error: unknown) => {
@@ -1569,7 +1569,7 @@ export async function matchRejectedBackgroundCheckPairing(entryId: string, perso
       action: "BACKGROUND_CHECK_REJECTION_OVERRIDDEN",
       entityType: "BackgroundCheckEntry",
       entityId: entry.id,
-      summary: "Staff matched a background-check row by hand to a person they had earlier said it was not.",
+      summary: "Staff matched a Sterling Volunteers row by hand to a person they had earlier said it was not.",
       metadata: { entryId: entry.id },
     }, tx);
   }).catch((error: unknown) => {
@@ -2141,7 +2141,8 @@ export async function uncachedChecksForRosterMembers(members: RosterMemberForChe
  * A club page's compliance status per adult roster member (#427): Clear,
  * Expiring soon, Not in compliance, or No record, keyed by roster member id.
  * `includeNotes` must be decided by the caller from who is asking — the note
- * is staff only, and a club director never receives it, not even a blank one
+ * is for system administrators and, for a club in their scope, an Area
+ * Coordinator (#443), and a club director never receives it, not even a blank one
  * to hide.
  */
 export async function clubRosterComplianceStatuses(
@@ -2192,9 +2193,10 @@ export async function clubRosterComplianceStatuses(
 
 /**
  * Just the reminder counts behind club home "What's next" and the club
- * overview (#479) — never the per-member statuses, so a caller that isn't
- * allowed to see the roster's background-check column (an Area Coordinator)
- * can still show the same counts without any name or note attached.
+ * overview (#479) — never the per-member statuses, so a caller that only
+ * needs the reminder figures (the cross-club Area Coordinator overview, club
+ * home) gets counts without any name or note attached. An Area Coordinator's
+ * single-club page uses the per-member statuses instead (#443).
  */
 export async function clubComplianceReminderCounts(organizationId: string, clubYear: string) {
   const { notInCompliance, expiringSoon, missing } = await clubRosterComplianceStatuses(organizationId, clubYear, { includeNotes: false });

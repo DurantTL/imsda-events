@@ -1529,7 +1529,7 @@ describe("club page compliance (#427, #527)", () => {
     expect(JSON.stringify(flags)).not.toContain("Synthetic");
     const withNotes = await listEventBackgroundFlags("event-1", { includeNotes: true });
     expect(withNotes!.people.map((flag) => [flag.attendeeId, flag.issuesNote])).toEqual([["roster-no", "Synthetic issue, Non-Driver, BGC"], ["none", null]]);
-    expect(withNotes!.people[0]!.issueReasons).toEqual(["Marked Non-Driver", "Background check expired"]);
+    expect(withNotes!.people[0]!.issueReasons).toEqual(["Marked Non-Driver", "Background screening expired"]);
     // Without includeNotes there is no text and no reason: nothing to leak.
     expect(flags!.people.every((flag) => flag.issueReasons.length === 0)).toBe(true);
     expect(JSON.stringify(flags)).not.toContain("Non-Driver");
@@ -1694,9 +1694,9 @@ describe("Club home and club overview compliance reminders (#479, #527)", () => 
   it("turns counts into reminder lines with a filtered-roster link each, skipping any count that's zero", () => {
     const items = complianceReminders({ missing: 3, notInCompliance: 2, expiringSoon: 1 }, "/account/clubs/club-1/roster");
     expect(items).toEqual([
-      { key: "background-check-missing", text: "3 adults missing a current background check.", href: "/account/clubs/club-1/roster?compliance=missing" },
-      { key: "background-check-not-compliant", text: "2 background checks expired or not in compliance.", href: "/account/clubs/club-1/roster?compliance=expired" },
-      { key: "background-check-expiring", text: "1 background check expires within 60 days.", href: "/account/clubs/club-1/roster?compliance=expiring" },
+      { key: "background-check-missing", text: "3 adults have no Sterling Volunteers record.", href: "/account/clubs/club-1/roster?compliance=missing" },
+      { key: "background-check-not-compliant", text: "2 adults are not in compliance with Sterling Volunteers.", href: "/account/clubs/club-1/roster?compliance=expired" },
+      { key: "background-check-expiring", text: "1 adult has Sterling Volunteers expiring within 60 days.", href: "/account/clubs/club-1/roster?compliance=expiring" },
     ]);
   });
 

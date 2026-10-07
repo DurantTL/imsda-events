@@ -17,7 +17,7 @@ export const SENSITIVE_FIELD_STEMS: readonly string[] = [
   "behavio", "limitation", "sensitiv", "vegetarian", "vegan", "gluten", "wheelchair", "mobility",
   "pediatric", "hospital", "clinic", "blood", "diagnos", "disab", "accessib", "special\\s*needs?",
   "policy\\s*(?:number|holder)", "birth", "bday", "d\\W?o\\W?b\\b", "guardian", "parent", "pick\\s?up",
-  "custody", "emergency", "background", "ssn", "social\\s*security",
+  "custody", "emergency", "background", "sterling", "ssn", "social\\s*security",
   "injur", "surg", "ill(?:ness)?\\b", "sick", "symptom", "treatment", "anxi", "depress", "adhd", "autis",
   "hearing", "vision", "impair", "lactose", "nut\\s*free", "care\\s*plan",
   "celiac", "intoleran",

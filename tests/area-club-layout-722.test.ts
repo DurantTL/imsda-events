@@ -96,6 +96,6 @@ describe("area club menu markup (#722)", () => {
     expect(html).toContain('aria-current="page" href="/account/area/club-1/honors"');
     expect(html.match(/aria-current="page"/g)).toHaveLength(1);
     expect(html).toContain("account-nav-secondary");
-    expect(html).not.toContain("Background checks");
+    expect(html).not.toContain("Sterling Volunteers");
   });
 });

@@ -729,7 +729,7 @@ async function runSerializable<T>(
 }
 
 async function registrationResult(eventId: string, registrationId: string) {
-  // #527: a status change moves people in or out of the background-check
+  // #527: a status change moves people in or out of the Sterling Volunteers
   // candidate pool (active registrations only); refresh after commit, best effort.
   await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
   const registration = await getRegistrationById(eventId, registrationId);

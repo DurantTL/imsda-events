@@ -238,6 +238,28 @@ async function main() {
   for (const person of people) await repository.refreshBackgroundCheckMatchForPerson(ids.person(person.key));
   assertEqual(await statuses(), expected, "every state is unchanged after refreshing each person");
   assert((await db.backgroundCheckMatch.count({ where: { matchedBy: "MIGRATED" } })) === migrated.length, "no MIGRATED match was deleted by a refresh");
+
+  // 5b. (#443) The Area Coordinator view of a club: status and the full note for a club in their scope, decided from the
+  // real organization row, never the note for a director, and never for an organization outside the Area Coordinator scope.
+  const { canSeeIssuesTextForAreaClub } = await import("../modules/background-checks/notes-access");
+  const clubRow = await db.organization.findUniqueOrThrow({ where: { id: ids.club }, select: { type: true, isActive: true } });
+  const churchRow = await db.organization.findUniqueOrThrow({ where: { id: ids.church }, select: { type: true, isActive: true } });
+  assert(canSeeIssuesTextForAreaClub({ areaCoordinatorActive: true }, clubRow), "an active club is in an Area Coordinator's scope");
+  assert(!canSeeIssuesTextForAreaClub({ areaCoordinatorActive: true }, churchRow), "a church is outside an Area Coordinator's scope");
+  assert(!canSeeIssuesTextForAreaClub({ areaCoordinatorActive: true }, { ...clubRow, isActive: false }), "an inactive club is outside an Area Coordinator's scope");
+  assert(!canSeeIssuesTextForAreaClub({ areaCoordinatorActive: false }, clubRow), "a viewer who is not an Area Coordinator never gets the note");
+  const areaView = await repository.clubRosterComplianceStatuses(ids.club, clubYear, { includeNotes: canSeeIssuesTextForAreaClub({ areaCoordinatorActive: true }, clubRow) });
+  assertEqual(areaView.statuses, expected, "an Area Coordinator sees each adult's status, the full note and the reasons for a club in scope");
+  assert(Object.values(areaView.statuses).some((status) => status.note !== null), "the Area Coordinator view includes at least one synthetic note");
+  assertEqual(
+    { notInCompliance: areaView.notInCompliance, expiringSoon: areaView.expiringSoon },
+    { notInCompliance: Object.values(expected).filter((status) => status.state === "NOT_COMPLIANT").length, expiringSoon: Object.values(expected).filter((status) => status.state === "FLAGGED").length },
+    "an Area Coordinator sees the not-in-compliance and expiring-soon counts",
+  );
+  const directorView = await repository.clubPortalComplianceStatuses(ids.club, clubYear, { seeBirthDates: true });
+  assert(directorView !== undefined && Object.keys(directorView).length === Object.keys(expected).length, "a club director sees every adult's status");
+  assert(Object.values(directorView ?? {}).every((status) => status.note === null && status.reasons.length === 0), "a club director sees status only, never the note");
+  console.log("ok  Area Coordinator sees status, counts and the note for a club in scope; a director sees status only");
   const names = await db.backgroundCheckEntry.findMany({ select: { firstName: true, lastName: true, normalizedName: true } });
   for (const entry of names) {
     assertEqual(entry.normalizedName, matchableName(`${entry.firstName} ${entry.lastName}`), `normalizedName is filled in by matchableName for ${entry.firstName}`);

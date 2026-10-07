@@ -1501,7 +1501,7 @@ export async function submitPublicRegistration(
           ...(bulk ? { timeout: locationTransactionTimeoutMs } : input.lodging ? { timeout: lodgingTransactionTimeoutMs, maxWait: lodgingTransactionTimeoutMs } : {}),
         }
       );
-      // #527: a registrant already on the background-check list is matched
+      // #527: a registrant already on the Sterling Volunteers list is matched
       // now, after commit; best effort, never fails the submission.
       await refreshBackgroundCheckMatchesForRegistrations([result.registrationId]);
       let processed = {

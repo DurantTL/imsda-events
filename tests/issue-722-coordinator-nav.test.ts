@@ -33,7 +33,7 @@ describe("area coordinator club menu (#722)", () => {
     for (const href of hrefs) expect(href.startsWith("/account/clubs/")).toBe(false);
     // Every item stays inside this club.
     for (const href of hrefs) expect(href.startsWith(base)).toBe(true);
-    expect(items.map((item) => item.label)).not.toContain("Background checks");
+    expect(items.map((item) => item.label)).not.toContain("Sterling Volunteers");
     expect(items.map((item) => item.label)).not.toContain("Class tracking");
     expect(items.map((item) => item.label)).not.toContain("Club info");
     expect(items.map((item) => item.label)).not.toContain("Club settings");

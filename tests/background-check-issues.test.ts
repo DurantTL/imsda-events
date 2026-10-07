@@ -57,11 +57,11 @@ describe("readable reasons for staff (#544)", () => {
 
   it("says what each item means, in the order written", () => {
     expect(describeIssues("Non-Driver", today)).toEqual(["Marked Non-Driver"]);
-    expect(describeIssues("BGC", today)).toEqual(["Background check expired"]);
+    expect(describeIssues("BGC", today)).toEqual(["Background screening expired"]);
     expect(describeIssues("Training", today)).toEqual(["Child-protection training not completed"]);
     expect(describeIssues("Training (10/04/26),BGC (09/30/26), non driver", today)).toEqual([
       "Child-protection training expiring (10/04/2026)",
-      "Background check expired (09/30/2026)",
+      "Background screening expired (09/30/2026)",
       "Marked Non-Driver",
     ]);
   });
@@ -85,6 +85,6 @@ describe("the event background-check CSV never carries the issues text (#427, #5
       state: "NOT_COMPLIANT", expiresOn: null,
     }]);
     expect(csv).not.toContain("Issues");
-    expect(csv.split(/\r?\n/)[0]).toBe(["Last name", "First name", "Attendee type", "Club", "Confirmation code", "Background check", "Expired on"].map((name) => `"${name}"`).join(","));
+    expect(csv.split(/\r?\n/)[0]).toBe(["Last name", "First name", "Attendee type", "Club", "Confirmation code", "Sterling Volunteers", "Expired on"].map((name) => `"${name}"`).join(","));
   });
 });

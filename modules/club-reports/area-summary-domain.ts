@@ -5,7 +5,7 @@ import { toCsv } from "@/modules/reporting/csv";
 /**
  * Cross-club monthly report summary for Area Coordinators and the conference
  * office. Pure functions over already-loaded rows: counts and points only.
- * Background checks are counts, never names or notes (#479).
+ * Sterling Volunteers shows counts, never names or notes (#479).
  */
 
 export type MonthStatus = "SUBMITTED" | "LATE" | "DRAFT" | "MISSING" | "DUE" | "FUTURE";

@@ -4,20 +4,20 @@ import { backgroundFlagLabels } from "@/modules/background-checks/display";
 import type { BackgroundFlag } from "@/modules/background-checks/repository";
 
 const badgeTitles = {
-  MISSING: "No background check on file.",
-  EXPIRED: "Their Sterling Volunteers check has expired.",
+  MISSING: "No Sterling Volunteers record on file.",
+  EXPIRED: "Their Sterling Volunteers record has expired.",
   NOT_COMPLIANT: "The latest roster import marks them not in compliance.",
 } as const;
 
 /**
- * The red flag for an adult with no current background check (#388, #427).
+ * The red flag for an adult with no current Sterling Volunteers (#388, #427).
  * Never shown to clubs. An "expiring soon" roster mark still counts as
  * current here, so it is never flagged.
  */
 export function BackgroundCheckBadge({ state }: { state?: BackgroundFlag["state"] }) {
   return (
     <span className="status-chip coral background-check-badge" title={badgeTitles[state ?? "MISSING"]}>
-      <ShieldAlert aria-hidden="true" size={12} /> Background check needed
+      <ShieldAlert aria-hidden="true" size={12} /> Sterling Volunteers needed
     </span>
   );
 }
@@ -36,12 +36,12 @@ export function BackgroundCheckList({
   showClub?: boolean;
 }) {
   if (people.length === 0) {
-    return <p className="report-empty">Every adult registered has a current background check.</p>;
+    return <p className="report-empty">Every adult registered is current with Sterling Volunteers.</p>;
   }
   return (
     <div className="report-table-wrap">
       <table className="report-table roster-table">
-        <caption className="sr-only">Adults needing a background check</caption>
+        <caption className="sr-only">Adults needing Sterling Volunteers</caption>
         <thead>
           <tr>
             <th scope="col">Person</th>

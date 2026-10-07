@@ -4,7 +4,7 @@ import { listManualBackgroundCheckMatches } from "@/modules/background-checks/re
 import { withRequestContext } from "@/lib/request-context";
 
 /**
- * Background-check matches staff made by hand (#527): a staff decision that
+ * Sterling Volunteers matches staff made by hand (#527): a staff decision that
  * holds across refreshes and uploads until staff undo it. Staff-only.
  */
 async function getHandler() {
@@ -12,7 +12,7 @@ async function getHandler() {
     await requireSystemAdministrator();
     return Response.json({ matches: await listManualBackgroundCheckMatches() });
   } catch (error) {
-    return backgroundCheckApiError(error, "Loading background check matches made by hand");
+    return backgroundCheckApiError(error, "Loading Sterling Volunteers matches made by hand");
   }
 }
 

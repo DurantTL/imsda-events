@@ -103,7 +103,7 @@ describe("starter event templates (#546)", () => {
     }
   });
 
-  it("turns adult background checks on for the club events only", () => {
+  it("turns adult Sterling Volunteers on for the club events only", () => {
     for (const starter of starterEventTemplates) {
       expect(starter.checksAdultBackgrounds, starter.name).toBe(starter.audience === "CLUB");
     }
