@@ -81,6 +81,9 @@ const clubEventId = `${P}_club_event`;
 const clubEventSlug = `${P}-club-weekend`;
 const clubA = `${P}_club_a`;
 const clubB = `${P}_club_b`;
+// A published public event page with one of every content block kind (#816).
+const blocksEventId = `${P}_blocks_event`;
+const blocksEventSlug = `${P}-blocks-weekend`;
 const churchA = `${P}_church_a`;
 const churchB = `${P}_church_b`;
 const reportMonth = "2026-09";
@@ -95,7 +98,9 @@ const touchTolerance = 0.5;
 const touchMaxWidth = 600;
 const cardsMaxWidth = 600;
 
-type Role = "event-admin" | "system-admin" | "director" | "area";
+/** "visitor" is a signed-out public page: no session cookie at all. */
+type Role = "event-admin" | "system-admin" | "director" | "area" | "visitor";
+type SignedInRole = Exclude<Role, "visitor">;
 
 type PageSpec = {
   name: string;
@@ -118,6 +123,8 @@ const club = (name: string, suffix: string, clubId = clubA): PageSpec => ({
 const area = (name: string, route: string): PageSpec => ({ name: `area-${name}`, path: route, role: "area" });
 
 const pages: PageSpec[] = [
+  // The public event page with one of each content block (#816), signed out.
+  { name: "public-event-page-all-blocks", path: `/events/${blocksEventSlug}`, role: "visitor" },
   // Club portal (a director of two clubs).
   { name: "account-registrations", path: "/account/registrations", role: "director" },
   { name: "account-profile", path: "/account/profile", role: "director" },
@@ -189,6 +196,8 @@ const pages: PageSpec[] = [
   staff("system-settings", "/admin/settings", "system-admin"),
   staff("club-supplies", "/admin/club-supplies", "system-admin"),
   staff("club-forms", "/admin/club-forms", "system-admin"),
+  // The block editor with one of each kind, as a system administrator (custom HTML is editable).
+  staff("event-content-blocks", `/more/event-content?event=${blocksEventId}`, "system-admin"),
 ];
 
 /**
@@ -254,6 +263,54 @@ async function assertSeededDatabase(prisma: PrismaClient) {
   }
 }
 
+
+/**
+ * A published event whose page has one block of every kind (#816), saved through
+ * the real repository so what the audit sees is what staff would publish. A
+ * 1x1 image, stretched by the layout, is enough: the audit looks at structure.
+ * Long words and long addresses are here on purpose.
+ */
+async function seedBlocksEvent(prisma: PrismaClient) {
+  const { createEventAsset } = await import("../modules/events/asset-repository");
+  const { replaceEventContent } = await import("../modules/events/content-repository");
+  const { eventContentInputSchema } = await import("../modules/events/content-schemas");
+  await prisma.event.upsert({
+    where: { id: blocksEventId },
+    update: { isPublished: true },
+    create: {
+      id: blocksEventId, slug: blocksEventSlug, name: "Mobilecheck Blocks Weekend",
+      startsAt: new Date("2027-03-05T15:00:00Z"), endsAt: new Date("2027-03-07T18:00:00Z"), timezone: "America/Chicago",
+      isPublished: true, registrationOpensOn: "2026-10-01", registrationClosesOn: "2027-02-28",
+    },
+  });
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  let asset = await prisma.eventAsset.findFirst({ where: { eventId: blocksEventId, displayName: { startsWith: "mobilecheck-photo" } }, select: { id: true } });
+  if (!asset) {
+    const created = await createEventAsset(blocksEventId, new File([png], "mobilecheck-photo.png", { type: "image/png" }), "usr_system_admin");
+    asset = { id: created.id };
+  }
+  const long = "Supercalifragilisticexpialidocious-and-an-extremely-long-unbroken-synthetic-word-for-wrapping";
+  const mapsId = "!1m18!1m12!1m3!1d3000.5!2d-93.6!3d41.6!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x0%3A0x0!2sSynthetic!5e0!3m2!1sen!2sus!4v1700000000000";
+  const image = { assetId: asset.id, alt: "A synthetic test image" };
+  const input = eventContentInputSchema.parse({
+    sections: [
+      { kind: "HERO", title: `Mobilecheck Blocks Weekend ${long}`, isPublished: true, data: { ...image, subtitle: `A subtitle that is long enough to wrap onto several lines on a phone ${long}`, button: { label: "Register for the weekend", target: "REGISTER" }, overlay: 45 } },
+      { kind: "IMAGE", title: "Photo with text", body: `Text beside the photo. ${long}\n\nA second paragraph.`, isPublished: true, data: { ...image, caption: "A caption", imageSide: "RIGHT" } },
+      { kind: "GALLERY", title: "Photo gallery", isPublished: true, data: { images: [0, 1, 2, 3, 4].map((index) => ({ ...image, caption: `Caption ${index + 1}` })) } },
+      { kind: "FORMATTED_TEXT", title: "Formatted text", isPublished: true, body: `## A heading\n\nSome **bold**, *italic* and a [link](https://example.org/${long}).\n\n### A smaller heading\n\n- First bullet\n- Second bullet\n\n1. First step\n2. Second step` },
+      { kind: "EMBED", title: "Video", isPublished: true, data: { provider: "YOUTUBE", id: "dQw4w9WgXcQ", title: "Synthetic welcome video" } },
+      { kind: "EMBED", title: "Map", isPublished: true, data: { provider: "GOOGLE_MAPS", id: mapsId, title: "Synthetic map" } },
+      { kind: "FAQ", title: "Questions and answers", isPublished: true, data: { entries: [{ question: `Where do I park? ${long}`, answer: `The north lot. ${long}` }, { question: "What should I bring?", answer: "A water bottle." }] } },
+      { kind: "SCHEDULE", title: "Schedule", isPublished: true, data: { rows: [{ day: "Friday", time: "7:00 PM", title: "Opening worship", location: "Chapel", description: "Songs and a short message." }, { day: "Friday", time: "9:00 PM", title: long }, { day: "Sabbath", time: "9:30 AM", title: "Sabbath school" }] } },
+      { kind: "SPEAKERS", title: "Speakers", isPublished: true, data: { speakers: [{ name: "Pat Mobilecheck-Speaker", role: "Pastor", bio: `A short synthetic bio. ${long}`, ...image }, { name: "Sam Example", role: "Youth leader", bio: "" }] } },
+      { kind: "CONTACT", title: "Contact", isPublished: true, data: { contacts: [{ name: "Dana Mobilecheck-Contact", role: "Event coordinator", email: "a-very-long-synthetic-address-for-wrapping@mobilecheck.example.test", phone: "(555) 010-0100" }] } },
+      { kind: "COUNTDOWN", title: "Countdown", isPublished: true, data: { target: "EVENT_START", label: "Until we gather" } },
+      { kind: "CUSTOM_HTML", title: "Custom HTML", isPublished: true, body: `<h2>A custom heading</h2><p>Custom paragraph. ${long}</p><table><tr><th>Day</th><th>Meal</th></tr><tr><td>Friday</td><td>Supper</td></tr></table><img src="/api/public/events/${blocksEventSlug}/assets/${asset.id}" alt="A synthetic test image" width="1600" height="900">` },
+    ],
+  });
+  await replaceEventContent(blocksEventId, input, "usr_system_admin", { isSystemAdmin: true });
+}
+
 /** MOBILE_LAYOUT_CLEANUP=1: deletes every row the audit created, children before parents. */
 async function cleanupSynthetic(prisma: PrismaClient) {
   const orgs = { organizationId: { in: [clubA, clubB] } };
@@ -273,7 +330,10 @@ async function cleanupSynthetic(prisma: PrismaClient) {
     prisma.backgroundCheckUpload.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
     prisma.registrationFormVersion.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
     prisma.registrationForm.deleteMany({ where: { id: { startsWith: `${P}_` } } }),
-    prisma.event.deleteMany({ where: { id: clubEventId } }),
+    prisma.eventContentSection.deleteMany({ where: { eventId: blocksEventId } }),
+    prisma.eventAsset.deleteMany({ where: { eventId: blocksEventId } }),
+    prisma.auditLog.deleteMany({ where: { eventId: blocksEventId } }),
+    prisma.event.deleteMany({ where: { id: { in: [clubEventId, blocksEventId] } } }),
     prisma.organization.deleteMany({ where: { id: { in: [clubA, clubB] } } }),
     prisma.organization.deleteMany({ where: { id: { in: [churchA, churchB] } } }),
   ]);
@@ -460,13 +520,15 @@ async function seedSynthetic(prisma: PrismaClient) {
       },
     });
   }
+
+  await seedBlocksEvent(prisma);
 }
 
 /** Sessions are minted directly (the second factor is skipped, as in verify-badge-print). */
 async function mintSessions(prisma: PrismaClient, tokens: { staff: string[]; attendee: string[] }) {
   const staffSession = await import("../modules/access/session-store");
   const attendeeSession = await import("../modules/attendee-accounts/session-store");
-  const cookie = async (role: Role) => {
+  const cookie = async (role: SignedInRole) => {
     if (role === "director" || role === "area") {
       const accountId = role === "director" ? `${P}_account_director` : `${P}_account_area`;
       const session = await attendeeSession.createAttendeeSession(accountId, null, { secondFactorVerifiedAt: new Date() });
@@ -480,7 +542,7 @@ async function mintSessions(prisma: PrismaClient, tokens: { staff: string[]; att
     tokens.staff.push(session.token);
     return { name: staffSession.SESSION_COOKIE_NAME, value: session.token, expires: Math.floor(session.expiresAt.getTime() / 1000) };
   };
-  const cookies: Record<Role, { name: string; value: string; expires: number }> = {
+  const cookies: Record<SignedInRole, { name: string; value: string; expires: number }> = {
     "event-admin": await cookie("event-admin"),
     "system-admin": await cookie("system-admin"),
     director: await cookie("director"),
@@ -871,7 +933,7 @@ async function main() {
     });
     for (const width of widths) {
       const height = heightFor(width);
-      for (const role of ["director", "area", "event-admin", "system-admin"] as Role[]) {
+      for (const role of ["visitor", "director", "area", "event-admin", "system-admin"] as Role[]) {
         const specs = pages.filter((spec) => spec.role === role && (!only || spec.name.includes(only)));
         if (specs.length === 0) continue;
         const context: Context = await browser.newContext({
@@ -883,9 +945,11 @@ async function main() {
         // tsx compiles with esbuild's keepNames, which wraps functions in __name();
         // the page has no such helper, so give it a no-op one.
         await context.addInitScript("window.__name = (target) => target;");
-        await context.addCookies([{
-          name: cookies[role].name, value: cookies[role].value, url: baseUrl, httpOnly: true, expires: cookies[role].expires,
-        }]);
+        if (role !== "visitor") {
+          await context.addCookies([{
+            name: cookies[role].name, value: cookies[role].value, url: baseUrl, httpOnly: true, expires: cookies[role].expires,
+          }]);
+        }
         const page = await context.newPage();
         page.on("pageerror", (error: Error) => pageErrors.push(`${page.url()}: ${error.message.slice(0, 160)}`));
         for (const spec of specs) {

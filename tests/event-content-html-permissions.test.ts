@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-type Stored = { title: string; body: string };
-
 const state = vi.hoisted(() => ({
   session: null as null | { user: { id: string; email: string; displayName: string; globalRole: string; accountStatus: string } },
   membership: null as null | { role: string; status: string; permissions: string[] },

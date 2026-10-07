@@ -87,7 +87,8 @@ describe("compiled Content Security Policy", () => {
 
     const policies = await compiledContentSecurityPolicies();
 
-    expect(policies).toHaveLength(4);
+    // Site-wide, /clubs, the church location editor, the public event page (#816) and /embed.
+    expect(policies).toHaveLength(5);
     for (const policy of policies) {
       for (const directive of [
         "script-src",

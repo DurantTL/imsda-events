@@ -6822,6 +6822,12 @@ select:focus-visible {
 .event-content-link-row { display: grid; grid-template-columns: 1fr 1fr 2fr auto; gap: 8px; align-items: end; }
 @media (max-width: 720px) { .event-content-link-row { grid-template-columns: 1fr; } }
 
+.event-content-section input[type="range"] { width: 100%; min-height: 44px; }
+@media (max-width: 600px) {
+  .event-asset-list a { display: inline-flex; min-height: 44px; align-items: center; }
+  .event-asset-list .icon-button { min-width: 44px; min-height: 44px; }
+  .translate-hint a { display: inline-flex; min-height: 44px; align-items: center; }
+}
 .event-block-picker { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
 .event-block-picker label { flex: 1 1 14rem; }
 .event-block-row { display: grid; gap: 10px; margin: 0; border: 1px solid #dbe7ed; border-radius: 12px; padding: 12px; min-width: 0; }
