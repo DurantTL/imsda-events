@@ -4,6 +4,7 @@ import {
   remainingEventCapacity,
   type EventRegistrationPhase,
 } from "@/modules/events/lifecycle";
+import { pluralAttendeeLabel } from "@/modules/forms/attendee-label";
 import type { RegistrationFormDefinition } from "@/modules/forms/definition";
 
 export type PublicEventRegistrationState =
@@ -375,7 +376,7 @@ export function summarizePublicRegistrationForm(
         : "Event registration",
     highlights: [
       roster
-        ? `Add up to ${roster.maxAttendees} ${roster.attendeeLabel.toLowerCase()}${roster.maxAttendees === 1 ? "" : "s"}`
+        ? `Add up to ${roster.maxAttendees} ${pluralAttendeeLabel(roster.attendeeLabel, roster.maxAttendees)}`
         : "One registration at a time",
       `${definition.sections.length} section${definition.sections.length === 1 ? "" : "s"}`,
       ...(definition.payment?.enabled || hasPricing ? ["Includes fee calculation"] : []),

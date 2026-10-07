@@ -35,6 +35,8 @@ import {
   type ClubGuest,
 } from "@/modules/club-registrations/domain";
 import { fillMissingAnswers } from "@/modules/club-registrations/contact-prefill";
+import { permissionPendingNotice } from "@/modules/club-teams/permission-domain";
+import { teamRoleFor } from "@/modules/club-teams/rules";
 import type { ClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { ClassPickFields } from "@/components/class-pick-fields";
 import { attendeeTypeLabel } from "@/modules/honors/class-picker-view";
@@ -59,15 +61,21 @@ type DraftState = {
   rosterAgeSaveOff: string[];
   /** The chosen location (#659), saved with the draft and checked again on restore. */
   locationId: string | null;
+  /** Which team this draft is for and the name typed so far (#809); empty on an event without teams. */
+  draftKey: string;
+  teamName: string;
 };
 
 export function ClubRegistrationWorkspace({
   contactPrefill,
+  draftKey = "",
   honorsCatalog = null,
   organizationId,
   workspace,
 }: {
   contactPrefill: Record<string, string>;
+  /** The id of the team's draft (#809), picked by the page; empty on an event without teams. */
+  draftKey?: string;
   /** The event's honors classes, when it has any (#618). */
   honorsCatalog?: RegistrationHonorsCatalog | null;
   organizationId: string;
@@ -91,7 +99,11 @@ export function ClubRegistrationWorkspace({
     rosterAges: workspace.draft?.rosterAges ?? {},
     rosterAgeSaveOff: workspace.draft?.rosterAgeSaveOff ?? [],
     locationId: restoredLocation.locationId,
+    draftKey,
+    teamName: workspace.draft?.teamName ?? "",
   }));
+  const multipleTeams = workspace.teams.multiple;
+  const teamNameMissing = multipleTeams && draft.teamName.trim().length === 0;
   const [step, setStep] = useState<"who" | "form">("who");
   const locationId = draft.locationId;
   const chosenLocation = locations.find((location) => location.id === locationId) ?? null;
@@ -152,6 +164,14 @@ export function ClubRegistrationWorkspace({
     timer.current = setTimeout(() => { timer.current = null; if (!sender.isConflicted()) void queue.flush(false); }, 1200);
   }, [queue, sender]);
 
+  const setTeamName = (next: string) => {
+    setDraft((current) => {
+      const updated = { ...current, teamName: next };
+      queueSave(updated);
+      return updated;
+    });
+  };
+
   const setLocationId = (next: string) => {
     setLocationNote(null);
     setDraft((current) => {
@@ -191,6 +211,35 @@ export function ClubRegistrationWorkspace({
 
   const selected = workspace.roster.filter((person) => draft.selectedMemberIds.includes(person.memberId));
   const goingCount = selected.length + draft.guests.length;
+  // The event's team rules (#809), shown beside who is going; the server checks them again on save.
+  const teamRules = workspace.teams.settings;
+  const coachCount = selected.filter((person) => teamRoleFor({ responses: draft.attendeeResponses[person.clientId] ?? {}, rosterAttendeeType: person.attendeeType, rosterClassLevel: person.classLevel, maxMemberAge: teamRules?.maxMemberAge ?? null, age: person.ageOnEventDate }) === "COACH").length
+    + draft.guests.filter((guest) => teamRoleFor({ responses: draft.attendeeResponses[clubGuestClientId(guest.id)] ?? {}, maxMemberAge: teamRules?.maxMemberAge ?? null, age: guest.age }) === "COACH").length;
+  const teamMemberCount = goingCount - coachCount;
+  // What will happen to people who are over the team-member age or 18 and over, said before the team is saved (#809).
+  const teamHints: string[] = [];
+  if (teamRules) {
+    const hintFor = (name: string, age: number | null, role: "MEMBER" | "COACH") => {
+      if (age === null || age < 18) return;
+      if (role === "COACH" && teamRules.maxMemberAge !== null && age > teamRules.maxMemberAge) teamHints.push(`${name} is over the team-member age and will be listed as a coach.`);
+      if (role === "MEMBER") teamHints.push(permissionPendingNotice(name));
+    };
+    for (const person of selected) {
+      const age = person.ageOnEventDate ?? draft.rosterAges[person.memberId] ?? person.reportedAge ?? null;
+      const role = teamRoleFor({ responses: draft.attendeeResponses[person.clientId] ?? {}, rosterAttendeeType: person.attendeeType, rosterClassLevel: person.classLevel, maxMemberAge: teamRules.maxMemberAge, age });
+      hintFor(`${person.firstName} ${person.lastName}`.trim(), age, role);
+    }
+    for (const guest of draft.guests) {
+      const role = teamRoleFor({ responses: draft.attendeeResponses[clubGuestClientId(guest.id)] ?? {}, maxMemberAge: teamRules.maxMemberAge, age: guest.age });
+      hintFor(`${guest.firstName} ${guest.lastName}`.trim(), guest.age, role);
+    }
+  }
+  const sizeLimits = teamRules && (teamRules.minTeamMembers !== null || teamRules.maxTeamMembers !== null)
+    ? `${teamRules.minTeamMembers ?? 1} to ${teamRules.maxTeamMembers ?? "any number"}`
+    : null;
+  const sizeProblem = teamRules && ((teamRules.minTeamMembers !== null && teamMemberCount < teamRules.minTeamMembers)
+    || (teamRules.maxTeamMembers !== null && teamMemberCount > teamRules.maxTeamMembers));
+  const ageDateText = formatCalendarDate(workspace.event.ageDate);
   // Roster people with no birth date need an age typed in for this registration (#639).
   // The raw text of the age fields, so a half-typed entry is reported rather than read as blank.
   const [ageText, setAgeText] = useState<Record<string, string>>({});
@@ -390,6 +439,9 @@ export function ClubRegistrationWorkspace({
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
     lockedRegistrationFieldKeys: workspace.directory.lockedFieldKeys,
     locationId,
+    teamName: multipleTeams ? draft.teamName.trim() : null,
+    noCost: workspace.event.noCost,
+    draftKey: multipleTeams ? draft.draftKey : null,
     honorSelections: hasHonors ? honorPicks : {},
     renderAttendeeExtras,
     blockedReason: draftBlockedReason({ conflict, honorsProblem }),
@@ -405,7 +457,7 @@ export function ClubRegistrationWorkspace({
       router.refresh();
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, hasHonors, honorPicks, honorsProblem, conflict, honorAttendees, honorOfferings, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, multipleTeams, draft.teamName, draft.draftKey, hasHonors, honorPicks, honorsProblem, conflict, honorAttendees, honorOfferings, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
 
   const saveLabel = conflict
     ? DRAFT_CONFLICT_MESSAGE
@@ -450,11 +502,39 @@ export function ClubRegistrationWorkspace({
         <span className="count-badge">{goingCount} chosen</span>
       </div>
       {locationNote && <p className="field-help" role="status">{locationNote}</p>}
+      {multipleTeams && (
+        <div className="club-team-name">
+          <label htmlFor="club-team-name">Team name</label>
+          <input
+            autoComplete="off"
+            id="club-team-name"
+            maxLength={80}
+            onChange={(event) => setTeamName(event.target.value)}
+            required
+            value={draft.teamName}
+          />
+          <small className="field-help">Each team needs its own name, different from every other team at this event.</small>
+        </div>
+      )}
       <ClubLocationPicker allowWaitlist locations={locations} onChange={setLocationId} value={locationId} />
       <p>
-        Tap everyone from your roster who is attending. Ages are as of the first day of the
-        event, {formatCalendarDate(chosenLocation?.firstDay ?? workspace.event.eventDate)}. Your choices save automatically.
+        Tap everyone from your roster who is attending. Ages are as of {workspace.event.ageAsOf ? "" : "the first day of the event, "}
+        {workspace.event.ageAsOf ? ageDateText : formatCalendarDate(chosenLocation?.firstDay ?? workspace.event.eventDate)}. Your choices save automatically.
       </p>
+      {teamRules && (
+        <div className={`inline-notice${sizeProblem ? " error" : ""}`} role="status">
+          <strong>{teamMemberCount} team {teamMemberCount === 1 ? "member" : "members"}</strong>
+          {sizeLimits ? <> (a team has {sizeLimits}{teamRules.maxAlternates > 0 ? `, including ${teamRules.maxAlternates === 1 ? "the alternate" : `up to ${teamRules.maxAlternates} alternates`}` : ""})</> : null}
+          {" · "}{coachCount} {coachCount === 1 ? "coach" : "coaches"}. Coaches are adults who come with the team; they don&apos;t count toward the team.
+          {teamRules.maxMemberAge !== null && <> A team member can be at most {teamRules.maxMemberAge} on {ageDateText}.</>}
+          {teamRules.maxAlternates > 0 && <> You mark the alternate on the next step.</>}
+        </div>
+      )}
+      {teamHints.length > 0 && (
+        <ul className="inline-notice warning team-hints" role="status">
+          {teamHints.map((hint) => <li key={hint}>{hint}</li>)}
+        </ul>
+      )}
       {workspace.roster.length === 0 ? (
         <p className="public-manage-empty">
           <UsersRound size={17} aria-hidden="true" /> Your roster is empty. Add regular members using Add to roster on the roster page, or import a CSV. You can add event-only guests when registering.
@@ -502,6 +582,7 @@ export function ClubRegistrationWorkspace({
                     href={rosterHref}
                     onNavigate={(event) => followRosterLink(event, rosterHref)}
                     onSaveToRoster={(save) => changeSaveToRoster(person.memberId, save)}
+                    dateText={workspace.event.ageAsOf ? ageDateText : undefined}
                     organizationId={organizationId}
                     saveToRoster={!draft.rosterAgeSaveOff.includes(person.memberId)}
                   />
@@ -547,7 +628,7 @@ export function ClubRegistrationWorkspace({
             <div className="form-grid two-column">
               <label>First name<input autoComplete="off" maxLength={80} name="firstName" required /></label>
               <label>Last name<input autoComplete="off" maxLength={80} name="lastName" required /></label>
-              <label>Age at the event<input {...ageInputAttributes} name="age" required type="number" /></label>
+              <label>{workspace.event.ageAsOf ? `Age on ${ageDateText}` : "Age at the event"}<input {...ageInputAttributes} name="age" required type="number" /></label>
               <label>
                 Email (optional)
                 <input autoComplete="off" maxLength={254} name="email" type="email" />
@@ -578,12 +659,12 @@ export function ClubRegistrationWorkspace({
         </Link>
         <button
           className="primary-button"
-          disabled={goingCount === 0 || needsLocation}
+          disabled={goingCount === 0 || needsLocation || teamNameMissing}
           onClick={leaveWho}
-          title={needsLocation ? "Choose a location first" : undefined}
+          title={needsLocation ? "Choose a location first" : teamNameMissing ? "Name the team first" : undefined}
           type="button"
         >
-          {continueButtonLabel({ missingAges: missingAges.length, goingCount, otherwiseDisabled: goingCount === 0 || needsLocation })} <ArrowRight aria-hidden="true" size={15} />
+          {continueButtonLabel({ missingAges: missingAges.length, goingCount, otherwiseDisabled: goingCount === 0 || needsLocation || teamNameMissing })} <ArrowRight aria-hidden="true" size={15} />
         </button>
       </div>
     </section>

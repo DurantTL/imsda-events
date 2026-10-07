@@ -16,6 +16,9 @@ const draftSchema = z.object({
   rosterAges: rosterAgesSchema.default({}),
   rosterAgeSaveOff: rosterAgeSaveOffSchema.default([]),
   locationId: z.string().min(1).max(64).nullable().optional(),
+  // Which team's draft this is, and the name typed so far (#809); both absent on an event without teams.
+  draftKey: z.string().max(64).optional(),
+  teamName: z.string().max(200).optional(),
   baseRevision: z.number().int().min(0),
   saveId: z.string().min(8).max(64),
 }).strict();

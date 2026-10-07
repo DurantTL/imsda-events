@@ -1,5 +1,6 @@
 "use client";
 
+import { pluralAttendeeLabel } from "@/modules/forms/attendee-label";
 import { EmptyState } from "@/components/empty-state";
 import { staffPageTitles } from "@/components/staff-navigation";
 import { PUBLIC_DRAFT_STAFF_HELP } from "@/modules/forms/public-draft";
@@ -857,7 +858,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
       <div className="preview-roster-heading">
         <span>
           <h4>{previewStep.managesAttendees ? "Who is attending?" : "Choices for each attendee"}</h4>
-          <small>{previewAttendees.length} of {roster.maxAttendees} {roster.attendeeLabel.toLowerCase()}{roster.maxAttendees === 1 ? "" : "s"}</small>
+          <small>{previewAttendees.length} of {roster.maxAttendees} {pluralAttendeeLabel(roster.attendeeLabel, roster.maxAttendees)}</small>
         </span>
       </div>
       {previewAttendees.map((attendee, attendeeIndex) => {
@@ -1242,7 +1243,7 @@ export function RegistrationBuilderWorkspace({ eventId, eventSlug, eventName, ev
               {renderPreviewRoster(previewAllowedFieldKeys)}
               {previewStep?.isReview && <section className="preview-review-card">
                 <h4>Review before submitting</h4>
-                <p>{roster?.enabled ? `${previewAttendees.length} ${roster.attendeeLabel.toLowerCase()}${previewAttendees.length === 1 ? "" : "s"} will be included. ` : ""}The public form shows entered answers here before the registrant submits.</p>
+                <p>{roster?.enabled ? `${previewAttendees.length} ${pluralAttendeeLabel(roster.attendeeLabel, previewAttendees.length)} will be included. ` : ""}The public form shows entered answers here before the registrant submits.</p>
               </section>}
               {calculation && (calculation.lineItems.length > 0 || definition.payment?.enabled) && <section className="preview-order-summary" aria-label="Order summary"><h4>Order summary</h4>{calculation.lineItems.length === 0 ? <p>Select a priced option to see the total.</p> : <>{calculation.lineItems.map((item) => <div key={item.key}><span>{item.label}{item.pricingLabel && <small>{item.pricingLabel}</small>}</span><strong>{money(item.amountCents)}</strong></div>)}<div><span>Subtotal</span><strong>{money(calculation.subtotalCents)}</strong></div>{calculation.processingFeeCents > 0 && <div><span>Card processing</span><strong>{money(calculation.processingFeeCents)}</strong></div>}<div className="preview-total"><span>Total</span><strong>{money(calculation.totalCents)}</strong></div></>}</section>}
               {previewStep && <nav className="preview-step-actions" aria-label="Move through preview">

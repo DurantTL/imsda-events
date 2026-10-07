@@ -293,6 +293,8 @@ describe("registration moves (staff approve each one)", () => {
     },
     fromRegistration: { id: "reg-a", confirmationCode: "A-1", status: "SUBMITTED", totalAmount: 75, payments: [] },
   };
+  /** The receiving club's registrations for the event (#809: a club may have several teams, so it is looked up as a list). */
+  const setDestination = (row: unknown) => db.clubEventRegistration.findMany.mockResolvedValue([row]);
   const destination = (overrides: Record<string, unknown> = {}) => ({
     registration: { id: "reg-b", confirmationCode: "B-1", status: "SUBMITTED", totalAmount: 150, waitlistEntry: null, payments: [], ...overrides },
   });
@@ -305,7 +307,7 @@ describe("registration moves (staff approve each one)", () => {
   beforeEach(() => {
     db.memberTransferRegistrationMove.updateMany.mockResolvedValue({ count: 1 });
     db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue(storedMove);
-    db.clubEventRegistration.findUnique.mockResolvedValue(destination());
+    setDestination(destination());
     db.registrationAttendee.findUnique.mockResolvedValue(null);
     db.registrationAttendee.findFirst.mockResolvedValue({ position: 3 });
     countPicks({ perClub: 1 });
@@ -334,9 +336,9 @@ describe("registration moves (staff approve each one)", () => {
   });
 
   it("refuses a waitlisted destination and a person already on it, moving nothing", async () => {
-    db.clubEventRegistration.findUnique.mockResolvedValue(destination({ waitlistEntry: { status: "WAITING" } }));
+    setDestination(destination({ waitlistEntry: { status: "WAITING" } }));
     await expect(approveRegistrationMove("move-1", "", staff, now)).rejects.toMatchObject({ code: "MOVE_BLOCKED", blocker: "DESTINATION_WAITLISTED" });
-    db.clubEventRegistration.findUnique.mockResolvedValue(destination());
+    setDestination(destination());
     db.registrationAttendee.findUnique.mockResolvedValue({ id: "att-existing" });
     await expect(approveRegistrationMove("move-1", "", staff, now)).rejects.toMatchObject({ code: "MOVE_BLOCKED", blocker: "ALREADY_ON_DESTINATION" });
     expect(db.registrationAttendee.update).not.toHaveBeenCalled();
@@ -349,17 +351,17 @@ describe("registration moves (staff approve each one)", () => {
       })],
       ["CLUB_CLASS_LIMIT", () => countPicks({ perClub: 2 })],
       ["CLASS_PICKS_OTHER_SITE", () => countPicks({ perClub: 1, otherSite: 2 })],
-      ["TOTAL_CLAMPED", () => db.clubEventRegistration.findUnique.mockResolvedValue(destination({ totalAmount: 0 }))],
+      ["TOTAL_CLAMPED", () => setDestination(destination({ totalAmount: 0 }))],
       // Moving a +$200 correction off a $75 registration would leave it at -$125.
       ["TOTAL_BELOW_ZERO", () => db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
         ...storedMove, attendee: { ...storedMove.attendee, adjustments: [{ amountCents: 20000, registrationId: "reg-a" }] },
       })],
       // Moving a -$25 scholarship onto a $150 registration already paid $140 leaves $125 < $140.
-      ["TOTAL_BELOW_PAID", () => db.clubEventRegistration.findUnique.mockResolvedValue(destination({ payments: [{ amount: 140, refunds: [] }] }))],
+      ["TOTAL_BELOW_PAID", () => setDestination(destination({ payments: [{ amount: 140, refunds: [] }] }))],
     ];
     for (const [blocker, arrange] of cases) {
       db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue(storedMove);
-      db.clubEventRegistration.findUnique.mockResolvedValue(destination());
+      setDestination(destination());
       countPicks({ perClub: 1 });
       arrange();
       await expect(approveRegistrationMove("move-1", "", staff, now)).rejects.toMatchObject({ code: "MOVE_BLOCKED", blocker });
@@ -374,7 +376,7 @@ describe("registration moves (staff approve each one)", () => {
       db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
         ...storedMove, fromRegistration: { ...storedMove.fromRegistration, locationId: "loc-2", location: { name: "Kansas City" } },
       });
-      db.clubEventRegistration.findUnique.mockResolvedValue(destination({ locationId: "loc-1", location: { name: "Des Moines" }, _count: { attendees: 2 } }));
+      setDestination(destination({ locationId: "loc-1", location: { name: "Des Moines" }, _count: { attendees: 2 } }));
       (db as unknown as Record<string, ReturnType<typeof vi.fn>>).$queryRaw!.mockResolvedValue([
         { id: "loc-1", eventId: "event-1", name: "Des Moines", address: null, firstDay: null, lastDay: null, capacity: null, registrationClosesOn: null, isActive: true },
       ]);
@@ -416,7 +418,7 @@ describe("registration moves (staff approve each one)", () => {
         ...storedMove, fromRegistration: { ...storedMove.fromRegistration, locationId: "loc-2", location: { name: "Kansas City" } },
       });
       // The receiving registration already has two people; the move adds a third.
-      db.clubEventRegistration.findUnique.mockResolvedValue(destination({ locationId: "loc-1", location: { name: "Des Moines" }, _count: { attendees: 2 } }));
+      setDestination(destination({ locationId: "loc-1", location: { name: "Des Moines" }, _count: { attendees: 2 } }));
       raw("$queryRaw").mockResolvedValue(location(capacity));
       db.registrationAttendee.count.mockResolvedValue(seatsElsewhere);
     };
@@ -441,7 +443,7 @@ describe("registration moves (staff approve each one)", () => {
       db.memberTransferRegistrationMove.findUniqueOrThrow.mockResolvedValue({
         ...storedMove, fromRegistration: { ...storedMove.fromRegistration, locationId: "loc-1", location: { name: "Des Moines" } },
       });
-      db.clubEventRegistration.findUnique.mockResolvedValue(destination({ locationId: "loc-1", location: { name: "Des Moines" }, _count: { attendees: 2 } }));
+      setDestination(destination({ locationId: "loc-1", location: { name: "Des Moines" }, _count: { attendees: 2 } }));
       await approveRegistrationMove("move-1", "ok", staff, now);
       expect(raw("$queryRaw")).not.toHaveBeenCalled();
     });
@@ -465,7 +467,7 @@ describe("registration moves (staff approve each one)", () => {
     });
 
     it("offers nothing when the old registration has no location", async () => {
-      db.clubEventRegistration.findUnique.mockResolvedValue(destination());
+      setDestination(destination());
       const client = db as unknown as { event: { findUnique: ReturnType<typeof vi.fn> } };
       await approveRegistrationMove("move-1", "ok", staff, now);
       expect(client.event.findUnique).not.toHaveBeenCalled();

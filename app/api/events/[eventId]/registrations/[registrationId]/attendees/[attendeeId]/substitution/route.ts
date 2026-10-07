@@ -6,6 +6,7 @@ import {
   ensureEventMessagingDefaults,
   processQueuedMessageIdsAfterCommit,
 } from "@/modules/communications/messaging-repository";
+import { ClubTeamError, clubTeamErrorStatus } from "@/modules/club-teams/errors";
 import { findActiveMembership } from "@/modules/events/repository";
 import {
   RegistrationOperationError,
@@ -44,6 +45,13 @@ function errorResponse(error: unknown) {
           : 409,
         headers: noStoreHeaders,
       }
+    );
+  }
+  // The replacement would break the event's team rules, or is on another team of the club (#809); nothing was changed.
+  if (error instanceof ClubTeamError) {
+    return Response.json(
+      { error: error.code, message: error.message, problems: error.problems },
+      { status: clubTeamErrorStatus(error.code), headers: noStoreHeaders }
     );
   }
   logError("Attendee substitution failed", error);

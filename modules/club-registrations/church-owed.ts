@@ -71,6 +71,8 @@ export type ChurchAmountOwedRow = {
   amountOwedCents: number;
   /** The event location the club registered at (#413); absent when the event has none. */
   locationName?: string | null;
+  /** The team's name (#809), only on an event that lets a club register several; each team is its own billed row. */
+  teamName?: string;
   /**
    * A "Group" registration (#650) has no club or church; its contact is the billing party. Present only on
    * `kind: "GROUP"` rows, where `organizationName` is the contact's name and `churchId` is `GROUP_KEY`.
@@ -173,7 +175,8 @@ export function sortChurchAmountsOwed(rows: ChurchAmountOwedRow[]) {
     const rank = (row: ChurchAmountOwedRow) => (row.churchId === GROUP_KEY ? 2 : row.churchName === null ? 1 : 0);
     if (rank(left) !== rank(right)) return rank(left) - rank(right);
     return (left.churchName ?? "").localeCompare(right.churchName ?? "")
-      || left.organizationName.localeCompare(right.organizationName);
+      || left.organizationName.localeCompare(right.organizationName)
+      || (left.teamName ?? "").localeCompare(right.teamName ?? "");
   });
 }
 
@@ -228,9 +231,12 @@ export function churchAmountsOwedCsvRows(
   // "Group" rows (#650) add the billing contact, and relabel the columns that would otherwise say "church".
   const hasGroups = rows.some((row) => row.kind === "GROUP");
   const relabeled = hasIndividuals || hasGroups;
+  // A Team column (#809), only when some club registered one, so an event without teams exports the columns it always did.
+  const hasTeams = rows.some((row) => row.teamName);
   const table: Array<Array<string | number>> = [[
     hasGroups ? "Church, organization or group" : hasIndividuals ? "Church or organization" : "Church",
     relabeled ? "Club or registrant" : "Club",
+    ...(hasTeams ? ["Team"] : []),
     "Confirmation code",
     "Status",
     hasGroups ? "Billed after the event" : "Billed to church",
@@ -245,6 +251,7 @@ export function churchAmountsOwedCsvRows(
     table.push([
       row.churchName ?? NO_CHURCH_ON_FILE,
       row.organizationName,
+      ...(hasTeams ? [row.teamName ?? ""] : []),
       row.confirmationCode,
       row.status,
       row.isBilled ? "Yes" : "No",
@@ -262,6 +269,7 @@ export function churchAmountsOwedCsvRows(
     table.push([
       line.churchName,
       `Promo code ${line.promoCode}`,
+      ...(hasTeams ? [""] : []),
       line.confirmationCode,
       line.status,
       "Yes",

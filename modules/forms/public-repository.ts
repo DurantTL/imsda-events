@@ -1,3 +1,4 @@
+import { enforceTeamRegistrationRules } from "@/modules/club-teams/registration-guard";
 import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
@@ -69,6 +70,7 @@ import { LodgingError } from "@/modules/lodging/errors";
 import { lodgingTransactionTimeoutMs } from "@/modules/lodging/service";
 import { getPublicLodgingOffer, planRegistrationLodging, recordRegistrationLodging, type LodgingPlan, type PublicLodgingOffer } from "@/modules/lodging/registration-form";
 import { eventStartDate, planPublicResponsibleAdults } from "@/modules/guardian-authority/domain";
+import { teamNameTakenMessage } from "@/modules/club-teams/domain";
 
 export type PublicRegistrationErrorCode =
   | "FORM_NOT_FOUND"
@@ -82,6 +84,7 @@ export type PublicRegistrationErrorCode =
   | "SUBMISSION_CONFLICT"
   | "CLUB_REGISTRATION_UNAVAILABLE"
   | "CLUB_ALREADY_REGISTERED"
+  | "CLUB_TEAM_NAME_TAKEN"
   | "CLUB_ATTENDEES_INVALID"
   | "GROUP_REGISTRATION_UNAVAILABLE"
   | "GROUP_ATTENDEES_INVALID";
@@ -94,6 +97,12 @@ export type PublicRegistrationErrorCode =
  */
 export type ClubSubmissionContext = {
   organizationId: string;
+  /**
+   * The team being registered (#809), on an event that lets a club register several. `name` and `key` are the team's
+   * cleaned name and its normalized key, `draftKey` the club's draft this submission replaces. Absent on every other
+   * event: the registration takes the empty team key, the one-per-club rule it has always had.
+   */
+  team?: { name: string; key: string; draftKey: string };
   /** Never both: a staff "act as" director (#442) sets `submittedByUserId`, never an attendee account. */
   submittedByAccountId?: string;
   submittedByUserId?: string;
@@ -111,6 +120,8 @@ export type ClubSubmissionContext = {
    * waitlisted. The club module uses it to skip work that must happen once.
    */
   report?: (outcome: { replayed: boolean; waitlisted: boolean }) => void;
+  /** Told the new (or replayed) registration's id once it has committed, so the director can be told about any flags (#809). */
+  registered?: (registrationId: string) => void;
   prepareAttendees: (
     tx: Prisma.TransactionClient,
     args: {
@@ -129,6 +140,8 @@ export type ClubSubmissionContext = {
       personId: string | null;
       rosterMemberId: string | null;
       ageOnEventDate: number | null;
+      /** Team member or coach (#809), set only for an event with team rules; kept on the attendee's profile snapshot. */
+      teamRole?: "MEMBER" | "COACH";
       // `guestId` is the club module's own guest identifier (#388), kept on
       // the created attendee's profileSnapshot as `clubGuestId` so a later
       // reopen-and-amend (H3b, #366) can match this attendee back to the
@@ -710,6 +723,10 @@ async function createPublicRegistrationTransaction(
           : "This event isn't set up for club registration billed to the church.",
       );
     }
+    if (group && (await tx.eventTeamSettings.findUnique({ where: { eventId: form.eventId }, select: { eventId: true } }))) {
+      // An event with team rules takes club teams only (#809); a group would skip every team rule.
+      throw new PublicRegistrationError("GROUP_REGISTRATION_UNAVAILABLE", "This event takes registrations from club teams only.");
+    }
     const bulkPrepared = await bulk.prepareAttendees(tx, { definition, event: form.event, input });
     input = bulkPrepared.input;
     clubAttendees = bulkPrepared.attendees;
@@ -718,15 +735,36 @@ async function createPublicRegistrationTransaction(
   const replay = await findExistingConfirmation(tx, version.id, input.idempotencyKey, requestHash, definition, churchBilledDisplay);
   if (replay) return replay;
   if (club) {
+    // The team rules, read inside this Serializable transaction (#809): a save of the rules that races this submit makes one
+    // of them fail rather than letting a team be registered on an event that has just stopped taking teams, or the reverse.
+    const teamRules = await tx.eventTeamSettings.findUnique({ where: { eventId: form.eventId }, select: { allowMultipleTeams: true } });
+    if ((teamRules?.allowMultipleTeams === true) !== Boolean(club.team)) {
+      throw new PublicRegistrationError(
+        "CLUB_REGISTRATION_UNAVAILABLE",
+        "This event's team rules changed while you were registering. Reload the page and try again.",
+      );
+    }
     const existingClubRegistration = await tx.clubEventRegistration.findUnique({
-      where: { eventId_organizationId: { eventId: form.eventId, organizationId: club.organizationId } },
+      where: { eventId_organizationId_teamKey: { eventId: form.eventId, organizationId: club.organizationId, teamKey: club.team?.key ?? "" } },
       select: { id: true },
     });
     if (existingClubRegistration) {
       throw new PublicRegistrationError(
         "CLUB_ALREADY_REGISTERED",
-        "Your club is already registered for this event.",
+        club.team
+          ? `Your club already registered a team named "${club.team.name}" for this event. Choose a different team name.`
+          : "Your club is already registered for this event.",
       );
+    }
+    if (club.team) {
+      // A team name is unique within the whole event, whichever club has it. Never names the other club.
+      const nameTaken = await tx.clubEventRegistration.findFirst({
+        where: { eventId: form.eventId, teamKey: club.team.key },
+        select: { id: true },
+      });
+      if (nameTaken) {
+        throw new PublicRegistrationError("CLUB_TEAM_NAME_TAKEN", teamNameTakenMessage(club.team.name));
+      }
     }
   }
 
@@ -1128,6 +1166,7 @@ async function createPublicRegistrationTransaction(
             clubOrganizationId: club.organizationId,
             ...(clubAttendee.rosterMemberId ? { clubRosterMemberId: clubAttendee.rosterMemberId } : {}),
             ageOnEventDate: clubAttendee.ageOnEventDate,
+            ...(clubAttendee.teamRole ? { teamRole: clubAttendee.teamRole } : {}),
             // For this event only: never on the club roster (#388).
             ...(clubAttendee.guest
               ? { temporary: true, temporaryAttendeeType: clubAttendee.guest.attendeeType, clubGuestId: clubAttendee.guest.guestId }
@@ -1281,23 +1320,38 @@ async function createPublicRegistrationTransaction(
       })),
     });
   }
+  let teamPermissionMessageIds: string[] = [];
   if (club) {
-    await tx.clubEventRegistration.create({
-      data: {
-        eventId: form.eventId,
-        organizationId: club.organizationId,
-        registrationId: registration.id,
-        submittedByAccountId: club.submittedByAccountId ?? null,
-        submittedByUserId: club.submittedByUserId ?? null,
-      },
-    });
+    try {
+      await tx.clubEventRegistration.create({
+        data: {
+          eventId: form.eventId,
+          organizationId: club.organizationId,
+          registrationId: registration.id,
+          // Only a team has a name and a key; every other registration takes the column defaults (null, '') as ever.
+          ...(club.team ? { teamName: club.team.name, teamKey: club.team.key } : {}),
+          submittedByAccountId: club.submittedByAccountId ?? null,
+          submittedByUserId: club.submittedByUserId ?? null,
+        },
+      });
+    } catch (error) {
+      // Two clubs choosing the same team name at the same moment: the event-wide unique index decides (#809).
+      if (club.team && error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+        throw new PublicRegistrationError("CLUB_TEAM_NAME_TAKEN", teamNameTakenMessage(club.team.name));
+      }
+      throw error;
+    }
     await tx.clubRegistrationDraft.deleteMany({
-      where: { eventId: form.eventId, organizationId: club.organizationId },
+      // The team's own draft (#809); an event without teams has only the one.
+      where: { eventId: form.eventId, organizationId: club.organizationId, ...(club.team ? { draftKey: club.team.draftKey } : {}) },
     });
     if (isWaitlisted && registrationLocationId) {
       // After the club link exists, so the record names the club.
       await recordLocationWaitlistChange(tx, { registrationId: registration.id, locationId: registrationLocationId, kind: "JOINED", place: waitlistPosition });
     }
+    // The team's rules once more on what was just saved, and the flag for any team member of 18 or older (#809). Nothing
+    // for an event without team rules.
+    teamPermissionMessageIds = (await enforceTeamRegistrationRules(tx, registration.id, { actorUserId: club.submittedByUserId, actorAccountId: club.submittedByAccountId })).queuedMessageIds;
   }
   if (group) {
     // The contact is the billing party; no club, church, or roster is involved (#650).
@@ -1378,6 +1432,7 @@ async function createPublicRegistrationTransaction(
         ...(club
           ? {
               clubOrganizationId: club.organizationId,
+              ...(club.team ? { teamName: club.team.name } : {}),
               ...(registrationLocationId ? { locationId: registrationLocationId } : {}),
               ...(club.submittedByAccountId ? { submittedByAttendeeAccountId: club.submittedByAccountId } : {}),
               ...(club.submittedByUserId ? { submittedByStaffUserId: club.submittedByUserId } : {}),
@@ -1407,7 +1462,7 @@ async function createPublicRegistrationTransaction(
       managePath: access.managePath,
       manageLinkExpiresAt: access.expiresAt.toISOString(),
     },
-    pendingMessageIds: queuedMessages.pendingMessageIds,
+    pendingMessageIds: [...queuedMessages.pendingMessageIds, ...teamPermissionMessageIds],
     registrantMessageIds: queuedMessages.registrantMessageIds,
     registrationId: registration.id,
     replayed: false,
@@ -1473,7 +1528,7 @@ export async function submitPublicRegistration(
         processed.failedIds.includes(messageId)
       ));
       bulk?.report?.({ replayed: result.replayed, waitlisted: result.confirmation.registrationStatus === "WAITLISTED" });
-      if (bulk && "group" in bulk) bulk.registered?.(result.registrationId);
+      if (bulk) bulk.registered?.(result.registrationId);
       return {
         ...result.confirmation,
         emailSent: registrantSent,

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { enforceTeamRegistrationRules } from "@/modules/club-teams/registration-guard";
+import { deliverPermissionMessages } from "@/modules/club-teams/permission-repository";
 import { checkLocationSeats } from "@/modules/event-locations/admission";
 import { LODGING_LINE_KEY } from "@/modules/lodging/pricing";
 import { promoteWaitlistAfterSeatsFreed } from "@/modules/registrations/lifecycle-repository";
@@ -94,6 +96,8 @@ export type AmendmentProfileMetadata = {
   temporary?: boolean;
   temporaryAttendeeType?: "ADULT" | "YOUTH";
   clubGuestId?: string;
+  /** Whether the person is a team member or a coach on a team registration (#809), decided by the server. */
+  teamRole?: "MEMBER" | "COACH";
   /** A "Group" person's id (#650): the client id the registration form gave them. */
   groupAttendeeId?: string;
 };
@@ -189,6 +193,7 @@ function allowedProfileMetadata(metadata: AmendmentProfileMetadata | undefined) 
     allowed.temporaryAttendeeType = metadata.temporaryAttendeeType;
   }
   if (typeof metadata.clubGuestId === "string") allowed.clubGuestId = metadata.clubGuestId;
+  if (metadata.teamRole === "MEMBER" || metadata.teamRole === "COACH") allowed.teamRole = metadata.teamRole;
   if (typeof metadata.groupAttendeeId === "string") allowed.groupAttendeeId = metadata.groupAttendeeId;
   return allowed;
 }
@@ -1437,6 +1442,7 @@ export async function amendRegistration(
   const prisma = getPrisma();
   for (let attempt = 0; attempt < maxRetryAttempts; attempt += 1) {
     try {
+      const permissionMessageIds: string[] = [];
       const amended = await prisma.$transaction(async (tx) => {
         const existing = await tx.registrationOperation.findUnique({
           where: {
@@ -1653,6 +1659,17 @@ export async function amendRegistration(
         }
 
         if (serverOptions.inTransaction) await serverOptions.inTransaction(tx);
+        // A team's registration keeps its event's team rules however it is changed, by a director or by staff (#809).
+        // Only staff can confirm that a name match is a different person; the ids are the rows just written, in input order.
+        const differentPeople = actor.kind === "STAFF"
+          ? new Set(input.attendees.flatMap((entry, index) => (entry.differentPerson ? committedAttendees[index]?.attendeeId ?? [] : [])))
+          : undefined;
+        permissionMessageIds.push(...(await enforceTeamRegistrationRules(tx, registrationId, {
+            // Staff only can confirm a name match as a different person; everyone else's flag is ignored.
+            ...(actor.kind === "STAFF" ? { differentPersonAttendeeIds: differentPeople } : {}),
+            ...(actor.kind === "STAFF" || actor.kind === "STAFF_ACTING_DIRECTOR" ? { actorUserId: actor.id } : {}),
+            ...(actor.kind === "CLUB_DIRECTOR" ? { actorAccountId: actor.attendeeAccountId } : {}),
+          })).queuedMessageIds);
         await tx.registration.update({
           where: { id: registrationId },
           data: {
@@ -1861,6 +1878,8 @@ export async function amendRegistration(
       // #527: a new or renamed attendee on the Sterling Volunteers list is
       // matched after commit; best effort, never fails the amendment.
       await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
+      // The request to the Area Coordinator, if this change flagged someone, goes out once the change is committed (#809).
+      await deliverPermissionMessages(permissionMessageIds);
       return amended;
     } catch (error) {
       if (!retryable(error)) throw error;

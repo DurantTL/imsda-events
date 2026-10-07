@@ -260,6 +260,23 @@ describe("staff registration operation routes", () => {
       .toHaveBeenCalledWith(["message-substitution"]);
   });
 
+  it("answers a substitution that breaks the event's team rules with the rule's status, and processes no notices (#809)", async () => {
+    const { ClubTeamError } = await import("@/modules/club-teams/errors");
+    operationMocks.substituteRegistrationAttendee.mockRejectedValueOnce(
+      new ClubTeamError("TEAM_RULES", "Someone named Pat Visitor is already on another team from your club. If this is a different person, contact the event team.", ["x"]),
+    );
+    const response = await substitutionPOST(
+      request(
+        "/api/events/event-1/registrations/registration-1/attendees/attendee-1/substitution",
+        { ...transferBody, email: "" },
+      ),
+      { params: Promise.resolve({ eventId: "event-1", registrationId: "registration-1", attendeeId: "attendee-1" }) },
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({ error: "TEAM_RULES", message: expect.stringContaining("already on another team") });
+    expect(messageMocks.processQueuedMessageIdsAfterCommit).not.toHaveBeenCalled();
+  });
+
   it("maps checked-in and authorization failures without processing notices", async () => {
     operationMocks.substituteRegistrationAttendee.mockRejectedValueOnce(
       new RegistrationOperationError(

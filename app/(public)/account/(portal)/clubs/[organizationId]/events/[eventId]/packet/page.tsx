@@ -4,6 +4,7 @@ import { BackLink } from "@/components/back-link";
 import { ClubPacketSheet } from "@/components/club-packet-sheet";
 import { PrintReportButton } from "@/components/print-report-button";
 import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
+import { singleSearchParam } from "@/modules/club-teams/domain";
 import { loadDirectorClubPacket } from "@/modules/reporting/director-club-packet";
 
 export const metadata: Metadata = { title: "Club packet" };
@@ -15,11 +16,16 @@ export const dynamic = "force-dynamic";
  */
 export default async function DirectorClubPacketPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ organizationId: string; eventId: string }>;
+  searchParams: Promise<{ team?: string | string[] }>;
 }) {
   const { organizationId, eventId } = await params;
-  const packet = await loadDirectorClubPacket(organizationId, eventId);
+  // Which of the club's teams (#809); absent on an event without teams.
+  const teamKey = singleSearchParam((await searchParams).team);
+  if (teamKey === null) notFound();
+  const packet = await loadDirectorClubPacket(organizationId, eventId, teamKey);
   if (!packet) {
     // The club layout shows the sign-in / unlock prompts; an open club with
     // no active registration for this event is simply not found.
@@ -31,13 +37,13 @@ export default async function DirectorClubPacketPage({
     <section className="page-stack retreat-packet-workspace">
       <div className="page-intro retreat-packet-intro">
         <div>
-          <BackLink href={`/account/clubs/${organizationId}/events/${eventId}`}>Back to {packet.event.name}</BackLink>
+          <BackLink href={`/account/clubs/${organizationId}/events/${eventId}${teamKey ? `?team=${encodeURIComponent(teamKey)}` : ""}`}>Back to {packet.event.name}</BackLink>
           <h2>Your club packet</h2>
           <p>Print this for check-in: one letter sheet, printed double-sided.</p>
         </div>
         <PrintReportButton label="Print packet" />
       </div>
-      <ClubPacketSheet packet={packet} qrSrc={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}/club-pass/qr`} />
+      <ClubPacketSheet packet={packet} qrSrc={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}/club-pass/qr${teamKey ? `?team=${encodeURIComponent(teamKey)}` : ""}`} />
     </section>
   );
 }

@@ -6,7 +6,7 @@ import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { normalizeHonorText, offeringSlotConflict } from "@/modules/honors/domain";
 import { offeringSiteId } from "@/modules/honors/locations";
-import { HonorConfigurationError, getEventHonorSetup, serializable } from "@/modules/honors/repository";
+import { requireNoTeams, HonorConfigurationError, getEventHonorSetup, serializable } from "@/modules/honors/repository";
 
 /**
  * Copying one site's sessions and offerings into another site or next year's
@@ -61,6 +61,7 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
     loadEvent(client, sourceEventId),
     loadEvent(client, targetEventId),
   ]);
+  await requireNoTeams(client, targetEventId);
   const [sourceSessions, targetSessions, sourceOfferings, targetOfferings, targetLocations] = await Promise.all([
     client.honorSession.findMany({
       where: { eventId: sourceEventId },

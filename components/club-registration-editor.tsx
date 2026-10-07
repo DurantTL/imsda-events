@@ -21,6 +21,7 @@ import {
   clubAttendeeClientId,
   clubExistingAttendeeClientId,
   clubGuestClientId,
+  formatCalendarDate,
   guestIsAdult,
   MAX_CLUB_GUESTS,
   rosterOwnedResponses,
@@ -252,6 +253,8 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
           saveAgeToRosterIds: Object.keys(typedAges).filter((memberId) => !saveAgeOff.includes(memberId) && typedAges[memberId] !== startingAges[memberId]),
           attendeeResponses: Object.fromEntries(attendees.map((attendee) => [attendee.clientId, attendee.responses])),
           ...(locationId && locationId !== currentLocationId ? { locationId } : {}),
+          // Which of the club's teams this edit is for (#809); empty, so left out, on an event without teams.
+          ...(workspace.registration.teamKey ? { teamKey: workspace.registration.teamKey } : {}),
         }),
       },
     );
@@ -268,7 +271,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
         : { key: issue.key, message: issue.message, attendeeIndex: null }];
     });
     return { ok: false as const, message: result.message ?? "That change couldn't be saved. Refresh and try again.", issues };
-  }, [organizationId, workspace.event.id, workspace.registration.updatedAt, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests, typedAges, startingAges, saveAgeOff, locationId, currentLocationId]);
+  }, [organizationId, workspace.event.id, workspace.registration.updatedAt, workspace.registration.teamKey, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests, typedAges, startingAges, saveAgeOff, locationId, currentLocationId]);
 
   const club = useMemo(() => ({
     initialAttendees,
@@ -373,6 +376,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
                 onSaveToRoster={(save) => setSaveAgeOff((current) => (save ? current.filter((id) => id !== person.memberId) : [...current.filter((id) => id !== person.memberId), person.memberId]))}
                 href={rosterHrefFromRegistration(organizationId, workspace.event.id)}
                 newTab
+                dateText={workspace.event.ageAsOf ? formatCalendarDate(workspace.event.ageDate) : undefined}
                 organizationId={organizationId}
                 saveToRoster={!saveAgeOff.includes(person.memberId)}
               />
@@ -450,7 +454,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
             <div className="form-grid two-column">
               <label>First name<input autoComplete="off" maxLength={80} name="firstName" required /></label>
               <label>Last name<input autoComplete="off" maxLength={80} name="lastName" required /></label>
-              <label>Age at the event<input {...ageInputAttributes} name="age" required type="number" /></label>
+              <label>{workspace.event.ageAsOf ? `Age on ${formatCalendarDate(workspace.event.ageDate)}` : "Age at the event"}<input {...ageInputAttributes} name="age" required type="number" /></label>
               <label>Email (optional)<input autoComplete="off" maxLength={254} name="email" type="email" /></label>
             </div>
             <div className="club-registration-toolbar">

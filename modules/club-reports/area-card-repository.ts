@@ -80,7 +80,7 @@ export async function getAreaCoordinatorCard(account: { id: string }, now = new 
         registrationClosesOn: true,
         clubRegistrations: {
           where: { organization: { isActive: true } },
-          select: { registration: { select: { status: true, _count: { select: { attendees: true } } } } },
+          select: { organizationId: true, registration: { select: { status: true, _count: { select: { attendees: true } } } } },
         },
       },
     }),
@@ -90,7 +90,7 @@ export async function getAreaCoordinatorCard(account: { id: string }, now = new 
   const locationIds = locations.map((location) => location.id);
   const locationRegistrations = locationIds.length === 0 ? [] : await prisma.registration.findMany({
     where: { locationId: { in: locationIds }, status: { in: ["SUBMITTED", "CONFIRMED"] }, clubRegistration: { organization: { isActive: true } } },
-    select: { locationId: true, _count: { select: { attendees: true } } },
+    select: { locationId: true, clubRegistration: { select: { organizationId: true } }, _count: { select: { attendees: true } } },
   });
 
   return {
@@ -104,14 +104,15 @@ export async function getAreaCoordinatorCard(account: { id: string }, now = new 
         timezone: location.event.timezone,
         locationName: location.name,
         registration: registrationWindow(location.event.registrationOpensOn, location.registrationClosesOn ?? location.event.registrationClosesOn, now),
-        clubsRegistered: here.length,
+        // Clubs, not registrations: a club that registers several teams (#809) is still one club.
+        clubsRegistered: new Set(here.map((registration) => registration.clubRegistration?.organizationId)).size,
         headcount: here.reduce((sum, registration) => sum + registration._count.attendees, 0),
       };
     }),
     clubEvents: clubEvents.map((event) => {
-      const registered = event.clubRegistrations
-        .map((entry) => entry.registration)
-        .filter((registration) => registrationStatusFor(registration.status) === "REGISTERED");
+      const registeredEntries = event.clubRegistrations
+        .filter((entry) => registrationStatusFor(entry.registration.status) === "REGISTERED");
+      const registered = registeredEntries.map((entry) => entry.registration);
       return {
         eventId: event.id,
         eventName: event.name,
@@ -120,7 +121,8 @@ export async function getAreaCoordinatorCard(account: { id: string }, now = new 
         timezone: event.timezone,
         locationName: null,
         registration: registrationWindow(event.registrationOpensOn, event.registrationClosesOn, now),
-        clubsRegistered: registered.length,
+        // Clubs, not registrations: a club that registers several teams (#809) is still one club.
+        clubsRegistered: new Set(registeredEntries.map((entry) => entry.organizationId)).size,
         headcount: registered.reduce((sum, registration) => sum + registration._count.attendees, 0),
       };
     }),

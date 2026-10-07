@@ -33,6 +33,8 @@ import {
   type RegistrationMoveBlocker,
   type StaffQueueFilter,
 } from "@/modules/club-transfers/domain";
+import { ClubTeamError } from "@/modules/club-teams/errors";
+import { enforceTeamRegistrationRules } from "@/modules/club-teams/registration-guard";
 import { transferNotificationKey, transferRequestKey } from "@/modules/club-transfers/keys";
 import type { RequestTransferInput } from "@/modules/club-transfers/schemas";
 import { seatHoldingEnrollment } from "@/modules/honors/enrollment-repository";
@@ -1175,12 +1177,18 @@ const moveSelect = {
 
 type StoredMove = Prisma.MemberTransferRegistrationMoveGetPayload<{ select: typeof moveSelect }>;
 
+/**
+ * The receiving club's registration for the event. A club that registered several teams (#809) has no one
+ * destination, so the move is reported as ambiguous and staff add the person to the right team by hand.
+ */
 async function moveDestination(client: Client, eventId: string, toOrganizationId: string) {
-  const club = await client.clubEventRegistration.findUnique({
-    where: { eventId_organizationId: { eventId, organizationId: toOrganizationId } },
+  const clubs = await client.clubEventRegistration.findMany({
+    where: { eventId, organizationId: toOrganizationId },
+    take: 2,
     select: { registration: { select: destinationSelect } },
   });
-  return club?.registration ?? null;
+  if (clubs.length > 1) return { destination: null, ambiguous: true };
+  return { destination: clubs[0]?.registration ?? null, ambiguous: false };
 }
 
 /**
@@ -1237,12 +1245,10 @@ async function locationHasNoRoom(
 }
 
 async function describeMove(client: Client, move: StoredMove, options: { lockLocation?: boolean } = {}) {
-  const destination = move.status === "APPROVED" && move.toRegistrationId
-    ? await client.registration.findUnique({
-      where: { id: move.toRegistrationId },
-      select: destinationSelect,
-    })
+  const found = move.status === "APPROVED" && move.toRegistrationId
+    ? { destination: await client.registration.findUnique({ where: { id: move.toRegistrationId }, select: destinationSelect }), ambiguous: false }
     : await moveDestination(client, move.eventId, move.transfer.toOrganizationId);
+  const destination = found.destination;
   const personAlreadyThere = Boolean(destination && move.attendee && move.status === "PENDING" && await client.registrationAttendee.findUnique({
     where: { registrationId_personId: { registrationId: destination.id, personId: move.attendee.personId } },
     select: { id: true },
@@ -1274,6 +1280,7 @@ async function describeMove(client: Client, move: StoredMove, options: { lockLoc
       destination: destination
         ? { status: destination.status, waitlisted: destination.waitlistEntry?.status === "WAITING", personAlreadyThere }
         : null,
+      destinationAmbiguous: found.ambiguous,
       classLimitExceeded,
       locationFull,
       classPicksAtOtherSite,
@@ -1446,6 +1453,18 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
   // `RegistrationOperation` rows stay put: they are the old registration's
   // history (substitution snapshots), and their key to the attendee still holds.
 
+  // A team registration keeps its event's team rules on both sides of the move (#809): the sending team must still be a
+  // team (size, alternate), and the receiving one must take the person (size, age, one team per person). The sending side
+  // runs first so the person's permission flag leaves it before the receiving team flags them again. A refusal stops the move.
+  const teamMessageIds: string[] = [];
+  try {
+    teamMessageIds.push(...(await enforceTeamRegistrationRules(tx, fromRegistrationId, { actorUserId: actor.userId, declineScope: "CHANGED_ONLY", changedAttendeeIds: new Set([attendeeId]) })).queuedMessageIds);
+    teamMessageIds.push(...(await enforceTeamRegistrationRules(tx, toRegistrationId, { actorUserId: actor.userId, declineScope: "CHANGED_ONLY", changedAttendeeIds: new Set([attendeeId]) })).queuedMessageIds);
+  } catch (error) {
+    if (error instanceof ClubTeamError) throw new MemberTransferError("MOVE_BLOCKED", `The event's team rules stop this move. ${error.message}`);
+    throw error;
+  }
+
   const shiftCents = described.adjustmentCents;
   const fromTotalBefore = described.fromRegistration!.totalCents;
   const toTotalBefore = described.toRegistration.totalCents;
@@ -1494,7 +1513,7 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
     { transferId: move.transfer.id, fromOrganizationId: move.transfer.fromOrganizationId, toOrganizationId: move.transfer.toOrganizationId, ...detail },
     { eventId: move.eventId, entityType: "RegistrationAttendee" },
   );
-  return { ...detail, pendingMessageIds: freedSeat?.pendingMessageIds ?? [] };
+  return { ...detail, pendingMessageIds: [...(freedSeat?.pendingMessageIds ?? []), ...teamMessageIds] };
 }
 
 /** Staff skip one registration move (#489 decision 2): the attendee stays where they are. Audited with the actor (N4). */

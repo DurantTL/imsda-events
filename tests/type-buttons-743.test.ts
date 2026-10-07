@@ -343,7 +343,7 @@ describe("one filled primary per screen (#743)", () => {
   const clubEvent = (id: string, over: Partial<ClubEventSummary> = {}): ClubEventSummary => ({
     id, name: `Synthetic event ${id}`, startsAt: "2026-11-06T15:00:00.000Z", endsAt: "2026-11-08T20:00:00.000Z", timezone: "America/Chicago",
     location: "Camp", phase: "OPEN", registrationClosesOn: null, available: true, problem: null, registration: null, draft: null,
-    registeredLocation: null, hasLocations: false, ...over,
+    registeredLocation: null, hasLocations: false, multipleTeams: false, teams: [], drafts: [], ...over,
   });
 
   it("club events: only the first open event is filled; the others, and registered events, are outlined", () => {

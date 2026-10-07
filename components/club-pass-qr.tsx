@@ -8,10 +8,13 @@
 export function ClubPassQr({
   organizationId,
   eventId,
+  teamKey = "",
   size = 220,
 }: {
   organizationId: string;
   eventId: string;
+  /** Which of the club's teams (#809); empty on an event without teams. */
+  teamKey?: string;
   size?: number;
 }) {
   return (
@@ -21,7 +24,7 @@ export function ClubPassQr({
       alt="Club check-in QR pass"
       height={size}
       loading="lazy"
-      src={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}/club-pass/qr`}
+      src={`/api/attendee/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}/club-pass/qr${teamKey ? `?team=${encodeURIComponent(teamKey)}` : ""}`}
       width={size}
     />
   );

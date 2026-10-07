@@ -316,6 +316,8 @@ export function RegistrationAmendmentEditor({
   const [preview, setPreview] = useState<AmendmentPreview | null>(null);
   const [issues, setIssues] = useState<Array<{ path?: string; message?: string }>>([]);
   const [error, setError] = useState("");
+  // Staff only (#809): attendees confirmed as a different person from someone with the same name on another team of the club.
+  const [differentPeople, setDifferentPeople] = useState<ReadonlySet<string>>(new Set());
   const [saving, setSaving] = useState(false);
   const [addedNotice, setAddedNotice] = useState("");
   // Review before removing an attendee from this draft amendment (#471):
@@ -419,7 +421,7 @@ export function RegistrationAmendmentEditor({
       expectedUpdatedAt: registration.updatedAt,
       reason,
       responses,
-      attendees,
+      attendees: attendees.map((attendee) => (differentPeople.has(attendee.clientId) ? { ...attendee, differentPerson: true } : attendee)),
       previewOnly,
       ...(quoteFingerprint ? { quoteFingerprint } : {}),
     };
@@ -578,6 +580,21 @@ export function RegistrationAmendmentEditor({
                   <button className="danger" type="button" disabled={attendees.length <= 1} aria-label="Remove attendee" onClick={() => removeAttendee(attendeeIndex)}><Trash2 aria-hidden="true" size={15} /></button>
                 </div>
               </header>
+              {/* A name-only match with someone on another team of the club: staff can confirm this is a different person (#809). */}
+              {error.includes(`Someone named ${`${firstName} ${lastName}`.trim()} is already on another team`) && (
+                <label className="checkbox-label">
+                  <input
+                    checked={differentPeople.has(attendee.clientId)}
+                    onChange={(event) => setDifferentPeople((current) => {
+                      const next = new Set(current);
+                      if (event.target.checked) next.add(attendee.clientId); else next.delete(attendee.clientId);
+                      return next;
+                    })}
+                    type="checkbox"
+                  />
+                  <span>This is a different person from the one with the same name on another team (recorded in the audit log)</span>
+                </label>
+              )}
               <div className="amendment-fields">
                 {visibleFields.map((field) => (
                   <AmendmentField

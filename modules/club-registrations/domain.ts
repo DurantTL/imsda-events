@@ -94,6 +94,8 @@ export const clubRegistrationEditInputSchema = z.object({
   saveAgeToRosterIds: z.array(z.string().trim().min(1).max(64)).max(500).default([]),
   /** Move the registration to another location of the event (#413); omitted leaves it where it is. */
   locationId: z.string().trim().min(1).max(100).optional(),
+  /** Which of the club's teams this edit is for (#809); omitted on an event without teams. */
+  teamKey: z.string().max(200).optional(),
 }).strict();
 
 /** What a caller sends: the #639 age fields may be left out (they default to none). */
@@ -407,8 +409,8 @@ export function rosterGenderPrefill(definition: RegistrationFormDefinition, pers
 // blank or unrecognized youth role (e.g. "Teen Leader") is left for the
 // director to pick — never silently defaulted to a role like Pathfinder.
 const TYPE_OPTION_NAMES: Record<string, string[]> = {
-  STAFF: ["staff"],
-  ADULT: ["adult", "staff"],
+  STAFF: ["staff", "coach"],
+  ADULT: ["adult", "staff", "coach"],
   UNDERAGE: ["child", "underage"],
 };
 

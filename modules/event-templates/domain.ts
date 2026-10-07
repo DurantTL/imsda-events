@@ -4,6 +4,7 @@ import { isEventMessageTemplateKey, validateMessageTemplate, type MessageTemplat
 import { calendarDateSchema, eventNameSchema, eventSlugSchema } from "@/modules/events/schemas";
 import { operationalReportKinds } from "@/modules/reporting/operational-reports";
 import { attendeeClassificationInputSchema, attendeeTypeInputSchema } from "@/modules/attendee-types/domain";
+import { teamSettingsInputSchema } from "@/modules/club-teams/domain";
 
 /**
  * The fixed set of optional feature toggles a template may set on the new
@@ -129,7 +130,17 @@ export const eventTemplatePayloadSchema = z.object({
   }),
   /** Locations created on the new event, in this order (#413). Optional, so no stored payload changes shape. */
   locations: z.array(templateLocationSchema).max(20).optional(),
+  /**
+   * The event's registration deadline (#809), a calendar date, for a template made for one year's event such as the
+   * Pathfinder Bible Experience. Optional: most templates leave the dates to staff.
+   */
+  registrationClosesOn: calendarDateSchema.optional(),
+  /** Team rules for the new event (#809): several teams per club, team size, the alternate, the age date. Club events only. */
+  teamSettings: teamSettingsInputSchema.optional(),
 }).superRefine((payload, ctx) => {
+  if (payload.teamSettings && payload.audience !== "CLUB") {
+    ctx.addIssue({ code: "custom", path: ["teamSettings"], message: "Team rules are for club events." });
+  }
   const locationNames = new Set<string>();
   (payload.locations ?? []).forEach((location, index) => {
     const key = location.name.normalize("NFKC").replace(/\s+/g, " ").toLocaleLowerCase("en-US");

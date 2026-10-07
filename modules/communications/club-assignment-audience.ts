@@ -21,9 +21,19 @@ import {
 } from "@/modules/club-registrations/assignments";
 import type { MessagingSettingsRecord } from "@/modules/communications/types";
 
+/**
+ * The identity of one registration in an assignment batch (#809): the club's id, as it always was, for a registration
+ * without a team, and the club's id with the team's key for each team, so a club's teams are told apart.
+ */
+export function assignmentRecipientKey(entry: { organizationId: string; teamKey?: string | null }) {
+  return entry.teamKey ? `${entry.organizationId}:${entry.teamKey}` : entry.organizationId;
+}
+
 export type ClubAssignmentCandidate = {
   organizationId: string;
+  /** The club's name, or "Team (Club)" for a team (#809). */
   organizationName: string;
+  teamKey?: string;
   clubEventRegistrationId: string;
   registrationId: string;
   confirmationCode: string;
@@ -36,7 +46,7 @@ export type ClubAssignmentCandidate = {
 };
 
 export type ClubAssignmentSendSelection =
-  | { scope: "ONE"; organizationId: string }
+  | { scope: "ONE"; organizationId: string; teamKey?: string }
   | { scope: "ALL_SET" };
 
 export type ClubAssignmentSkipReasonCode =
@@ -57,6 +67,7 @@ const skipReasonLabels: Record<ClubAssignmentSkipReasonCode, string> = {
 export type ClubAssignmentRecipient = {
   organizationId: string;
   organizationName: string;
+  teamKey?: string;
   clubEventRegistrationId: string;
   registrationId: string;
   confirmationCode: string;
@@ -71,6 +82,7 @@ export type ClubAssignmentRecipient = {
 export type ClubAssignmentSkip = {
   organizationId: string;
   organizationName: string;
+  teamKey?: string;
   code: ClubAssignmentSkipReasonCode;
   label: string;
 };
@@ -91,7 +103,7 @@ export type ClubAssignmentPreview = {
    * template, so staff read the real wording before sending. Filled in by the
    * repository (it needs the template); null when no club is included.
    */
-  sample: { organizationId: string; subject: string; body: string } | null;
+  sample: { organizationId: string; teamKey?: string; subject: string; body: string } | null;
 };
 
 export type ClubAssignmentPreviewContext = {
@@ -124,19 +136,21 @@ export function computeClubAssignmentPreview(
     skipped.push({
       organizationId: candidate.organizationId,
       organizationName: candidate.organizationName,
+      ...(candidate.teamKey ? { teamKey: candidate.teamKey } : {}),
       code,
       label: skipReasonLabels[code],
     });
   };
 
   const targets = selection.scope === "ONE"
-    ? candidates.filter((candidate) => candidate.organizationId === selection.organizationId)
+    ? candidates.filter((candidate) => candidate.organizationId === selection.organizationId && (candidate.teamKey ?? "") === (selection.teamKey ?? ""))
     : candidates;
 
   if (selection.scope === "ONE" && targets.length === 0) {
     skipped.push({
       organizationId: selection.organizationId,
       organizationName: "",
+      ...(selection.teamKey ? { teamKey: selection.teamKey } : {}),
       code: "NOT_FOUND",
       label: skipReasonLabels.NOT_FOUND,
     });
@@ -164,6 +178,7 @@ export function computeClubAssignmentPreview(
     recipients.push({
       organizationId: candidate.organizationId,
       organizationName: candidate.organizationName,
+      ...(candidate.teamKey ? { teamKey: candidate.teamKey } : {}),
       clubEventRegistrationId: candidate.clubEventRegistrationId,
       registrationId: candidate.registrationId,
       confirmationCode: candidate.confirmationCode,
@@ -181,6 +196,7 @@ export function computeClubAssignmentPreview(
     eventId: context.eventId,
     scope: selection.scope,
     selectedOrganizationId: selection.scope === "ONE" ? selection.organizationId : null,
+    ...(selection.scope === "ONE" && selection.teamKey ? { selectedTeamKey: selection.teamKey } : {}),
     deliveryMode: context.deliveryMode,
     senderName: context.senderName,
     senderEmail: context.senderEmail,
@@ -190,6 +206,7 @@ export function computeClubAssignmentPreview(
     templateVersionNumber: context.templateVersionNumber,
     recipients: recipients.map((recipient) => ({
       organizationId: recipient.organizationId,
+      ...(recipient.teamKey ? { teamKey: recipient.teamKey } : {}),
       confirmationCode: recipient.confirmationCode,
       recipientEmail: recipient.recipientEmail,
       assignmentBlock: recipient.assignmentBlock,
@@ -198,7 +215,7 @@ export function computeClubAssignmentPreview(
       // no longer matches and can't email the same version twice.
       lastEmailedVersion: recipient.lastEmailedVersion,
     })),
-    skipped: skipped.map((entry) => ({ organizationId: entry.organizationId, code: entry.code })),
+    skipped: skipped.map((entry) => ({ organizationId: entry.organizationId, ...(entry.teamKey ? { teamKey: entry.teamKey } : {}), code: entry.code })),
   })).digest("hex");
 
   return {

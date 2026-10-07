@@ -5,6 +5,7 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { BackLink } from "@/components/back-link";
 import { BackgroundCheckBadge } from "@/components/background-check-flags";
 import { listEventBackgroundFlags } from "@/modules/background-checks/repository";
+import { getTeamSettings } from "@/modules/club-teams/settings-repository";
 import { listRegisteredClubs, resolveClubOversight } from "@/modules/club-rosters/event-oversight";
 import { staffPageTitles } from "@/components/staff-navigation";
 import { cardCell } from "@/components/table-card-labels";
@@ -26,7 +27,7 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
       />
     );
   }
-  const [clubs, backgroundFlags] = await Promise.all([listRegisteredClubs(event.id), listEventBackgroundFlags(event.id)]);
+  const [clubs, backgroundFlags, teamSettings] = await Promise.all([listRegisteredClubs(event.id), listEventBackgroundFlags(event.id), getTeamSettings(event.id)]);
   const neededByClub = new Map<string, number>();
   for (const person of backgroundFlags?.people ?? []) {
     if (person.organizationId) neededByClub.set(person.organizationId, (neededByClub.get(person.organizationId) ?? 0) + 1);
@@ -38,6 +39,7 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
         <Link className="secondary-button" href={`/more/clubs/reports?event=${event.id}`}>
           <FileText aria-hidden="true" size={14} /> All clubs&apos; monthly reports
         </Link>
+        {teamSettings && <Link className="secondary-button" href={`/more/team-results?event=${event.id}`}>Team results</Link>}
       </div>
       <div className="page-intro">
         <div>
@@ -55,15 +57,18 @@ export default async function EventClubsPage({ searchParams }: { searchParams: P
               <caption className="sr-only">Registered clubs</caption>
               <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Club</th><th role="columnheader" scope="col">Going</th>{backgroundFlags && <th role="columnheader" scope="col">Sterling Volunteers</th>}<th role="columnheader" scope="col">Registration</th><th role="columnheader" scope="col"><span className="sr-only">Open</span></th></tr></thead>
               <tbody role="rowgroup">
-                {clubs.map((club) => (
-                  <tr role="row" key={club.organizationId}>
-                    <th role="rowheader" scope="row" translate="no">{club.name}{club.sponsoringChurch && <small> · {club.sponsoringChurch}</small>}</th>
+                {clubs.map((club, index) => (
+                  <tr role="row" key={`${club.organizationId}:${club.teamKey}`}>
+                    <th role="rowheader" scope="row" translate="no">{club.teamName ? `${club.teamName} (${club.name})` : club.name}{club.sponsoringChurch && <small> · {club.sponsoringChurch}</small>}</th>
                     <td {...cardCell("Going")}>{club.attendeeCount}</td>
                     {backgroundFlags && (
                       <td {...cardCell("Sterling Volunteers")}>
-                        {neededByClub.get(club.organizationId)
-                          ? <><BackgroundCheckBadge /> <small className="quiet-copy">{neededByClub.get(club.organizationId)}</small></>
-                          : <small className="quiet-copy">All current</small>}
+                        {/* Sterling Volunteers records are the club's, not a team's (#809): a club's count shows once, on its first team. */}
+                        {clubs.findIndex((other) => other.organizationId === club.organizationId) !== index
+                          ? <small className="quiet-copy">Club-wide, shown above</small>
+                          : neededByClub.get(club.organizationId)
+                            ? <><BackgroundCheckBadge /> <small className="quiet-copy">{neededByClub.get(club.organizationId)}{club.teamName ? " (club-wide)" : ""}</small></>
+                            : <small className="quiet-copy">All current</small>}
                       </td>
                     )}
                     <td {...cardCell("Registration")}>{club.confirmationCode}</td>

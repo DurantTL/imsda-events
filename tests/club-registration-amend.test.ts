@@ -226,6 +226,8 @@ function fixture({
         return created;
       }),
     },
+    eventTeamSettings: { findUnique: vi.fn(async () => null) },
+    clubTeamMemberPermission: { findMany: vi.fn(async () => []) },
     clubRosterMember: { findMany: vi.fn(async () => rosterRows), updateMany: vi.fn(async () => ({ count: 1 })) },
     attendeeAccount: { findUnique: vi.fn(async () => ({ displayName: "Test Director" })) },
     registration: {
@@ -315,7 +317,7 @@ describe("club registration edit (H3b, #366)", () => {
     }, beforeDeadline);
 
     // Only the club summary: none of the engine's staff view.
-    expect(result).toEqual({ confirmationCode: "REG-CLUB", updatedAt: "2026-10-15T13:00:00.000Z", attendeeCount: 2 });
+    expect(result).toEqual({ confirmationCode: "REG-CLUB", updatedAt: "2026-10-15T13:00:00.000Z", attendeeCount: 2, permissionNotices: [] });
     expect(pendingMessageIds).toEqual(["message-1"]);
     // m2 (off the roster, explicitly not kept) is removed.
     expect(prisma.registrationAttendee.deleteMany).toHaveBeenCalledWith({ where: { registrationId: "registration-1", id: { in: ["attendee-m2"] } } });
@@ -640,7 +642,7 @@ describe("club registration edit (H3b, #366)", () => {
     const first = await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, edit, beforeDeadline);
     const replay = await amendClubRegistration("club-1", "event-1", { accountId: "director-1" }, edit, beforeDeadline);
     expect(replay.result).toEqual(first.result);
-    expect(Object.keys(replay.result).sort()).toEqual(["attendeeCount", "confirmationCode", "updatedAt"]);
+    expect(Object.keys(replay.result).sort()).toEqual(["attendeeCount", "confirmationCode", "permissionNotices", "updatedAt"]);
     expect(JSON.stringify(replay)).not.toMatch(/Staff-only|Staff Person|adjustments|lineItems/);
   });
 

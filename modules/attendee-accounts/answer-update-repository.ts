@@ -10,6 +10,8 @@ import {
 } from "@/modules/attendee-accounts/registration-answer-policy";
 import { enqueueRegistrationUpdatedMessage } from "@/modules/communications/transactional-messages";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
+import { ClubTeamError } from "@/modules/club-teams/errors";
+import { enforceTeamRegistrationRules } from "@/modules/club-teams/registration-guard";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { hydrateFormOptions } from "@/modules/forms/form-options-repository";
 import { publicAttendeeName } from "@/modules/public-access/domain";
@@ -252,6 +254,18 @@ export async function updateTieredRegistrationAnswersWithClient(
         data: { formResponses: update.responses as Prisma.InputJsonValue },
       });
     }
+    // A team registration keeps its event's team rules whoever edits it (#809); nothing is saved if they break.
+    let teamMessageIds: string[] = [];
+    try {
+      // Only someone whose own answers change here can be stopped by their own declined permission; a teammate's never stops this.
+      teamMessageIds = (await enforceTeamRegistrationRules(tx, registration.id, {
+        declineScope: "CHANGED_ONLY",
+        changedAttendeeIds: new Set(prepared.filter((update) => update.changedKeys.length > 0).map((update) => update.attendee.id)),
+      })).queuedMessageIds;
+    } catch (error) {
+      if (error instanceof ClubTeamError) throw new AttendeeAnswerUpdateError("INVALID_ANSWER", error.message);
+      throw error;
+    }
     await tx.registration.update({
       where: { id: registration.id },
       data: { updatedAt: input.now },
@@ -353,7 +367,7 @@ export async function updateTieredRegistrationAnswersWithClient(
         } as unknown as Prisma.InputJsonObject,
       },
     });
-    return { ...result, pendingMessageIds: queued.pendingMessageIds, registrationId: registration.id };
+    return { ...result, pendingMessageIds: [...queued.pendingMessageIds, ...teamMessageIds], registrationId: registration.id };
   }
 
   return {

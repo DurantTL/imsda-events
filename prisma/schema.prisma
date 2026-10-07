@@ -520,6 +520,8 @@ enum MessageTemplateKey {
   /// The daily digest of location waitlist changes to Area Coordinators and
   /// event staff (#599). Sent without an event, one email per person.
   LOCATION_WAITLIST_DIGEST
+  /// A team member of 18 or older needs the Area Coordinator's permission (#809): sent to the location's Area Coordinator, else event staff.
+  TEAM_PERMISSION_REQUEST
   /// A club member transfer (#489) was started: sent to the sending club.
   MEMBER_TRANSFER_STARTED
   /// A club member transfer (#489) was resolved (acknowledged, staff-finished,
@@ -681,6 +683,8 @@ model User {
   uploadedEventAssets       EventAsset[]              @relation("EventAssetUploadedBy")
   appliedProgramAssignments ProgramAssignmentRun[]    @relation("ProgramAssignmentAppliedBy")
   clubAssignmentUpdates     ClubEventAssignment[]     @relation("ClubEventAssignmentUpdatedBy")
+  teamResultUpdates         ClubTeamResult[]          @relation("ClubTeamResultUpdatedBy")
+  teamPermissionDecisions   ClubTeamMemberPermission[] @relation("ClubTeamPermissionDecidedBy")
   registrationOperations    RegistrationOperation[]   @relation("RegistrationOperationActor")
   accountMessages           MessageOutbox[]           @relation("AccountMessageRecipient")
   mfaEnrollment             UserMfaEnrollment?
@@ -923,6 +927,7 @@ model PasswordResetToken {
  */
 model AttendeeAccount {
   id                 String                @id @default(cuid())
+  teamPermissionDecisions ClubTeamMemberPermission[] @relation("ClubTeamPermissionDecidedByAccount")
   email              String                @unique
   displayName        String
   firstName          String?
@@ -1443,6 +1448,7 @@ model Event {
   honorSessions                       HonorSession[]
   honorOfferings                      HonorOffering[]
   clubRegistrations                   ClubEventRegistration[]
+  teamSettings                        EventTeamSettings?
   groupRegistrations                  GroupEventRegistration[]
   billingResponsibilities             RegistrationBillingResponsibility[]
   billingResponsibilityChanges        RegistrationBillingResponsibilityChange[]
@@ -2683,6 +2689,7 @@ model RegistrationWaitlistEntry {
 
 model RegistrationAttendee {
   id              String   @id @default(cuid())
+  teamPermission  ClubTeamMemberPermission?
   eventId         String
   registrationId  String
   personId        String
@@ -2714,6 +2721,8 @@ model RegistrationAttendee {
   @@unique([registrationId, personId])
   @@index([registrationId, position])
   @@index([eventId, attendeeType])
+  /// "Who is already on another team of this club for this event" (#809) reads an event's attendees by person.
+  @@index([eventId, personId])
   @@index([attendeeTypeDefinitionId])
 }
 
@@ -4462,6 +4471,13 @@ model ClubEventRegistration {
   eventId              String
   organizationId       String
   registrationId       String   @unique
+  /// The team's name as the director typed it (#809), on an event that lets a club register more than one team
+  /// (`EventTeamSettings.allowMultipleTeams`). Null on every other event, so those rows read exactly as before.
+  teamName             String?
+  /// The team name, normalized (case, spacing), or the empty string for a club's one registration on an event without
+  /// teams. It is part of the key `(eventId, organizationId, teamKey)`, which is today's one-per-club rule when the key is
+  /// always `''`, and a hand-written partial unique index makes a named team's key unique within the whole event.
+  teamKey              String   @default("")
   submittedByAccountId String?
   /// Set instead of `submittedByAccountId` for a staff "act as" director (#442).
   submittedByUserId    String?
@@ -4473,8 +4489,10 @@ model ClubEventRegistration {
   submittedBy     AttendeeAccount? @relation("ClubEventRegistrationSubmittedBy", fields: [submittedByAccountId], references: [id], onDelete: SetNull)
   submittedByUser User?            @relation("ClubEventRegistrationSubmittedByUser", fields: [submittedByUserId], references: [id], onDelete: SetNull)
   assignment      ClubEventAssignment?
+  teamResults     ClubTeamResult[]
+  teamPermissions ClubTeamMemberPermission[]
 
-  @@unique([eventId, organizationId])
+  @@unique([eventId, organizationId, teamKey])
   @@index([organizationId])
 }
 
@@ -4533,7 +4551,9 @@ model ClubEventAssignment {
   clubEventRegistration ClubEventRegistration @relation(fields: [clubEventRegistrationId], references: [id], onDelete: Cascade)
   updatedBy             User?                 @relation("ClubEventAssignmentUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
-  @@unique([eventId, organizationId])
+  /// One per `ClubEventRegistration` (`clubEventRegistrationId` is unique), so a club with several teams (#809) has one
+  /// per team; `(eventId, organizationId)` is therefore an ordinary index, not a key.
+  @@index([eventId, organizationId])
   @@index([eventId, updatedAt])
 }
 
@@ -4563,6 +4583,12 @@ model ClubRegistrationDraft {
   /// Not a foreign key: a location removed later is explained on restore rather
   /// than blocking the draft. A draft reserves no seats.
   locationId         String?
+  /// Which of the club's drafts this is (#809). `''` on an event without teams, so it has the one draft it always had;
+  /// on an event with teams, a random id the page picks for each team being registered. Not the team's key: a name can
+  /// change while typing, and the registration's own key is made from the name at submit.
+  draftKey           String   @default("")
+  /// The team name typed so far (#809); empty on an event without teams.
+  teamName           String   @default("")
   /// Bumped by every save. A save must name the revision it was based on, so a
   /// second tab's stale save is refused instead of silently overwriting (#659).
   revision           Int      @default(0)
@@ -4580,7 +4606,7 @@ model ClubRegistrationDraft {
   updatedBy     AttendeeAccount? @relation("ClubRegistrationDraftUpdatedBy", fields: [updatedByAccountId], references: [id], onDelete: SetNull)
   updatedByUser User?            @relation("ClubRegistrationDraftUpdatedByUser", fields: [updatedByUserId], references: [id], onDelete: SetNull)
 
-  @@unique([eventId, organizationId])
+  @@unique([eventId, organizationId, draftKey])
 }
 
 /// A person's place in an Honors Weekend class (#359). Taken on the server
@@ -6732,4 +6758,96 @@ model EventLodgingWaitlistHistory {
   entry EventLodgingWaitlistEntry @relation(fields: [entryId, eventId], references: [id, eventId], onDelete: Cascade)
 
   @@index([entryId, at])
+}
+
+/// Team rules for a club event (#809): whether a club may register more than one team, how many members a team has,
+/// the alternate, and the date ages are counted on. A row exists only for an event that uses teams (the Pathfinder Bible
+/// Experience); an event without one behaves exactly as a club event always has. One row per event.
+model EventTeamSettings {
+  eventId            String   @id
+  /// A club may register several teams, each with its own unique name (#809). Off: one registration per club.
+  allowMultipleTeams Boolean  @default(false)
+  /// Fewest and most team members (everyone but the coaches) a registration may have; null for no limit.
+  minTeamMembers     Int?
+  maxTeamMembers     Int?
+  /// Most team members that may be marked the alternate; 0 means the event has no alternate.
+  maxAlternates      Int      @default(0)
+  /// Ages are counted on this calendar date (`YYYY-MM-DD`) instead of the event's first day; null counts on the event date.
+  ageAsOf            String?
+  /// The oldest a team member may be on that date; null for no limit. Coaches are never held to it.
+  maxMemberAge       Int?
+  /// The line under the title on the printed form, e.g. the books the team studies.
+  booksLine          String   @default("")
+  /// The dates and places of the levels above this event's Area level, for the printed form and the results report.
+  /// `[{ level: "CONFERENCE" | "UNION", date: "YYYY-MM-DD", place: string }]`.
+  levelInfo          Json     @default("[]")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+enum TeamResultLevel {
+  AREA
+  CONFERENCE
+  UNION
+}
+
+/// How a team did at one level of a multi-level event (#809): a free-text placement or score and whether it qualified
+/// for the next level. The Conference and Union levels are not registrations of their own, so their results live here,
+/// beside the one registration the team made for the Area level. Entered by staff; the club's director reads them.
+model ClubTeamResult {
+  id                      String          @id @default(cuid())
+  clubEventRegistrationId String
+  level                   TeamResultLevel
+  /// Free text, e.g. "2nd place" or "412 points".
+  placement               String          @default("")
+  qualified               Boolean         @default(false)
+  notes                   String          @default("")
+  updatedByUserId         String?
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+
+  clubEventRegistration ClubEventRegistration @relation(fields: [clubEventRegistrationId], references: [id], onDelete: Cascade)
+  updatedBy             User?                 @relation("ClubTeamResultUpdatedBy", fields: [updatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([clubEventRegistrationId, level])
+}
+
+enum TeamPermissionStatus {
+  PENDING
+  GRANTED
+  DECLINED
+}
+
+/// A team member who is 18 or older on the event's age date needs the Area Coordinator's permission (#809). The team
+/// registers anyway: this is a flag, not a block. One row per PERSON on a team, so a decision outlives the attendee row it
+/// was made about: a person who stops needing the flag (a coach, removed, under 18) keeps a granted or declined decision
+/// (marked inactive) and gets it back if they become a team member of 18 or older on that team again; only a pending flag is
+/// deleted. Decided by the Area Coordinator (who does not direct the team's own club), or staff who manage registrations;
+/// a declined person must become a coach or leave before the team can be saved again.
+model ClubTeamMemberPermission {
+  id                      String               @id @default(cuid())
+  eventId                 String
+  clubEventRegistrationId String
+  personId                String
+  /// The person's current attendee row on the team; null while the flag is inactive.
+  registrationAttendeeId  String?              @unique
+  active                  Boolean              @default(true)
+  status                  TeamPermissionStatus @default(PENDING)
+  /// The age on the age date when it was flagged, kept for the Area Coordinator's view.
+  ageOnAgeDate            Int
+  decidedByUserId         String?
+  decidedByAccountId      String?
+  decidedAt               DateTime?
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+
+  clubEventRegistration ClubEventRegistration @relation(fields: [clubEventRegistrationId], references: [id], onDelete: Cascade)
+  attendee              RegistrationAttendee? @relation(fields: [registrationAttendeeId], references: [id], onDelete: SetNull)
+  decidedByUser         User?                 @relation("ClubTeamPermissionDecidedBy", fields: [decidedByUserId], references: [id], onDelete: SetNull)
+  decidedByAccount      AttendeeAccount?      @relation("ClubTeamPermissionDecidedByAccount", fields: [decidedByAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([clubEventRegistrationId, personId])
+  @@index([eventId, status])
 }

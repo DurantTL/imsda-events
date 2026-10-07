@@ -1,5 +1,6 @@
 "use client";
 
+import { pluralAttendeeLabel } from "@/modules/forms/attendee-label";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
   AlertTriangle,
@@ -80,7 +81,7 @@ import {
   type RegistrationFormDefinition,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
-import { perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
+import { noCostPrice, perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 import {
   AttendeeRosterCsvError,
   createAttendeeRosterCsvTemplate,
@@ -271,6 +272,11 @@ export type PublicRegistrationFormProps = {
     lockedRegistrationFieldKeys?: string[];
     /** The event location the club picked (#413), sent beside the answers; the server checks it again. */
     locationId?: string | null;
+    /** The team being registered (#809), on an event that lets a club register several: its name and the draft it replaces, sent beside the answers. */
+    teamName?: string | null;
+    /** The event is a team event with nothing to pay (#809): the price notice says "No cost." */
+    noCost?: boolean;
+    draftKey?: string | null;
     /** Classes picked under each person's details (#618, #650), by attendee client id; saved by the server after the registration. */
     honorSelections?: Record<string, string[]>;
     submitUrl: string;
@@ -795,12 +801,15 @@ export function PublicRegistrationForm({
     ?? calculation.subtotalCents
     ?? 0;
   // Church-billed events show the per-person price only, never a total (#621).
-  const perPerson = perPersonPrice({
+  // A free team event (#809) has no church bill to announce, so it says "No cost." instead.
+  const freeTeamEvent = club?.noCost === true;
+  const priced = perPersonPrice({
     lineItems: calculation.lineItems,
     roster: rosterEnabled,
     attendeeCount: rosterEnabled ? attendees.length : undefined,
     attendeeNames: rosterEnabled ? attendees.map((attendee, index) => attendeeName(attendee, index, roster.attendeeLabel)) : undefined,
   });
+  const perPerson = freeTeamEvent ? noCostPrice(priced) : priced;
   // The lead wording and the invoice recipient come from the configured fee and the church answer (#743).
   const invoiceTerms = deferredOrganizationBilling
     ? churchInvoiceTerms(definition, { pricingDate, attendeeLabel: rosterEnabled ? roster.attendeeLabel : undefined })
@@ -2518,7 +2527,7 @@ export function PublicRegistrationForm({
             <p className="public-registration-eyebrow">Attendees</p>
             <h3>
               {rosterEnabled
-                ? `${attendees.length} ${attendees.length === 1 ? roster.attendeeLabel.toLowerCase() : `${roster.attendeeLabel.toLowerCase()}s`}`
+                ? `${attendees.length} ${pluralAttendeeLabel(roster.attendeeLabel, attendees.length)}`
                 : singleAttendeeName}
             </h3>
             {rosterEnabled && (
@@ -2738,7 +2747,7 @@ export function PublicRegistrationForm({
         key: "attendees",
         path: "attendees",
         attendeeIndex: null,
-        message: `Add between ${roster.minAttendees} and ${roster.maxAttendees} ${roster.attendeeLabel.toLowerCase()}${roster.maxAttendees === 1 ? "" : "s"}.`,
+        message: `Add between ${roster.minAttendees} and ${roster.maxAttendees} ${pluralAttendeeLabel(roster.attendeeLabel, roster.maxAttendees)}.`,
       });
     }
     const projectedUsage = cloneChoiceUsage(definition, choiceUsage);
@@ -2847,6 +2856,8 @@ export function PublicRegistrationForm({
           ...(responsibleAdultMinors.length > 0 ? { responsibleAdults: responsibleAdultValues } : {}),
           ...(lodgingSubmission ? { lodging: lodgingSubmission } : {}),
           ...(club?.locationId ? { locationId: club.locationId } : {}),
+          ...(club?.teamName ? { teamName: club.teamName } : {}),
+          ...(club?.draftKey ? { draftKey: club.draftKey } : {}),
           ...(club?.honorSelections && Object.keys(club.honorSelections).length > 0 ? { honorSelections: club.honorSelections } : {}),
           ...(group?.locationId ? { locationId: group.locationId } : {}),
           ...(Object.keys(groupPicks).length > 0 ? { honorSelections: groupPicks } : {}),
@@ -2978,7 +2989,7 @@ export function PublicRegistrationForm({
             </dl>
             {deferredOrganizationBilling && (
               <>
-                <PerPersonPriceNotice price={confirmation.perPerson ?? perPersonPrice({ lineItems: confirmation.lineItems, roster: rosterEnabled })} className="public-registration-review-waitlist" />
+                <PerPersonPriceNotice price={freeTeamEvent ? noCostPrice(confirmation.perPerson ?? perPersonPrice({ lineItems: confirmation.lineItems, roster: rosterEnabled })) : (confirmation.perPerson ?? perPersonPrice({ lineItems: confirmation.lineItems, roster: rosterEnabled }))} className="public-registration-review-waitlist" />
                 {!waitlisted && <p className="public-registration-review-waitlist">No payment is due online.</p>}
               </>
             )}
@@ -3263,7 +3274,7 @@ export function PublicRegistrationForm({
             </p>
           )}
           {group?.waitlistNote && <p className="public-registration-summary-empty">{group.waitlistNote}</p>}
-          {rosterEnabled && <p className="public-registration-summary-roster"><UsersRound size={15} aria-hidden="true" /> {attendees.length} {attendees.length === 1 ? roster.attendeeLabel.toLowerCase() : `${roster.attendeeLabel.toLowerCase()}s`}</p>}
+          {rosterEnabled && <p className="public-registration-summary-roster"><UsersRound size={15} aria-hidden="true" /> {attendees.length} {pluralAttendeeLabel(roster.attendeeLabel, attendees.length)}</p>}
           {deferredOrganizationBilling ? <ChurchInvoiceNotice terms={shownInvoiceTerms} price={perPerson} className="public-registration-summary-lines" /> : calculation.lineItems.length === 0 ? <p className="public-registration-summary-empty">Select any priced options to see your total.</p> : (
             <div className="public-registration-summary-lines">
               {calculation.lineItems.map((item) => (

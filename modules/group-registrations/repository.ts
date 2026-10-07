@@ -128,7 +128,8 @@ export function groupAttendeePreparer(): GroupSubmissionContext["prepareAttendee
 
 async function groupEventBySlug(eventSlug: string) {
   const event = await getPrisma().event.findFirst({
-    where: { slug: eventSlug, isPublished: true, audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE" },
+    // An event with team rules (#809) takes club teams only: a group would skip every team rule.
+    where: { slug: eventSlug, isPublished: true, audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", teamSettings: { is: null } },
     select: { id: true },
   });
   if (!event) throw new GroupRegistrationError("EVENT_NOT_FOUND", "That event isn't taking group registrations.");

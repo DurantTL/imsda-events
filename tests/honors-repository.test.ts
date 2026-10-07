@@ -39,6 +39,8 @@ function fakeDatabase() {
     failNextOfferingUpdateWithUnique: false,
     /** Offerings whose picks were already written back into members' honor records. */
     writtenBackOfferingIds: [] as string[],
+    /** Events where a club registers several teams (#809). */
+    teamEvents: [] as string[],
   };
   const id = (prefix: string) => `${prefix}-${++sequence}`;
   const matches = (row: Row, where: Record<string, unknown> = {}) =>
@@ -86,6 +88,8 @@ function fakeDatabase() {
       count: async ({ where }: { where: Record<string, unknown> }) => db.locations.filter((location) => matches({ isActive: true, ...location }, where)).length,
     },
     event: { findUnique: async ({ where }: { where: Row }) => db.events.find((event) => event.id === where.id) ?? null },
+    // Team rules (#809): none unless a test turns teams on for an event.
+    eventTeamSettings: { findUnique: async ({ where }: { where: Row }) => (db.teamEvents.includes(where.eventId as string) ? { allowMultipleTeams: true } : null) },
     honor: {
       findUnique: async ({ where }: { where: Row }) => db.honors.find((honor) => honor.id === where.id) ?? null,
       findMany: async () => db.honors.map((honor) => ({
@@ -228,6 +232,18 @@ describe("honor offerings", () => {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
     });
     expect(mocks.writeAuditLog.mock.calls[0][0]).toMatchObject({ action: "HONOR_OFFERING_CREATED", eventId: "site-a" });
+  });
+
+  it("creates no class or session on an event where a club registers several teams (#809)", async () => {
+    fake.db.teamEvents.push("site-a");
+    const sessionsBefore = fake.db.sessions.length;
+    await expect(createHonorOffering("site-a", offeringInput(), "staff-1")).rejects.toMatchObject({ code: "EVENT_HAS_TEAMS" });
+    await expect(createHonorSession("site-a", { name: "Session", locationId: null } as never, "staff-1")).rejects.toMatchObject({ code: "EVENT_HAS_TEAMS" });
+    expect(fake.db.offerings).toHaveLength(0);
+    expect(fake.db.sessions).toHaveLength(sessionsBefore);
+    // Turned off again, the same class is created.
+    fake.db.teamEvents.length = 0;
+    await expect(createHonorOffering("site-a", offeringInput(), "staff-1")).resolves.toBeDefined();
   });
 
   it("refuses a duplicate in the same session and an all-sessions clash", async () => {

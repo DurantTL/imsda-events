@@ -116,6 +116,7 @@ function fixture() {
       )),
       create: vi.fn().mockResolvedValue({ id: "cer-1" }),
     },
+    eventTeamSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(null), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     publicRegistrationSubmission: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "submission-1" }) },
     registrationCapacityReservation: { findMany: vi.fn().mockResolvedValue([]), createMany: vi.fn() },

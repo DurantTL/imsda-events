@@ -138,6 +138,7 @@ const pages: PageSpec[] = [
   // Area Coordinator.
   area("overview", "/account/area-clubs/overview"),
   area("events", "/account/area-clubs/events"),
+  area("team-permissions", "/account/area-clubs/team-permissions"),
   area("points", "/account/area-clubs/points"),
   area("reports", "/account/area-clubs/reports"),
   area("club-home", `/account/area/${clubA}`),
@@ -170,6 +171,7 @@ const pages: PageSpec[] = [
   staff("promo-codes", "/more/promo-codes"),
   staff("tags", "/more/tags"),
   staff("event-settings", "/more/event-settings"),
+  staff("team-results", "/more/team-results"),
   staff("check-in", "/check-in"),
   staff("communications", "/communications"),
   staff("registration-builder", "/registration-builder"),

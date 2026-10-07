@@ -160,6 +160,11 @@ export type SourceConfiguration = {
     collectsShirtSizes: boolean;
     checksAdultBackgrounds: boolean;
     community: SourceCommunitySettings | null;
+    /**
+     * The event's team rules (#809), when it has any. Optional so a source without them reads as before. The age date
+     * and the dates of the later levels are for one year, so a copy never carries them.
+     */
+    teamSettings?: { allowMultipleTeams: boolean; minTeamMembers: number | null; maxTeamMembers: number | null; maxAlternates: number; maxMemberAge: number | null; booksLine: string } | null;
   };
   contentSections: Array<{
     kind: "RICH_TEXT" | "RESOURCE_LINKS" | "NOTICE" | "STEPS" | "CHECKLIST";
@@ -650,7 +655,7 @@ export function buildClonePlan(rawConfig: SourceConfiguration, fingerprint: stri
 
   const assetLinks = config.contentSections.reduce((total, section) => total + section.assetLinkCount, 0);
   const linkCount = config.contentSections.reduce((total, section) => total + section.links.length, 0);
-  const moduleCount = 4 + (config.moduleToggles.community ? 1 : 0);
+  const moduleCount = 4 + (config.moduleToggles.community ? 1 : 0) + (config.moduleToggles.teamSettings ? 1 : 0);
   const privateLinkNote = (key: CloneDomainKey) => {
     const count = findings.filter((finding) => finding.domain === key).length;
     return count > 0 ? [`${plural(count, "private link")} need${count === 1 ? "s" : ""} review and will be removed from the copy.`] : [];
@@ -659,7 +664,10 @@ export function buildClonePlan(rawConfig: SourceConfiguration, fingerprint: stri
 
   const notes: Record<CloneDomainKey, string[]> = {
     eventDetails: privateLinkNote("eventDetails"),
-    moduleToggles: [`${moduleCount - (config.moduleToggles.community ? 1 : 0)} switches${config.moduleToggles.community ? " and community settings" : ""} are copied as they are, on or off.`],
+    moduleToggles: [
+      `${4} switches${config.moduleToggles.community ? " and community settings" : ""} are copied as they are, on or off.`,
+      ...(config.moduleToggles.teamSettings ? ["Team rules (teams, team size, alternate, oldest age) are copied. The date ages are counted on and the dates of the later levels are not: enter them on the new event."] : []),
+    ],
     contentSections: [
       linkCount > 0 ? `${plural(linkCount, "web link")} copied.` : "No web links.",
       ...(assetLinks > 0 ? [`${plural(assetLinks, "link")} to uploaded files will be skipped.`] : []),

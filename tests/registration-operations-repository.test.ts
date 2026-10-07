@@ -185,6 +185,8 @@ function fixture() {
   const createdOperations: Array<Record<string, unknown>> = [];
   const audits: Array<Record<string, unknown>> = [];
   const tx = {
+    // Not a team registration (#809): the substitution has no team rules to keep.
+    clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null) },
     registrationOperation: {
       findUnique: vi.fn(async () => replay),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {

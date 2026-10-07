@@ -25,8 +25,10 @@ export async function resolveClubOversight(requestedEventId?: string) {
 export async function listRegisteredClubs(eventId: string) {
   const registrations = await getPrisma().clubEventRegistration.findMany({
     where: { eventId, registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } },
-    orderBy: { organization: { name: "asc" } },
+    orderBy: [{ organization: { name: "asc" } }, { teamKey: "asc" }],
     select: {
+      teamKey: true,
+      teamName: true,
       organization: { select: { id: true, name: true, parentOrganization: { select: { name: true } } } },
       registration: { select: { confirmationCode: true, _count: { select: { attendees: true } } } },
     },
@@ -34,6 +36,9 @@ export async function listRegisteredClubs(eventId: string) {
   return registrations.map((row) => ({
     organizationId: row.organization.id,
     name: row.organization.name,
+    // A club's teams (#809) are listed one to a row, each with its own registration.
+    teamKey: row.teamKey,
+    teamName: row.teamName,
     sponsoringChurch: row.organization.parentOrganization?.name ?? null,
     confirmationCode: row.registration.confirmationCode,
     attendeeCount: row.registration._count.attendees,

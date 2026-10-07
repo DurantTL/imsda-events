@@ -124,6 +124,21 @@ describe("groupBillingLines (#165)", () => {
     expect(groups.find((group) => group.title === "Beta SDA Church")!.readiness).toBe("NO_CONTACT");
   });
 
+  it("keeps a club's teams in one per-club group, titled with the club's name and with a line for each team (#809)", () => {
+    const teams = [
+      line({ registrationId: "t1", party: a, clubId: "club-1", clubName: "Bible Bees (Alpha Pathfinders)", clubOrganizationName: "Alpha Pathfinders" }),
+      line({ registrationId: "t2", party: a, clubId: "club-1", clubName: "Sword Drill (Alpha Pathfinders)", clubOrganizationName: "Alpha Pathfinders" }),
+    ];
+    const perClub = groupBillingLines(teams, "PER_CLUB", contacts);
+    expect(perClub).toHaveLength(1);
+    expect(perClub[0]!.title).toBe("Alpha Pathfinders");
+    expect(perClub[0]!.lines.map((entry) => entry.clubName)).toEqual(["Bible Bees (Alpha Pathfinders)", "Sword Drill (Alpha Pathfinders)"]);
+    const perChurch = groupBillingLines(teams, "PER_CHURCH", contacts);
+    expect(perChurch).toHaveLength(1);
+    expect(perChurch[0]!.title).toBe("Alpha SDA Church");
+    expect(perChurch[0]!.lines).toHaveLength(2);
+  });
+
   it("splits each club into its own group per club, still addressed to the church's contact", () => {
     const groups = groupBillingLines(lines, "PER_CLUB", contacts);
     const alphaGroups = groups.filter((group) => group.party.kind === "ORGANIZATION" && group.party.id === "church-1");

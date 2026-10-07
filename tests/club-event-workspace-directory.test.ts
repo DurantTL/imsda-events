@@ -49,6 +49,8 @@ function mockPrisma(parentOrganization: { name: string; isActive: boolean } | nu
     }) },
     registrationForm: { findFirst: vi.fn().mockResolvedValue({ slug: "clubs", versions: [{ definition }] }) },
     eventLocation: { findMany: vi.fn().mockResolvedValue([]) },
+    eventTeamSettings: { findUnique: vi.fn().mockResolvedValue(null) },
+    clubTeamMemberPermission: { findMany: vi.fn().mockResolvedValue([]) },
     clubRosterMember: { findMany: vi.fn().mockResolvedValue([]) },
     clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null) },
     clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(draftResponses ? {
@@ -133,7 +135,7 @@ describe("club event workspace locations (#413)", () => {
     });
     if (registered) {
       prisma.clubEventRegistration.findUnique.mockResolvedValue({
-        createdAt: new Date("2026-10-10T12:00:00Z"), registrationId: "registration-1",
+        createdAt: new Date("2026-10-10T12:00:00Z"), registrationId: "registration-1", teamKey: "", teamName: null, teamResults: [],
         registration: {
           confirmationCode: "REG-CLUB", status: "SUBMITTED", updatedAt: new Date("2026-10-10T12:00:00Z"), totalAmount: 0,
           location: registered.location, attendees: [], messages: [],
@@ -153,7 +155,7 @@ describe("club event workspace locations (#413)", () => {
       ...(await prisma.event.findFirst()), supportContact: "events@example.test",
     });
     prisma.clubEventRegistration.findUnique.mockResolvedValue({
-      createdAt: new Date("2026-10-10T12:00:00Z"), registrationId: "registration-1",
+      createdAt: new Date("2026-10-10T12:00:00Z"), registrationId: "registration-1", teamKey: "", teamName: null, teamResults: [],
       registration: {
         confirmationCode: "REG-CLUB", status: "SUBMITTED", updatedAt: new Date("2026-10-10T12:00:00Z"),
         location: null, attendees: [], messages: [{ status: outbox }],
@@ -165,6 +167,20 @@ describe("club event workspace locations (#413)", () => {
     expect(keys).toEqual(expect.arrayContaining(["REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED", "WAITLIST_PROMOTED"]));
     expect(workspace.registration?.confirmationEmail.status).toBe(expected);
     expect(workspace.registration?.confirmationEmail.supportEmail).toBe(hasSupport ? "events@example.test" : null);
+  });
+
+  it("hands the director the team's results to read, and the team's own name and key (#809)", async () => {
+    const prisma = mockPrisma(null);
+    Object.assign(prisma, { registration: { findFirst: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]) } });
+    prisma.clubEventRegistration.findUnique.mockResolvedValue({
+      createdAt: new Date("2026-10-10T12:00:00Z"), registrationId: "registration-1", teamKey: "", teamName: null,
+      teamResults: [{ level: "AREA", placement: "2nd place", qualified: true, notes: "Well done", updatedAt: new Date("2027-01-16T20:00:00Z") }],
+      registration: { confirmationCode: "REG-CLUB", status: "SUBMITTED", updatedAt: new Date("2026-10-10T12:00:00Z"), location: null, attendees: [], messages: [] },
+    });
+    const workspace = await getClubEventWorkspace("club-1", "event-1", now);
+    expect(workspace.registration?.results).toEqual([{ level: "AREA", placement: "2nd place", qualified: true, notes: "Well done" }]);
+    // Read only: the director's payload carries no id to write one back with.
+    expect(JSON.stringify(workspace.registration?.results)).not.toContain("updatedAt");
   });
 
   it("has no locations for an event without them, and reads no seat counts", async () => {
