@@ -876,3 +876,57 @@ export async function checkModuleRequestRateLimit(request: Request, userId: stri
     },
   ], configuration);
 }
+
+/**
+ * The public "Register a new club" form (#817). Submitting writes a row and
+ * emails the conference, so it is held tight: six an hour from one address,
+ * charged once per submit (the route calls this once, before parsing the
+ * body), and only three a day naming the same director email
+ * (`checkNewClubApplicationEmailRateLimit`, charged after the body is read).
+ */
+export async function checkNewClubApplicationSubmitRateLimit(request: Request) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  return evaluate([{
+    policy: "club-application.submit.client",
+    limit: 6,
+    windowSeconds: oneHour,
+    identifierHashes: [client],
+  }], configuration);
+}
+
+export async function checkNewClubApplicationEmailRateLimit(directorEmail: string) {
+  const configuration = getRateLimitConfiguration();
+  const email = hashRateLimitIdentifier(
+    "club-application-director-email",
+    directorEmail.trim().toLowerCase(),
+    configuration,
+  );
+  return evaluate([{
+    policy: "club-application.submit.email",
+    limit: 3,
+    windowSeconds: 24 * oneHour,
+    identifierHashes: [email],
+  }], configuration);
+}
+
+/** Opening an invite's private link (#817): the token is a 256-bit secret, so this only stops scripted guessing. */
+export async function checkNewClubApplicationLinkRateLimit(request: Request, token: string) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const tokenHash = hashRateLimitIdentifier("club-application-link-token", token, configuration);
+  return evaluate([
+    {
+      policy: "club-application.link.client",
+      limit: 60,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [client],
+    },
+    {
+      policy: "club-application.link.token",
+      limit: 60,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [tokenHash],
+    },
+  ], configuration);
+}

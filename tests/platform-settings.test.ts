@@ -115,6 +115,18 @@ describe("platform settings input", () => {
   });
 });
 
+describe("platform settings new club application notifications (#817)", () => {
+  it("is optional and never defaults to an address: blank means no notice", () => {
+    expect(platformSettingsInputSchema.parse(validInput()).newClubApplicationEmail).toBeNull();
+    expect(platformSettingsInputSchema.parse(validInput({ newClubApplicationEmail: "  " })).newClubApplicationEmail).toBeNull();
+  });
+
+  it("keeps a valid address, trimmed and lower-cased, and refuses a malformed one", () => {
+    expect(platformSettingsInputSchema.parse(validInput({ newClubApplicationEmail: "  Youth.Assistant@IMSDA-Events.test " })).newClubApplicationEmail).toBe("youth.assistant@imsda-events.test");
+    expect(platformSettingsInputSchema.safeParse(validInput({ newClubApplicationEmail: "not-an-address" })).success).toBe(false);
+  });
+});
+
 describe("clearing the passkey domain", () => {
   function settingsDatabase(options: { currentRpId: string | null; passkeyOnlyStaff: number }) {
     const tx = {

@@ -20,6 +20,7 @@
     "test:club-supplies": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-supply-catalog.ts",
     "test:eadventist-import": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-eadventist-import.ts",
     "test:club-imports": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-imports.ts",
+    "test:new-club-application": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-new-club-application.ts",
     "test:club-orders": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-order-fulfillment.ts",
     "test:uniform-orders": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-uniform-orders.ts",
     "test:earned-awards": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-earned-awards.ts",

@@ -32,6 +32,11 @@ import {
   retireClubFormLinkForMessage,
 } from "@/modules/club-forms/link-email";
 import {
+  NEW_CLUB_APPLICATION_INVITE_TEMPLATE_KEY,
+  prepareNewClubInviteBodyForDelivery,
+  retireNewClubInviteForMessage,
+} from "@/modules/club-applications/email";
+import {
   HEALTH_RECORD_LINK_TEMPLATE_KEY,
   prepareHealthRecordLinkBodyForDelivery,
   retireHealthRecordLinkForMessage,
@@ -723,6 +728,13 @@ async function runDeliveryLoop(
             logError("Unable to withdraw a club form link after its email finally failed.", retireError);
           }
         }
+        if (message.templateKey === NEW_CLUB_APPLICATION_INVITE_TEMPLATE_KEY) {
+          try {
+            await retireNewClubInviteForMessage(prisma as unknown as PrismaClient, message.id, now());
+          } catch (retireError) {
+            logError("Unable to withdraw a new club application link after its email finally failed.", retireError);
+          }
+        }
         if (message.templateKey === HEALTH_RECORD_LINK_TEMPLATE_KEY) {
           try {
             await retireHealthRecordLinkForMessage(prisma as unknown as PrismaClient, message.id, now());
@@ -761,6 +773,17 @@ async function prepareAccountEmailBody(
       bodyText: input.bodyText,
       now: input.now,
     });
+  }
+  // New club application email (#817): only the invite carries a sentinel; the rest carry free text and must never be rewritten.
+  if (input.templateKey === NEW_CLUB_APPLICATION_INVITE_TEMPLATE_KEY) {
+    return prepareNewClubInviteBodyForDelivery({
+      messageId: input.messageId,
+      bodyText: input.bodyText,
+      now: input.now,
+    });
+  }
+  if (input.templateKey?.startsWith("NEW_CLUB_APPLICATION_")) {
+    return { bodyText: input.bodyText };
   }
   // Module request email (#741) carries free text and no sentinel: never replace anything in it.
   if (input.templateKey?.startsWith("MODULE_REQUEST_")) {

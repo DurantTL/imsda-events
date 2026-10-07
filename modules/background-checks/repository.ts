@@ -10,6 +10,7 @@ import { ageOn, clubYearChoices, clubYearFor } from "@/modules/club-rosters/doma
 import type { ClubCapabilities } from "@/modules/organizations/director-grants-domain";
 import { activeRegistrationStatuses, calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { BackgroundCheckOperationError } from "@/modules/background-checks/errors";
+import { directorMatchKey, nameWords } from "@/modules/background-checks/director-match";
 import { describeIssues } from "@/modules/background-checks/issues";
 import {
   ageFromAnswer,
@@ -2284,3 +2285,104 @@ export async function clubPortalComplianceStatuses(
 }
 
 export { ROSTER_IMPORT_PROVIDER };
+
+/** The typed name carries the person's first and last name (a middle name or initial doesn't matter). */
+function namesAgree(typed: string, person: { firstName: string; lastName: string }) {
+  const words = new Set(nameWords(typed));
+  const wanted = [...nameWords(person.firstName), ...nameWords(person.lastName)];
+  return wanted.length > 0 && wanted.every((word) => words.has(word));
+}
+
+export type DirectorBackgroundMatch = {
+  state: ClubComplianceState;
+  /** The email reached more than one person; the least favorable state is shown. */
+  ambiguous: boolean;
+  /** The email matched someone, but none of them has the typed director's name. */
+  nameMismatch: boolean;
+};
+
+/**
+ * The Sterling Volunteers status of each applying director (#817), keyed by
+ * `directorMatchKey(email, name)`: Clear, Expiring soon, Not in compliance or No record, the
+ * same labels a club roster shows. A director is matched to an existing person
+ * by email: the person's own email, or the email of an attendee account linked
+ * to them. Someone who matches nobody is "No record". The check is the cached
+ * match, else the same read-time match the rosters use.
+ *
+ * An email can reach more than one person, and the result is then marked
+ * ambiguous. The matched people's names are compared with the name the
+ * applicant typed: the status shown is that of the people who agree (the least
+ * favorable if several), and when none agrees it is No record with the result
+ * marked as a name mismatch, so a stranger's check is never shown as theirs.
+ * It is a flag for staff to review, never a block, and it returns no names,
+ * notes or dates.
+ */
+export async function directorBackgroundStatesByEmail(
+  directors: Array<{ email: string; name: string }>,
+  now = new Date(),
+  prisma: PrismaLike = getPrisma(),
+): Promise<Map<string, DirectorBackgroundMatch>> {
+  const typedNames = new Map<string, string[]>();
+  for (const director of directors) {
+    const email = director.email.trim().toLowerCase();
+    if (!email) continue;
+    typedNames.set(email, [...(typedNames.get(email) ?? []), director.name]);
+  }
+  const wanted = [...typedNames.keys()];
+  const results = new Map<string, DirectorBackgroundMatch>(
+    directors
+      .filter((director) => director.email.trim())
+      .map((director) => [directorMatchKey(director.email, director.name), { state: "NO_RECORD", ambiguous: false, nameMismatch: false }]),
+  );
+  if (wanted.length === 0) return results;
+  const today = calendarDateInEventTimeZone(now, "America/Chicago");
+  const people = await prisma.person.findMany({
+    where: {
+      OR: [
+        { normalizedEmail: { in: wanted } },
+        { attendeeAccountLinks: { some: { account: { email: { in: wanted } } } } },
+      ],
+    },
+    select: {
+      id: true,
+      firstName: true,
+      lastName: true,
+      ...personEmailSelect,
+      backgroundCheckMatch: { select: { entry: { select: { complianceStatus: true, expiresOn: true } } } },
+    },
+  });
+  const uncached = await lookupUncachedChecks(prisma, people
+    .filter((person) => !person.backgroundCheckMatch)
+    .map((person) => ({
+      personId: person.id,
+      firstName: person.firstName,
+      lastName: person.lastName,
+      emails: personEmails(person),
+      birthDates: [],
+      sites: [],
+    })), now);
+  // Least favorable first: a missing record is worse than a clear one, and an expired check is worst.
+  const favor: Record<ClubComplianceState, number> = { NOT_COMPLIANT: 0, NO_RECORD: 1, FLAGGED: 2, CLEAR: 3 };
+  const byEmail = new Map<string, Array<{ state: ClubComplianceState; person: { firstName: string; lastName: string } }>>();
+  for (const person of people) {
+    const check: StoredCheck | null = person.backgroundCheckMatch?.entry ?? uncached.get(person.id) ?? null;
+    const state = clubComplianceState(check, today);
+    for (const email of personEmails(person)) {
+      if (!typedNames.has(email)) continue;
+      byEmail.set(email, [...(byEmail.get(email) ?? []), { state, person }]);
+    }
+  }
+  for (const [email, matches] of byEmail) {
+    // One result per typed name: two applications can share an email and carry different names.
+    for (const name of new Set(typedNames.get(email) ?? [])) {
+      const agreeing = matches.filter((match) => namesAgree(name, match.person));
+      // Someone else's check is never shown as the applicant's: with no matching name the status is No record.
+      // Among people with the typed name, the least favorable status wins (a single one is simply theirs).
+      const state: ClubComplianceState = agreeing.length === 0
+        ? "NO_RECORD"
+        : agreeing.reduce((least, match) => (favor[match.state] < favor[least.state] ? match : least)).state;
+      results.set(directorMatchKey(email, name), { state, ambiguous: matches.length > 1, nameMismatch: agreeing.length === 0 });
+    }
+  }
+  return results;
+}

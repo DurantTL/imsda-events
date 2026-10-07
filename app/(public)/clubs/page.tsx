@@ -40,6 +40,7 @@ export default async function PublicClubsPage() {
           <p className="public-registration-eyebrow">Iowa-Missouri Conference</p>
           <h1>Find a club</h1>
           <p>Pathfinder and Adventurer clubs that have chosen to be listed publicly.</p>
+          <p><Link href="/clubs/register">Register a new club</Link>: applications are open all year.</p>
         </div>
       </section>
 

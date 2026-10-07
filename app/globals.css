@@ -10354,3 +10354,32 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 /* The page container normalises widths (#720); the blocks join it. */
 .public-event-container > .event-blocks,
 .public-event-container > .event-hero-banner { width: auto; max-width: none; margin-right: 0; margin-left: 0; }
+
+/* New club applications (#817): the public form's agreement and board list, and the review queue's cards. */
+.nca-agree { display: flex; align-items: flex-start; gap: 10px; font-weight: 600; line-height: 1.5; }
+.nca-agree input { flex: none; margin-top: 4px; }
+.nca-board { display: grid; gap: 8px; min-width: 0; }
+.nca-board-title { font-size: max(var(--type-body-floor, 0px), 0.7rem); font-weight: 700; }
+.nca-board-row { display: flex; gap: 8px; align-items: center; }
+.nca-board-row input { flex: 1; min-width: 0; }
+.nca-board-add { justify-self: start; }
+.nca-queue { min-width: 0; }
+.nca-list { display: grid; gap: 14px; min-width: 0; }
+.nca-card { display: grid; gap: 12px; min-width: 0; border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+.nca-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px 12px; }
+.nca-head h3 { margin: 0; overflow-wrap: anywhere; }
+.nca-head p { margin: 4px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+.nca-flags { display: flex; flex-wrap: wrap; gap: 8px; }
+.nca-duplicates { display: grid; gap: 4px; margin: 0; padding: 10px 12px 10px 28px; border-radius: 10px; background: var(--imsda-gold-soft); color: #805807; }
+.nca-details { display: grid; gap: 8px; margin: 0; }
+.nca-details > div { display: grid; grid-template-columns: minmax(0, 11rem) minmax(0, 1fr); gap: 4px 12px; }
+.nca-details dt { color: var(--muted); font-weight: 700; }
+.nca-details dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .nca-details > div { grid-template-columns: minmax(0, 1fr); } }
+.nca-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.nca-decision { display: grid; gap: 10px; }
+.nca-decision label { display: grid; gap: 6px; font-weight: 700; }
+.nca-decision textarea, .nca-decision select { width: 100%; max-width: 100%; }
+.nca-invite-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); gap: 12px; align-items: end; margin: 8px 0 12px; }
+.nca-invite-form label { display: grid; gap: 6px; font-weight: 700; min-width: 0; }
+.nca-invite-form input { width: 100%; min-width: 0; }
