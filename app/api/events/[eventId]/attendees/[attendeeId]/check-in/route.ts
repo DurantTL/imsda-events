@@ -113,7 +113,7 @@ async function deleteHandler(request: Request, context: { params: Promise<{ even
       ? json({ checkIn })
       : json({
           error: "ACTIVE_CHECK_IN_NOT_FOUND",
-          message: "This attendee does not have an active check-in to undo.",
+          message: "This attendee does not have an active check-in to undo. Another device may have already undone it.",
         }, { status: 404 });
   } catch (error) {
     return apiError(error);

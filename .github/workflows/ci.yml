@@ -207,6 +207,12 @@ jobs:
       # team, and an event without team rules behaving exactly as before.
       - run: npm run test:pbe-registration
 
+      # Check-in desk concurrency (#825): 4 devices checking in the same attendee,
+      # the same retry key re-sent, and different attendees of one registration at
+      # once, plus check-in racing undo and double undo. One record and one audit
+      # entry each, "already checked in by <name>" for the others, never an error.
+      - run: npm run test:check-in-concurrency
+
       # Real-database check of the eAdventist organizations import and church map
       # locations (#649, #724). It creates, migrates and drops its own scratch
       # database on this same Postgres service (the CI role may create databases),
@@ -249,6 +255,11 @@ jobs:
       - run: npm run test:public-roster
       # Lodging assignment through the built app (#200): the private page shows a published room and roommates by first name only, nothing before publishing, the registrant waitlist route needs a private link and the same origin, and every staff route refuses a signed-out caller.
       - run: npm run test:lodging-assignment-http
+      # One staff account on four devices (#825): four cookie jars sign in at once
+      # (password and second step), then scan in parallel with no 401, 403, 429 or
+      # 500, an address change mid-session, re-sent scans, check-in racing undo,
+      # the small live-list poll, and every session still valid at the end.
+      - run: npm run test:check-in-multi-device-http
 
       - name: Show the app log when a suite failed
         if: failure()

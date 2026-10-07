@@ -57,12 +57,22 @@ function requestIdentities(
   };
 }
 
+/**
+ * Staff sign-in budgets, per 15 minutes (#825). Every attempt is charged,
+ * successful or not. A check-in desk signs one staff account in on 2-4 phones
+ * and tablets at once, often behind one venue Wi-Fi or carrier-grade NAT
+ * address, and a typo or two must not lock the fourth device out on arrival
+ * morning. The real brute-force guards are the five-wrong-passwords account
+ * lockout and the three-wrong-codes second-step lock, not these counts.
+ */
+export const staffLoginBudgets = { client: 60, account: 20, clientAccount: 12 } as const;
+
 export async function checkLoginClientRateLimit(request: Request) {
   const configuration = getRateLimitConfiguration();
   const { client } = requestIdentities(request, configuration);
   return evaluate([{
     policy: "auth.login.client",
-    limit: 20,
+    limit: staffLoginBudgets.client,
     windowSeconds: fifteenMinutes,
     identifierHashes: [client],
   }], configuration);
@@ -82,13 +92,13 @@ export async function checkLoginAccountRateLimit(
   return evaluate([
     {
       policy: "auth.login.account",
-      limit: 10,
+      limit: staffLoginBudgets.account,
       windowSeconds: fifteenMinutes,
       identifierHashes: [account],
     },
     {
       policy: "auth.login.client-account",
-      limit: 5,
+      limit: staffLoginBudgets.clientAccount,
       windowSeconds: fifteenMinutes,
       identifierHashes: [client, account],
     },
@@ -553,11 +563,17 @@ export async function checkPublicPromoQuoteRateLimit(
  * one arrival rush could refuse passes to everyone behind that address. The
  * token itself is a long random secret, so the looser client budget does not
  * make guessing one practical; the per-token budgets still cap any one link.
+ *
+ * #825: phones on cellular reach us through carrier-grade NAT, where
+ * unrelated attendees in one lobby share a public address, so the per-client
+ * numbers for `read` and `pass` are sized for a crowd (a 500-person retreat
+ * opening passes in 15 minutes), while the per-link numbers stay small. The
+ * client budget for `update` is untouched.
  */
-const publicManageBudgets = {
-  read: { client: 120, token: 120, clientToken: 60 },
+export const publicManageBudgets = {
+  read: { client: 600, token: 120, clientToken: 60 },
   update: { client: 30, token: 20, clientToken: 10 },
-  pass: { client: 600, token: 240, clientToken: 120 },
+  pass: { client: 3000, token: 240, clientToken: 120 },
 } as const;
 
 export async function checkPublicManageRateLimit(

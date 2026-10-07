@@ -30,6 +30,8 @@ import {
 const SECRET_PURPOSE = "mfa-totp-secret";
 const CHALLENGE_LIFETIME_MINUTES = 10;
 const MAX_CHALLENGE_ATTEMPTS = 5;
+/** Sign-ins that may await their second step at once, per account (#825). */
+export const MAX_LIVE_CHALLENGES = 6;
 // Decision 2026-09-25 (#456): three wrong codes, not five, lock the second
 // factor for fifteen minutes — covers both an authenticator code and a
 // recovery code, at sign-in and in the passkey-change proof.
@@ -431,21 +433,33 @@ export async function issueMfaChallenge(
   const now = options.now ?? new Date();
   const token = createOpaqueToken();
   const expiresAt = new Date(now.getTime() + CHALLENGE_LIFETIME_MINUTES * 60 * 1000);
-  await getPrisma().$transaction([
-    // One live challenge per account: a second sign-in attempt retires the first.
-    getPrisma().mfaChallenge.updateMany({
-      where: { userId, consumedAt: null },
+  const prisma = getPrisma();
+  await prisma.mfaChallenge.create({
+    data: {
+      userId,
+      tokenHash: hashOpaqueToken(token),
+      expiresAt,
+      userAgent: options.userAgent ?? null,
+    },
+  });
+  // A few live challenges per account, not one (#825): a check-in desk signs
+  // one staff account in on 2-4 devices at about the same time, and each
+  // device's second step must survive another device's password. Guessing is
+  // not bounded by how many challenges exist: every challenge is single-use
+  // and capped at MAX_CHALLENGE_ATTEMPTS, and the codes themselves share the
+  // enrolment's lock (MAX_VERIFY_FAILURES). Only the oldest beyond the cap retire.
+  const surplus = await prisma.mfaChallenge.findMany({
+    where: { userId, consumedAt: null, expiresAt: { gt: now } },
+    orderBy: { createdAt: "desc" },
+    skip: MAX_LIVE_CHALLENGES,
+    select: { id: true },
+  });
+  if (surplus.length > 0) {
+    await prisma.mfaChallenge.updateMany({
+      where: { id: { in: surplus.map((challenge) => challenge.id) }, consumedAt: null },
       data: { consumedAt: now },
-    }),
-    getPrisma().mfaChallenge.create({
-      data: {
-        userId,
-        tokenHash: hashOpaqueToken(token),
-        expiresAt,
-        userAgent: options.userAgent ?? null,
-      },
-    }),
-  ]);
+    });
+  }
   return { challengeToken: token, gate, expiresAt };
 }
 

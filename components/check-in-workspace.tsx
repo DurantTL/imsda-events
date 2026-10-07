@@ -18,6 +18,7 @@ import {
 import Link from "next/link";
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -40,6 +41,12 @@ import {
 } from "@/modules/checkin/bulk-check-in";
 import { arrivalMatchesSearch, offlineCheckInErrorMessage } from "@/modules/checkin/domain";
 import type { CheckInArrival } from "@/modules/checkin/arrival-view";
+import {
+  applyLiveCheckInChanges,
+  nextLiveSince,
+  nextLivePollDelay,
+  parseLiveCheckInChanges,
+} from "@/modules/checkin/live-changes";
 import type { ClubCheckInInfo } from "@/modules/club-registrations/repository";
 
 /** Arrivals rendered per page; search always runs across the whole roster (#702). */
@@ -58,6 +65,7 @@ export function CheckInWorkspace({
   backgroundFlaggedAttendeeIds = [],
   clubs = [],
   locationName,
+  loadedAt,
 }: {
   eventName: string;
   eventId: string;
@@ -70,6 +78,8 @@ export function CheckInWorkspace({
   clubs?: ClubCheckInInfo[];
   /** The location the desk is filtered to (#413), named in the roster heading so staff can see the list is filtered. */
   locationName?: string;
+  /** The server's clock when this page was rendered (#825): where the live list starts asking for other devices' changes. */
+  loadedAt?: string;
 }) {
   const [arrivals, setArrivals] = useState<Arrival[]>(initialArrivals);
   const paymentDueByConfirmationCode = useMemo(() => Object.fromEntries(
@@ -120,6 +130,64 @@ export function CheckInWorkspace({
     });
   }, []);
 
+  // Live list (#825): other desk devices' check-ins and undos arrive as a
+  // few bytes every few seconds. The ref holds attendees this device just
+  // acted on, so a poll that was already in flight cannot overwrite them.
+  const localActionsRef = useRef(new Set<string>());
+  const [liveStale, setLiveStale] = useState(false);
+  useEffect(() => {
+    if (!loadedAt) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    let failures = 0;
+    let since = nextLiveSince(loadedAt);
+    const poll = async () => {
+      if (cancelled) return;
+      if (document.visibilityState === "hidden" || !navigator.onLine || !since) {
+        timer = window.setTimeout(poll, nextLivePollDelay(failures));
+        return;
+      }
+      const touchedBefore = new Set(localActionsRef.current);
+      try {
+        const response = await fetch(
+          `/api/events/${encodeURIComponent(eventId)}/check-ins?since=${encodeURIComponent(since)}`,
+          {
+            cache: "no-store",
+            signal: typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+              ? AbortSignal.timeout(10_000)
+              : undefined,
+          },
+        );
+        const live = response.ok ? parseLiveCheckInChanges(await response.json()) : null;
+        if (!live) throw new Error("live list unavailable");
+        if (cancelled) return;
+        const skip = new Set([...touchedBefore, ...localActionsRef.current]);
+        setArrivals((current) => applyLiveCheckInChanges(current, live.changes, skip) as Arrival[]);
+        since = nextLiveSince(live.now);
+        failures = 0;
+        setLiveStale(false);
+      } catch {
+        failures = Math.min(failures + 1, 4);
+        // One missed poll is normal on cellular; say so only when it persists.
+        if (failures >= 3) setLiveStale(true);
+      }
+      timer = window.setTimeout(poll, nextLivePollDelay(failures));
+    };
+    timer = window.setTimeout(poll, nextLivePollDelay(0));
+    const wake = () => {
+      if (document.visibilityState === "visible") {
+        window.clearTimeout(timer);
+        timer = window.setTimeout(poll, 250);
+      }
+    };
+    document.addEventListener("visibilitychange", wake);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", wake);
+    };
+  }, [eventId, loadedAt]);
+
   const applyConfirmedCheckIn = useCallback((
     attendeeId: string,
     checkedInAt: string,
@@ -131,6 +199,8 @@ export function CheckInWorkspace({
     )));
     clearBulkResult(attendeeId);
     setMessage("A saved check-in was confirmed by the server.");
+    localActionsRef.current.add(attendeeId);
+    window.setTimeout(() => localActionsRef.current.delete(attendeeId), 8_000);
   }, [clearBulkResult]);
 
   const {
@@ -237,18 +307,24 @@ export function CheckInWorkspace({
     }
 
     setUndoPendingId(arrival.id);
+    localActionsRef.current.add(arrival.id);
     try {
       const response = await fetch(
         `/api/events/${encodeURIComponent(eventId)}/attendees/${encodeURIComponent(arrival.id)}/check-in`,
         {
           method: "DELETE",
           cache: "no-store",
+          signal: typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+            ? AbortSignal.timeout(12_000)
+            : undefined,
         },
       );
       const result = await response.json().catch(() => null) as {
+        error?: string;
         message?: string;
       } | null;
-      if (!response.ok) {
+      // Another device already undid it: the attendee is not checked in, which is what was asked for.
+      if (!response.ok && result?.error !== "ACTIVE_CHECK_IN_NOT_FOUND") {
         throw new Error(
           result?.message ?? "The server could not undo this check-in.",
         );
@@ -270,6 +346,7 @@ export function CheckInWorkspace({
       );
     } finally {
       setUndoPendingId(null);
+      window.setTimeout(() => localActionsRef.current.delete(arrival.id), 8_000);
     }
   }
 
@@ -461,6 +538,16 @@ export function CheckInWorkspace({
         )}
       </div>
 
+      {liveStale && (
+        <div className="inline-notice" role="status">
+          <WifiOff aria-hidden="true" size={17} />
+          <span>
+            Other devices&rsquo; check-ins are not updating right now. Your own
+            check-ins still save. This list keeps trying.
+          </span>
+        </div>
+      )}
+
       {storageError && (
         <div className="inline-notice error check-in-storage-warning" role="alert">
           <AlertTriangle aria-hidden="true" size={17} />
@@ -615,7 +702,7 @@ export function CheckInWorkspace({
                   : savedItem?.state === "CONFLICT"
                     ? "Needs review"
                     : savedItem
-                      ? "Queued — not confirmed"
+                      ? (processing ? "Retrying…" : "Not saved — tap to retry")
                       : AWAITING_ARRIVAL_LABEL}
               </span>
               <button

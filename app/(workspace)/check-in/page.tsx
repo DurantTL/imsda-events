@@ -45,6 +45,9 @@ export default async function CheckInPage({ searchParams }: { searchParams: Prom
   }
   // A check-in desk can work one location, or all of them at once (#413).
   const { locations, locationId, selected } = await resolveLocationFilter(event.id, requestedLocation);
+  // #825: the live list asks other devices' changes from this moment (minus a
+  // safety overlap), so nothing checked in while the page loaded is missed.
+  const loadedAt = new Date().toISOString();
   const [registrations, flagged, clubs] = await Promise.all([
     listRegistrations(event.id, { statuses: activeRegistrationStatuses, locationId }),
     backgroundFlaggedAttendeeIds(event.id),
@@ -55,6 +58,6 @@ export default async function CheckInPage({ searchParams }: { searchParams: Prom
   const arrivals = projectCheckInArrivals(registrations, { showBalances: event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE" });
   return <>
     <DeskLocationSelect basePath="/check-in" locations={locations} params={{ event: event.id }} selectedId={locationId} />
-    <CheckInWorkspace key={`${event.id}:${locationId ?? "all"}`} locationName={selected ? deskLocationLabel(selected) : undefined} eventName={event.name} eventId={event.id} initialArrivals={arrivals} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} backgroundFlaggedAttendeeIds={[...flagged]} clubs={clubs} />
+    <CheckInWorkspace key={`${event.id}:${locationId ?? "all"}`} locationName={selected ? deskLocationLabel(selected) : undefined} eventName={event.name} eventId={event.id} loadedAt={loadedAt} initialArrivals={arrivals} canCheckIn={permissions.includes("MANAGE_CHECK_IN")} backgroundFlaggedAttendeeIds={[...flagged]} clubs={clubs} />
   </>;
 }

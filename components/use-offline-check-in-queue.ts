@@ -18,6 +18,16 @@ import {
   type OfflineCheckInErrorCode,
   type OfflineCheckInQueueItem,
 } from "@/modules/checkin/domain";
+import { alreadyCheckedInMessage } from "@/modules/checkin/live-changes";
+
+/**
+ * A check-in request that has not answered by now is abandoned and kept in the
+ * saved queue, then retried with the same key (#825). Long enough for a weak
+ * cellular link, short enough that staff are not left staring at a spinner.
+ */
+export const CHECK_IN_REQUEST_TIMEOUT_MS = 12_000;
+/** How often saved, unconfirmed check-ins retry on their own while online. */
+export const CHECK_IN_AUTO_RETRY_MS = 20_000;
 
 export type CheckInActionResult = {
   status: "CONFIRMED" | "QUEUED" | "CONFLICT";
@@ -28,6 +38,7 @@ export type CheckInActionResult = {
 type CheckInResponse = {
   checkedIn?: boolean;
   disposition?: "CREATED" | "IDEMPOTENT_REPLAY" | "ALREADY_CHECKED_IN";
+  checkedInBy?: string | null;
   checkIn?: {
     checkedInAt?: string;
     undoneAt?: string | null;
@@ -182,6 +193,9 @@ export function useOfflineCheckInQueue({
           body: JSON.stringify({
             idempotencyKey: item.idempotencyKey,
           }),
+          signal: typeof AbortSignal !== "undefined" && "timeout" in AbortSignal
+            ? AbortSignal.timeout(CHECK_IN_REQUEST_TIMEOUT_MS)
+            : undefined,
         },
       );
       const payload = await response.json().catch(() => null) as
@@ -203,7 +217,7 @@ export function useOfflineCheckInQueue({
           message: payload.disposition === "IDEMPOTENT_REPLAY"
             ? "The server confirmed this saved check-in."
             : payload.disposition === "ALREADY_CHECKED_IN"
-              ? "This attendee was already checked in."
+              ? alreadyCheckedInMessage(payload.checkIn.checkedInAt, payload.checkedInBy)
               : "Check-in confirmed by the server.",
         };
       }
@@ -228,7 +242,7 @@ export function useOfflineCheckInQueue({
       return {
         status: retryLater ? "QUEUED" : "CONFLICT",
         message: retryLater
-          ? "The server did not confirm this check-in. It remains saved for retry."
+          ? "Not confirmed. It stays saved on this device and retries on its own; tap Retry to try now."
           : payload?.message ?? "This saved check-in needs staff review.",
       };
     } catch {
@@ -239,7 +253,7 @@ export function useOfflineCheckInQueue({
       }));
       return {
         status: "QUEUED",
-        message: "The connection failed. This check-in is saved, but not confirmed.",
+        message: "Not saved on the server yet. It stays on this device and retries on its own; tap Retry to try now.",
       };
     } finally {
       processingRef.current.delete(item.idempotencyKey);
@@ -326,6 +340,19 @@ export function useOfflineCheckInQueue({
   useEffect(() => {
     retryQueuedRef.current = () => retryAll(false);
   }, [retryAll]);
+
+  // A weak cellular link keeps `navigator.onLine` true, so the browser never
+  // announces "back online". Saved check-ins that have not been confirmed
+  // therefore retry on a timer, with the same keys, until the server answers.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "hidden" || !navigator.onLine) return;
+      if (processingRef.current.size > 0) return;
+      if (!queueRef.current.some((item) => item.state === "QUEUED")) return;
+      void retryQueuedRef.current();
+    }, CHECK_IN_AUTO_RETRY_MS);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     let saved: OfflineCheckInQueueItem[] = [];
