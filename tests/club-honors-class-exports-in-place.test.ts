@@ -104,13 +104,15 @@ describe("Honors page empty states (D4) and labels (D3)", () => {
   });
 
   it("labels the bulk button and explains why it is disabled at 0", () => {
-    expect(bulkHonorButtonState(0, true)).toEqual({ label: "Record honor for 0 selected", disabledReason: "Tick at least one name above." });
+    expect(bulkHonorButtonState(0, true)).toEqual({ label: "Record honor for 0 selected", disabledReason: "Tick at least one member." });
     expect(bulkHonorButtonState(3, false)).toEqual({ label: "Record honor for 3 selected", disabledReason: "Choose an honor." });
     expect(bulkHonorButtonState(3, true).disabledReason).toBe("");
+    // The bulk form is a popup now (#819): the page only offers the button that opens it.
     const html = honorsMarkup({ initialRows: [row("a", [honor])] });
-    expect(html).toContain("Record honor for 0 selected");
-    expect(html).toContain("Tick at least one name above.");
-    expect(html).toMatch(/<button[^>]*disabled[^>]*>Record honor for 0 selected/);
+    expect(html).toMatch(/<button[^>]*aria-haspopup="dialog"[^>]*>.*Add honors to several members/);
+    expect(html).not.toContain("Record honor for 0 selected");
+    expect(html).not.toContain("Select all shown");
+    expect(html).not.toContain('type="checkbox"');
   });
 });
 
@@ -120,7 +122,7 @@ describe("the roster's per-person honors popup", () => {
     status: "ACTIVE", source: "DIRECTOR", age: 12, reportedAge: null, birthDateNeeded: false, updatedAt: "2026-09-01T00:00:00.000Z",
   };
   const roster = (props: Partial<Parameters<typeof ClubRosterWorkspace>[0]>) => renderToStaticMarkup(createElement(ClubRosterWorkspace, {
-    canSeeBirthDates: false, clubYear: "2026-27", initialMembers: [member], organizationId: "org-1", honorSummaries: { m1: [honor] }, ...props,
+    canSeeBirthDates: false, clubYear: "2026-27", initialMembers: [member], organizationId: "org-1", ...props,
   }));
 
   it("replaces the Open Honors link with a per-row button", () => {

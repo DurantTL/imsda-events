@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { HonorCombobox } from "@/components/honor-combobox";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import {
   type MemberHonorEntryRecord,
@@ -47,6 +48,7 @@ export function ClubMemberHonorsDialog({
   const [loadError, setLoadError] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [honorId, setHonorId] = useState("");
   const [saving, setSaving] = useState(false);
   const dialogRef = useAccessibleDialog<HTMLElement>(true, onClose);
 
@@ -101,6 +103,7 @@ export function ClubMemberHonorsDialog({
       setHistory(result.history);
       setNotice("Honor recorded.");
       formElement.reset();
+      setHonorId("");
       onRecorded?.();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "That honor could not be recorded.");
@@ -145,15 +148,7 @@ export function ClubMemberHonorsDialog({
         {mayRecord && history && (
           <form className="form-stack" onSubmit={record}>
             <div className="form-grid two-column">
-              <label>
-                Honor
-                <select defaultValue="" name="honorId" required>
-                  <option disabled value="">Choose an honor</option>
-                  {honors.map((honor) => (
-                    <option key={honor.id} value={honor.id}>{honor.name}</option>
-                  ))}
-                </select>
-              </label>
+              <HonorCombobox label="Honor" name="honorId" onChange={setHonorId} options={honors} required value={honorId} />
               <label>
                 Status
                 <select defaultValue="IN_PROGRESS" name="status">

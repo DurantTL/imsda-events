@@ -111,6 +111,7 @@ export default async function StaffOpenClubPage({
         backgroundChecks={{ includeNotes: true }}
         birthDatesEndpoint={`/api/admin/organizations/${encodeURIComponent(organizationId)}/roster/birth-dates`}
         organizationId={organizationId}
+        staffHonorsHref={`/admin/organizations/${encodeURIComponent(organizationId)}/club/honors`}
         reportHref={(month) => `/admin/clubs/reports/${organizationId}/${month}${fromHere}`}
         reportsEditable
         rosterYear={view.clubYear}

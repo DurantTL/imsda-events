@@ -66,12 +66,14 @@ export async function listClubsForArea() {
   const clubs = await getPrisma().organization.findMany({
     where: { type: "CLUB", isActive: true },
     orderBy: { name: "asc" },
-    select: { id: true, name: true, parentOrganization: { select: { name: true } } },
+    select: { id: true, name: true, city: true, parentOrganization: { select: { name: true, city: true } } },
   });
   return clubs.map((club) => ({
     organizationId: club.id,
     name: club.name,
     sponsoringChurch: club.parentOrganization?.name ?? null,
+    // The club's own city, else its church's: what the All clubs search matches on.
+    city: club.city ?? club.parentOrganization?.city ?? null,
   }));
 }
 

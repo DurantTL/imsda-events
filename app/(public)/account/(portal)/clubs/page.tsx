@@ -3,6 +3,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, UsersRound } from "lucide-react";
 import { AreaClubsSubNav } from "@/components/area-clubs-subnav";
+import { AreaClubSearch } from "@/components/area-clubs-views";
+import { filterClubsByNameChurchOrCity, parseClubQuery } from "@/modules/club-reports/area-summary-domain";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { attendeeSignInRedirectPath, twoStepRedirectPath } from "@/modules/attendee-accounts/return-redirect";
 import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
@@ -18,7 +20,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false, nocache: true },
 };
 
-export default async function MyClubsPage() {
+export default async function MyClubsPage({ searchParams }: { searchParams: Promise<{ q?: string | string[] }> }) {
   const { account } = await getCurrentAttendee();
   const acting = await currentStaffActingContext();
   if (!account && !acting) redirect(await attendeeSignInRedirectPath());
@@ -43,7 +45,9 @@ export default async function MyClubsPage() {
     // An Area Coordinator sees every club (#387): their own open as usual;
     // the rest open view only.
     const own = new Map(clubs.map((club) => [club.organizationId, club]));
-    const allClubs = await listClubsForArea();
+    const query = parseClubQuery((await searchParams).q);
+    const everyClub = await listClubsForArea();
+    const allClubs = filterClubsByNameChurchOrCity(everyClub, query);
     return (
       <>
         <section className="public-registration-hero public-manage-hero account-page-hero">
@@ -56,6 +60,8 @@ export default async function MyClubsPage() {
         <div className="account-page-body">
           <section className="public-manage-card">
             <p className="field-help">Every active club. Clubs you don&apos;t run open view only, with ages instead of birth dates.</p>
+            <AreaClubSearch basePath="/account/clubs" label="Search by club, church or city" query={query} shown={allClubs.length} total={everyClub.length} />
+            {allClubs.length === 0 && <p className="public-manage-empty" role="status">{query ? `No club, church or city matches “${query}”.` : "No active clubs yet."}</p>}
             <ul className="public-manage-club-list">
               {allClubs.map((club) => {
                 const mine = own.get(club.organizationId);

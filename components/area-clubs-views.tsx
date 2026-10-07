@@ -38,18 +38,18 @@ const noClubsText = (query?: string) => (query ? `No club name matches “${quer
  * it works without scripts and the address keeps the search; the year and sort
  * are carried along. The page filters on the server with `filterClubsByName`.
  */
-export function AreaClubSearch({ basePath, clubYear, query, sort, shown, total }: { basePath: string; clubYear: string; query: string; sort?: LeaderboardSort; shown: number; total: number }) {
+export function AreaClubSearch({ basePath, clubYear, query, sort, shown, total, label = "Search clubs by name" }: { basePath: string; clubYear?: string; query: string; sort?: LeaderboardSort; shown: number; total: number; label?: string }) {
   return (
     <form action={basePath} className="area-club-search" method="get" role="search">
-      <input name="year" type="hidden" value={clubYear} />
+      {clubYear && <input name="year" type="hidden" value={clubYear} />}
       {sort && <input name="sort" type="hidden" value={sort} />}
       <label className="search-field" htmlFor="area-club-search">
         <Search aria-hidden="true" size={15} />
-        <span className="sr-only">Search clubs by name</span>
-        <input autoComplete="off" defaultValue={query} id="area-club-search" maxLength={80} name="q" placeholder="Search clubs by name" type="search" />
+        <span className="sr-only">{label}</span>
+        <input autoComplete="off" defaultValue={query} id="area-club-search" maxLength={80} name="q" placeholder={label} type="search" />
       </label>
       <button className="secondary-button" type="submit">Search</button>
-      {query && <Link className="text-button" href={`${basePath}?year=${encodeURIComponent(clubYear)}${sort ? `&sort=${sort}` : ""}`}>Clear</Link>}
+      {query && <Link className="text-button" href={clubYear ? `${basePath}?year=${encodeURIComponent(clubYear)}${sort ? `&sort=${sort}` : ""}` : basePath}>Clear</Link>}
       <small aria-live="polite" role="status">{query ? `${shown} of ${total} clubs match` : ""}</small>
     </form>
   );

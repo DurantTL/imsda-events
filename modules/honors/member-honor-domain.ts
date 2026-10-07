@@ -105,6 +105,15 @@ export type MemberHonorEntryRecord = {
   voided: MemberHonorEntryVoidRecord | null;
 };
 
+/**
+ * The honor history popup lists live entries only (#819). A voided entry (and
+ * the in-progress one a completion replaced) stays in the database with its
+ * audit row; it just isn't shown. Counts, CSVs and reports already skip them.
+ */
+export function visibleHonorHistory<T extends { voided: unknown }>(history: readonly T[]): T[] {
+  return history.filter((entry) => !entry.voided);
+}
+
 export type CurrentMemberHonor = {
   honorId: string;
   honorCode: string;
@@ -239,11 +248,31 @@ export const clubHonorsEmptyCopy: Record<ClubHonorsEmptyState, string> = {
   NO_MATCH: "No one matches these filters.",
 };
 
+/**
+ * The body the bulk popup posts to the existing bulk-record endpoint (#819):
+ * a date only goes with a completion. The server checks every field again.
+ */
+export function bulkHonorPayload(input: {
+  memberIds: Iterable<string>;
+  honorId: string;
+  status: MemberHonorStatus;
+  completionDate: string;
+  note: string;
+}) {
+  return {
+    memberIds: [...input.memberIds],
+    honorId: input.honorId,
+    status: input.status,
+    completionDate: input.status === "COMPLETED" ? input.completionDate : "",
+    note: input.note,
+  };
+}
+
 /** The bulk button's label and, while it is disabled, the reason shown beside it (#701, D4). */
 export function bulkHonorButtonState(selectedCount: number, honorChosen: boolean) {
   return {
     label: `Record honor for ${selectedCount} selected`,
-    disabledReason: selectedCount === 0 ? "Tick at least one name above." : !honorChosen ? "Choose an honor." : "",
+    disabledReason: selectedCount === 0 ? "Tick at least one member." : !honorChosen ? "Choose an honor." : "",
   };
 }
 
