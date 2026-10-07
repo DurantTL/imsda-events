@@ -1500,6 +1500,7 @@ model Event {
   squareWebhookEvents                 SquareWebhookEvent[]
   promoCodes                          PromoCode[]
   promoCodeRedemptions                PromoCodeRedemption[]
+  churchSponsorFinanceReviews           ChurchSponsorFinanceReview[]
   programAssignmentRuns               ProgramAssignmentRun[]
   honorSessions                       HonorSession[]
   honorOfferings                      HonorOffering[]
@@ -2092,6 +2093,7 @@ model UserPersonLink {
  */
 model Organization {
   id                   String           @id @default(cuid())
+  churchSponsorFinanceReviews ChurchSponsorFinanceReview[] @relation("ChurchSponsorFinanceReviewChurch")
   healthRecords       HealthRecord[]
   healthRecordLinks   HealthRecordLink[]
   type                 OrganizationType
@@ -2592,6 +2594,7 @@ model Registration {
   accessTokens            RegistrationAccessToken[]
   paymentAttempts         PaymentAttempt[]
   promoCodeRedemption     PromoCodeRedemption?
+  churchSponsorFinanceReviews ChurchSponsorFinanceReview[]
   operations              RegistrationOperation[]
   paymentChoiceOperations RegistrationPaymentChoiceOperation[]
   merchandiseOrders       MerchandiseOrder[]
@@ -2694,6 +2697,10 @@ model PromoCodeRedemption {
   maximumDiscountCentsSnapshot Int?
   eligibleSubtotalCents        Int
   discountAmountCents          Int
+  /// What staff lodging edits have moved the church's share by since the code was used (#813): signed, summed over
+  /// edits, and never touched by an amendment (which rewrites `discountAmountCents` from the form). The church owes
+  /// `discountAmountCents + sponsorLodgingChangeCents`; the registrant's own discount stays `discountAmountCents`.
+  sponsorLodgingChangeCents    Int               @default(0)
   pricingDate                  String
   createdAt                    DateTime          @default(now())
 
@@ -2704,6 +2711,40 @@ model PromoCodeRedemption {
   @@unique([promoCodeId, registrationId])
   @@index([eventId, createdAt])
   @@index([promoCodeId, createdAt])
+}
+
+/// A lodging change that moved a church's share after the church's invoice was finalized (#813), raised for the finance office. The invoice is never
+/// revised automatically and the church's amount owed is not changed; the finance office sees this row (and clears it
+/// once they have dealt with it). Ids and amounts only. One open row per registration.
+model ChurchSponsorFinanceReview {
+  id                      String    @id @default(cuid())
+  eventId                 String
+  registrationId          String
+  churchId                String
+  /// The finalized invoice version the change would have touched.
+  invoiceVersionId        String?
+  /// What last raised or updated it: "lodging:<request version id>" or "amendment:<id>".
+  sourceKey               String
+  /// The signed difference between what the church's share should be and what it is (and stays, while the invoice is
+  /// finalized): the amount the finance office is asked to review. Updated in place while the flag is open.
+  deltaCents              Int
+  /// What the church's share should be (the recompute) when this flag was last raised or updated.
+  desiredShareCents       Int
+  createdAt               DateTime  @default(now())
+  clearedAt               DateTime?
+  clearedByUserId         String?
+  clearNote               String?
+  /// Set when the finance office clears the flag: the share they reviewed. A later recompute raises a new flag only if it
+  /// differs from this figure. A flag that closes itself (the share returned to the invoiced amount) leaves it null.
+  reviewedShareCents      Int?
+
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  church       Organization @relation("ChurchSponsorFinanceReviewChurch", fields: [churchId], references: [id], onDelete: Restrict)
+
+  @@index([registrationId, clearedAt])
+  @@index([eventId, clearedAt])
+  @@index([churchId])
 }
 
 model RegistrationAccessToken {

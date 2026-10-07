@@ -77,3 +77,37 @@ describe("spacing and caption overflow (#789)", () => {
     expect(css).not.toMatch(/table\.table-cards\.table-cards > caption \{/);
   });
 });
+
+describe("meeting note Saved banner (#810)", () => {
+  const notes = read("components/club-meeting-notes.tsx");
+  const css = read("app/globals.css");
+
+  it("shows a green Saved banner at the top of the popup after a save, in the report's success style", () => {
+    // Same class the monthly report's confirmation uses.
+    expect(read("components/club-report-form.tsx")).toContain('className="inline-notice success"');
+    expect(notes).toMatch(/justSaved && !dirty && <div className="inline-notice success meeting-note-saved" data-meeting-note-saved="" role="status">Saved<\/div>/);
+    // It is the first thing in the dialog's form, before the heading.
+    expect(notes.indexOf("data-meeting-note-saved")).toBeLessThan(notes.indexOf('id="meeting-note-dialog-title"'));
+  });
+
+  it("keeps the popup open on the saved note and clears the banner when the draft changes again", () => {
+    expect(notes).toContain("setJustSaved(true)");
+    expect(notes).toMatch(/setEditingId\(result\.note\.id\);\s*setHadAttendance\([^)]*\);\s*setAdding\(false\);\s*setBaseline\(JSON\.stringify\(draft\)\)/);
+    expect(notes).toMatch(/justSaved && !dirty/);
+    expect(notes.match(/setJustSaved\(false\)/g)?.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("pins the banner while the popup scrolls", () => {
+    expect(css).toMatch(/\.meeting-note-saved \{[^}]*position: sticky;[^}]*top: 0;/);
+  });
+});
+
+describe("meeting note check-off flag after a save (#810)", () => {
+  const notes = read("components/club-meeting-notes.tsx");
+
+  it("keeps the saved note's attendance flag in state, not a lookup in the month's list", () => {
+    expect(notes).toContain("setHadAttendance(note.attendance.length > 0)");
+    expect(notes).toContain("setHadAttendance(result.note.attendance.length > 0)");
+    expect(notes).not.toMatch(/notes\.find\(\(note\) => note\.id === editingId\)/);
+  });
+});

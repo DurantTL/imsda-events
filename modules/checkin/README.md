@@ -107,3 +107,39 @@ route (`pass-lookup.ts`) tells the two apart by token prefix before either
 is verified. Only an active (submitted or confirmed) club registration gets
 a working pass; a director reaches only her own club's QR
 (`requireRosterAccess`, the same gate the club event page already uses).
+
+### Several devices at one desk (#825)
+
+A desk runs 2-4 phones or tablets, often on one staff account, on cellular or
+venue Wi-Fi.
+
+- **Check-in** (`repository.ts`): serializable transaction plus the partial
+  unique index on active rows. A lost race retries (up to
+  `CHECK_IN_MAX_ATTEMPTS`, with a short jittered pause) and then answers
+  `ALREADY_CHECKED_IN` with `checkedInBy` (the staff display name from the audit
+  entry written in the same transaction). The same retry key returns the same
+  record (`IDEMPOTENT_REPLAY`). **Undo** only matches a row that is still
+  active, so two undos make one audit entry and the loser gets
+  `ACTIVE_CHECK_IN_NOT_FOUND`, which the UI treats as done.
+- **Live list**: `GET /api/events/[eventId]/check-ins?since=` returns
+  `[attendeeId, checkedInAt|null]` pairs (`live-changes.ts`), polled every 5 s
+  by a visible tab with backoff, a 15 s overlap, and a 6 h look-back cap. A quiet
+  answer is under 80 bytes. Rows this device just touched are not overwritten.
+- **Slow networks**: requests time out after 12 s and stay in the saved queue
+  with their key; unconfirmed items retry every 20 s while online. Rows read
+  "Not saved - tap to retry" or "Retrying...".
+- **Limits**: the staff scan, lookup, check-in, undo, staff pass image and live
+  poll routes carry no rate limiter (authenticated and permission checked).
+  Sign-in and attendee pass budgets are sized in `modules/rate-limit/service.ts`
+  (`staffLoginBudgets`, `publicManageBudgets`); the per-IP numbers allow for
+  carrier-grade NAT and venue Wi-Fi.
+- **Sessions**: sign-in only adds a session; nothing is tied to the client IP;
+  up to `MAX_LIVE_CHALLENGES` second-step challenges per account may be open
+  at once. A 6-digit authenticator code is single-use, but a correct code that
+  was already spent (several phones reading the same code within one 30 s
+  step) is not a wrong guess: it answers `MFA_CODE_ALREADY_USED` ("That code
+  was just used on another device. Wait for the next code, then enter it."),
+  releases the reserved attempt, sends no lockout email and leaves the
+  challenge live. Wrong codes still count and still lock after 3. Volunteers
+  just wait for the next code; no recovery codes need handing out. The
+  per-challenge attempt cap (5) and the sign-in rate limit still bound it.

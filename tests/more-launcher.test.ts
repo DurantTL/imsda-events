@@ -26,6 +26,7 @@ import {
 } from "@/components/more-launcher-model";
 import { buildMoreDirectoryCards, moreDirectoryGroupOrder, type MoreDirectoryContext } from "@/components/staff-navigation";
 import { eventPermissions, type EventPermission } from "@/modules/access/permissions";
+import { buildEventModulesView, removableModuleKeys } from "@/components/event-modules-page-model";
 import { disabledModuleCardKeys, eventModuleCatalog, eventModuleKeys, moduleForCard, type EventModuleKey } from "@/modules/event-modules/catalog";
 
 /** The More launcher (#741 slice 2): grouping, role limits, footers, keyboard and focus rules. Synthetic data only. */
@@ -202,6 +203,102 @@ describe("launcher panel markup", () => {
   it("uses the sheet class on a phone and the popover class on desktop", () => {
     expect(render(false, "tab")).toContain("more-launcher-tab");
     expect(render(false, "sidebar")).toContain("more-launcher-sidebar");
+  });
+});
+
+describe("turning a module off from the launcher (#810)", () => {
+  const everyStored = new Set<EventModuleKey>(eventModuleKeys);
+  const renderWith = (isSystemAdmin: boolean, eventId: string | null = "event_1", removableModules: readonly string[] = removableModuleKeys({ stored: everyStored, dataForced: new Set() })) => renderToStaticMarkup(
+    createElement(MoreLauncherPanel, { cards: cardsFor({ isSystemAdmin }), isSystemAdmin, eventQuery: "?event=event_1", eventId: eventId ?? undefined, removableModules, variant: "sidebar" }),
+  );
+
+  it("gives a system administrator a Turn off control on each switchable module card, and none on the universal tools", () => {
+    const markup = renderWith(true);
+    const switchable = eventModuleCatalog.filter((definition) => !definition.alwaysOn && definition.cardKey);
+    expect(switchable.length).toBeGreaterThan(0);
+    for (const definition of switchable) {
+      if (markup.includes(`data-card="${definition.cardKey}"`)) expect(markup).toContain(`aria-label="Turn off ${definition.title}"`);
+    }
+    expect(markup).toContain('data-module-toggle="merchandise"');
+    // Event settings and the other universal tools are never switchable.
+    expect(markup).toContain('data-card="event-settings"');
+    expect(markup).not.toContain('aria-label="Turn off Event settings"');
+    for (const definition of eventModuleCatalog.filter((entry) => entry.alwaysOn)) {
+      expect(markup).not.toContain(`aria-label="Turn off ${definition.title}"`);
+    }
+  });
+
+  it("offers Turn off only where the server allows it: no button for a module its data keeps on or one with no stored row", () => {
+    const stored = new Set<EventModuleKey>(["merchandise", "honors"]);
+    const dataForced = new Set<EventModuleKey>(["merchandise"]);
+    const removable = removableModuleKeys({ stored, dataForced });
+    expect(removable).toEqual(["honors"]);
+    const markup = renderWith(true, "event_1", removable);
+    expect(markup).toContain('data-card="merchandise"');
+    expect(markup).not.toContain('aria-label="Turn off Merchandise"');
+    expect(markup).toContain('data-module-toggle="honors"');
+    // A module with no stored row (on only through its data) has none either, and nothing removable means no toggles.
+    expect(removableModuleKeys({ stored: new Set(), dataForced: new Set(["merchandise"]) })).toEqual([]);
+    expect(renderWith(true, "event_1", [])).not.toContain("data-module-toggle");
+    // Always-on modules are never removable.
+    for (const definition of eventModuleCatalog.filter((entry) => entry.alwaysOn)) {
+      expect(removableModuleKeys({ stored: everyStored, dataForced: new Set() })).not.toContain(definition.key);
+    }
+  });
+
+  it("lists the same removable set as the Event modules page's Turn off buttons", () => {
+    const cards = cardsFor({ isSystemAdmin: true });
+    const stored = new Set<EventModuleKey>(["merchandise", "honors", "attendee-community"]);
+    const dataForced = new Set<EventModuleKey>(["merchandise"]);
+    const view = buildEventModulesView({ cards, stored, effective: stored, dataPresent: dataForced, dataForced, isSystemAdmin: true, audience: "CLUB" });
+    const onPage = view.enabled.filter((entry) => entry.canToggle).map((entry) => entry.definition.key).sort();
+    expect(onPage).toEqual([...removableModuleKeys({ stored, dataForced })].sort());
+  });
+
+  it("moves focus back to the opener on Cancel or Escape, refocuses a card after a turn-off, and makes the rest of the panel inert while the confirm is open", () => {
+    const source = readFileSync("components/more-launcher.tsx", "utf8");
+    expect(source).toContain("openerRef.current = event.currentTarget");
+    expect(source).toMatch(/function cancelConfirm\(\) \{\s*pendingFocus\.current = \{ kind: "opener" \};/);
+    expect(source).toContain("onClick={cancelConfirm}");
+    expect(source).toMatch(/event\.key === "Escape"\) \{\s*event\.preventDefault\(\);\s*cancelConfirm\(\);/);
+    expect(source).toContain('pendingFocus.current = { kind: "card"');
+    expect(source.match(/inert=\{confirming \? true : undefined\}/g)).toHaveLength(2);
+  });
+
+  it("shows an Event Admin the enabled modules with no toggles at all", () => {
+    const markup = renderWith(false);
+    expect(markup).toContain('data-card="merchandise"');
+    expect(markup).not.toContain("more-launcher-toggle");
+    expect(markup).not.toContain("data-module-toggle");
+    expect(markup).not.toContain("Turn off");
+  });
+
+  it("shows no toggle without a selected event, even to a system administrator", () => {
+    expect(renderWith(true, null)).not.toContain("data-module-toggle");
+  });
+
+  it("asks first, says the data is kept, and reuses the existing disable route and its audit", () => {
+    const source = readFileSync("components/more-launcher.tsx", "utf8");
+    expect(source).toContain('role="alertdialog"');
+    expect(source).toContain("The data is kept");
+    expect(source).toMatch(/modules\/\$\{encodeURIComponent\(confirming\.moduleKey\)\}`, \{ method: "DELETE" \}/);
+    // Cancel is the first focus, and Escape closes the confirm before the launcher.
+    expect(source).toContain("cancelRef.current?.focus()");
+  });
+
+  it("leaves an Event Admin without a toggle in the shell too", () => {
+    const AppShellElement = AppShell as ComponentType<Omit<Parameters<typeof AppShell>[0], "children">>;
+    const markup = renderToStaticMarkup(
+      createElement(
+        AppShellElement,
+        {
+          events: [{ id: "event_1", slug: "club-camporee", name: "Club Camporee", permissions: allPermissions, clubEvent: true, clubOversight: true }],
+          user: { displayName: "Riley Event Admin", email: "riley@imsda-events.test" },
+        },
+        createElement("p", null, "Workspace content"),
+      ),
+    );
+    expect(markup).not.toContain("more-launcher-toggle");
   });
 });
 

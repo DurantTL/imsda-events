@@ -13,6 +13,8 @@ import {
   checkPublicManageRateLimit,
   checkRegistrationCodeAccessRateLimit,
   checkRegistrationRecoveryRateLimit,
+  publicManageBudgets,
+  staffLoginBudgets,
 } from "@/modules/rate-limit/service";
 
 beforeEach(() => {
@@ -112,14 +114,50 @@ describe("private manage-link budgets", () => {
         .map(({ policy, limit }) => [policy, limit]),
     );
     expect(read).toEqual([
-      ["public.manage.read.client", 120],
+      ["public.manage.read.client", 600],
       ["public.manage.read.token", 120],
       ["public.manage.read.client-token", 60],
     ]);
     expect(pass).toEqual([
-      ["public.manage.pass.client", 600],
-      ["public.manage.pass.token", 240],
-      ["public.manage.pass.client-token", 120],
+      ["public.manage.pass.client", 3000],
+      ["public.manage.pass.token", 600],
+      ["public.manage.pass.client-token", 300],
     ]);
+  });
+});
+
+describe("check-in desk limiter sizes (#825)", () => {
+  it("lets 4 devices sign one staff account in from one address, with a retry each", () => {
+    expect(staffLoginBudgets.clientAccount).toBeGreaterThanOrEqual(4 * 2);
+    expect(staffLoginBudgets.account).toBeGreaterThanOrEqual(staffLoginBudgets.clientAccount);
+    expect(staffLoginBudgets.client).toBeGreaterThanOrEqual(staffLoginBudgets.account);
+  });
+
+  it("keeps sign-in guessing bounded per address and per account", () => {
+    expect(staffLoginBudgets.clientAccount).toBeLessThanOrEqual(15);
+    expect(staffLoginBudgets.account).toBeLessThanOrEqual(30);
+  });
+
+  it("sizes attendee pass budgets for a crowd behind one carrier address, but not per link", () => {
+    expect(publicManageBudgets.pass.client).toBeGreaterThanOrEqual(500 * 3);
+    expect(publicManageBudgets.read.client).toBeGreaterThanOrEqual(500);
+    // One private link stays at a few loads a minute (15-minute window).
+    // An announcement email embeds up to 8 attendee pass images per open (#824).
+    expect(publicManageBudgets.pass.token).toBeGreaterThanOrEqual(8 * 60);
+    expect(publicManageBudgets.pass.token / 15).toBeLessThanOrEqual(60);
+    expect(publicManageBudgets.pass.clientToken).toBeLessThanOrEqual(publicManageBudgets.pass.token);
+    expect(publicManageBudgets.update.client).toBeLessThanOrEqual(30);
+  });
+
+  it("charges no limiter on the authenticated scan, check-in, undo, live-list or staff pass routes", async () => {
+    const { readFileSync } = await import("node:fs");
+    for (const file of [
+      "app/api/events/[eventId]/attendee-passes/resolve/route.ts",
+      "app/api/events/[eventId]/attendees/[attendeeId]/check-in/route.ts",
+      "app/api/events/[eventId]/attendee-passes/[attendeeId]/qr/route.ts",
+      "app/api/events/[eventId]/check-ins/route.ts",
+    ]) {
+      expect(readFileSync(file, "utf8"), file).not.toMatch(/rate-limit/);
+    }
   });
 });

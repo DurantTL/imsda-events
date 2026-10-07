@@ -30,10 +30,11 @@ const signInAnchors = ["two-step-verification", "passkeys"] as const;
 
 /**
  * `/more` is the Event modules page (#741): which features this event uses and,
- * for a system administrator, the switch. The destination keeps its one staff
- * name, "More" (#685), in the tab, the header and the page title.
+ * for a system administrator, the switch. The tab keeps its staff name, "More"
+ * (#685); the page title is "Event modules" (#810), once as the shell's H1 and
+ * once as the hidden duplicate H2 every staff page carries.
  */
-export const metadata: Metadata = { title: staffPageTitles.more };
+export const metadata: Metadata = { title: staffPageTitles.eventModules };
 
 export default async function MorePage({ searchParams }: { searchParams: Promise<{ event?: string; activity?: string }> }) {
   const { event: requested, activity: activityFilter } = await searchParams;
@@ -85,8 +86,7 @@ export default async function MorePage({ searchParams }: { searchParams: Promise
     <section className="page-stack event-modules-page">
       <div className="page-intro">
         <div>
-          <p className="eyebrow">Event modules</p>
-          <h2 className="event-modules-heading">Customize this event</h2>
+          <h2 className="duplicate-page-title">{staffPageTitles.eventModules}</h2>
           <p>Turn features on or off for {event.name}</p>
           {!view.canToggle && <p className="quiet-copy">A system administrator turns features on or off. These are the ones this event uses.</p>}
         </div>

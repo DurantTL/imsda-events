@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * #741 slice 2: `/more` is the Event modules page. Visibility rules per role,
  * the health strip, and that devices no longer live here. Synthetic data only.
  */
+import { staffSubpageTitle } from "@/components/staff-navigation";
 vi.mock("server-only", () => ({}));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 const mocks = vi.hoisted(() => ({
@@ -68,13 +69,16 @@ beforeEach(() => {
 });
 
 describe("/more as the Event modules page", () => {
-  it("is headed Customize this event, with the event name in the subline", async () => {
+  it("is titled Event modules, with the event name in the subline and no Customize heading (#810)", async () => {
     signIn({ globalRole: null, permissions: eventPermissions, enabled: [] });
     const markup = await render();
-    expect(markup).toContain(">Customize this event<");
-    // Visible copy: not the hidden duplicate of the shell title.
-    expect(markup).not.toContain("duplicate-page-title");
+    expect(markup).not.toContain("Customize this event");
+    // One hidden duplicate H2 under the shell's H1, like every other staff page; no separate eyebrow.
+    expect(markup).toContain('<h2 class="duplicate-page-title">Event modules</h2>');
+    expect(markup).not.toContain('class="eyebrow">Event modules');
     expect(markup).toContain("Turn features on or off for Synthetic Camporee");
+    expect(staffSubpageTitle("/more")).toBe("Event modules");
+    expect(staffSubpageTitle("/more/merchandise")).not.toBe("Event modules");
   });
 
   it("shows a system administrator the enabled modules with Turn off and a collapsed Not used by this event with Enable", async () => {

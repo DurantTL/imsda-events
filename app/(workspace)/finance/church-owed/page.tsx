@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import { AccessRestricted } from "@/components/access-restricted";
 import { ChurchAmountsOwed } from "@/components/church-amounts-owed";
+import { ChurchSponsorFlags } from "@/components/church-sponsor-flags";
 import { LocationFilter } from "@/components/location-filter";
 import { resolveLocationFilter } from "@/modules/event-locations/filter";
 import { resolveEventContext } from "@/modules/events/selection";
 import { listChurchSponsoredPromoLines } from "@/modules/promo-codes/church-sponsored-repository";
+import { listOpenChurchSponsorFlags } from "@/modules/promo-codes/church-sponsor-lodging";
 import { listChurchAmountsOwed } from "@/modules/club-registrations/repository";
 
 export const metadata: Metadata = { title: "Owed by churches" };
@@ -16,12 +18,14 @@ export default async function ChurchOwedPage({ searchParams }: { searchParams: P
     return <AccessRestricted title="Finance is restricted" detail="Only event administrators and finance managers can view what each church owes." />;
   }
   const { locations, locationId } = await resolveLocationFilter(event.id, requestedLocation);
-  const [owed, sponsoredLines] = await Promise.all([
+  const [owed, sponsoredLines, flags] = await Promise.all([
     listChurchAmountsOwed(event.id, { locationId }),
     listChurchSponsoredPromoLines(event.id),
+    listOpenChurchSponsorFlags(event.id),
   ]);
   return (
     <>
+      <ChurchSponsorFlags eventId={event.id} flags={flags} />
       <LocationFilter basePath="/finance/church-owed" locations={locations} params={{ event: event.id }} selectedId={locationId} />
       <ChurchAmountsOwed
         eventId={event.id}

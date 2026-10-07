@@ -81,7 +81,7 @@ async function lockRow(tx: Tx, key: string) {
 function assertSyncedForEditing(row: { key: string; version: number; customizedAt: Date | null }) {
   const seed = clubFormTemplateSeeds.find((candidate) => candidate.key === row.key);
   if (seed && !row.customizedAt && row.version < seed.version) {
-    throw new ClubFormError("TEMPLATE_NEEDS_SYNC", "This form needs to be synced before it can be edited. Run npm run club-forms:sync, then try again.");
+    throw new ClubFormError("TEMPLATE_NEEDS_SYNC", "This form needs to be synced before it can be edited. Use Sync templates on the Club forms page, then try again.");
   }
 }
 

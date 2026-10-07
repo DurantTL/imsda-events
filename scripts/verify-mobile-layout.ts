@@ -159,6 +159,8 @@ const pages: PageSpec[] = [
   club("monthly-records", "/records"),
   club("monthly-report-form", `/records?month=${reportMonth}`),
   club("orders", "/orders"),
+  // Meeting notes on the Monthly records page: the add popup is opened, saved and checked for the pinned "Saved" banner (#810).
+  club("meeting-notes", "/records"),
   club("club-info", "/club-info"),
   club("forms", "/forms"),
   club("health", "/health"),
@@ -190,6 +192,8 @@ const pages: PageSpec[] = [
   staff("lodging-assignments", "/more/lodging/assignments"),
   staff("kitchen-report", "/more/kitchen-report"),
   staff("more-menu", "/more"),
+  // The More launcher as a system administrator: every switchable module card has Turn off, and its confirm must fit (#810).
+  staff("more-launcher-admin", "/overview", "system-admin"),
   staff("reports", "/more/reports"),
   staff("reports-clubs", "/more/reports/clubs"),
   staff("clubs-oversight", "/more/clubs"),
@@ -249,6 +253,8 @@ const pages: PageSpec[] = [
  * page (the first visible match); opening is harmless, and Escape closes it unsubmitted.
  */
 const dialogOpeners = [
+  // The More launcher trigger is a link, not a button (#741, #810).
+  'a[aria-haspopup="dialog"]',
   "[data-monthly-report-open]",
   "[data-meeting-note-add]",
   'button:has-text("Add to roster")',
@@ -267,6 +273,20 @@ const dialogOpeners = [
  * with `*` allowed as a suffix. Each needs a reason. Empty on purpose: fix, do not accept.
  */
 const acceptedFindings: Array<{ match: string; reason: string }> = [];
+
+/** Set once the database client exists: the meeting-note check deletes the note it saves (and its audit rows) through it. */
+let noteCleanup: PrismaClient | null = null;
+const layoutNoteText = "Synthetic layout check note.";
+
+/** Removes the meeting notes this audit saved and their CLUB_MEETING_NOTE_* audit rows, so repeated runs leave nothing behind. */
+async function deleteLayoutNotes() {
+  if (!noteCleanup) return;
+  const notes = await noteCleanup.clubMeetingNote.findMany({ where: { organizationId: clubA, notes: layoutNoteText }, select: { id: true } });
+  const ids = notes.map((note) => note.id);
+  if (ids.length === 0) return;
+  await noteCleanup.auditLog.deleteMany({ where: { entityType: "ClubMeetingNote", entityId: { in: ids }, action: { startsWith: "CLUB_MEETING_NOTE_" } } });
+  await noteCleanup.clubMeetingNote.deleteMany({ where: { id: { in: ids } } });
+}
 
 type Finding = { kind: string; page: string; width: number; detail: string };
 const findings: Finding[] = [];
@@ -392,6 +412,20 @@ async function seedMessageFiles(prisma: PrismaClient) {
     priority: "NORMAL",
     attachmentFileIds: [agenda.id, terms.id],
   });
+}
+
+/**
+ * The More launcher offers Turn off only for a module with a stored row that its data
+ * does not keep on (#810). The seeded event has none, so this adds one switchable
+ * module row (Attendee community, no data behind it) and the audit removes it again
+ * at the end of the run, whether or not MOBILE_LAYOUT_CLEANUP is set.
+ */
+let launcherModuleCreated = false;
+async function seedLauncherModule(prisma: PrismaClient) {
+  const existing = await prisma.eventModule.findUnique({ where: { eventId_moduleKey: { eventId, moduleKey: "attendee-community" } }, select: { id: true } });
+  if (existing) return;
+  await prisma.eventModule.create({ data: { eventId, moduleKey: "attendee-community" } });
+  launcherModuleCreated = true;
 }
 
 /** MOBILE_LAYOUT_CLEANUP=1: deletes every row the audit created, children before parents. */
@@ -655,6 +689,7 @@ async function seedSynthetic(prisma: PrismaClient) {
   await seedBlocksEvent(prisma);
   await seedMessageFiles(prisma);
   await seedMultiHonorClass(prisma);
+  await seedLauncherModule(prisma);
 }
 
 /**
@@ -1310,6 +1345,70 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
     if (page.url() !== bulkBefore) await page.goto(bulkBefore, { waitUntil: "load" });
   }
 
+  // The More launcher's Turn off confirm (#810): open the launcher, press the first Turn off, and the
+  // confirm must fit, say the data is kept, and every control in it must be a big enough tap target.
+  // It is cancelled, never confirmed, so no module is changed.
+  if (spec.name === "staff-more-launcher-admin") {
+    const launcherName = `${spec.name} (turn off confirm)`;
+    try {
+      await page.locator('a[aria-haspopup="dialog"]:visible').first().click({ timeout: 3000 });
+      await page.waitForTimeout(250);
+      const toggle = page.locator(".more-launcher [data-module-toggle]:visible").first();
+      if ((await toggle.count()) === 0) {
+        record("dialog-open-failed", launcherName, width, "a system administrator sees no Turn off control in the More launcher");
+      } else {
+        await toggle.scrollIntoViewIfNeeded({ timeout: 3000 });
+        await toggle.click({ timeout: 3000 });
+        await page.waitForTimeout(250);
+        const confirmText = await page.locator(".more-launcher-confirm:visible").innerText({ timeout: 3000 }).catch(() => "");
+        if (!/data is kept/i.test(confirmText)) record("dialog-open-failed", launcherName, width, "the Turn off confirm did not say the data is kept");
+        const fit = await page.evaluate(dialogFitInPage);
+        dialogsOpened += fit.count;
+        for (const problem of fit.problems) record("dialog-too-tall", launcherName, width, problem);
+        const open = await page.evaluate(auditInPage, { touch, cards: width <= cardsMaxWidth, minTarget: touchTarget, tolerance: touchTolerance });
+        if (open.scrollWidth > open.innerWidth) record("horizontal-scroll", launcherName, width, `page is ${open.scrollWidth}px wide in a ${open.innerWidth}px window; sticking out: ${open.overflowers.join("; ") || "(nothing identified)"}`);
+        for (const target of open.smallTargets) record("small-tap-target", launcherName, width, target);
+        if (takeShots) await page.screenshot({ path: `${prefix}-launcher-confirm.jpg`, type: "jpeg", quality: 60 });
+      }
+    } catch (error) {
+      record("dialog-open-failed", launcherName, width, (error as Error).message.split("\n")[0] ?? "failed");
+    }
+    // First Escape cancels the confirm, the second closes the launcher.
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.waitForTimeout(100);
+  }
+
+  // The meeting-note popup after a save (#810): the green Saved banner is pinned at the top of the popup.
+  if (spec.name === "club-meeting-notes") {
+    const savedName = `${spec.name} (saved popup)`;
+    try {
+      const opener = page.locator("[data-meeting-note-add]:visible").first();
+      await opener.scrollIntoViewIfNeeded({ timeout: 3000 });
+      await opener.click({ timeout: 3000 });
+      await page.waitForTimeout(250);
+      await page.locator('[role="dialog"] textarea:visible').first().fill(layoutNoteText);
+      await page.locator('[role="dialog"] button[type="submit"]:visible').first().click({ timeout: 3000 });
+      const banner = page.locator("[data-meeting-note-saved]:visible").first();
+      await banner.waitFor({ state: "visible", timeout: 8000 });
+      const box = await banner.boundingBox();
+      if (!box || box.y < -1 || box.y > 120) record("dialog-too-tall", savedName, width, `the Saved banner is not at the top of the popup (y=${box ? Math.round(box.y) : "none"})`);
+      if (!/^Saved$/.test((await banner.innerText()).trim())) record("dialog-open-failed", savedName, width, "the banner does not say Saved");
+      const fit = await page.evaluate(dialogFitInPage);
+      dialogsOpened += fit.count;
+      for (const problem of fit.problems) record("dialog-too-tall", savedName, width, problem);
+      const open = await page.evaluate(auditInPage, { touch, cards: width <= cardsMaxWidth, minTarget: touchTarget, tolerance: touchTolerance });
+      if (open.scrollWidth > open.innerWidth) record("horizontal-scroll", savedName, width, `page is ${open.scrollWidth}px wide in a ${open.innerWidth}px window; sticking out: ${open.overflowers.join("; ") || "(nothing identified)"}`);
+      for (const target of open.smallTargets) record("small-tap-target", savedName, width, target);
+      if (takeShots) await page.screenshot({ path: `${prefix}-note-saved.jpg`, type: "jpeg", quality: 60 });
+    } catch (error) {
+      record("dialog-open-failed", savedName, width, (error as Error).message.split("\n")[0] ?? "failed");
+    }
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.waitForTimeout(100);
+    await deleteLayoutNotes().catch((error: Error) => record("dialog-open-failed", savedName, width, `could not delete the synthetic note: ${error.message.split("\n")[0]}`));
+  }
+
   // The class builder with several honors chosen (#812): the add form with its honor search narrowed and
   // three honors ticked, then the edit form of a class that teaches four. Nothing may stick out sideways,
   // and every checkbox, chip button and search box must be a big enough tap target.
@@ -1437,6 +1536,7 @@ async function main() {
   }
   mkdirSync(outDir, { recursive: true });
   const prisma: PrismaClient = new Prisma();
+  noteCleanup = prisma;
   // Declared before the first thing that can fail, so the finally below always
   // revokes the sessions and disconnects.
   const tokens: { staff: string[]; attendee: string[] } = { staff: [], attendee: [] };
@@ -1494,6 +1594,10 @@ async function main() {
     const { revokeAttendeeSession } = await import("../modules/attendee-accounts/session-store");
     for (const token of tokens.staff) await revokeDatabaseSession(token).catch(() => undefined);
     for (const token of tokens.attendee) await revokeAttendeeSession(token).catch(() => undefined);
+    if (launcherModuleCreated) {
+      await prisma.eventModule.deleteMany({ where: { eventId, moduleKey: "attendee-community" } }).catch((error: Error) => console.error(`Could not remove the synthetic module row: ${error.message}`));
+      await prisma.auditLog.deleteMany({ where: { eventId, action: { startsWith: "EVENT_MODULE_" }, entityId: "attendee-community" } }).catch(() => undefined);
+    }
     if (seeded && process.env.MOBILE_LAYOUT_CLEANUP === "1") {
       await cleanupSynthetic(prisma).catch((error: Error) => console.error(`Cleanup failed: ${error.message}`));
     }

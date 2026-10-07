@@ -280,7 +280,8 @@ describe("wrong two-step code (#456)", () => {
     expect(stub.mfaRecoveryCode.updateMany).toHaveBeenCalledTimes(3);
     const codes = results.map((result) => (result as PromiseRejectedResult).reason.code);
     expect(codes.filter((code) => code === "MFA_CODE_INVALID")).toHaveLength(3);
-    expect(codes.filter((code) => code === "MFA_LOCKED")).toHaveLength(7);
+    // The rest are refused without verifying: "locked" once the lock is set, "try again in a moment" while the burst is still being counted (#825).
+    expect(codes.filter((code) => code === "MFA_LOCKED" || code === "MFA_TRY_AGAIN")).toHaveLength(7);
     expect(enrollment.row.lockedUntil).toBeInstanceOf(Date);
     expect(dependencies.scheduleLockoutEmails).toHaveBeenCalledTimes(1);
   });

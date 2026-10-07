@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { HTMLAttributes, ReactNode, Ref } from "react";
 import { createPortal } from "react-dom";
@@ -18,6 +18,7 @@ import {
   type LauncherCloseReason,
 } from "@/components/more-launcher-model";
 import type { MoreDirectoryCard } from "@/components/staff-navigation";
+import { eventModuleDefinition, moduleForCard } from "@/modules/event-modules/catalog";
 
 /**
  * The More launcher (#741 slice 2). On desktop it is a popover anchored to the
@@ -50,6 +51,8 @@ export function MoreLauncherPanel({
   isSystemAdmin,
   canRequestFeature = false,
   eventQuery,
+  eventId,
+  removableModules,
   id,
   panelRef,
   onNavigate,
@@ -61,6 +64,14 @@ export function MoreLauncherPanel({
   /** An Event Admin who is not a system administrator: shows "Request a feature" (#741). */
   canRequestFeature?: boolean;
   eventQuery: string;
+  /** The selected event; with a system administrator it adds a "Turn off" control to each module card (#810). */
+  eventId?: string;
+  /**
+   * Module keys the server will let a system administrator turn off for this event
+   * (stored row, not always on, not kept on by its data), the same set the Event
+   * modules page uses. Without it no card gets a Turn off control.
+   */
+  removableModules?: readonly string[];
   id?: string;
   panelRef?: Ref<HTMLDivElement>;
   onNavigate?: (card?: { key: string; href: string }) => void;
@@ -69,6 +80,78 @@ export function MoreLauncherPanel({
 }) {
   const groups = launcherGroups(cards);
   const footer = launcherFooterLinks({ isSystemAdmin, canRequestFeature, eventQuery });
+  const router = useRouter();
+  const [confirming, setConfirming] = useState<{ moduleKey: string; title: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const turnOffRef = useRef<HTMLButtonElement>(null);
+  // Only a system administrator sees a toggle; the route and service check the role again (#741, #810).
+  const canToggle = isSystemAdmin && Boolean(eventId) && Boolean(removableModules?.length);
+  const removable = new Set(removableModules ?? []);
+  const confirmRef = useRef<HTMLDivElement>(null);
+  // The Turn off button that opened the confirm, and where focus goes once the confirm is gone.
+  const openerRef = useRef<HTMLButtonElement | null>(null);
+  const pendingFocus = useRef<{ kind: "opener" } | { kind: "card"; key: string | null } | null>(null);
+
+  // Runs after the render that clears `confirming`, so the rest of the panel is no longer inert when focus moves back.
+  useEffect(() => {
+    if (confirming) {
+      cancelRef.current?.focus();
+      return;
+    }
+    const target = pendingFocus.current;
+    pendingFocus.current = null;
+    if (!target) return;
+    const panel = openerRef.current?.closest<HTMLElement>(".more-launcher") ?? null;
+    if (target.kind === "opener" && openerRef.current?.isConnected) {
+      openerRef.current.focus();
+    } else {
+      const card = target.kind === "card" && target.key ? panel?.querySelector<HTMLElement>(`a[data-card="${target.key}"]`) : null;
+      (card ?? panel)?.focus();
+    }
+  }, [confirming]);
+
+  function cancelConfirm() {
+    pendingFocus.current = { kind: "opener" };
+    setConfirming(null);
+  }
+
+  async function turnOff() {
+    if (!confirming || !eventId) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/events/${encodeURIComponent(eventId)}/modules/${encodeURIComponent(confirming.moduleKey)}`, { method: "DELETE" });
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.message ?? "The module could not be turned off.");
+      }
+      // The turned-off card goes away on refresh, so focus its neighbour (or the panel).
+      const row = openerRef.current?.closest("li");
+      const neighbour = (row?.nextElementSibling ?? row?.previousElementSibling)?.querySelector<HTMLElement>("a[data-card]") ?? null;
+      pendingFocus.current = { kind: "card", key: neighbour?.dataset.card ?? null };
+      setConfirming(null);
+      router.refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The module could not be turned off.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function onConfirmKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    // The confirm owns the keyboard while it is open: Escape cancels it only, and Tab stays between its two buttons.
+    event.stopPropagation();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      cancelConfirm();
+    } else if (event.key === "Tab") {
+      event.preventDefault();
+      (document.activeElement === cancelRef.current ? turnOffRef.current : cancelRef.current)?.focus();
+    }
+  }
+
   return (
     <div
       className={`more-launcher more-launcher-${variant}`}
@@ -78,26 +161,62 @@ export function MoreLauncherPanel({
       aria-modal={variant === "tab" ? "true" : undefined}
       aria-label="More tools"
       style={style}
+      tabIndex={-1}
     >
-      <div className="more-launcher-columns">
+      {/* While the confirm is open the rest of the panel is inert, to match aria-modal. */}
+      <div className="more-launcher-columns" inert={confirming ? true : undefined}>
         {groups.map(({ group, label, cards: groupCards }) => (
           <section className="more-launcher-group" aria-label={label} key={group} data-group={group}>
             <h2 className="more-launcher-group-label">{label}</h2>
             <ul>
-              {groupCards.map((card) => (
-                <li key={card.key}>
-                  <Link className="more-launcher-item" href={card.href} onClick={() => onNavigate?.({ key: card.key, href: card.href })} data-card={card.key}>
-                    <card.icon aria-hidden="true" size={18} strokeWidth={1.9} />
-                    <span>{card.title}</span>
-                  </Link>
-                </li>
-              ))}
+              {groupCards.map((card) => {
+                const definition = canToggle ? moduleForCard(card.key) : undefined;
+                const switchable = definition && !definition.alwaysOn && removable.has(definition.key) ? definition : undefined;
+                return (
+                  <li key={card.key} className={switchable ? "more-launcher-row" : undefined}>
+                    <Link className="more-launcher-item" href={card.href} onClick={() => onNavigate?.({ key: card.key, href: card.href })} data-card={card.key}>
+                      <card.icon aria-hidden="true" size={18} strokeWidth={1.9} />
+                      <span>{card.title}</span>
+                    </Link>
+                    {switchable && (
+                      <button
+                        className="more-launcher-toggle"
+                        type="button"
+                        data-module-toggle={switchable.key}
+                        aria-label={`Turn off ${switchable.title}`}
+                        onClick={(event) => { openerRef.current = event.currentTarget; setError(""); setConfirming({ moduleKey: switchable.key, title: switchable.title }); }}
+                      >
+                        Turn off
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </section>
         ))}
       </div>
+      {confirming && (
+        <div
+          className="more-launcher-confirm"
+          ref={confirmRef}
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="more-launcher-confirm-title"
+          aria-describedby="more-launcher-confirm-body"
+          onKeyDown={onConfirmKeyDown}
+        >
+          <h3 id="more-launcher-confirm-title">Turn off {eventModuleDefinition(confirming.moduleKey as Parameters<typeof eventModuleDefinition>[0]).title}?</h3>
+          <p id="more-launcher-confirm-body">Its pages and links are hidden for this event. The data is kept, and you can turn it back on from Event modules.</p>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <div className="more-launcher-confirm-actions">
+            <button className="secondary-button" type="button" ref={cancelRef} onClick={cancelConfirm} disabled={busy}>Cancel</button>
+            <button className="primary-button" type="button" ref={turnOffRef} onClick={turnOff} disabled={busy}>{busy ? "Turning off…" : "Turn off"}</button>
+          </div>
+        </div>
+      )}
       {footer.length > 0 && (
-        <div className="more-launcher-footer">
+        <div className="more-launcher-footer" inert={confirming ? true : undefined}>
           {footer.map((link) => (
             <Link className="more-launcher-item more-launcher-footer-link" href={link.href} key={link.key} onClick={() => onNavigate?.()} data-footer={link.key}>
               {link.label}
@@ -118,6 +237,8 @@ export function MoreLauncher({
   isSystemAdmin,
   canRequestFeature = false,
   eventQuery,
+  eventId,
+  removableModules,
   userId = "",
   tipProps = {},
   children,
@@ -131,6 +252,8 @@ export function MoreLauncher({
   isSystemAdmin: boolean;
   canRequestFeature?: boolean;
   eventQuery: string;
+  eventId?: string;
+  removableModules?: readonly string[];
   /** The signed-in user, so a remembered position never carries to another person on a shared tab. */
   userId?: string;
   tipProps?: HTMLAttributes<HTMLElement>;
@@ -207,7 +330,7 @@ export function MoreLauncher({
       close("escape");
       return;
     }
-    const items = Array.from(panelRef.current?.querySelectorAll<HTMLElement>("a[href]") ?? []);
+    const items = Array.from(panelRef.current?.querySelectorAll<HTMLElement>("a[href], button.more-launcher-toggle:not([disabled])") ?? []);
     const current = items.indexOf(document.activeElement as HTMLElement);
     // The panel is drawn at the end of <body>, so Tab and Shift+Tab walk its links in a loop.
     const key = event.key === "Tab" ? (event.shiftKey ? "ArrowUp" : "ArrowDown") : event.key;
@@ -253,6 +376,8 @@ export function MoreLauncher({
             <MoreLauncherPanel
               cards={cards}
               eventQuery={eventQuery}
+              eventId={eventId}
+              removableModules={removableModules}
               id={panelId}
               isSystemAdmin={isSystemAdmin}
               canRequestFeature={canRequestFeature}
@@ -261,7 +386,7 @@ export function MoreLauncher({
                 close("navigate");
               }}
               panelRef={panelRef}
-              style={variant === "sidebar" && anchor ? { left: anchor.left, bottom: anchor.bottom } : undefined}
+              style={variant === "sidebar" && anchor ? { left: anchor.left, bottom: anchor.bottom, maxHeight: `calc(100vh - ${anchor.bottom + 12}px)` } : undefined}
               variant={variant}
             />
           </div>
