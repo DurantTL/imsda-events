@@ -7,7 +7,7 @@ import {
   buildSeminarPreferencesBlock,
   withPerAttendeeQrImages,
 } from "@/modules/communications/message-blocks";
-import { loadSeminarAttendees } from "@/modules/communications/seminar-preferences";
+import { buildSeminarPreferencesBlocks, loadSeminarAttendees } from "@/modules/communications/seminar-preferences";
 import {
   NO_VALUE_MESSAGE_TEMPLATE_CONTEXT,
   OPTIONAL_MESSAGE_TEMPLATE_TOKENS,
@@ -195,7 +195,7 @@ describe("event announcement to a party", () => {
     const text = created.bodyTextSnapshot;
     const html = created.bodyHtmlSnapshot;
 
-    expect(text).toContain("**Ann Synthetic**\n- Assigned: Prayer\n- 1st choice: Service\n- 2nd choice: Prayer");
+    expect(text).toContain("Ann Synthetic\n- Assigned: Prayer\n- 1st choice: Service\n- 2nd choice: Prayer");
     expect(text).toContain("- 1st choice: Music\n- 2nd choice: Service");
     expect(html).toContain("Assigned: Prayer");
     // The registrant-supplied name never becomes a live link.
@@ -273,5 +273,146 @@ describe("a message built from a real registration never shows sample values", (
     expect(rendered.body).toBe("(none)\n\nEnd");
     expect(rendered.body).not.toContain("Avery Johnson");
     expect(rendered.body).not.toContain("Prayer, Service");
+  });
+});
+
+describe("escaped names read cleanly in both parts", () => {
+  const name = "Mary-Ann O'Neil (Sr.)";
+
+  it("renders the seminar list and per-attendee QR without backslashes or raw bold", () => {
+    const rendered = renderMessageTemplate(
+      { subject: "s", body: "{{seminar_preferences}}\n\n{{checkin_qr_images}}\n\n{{checkin_block}}" },
+      {
+        ...NO_VALUE_MESSAGE_TEMPLATE_CONTEXT,
+        seminar_preferences: buildSeminarPreferencesBlock([
+          { name, fields: [{ label: "Seminar", choices: ["Prayer (Sr.)"], assigned: ["Music-1"] }] },
+        ]),
+        ...buildRegistrationCheckinTokens({
+          confirmationCode: "REG-1",
+          attendeeIds: ["a1", "a2"],
+          attendees: [{ id: "a1", name }, { id: "a2", name: "Bo" }],
+        }),
+      },
+    );
+
+    expect(rendered.body).toContain(`Mary-Ann O'Neil (Sr.)\n- Assigned: Music-1\n- 1st choice: Prayer (Sr.)`);
+    expect(rendered.body).toContain(`![Check-in QR code for Mary-Ann O'Neil (Sr.)](`);
+    expect(rendered.body).not.toContain("\\");
+    expect(rendered.body).not.toContain("**");
+    expect(rendered.bodyHtml).toContain(`<strong>Mary-Ann O&#39;Neil (Sr.)</strong>`);
+    expect(rendered.bodyHtml).toContain("Prayer (Sr.)</li>");
+    expect(rendered.bodyHtml).toContain(`alt="Check-in QR code for Mary-Ann O&#39;Neil (Sr.)"`);
+    expect(rendered.bodyHtml).not.toContain("\\");
+  });
+});
+
+
+describe("seminar blocks leave out empty attendees and name the unnamed", () => {
+  it("omits attendees and fields with nothing to show, and renders empty when nobody has any", () => {
+    const block = buildSeminarPreferencesBlock([
+      { name: "Ann", fields: [{ label: "Seminar", choices: [], assigned: [] }] },
+      { name: "", fields: [{ label: "Seminar", choices: ["Music"], assigned: [] }] },
+    ]);
+
+    expect(block).toBe("**Attendee 2**\n- 1st choice: Music");
+    expect(block).not.toContain("No seminar choices");
+    expect(buildSeminarPreferencesBlock([{ name: "Ann", fields: [{ label: "Seminar", choices: [], assigned: [] }] }])).toBe("");
+  });
+
+  it("keeps each field's own label and rank", () => {
+    const block = buildSeminarPreferencesBlock([{
+      name: "Ann",
+      fields: [
+        { label: "Friday", choices: ["A", "B"], assigned: [] },
+        { label: "Sabbath", choices: ["C"], assigned: ["C"] },
+      ],
+    }]);
+
+    expect(block).toContain("- Friday — 1st choice: A");
+    expect(block).toContain("- Friday — 2nd choice: B");
+    expect(block).toContain("- Sabbath — Assigned: C");
+    expect(block).toContain("- Sabbath — 1st choice: C");
+  });
+});
+
+describe("large parties", () => {
+  const party = (count: number) => Array.from({ length: count }, (_, index) => ({
+    id: `a${index}`,
+    name: index === 1 ? "" : `Person ${index}`,
+  }));
+
+  it("inlines every QR up to 8 attendees, naming unnamed ones", () => {
+    const tokens = buildRegistrationCheckinTokens({
+      confirmationCode: "REG-1",
+      attendeeIds: party(8).map((attendee) => attendee.id),
+      attendees: party(8),
+    });
+
+    expect((tokens.checkin_qr_images.match(/!\[/g) ?? [])).toHaveLength(8);
+    expect(tokens.checkin_qr_images).toContain("**Attendee 2**");
+  });
+
+  it("uses the portal link above 8 attendees", () => {
+    const tokens = buildRegistrationCheckinTokens({
+      confirmationCode: "REG-1",
+      attendeeIds: party(9).map((attendee) => attendee.id),
+      attendees: party(9),
+    });
+
+    expect(tokens.checkin_qr_images).toBe("");
+    expect(tokens.checkin_block).toContain("Show our check-in passes");
+    expect(tokens.checkin_block).not.toContain("![");
+    expect(withPerAttendeeQrImages("![x]({{checkin_qr_image}})", 9)).toBe(
+      "[Show our check-in passes]({{checkin_qr_url}})",
+    );
+  });
+});
+
+describe("seminar loading cost", () => {
+  it("does not read seminar data when the message does not use the token", async () => {
+    const { tx, upsert } = announcementFixture("# {{announcement_title}}\n\n{{announcement_body}}");
+    await enqueueEventAnnouncementMessage(tx as never, {
+      eventId: "event-1",
+      registrationId: "registration-1",
+      correlationId: "batch-1",
+      transitionKey: "t",
+      announcementTitle: "Title",
+      announcementBody: "Body",
+    });
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+    expect(tx.registration.findFirst).toHaveBeenCalledTimes(1);
+    expect(tx.programAttendeeAssignment.findMany).not.toHaveBeenCalled();
+  });
+
+  it("builds many registrations' blocks in three queries, parsing each form version once", async () => {
+    const registrations = Array.from({ length: 50 }, (_, index) => ({
+      id: `reg-${index}`,
+      publicFormSubmission: { formVersionId: "version-1" },
+      attendees: attendeeRows.map((attendee) => ({ ...attendee, id: `${attendee.id}-${index}` })),
+    }));
+    const client = {
+      registration: { findMany: vi.fn().mockResolvedValue(registrations) },
+      registrationFormVersion: {
+        findMany: vi.fn().mockResolvedValue([{ id: "version-1", formId: "form-1", definition: seminarDefinition }]),
+      },
+      programAttendeeAssignment: {
+        findMany: vi.fn().mockResolvedValue([
+          { attendeeIdSnapshot: "attendee-ann-7", optionValue: "Prayer", run: { fieldKeySnapshot: "seminar_preferences", formId: "form-1" } },
+        ]),
+      },
+    };
+    const blocks = await buildSeminarPreferencesBlocks(client as never, {
+      eventId: "event-1",
+      registrationIds: registrations.map((registration) => registration.id),
+    });
+
+    expect(client.registration.findMany).toHaveBeenCalledTimes(1);
+    expect(client.registrationFormVersion.findMany).toHaveBeenCalledTimes(1);
+    expect(client.programAttendeeAssignment.findMany).toHaveBeenCalledTimes(1);
+    expect(blocks.size).toBe(50);
+    expect(blocks.get("reg-7")).toContain("**Ann Synthetic**\n- Assigned: Prayer");
+    expect(blocks.get("reg-8")).not.toContain("Assigned");
+    expect(blocks.get("reg-8")).toContain("- 1st choice: Service");
   });
 });

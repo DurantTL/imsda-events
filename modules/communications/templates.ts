@@ -1,4 +1,4 @@
-import { escapeMarkdown, renderEmailBodyHtml } from "@/modules/communications/email-html";
+import { escapeMarkdown, plainTextFromEscapedMarkdown, renderEmailBodyHtml } from "@/modules/communications/email-html";
 
 export const MESSAGE_TEMPLATE_KEYS = [
   "REGISTRATION_CONFIRMATION_PAID",
@@ -135,6 +135,16 @@ export const MARKDOWN_MESSAGE_TEMPLATE_TOKENS: ReadonlySet<MessageTemplateToken>
   "announcement_body",
   "seminar_preferences",
   "club_assignments_block",
+]);
+
+/**
+ * Blocks built with `escapeMarkdown` over registrant-supplied names. The HTML
+ * part needs the escapes; the text part reads them as plain text.
+ */
+const PLAIN_TEXT_FROM_ESCAPED_TOKENS: ReadonlySet<MessageTemplateToken> = new Set([
+  "seminar_preferences",
+  "checkin_qr_images",
+  "checkin_block",
 ]);
 
 export type MessageTemplateContext = Partial<
@@ -1099,6 +1109,9 @@ export function renderTemplateText(
 
     // The callback return is inserted literally. Values containing "$&" or
     // another {{token}} are never interpreted as replacement syntax or rendered twice.
+    if (!options.escapeUntrustedMarkdown && PLAIN_TEXT_FROM_ESCAPED_TOKENS.has(knownToken)) {
+      return plainTextFromEscapedMarkdown(value);
+    }
     return options.escapeUntrustedMarkdown
       && !MARKDOWN_MESSAGE_TEMPLATE_TOKENS.has(knownToken)
       ? escapeMarkdown(value)

@@ -265,8 +265,8 @@ export type AttendeeQr = { name: string; qrImageUrl: string };
 /** One labelled QR image per attendee. Names are registrant-supplied, so escaped. */
 export function buildAttendeeQrImagesBlock(attendeeQrs: readonly AttendeeQr[]) {
   return attendeeQrs
-    .map((attendee) => {
-      const name = escapeMarkdown(clean(attendee.name) ?? "Attendee");
+    .map((attendee, index) => {
+      const name = escapeMarkdown(clean(attendee.name) ?? `Attendee ${index + 1}`);
       return [`**${name}**`, "", `![Check-in QR code for ${name}](${attendee.qrImageUrl})`].join("\n");
     })
     .join("\n\n");
@@ -284,10 +284,17 @@ const CHECKIN_QR_IMAGE_MARKDOWN = /!\[[^\]]*\]\(\s*\{\{\s*checkin_qr_image\s*\}\
  * the labelled per-attendee block before rendering.
  */
 export function withPerAttendeeQrImages(body: string, attendeeCount: number) {
+  if (attendeeCount > MAX_INLINE_ATTENDEE_QRS) {
+    // Too many pictures for one email: link to the portal, which shows every pass.
+    return body.replace(CHECKIN_QR_IMAGE_MARKDOWN, "[Show our check-in passes]({{checkin_qr_url}})");
+  }
   return attendeeCount > 1
     ? body.replace(CHECKIN_QR_IMAGE_MARKDOWN, "{{checkin_qr_images}}")
     : body;
 }
+
+/** Above this many attendees an announcement links to the portal instead of inlining every QR. */
+export const MAX_INLINE_ATTENDEE_QRS = 8;
 
 /**
  * The check-in tokens for one registration, written against the delivery
@@ -322,11 +329,12 @@ export function buildRegistrationCheckinTokens(input: {
   );
   const soleAttendeeId = attendeeIds.length === 1 ? attendeeIds[0] : null;
   const qrImageUrl = soleAttendeeId ? attendeePassQrUrl(soleAttendeeId) : null;
-  const perAttendee = attendeeQrs.length > 1 ? attendeeQrs : null;
+  const inlineQrs = attendeeQrs.length <= MAX_INLINE_ATTENDEE_QRS ? attendeeQrs : [];
+  const perAttendee = inlineQrs.length > 1 ? inlineQrs : null;
   return {
     checkin_qr_url: REGISTRATION_MANAGE_LINK_SENTINEL,
     checkin_qr_image: qrImageUrl ?? "",
-    checkin_qr_images: attendeeQrs.length > 0 ? buildAttendeeQrImagesBlock(attendeeQrs) : "",
+    checkin_qr_images: inlineQrs.length > 0 ? buildAttendeeQrImagesBlock(inlineQrs) : "",
     checkin_block: buildCheckinBlock({
       confirmationCode: input.confirmationCode,
       passUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
@@ -406,22 +414,22 @@ function ordinal(position: number) {
  * no seminar choice at all, so the section is omitted rather than empty.
  */
 export function buildSeminarPreferencesBlock(attendees: readonly SeminarAttendee[]) {
-  if (!attendees.some((attendee) => attendee.fields.length > 0)) return "";
   return attendees
-    .map((attendee) => {
-      const lines = [`**${escapeMarkdown(clean(attendee.name) ?? "Attendee")}**`];
-      const labelled = attendee.fields.length > 1;
-      for (const field of attendee.fields) {
+    .map((attendee, index) => {
+      // Fields with nothing to say are left out, and so are attendees with none.
+      const fields = attendee.fields.filter((field) => field.choices.length > 0 || field.assigned.length > 0);
+      if (fields.length === 0) return null;
+      const lines = [`**${escapeMarkdown(clean(attendee.name) ?? `Attendee ${index + 1}`)}**`];
+      const labelled = fields.length > 1;
+      for (const field of fields) {
         const prefix = labelled ? `${escapeMarkdown(field.label)} — ` : "";
         field.assigned.forEach((value) => lines.push(`- ${prefix}Assigned: ${escapeMarkdown(value)}`));
-        field.choices.forEach((choice, index) => (
-          lines.push(`- ${prefix}${ordinal(index + 1)} choice: ${escapeMarkdown(choice)}`)
+        field.choices.forEach((choice, rank) => (
+          lines.push(`- ${prefix}${ordinal(rank + 1)} choice: ${escapeMarkdown(choice)}`)
         ));
-        if (field.choices.length === 0 && field.assigned.length === 0) {
-          lines.push(`- ${prefix}No seminar choices recorded yet`);
-        }
       }
       return lines.join("\n");
     })
+    .filter((block): block is string => block !== null)
     .join("\n\n");
 }

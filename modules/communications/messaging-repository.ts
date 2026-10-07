@@ -1365,6 +1365,8 @@ async function loadTestRegistrationContext(
   };
 }
 
+const NO_ANNOUNCEMENT_TEXT = "(no announcement published yet)";
+
 export async function sendTestMessage(
   eventId: string,
   templateId: string,
@@ -1424,6 +1426,14 @@ export async function sendTestMessage(
     ? await loadTestRegistrationContext(eventId, input.confirmationCode, prisma, template.key)
     : null;
 
+  const latestAnnouncement = source
+    ? await prisma.announcement.findFirst({
+        where: { eventId, status: "PUBLISHED" },
+        orderBy: [{ publishedAt: "desc" }, { createdAt: "desc" }],
+        select: { title: true, body: true },
+      })
+    : null;
+
   const context: MessageTemplateContext = {
     // A test that names a registration is a real message: a token with no real
     // value renders empty (optional blocks) or "(none)", never a sample value.
@@ -1443,6 +1453,14 @@ export async function sendTestMessage(
     // Real registration values last: they are the point of naming a code, and
     // they carry the sentinel that becomes a working private link.
     ...(source?.tokens ?? {}),
+    // A real test shows a real announcement: the event's latest published one,
+    // or a plain note that there is none. Never the sample, never "(none)" in a subject.
+    ...(source
+      ? {
+          announcement_title: latestAnnouncement?.title ?? NO_ANNOUNCEMENT_TEXT,
+          announcement_body: latestAnnouncement?.body ?? NO_ANNOUNCEMENT_TEXT,
+        }
+      : {}),
   };
   const rendered = renderMessageTemplate(
     {

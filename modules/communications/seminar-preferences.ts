@@ -7,15 +7,72 @@ import {
 import {
   registrationFormDefinitionSchema,
   type RegistrationFormDefinition,
+  type RegistrationFormField,
 } from "@/modules/forms/definition";
 import { publicAttendeeName } from "@/modules/public-access/domain";
 
 type SeminarReadClient = Pick<Prisma.TransactionClient, "registration" | "programAttendeeAssignment">;
+type SeminarBatchClient = SeminarReadClient & Pick<Prisma.TransactionClient, "registrationFormVersion">;
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function seminarFieldsOf(definition: unknown): RegistrationFormField[] {
+  const parsed = registrationFormDefinitionSchema.safeParse(definition);
+  return parsed.success
+    ? parsed.data.sections.flatMap((section) => section.fields).filter(isSeminarPreferenceField)
+    : [];
+}
+
+type AttendeeRow = {
+  id: string;
+  formResponses: unknown;
+  profileSnapshot: unknown;
+  person: { firstName: string; lastName: string };
+};
+type AssignmentRow = {
+  attendeeIdSnapshot: string;
+  optionValue: string | null;
+  run: { fieldKeySnapshot: string };
+};
+
+function assembleSeminarAttendees(
+  attendees: readonly AttendeeRow[],
+  seminarFields: readonly RegistrationFormField[],
+  assignments: readonly AssignmentRow[],
+): SeminarAttendee[] {
+  return attendees.map((attendee) => {
+    const responses = record(attendee.formResponses);
+    return {
+      name: publicAttendeeName(attendee.profileSnapshot, attendee.person),
+      fields: seminarFields.map((field) => {
+        const value = responses[field.key];
+        return {
+          label: field.label,
+          // Ranked order is the stored order; labels no longer on the form are dropped.
+          choices: Array.isArray(value)
+            ? value
+                .filter((choice): choice is string => (
+                  typeof choice === "string" && field.options.includes(choice)
+                ))
+                .map((choice) => field.optionLabels?.[choice] ?? choice)
+            : [],
+          assigned: assignments
+            .filter((assignment) => (
+              assignment.attendeeIdSnapshot === attendee.id
+              && assignment.run.fieldKeySnapshot === field.key
+              && assignment.optionValue
+            ))
+            .map((assignment) => (
+              field.optionLabels?.[assignment.optionValue as string] ?? assignment.optionValue as string
+            )),
+        };
+      }),
+    };
+  });
 }
 
 /**
@@ -51,11 +108,7 @@ export async function loadSeminarAttendees(
   if (!registration) return [];
 
   const version = registration.publicFormSubmission?.formVersion;
-  const parsed = version ? registrationFormDefinitionSchema.safeParse(version.definition) : null;
-  const seminarFields = parsed?.success
-    ? parsed.data.sections.flatMap((section) => section.fields).filter(isSeminarPreferenceField)
-    : [];
-
+  const seminarFields = version ? seminarFieldsOf(version.definition) : [];
   const assignments = version && seminarFields.length > 0
     ? await client.programAttendeeAssignment.findMany({
         where: {
@@ -77,36 +130,7 @@ export async function loadSeminarAttendees(
         },
       })
     : [];
-
-  return registration.attendees.map((attendee) => {
-    const responses = record(attendee.formResponses);
-    return {
-      name: publicAttendeeName(attendee.profileSnapshot, attendee.person),
-      fields: seminarFields.map((field) => {
-        const value = responses[field.key];
-        return {
-          label: field.label,
-          // Ranked order is the stored order; labels no longer on the form are dropped.
-          choices: Array.isArray(value)
-            ? value
-                .filter((choice): choice is string => (
-                  typeof choice === "string" && field.options.includes(choice)
-                ))
-                .map((choice) => field.optionLabels?.[choice] ?? choice)
-            : [],
-          assigned: assignments
-            .filter((assignment) => (
-              assignment.attendeeIdSnapshot === attendee.id
-              && assignment.run.fieldKeySnapshot === field.key
-              && assignment.optionValue
-            ))
-            .map((assignment) => (
-              field.optionLabels?.[assignment.optionValue as string] ?? assignment.optionValue as string
-            )),
-        };
-      }),
-    };
-  });
+  return assembleSeminarAttendees(registration.attendees, seminarFields, assignments);
 }
 
 /** The `{{seminar_preferences}}` value for one registration, from its own data. */
@@ -115,6 +139,99 @@ export async function buildRegistrationSeminarPreferences(
   input: { eventId: string; registrationId: string },
 ) {
   return buildSeminarPreferencesBlock(await loadSeminarAttendees(client, input));
+}
+
+/**
+ * The same blocks for many registrations in four queries, whatever their
+ * number: registrations and attendees, each distinct form version once,
+ * and every current assignment. A broadcast uses this so its single send
+ * transaction does not query once per recipient.
+ */
+export async function buildSeminarPreferencesBlocks(
+  client: SeminarBatchClient,
+  input: { eventId: string; registrationIds: readonly string[] },
+): Promise<Map<string, string>> {
+  const blocks = new Map<string, string>();
+  if (input.registrationIds.length === 0) return blocks;
+  const registrations = await client.registration.findMany({
+    where: { id: { in: [...input.registrationIds] }, eventId: input.eventId },
+    select: {
+      id: true,
+      publicFormSubmission: { select: { formVersionId: true } },
+      attendees: {
+        orderBy: [{ position: "asc" }, { createdAt: "asc" }],
+        select: {
+          id: true,
+          formResponses: true,
+          profileSnapshot: true,
+          person: { select: { firstName: true, lastName: true } },
+        },
+      },
+    },
+  });
+  const versionIds = [...new Set(registrations.flatMap((registration) => (
+    registration.publicFormSubmission ? [registration.publicFormSubmission.formVersionId] : []
+  )))];
+  const versions = versionIds.length > 0
+    ? await client.registrationFormVersion.findMany({
+        where: { id: { in: versionIds } },
+        select: { id: true, formId: true, definition: true },
+      })
+    : [];
+  // Each definition is parsed once, however many registrations use it.
+  const fieldsByVersion = new Map(versions.map((version) => [
+    version.id,
+    { formId: version.formId, fields: seminarFieldsOf(version.definition) },
+  ]));
+  const seminarKeys = [...new Set([...fieldsByVersion.values()].flatMap((entry) => (
+    entry.fields.map((field) => field.key)
+  )))];
+  const attendeeIds = registrations.flatMap((registration) => (
+    registration.attendees.map((attendee) => attendee.id)
+  ));
+  const assignments = seminarKeys.length > 0 && attendeeIds.length > 0
+    ? await client.programAttendeeAssignment.findMany({
+        where: {
+          attendeeIdSnapshot: { in: attendeeIds },
+          outcome: "ASSIGNED",
+          optionValue: { not: null },
+          run: {
+            eventId: input.eventId,
+            fieldKeySnapshot: { in: seminarKeys },
+            invalidatedAt: null,
+            supersededBy: { none: {} },
+          },
+        },
+        select: {
+          attendeeIdSnapshot: true,
+          optionValue: true,
+          run: { select: { fieldKeySnapshot: true, formId: true } },
+        },
+      })
+    : [];
+  const assignmentsByAttendee = new Map<string, Array<AssignmentRow & { run: { formId: string } }>>();
+  for (const assignment of assignments) {
+    const list = assignmentsByAttendee.get(assignment.attendeeIdSnapshot) ?? [];
+    list.push(assignment);
+    assignmentsByAttendee.set(assignment.attendeeIdSnapshot, list);
+  }
+  for (const registration of registrations) {
+    const entry = registration.publicFormSubmission
+      ? fieldsByVersion.get(registration.publicFormSubmission.formVersionId)
+      : undefined;
+    if (!entry) {
+      blocks.set(registration.id, "");
+      continue;
+    }
+    const relevant = registration.attendees.flatMap((attendee) => (
+      (assignmentsByAttendee.get(attendee.id) ?? []).filter((assignment) => assignment.run.formId === entry.formId)
+    ));
+    blocks.set(
+      registration.id,
+      buildSeminarPreferencesBlock(assembleSeminarAttendees(registration.attendees, entry.fields, relevant)),
+    );
+  }
+  return blocks;
 }
 
 /**

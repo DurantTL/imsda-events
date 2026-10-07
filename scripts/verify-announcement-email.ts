@@ -103,7 +103,7 @@ async function cleanup() {
   await prisma.auditLog.deleteMany({ where: { OR: [{ eventId: ids.event }, { actorUserId: ids.staff }] } });
   await prisma.publicRegistrationSubmission.deleteMany({ where: { eventId: ids.event } });
   await prisma.event.deleteMany({ where: { id: ids.event } });
-  await prisma.person.deleteMany({ where: { id: { in: [ids.holder, ids.ann, ids.bo] } } });
+  await prisma.person.deleteMany({ where: { id: { in: [ids.holder, ids.ann, ids.bo, `${P}_cy`] } } });
   await prisma.user.deleteMany({ where: { id: ids.staff } });
 }
 
@@ -186,7 +186,7 @@ async function main() {
   });
   await prisma.announcement.create({
     data: {
-      id: ids.announcement, eventId: ids.event, createdByUserId: ids.staff, title: "Friday arrival information",
+      id: ids.announcement, eventId: ids.event, createdByUserId: ids.staff, title: "Saturday schedule update",
       body: "Doors open at 3 PM.\n\nBring a coat.", audience: { type: "ALL_ATTENDEES" }, placement: "HOME_BANNER",
       status: "PUBLISHED", publishedAt: new Date(),
     },
@@ -220,12 +220,12 @@ async function main() {
 
   // Seminar lists, per attendee, ranked, with the assignment first.
   assert(
-    text.includes("**Ann Synthetic**\n- Assigned: Prayer\n- 1st choice: Service\n- 2nd choice: Prayer"),
+    text.includes("Ann Synthetic\n- Assigned: Prayer\n- 1st choice: Service\n- 2nd choice: Prayer"),
     `Ann's seminar list is wrong:\n${text}`,
   );
   const boSection = text.slice(text.indexOf("- 1st choice: Music"));
   assert(boSection.startsWith("- 1st choice: Music\n- 2nd choice: Service"), "Bo's choices are ranked Music then Service");
-  assert(!text.slice(text.indexOf("**Ann Synthetic**"), text.indexOf("Music")).includes("Music"), "Ann's list does not carry Bo's choices");
+  assert(!text.slice(text.indexOf("Ann Synthetic"), text.indexOf("Music")).includes("Music"), "Ann's list does not carry Bo's choices");
   assert(!text.slice(text.indexOf("Music")).includes("Assigned:"), "Bo has no assignment line");
   assert(!text.includes("Avery Johnson"), "no sample value in the sent text");
   assert(!html.includes("Avery Johnson"), "no sample value in the sent HTML");
@@ -240,7 +240,7 @@ async function main() {
   const boSrc = `__IMSDA_PRIVATE_MANAGE_API__/attendee-passes/${boAttendee.id}/qr?format=png`;
   assert(html.includes(`src="${annSrc}"`) && html.includes(`src="${boSrc}"`), "HTML has each attendee's own QR image");
   assert((html.match(/<img /g) ?? []).length === 2, "exactly two QR images");
-  assert(text.includes("**Ann Synthetic**\n\n![Check-in QR code for Ann Synthetic]("), "Ann's QR is labelled with her name");
+  assert(text.includes("Ann Synthetic\n\n![Check-in QR code for Ann Synthetic]("), "Ann's QR is labelled with her name");
   assert(html.includes("alt=\"Check-in QR code for Ann Synthetic\""), "the image alt names the attendee");
 
   // Paragraph spacing: every blank-line-separated block is its own paragraph.
@@ -288,8 +288,11 @@ async function main() {
   }
   assert(real.bodyTextSnapshot.includes("- 1st choice: Service"), "the real test shows the registration's own seminar choices");
   assert(real.bodyTextSnapshot.includes("![Check-in QR code for Bo"), "the real test shows each attendee's QR");
-  assert(real.bodyTextSnapshot.includes("(none)"), "a required token with no real value renders (none)");
+  assert(real.subjectSnapshot.includes("Saturday schedule update"), "the real test subject carries the latest published announcement's title");
+  assert(real.bodyTextSnapshot.includes("Doors open at 3 PM."), "the real test shows the latest published announcement's body");
   assert(!real.bodyTextSnapshot.includes("Check-in opens at 3:00 PM"), "the sample announcement body is not used");
+  assert(!real.bodyTextSnapshot.includes("\\"), "no Markdown escape backslash in the text part");
+  assert(!real.bodyTextSnapshot.includes("**"), "no raw bold markers in the seminar and QR blocks of the text part");
 
   // 3. A test with no registration is still a sample preview.
   await sendTestMessage(ids.event, template.id, {
@@ -303,6 +306,85 @@ async function main() {
     select: { bodyTextSnapshot: true },
   });
   assert(sample.bodyTextSnapshot.includes("Check-in opens at 3:00 PM"), "a test with no registration keeps the sample body");
+
+  // 4. With no published announcement, a real test says so plainly, in the subject too.
+  await prisma.announcement.update({ where: { id: ids.announcement }, data: { status: "DRAFT" } });
+  const countBefore = await prisma.messageOutbox.count({ where: { eventId: ids.event, recipientKind: "TEST", registrationId: registration.id } });
+  await sendTestMessage(ids.event, template.id, {
+    recipientEmail: `${P}.tester@example.test`,
+    recipientName: "Synthetic Tester",
+    realDelivery: false,
+    confirmationCode: CONFIRMATION_CODE,
+  } as never, ids.staff);
+  const noAnnouncement = await prisma.messageOutbox.findMany({
+    where: { eventId: ids.event, recipientKind: "TEST", registrationId: registration.id },
+    orderBy: { createdAt: "desc" },
+    take: 1,
+    select: { subjectSnapshot: true, bodyTextSnapshot: true },
+  });
+  assert(countBefore >= 1 && noAnnouncement[0].subjectSnapshot.includes("(no announcement published yet)"), "the subject says no announcement is published");
+  assert(!noAnnouncement[0].subjectSnapshot.includes("(none)"), "the subject never says (none)");
+  await prisma.announcement.update({ where: { id: ids.announcement }, data: { status: "PUBLISHED" } });
+
+  // 5. Timed: a 300-registration broadcast with both seminar and QR tokens finishes well inside its transaction timeout.
+  const COUNT = 300;
+  const cy = `${P}_cy`;
+  await prisma.person.create({ data: { id: cy, firstName: "Cy", lastName: "Synthetic" } });
+  const regs = Array.from({ length: COUNT }, (_, index) => ({ id: `${P}_r${index}`, size: 2 + (index % 2) }));
+  await prisma.registration.createMany({
+    data: regs.map((reg, index) => ({
+      id: reg.id, eventId: ids.event, accountHolderPersonId: ids.holder, confirmationCode: `${P}-L${index}`.toUpperCase(),
+      status: "CONFIRMED" as const, totalAmount: "50.00", submittedAt: new Date("2027-09-02T10:00:00Z"),
+      contactSnapshot: { firstName: "Load", lastName: `Party${index}`, email: `${P}.load${index}@example.test` },
+    })),
+  });
+  const people = [ids.ann, ids.bo, cy];
+  const names = ["Ann", "Bo", "Cy"];
+  await prisma.registrationAttendee.createMany({
+    data: regs.flatMap((reg, index) => Array.from({ length: reg.size }, (_, position) => ({
+      id: `${P}_r${index}_a${position}`, eventId: ids.event, registrationId: reg.id, personId: people[position], attendeeType: "ADULT", position,
+      profileSnapshot: { firstName: names[position], lastName: `Load${index}` },
+      formResponses: { seminar_preferences: position % 2 === 0 ? ["Service", "Prayer"] : ["Music", "Service"] },
+    }))),
+  });
+  await prisma.publicRegistrationSubmission.createMany({
+    data: regs.map((reg, index) => ({
+      eventId: ids.event, formVersionId: ids.version, registrationId: reg.id,
+      idempotencyKey: `${P}-load-${index}`, requestHash: `${P}-loadhash-${index}`, responses: {}, pricingSnapshot: {},
+    })),
+  });
+  await prisma.programAttendeeAssignment.createMany({
+    data: regs.map((reg, index) => ({
+      runId: run.id, attendeeIdSnapshot: `${P}_r${index}_a0`, registrationIdSnapshot: reg.id, confirmationCodeSnapshot: `${P}-L${index}`.toUpperCase(),
+      attendeePositionSnapshot: 0, stableOrder: index + 1, firstNameSnapshot: "Ann", lastNameSnapshot: `Load${index}`, attendeeTypeSnapshot: "ADULT",
+      preferencesSnapshot: ["Service", "Prayer"], optionValue: "Service", preferenceRank: 1, outcome: "ASSIGNED" as const,
+    })),
+  });
+  const bulkAnnouncement = await prisma.announcement.create({
+    data: {
+      eventId: ids.event, createdByUserId: ids.staff, title: "Bulk arrival information", body: "Bulk body.",
+      audience: { type: "ALL_ATTENDEES" }, placement: "HOME_BANNER", status: "PUBLISHED", publishedAt: new Date(),
+    },
+    select: { id: true },
+  });
+  const bulkPreview = await previewAnnouncementBroadcast({ eventId: ids.event, announcementId: bulkAnnouncement.id });
+  assert(bulkPreview.recipientCount === COUNT + 1, `expected ${COUNT + 1} recipients, got ${bulkPreview.recipientCount}`);
+  const bulkBatch = randomUUID();
+  const startedAt = Date.now();
+  const bulkSent = await broadcastPublishedAnnouncement({
+    eventId: ids.event, announcementId: bulkAnnouncement.id, batchId: bulkBatch, previewFingerprint: bulkPreview.fingerprint, actorUserId: ids.staff,
+  });
+  const elapsedMs = Date.now() - startedAt;
+  console.log(`timed broadcast: ${bulkSent.messageCount} messages in ${elapsedMs} ms`);
+  assert(bulkSent.messageCount === COUNT + 1, "every registration got a message");
+  assert(elapsedMs < 30_000, `broadcast of ${COUNT + 1} took ${elapsedMs} ms, which is not well inside the 120 s transaction timeout`);
+  const sampleMessage = await prisma.messageOutbox.findFirstOrThrow({
+    where: { eventId: ids.event, correlationId: bulkBatch, registrationId: `${P}_r1` },
+    select: { bodyTextSnapshot: true, bodyHtmlSnapshot: true },
+  });
+  assert(sampleMessage.bodyTextSnapshot.includes("Ann Load1\n- Assigned: Service\n- 1st choice: Service\n- 2nd choice: Prayer"), "bulk message carries its own registration's seminar list");
+  assert(sampleMessage.bodyTextSnapshot.includes(`${P}_r1_a1`) && sampleMessage.bodyTextSnapshot.includes(`${P}_r1_a2`), "bulk message carries each attendee's own QR");
+  assert(!sampleMessage.bodyTextSnapshot.includes(`${P}_r0_`), "no other registration's attendee in a bulk message");
 
   console.log("announcement email verification passed");
 }

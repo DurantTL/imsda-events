@@ -80,10 +80,16 @@ type TransactionalMessageInput = {
    * queues its notice before the AMENDMENT operation that holds the new snapshot exists (#621).
    */
   pricingSnapshot?: Record<string, unknown>;
+  /** Change notices: what was just saved, per seminar field, in ranked order. */
   seminarPreferences?: Array<{
     attendeeName: string;
-    seminarLabels: string[];
+    fields: Array<{ label: string; choices: string[] }>;
   }>;
+  /**
+   * A broadcast loads every recipient's seminar block in a few queries and
+   * passes each one in, so the send transaction does not query per recipient.
+   */
+  seminarPreferencesBlock?: string;
   metadata?: Record<string, string | number | boolean | null>;
 };
 
@@ -109,6 +115,8 @@ const fallbackSettings = {
   senderEmail: null,
   replyToEmail: null,
 };
+
+const SEMINAR_TOKEN_PATTERN = /\{\{\s*seminar_preferences\s*\}\}/;
 
 const waitlistTemplateKeys: ReadonlySet<TransactionalTemplateKey> = new Set([
   "WAITLIST_JOINED",
@@ -472,15 +480,22 @@ async function enqueueTransactionalMessage(
     : announcementBody;
   // A change notice carries the labels that were just saved; every other message
   // reads the registration's own answers and any seminar assignment.
+  // Loaded only when the message actually uses the token.
+  const usesSeminarPreferences = SEMINAR_TOKEN_PATTERN.test(bodyTemplate)
+    || SEMINAR_TOKEN_PATTERN.test(source?.subjectTemplate ?? fallback.subject);
   const seminarPreferences = input.seminarPreferences
     ? buildSeminarPreferencesBlock(input.seminarPreferences.map((attendee) => ({
         name: attendee.attendeeName,
-        fields: [{ label: "Seminar", choices: attendee.seminarLabels, assigned: [] }],
+        fields: attendee.fields.map((field) => ({ ...field, assigned: [] })),
       })))
-    : await buildRegistrationSeminarPreferences(tx, {
-        eventId: input.eventId,
-        registrationId: registration.id,
-      });
+    : input.seminarPreferencesBlock !== undefined
+      ? input.seminarPreferencesBlock
+      : usesSeminarPreferences
+        ? await buildRegistrationSeminarPreferences(tx, {
+            eventId: input.eventId,
+            registrationId: registration.id,
+          })
+        : "";
   const context: MessageTemplateContext = {
     recipient_name: recipientName || "Registrant",
     // The person the registration belongs to, which is not always the person

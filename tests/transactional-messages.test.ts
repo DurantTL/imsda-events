@@ -324,13 +324,13 @@ describe("transactional lifecycle messages", () => {
       changeCategory: "SEMINAR_PREFERENCES",
       seminarPreferences: [{
         attendeeName: "Retreat Guest",
-        seminarLabels: ["Prayer", "Service"],
+        fields: [{ label: "Seminar", choices: ["Prayer", "Service"] }],
       }],
     });
 
     const message = queuedMessage(upsert);
     expect(message.create.bodyTextSnapshot).toContain("Seminar preferences");
-    expect(message.create.bodyTextSnapshot).toContain("**Retreat Guest**\n- 1st choice: Prayer\n- 2nd choice: Service");
+    expect(message.create.bodyTextSnapshot).toContain("Retreat Guest\n- 1st choice: Prayer\n- 2nd choice: Service");
     expect(message.create.bodyHtmlSnapshot).toContain("<li style=\"margin:0 0 4px;\">1st choice: Prayer</li>");
     expect(JSON.stringify(message.create)).not.toContain("immutable_protected_answer");
     expect(JSON.stringify(message.create)).not.toContain("do-not-render");
@@ -380,14 +380,14 @@ describe("transactional lifecycle messages", () => {
       changeCategory: "SEMINAR_PREFERENCES",
       seminarPreferences: [{
         attendeeName: "Retreat Guest",
-        seminarLabels: ["Prayer", "Service"],
+        fields: [{ label: "Seminar", choices: ["Prayer", "Service"] }],
       }],
     });
 
     const message = queuedMessage(upsert);
     expect(message.create.bodyTextSnapshot).toContain("Questions? Contact registration@example.test.");
     expect(message.create.bodyTextSnapshot).toContain("### Seminar preferences");
-    expect(message.create.bodyTextSnapshot).toContain("**Retreat Guest**\n- 1st choice: Prayer\n- 2nd choice: Service");
+    expect(message.create.bodyTextSnapshot).toContain("Retreat Guest\n- 1st choice: Prayer\n- 2nd choice: Service");
     expect(message.create.bodyTextSnapshot).not.toContain("immutable_protected_answer");
     expect(message.create.bodyTextSnapshot).not.toContain("do-not-render");
   });

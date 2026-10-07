@@ -13,6 +13,7 @@ import {
 import {
   enqueueEventAnnouncementMessage,
 } from "@/modules/communications/transactional-messages";
+import { buildSeminarPreferencesBlocks } from "@/modules/communications/seminar-preferences";
 import type { AnnouncementBroadcastPreview } from "@/modules/communications/types";
 
 export class AnnouncementBroadcastError extends Error {
@@ -29,6 +30,14 @@ export class AnnouncementBroadcastError extends Error {
     this.name = "AnnouncementBroadcastError";
   }
 }
+
+/**
+ * One transaction enqueues every recipient, so Prisma's 5-second default would
+ * roll back a large send. Sized from the timed check in
+ * scripts/verify-announcement-email.ts, with wide headroom.
+ */
+const BROADCAST_TRANSACTION_TIMEOUT_MS = 120_000;
+const BROADCAST_TRANSACTION_MAX_WAIT_MS = 15_000;
 
 type BroadcastDatabaseClient = Prisma.TransactionClient | ReturnType<typeof getPrisma>;
 
@@ -189,6 +198,30 @@ export async function broadcastPublishedAnnouncement(input: {
       );
     }
 
+    // Seminar blocks for every recipient in a few queries, and only when the
+    // published template uses the token, so the loop below stays one set of
+    // writes per recipient rather than a set of reads as well.
+    const publishedTemplate = await tx.eventMessageTemplate.findUnique({
+      where: { eventId_key: { eventId: input.eventId, key: "EVENT_ANNOUNCEMENT" } },
+      select: {
+        versions: {
+          where: { status: "PUBLISHED" },
+          orderBy: { versionNumber: "desc" },
+          take: 1,
+          select: { subjectTemplate: true, bodyTemplate: true },
+        },
+      },
+    });
+    const publishedVersion = publishedTemplate?.versions[0];
+    const seminarBlocks = /\{\{\s*seminar_preferences\s*\}\}/.test(
+      `${publishedVersion?.subjectTemplate ?? ""}\n${publishedVersion?.bodyTemplate ?? ""}`,
+    )
+      ? await buildSeminarPreferencesBlocks(tx, {
+          eventId: input.eventId,
+          registrationIds: recipients.map((recipient) => recipient.registrationId),
+        })
+      : null;
+
     const messageIds: string[] = [];
     const pendingMessageIds: string[] = [];
     // Registrations with no contact email were reviewed as skipped.
@@ -203,6 +236,9 @@ export async function broadcastPublishedAnnouncement(input: {
         transitionKey: `announcement-broadcast:${announcement.id}:${input.batchId}`,
         announcementTitle: announcement.title,
         announcementBody: announcement.body,
+        ...(seminarBlocks
+          ? { seminarPreferencesBlock: seminarBlocks.get(recipient.registrationId) ?? "" }
+          : {}),
         metadata: {
           trigger: "STAFF_EVENT_ANNOUNCEMENT_BROADCAST",
           announcementId: announcement.id,
@@ -242,7 +278,7 @@ export async function broadcastPublishedAnnouncement(input: {
       deliveryMode,
       replayed: false,
     };
-  });
+  }, { timeout: BROADCAST_TRANSACTION_TIMEOUT_MS, maxWait: BROADCAST_TRANSACTION_MAX_WAIT_MS });
   await processQueuedMessageIdsAfterCommit(result.pendingMessageIds);
   return {
     broadcastId: input.batchId,

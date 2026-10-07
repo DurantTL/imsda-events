@@ -312,15 +312,18 @@ export async function updateTieredRegistrationAnswersWithClient(
               update.attendee.profileSnapshot,
               update.attendee.person,
             ),
-            seminarLabels: seminarFields.flatMap((field) => {
+            fields: seminarFields.map((field) => {
               const value = update.responses[field.key];
-              return Array.isArray(value)
-                ? value.flatMap((label) => (
-                    typeof label === "string" && field.options.includes(label)
-                      ? [label]
-                      : []
-                  ))
-                : [];
+              return {
+                label: field.label,
+                choices: Array.isArray(value)
+                  ? value.flatMap((label) => (
+                      typeof label === "string" && field.options.includes(label)
+                        ? [field.optionLabels?.[label] ?? label]
+                        : []
+                    ))
+                  : [],
+              };
             }),
           })),
         })

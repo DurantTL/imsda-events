@@ -1785,18 +1785,21 @@ export async function amendRegistration(
                   attendeeName: attendee.identity
                     ? `${attendee.identity.firstName} ${attendee.identity.lastName}`.trim()
                     : "Attendee",
-                  seminarLabels: prepared.definition.sections
+                  fields: prepared.definition.sections
                     .flatMap((section) => section.fields)
                     .filter(isSeminarPreferenceField)
-                    .flatMap((field) => {
+                    .map((field) => {
                       const value = attendee.responses[field.key];
-                      return Array.isArray(value)
-                        ? value.flatMap((label) => (
-                            typeof label === "string" && field.options.includes(label)
-                              ? [label]
-                              : []
-                          ))
-                        : [];
+                      return {
+                        label: field.label,
+                        choices: Array.isArray(value)
+                          ? value.flatMap((label) => (
+                              typeof label === "string" && field.options.includes(label)
+                                ? [field.optionLabels?.[label] ?? label]
+                                : []
+                            ))
+                          : [],
+                      };
                     }),
                 }))
               : undefined,
