@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { ActAsBanner } from "@/components/act-as-banner";
 import { AppShell } from "@/components/app-shell";
+import { removableModuleKeys } from "@/components/event-modules-page-model";
 import { listActiveEventPermissionsForUser, listActiveEventRolesForUser } from "@/modules/access/membership-repository";
 import { eventPermissions } from "@/modules/access/permissions";
 import { findSwitchableAttendeeAccountForStaff } from "@/modules/attendee-accounts/current-attendee";
@@ -51,6 +52,7 @@ export async function WorkspaceShell({ anyStaffWithoutEvents = false, children }
     permissions: permissionsByEvent.get(event.id) ?? [],
     clubEvent: event.audience === "CLUB",
     hiddenCardKeys: modulesByEvent.has(event.id) ? [...disabledModuleCardKeys(modulesByEvent.get(event.id)!.effective)] : undefined,
+    removableModules: isSystemAdmin && modulesByEvent.has(event.id) ? removableModuleKeys(modulesByEvent.get(event.id)!) : undefined,
     clubFormsAccess,
     clubOversight: event.audience === "CLUB"
       && (isSystemAdmin || rolesByEvent.get(event.id) === "EVENT_ADMIN"),

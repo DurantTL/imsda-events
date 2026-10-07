@@ -150,8 +150,8 @@ const pages: PageSpec[] = [
   club("monthly-records", "/records"),
   club("monthly-report-form", `/records?month=${reportMonth}`),
   club("orders", "/orders"),
-  // Meeting notes: the add popup is opened, saved and checked for the pinned "Saved" banner (#810).
-  club("meeting-notes", "/notes"),
+  // Meeting notes on the Monthly records page: the add popup is opened, saved and checked for the pinned "Saved" banner (#810).
+  club("meeting-notes", "/records"),
   club("club-info", "/club-info"),
   club("forms", "/forms"),
   club("health", "/health"),
@@ -244,6 +244,20 @@ const dialogOpeners = [
  */
 const acceptedFindings: Array<{ match: string; reason: string }> = [];
 
+/** Set once the database client exists: the meeting-note check deletes the note it saves (and its audit rows) through it. */
+let noteCleanup: PrismaClient | null = null;
+const layoutNoteText = "Synthetic layout check note.";
+
+/** Removes the meeting notes this audit saved and their CLUB_MEETING_NOTE_* audit rows, so repeated runs leave nothing behind. */
+async function deleteLayoutNotes() {
+  if (!noteCleanup) return;
+  const notes = await noteCleanup.clubMeetingNote.findMany({ where: { organizationId: clubA, notes: layoutNoteText }, select: { id: true } });
+  const ids = notes.map((note) => note.id);
+  if (ids.length === 0) return;
+  await noteCleanup.auditLog.deleteMany({ where: { entityType: "ClubMeetingNote", entityId: { in: ids }, action: { startsWith: "CLUB_MEETING_NOTE_" } } });
+  await noteCleanup.clubMeetingNote.deleteMany({ where: { id: { in: ids } } });
+}
+
 type Finding = { kind: string; page: string; width: number; detail: string };
 const findings: Finding[] = [];
 const accepted: Finding[] = [];
@@ -330,6 +344,20 @@ async function seedBlocksEvent(prisma: PrismaClient) {
     ],
   });
   await replaceEventContent(blocksEventId, input, "usr_system_admin", { isSystemAdmin: true });
+}
+
+/**
+ * The More launcher offers Turn off only for a module with a stored row that its data
+ * does not keep on (#810). The seeded event has none, so this adds one switchable
+ * module row (Attendee community, no data behind it) and the audit removes it again
+ * at the end of the run, whether or not MOBILE_LAYOUT_CLEANUP is set.
+ */
+let launcherModuleCreated = false;
+async function seedLauncherModule(prisma: PrismaClient) {
+  const existing = await prisma.eventModule.findUnique({ where: { eventId_moduleKey: { eventId, moduleKey: "attendee-community" } }, select: { id: true } });
+  if (existing) return;
+  await prisma.eventModule.create({ data: { eventId, moduleKey: "attendee-community" } });
+  launcherModuleCreated = true;
 }
 
 /** MOBILE_LAYOUT_CLEANUP=1: deletes every row the audit created, children before parents. */
@@ -582,6 +610,7 @@ async function seedSynthetic(prisma: PrismaClient) {
 
   await seedBlocksEvent(prisma);
   await seedMultiHonorClass(prisma);
+  await seedLauncherModule(prisma);
 }
 
 /**
@@ -1050,7 +1079,7 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
       await opener.scrollIntoViewIfNeeded({ timeout: 3000 });
       await opener.click({ timeout: 3000 });
       await page.waitForTimeout(250);
-      await page.locator('[role="dialog"] textarea:visible').first().fill("Synthetic layout check note.");
+      await page.locator('[role="dialog"] textarea:visible').first().fill(layoutNoteText);
       await page.locator('[role="dialog"] button[type="submit"]:visible').first().click({ timeout: 3000 });
       const banner = page.locator("[data-meeting-note-saved]:visible").first();
       await banner.waitFor({ state: "visible", timeout: 8000 });
@@ -1069,6 +1098,7 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
     }
     await page.keyboard.press("Escape").catch(() => undefined);
     await page.waitForTimeout(100);
+    await deleteLayoutNotes().catch((error: Error) => record("dialog-open-failed", savedName, width, `could not delete the synthetic note: ${error.message.split("\n")[0]}`));
   }
 
   // The class builder with several honors chosen (#812): the add form with its honor search narrowed and
@@ -1137,6 +1167,7 @@ async function main() {
   }
   mkdirSync(outDir, { recursive: true });
   const prisma: PrismaClient = new Prisma();
+  noteCleanup = prisma;
   // Declared before the first thing that can fail, so the finally below always
   // revokes the sessions and disconnects.
   const tokens: { staff: string[]; attendee: string[] } = { staff: [], attendee: [] };
@@ -1194,6 +1225,10 @@ async function main() {
     const { revokeAttendeeSession } = await import("../modules/attendee-accounts/session-store");
     for (const token of tokens.staff) await revokeDatabaseSession(token).catch(() => undefined);
     for (const token of tokens.attendee) await revokeAttendeeSession(token).catch(() => undefined);
+    if (launcherModuleCreated) {
+      await prisma.eventModule.deleteMany({ where: { eventId, moduleKey: "attendee-community" } }).catch((error: Error) => console.error(`Could not remove the synthetic module row: ${error.message}`));
+      await prisma.auditLog.deleteMany({ where: { eventId, action: { startsWith: "EVENT_MODULE_" }, entityId: "attendee-community" } }).catch(() => undefined);
+    }
     if (seeded && process.env.MOBILE_LAYOUT_CLEANUP === "1") {
       await cleanupSynthetic(prisma).catch((error: Error) => console.error(`Cleanup failed: ${error.message}`));
     }

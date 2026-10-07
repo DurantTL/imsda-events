@@ -56,6 +56,8 @@ type ShellEvent = {
    * computed server-side. Relevance only: pages keep their own authorization.
    */
   hiddenCardKeys?: readonly string[];
+  /** Module keys a system administrator may turn off for this event (#810), computed server-side with the Event modules page's rule. */
+  removableModules?: readonly string[];
   /** Club forms (#610) are open to system admins and Event Admins of a current event; computed server-side. */
   clubFormsAccess?: boolean;
 };
@@ -299,6 +301,7 @@ export function AppShell({
                   canRequestFeature={canRequestFeature}
                   eventQuery={eventQuery}
                   eventId={selectedEventId || undefined}
+                removableModules={isSystemAdmin ? selectedEvent?.removableModules : undefined}
                   userId={user.id ?? ""}
                   tipProps={tipProps(label)}
                 >
@@ -402,6 +405,7 @@ export function AppShell({
                 canRequestFeature={canRequestFeature}
                 eventQuery={eventQuery}
                 eventId={selectedEventId || undefined}
+                removableModules={isSystemAdmin ? selectedEvent?.removableModules : undefined}
                 userId={user.id ?? ""}
               >
                 <Icon aria-hidden="true" size={22} /><span>{mobileNavigationLabels[href] ?? label}</span>

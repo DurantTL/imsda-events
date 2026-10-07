@@ -9232,7 +9232,6 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .session-show-all { margin-top: 12px; }
 
 /* #741 slice 2 review: visible page heading, data-driven reason, left-over modules. */
-.event-modules-heading { margin: 0; color: var(--ink); font-size: var(--heading-section, 1.3rem); }
 .event-module-reason { margin: 10px 0 0; }
 .event-modules-leftover { border-left: 5px solid var(--imsda-gold); }
 .event-modules-leftover .foundation-grid { margin-top: 14px; }

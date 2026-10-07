@@ -354,6 +354,12 @@ export function ClubOrderWorkspace({
         </div>
         <span className="count-badge">{onList.length} {onList.length === 1 ? "line" : "lines"}</span>
       </div>
+      <nav aria-label="Jump to a part of this page" className={styles.jumpNav} id="club-order-sections">
+        {orderSectionLinks(waitingBatches.length > 0).map((link) => (
+          <a className={styles.jumpLink} href={`#${link.id}`} key={link.id}>{link.label}</a>
+        ))}
+      </nav>
+
       <p className="inline-notice" id="club-order-helper-notice" role="note">
         This is a helper to build your list — it is <strong>not</strong> an official order form. You still need to order the items from{" "}
         <a href={ADVENTSOURCE_URL} rel="noopener noreferrer" target="_blank">AdventSource</a>.
@@ -402,12 +408,6 @@ export function ClubOrderWorkspace({
           </div>
         </section>
       )}
-
-      <nav aria-label="Jump to a part of this page" className={styles.jumpNav} id="club-order-sections">
-        {orderSectionLinks(waitingBatches.length > 0).map((link) => (
-          <a className={styles.jumpLink} href={`#${link.id}`} key={link.id}>{link.label}</a>
-        ))}
-      </nav>
 
       <section className={styles.block} id={ORDER_SECTION_IDS.list}>
         <h3>Your order list</h3>

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { CalendarDays, Download, Pencil, Plus, Trash2, X } from "lucide-react";
 import { notePreview } from "@/components/club-form-state";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import { attendanceForSave } from "@/modules/club-meeting-notes/attendance-save";
 import { countsFromAttendance, countsToSend, groupAttendanceRoster } from "@/modules/club-meeting-notes/attendance";
 import type { AttendanceRosterEntry, ClubMeetingNoteRecord } from "@/modules/club-meeting-notes/repository";
 import { clubYearFor } from "@/modules/club-rosters/domain";
@@ -110,10 +111,13 @@ export function ClubMeetingNotes({
   const dirty = JSON.stringify(draft) !== baseline;
   // The green "Saved" banner pinned to the top of the popup (#810): it appears after a save and goes away when the draft changes again.
   const [justSaved, setJustSaved] = useState(false);
+  // Whether the note being edited has a check-off on file. Kept from the note itself and from each save response, never looked up in `notes`, which only holds this month's meetings.
+  const [hadAttendance, setHadAttendance] = useState(false);
   const dialogRef = useAccessibleDialog<HTMLElement>(editorOpen, requestClose);
 
   function startAdd() {
     setJustSaved(false);
+    setHadAttendance(false);
     setBaseline(JSON.stringify(emptyDraft(newMeetingDate)));
     setConfirmingDiscard(false);
     setDraft(emptyDraft(newMeetingDate));
@@ -125,6 +129,7 @@ export function ClubMeetingNotes({
 
   function startEdit(note: ClubMeetingNoteRecord) {
     setJustSaved(false);
+    setHadAttendance(note.attendance.length > 0);
     setBaseline(JSON.stringify(draftFromNote(note)));
     setConfirmingDiscard(false);
     setDraft(draftFromNote(note));
@@ -177,7 +182,6 @@ export function ClubMeetingNotes({
     setPresent(Object.fromEntries(roster.map((member) => [member.id, value])));
   }
 
-  const hadAttendance = editingId !== null && (notes.find((note) => note.id === editingId)?.attendance.length ?? 0) > 0;
   // The roster shown is for one club year; a meeting dated in another year can't be checked off here.
   const rosterMatchesDate = attendanceAvailable && roster.length > 0 && isRealDate(draft.meetingDate) && clubYearFor(new Date(`${draft.meetingDate}T12:00:00Z`)) === rosterClubYear;
 
@@ -206,11 +210,7 @@ export function ClubMeetingNotes({
       notes: draft.notes,
       // Omitted leaves a meeting's check-off alone; an empty list clears it (#653).
       // Only a touched check-off is sent; the server merges it into the marks already there.
-      ...(attendanceAvailable && draft.attendanceTouched
-        ? draft.attendanceOn && rosterMatchesDate
-          ? { attendance: roster.map((member) => ({ rosterMemberId: member.id, present: draft.present[member.id] === true })) }
-          : !draft.attendanceOn && hadAttendance ? { attendance: [] } : {}
-        : {}),
+      ...attendanceForSave({ available: attendanceAvailable, touched: draft.attendanceTouched, on: draft.attendanceOn, rosterMatchesDate, hadAttendance, roster, present: draft.present }),
     };
     try {
       const response = await fetch(editingId ? `${base}/${encodeURIComponent(editingId)}` : base, {
@@ -227,6 +227,7 @@ export function ClubMeetingNotes({
       setNotice(editingId ? "Meeting note updated." : "Meeting note added.");
       // The popup stays open on the saved note so the confirmation is seen where the person is looking (#810).
       setEditingId(result.note.id);
+      setHadAttendance(result.note.attendance.length > 0);
       setAdding(false);
       setBaseline(JSON.stringify(draft));
       setConfirmingDiscard(false);
