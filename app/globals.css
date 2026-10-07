@@ -10383,3 +10383,11 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
 .nca-invite-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); gap: 12px; align-items: end; margin: 8px 0 12px; }
 .nca-invite-form label { display: grid; gap: 6px; font-weight: 700; min-width: 0; }
 .nca-invite-form input { width: 100%; min-width: 0; }
+
+/* The class builder's honor multi-select (#812): chosen honors above a searchable checkbox list. */
+.honor-multi-select { grid-column: 1 / -1; }
+.honor-multi-chosen { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.honor-multi-chosen li { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: 100%; padding: 4px 8px; border: 1px solid #cbdbe2; border-radius: 999px; background: var(--panel-tint, #eef4f6); overflow-wrap: anywhere; }
+.honor-multi-chosen li.field-help { border: 0; background: none; padding: 0; }
+.honor-multi-chosen .text-button { min-height: 32px; }
+@media (max-width: 640px), (pointer: coarse) { .honor-multi-chosen .text-button { min-height: 44px; min-width: 44px; } }

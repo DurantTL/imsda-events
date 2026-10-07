@@ -16,11 +16,11 @@ function database() {
     { id: "s-shared", name: "Sunday", locationId: null, sortOrder: 1, createdAt: at, location: null },
   ];
   const offerings = [
-    { id: "o-dm", span: "SINGLE_SESSION", sessionId: "s-dm", locationId: null, site: null, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Birds", code: "B" } },
-    { id: "o-hr", span: "SINGLE_SESSION", sessionId: "s-hr", locationId: null, site: null, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Knots at Heritage", code: "K" } },
-    { id: "o-all", span: "ALL_SESSIONS", sessionId: null, locationId: null, site: null, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Camping", code: "C" } },
-    { id: "o-all-dm", span: "ALL_SESSIONS", sessionId: null, locationId: "loc-dm", site: { name: "Des Moines" }, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Fire", code: "F" } },
-    { id: "o-all-hr", span: "ALL_SESSIONS", sessionId: null, locationId: "loc-hr", site: { name: "Camp Heritage 1" }, capacity: 5, teacherName: "", location: "", isActive: true, honor: { name: "Stars", code: "S" } },
+    { id: "o-dm", span: "SINGLE_SESSION", sessionId: "s-dm", locationId: null, site: null, capacity: 5, teacherName: "", location: "", isActive: true, honors: [{ honor: { id: "honor-b", name: "Birds", code: "B", isActive: true } }] },
+    { id: "o-hr", span: "SINGLE_SESSION", sessionId: "s-hr", locationId: null, site: null, capacity: 5, teacherName: "", location: "", isActive: true, honors: [{ honor: { id: "honor-k", name: "Knots at Heritage", code: "K", isActive: true } }] },
+    { id: "o-all", span: "ALL_SESSIONS", sessionId: null, locationId: null, site: null, capacity: 5, teacherName: "", location: "", isActive: true, honors: [{ honor: { id: "honor-c", name: "Camping", code: "C", isActive: true } }] },
+    { id: "o-all-dm", span: "ALL_SESSIONS", sessionId: null, locationId: "loc-dm", site: { name: "Des Moines" }, capacity: 5, teacherName: "", location: "", isActive: true, honors: [{ honor: { id: "honor-f", name: "Fire", code: "F", isActive: true } }] },
+    { id: "o-all-hr", span: "ALL_SESSIONS", sessionId: null, locationId: "loc-hr", site: { name: "Camp Heritage 1" }, capacity: 5, teacherName: "", location: "", isActive: true, honors: [{ honor: { id: "honor-s", name: "Stars", code: "S", isActive: true } }] },
   ];
   const db = {
     event: { findUnique: vi.fn().mockResolvedValue({ id: "e1", name: "Honors", startsAt: at, endsAt: at, timezone: "America/Chicago", location: null }) },

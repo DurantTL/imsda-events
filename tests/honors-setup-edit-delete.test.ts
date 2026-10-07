@@ -90,15 +90,15 @@ describe("offering update schema", () => {
   it("accepts every field set at creation and adds no defaults", () => {
     expect(honorOfferingUpdateSchema.parse({ capacity: 9 })).toEqual({ capacity: 9 });
     expect(honorOfferingUpdateSchema.parse({ honorId: "h2", span: "ALL_SESSIONS", sessionId: null, locationId: "loc-1" }))
-      .toEqual({ honorId: "h2", span: "ALL_SESSIONS", sessionId: null, locationId: "loc-1" });
+      .toEqual({ honorIds: ["h2"], span: "ALL_SESSIONS", sessionId: null, locationId: "loc-1" });
     expect(honorOfferingUpdateSchema.safeParse({ unknown: 1 }).success).toBe(false);
   });
 
   it("the class form sends the honor, span and session only when they changed", () => {
-    const current = { honorId: "h1", span: "SINGLE_SESSION" as const, sessionId: "s1" };
+    const current = { honorIds: ["h1"], span: "SINGLE_SESSION" as const, sessionId: "s1" };
     expect(offeringPlacementPatch(current, { ...current })).toEqual({});
-    expect(offeringPlacementPatch(current, { ...current, honorId: "h2", sessionId: "s2" })).toEqual({ honorId: "h2", sessionId: "s2" });
-    expect(offeringPlacementPatch(current, { honorId: "h1", span: "ALL_SESSIONS", sessionId: "s1" })).toEqual({ span: "ALL_SESSIONS", sessionId: null });
+    expect(offeringPlacementPatch(current, { ...current, honorIds: ["h2"], sessionId: "s2" })).toEqual({ honorIds: ["h2"], sessionId: "s2" });
+    expect(offeringPlacementPatch(current, { honorIds: ["h1"], span: "ALL_SESSIONS", sessionId: "s1" })).toEqual({ span: "ALL_SESSIONS", sessionId: null });
   });
 });
 
@@ -154,7 +154,7 @@ describe("edit and delete routes", () => {
   it("edits a class through PATCH with the whole set of fields", async () => {
     const body = { honorId: "h2", span: "SINGLE_SESSION", sessionId: "s2", capacity: 12, teacherName: "A. Teacher" };
     expect((await PATCH_OFFERING(request("PATCH", body), offeringContext)).status).toBe(200);
-    expect(mocks.updateHonorOffering).toHaveBeenCalledWith("site-b", "o1", body, "staff-1");
+    expect(mocks.updateHonorOffering).toHaveBeenCalledWith("site-b", "o1", { ...body, honorId: undefined, honorIds: ["h2"] }, "staff-1");
   });
 
   it("keeps the refusal for changing the site of a picked class as a 409 with the reason", async () => {

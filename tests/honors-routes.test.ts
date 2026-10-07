@@ -99,10 +99,20 @@ describe("site honors routes", () => {
     expect((await POST_OFFERING(request({ honorId: "h1", span: "SINGLE_SESSION", capacity: 5 }), eventContext)).status).toBe(400);
     const created = await POST_OFFERING(request({ honorId: "h1", span: "ALL_SESSIONS", capacity: 5 }), eventContext);
     expect(created.status).toBe(201);
-    expect(mocks.createHonorOffering).toHaveBeenCalledWith("site-b", expect.objectContaining({ honorId: "h1" }), "staff-1");
+    expect(mocks.createHonorOffering).toHaveBeenCalledWith("site-b", expect.objectContaining({ honorIds: ["h1"] }), "staff-1");
     mocks.createHonorOffering.mockRejectedValue(new HonorConfigurationError("OFFERING_CONFLICT", "Already offered."));
     const conflict = await POST_OFFERING(request({ honorId: "h1", span: "ALL_SESSIONS", capacity: 5 }), eventContext);
     expect(conflict.status).toBe(409);
+  });
+
+  it("takes several honors for one class and refuses none or a repeat (#812)", async () => {
+    const created = await POST_OFFERING(request({ honorIds: ["h1", "h2", "h3"], span: "ALL_SESSIONS", capacity: 5 }), eventContext);
+    expect(created.status).toBe(201);
+    expect(mocks.createHonorOffering).toHaveBeenCalledWith("site-b", expect.objectContaining({ honorIds: ["h1", "h2", "h3"] }), "staff-1");
+    mocks.createHonorOffering.mockClear();
+    expect((await POST_OFFERING(request({ honorIds: [], span: "ALL_SESSIONS", capacity: 5 }), eventContext)).status).toBe(400);
+    expect((await POST_OFFERING(request({ honorIds: ["h1", "h1"], span: "ALL_SESSIONS", capacity: 5 }), eventContext)).status).toBe(400);
+    expect(mocks.createHonorOffering).not.toHaveBeenCalled();
   });
 });
 

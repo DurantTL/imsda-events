@@ -53,7 +53,7 @@ describe("honor input validation", () => {
   });
 
   it("lets an update name a new honor or session (the repository refuses it once clubs picked the class, #615)", () => {
-    expect(honorOfferingUpdateSchema.parse({ honorId: "birds" })).toEqual({ honorId: "birds" });
+    expect(honorOfferingUpdateSchema.parse({ honorId: "birds" })).toEqual({ honorIds: ["birds"] });
     expect(honorOfferingUpdateSchema.parse({ sessionId: "sunday" })).toEqual({ sessionId: "sunday" });
     expect(() => honorOfferingUpdateSchema.parse({ honorId: "" })).toThrow();
     expect(honorOfferingUpdateSchema.parse({ capacity: 12, minimumAge: null })).toEqual({ capacity: 12, minimumAge: null });
