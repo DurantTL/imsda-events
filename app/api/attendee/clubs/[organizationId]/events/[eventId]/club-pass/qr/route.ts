@@ -1,3 +1,4 @@
+import { singleQueryParam } from "@/modules/club-teams/domain";
 import QRCode from "qrcode";
 import { requireRosterAccess } from "@/modules/club-rosters/access";
 import { rosterApiError } from "@/modules/club-rosters/api-errors";
@@ -31,12 +32,15 @@ function privateJson(body: unknown, init?: ResponseInit) {
  * check-in (Q1, #412). Same roster access gate as the club event page —
  * a director from another club can never reach this organization's pass.
  */
-async function getHandler(_request: Request, context: Context) {
+async function getHandler(request: Request, context: Context) {
   try {
     const { organizationId, eventId } = await context.params;
     await requireRosterAccess(organizationId);
 
-    const pass = await createDirectorClubPass(organizationId, eventId);
+    // Which of the club's teams (#809); omitted on an event without teams.
+    // A repeated ?team= names no team.
+    const teamKey = singleQueryParam(new URL(request.url).searchParams, "team");
+    const pass = teamKey === null ? null : await createDirectorClubPass(organizationId, eventId, new Date(), teamKey);
     if (!pass) {
       return privateJson({
         error: "CLUB_PASS_UNAVAILABLE",

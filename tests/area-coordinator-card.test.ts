@@ -129,15 +129,15 @@ describe("getAreaCoordinatorCard", () => {
   it("builds location and club event rows with registered headcounts only, at active clubs", async () => {
     mocks.locationFindMany.mockResolvedValue([{ id: "loc-1", name: "North site", registrationClosesOn: "2026-11-25", event }]);
     mocks.registrationFindMany.mockResolvedValue([
-      { locationId: "loc-1", _count: { attendees: 12 } },
-      { locationId: "loc-1", _count: { attendees: 8 } },
+      { locationId: "loc-1", clubRegistration: { organizationId: "org-1" }, _count: { attendees: 12 } },
+      { locationId: "loc-1", clubRegistration: { organizationId: "org-2" }, _count: { attendees: 8 } },
     ]);
     mocks.eventFindMany.mockResolvedValue([{
       ...event,
       clubRegistrations: [
-        { registration: { status: "CONFIRMED", _count: { attendees: 10 } } },
-        { registration: { status: "WAITLISTED", _count: { attendees: 5 } } },
-        { registration: { status: "CANCELLED", _count: { attendees: 7 } } },
+        { organizationId: "org-1", registration: { status: "CONFIRMED", _count: { attendees: 10 } } },
+        { organizationId: "org-2", registration: { status: "WAITLISTED", _count: { attendees: 5 } } },
+        { organizationId: "org-3", registration: { status: "CANCELLED", _count: { attendees: 7 } } },
       ],
     }]);
 

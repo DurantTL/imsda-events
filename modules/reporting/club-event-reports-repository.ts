@@ -9,7 +9,9 @@ import {
 import { listClubAssignments } from "@/modules/club-registrations/assignments-repository";
 import { churchOwedCents, type ClubRegistrationStatus } from "@/modules/club-registrations/church-owed";
 import { activeRegistrationStatuses } from "@/modules/events/lifecycle";
+import { teamLabel } from "@/modules/club-teams/domain";
 import {
+  assignmentKey,
   buildCampingReport,
   buildClubEventRecord,
   buildDutiesActivitiesReport,
@@ -91,6 +93,8 @@ export async function getClubEventRecords(
       select: {
         organizationId: true,
         registrationId: true,
+        teamKey: true,
+        teamName: true,
         organization: { select: { name: true, parentOrganization: { select: { name: true } } } },
       },
     }),
@@ -100,7 +104,7 @@ export async function getClubEventRecords(
 
   const registrationsById = new Map(registrations.map((registration) => [registration.id, registration]));
   const assignments = new Map<string, ClubAssignmentSummary>(
-    assignmentRows.map((row) => [row.organizationId, toClubAssignmentSummary(row.fields)]),
+    assignmentRows.map((row) => [assignmentKey(row.organizationId, row.teamKey), toClubAssignmentSummary(row.fields)]),
   );
 
   let earlyBirdDeadline: string | null = null;
@@ -111,7 +115,9 @@ export async function getClubEventRecords(
     if (!earlyBirdDeadline) earlyBirdDeadline = earlyBirdDeadlineFromRegistration(registration);
     clubs.push(buildClubEventRecord({
       organizationId: row.organizationId,
-      organizationName: row.organization.name,
+      organizationName: teamLabel(row.organization.name, row.teamName),
+      teamKey: row.teamKey,
+      teamName: row.teamName,
       sponsoringChurch: row.organization.parentOrganization?.name ?? null,
       registrationId: registration.id,
       confirmationCode: registration.confirmationCode,

@@ -22,8 +22,8 @@ export function EventHealthSheet({ clubs, clubLinks }: { clubs: HealthClubSheet[
     <div className="event-health-sheet">
       <p className="inline-notice error" role="note"><strong>{HEALTH_TEXT.confidential}</strong></p>
       {clubs.map((club) => (
-        <section className="panel" key={club.organizationId} aria-labelledby={`health-${club.organizationId}`}>
-          <h3 id={`health-${club.organizationId}`} translate="no">{club.clubName}</h3>
+        <section className="panel" key={`${club.organizationId}:${club.teamKey ?? ""}`} aria-labelledby={`health-${club.organizationId}${club.teamKey ? `-${club.teamKey.replace(/[^a-z0-9]+/g, "-")}` : ""}`}>
+          <h3 id={`health-${club.organizationId}${club.teamKey ? `-${club.teamKey.replace(/[^a-z0-9]+/g, "-")}` : ""}`} translate="no">{club.clubName}</h3>
           {clubLinks && (
             <p className="field-help">
               <a href={clubLinks(club.organizationId).view}>This club only</a>{" · "}

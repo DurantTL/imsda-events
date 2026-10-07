@@ -62,14 +62,14 @@ function putContext(organizationId: string) {
 /** Club org-b is registered only on event-2; org-a is on event-1. */
 function prismaWithRegistrations() {
   const registrations = [
-    { eventId: "event-1", organizationId: "org-a", id: "cer-a", registration: { status: "CONFIRMED" } },
-    { eventId: "event-2", organizationId: "org-b", id: "cer-b", registration: { status: "CONFIRMED" } },
+    { eventId: "event-1", organizationId: "org-a", teamKey: "", id: "cer-a", registration: { status: "CONFIRMED" } },
+    { eventId: "event-2", organizationId: "org-b", teamKey: "", id: "cer-b", registration: { status: "CONFIRMED" } },
   ];
   const tx = {
     clubEventRegistration: {
-      findUnique: vi.fn(async ({ where }: { where: { eventId_organizationId: { eventId: string; organizationId: string } } }) => {
-        const key = where.eventId_organizationId;
-        const row = registrations.find((entry) => entry.eventId === key.eventId && entry.organizationId === key.organizationId);
+      findUnique: vi.fn(async ({ where }: { where: { eventId_organizationId_teamKey: { eventId: string; organizationId: string; teamKey: string } } }) => {
+        const key = where.eventId_organizationId_teamKey;
+        const row = registrations.find((entry) => entry.eventId === key.eventId && entry.organizationId === key.organizationId && entry.teamKey === key.teamKey);
         return row ? { id: row.id, registration: row.registration } : null;
       }),
     },
@@ -106,8 +106,28 @@ describe("PUT /api/events/[eventId]/club-assignments/[organizationId]", () => {
     const response = await PUT(putRequest("org-b"), putContext("org-b"));
     expect(response.status).toBe(404);
     expect(tx.clubEventRegistration.findUnique).toHaveBeenCalledWith(expect.objectContaining({
-      where: { eventId_organizationId: { eventId: "event-1", organizationId: "org-b" } },
+      where: { eventId_organizationId_teamKey: { eventId: "event-1", organizationId: "org-b", teamKey: "" } },
     }));
+    expect(tx.clubEventAssignment.upsert).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 for a team the club never registered, another club's, or a repeated team parameter (#809)", async () => {
+    mocks.findActiveMembership.mockResolvedValue(membership("REGISTRATION_MANAGER"));
+    const { prisma, tx } = prismaWithRegistrations();
+    mocks.getPrisma.mockReturnValue(prisma);
+    const withTeam = (query: string) => new Request(`https://events.imsda.test/api/events/event-1/club-assignments/org-a${query}`, {
+      method: "PUT",
+      headers: { origin: "https://events.imsda.test", "content-type": "application/json" },
+      body: JSON.stringify({ campsiteLocation: "Room 1" }),
+    });
+
+    expect((await PUT(withTeam("?team=nonexistent"), putContext("org-a"))).status).toBe(404);
+    expect(tx.clubEventRegistration.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { eventId_organizationId_teamKey: { eventId: "event-1", organizationId: "org-a", teamKey: "nonexistent" } },
+    }));
+    tx.clubEventRegistration.findUnique.mockClear();
+    expect((await PUT(withTeam("?team=a&team=b"), putContext("org-a"))).status).toBe(404);
+    expect(tx.clubEventRegistration.findUnique).not.toHaveBeenCalled();
     expect(tx.clubEventAssignment.upsert).not.toHaveBeenCalled();
   });
 

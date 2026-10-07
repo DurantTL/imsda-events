@@ -5,6 +5,7 @@ import { EventLocationError, eventLocationErrorStatus, locationBusyMessage } fro
 import { RosterAccessError } from "@/modules/club-rosters/access";
 import { namedSchemaIssueMessage } from "@/modules/club-registrations/domain";
 import { ClubRegistrationError } from "@/modules/club-registrations/repository";
+import { ClubTeamError, clubTeamErrorStatus } from "@/modules/club-teams/errors";
 import { PublicRegistrationError } from "@/modules/forms/public-repository";
 import { ClassSelectionError } from "@/modules/honors/enrollment-repository";
 import { RegistrationAmendmentError } from "@/modules/registrations/amendments-repository";
@@ -34,6 +35,9 @@ export function clubRegistrationApiError(error: unknown, action: string) {
     logExpiredTransaction(error, action);
     return Response.json({ error: "LOCATION_BUSY", message: locationBusyMessage }, { status: 503, headers: noStore });
   }
+  if (error instanceof ClubTeamError) {
+    return Response.json({ error: error.code, message: error.message, problems: error.problems }, { status: clubTeamErrorStatus(error.code), headers: noStore });
+  }
   if (error instanceof ClubRegistrationError) {
     const status = error.code === "EVENT_NOT_FOUND" || error.code === "REGISTRATION_NOT_FOUND"
       ? 404
@@ -41,7 +45,7 @@ export function clubRegistrationApiError(error: unknown, action: string) {
         ? 413
         : error.code === "REGISTRATION_CLOSED"
           ? 410
-          : error.code === "ATTENDEES_INVALID"
+          : error.code === "ATTENDEES_INVALID" || error.code === "TEAM_INVALID"
             ? 422
             : 409;
     return Response.json({ error: error.code, message: error.message }, { status, headers: noStore });

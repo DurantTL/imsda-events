@@ -245,7 +245,8 @@ export function buildCheckInBook(input: BuildCheckInBookInput): CheckInBook {
       const registration = registrationsById.get(club.registrationId);
       const responsesById = new Map((registration?.attendees ?? []).map((attendee) => [attendee.id, attendee.responses]));
       pages.push({
-        id: club.organizationId,
+        // A club's teams (#809) are pages of their own, so each needs an id of its own.
+        id: club.teamKey ? club.registrationId : club.organizationId,
         kind: "CLUB",
         title: club.organizationName,
         church: club.sponsoringChurch ?? "",

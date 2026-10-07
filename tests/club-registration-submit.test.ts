@@ -18,6 +18,7 @@ vi.mock("@/modules/communications/messaging-repository", () => ({
 vi.mock("@/modules/communications/transactional-messages", () => ({ enqueueWaitlistJoinedMessage: dependencies.enqueueWaitlistJoinedMessage }));
 
 import { sealSecret } from "@/lib/secret-box";
+import { normalizeTeamName } from "@/modules/club-teams/domain";
 import { clubAttendeePreparer, clubSubmissionAttribution } from "@/modules/club-registrations/repository";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { publicRegistrationInputSchema } from "@/modules/forms/public-domain";
@@ -108,12 +109,13 @@ function fixture({ billingMode = "DEFERRED_ORGANIZATION_INVOICE", audience = "CL
       findMany: vi.fn(async ({ where }: { where: { organizationId: string } }) => (where.organizationId === "club-1" ? members : [])),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
-    clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "cer-1" }) },
+    eventTeamSettings: { findUnique: vi.fn().mockResolvedValue(null) },
+    clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null), findFirst: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "cer-1" }) },
     eventLocation: { count: vi.fn().mockResolvedValue(0) },
     clubRegistrationDraft: { findUnique: vi.fn().mockResolvedValue(null), deleteMany: vi.fn().mockResolvedValue({ count: 1 }) },
     publicRegistrationSubmission: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({ id: "submission-1" }) },
     registrationCapacityReservation: { findMany: vi.fn().mockResolvedValue([]), createMany: vi.fn() },
-    registrationAttendee: { count: vi.fn().mockResolvedValue(0), create: vi.fn(async ({ data }: { data: { personId: string; profileSnapshot?: Record<string, unknown>; formResponses?: Record<string, unknown> } }) => ({ id: `attendee-${data.personId}` })) },
+    registrationAttendee: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]), create: vi.fn(async ({ data }: { data: { personId: string; profileSnapshot?: Record<string, unknown>; formResponses?: Record<string, unknown> } }) => ({ id: `attendee-${data.personId}` })) },
     person: {
       upsert: vi.fn().mockResolvedValue({ id: "person-director", firstName: "Test", lastName: "Director", normalizedEmail: "director@example.test" }),
       findUnique: vi.fn(),
@@ -174,6 +176,13 @@ const club = (organizationId = "club-1"): ClubSubmissionContext => ({
   organizationId,
   submittedByAccountId: "director-1",
   prepareAttendees: clubAttendeePreparer(organizationId),
+});
+/** A team on an event that lets a club register several (#809): the cleaned name, its key, and the draft it replaces. */
+const clubTeam = (name: string, draftKey = "draftkey0001", organizationId = "club-1"): ClubSubmissionContext => ({
+  organizationId,
+  submittedByAccountId: "director-1",
+  team: { name, key: normalizeTeamName(name), draftKey },
+  prepareAttendees: clubAttendeePreparer(organizationId, undefined, draftKey),
 });
 const clubAs = (): ClubSubmissionContext => ({
   organizationId: "club-1",
@@ -833,5 +842,181 @@ describe("responsible adult at an ordinary public submit (#131)", () => {
     const second = ordinary();
     await submitIndividual([dad, son], { "a-son": "NONE" }, second);
     expect(second.publicRegistrationSubmission.create.mock.calls[0]![0].data.requestHash).not.toBe(first);
+  });
+});
+
+const teamRulesRow = (overrides: Record<string, unknown> = {}) => ({
+  eventId: "event-1", allowMultipleTeams: true, minTeamMembers: null, maxTeamMembers: null, maxAlternates: 0,
+  ageAsOf: null, maxMemberAge: null, booksLine: "", levelInfo: [], ...overrides,
+});
+
+describe("club registration of named teams (#809)", () => {
+  it("refuses a team on an event whose rules say one registration per club, and the reverse, as read inside the transaction", async () => {
+    const tx = fixture();
+    await expect(submit(baseInput, clubTeam("Bible Bees"))).rejects.toMatchObject({ code: "CLUB_REGISTRATION_UNAVAILABLE" });
+    tx.eventTeamSettings.findUnique.mockResolvedValue(teamRulesRow());
+    await expect(submit()).rejects.toMatchObject({ code: "CLUB_REGISTRATION_UNAVAILABLE" });
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a group submission on an event with team rules, inside the transaction, before anything is saved", async () => {
+    const tx = fixture();
+    tx.eventTeamSettings.findUnique.mockResolvedValue(teamRulesRow());
+    const group = { group: true as const, prepareAttendees: vi.fn() };
+    await expect(submit(baseInput, group as never)).rejects.toMatchObject({ code: "GROUP_REGISTRATION_UNAVAILABLE", message: expect.stringContaining("club teams only") });
+    expect(group.prepareAttendees).not.toHaveBeenCalled();
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("registers a team under its name and key, and replaces only that team's draft", async () => {
+    const tx = fixture();
+    tx.eventTeamSettings.findUnique.mockResolvedValue(teamRulesRow());
+    await submit(baseInput, clubTeam("Bible  Bees"));
+    expect(tx.clubEventRegistration.create).toHaveBeenCalledWith({
+      data: { eventId: "event-1", organizationId: "club-1", registrationId: "registration-1", teamName: "Bible  Bees", teamKey: "bible bees", submittedByAccountId: "director-1", submittedByUserId: null },
+    });
+    expect(tx.clubRegistrationDraft.deleteMany).toHaveBeenCalledWith({ where: { eventId: "event-1", organizationId: "club-1", draftKey: "draftkey0001" } });
+    expect(tx.clubRegistrationDraft.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { eventId_organizationId_draftKey: { eventId: "event-1", organizationId: "club-1", draftKey: "draftkey0001" } },
+    }));
+    const audit = tx.auditLog.create.mock.calls.map(([call]) => call.data).find((data) => data.action === "CLUB_REGISTRATION_SUBMITTED");
+    expect(audit.metadata).toMatchObject({ clubOrganizationId: "club-1", teamName: "Bible  Bees" });
+  });
+
+  it("looks the club's registration up by the team's key, so a second team is not 'already registered'", async () => {
+    const tx = fixture();
+    tx.eventTeamSettings.findUnique.mockResolvedValue(teamRulesRow());
+    await submit(baseInput, clubTeam("Second Team"));
+    expect(tx.clubEventRegistration.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { eventId_organizationId_teamKey: { eventId: "event-1", organizationId: "club-1", teamKey: "second team" } },
+    }));
+    expect(tx.registration.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a team name another team already holds in the event, in any case, without naming the other club", async () => {
+    const tx = fixture();
+    tx.eventTeamSettings.findUnique.mockResolvedValue(teamRulesRow());
+    tx.clubEventRegistration.findFirst.mockResolvedValue({ id: "someone-elses" });
+    const refused = await submit(baseInput, clubTeam("BIBLE BEES")).catch((error: unknown) => error);
+    expect(refused).toMatchObject({ code: "CLUB_TEAM_NAME_TAKEN", message: 'A team named "BIBLE BEES" is already registered for this event. Choose a different team name.' });
+    expect(tx.clubEventRegistration.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { eventId: "event-1", teamKey: "bible bees" } }));
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses the club's own team name again, as an already registered team", async () => {
+    const tx = fixture();
+    tx.eventTeamSettings.findUnique.mockResolvedValue(teamRulesRow());
+    tx.clubEventRegistration.findUnique.mockResolvedValue({ id: "existing" });
+    await expect(submit(baseInput, clubTeam("Bible Bees"))).rejects.toMatchObject({
+      code: "CLUB_ALREADY_REGISTERED",
+      message: 'Your club already registered a team named "Bible Bees" for this event. Choose a different team name.',
+    });
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("turns a lost race on the event-wide name index into the same name-taken answer", async () => {
+    const tx = fixture();
+    tx.eventTeamSettings.findUnique.mockResolvedValue(teamRulesRow());
+    const { Prisma } = await import("@prisma/client");
+    tx.clubEventRegistration.create.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "test" }));
+    await expect(submit(baseInput, clubTeam("Bible Bees"))).rejects.toMatchObject({ code: "CLUB_TEAM_NAME_TAKEN" });
+  });
+
+  it("leaves a registration with no team exactly as it was: no name, no key, the one draft", async () => {
+    const tx = fixture();
+    await submit();
+    const data = tx.clubEventRegistration.create.mock.calls[0]![0].data;
+    expect(data).not.toHaveProperty("teamName");
+    expect(data).not.toHaveProperty("teamKey");
+    expect(tx.clubEventRegistration.findFirst).not.toHaveBeenCalled();
+    expect(tx.clubEventRegistration.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+      where: { eventId_organizationId_teamKey: { eventId: "event-1", organizationId: "club-1", teamKey: "" } },
+    }));
+  });
+});
+
+describe("team rules on submit (#809)", () => {
+  const people = (...clientIds: string[]) => ({ ...baseInput, attendees: clientIds.map((clientId) => ({ clientId, responses: {} })) });
+  const rules = (tx: ReturnType<typeof fixture>, overrides: Record<string, unknown> = {}) => tx.eventTeamSettings.findUnique.mockResolvedValue(
+    teamRulesRow({ minTeamMembers: 2, maxTeamMembers: 7, maxAlternates: 1, ageAsOf: "2026-01-01", maxMemberAge: 19, ...overrides }),
+  );
+
+  it("refuses one team member (a coach beside them does not count), saving nothing", async () => {
+    const tx = fixture();
+    rules(tx);
+    // m1 is a youth, m2 is staff: one team member and one coach.
+    const refused = await submit(people("member:m1", "member:m2"), clubTeam("Bible Bees")).catch((error: unknown) => error);
+    expect(refused).toMatchObject({ code: "TEAM_RULES" });
+    expect((refused as Error).message).toContain("A team needs at least 2 team members; this one has 1. Coaches don't count.");
+    expect(tx.registration.create).not.toHaveBeenCalled();
+    expect(tx.clubEventRegistration.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses a team member older than the limit on the age date, naming them", async () => {
+    const tx = fixture();
+    // The roster's birth dates make m1 11 on 2026-01-01; a limit of 10 refuses them.
+    rules(tx, { maxMemberAge: 10, minTeamMembers: 1 });
+    const refused = await submit(people("member:m1"), clubTeam("Bible Bees")).catch((error: unknown) => error);
+    expect((refused as Error).message).toContain("Alex Sample is 11 on January 1, 2026, and a team member can be at most 10.");
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("counts ages on the age date, not the event date: the same member passes a limit the event date would fail", async () => {
+    const tx = fixture();
+    // m1 turns 12 on 2026-12-06 (the event is 2026-12-05): 11 on the event date and on 2026-01-01 alike, so use the roster age.
+    rules(tx, { maxMemberAge: 11, minTeamMembers: 1 });
+    await submit(people("member:m1"), clubTeam("Bible Bees"));
+    expect(tx.registration.create).toHaveBeenCalledTimes(1);
+    const snapshot = tx.registrationAttendee.create.mock.calls[0]![0].data.profileSnapshot;
+    expect(snapshot).toMatchObject({ ageOnEventDate: 11, teamRole: "MEMBER" });
+  });
+
+  it("refuses a second alternate, naming both", async () => {
+    const tx = fixture();
+    rules(tx, { minTeamMembers: 1 });
+    const input = { ...baseInput, attendees: [
+      { clientId: "member:m1", responses: { alternate: true } },
+      { clientId: "member:m4", responses: { alternate: true } },
+    ] };
+    const refused = await submit(input, clubTeam("Bible Bees")).catch((error: unknown) => error);
+    expect((refused as Error).message).toContain("Only 1 team member can be the alternate, but 2 are marked: Alex Sample, Morgan Reported.");
+    expect(tx.registration.create).not.toHaveBeenCalled();
+  });
+
+  it("records each person's role on the attendee, so coaches can be listed later", async () => {
+    const tx = fixture();
+    rules(tx, { minTeamMembers: 1, maxMemberAge: null });
+    await submit(people("member:m1", "member:m2"), clubTeam("Bible Bees"));
+    const roles = tx.registrationAttendee.create.mock.calls.map(([call]) => call.data.profileSnapshot?.teamRole);
+    expect(roles).toEqual(["MEMBER", "COACH"]);
+  });
+
+  it("writes no role on an event without team rules", async () => {
+    const tx = fixture();
+    await submit();
+    expect(tx.registrationAttendee.create.mock.calls[0]![0].data.profileSnapshot).not.toHaveProperty("teamRole");
+  });
+
+  it("refuses anyone already on another team of the club, by name: a team member and a coach alike", async () => {
+    const tx = fixture();
+    rules(tx, { minTeamMembers: 1, maxMemberAge: null });
+    tx.registrationAttendee.findMany.mockResolvedValue([{ personId: "person-m1" }]);
+    const refused = await submit(people("member:m1"), clubTeam("Second Team")).catch((error: unknown) => error);
+    expect((refused as Error).message).toBe("Alex Sample is already on another team from your club for this event. Everyone is on one team only: remove them here, or from the other team.");
+    expect(tx.registrationAttendee.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ registration: { status: { in: ["SUBMITTED", "CONFIRMED", "WAITLISTED"] }, clubRegistration: { is: { organizationId: "club-1" } } } }),
+    }));
+    expect(tx.registration.create).not.toHaveBeenCalled();
+
+    // m2 is staff: a coach. A coach on another team is refused the same way.
+    tx.registrationAttendee.findMany.mockResolvedValue([{ personId: "person-m2" }]);
+    const coachRefused = await submit(people("member:m1", "member:m2"), clubTeam("Second Team")).catch((error: unknown) => error);
+    expect((coachRefused as Error).message).toContain("Jordan Example is already on another team from your club");
+    expect(tx.registration.create).not.toHaveBeenCalled();
+
+    // Nobody on another team: registers.
+    tx.registrationAttendee.findMany.mockResolvedValue([]);
+    await submit(people("member:m1", "member:m2"), clubTeam("Second Team"));
+    expect(tx.registration.create).toHaveBeenCalledTimes(1);
   });
 });

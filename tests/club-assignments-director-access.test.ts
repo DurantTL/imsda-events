@@ -7,13 +7,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 const mocks = vi.hoisted(() => ({
   getRosterAccessState: vi.fn(),
-  findUnique: vi.fn(),
+  findFirst: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/modules/club-rosters/access", () => ({ getRosterAccessState: mocks.getRosterAccessState }));
 vi.mock("@/lib/prisma", () => ({
-  getPrisma: () => ({ clubEventAssignment: { findUnique: mocks.findUnique } }),
+  getPrisma: () => ({ clubEventAssignment: { findFirst: mocks.findFirst } }),
 }));
 vi.mock("@/modules/audit/audit-service", () => ({ writeAuditLog: vi.fn() }));
 vi.mock("@/modules/registrations/amendments-repository", () => ({ currentRegistrationAnswers: vi.fn() }));
@@ -33,7 +33,7 @@ const setRow = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.findUnique.mockResolvedValue(setRow);
+  mocks.findFirst.mockResolvedValue(setRow);
 });
 
 describe("loadDirectorClubAssignment", () => {
@@ -42,7 +42,7 @@ describe("loadDirectorClubAssignment", () => {
     mocks.getRosterAccessState.mockResolvedValue({ state: "NOT_FOUND" });
     await expect(loadDirectorClubAssignment("org-b", "event-1")).resolves.toBeNull();
     expect(mocks.getRosterAccessState).toHaveBeenCalledWith("org-b");
-    expect(mocks.findUnique).not.toHaveBeenCalled();
+    expect(mocks.findFirst).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -54,7 +54,7 @@ describe("loadDirectorClubAssignment", () => {
   ])("returns null without querying for $state", async (access) => {
     mocks.getRosterAccessState.mockResolvedValue(access);
     await expect(loadDirectorClubAssignment("org-a", "event-1")).resolves.toBeNull();
-    expect(mocks.findUnique).not.toHaveBeenCalled();
+    expect(mocks.findFirst).not.toHaveBeenCalled();
   });
 
   it("reads exactly this event and this club when the roster is OPEN", async () => {
@@ -69,9 +69,9 @@ describe("loadDirectorClubAssignment", () => {
       status: "SET",
       fields: { campsiteLocation: "Field C, site 12" },
     });
-    expect(mocks.findUnique).toHaveBeenCalledTimes(1);
-    expect(mocks.findUnique).toHaveBeenCalledWith({
-      where: { eventId_organizationId: { eventId: "event-1", organizationId: "org-a" } },
+    expect(mocks.findFirst).toHaveBeenCalledTimes(1);
+    expect(mocks.findFirst).toHaveBeenCalledWith({
+      where: { eventId: "event-1", organizationId: "org-a", clubEventRegistration: { teamKey: "" } },
     });
   });
 
@@ -83,7 +83,7 @@ describe("loadDirectorClubAssignment", () => {
       accountId: "account-1",
       sessionId: "session-1",
     });
-    mocks.findUnique.mockResolvedValue({ ...setRow, campsiteLocation: "", dutyLabel: "", activityLabel: "" });
+    mocks.findFirst.mockResolvedValue({ ...setRow, campsiteLocation: "", dutyLabel: "", activityLabel: "" });
     await expect(loadDirectorClubAssignment("org-a", "event-1")).resolves.toBeNull();
   });
 });

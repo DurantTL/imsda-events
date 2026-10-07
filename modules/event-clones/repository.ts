@@ -119,6 +119,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     }),
   ];
 
+  const teamSettings = await db.eventTeamSettings.findUnique({ where: { eventId } });
   const currentForms = forms.filter((form) => form.status !== "ARCHIVED" && form.versions.length > 0);
   const currentTemplates = messageTemplates.filter((template) => template.versions.length > 0);
 
@@ -142,6 +143,12 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
       community: community
         ? { isEnabled: community.isEnabled, allowNewPosts: community.allowNewPosts, allowReplies: community.allowReplies, conductText: community.conductText, retentionDays: community.retentionDays }
         : null,
+      ...(teamSettings ? {
+        teamSettings: {
+          allowMultipleTeams: teamSettings.allowMultipleTeams, minTeamMembers: teamSettings.minTeamMembers, maxTeamMembers: teamSettings.maxTeamMembers,
+          maxAlternates: teamSettings.maxAlternates, maxMemberAge: teamSettings.maxMemberAge, booksLine: teamSettings.booksLine,
+        },
+      } : {}),
     },
     contentSections: sections.map((section) => ({
       kind: section.kind as SourceConfiguration["contentSections"][number]["kind"],
@@ -355,6 +362,12 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
         const community = config.moduleToggles.community;
         if (community) {
           await tx.eventCommunitySettings.create({ data: { eventId: event.id, ...community, updatedByUserId: actorUserId } });
+          copied.moduleToggles += 1;
+        }
+        // Team rules (#809) carry over, but not the dates that belong to one year.
+        const teamRules = config.moduleToggles.teamSettings;
+        if (teamRules && event.audience === "CLUB") {
+          await tx.eventTeamSettings.create({ data: { eventId: event.id, ...teamRules } });
           copied.moduleToggles += 1;
         }
       }

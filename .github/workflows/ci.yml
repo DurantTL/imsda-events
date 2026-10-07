@@ -188,6 +188,15 @@ jobs:
       # rolls everything back, and the ledger trigger flag never leaks (#620).
       - run: npm run test:event-deletion
 
+      # Real-database check of PBE registration (#809): the starter template, several
+      # named teams per club, the name unique per event (also under concurrent
+      # submits), team size 2 to 7 with one alternate, the age-as-of date, a person
+      # or coach on one team only (also under concurrency), director edits, the
+      # settings guards and the table constraints, level results with audit, the
+      # filled and blank print form, billing/church/packet/QR/check-in views per
+      # team, and an event without team rules behaving exactly as before.
+      - run: npm run test:pbe-registration
+
       # Real-database check of the eAdventist organizations import and church map
       # locations (#649, #724). It creates, migrates and drops its own scratch
       # database on this same Postgres service (the CI role may create databases),

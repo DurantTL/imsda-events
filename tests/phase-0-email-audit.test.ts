@@ -196,6 +196,22 @@ const eventFixtures: EventFixture[] = [
       { confirmationCode: "HW-DEMO-WAIT", state: "waitlisted", registrationType: "group", attendeeSummary: "River City Pathfinders — 20 club members", templateKey: "WAITLIST_JOINED" },
     ],
   },
+  {
+    formKey: "pbe_registration",
+    formName: "Pathfinder Bible Experience",
+    eventName: "Pathfinder Bible Experience",
+    eventDates: "January 16, 2027 (Area)",
+    eventLocation: "Missouri or Iowa",
+    contactEmail: "pbe-support@example.test",
+    senderName: "PBE Team",
+    senderEmail: "pbe@example.test",
+    replyToEmail: "pbe-replies@example.test",
+    lodging: "",
+    registrations: [
+      { confirmationCode: "PBE-DEMO-DEFERRED", state: "deferred-organization", registrationType: "group", attendeeSummary: "Bible Bees (Prairie View Pathfinders) — 6 team members, 1 coach", templateKey: null },
+      { confirmationCode: "PBE-DEMO-WAIT", state: "waitlisted", registrationType: "group", attendeeSummary: "Sword Drill (Lakeside Pathfinders) — 5 team members, 1 coach", templateKey: "WAITLIST_JOINED" },
+    ],
+  },
 ];
 
 const matrixMessageIds = [

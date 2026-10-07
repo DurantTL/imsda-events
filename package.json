@@ -39,6 +39,7 @@
     "test:invoices": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-invoices.ts",
     "test:invoice-delivery": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-invoice-delivery.ts",
     "test:module-requests": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-module-requests.ts",
+    "test:pbe-registration": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-pbe-registration.ts",
     "test:club-forms": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-club-forms.ts",
     "test:health-records": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-health-records.ts",
     "test:location-waitlist": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-location-waitlist.ts",

@@ -1,5 +1,6 @@
 import "server-only";
 
+import { teamLabel } from "@/modules/club-teams/domain";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { AccessDeniedError } from "@/modules/access/authorization";
@@ -68,6 +69,7 @@ const registrationSelect = {
   accountHolderPerson: { select: { firstName: true, lastName: true } },
   clubRegistration: {
     select: {
+      teamName: true,
       organization: {
         select: { id: true, name: true, parentOrganizationId: true, parentOrganization: { select: { id: true, name: true } } },
       },
@@ -163,7 +165,9 @@ function toLine(row: RegistrationRow): BillingLine {
     totalAmountCents: moneyToCents(row.totalAmount),
     locationName: row.location?.name ?? null,
     clubId: club?.id ?? null,
-    clubName: club?.name ?? null,
+    // A club's teams (#809) are separate lines, so each is told apart by its team's name.
+    clubName: club ? teamLabel(club.name, row.clubRegistration?.teamName) : null,
+    clubOrganizationName: club?.name ?? null,
     registrantName: personName(row.accountHolderPerson),
     party,
     source,

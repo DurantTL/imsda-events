@@ -200,6 +200,7 @@ describe("field resolution over the built-in templates", () => {
     fall_camporee: { dietary: "dietary_needs", church: "church_name", churchOther: "church_name_other" },
     camp_meeting_export: { dietary: "dietary_restrictions", church: "church_name", churchOther: "church_other" },
     honors_weekend: { dietary: "dietary_needs", church: "church_name", churchOther: "church_name_other" },
+    pbe_registration: { church: "church_name", churchOther: "church_name_other" },
     leadership_weekend: { dietary: "dietary_needs", church: "church_name", churchOther: "church_name_other" },
     tlt_retreat: { dietary: "dietary_needs" },
     outdoor_school: { dietary: "dietary_needs" },

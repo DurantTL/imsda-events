@@ -187,6 +187,28 @@ describe("registration amendment route", () => {
     await expect(response.json()).resolves.toEqual({ error: "CLASS_PICKS_CONFLICT", message: "Sam is too young for Archery." });
   });
 
+  it("answers a team-rule refusal with its status and the person-by-person problems, and saves nothing (#809)", async () => {
+    const { ClubTeamError } = await import("@/modules/club-teams/errors");
+    mocks.amendRegistration.mockRejectedValue(new ClubTeamError("TEAM_RULES", "A team needs at least 2 team members; this one has 1.", ["A team needs at least 2 team members; this one has 1."]));
+    const response = await POST(request({ ...baseBody, previewOnly: false, quoteFingerprint: "a".repeat(64) }), context);
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      error: "TEAM_RULES",
+      message: "A team needs at least 2 team members; this one has 1.",
+      problems: ["A team needs at least 2 team members; this one has 1."],
+    });
+    mocks.amendRegistration.mockRejectedValue(new ClubTeamError("REGISTRATION_NOT_FOUND", "That team is not registered for this event."));
+    expect((await POST(request({ ...baseBody, previewOnly: false, quoteFingerprint: "a".repeat(64) }), context)).status).toBe(404);
+  });
+
+  it("accepts staff's different-person confirmation on an attendee, and nothing else beyond the known fields (#809)", async () => {
+    const accepted = await POST(request({ ...baseBody, attendees: [{ ...attendee, differentPerson: true }] }), context);
+    expect(accepted.status).toBe(200);
+    expect(mocks.previewRegistrationAmendment.mock.calls[0]![2].attendees[0]).toMatchObject({ differentPerson: true });
+    const refused = await POST(request({ ...baseBody, attendees: [{ ...attendee, differentPerson: "yes" }] }), context);
+    expect(refused.status).toBe(400);
+  });
+
   it("rejects client-set attendee profile metadata (server-only, #366)", async () => {
     const response = await POST(request({
       ...baseBody,

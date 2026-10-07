@@ -13,6 +13,20 @@
 
 export const CHURCH_BILLED_NOTICE = "Your church is billed after the event.";
 
+/** What a registrant is told when a team event costs nothing: there is no church bill to announce (#809). */
+export const NO_COST_NOTICE = "No cost.";
+
+/** Whether any field of the form carries a price (a regular price, a choice price or late pricing). */
+export function formHasPrices(definition: { sections: ReadonlyArray<{ fields: ReadonlyArray<{ priceCents?: number; choicePricesCents?: unknown; latePricing?: unknown }> }> }): boolean {
+  return definition.sections.some((section) => section.fields.some((field) => field.priceCents !== undefined || field.choicePricesCents !== undefined || Boolean(field.latePricing)));
+}
+
+/** The price notice for an event with no prices at all: "No cost." instead of "billed to your church". Other prices are left as they are. */
+export function noCostPrice(price: PerPersonPrice): PerPersonPrice {
+  const free = price.attendeeLines.length === 0 && price.registrationLines.length === 0 && (price.uniformAmountCents === null || price.uniformAmountCents === 0);
+  return free ? { ...price, notice: NO_COST_NOTICE } : price;
+}
+
 export function isChurchBilledBillingMode(billingMode: string | null | undefined) {
   return billingMode === "DEFERRED_ORGANIZATION_INVOICE";
 }

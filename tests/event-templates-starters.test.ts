@@ -13,7 +13,7 @@ import {
 } from "@/modules/event-templates/starters";
 import { formTemplates, getFormTemplate } from "@/modules/forms/definition";
 
-const wantedNames = ["Blank event", "Blank club event", "Women's Retreat", "Man Camp", "Spring Camporee", "Fall Camporee", "Camp Meeting", "Honors Weekend", "Pathfinder Leadership Weekend", "TLT Retreat", "Outdoor School", "Hispanic Institute of Evangelism"];
+const wantedNames = ["Blank event", "Blank club event", "Women's Retreat", "Man Camp", "Spring Camporee", "Fall Camporee", "Camp Meeting", "Pathfinder Bible Experience", "Honors Weekend", "Pathfinder Leadership Weekend", "TLT Retreat", "Outdoor School", "Hispanic Institute of Evangelism"];
 
 function fieldsOf(formKey: string) {
   const definition = getFormTemplate(formKey)!.definition;
@@ -49,11 +49,13 @@ describe("starter event templates (#546)", () => {
     expect(payload.moduleEnablement.autoPromoteWaitlist).toBe(false);
     expect(payload.messageTemplateDefaults).toEqual([]);
     expect(payload.attendeeTypes).toEqual([]);
-    expect(Object.keys(payload).filter((key) => key !== "locations").sort()).toEqual([
+    // The Pathfinder Bible Experience (#809) also carries its team rules and registration deadline.
+    expect(Object.keys(payload).filter((key) => !["locations", "teamSettings", "registrationClosesOn"].includes(key)).sort()).toEqual([
       "attendeeClassifications", "attendeeTypes", "audience", "billingMode", "brandingDefaults", "formTemplateKeys",
       "messageTemplateDefaults", "moduleEnablement", "reportSelections", "starterKey",
     ]);
-    expect("locations" in payload).toBe(starter.starterKey === "fall_camporee");
+    expect("locations" in payload).toBe(["fall_camporee", "pathfinder_bible_experience"].includes(starter.starterKey));
+    expect("teamSettings" in payload).toBe(starter.starterKey === "pathfinder_bible_experience");
   });
 
   it("bills every CLUB starter to the church so directors can see the event (#565)", () => {
@@ -86,6 +88,7 @@ describe("starter event templates (#546)", () => {
       "Fall Camporee": "CLUB",
       "Camp Meeting": "GENERAL",
       "Honors Weekend": "CLUB",
+      "Pathfinder Bible Experience": "CLUB",
       "Pathfinder Leadership Weekend": "GENERAL",
       "TLT Retreat": "GENERAL",
       "Outdoor School": "GENERAL",
@@ -118,5 +121,49 @@ describe("starter event templates (#546)", () => {
   it("would fail reference validation if a starter named a missing form", () => {
     const broken = { ...starterPayload(starterEventTemplates[0]!), formTemplateKeys: ["no_such_form"] };
     expect(() => validateEventTemplatePayloadReferences(broken)).toThrow(EventTemplateReferenceError);
+  });
+
+  describe("Pathfinder Bible Experience (#809)", () => {
+    const starter = starterEventTemplates.find((entry) => entry.starterKey === "pathfinder_bible_experience")!;
+    const payload = parseEventTemplatePayload(starterPayload(starter));
+
+    it("presets every rule Caleb recorded: teams, size 2 to 7, one alternate, age on 2026-01-01 up to 19", () => {
+      expect(payload.teamSettings).toMatchObject({
+        allowMultipleTeams: true, minTeamMembers: 2, maxTeamMembers: 7, maxAlternates: 1, ageAsOf: "2026-01-01", maxMemberAge: 19,
+        booksLine: "The Book of Mark, 1-2 Peter, 1-3 John & Commentary",
+      });
+    });
+
+    it("carries the Conference and Union dates, the deadline, the two sites with the venue unknown, and church billing", () => {
+      expect(payload.teamSettings?.levelInfo).toEqual([
+        { level: "CONFERENCE", date: "2027-02-20", place: "TBA" },
+        { level: "UNION", date: "2027-03-27", place: "Lincoln, NE" },
+      ]);
+      expect(payload.registrationClosesOn).toBe("2026-12-18");
+      expect(payload.locations?.map((location) => [location.name, location.address])).toEqual([["Missouri", null], ["Iowa", null]]);
+      expect(payload.audience).toBe("CLUB");
+      expect(payload.billingMode).toBe("DEFERRED_ORGANIZATION_INVOICE");
+      expect(payload.moduleEnablement.checksAdultBackgrounds).toBe(true);
+    });
+
+    it("is a free form: no fee, price or payment anywhere in it", () => {
+      const definition = getFormTemplate("pbe_registration")!.definition;
+      expect(JSON.stringify(definition)).not.toMatch(/priceCents|choicePricesCents|creditCentsPerUnit|"payment"/);
+    });
+
+    it("asks for the coordinator, partner club, alternate, coach role, confirmation and release", () => {
+      const keys = fieldsOf("pbe_registration").map((field) => `${field.scope}:${field.key}`);
+      for (const key of [
+        "REGISTRATION:coordinator_name", "REGISTRATION:coordinator_address", "REGISTRATION:coordinator_city", "REGISTRATION:coordinator_state",
+        "REGISTRATION:coordinator_zip", "REGISTRATION:coordinator_phone", "REGISTRATION:coordinator_email", "REGISTRATION:partner_club",
+        "REGISTRATION:director_confirmation", "REGISTRATION:photo_video_release", "ATTENDEE:alternate", "ATTENDEE:attendee_type", "ATTENDEE:attendee_age",
+      ]) expect(keys).toContain(key);
+      const role = fieldsOf("pbe_registration").find((field) => field.key === "attendee_type")!;
+      expect(role.options).toEqual(["Pathfinder", "TLT", "Coach"]);
+    });
+
+    it("is refused for a general event, since team rules are for club events", () => {
+      expect(() => parseEventTemplatePayload({ ...starterPayload(starter), audience: "GENERAL" })).toThrow(EventTemplateReferenceError);
+    });
   });
 });

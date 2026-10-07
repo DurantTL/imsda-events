@@ -1,5 +1,6 @@
 import "server-only";
 
+import { teamLabel } from "@/modules/club-teams/domain";
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
@@ -130,7 +131,7 @@ const factsSelect = {
   locationId: true,
   location: { select: { name: true } },
   accountHolderPerson: { select: { firstName: true, lastName: true } },
-  clubRegistration: { select: { organization: { select: { id: true, name: true } } } },
+  clubRegistration: { select: { teamName: true, organization: { select: { id: true, name: true } } } },
   attendees: {
     orderBy: [{ position: "asc" }, { createdAt: "asc" }],
     select: {
@@ -232,6 +233,10 @@ function linesAt(lines: readonly LineRow[], index: number | undefined | null) {
   return index === undefined || index === null ? [] : lines.filter((line) => line.attendeeIndex === index);
 }
 
+function clubLabel(link: { teamName: string | null; organization: { name: string } } | null | undefined) {
+  return link ? teamLabel(link.organization.name, link.teamName) : null;
+}
+
 function sourceFor(row: FactsRow, context: SourceContext, placesFor: (registrationId: string) => Places | null): { source: RegistrationSource; reviewKey: string | null } {
   const substitutedAttendeeIds = context.substitutedAttendeeIds;
   const { snapshot, lines, pricedAt } = context.pricing.get(row.id) as Pricing;
@@ -241,7 +246,7 @@ function sourceFor(row: FactsRow, context: SourceContext, placesFor: (registrati
   const places = placesFor(row.id) as Places;
   const labelOf = (registrationId: string | null) => {
     const other = registrationId ? context.rows.get(registrationId) : null;
-    return other ? other.clubRegistration?.organization.name ?? personName(other.accountHolderPerson) : null;
+    return other ? clubLabel(other.clubRegistration) ?? personName(other.accountHolderPerson) : null;
   };
 
   /**
@@ -351,7 +356,8 @@ function sourceFor(row: FactsRow, context: SourceContext, placesFor: (registrati
     registrationId: row.id,
     confirmationCode: row.confirmationCode,
     status: row.status,
-    label: row.clubRegistration?.organization.name ?? personName(row.accountHolderPerson),
+    // A club's teams (#809) are billed as registrations of their own, so each line names its team.
+    label: clubLabel(row.clubRegistration) ?? personName(row.accountHolderPerson),
     clubId: row.clubRegistration?.organization.id ?? null,
     locationId: row.locationId,
     locationName: row.location?.name ?? null,

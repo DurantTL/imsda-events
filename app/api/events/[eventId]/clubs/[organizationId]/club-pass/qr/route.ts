@@ -1,3 +1,4 @@
+import { singleQueryParam } from "@/modules/club-teams/domain";
 import QRCode from "qrcode";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { getCurrentSession } from "@/modules/access/current-session";
@@ -30,12 +31,15 @@ function privateJson(body: unknown, init?: ResponseInit) {
  * own event-scoped staff permission (report access, or Pathfinder
  * event-manager oversight of this club event, #387), never on roster access.
  */
-async function getHandler(_request: Request, context: Context) {
+async function getHandler(request: Request, context: Context) {
   try {
     const { eventId, organizationId } = await context.params;
     await requireClubReportsAccess(await getCurrentSession(), eventId, findActiveMembership);
 
-    const pass = await createDirectorClubPass(organizationId, eventId);
+    // Which of the club's teams (#809); omitted on an event without teams.
+    // A repeated ?team= names no team.
+    const teamKey = singleQueryParam(new URL(request.url).searchParams, "team");
+    const pass = teamKey === null ? null : await createDirectorClubPass(organizationId, eventId, new Date(), teamKey);
     if (!pass) {
       return privateJson({
         error: "CLUB_PASS_UNAVAILABLE",

@@ -15,6 +15,9 @@ import {
   registrationOperationFingerprint,
   substitutedFormResponses,
 } from "@/modules/registrations/operations-domain";
+import { enforceTeamRegistrationRules } from "@/modules/club-teams/registration-guard";
+import { deliverPermissionMessages } from "@/modules/club-teams/permission-repository";
+import { isAgeFieldKey } from "@/modules/forms/definition";
 import { getRegistrationByIdWithClient } from "@/modules/registrations/repository";
 import type {
   AttendeeSubstitutionInput,
@@ -30,6 +33,7 @@ export type RegistrationOperationErrorCode =
   | "ATTENDEE_ALREADY_IN_PARTY"
   | "ATTENDEE_SAME_PERSON"
   | "TRANSFER_SAME_DESTINATION"
+  | "TEAM_AGE_REQUIRED"
   | "IDEMPOTENCY_KEY_REUSED"
   | "OPERATION_CONFLICT";
 
@@ -695,10 +699,14 @@ export async function substituteRegistrationAttendee(
       email: input.email,
       phone: input.phone,
       reason: input.reason,
+      ...(input.age !== undefined ? { age: input.age } : {}),
     },
   });
 
+  let permissionMessageIds: string[] = [];
   const result = await runSerializableOperation(async (tx) => {
+    // Each attempt starts clean, so a retried transaction never delivers the ids of one that rolled back.
+    permissionMessageIds = [];
     const existingOperation = await tx.registrationOperation.findUnique({
       where: {
         eventId_clientRequestId: {
@@ -814,12 +822,35 @@ export async function substituteRegistrationAttendee(
       select: { id: true },
     });
     const operationId = randomUUID();
+    // On a team registration (#809) the replacement is a different person: the age and team role of the one they replace
+    // are cleared (and the age answer too, which is the prior person's), and the team rules are checked below.
+    const teamEvent = await tx.clubEventRegistration.findUnique({ where: { registrationId }, select: { eventId: true, organizationId: true } });
+    const teamRules = teamEvent ? await tx.eventTeamSettings.findUnique({ where: { eventId: teamEvent.eventId }, select: { maxMemberAge: true, ageAsOf: true } }) : null;
+    const onTeamEvent = teamEvent !== null && teamRules !== null;
+    // A replacement who is not on the club's roster has no birth date to count an age from, so staff give their age on the age
+    // date (or the event date), where the event has an age limit or an age date; the age rules and the 18-and-over flag follow.
+    if (teamEvent && teamRules && (teamRules.maxMemberAge !== null || teamRules.ageAsOf !== null) && input.age === undefined) {
+      // Only a roster birth date lets the age be worked out; a roster member without one needs the age entered too.
+      const onRoster = await tx.clubRosterMember.findFirst({ where: { organizationId: teamEvent.organizationId, personId: newPerson.id, status: "ACTIVE" }, select: { sealedBirthDate: true } });
+      if (!onRoster?.sealedBirthDate) {
+        throw new RegistrationOperationError("TEAM_AGE_REQUIRED", onRoster
+          ? "Enter the replacement's age on the team's age date. Their roster entry has no birth date, so it can't be worked out."
+          : "Enter the replacement's age on the team's age date. They are not on the club's roster, so it can't be worked out from a birth date.");
+      }
+    }
+    const { ageOnEventDate: _priorAge, teamRole: _priorRole, differentPersonConfirmed: _priorConfirmed, ...snapshotWithoutTeamFields } = jsonRecord(attendee.profileSnapshot);
+    void _priorAge;
+    void _priorRole;
+    void _priorConfirmed;
+    const keptSnapshot = onTeamEvent ? { ...snapshotWithoutTeamFields, ...(input.age !== undefined ? { ageOnEventDate: input.age } : {}) } : jsonRecord(attendee.profileSnapshot);
+    const keptResponses = substitutedFormResponses(jsonRecord(attendee.formResponses), input);
+    if (onTeamEvent) for (const key of Object.keys(keptResponses)) if (isAgeFieldKey(key)) delete keptResponses[key];
     await tx.registrationAttendee.update({
       where: { id: attendeeId },
       data: {
         personId: newPerson.id,
         profileSnapshot: {
-          ...jsonRecord(attendee.profileSnapshot),
+          ...keptSnapshot,
           firstName: input.firstName,
           lastName: input.lastName,
           email: input.email || null,
@@ -828,9 +859,11 @@ export async function substituteRegistrationAttendee(
           identityOperationId: operationId,
         },
         // Rosters, exports, and the edit form read names from the answers too (WR26).
-        formResponses: substitutedFormResponses(jsonRecord(attendee.formResponses), input) as Prisma.InputJsonValue,
+        formResponses: keptResponses as Prisma.InputJsonValue,
       },
     });
+    // The same team rules as any other change to the team, inside this transaction, so a refused one saves nothing.
+    if (onTeamEvent) permissionMessageIds.push(...(await enforceTeamRegistrationRules(tx, registrationId, { actorUserId: actor.id })).queuedMessageIds);
 
     const priorName = `${prior.firstName} ${prior.lastName}`.trim();
     const replacementName = `${input.firstName} ${input.lastName}`.trim();
@@ -963,5 +996,6 @@ export async function substituteRegistrationAttendee(
   });
   // #527: the new person is matched against the Sterling Volunteers list after commit; best effort.
   await refreshBackgroundCheckMatchesForRegistrations([registrationId]);
+  await deliverPermissionMessages(permissionMessageIds);
   return result;
 }

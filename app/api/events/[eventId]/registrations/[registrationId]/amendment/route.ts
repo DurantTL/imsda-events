@@ -4,6 +4,7 @@ import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
 import { isBusyDatabaseError, logExpiredTransaction } from "@/modules/event-locations/api-errors";
+import { ClubTeamError, clubTeamErrorStatus } from "@/modules/club-teams/errors";
 import { EventLocationError, eventLocationErrorStatus, locationBusyMessage } from "@/modules/event-locations/errors";
 import { findActiveMembership } from "@/modules/events/repository";
 import { GroupRegistrationError, groupStaffAmendmentOptions } from "@/modules/group-registrations/repository";
@@ -51,6 +52,13 @@ function errorResponse(error: unknown) {
         details: error.details,
       },
       { status, headers: noStoreHeaders },
+    );
+  }
+  // The change breaks the event's team rules, or puts someone on two teams of a club (#809).
+  if (error instanceof ClubTeamError) {
+    return Response.json(
+      { error: error.code, message: error.message, problems: error.problems },
+      { status: clubTeamErrorStatus(error.code), headers: noStoreHeaders },
     );
   }
   // A group's class picks no longer fit the change (#650).

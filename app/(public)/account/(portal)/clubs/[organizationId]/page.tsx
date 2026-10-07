@@ -175,7 +175,11 @@ export default async function ClubHomePage({ params }: { params: Promise<{ organ
                 <CheckCircle2 size={17} aria-hidden="true" />
                 <span>
                   <strong>{event.name}</strong>
-                  <small>{event.registration?.attendeeCount} going · classes and details</small>
+                  <small>
+                    {event.multipleTeams && event.teams.length > 0
+                      ? `${event.teams.length} ${event.teams.length === 1 ? "team" : "teams"} · ${event.teams.reduce((sum, team) => sum + team.attendeeCount, 0)} going`
+                      : `${event.registration?.attendeeCount} going · classes and details`}
+                  </small>
                 </span>
                 <Link className="secondary-button club-event-action" href={`${base}/events/${event.id}`}>
                   Open <ArrowRight size={14} aria-hidden="true" />

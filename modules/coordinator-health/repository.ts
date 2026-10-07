@@ -1,5 +1,6 @@
 import "server-only";
 
+import { teamLabel } from "@/modules/club-teams/domain";
 import { getPrisma } from "@/lib/prisma";
 import { logError } from "@/lib/logger";
 import { isSecretEncryptionConfigured, SecretBoxError } from "@/lib/secret-box";
@@ -148,8 +149,10 @@ export async function loadEventHealth(
       ...(requestedClub ? { organizationId: requestedClub } : {}),
       registration: { status: { in: [...activeRegistrationStatuses] } },
     },
-    orderBy: { organization: { name: "asc" } },
+    orderBy: [{ organization: { name: "asc" } }, { teamKey: "asc" }],
     select: {
+      teamKey: true,
+      teamName: true,
       organization: { select: { id: true, name: true } },
       registration: {
         select: {
@@ -297,7 +300,8 @@ export async function loadEventHealth(
         emergencyStatus,
       };
     });
-    return { organizationId, clubName: row.organization.name, attendees: sortAttendees(rows) };
+    // One sheet per registration: a club's teams (#809) each get their own, named "Team (Club)".
+    return { organizationId, ...(row.teamKey ? { teamKey: row.teamKey } : {}), clubName: teamLabel(row.organization.name, row.teamName), attendees: sortAttendees(rows) };
   });
 
   return {

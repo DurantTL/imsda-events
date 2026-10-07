@@ -5,6 +5,7 @@ import { AccessRestricted } from "@/components/access-restricted";
 import { PrintReportButton } from "@/components/print-report-button";
 import { LocationFilter } from "@/components/location-filter";
 import { resolveLocationFilter } from "@/modules/event-locations/filter";
+import { getTeamSettings } from "@/modules/club-teams/settings-repository";
 import { getClubEventReports } from "@/modules/reporting/club-event-reports-repository";
 import { resolveClubReportsAccess } from "@/modules/reporting/club-reports-access";
 import { staffPageTitles } from "@/components/staff-navigation";
@@ -36,6 +37,7 @@ export default async function ClubEventReportsPage({
   // Each location on its own, or all of them combined with the location named (#413).
   const { locations, locationId } = await resolveLocationFilter(event.id, requestedLocation);
   const reports = await getClubEventReports(event.id, { locationId });
+  const usesTeams = (await getTeamSettings(event.id)) !== null;
   const showLocation = locations.length > 0;
 
   return (
@@ -49,6 +51,7 @@ export default async function ClubEventReportsPage({
         <div className="intro-actions report-actions">
           <Link className="secondary-button" href={`/more/reports?${eventQuery}`}>Back to reports</Link>
           <Link className="secondary-button" href={`/more/reports/clubs/check-in-book?${eventQuery}`}>Check-in book</Link>
+          {usesTeams && <Link className="secondary-button" href={`/more/team-results?${eventQuery}`}>Team results</Link>}
           <PrintReportButton />
         </div>
       </div>
@@ -82,7 +85,7 @@ export default async function ClubEventReportsPage({
               </thead>
               <tbody role="rowgroup">
                 {reports.camping.map((row) => (
-                  <tr role="row" key={row.organizationId}>
+                  <tr role="row" key={row.confirmationCode}>
                     <th role="rowheader" scope="row" translate="no">{row.organizationName}{row.sponsoringChurch && <small> · {row.sponsoringChurch}</small>}</th>
                     {showLocation && <td {...cardCell("Location")} translate="no">{row.locationName ?? "—"}</td>}
                     <td {...cardCell("Tents")}>{row.camping.tents}</td>
@@ -95,7 +98,7 @@ export default async function ClubEventReportsPage({
                     <td {...cardCell("Staff")}>{row.headcounts.staff}</td>
                     <td {...cardCell("Child")}>{row.headcounts.child}</td>
                     <td {...cardCell("Total")}><strong>{row.headcounts.total}</strong></td>
-                    <td {...cardCell(null)}><Link className="report-record-link" href={`/more/reports/clubs/packet/${encodeURIComponent(row.organizationId)}?${eventQuery}`}><PackageOpen aria-hidden="true" size={13} /> Packet</Link></td>
+                    <td {...cardCell(null)}><Link className="report-record-link" href={`/more/reports/clubs/packet/${encodeURIComponent(row.organizationId)}?${eventQuery}${row.teamKey ? `&team=${encodeURIComponent(row.teamKey)}` : ""}`}><PackageOpen aria-hidden="true" size={13} /> Packet</Link></td>
                   </tr>
                 ))}
               </tbody>
@@ -120,7 +123,7 @@ export default async function ClubEventReportsPage({
               </thead>
               <tbody role="rowgroup">
                 {reports.dutiesActivities.map((row) => (
-                  <tr role="row" key={row.organizationId}>
+                  <tr role="row" key={row.confirmationCode}>
                     <th role="rowheader" scope="row" translate="no">{row.organizationName}</th>
                     {showLocation && <td {...cardCell("Location")} translate="no">{row.locationName ?? "—"}</td>}
                     <td {...cardCell("Duty areas")}>{row.dutyAreas.join(", ") || "—"}</td>
@@ -150,7 +153,7 @@ export default async function ClubEventReportsPage({
               <thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Club</th>{showLocation && <th role="columnheader" scope="col">Location</th>}<th role="columnheader" scope="col">Baptism interest</th><th role="columnheader" scope="col">Bible read-through</th></tr></thead>
               <tbody role="rowgroup">
                 {reports.milestones.map((row) => (
-                  <tr role="row" key={row.organizationId}>
+                  <tr role="row" key={row.confirmationCode}>
                     <th role="rowheader" scope="row" translate="no">{row.organizationName}</th>
                     {showLocation && <td {...cardCell("Location")} translate="no">{row.locationName ?? "—"}</td>}
                     <td {...cardCell("Baptism interest")}>{row.baptismNames || "—"}</td>

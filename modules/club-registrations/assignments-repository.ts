@@ -13,6 +13,7 @@ import {
   emptyClubAssignmentFields,
   readClubAssignmentPreferences,
 } from "@/modules/club-registrations/assignments";
+import { teamLabel } from "@/modules/club-teams/domain";
 import { currentRegistrationAnswers } from "@/modules/registrations/amendments-repository";
 
 /**
@@ -46,6 +47,9 @@ export class ClubAssignmentError extends Error {
 export type ClubAssignmentRow = {
   organizationId: string;
   organizationName: string;
+  /** The team (#809) this assignment is for; empty on an event without teams. */
+  teamKey: string;
+  teamName: string | null;
   sponsoringChurch: string | null;
   clubEventRegistrationId: string;
   registrationId: string;
@@ -73,6 +77,8 @@ export async function listClubAssignments(eventId: string): Promise<ClubAssignme
       id: true,
       organizationId: true,
       registrationId: true,
+      teamKey: true,
+      teamName: true,
       organization: { select: { name: true, parentOrganization: { select: { name: true } } } },
       registration: { select: { confirmationCode: true, _count: { select: { attendees: true } } } },
       assignment: true,
@@ -84,7 +90,9 @@ export async function listClubAssignments(eventId: string): Promise<ClubAssignme
     const fields = fieldsFromRow(row.assignment);
     return {
       organizationId: row.organizationId,
-      organizationName: row.organization.name,
+      organizationName: teamLabel(row.organization.name, row.teamName),
+      teamKey: row.teamKey,
+      teamName: row.teamName,
       sponsoringChurch: row.organization.parentOrganization?.name ?? null,
       clubEventRegistrationId: row.id,
       registrationId: row.registrationId,
@@ -118,6 +126,8 @@ export async function upsertClubAssignment(
   organizationId: string,
   input: ClubAssignmentInput,
   actorUserId: string,
+  // Which of the club's teams (#809); empty on an event without teams.
+  teamKey = "",
 ) {
   const prisma = getPrisma();
   // Read, compare, write, and audit as one serializable unit: two staff
@@ -127,7 +137,7 @@ export async function upsertClubAssignment(
     try {
       return await prisma.$transaction(async (tx) => {
         const clubRegistration = await tx.clubEventRegistration.findUnique({
-          where: { eventId_organizationId: { eventId, organizationId } },
+          where: { eventId_organizationId_teamKey: { eventId, organizationId, teamKey } },
           select: { id: true, registration: { select: { status: true } } },
         });
         if (!clubRegistration || !["SUBMITTED", "CONFIRMED"].includes(clubRegistration.registration.status)) {
@@ -166,7 +176,7 @@ export async function upsertClubAssignment(
           entityType: "ClubEventAssignment",
           entityId: saved.id,
           summary: `Updated the club assignment for organization ${organizationId}.`,
-          metadata: { organizationId, version: saved.version },
+          metadata: { organizationId, version: saved.version, ...(teamKey ? { teamKey } : {}) },
         }, tx);
         return saved;
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
@@ -203,9 +213,9 @@ function assignmentPublicFields(row: {
  * the club packet (#411) print helper. Returns null when staff haven't set
  * anything yet, so an empty section is never shown.
  */
-export async function getClubAssignmentForClub(eventId: string, organizationId: string) {
-  const row = await getPrisma().clubEventAssignment.findUnique({
-    where: { eventId_organizationId: { eventId, organizationId } },
+export async function getClubAssignmentForClub(eventId: string, organizationId: string, teamKey = "") {
+  const row = await getPrisma().clubEventAssignment.findFirst({
+    where: { eventId, organizationId, clubEventRegistration: { teamKey } },
   });
   if (!row) return null;
   const fields = assignmentPublicFields(row);

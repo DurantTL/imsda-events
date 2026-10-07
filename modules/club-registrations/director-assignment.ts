@@ -11,8 +11,8 @@ import { getClubAssignmentForClub } from "@/modules/club-registrations/assignmen
  * read another club's assignment by changing the URL. Returns null for every
  * other state, and when staff haven't set anything yet.
  */
-export async function loadDirectorClubAssignment(organizationId: string, eventId: string) {
+export async function loadDirectorClubAssignment(organizationId: string, eventId: string, teamKey = "") {
   const access = await getRosterAccessState(organizationId);
   if (access.state !== "OPEN") return null;
-  return getClubAssignmentForClub(eventId, access.club.organizationId);
+  return getClubAssignmentForClub(eventId, access.club.organizationId, teamKey);
 }

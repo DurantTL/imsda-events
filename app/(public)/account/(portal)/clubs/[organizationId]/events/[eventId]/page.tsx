@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { notFound } from "next/navigation";
-import { ArrowRight, CalendarDays, CheckCircle2, MapPin, Printer, QrCode } from "lucide-react";
+import { notFound, redirect } from "next/navigation";
+import { ArrowRight, CalendarDays, CheckCircle2, MapPin, Plus, Printer, QrCode, UsersRound } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { BackLink } from "@/components/back-link";
 import { NeedsAttention, StatusComplete } from "@/components/needs-attention";
@@ -18,36 +18,61 @@ import { getRosterAccessStateForPage } from "@/modules/club-rosters/access";
 import { directorContactPrefill } from "@/modules/club-registrations/contact-prefill";
 import { loadDirectorClubAssignment } from "@/modules/club-registrations/director-assignment";
 import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
+import { noCostPrice } from "@/modules/club-registrations/per-person-price";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { activeRegistrationStatuses, registrationClosedMessage } from "@/modules/events/lifecycle";
 import { getClassSelectionWorkspaceIfRegistered, getRegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
+import { TEAM_LEVELS, teamLevelLabels, draftKeySchema, singleSearchParam } from "@/modules/club-teams/domain";
 
 export const metadata: Metadata = { title: "Club registration" };
 export const dynamic = "force-dynamic";
 
 export default async function ClubEventRegistrationPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ organizationId: string; eventId: string }>;
+  searchParams: Promise<{ team?: string | string[]; draft?: string | string[] }>;
 }) {
   const { organizationId, eventId } = await params;
+  const { team: rawTeam, draft: rawDraft } = await searchParams;
+  // A repeated ?team= or ?draft= names nothing.
+  const requestedTeam = singleSearchParam(rawTeam);
+  const requestedDraft = singleSearchParam(rawDraft);
+  if (requestedTeam === null || requestedDraft === null) notFound();
   const access = await getRosterAccessStateForPage(organizationId);
   // The club layout shows the sign-in and authenticator steps.
   if (access.state !== "OPEN") return null;
 
+  // A club that registers several teams (#809) has a page for each team and one for each team being started; the
+  // address says which. An event without teams ignores both and shows the one registration it has always had.
+  const requestedDraftKey = draftKeySchema.safeParse(requestedDraft).success ? requestedDraft : null;
   let workspace: Awaited<ReturnType<typeof getClubEventWorkspace>>;
   try {
-    workspace = await getClubEventWorkspace(organizationId, eventId);
+    workspace = await getClubEventWorkspace(organizationId, eventId, new Date(), { teamKey: requestedTeam || null, draftKey: requestedDraftKey });
   } catch (error) {
     if (error instanceof ClubRegistrationError) notFound();
     throw error;
   }
+  const multipleTeams = workspace.teams.multiple;
+  // A team this club never registered (another club's, a stale link, a made-up key), or one on an event without teams, is not found.
+  if (requestedTeam && (!multipleTeams || !workspace.registration)) notFound();
+  const eventBase = `/account/clubs/${organizationId}/events/${eventId}`;
+  const canStartTeam = !workspace.problem && workspace.event.phase === "OPEN" && Boolean(workspace.experience);
+  // The first team goes straight to its form: there is nothing to choose between yet.
+  if (multipleTeams && !workspace.registration && !requestedDraftKey && canStartTeam
+    && workspace.teams.registered.length === 0 && workspace.teams.drafts.length === 0) {
+    redirect(`${eventBase}?draft=${crypto.randomUUID().replaceAll("-", "")}`);
+  }
+  // Whether the page is showing one team (registered, or being started) rather than the list of the club's teams.
+  const showingTeam = !multipleTeams || Boolean(workspace.registration) || requestedDraftKey !== null;
+  const teamQuery = workspace.registration?.teamKey ? `?team=${encodeURIComponent(workspace.registration.teamKey)}` : "";
 
-  // A waitlisted or cancelled registration holds no seats, so it has no class picker.
-  const classes = workspace.registration ? await getClassSelectionWorkspaceIfRegistered(organizationId, eventId) : null;
+  // A waitlisted or cancelled registration holds no seats, so it has no class picker. An event with several teams per club has no classes.
+  const classes = workspace.registration && !multipleTeams ? await getClassSelectionWorkspaceIfRegistered(organizationId, eventId) : null;
   // Classes chosen while registering (#618); once registered, the class picker below takes over.
-  const honorsCatalog = !workspace.registration && workspace.experience ? await getRegistrationHonorsCatalog(
+  const honorsCatalog = !workspace.registration && !multipleTeams && workspace.experience ? await getRegistrationHonorsCatalog(
     organizationId,
     eventId,
     // Known without asking the browser: no locations, or exactly one.
@@ -60,7 +85,10 @@ export default async function ClubEventRegistrationPage({
   // #410: only shown once staff have set something — an empty section would
   // tell a director less than nothing. The loader re-checks this club's
   // roster access itself rather than trusting the check above.
-  const assignment = workspace.registration ? await loadDirectorClubAssignment(organizationId, eventId) : null;
+  const assignment = workspace.registration ? await loadDirectorClubAssignment(organizationId, eventId, workspace.registration.teamKey) : null;
+
+  // A free team event (#809) has no church bill to announce.
+  const freeTeamEvent = workspace.event.noCost;
 
   let contactPrefill: Record<string, string> = {};
   // Never prefill from an attendee account while staff act as director
@@ -88,15 +116,75 @@ export default async function ClubEventRegistrationPage({
   return (
     <>
       <section className="public-manage-card club-event-heading">
-        <BackLink href={`/account/clubs/${organizationId}/events`}>Back to club events</BackLink>
-        <h2>{workspace.event.name}</h2>
-        <p className="field-help">Billed to your church. No payment is taken online.</p>
+        <BackLink href={multipleTeams && showingTeam ? eventBase : `/account/clubs/${organizationId}/events`}>
+          {multipleTeams && showingTeam ? "Back to your teams" : "Back to club events"}
+        </BackLink>
+        <h2>{workspace.event.name}{workspace.registration?.teamName ? <> · <span translate="no">{workspace.registration.teamName}</span></> : ""}</h2>
+        <p className="field-help">{freeTeamEvent ? "No cost. No payment is taken online." : "Billed to your church. No payment is taken online."}</p>
       </section>
+      {multipleTeams && !showingTeam && (
+        <section className="public-manage-card" aria-labelledby="club-teams-heading">
+          <div className="public-manage-card-heading">
+            <p className="public-registration-eyebrow">Your teams</p>
+            <h2 id="club-teams-heading"><UsersRound size={20} aria-hidden="true" /> Teams registered for this event</h2>
+          </div>
+          <p className="field-help">
+            Your club can enter more than one team. Each team has its own name, its own people, and its own registration.
+          </p>
+          {workspace.teams.registered.length === 0 && workspace.teams.drafts.length === 0 && (
+            <p className="public-manage-empty">Your club has not registered a team yet.</p>
+          )}
+          <ul className="public-manage-club-list">
+            {workspace.teams.registered.map((team) => (
+              <li key={team.teamKey}>
+                <CheckCircle2 size={17} aria-hidden="true" />
+                <span>
+                  <strong translate="no">{team.teamName}</strong>
+                  <small>
+                    Confirmation <span translate="no">{team.confirmationCode}</span> · {team.attendeeCount} {team.attendeeCount === 1 ? "person" : "people"}
+                    {team.locationName ? <> · <span translate="no">{team.locationName}</span></> : ""}
+                    {team.status === "WAITLISTED" ? " · On the waitlist" : team.status === "CANCELLED" ? " · Cancelled" : ""}
+                  </small>
+                </span>
+                <Link className="secondary-button club-event-action" href={`${eventBase}?team=${encodeURIComponent(team.teamKey)}`}>
+                  View <ArrowRight size={14} aria-hidden="true" />
+                </Link>
+              </li>
+            ))}
+            {workspace.teams.drafts.map((entry) => (
+              <li key={entry.draftKey}>
+                <CalendarDays size={17} aria-hidden="true" />
+                <span>
+                  <strong translate="no">{entry.teamName || "Unnamed team"}</strong>
+                  <small>Not submitted yet · {entry.selectedCount} chosen</small>
+                </span>
+                <Link className="secondary-button club-event-action" href={`${eventBase}?draft=${encodeURIComponent(entry.draftKey)}`}>
+                  Continue <ArrowRight size={14} aria-hidden="true" />
+                </Link>
+              </li>
+            ))}
+          </ul>
+          {workspace.teams.settings && (
+            <p><Link className="text-button" href={`${eventBase}/team-form/blank`}>Blank team form to mail or email</Link></p>
+          )}
+          {canStartTeam ? (
+            <Link className="primary-button club-event-action" href={`${eventBase}?draft=${crypto.randomUUID().replaceAll("-", "")}`}>
+              <Plus size={14} aria-hidden="true" /> Register {workspace.teams.registered.length > 0 ? "another" : "a"} team
+            </Link>
+          ) : workspace.problem ? (
+            <p className="public-manage-empty">{workspace.problem} Let the event team know so they can fix the form.</p>
+          ) : (
+            <p className="public-manage-empty">
+              {workspace.event.phase === "CLOSED" ? "Registration has closed, so no more teams can be added." : "Registration isn't open yet."}
+            </p>
+          )}
+        </section>
+      )}
       {workspace.registration && (
         <section className="public-manage-card">
           <div className="public-manage-card-heading">
             <p className="public-registration-eyebrow">Registered</p>
-            <h2><CheckCircle2 size={20} aria-hidden="true" /> Your club is registered</h2>
+            <h2><CheckCircle2 size={20} aria-hidden="true" /> {workspace.registration.teamName ? <><span translate="no">{workspace.registration.teamName}</span> is registered</> : "Your club is registered"}</h2>
           </div>
           <ClubHonorsNote eventId={eventId} organizationId={organizationId} />
           {classReadiness && (
@@ -133,9 +221,14 @@ export default async function ClubEventRegistrationPage({
               {workspace.registration.location.lastDay !== workspace.registration.location.firstDay ? <> to {formatCalendarDate(workspace.registration.location.lastDay)}</> : ""}
             </p>
           )}
+          {workspace.registration.permissionNotices.length > 0 && (
+            <ul className={`inline-notice team-permission-notices${workspace.registration.permissionNotices.some((notice) => notice.status !== "GRANTED") ? " warning" : ""}`} role="status">
+              {workspace.registration.permissionNotices.map((notice) => <li key={notice.attendeeId} translate="no">{notice.text}</li>)}
+            </ul>
+          )}
           <div className="field-help">
             {isChurchBilledStatus(workspace.registration.status)
-              ? <PerPersonPriceNotice price={workspace.registration.perPerson} />
+              ? <PerPersonPriceNotice price={freeTeamEvent ? noCostPrice(workspace.registration.perPerson) : workspace.registration.perPerson} />
               : notBilledLabel(workspace.registration.status)}
           </div>
           {(activeRegistrationStatuses as readonly string[]).includes(workspace.registration.status)
@@ -144,7 +237,7 @@ export default async function ClubEventRegistrationPage({
             // Staff scan it (or the confirmation code) to open this club's
             // check-in view directly; clubs still check in per member there.
             <div className="club-pass-card">
-              <ClubPassQr eventId={eventId} organizationId={organizationId} />
+              <ClubPassQr eventId={eventId} organizationId={organizationId} teamKey={workspace.registration.teamKey} />
               <p className="field-help">
                 <QrCode aria-hidden="true" size={15} /> Show this at check-in
                 so staff can open your club&rsquo;s list. Confirmation{" "}
@@ -159,14 +252,45 @@ export default async function ClubEventRegistrationPage({
                   <strong translate="no">{attendee.lastName}, {attendee.firstName}</strong>
                   {attendee.ageOnEventDate !== null && <small>Age {attendee.ageOnEventDate} at the event</small>}
                   {attendee.temporary && <small>Not on your roster · this event only</small>}
+                  {attendee.teamRole === "COACH" && <small>Coach</small>}
+                  {attendee.alternate && <small>Alternate</small>}
                 </span>
               </li>
             ))}
           </ul>
           {(activeRegistrationStatuses as readonly string[]).includes(workspace.registration.status) && (
-            <Link className="secondary-button club-event-action" href={`/account/clubs/${organizationId}/events/${eventId}/packet`}>
+            <Link className="secondary-button club-event-action" href={`/account/clubs/${organizationId}/events/${eventId}/packet${teamQuery}`}>
               <Printer aria-hidden="true" size={14} /> Print club packet
             </Link>
+          )}
+          {workspace.teams.settings && (
+            <p>
+              <Link className="secondary-button club-event-action" href={`${eventBase}/team-form${teamQuery}`}>
+                <Printer aria-hidden="true" size={14} /> Print team form
+              </Link>{" "}
+              <Link className="text-button" href={`${eventBase}/team-form/blank`}>Blank form to mail or email</Link>
+            </p>
+          )}
+          {workspace.registration.results.length > 0 && (
+            <div className="public-manage-card team-results-block" aria-labelledby="team-results-heading">
+              <h3 id="team-results-heading">Results</h3>
+              <ul className="public-manage-club-list">
+                {TEAM_LEVELS.flatMap((level) => {
+                  const result = workspace.registration!.results.find((entry) => entry.level === level);
+                  return result ? [(
+                    <li key={level}>
+                      <span>
+                        <strong>{teamLevelLabels[level]}</strong>
+                        <small>
+                          {result.placement || "No placement entered"} · {result.qualified ? "Qualified for the next level" : "Did not qualify for the next level"}
+                          {result.notes ? ` · ${result.notes}` : ""}
+                        </small>
+                      </span>
+                    </li>
+                  )] : [];
+                })}
+              </ul>
+            </div>
           )}
           {assignment && (
             <div className="public-manage-card club-assignments-block">
@@ -211,12 +335,12 @@ export default async function ClubEventRegistrationPage({
           </Link>
         </section>
       )}
-      {!workspace.registration && workspace.problem && (
+      {showingTeam && !workspace.registration && workspace.problem && (
         <section className="public-manage-card">
           <p className="public-manage-empty">{workspace.problem} Let the event team know so they can fix the form.</p>
         </section>
       )}
-      {!workspace.registration && !workspace.problem && workspace.event.phase !== "OPEN" && (
+      {showingTeam && !workspace.registration && !workspace.problem && workspace.event.phase !== "OPEN" && (
         <section className="public-manage-card">
           <p className="public-manage-empty">
             {workspace.locations.length > 0
@@ -231,9 +355,10 @@ export default async function ClubEventRegistrationPage({
           </p>
         </section>
       )}
-      {!workspace.registration && !workspace.problem && workspace.event.phase === "OPEN" && workspace.experience && (
+      {showingTeam && !workspace.registration && !workspace.problem && workspace.event.phase === "OPEN" && workspace.experience && (
         <ClubRegistrationWorkspace
           contactPrefill={contactPrefill}
+          draftKey={multipleTeams ? requestedDraftKey ?? "" : ""}
           honorsCatalog={honorsCatalog && honorsCatalog.offerings.length > 0 ? honorsCatalog : null}
           organizationId={organizationId}
           workspace={{ ...workspace, experience: workspace.experience }}

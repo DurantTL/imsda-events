@@ -89,6 +89,8 @@ export const clubAssignmentBatchInputSchema = z.object({
   batchId: z.uuid(),
   scope: z.enum(["ONE", "ALL_SET"]),
   organizationId: z.string().trim().min(1).max(64).optional(),
+  /** Which of the club's teams (#809), when the club registered several. */
+  teamKey: z.string().max(200).optional(),
 }).strict().superRefine((value, context) => {
   if (value.scope === "ONE" && !value.organizationId) {
     context.addIssue({

@@ -87,6 +87,8 @@ export const attendeeSubstitutionInputSchema = z.strictObject({
   email: operationIdentityFields.email.default(""),
   phone: operationIdentityFields.phone.default(""),
   reason: operationIdentityFields.reason.default(""),
+  /** The replacement's age on the team's age date, for a team event with an age limit and someone not on the club roster (#809). */
+  age: z.number().int().min(0).max(120).optional(),
 });
 
 export type RegistrationTransferInput = z.infer<
@@ -100,6 +102,8 @@ const registrationAmendmentAttendeeSchema = z.strictObject({
   attendeeId: z.string().trim().min(1).max(100).nullable(),
   clientId: z.string().trim().min(1).max(100),
   responses: z.record(z.string(), z.unknown()),
+  /** Staff only: this person is not the same person as someone with the same name on another team of the club (#809). */
+  differentPerson: z.boolean().optional(),
 });
 
 export const registrationAmendmentInputSchema = z.strictObject({

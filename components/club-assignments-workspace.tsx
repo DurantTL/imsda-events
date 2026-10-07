@@ -95,23 +95,25 @@ export function ClubAssignmentsWorkspace({
   const [error, setError] = useState("");
   const [preview, setPreview] = useState<ClubAssignmentPreview | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
-  const [sendScope, setSendScope] = useState<{ scope: "ONE"; organizationId: string } | { scope: "ALL_SET" }>({ scope: "ALL_SET" });
+  const [sendScope, setSendScope] = useState<{ scope: "ONE"; organizationId: string; teamKey?: string } | { scope: "ALL_SET" }>({ scope: "ALL_SET" });
   const [sendResult, setSendResult] = useState<string>("");
   const [sendError, setSendError] = useState<string>("");
   const [batchId, setBatchId] = useState("");
   const [confirmed, setConfirmed] = useState(false);
 
   function beginEdit(row: ClubAssignmentRow) {
-    setEditingId(row.organizationId);
+    setEditingId(row.clubEventRegistrationId);
     setDraft(row.fields);
     setError("");
   }
 
-  async function save(organizationId: string) {
+  async function save(target: ClubAssignmentRow) {
+    const organizationId = target.organizationId;
     setSaving(true);
     setError("");
     try {
-      const response = await fetch(`/api/events/${eventId}/club-assignments/${organizationId}`, {
+      // A club's teams (#809) each have their own assignment, picked by the team's key.
+      const response = await fetch(`/api/events/${eventId}/club-assignments/${organizationId}${target.teamKey ? `?team=${encodeURIComponent(target.teamKey)}` : ""}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(draft),
@@ -119,7 +121,7 @@ export function ClubAssignmentsWorkspace({
       const data = await response.json();
       if (!response.ok) throw new Error(data.message ?? "Could not save this assignment.");
       setAssignments((rows) => rows.map((row) => (
-        row.organizationId === organizationId
+        row.clubEventRegistrationId === target.clubEventRegistrationId
           ? {
             ...row,
             fields: draft,
@@ -166,14 +168,17 @@ export function ClubAssignmentsWorkspace({
     setConfirmed(false);
   }
 
-  async function loadPreview(scope: { scope: "ONE"; organizationId: string } | { scope: "ALL_SET" }) {
+  async function loadPreview(scope: { scope: "ONE"; organizationId: string; teamKey?: string } | { scope: "ALL_SET" }) {
     setSendScope(scope);
     setLoadingPreview(true);
     setSendResult("");
     setSendError("");
     try {
       const search = new URLSearchParams({ scope: scope.scope });
-      if (scope.scope === "ONE") search.set("organizationId", scope.organizationId);
+      if (scope.scope === "ONE") {
+        search.set("organizationId", scope.organizationId);
+        if (scope.teamKey) search.set("teamKey", scope.teamKey);
+      }
       const response = await fetch(`/api/events/${eventId}/club-assignment-messages?${search.toString()}`);
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message ?? "Could not load the preview.");
@@ -204,7 +209,7 @@ export function ClubAssignmentsWorkspace({
           batchId: clientBatchId,
           previewFingerprint: preview.fingerprint,
           scope: sendScope.scope,
-          ...(sendScope.scope === "ONE" ? { organizationId: sendScope.organizationId } : {}),
+          ...(sendScope.scope === "ONE" ? { organizationId: sendScope.organizationId, ...(sendScope.teamKey ? { teamKey: sendScope.teamKey } : {}) } : {}),
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -251,7 +256,7 @@ export function ClubAssignmentsWorkspace({
               </thead>
               <tbody>
                 {assignments.map((row) => (
-                  <tr key={row.organizationId}>
+                  <tr key={row.clubEventRegistrationId}>
                     <th scope="row" translate="no">
                       {row.organizationName}
                       {row.sponsoringChurch && <small> · {row.sponsoringChurch}</small>}
@@ -263,7 +268,7 @@ export function ClubAssignmentsWorkspace({
                         : <ul className="quiet-copy compact-list">{preferenceLines(row.preferences).map((line) => <li key={line}>{line}</li>)}</ul>}
                     </td>
                     <td>
-                      {editingId === row.organizationId ? (
+                      {editingId === row.clubEventRegistrationId ? (
                         <div className="assignment-edit-form">
                           <label>Campsite<input value={draft.campsiteLocation} onChange={(event) => setDraft({ ...draft, campsiteLocation: event.target.value })} maxLength={200} /></label>
                           <label>Campsite notes<input value={draft.campsiteNotes} onChange={(event) => setDraft({ ...draft, campsiteNotes: event.target.value })} maxLength={2000} /></label>
@@ -273,7 +278,7 @@ export function ClubAssignmentsWorkspace({
                           <label>Activity<input value={draft.activityLabel} onChange={(event) => setDraft({ ...draft, activityLabel: event.target.value })} maxLength={200} /></label>
                           <label>Notes<textarea value={draft.notes} onChange={(event) => setDraft({ ...draft, notes: event.target.value })} maxLength={2000} /></label>
                           <div className="intro-actions">
-                            <button type="button" className="primary-button" disabled={saving} onClick={() => save(row.organizationId)}>Save</button>
+                            <button type="button" className="primary-button" disabled={saving} onClick={() => save(row)}>Save</button>
                             <button type="button" className="secondary-button" disabled={saving} onClick={() => setEditingId(null)}>Cancel</button>
                           </div>
                         </div>
@@ -293,14 +298,14 @@ export function ClubAssignmentsWorkspace({
                         : <span className="status-chip">Not sent</span>}
                       {canSend && (
                         <div>
-                          <button type="button" className="text-button" onClick={() => loadPreview({ scope: "ONE", organizationId: row.organizationId })}>
+                          <button type="button" className="text-button" onClick={() => loadPreview({ scope: "ONE", organizationId: row.organizationId, ...(row.teamKey ? { teamKey: row.teamKey } : {}) })}>
                             <Mail aria-hidden="true" size={13} /> Preview
                           </button>
                         </div>
                       )}
                     </td>
                     <td>
-                      {editingId !== row.organizationId && (
+                      {editingId !== row.clubEventRegistrationId && (
                         <button type="button" className="secondary-button" onClick={() => beginEdit(row)}>
                           <Pencil aria-hidden="true" size={13} /> Edit
                         </button>
@@ -353,7 +358,7 @@ export function ClubAssignmentsWorkspace({
                     </thead>
                     <tbody>
                       {preview.recipients.map((recipient) => (
-                        <tr key={recipient.organizationId}>
+                        <tr key={`${recipient.organizationId}:${recipient.teamKey ?? ""}`}>
                           <th scope="row" translate="no">
                             {recipient.organizationName}
                             <br /><small>{recipient.confirmationCode}</small>
@@ -376,14 +381,14 @@ export function ClubAssignmentsWorkspace({
                 <>
                   <p className="field-help">Skipped</p>
                   <ul className="quiet-copy compact-list">
-                    {preview.skipped.map((skip) => <li key={skip.organizationId}>{skip.organizationName || skip.organizationId}: {skip.label}</li>)}
+                    {preview.skipped.map((skip) => <li key={`${skip.organizationId}:${skip.teamKey ?? ""}`}>{skip.organizationName || skip.organizationId}: {skip.label}</li>)}
                   </ul>
                 </>
               )}
               {preview.sample && (
                 <div className="club-assignment-sample">
                   <p className="field-help">
-                    Sample message for {preview.recipients.find((recipient) => recipient.organizationId === preview.sample?.organizationId)?.organizationName ?? "the first club"}
+                    Sample message for {preview.recipients.find((recipient) => recipient.organizationId === preview.sample?.organizationId && (recipient.teamKey ?? "") === (preview.sample?.teamKey ?? ""))?.organizationName ?? "the first club"}
                     {preview.templateVersionNumber !== null ? ` (template version ${preview.templateVersionNumber})` : ""}
                   </p>
                   <p><strong>Subject:</strong> {preview.sample.subject}</p>

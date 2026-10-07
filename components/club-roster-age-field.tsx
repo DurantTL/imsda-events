@@ -27,7 +27,10 @@ export function ClubRosterAgeField({
   onNavigate,
   organizationId,
   saveToRoster,
+  dateText,
 }: {
+  /** The date ages are counted on, when the event sets one of its own (#809); blank counts ages on the event date. */
+  dateText?: string;
   /** True once Continue has been pressed and was blocked, so every missing age shows its problem. */
   attempted?: boolean;
   /** What is wrong with the age (blank, or not a whole number from 0 to 120), or null. Shown only once attempted or touched. */
@@ -51,7 +54,7 @@ export function ClubRosterAgeField({
   const shownError = shownAgeError(error, attempted, touched);
   return (
     <div className="club-roster-age">
-      <label className="club-roster-age-label" htmlFor={inputId}>Age on event date</label>
+      <label className="club-roster-age-label" htmlFor={inputId}>{dateText ? `Age on ${dateText}` : "Age on event date"}</label>
       <div className="club-roster-age-control">
         <input
           aria-describedby={shownError ? errorId : undefined}
@@ -68,12 +71,15 @@ export function ClubRosterAgeField({
         <span aria-hidden="true">years</span>
       </div>
       {shownError && <small className="inline-notice error" id={errorId}>{shownError}</small>}
-      <label className="checkbox-label">
-        <input checked={saveToRoster} onChange={(event) => onSaveToRoster(event.target.checked)} type="checkbox" />
-        <span>Also update their age on the roster</span>
-      </label>
+      {/* An age on the event's own age date is not their age today, so it is never offered for the roster (#809). */}
+      {!dateText && (
+        <label className="checkbox-label">
+          <input checked={saveToRoster} onChange={(event) => onSaveToRoster(event.target.checked)} type="checkbox" />
+          <span>Also update their age on the roster</span>
+        </label>
+      )}
       <small className="field-help">
-        No birth date on the roster. Enter their age on the event date, or{" "}
+        No birth date on the roster. Enter their age on {dateText ?? "the event date"}, or{" "}
         <Link
           href={href ?? `/account/clubs/${organizationId}/roster`}
           onClick={onNavigate}

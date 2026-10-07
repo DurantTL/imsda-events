@@ -16,13 +16,13 @@ import { getClubPacketData } from "@/modules/reporting/club-packet-repository";
  * The director never sees what the church owes (#621): the amount is removed
  * here, server-side, and the per-person price is shown instead.
  */
-export async function loadDirectorClubPacket(organizationId: string, eventId: string) {
+export async function loadDirectorClubPacket(organizationId: string, eventId: string, teamKey = "") {
   const access = await getRosterAccessState(organizationId);
   if (access.state !== "OPEN") return null;
-  const packet = await getClubPacketData(eventId, access.club.organizationId);
+  const packet = await getClubPacketData(eventId, access.club.organizationId, teamKey);
   if (!packet) return null;
   const submission = await getPrisma().clubEventRegistration.findUnique({
-    where: { eventId_organizationId: { eventId, organizationId: access.club.organizationId } },
+    where: { eventId_organizationId_teamKey: { eventId, organizationId: access.club.organizationId, teamKey } },
     select: {
       registration: {
         select: {

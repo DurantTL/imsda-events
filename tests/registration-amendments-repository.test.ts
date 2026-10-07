@@ -248,6 +248,8 @@ function repositoryFixture() {
     operations: [] as Array<Record<string, unknown>>,
   };
   const tx = {
+    // Not a team registration (#809): the team-rule guard has nothing to check.
+    clubEventRegistration: { findUnique: vi.fn().mockResolvedValue(null) },
     eventAttendeeType: {
       findMany: vi.fn(async () => []),
     },

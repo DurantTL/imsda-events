@@ -14,15 +14,21 @@ const mocks = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 vi.mock("@/modules/attendee-accounts/sign-in-gate", () => ({ accountNeedsSecondStep: async () => "OK" }));
 vi.mock("@/lib/prisma", () => ({
-  getPrisma: () => ({
+  getPrisma: () => {
+    const client = {
+    $queryRaw: async () => [{ id: "event-1" }],
+    $transaction: async (operation: (tx: unknown) => unknown) => operation(client),
     attendeeMfaEnrollment: { findUnique: async () => ({ status: "ACTIVE" }) },
     attendeeSession: { findUnique: async () => ({ secondFactorVerifiedAt: new Date() }) },
     attendeePasskey: { count: async () => 0 },
     platformSettings: { findUnique: async () => ({ passkeyRpId: null }) },
     event: { findFirst: mocks.eventFindFirst },
+    eventTeamSettings: { findUnique: async () => null },
     clubRosterMember: { findMany: mocks.rosterFindMany },
     clubRegistrationDraft: { update: mocks.draftUpdate },
-  }),
+    };
+    return client;
+  },
 }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
 vi.mock("@/modules/organizations/staff-act-as", () => ({ currentStaffActingContext: async () => null }));

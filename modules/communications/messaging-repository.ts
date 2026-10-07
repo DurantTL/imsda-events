@@ -29,7 +29,9 @@ import type {
   MessageTestInput,
   ShirtSizeRequestBatchInput,
 } from "@/modules/communications/schemas";
+import { teamLabel } from "@/modules/club-teams/domain";
 import {
+  assignmentRecipientKey,
   computeClubAssignmentPreview,
   type ClubAssignmentCandidate,
   type ClubAssignmentPreview,
@@ -2109,6 +2111,8 @@ async function loadClubAssignmentState(
       select: {
         id: true,
         organizationId: true,
+        teamKey: true,
+        teamName: true,
         organization: { select: { name: true } },
         registration: {
           select: {
@@ -2139,7 +2143,8 @@ async function loadClubAssignmentState(
     const lastName = contactValue("lastName", row.registration.accountHolderPerson.lastName);
     return {
       organizationId: row.organizationId,
-      organizationName: row.organization.name,
+      organizationName: teamLabel(row.organization.name, row.teamName),
+      ...(row.teamKey ? { teamKey: row.teamKey } : {}),
       clubEventRegistrationId: row.id,
       registrationId: row.registration.id,
       confirmationCode: row.registration.confirmationCode,
@@ -2183,6 +2188,7 @@ async function loadClubAssignmentState(
     // token link, so the preview shows exactly what will be sent.
     preview.sample = {
       organizationId: first.organizationId,
+      ...(first.teamKey ? { teamKey: first.teamKey } : {}),
       subject: rendered.subject,
       body: rendered.body,
     };
@@ -2200,9 +2206,10 @@ async function loadClubAssignmentState(
  * sign-in and a second factor, so a forwarded email never exposes the
  * roster the way a private registration link would.
  */
-function clubEventPortalUrl(eventId: string, organizationId: string) {
+function clubEventPortalUrl(eventId: string, organizationId: string, teamKey?: string) {
+  // A team's page is picked by its key (#809); an event without teams has just the one page.
   return new URL(
-    `/account/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}`,
+    `/account/clubs/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}${teamKey ? `?team=${encodeURIComponent(teamKey)}` : ""}`,
     getServerEnv().APP_BASE_URL,
   ).toString();
 }
@@ -2215,7 +2222,7 @@ function renderClubAssignmentMessage(
   source: { subject: string; body: string },
   event: { id: string; name: string; supportContact: string | null },
   settings: { replyToEmail: string | null; senderEmail: string | null },
-  recipient: Pick<ClubAssignmentRecipient, "organizationId" | "recipientName" | "confirmationCode" | "assignmentBlock">,
+  recipient: Pick<ClubAssignmentRecipient, "organizationId" | "teamKey" | "recipientName" | "confirmationCode" | "assignmentBlock">,
 ) {
   return renderMessageTemplate(
     { subject: source.subject, body: source.body },
@@ -2225,7 +2232,7 @@ function renderClubAssignmentMessage(
       event_name: event.name,
       confirmation_code: recipient.confirmationCode,
       club_assignments_block: recipient.assignmentBlock,
-      portal_url: clubEventPortalUrl(event.id, recipient.organizationId),
+      portal_url: clubEventPortalUrl(event.id, recipient.organizationId, recipient.teamKey),
       reply_to_email: settings.replyToEmail
         || settings.senderEmail
         || event.supportContact
@@ -2275,7 +2282,7 @@ export async function enqueueClubAssignmentBatch(
   await ensureEventMessagingDefaults(eventId);
   const prisma = getPrisma();
   const selection: ClubAssignmentSendSelection = input.scope === "ONE"
-    ? { scope: "ONE", organizationId: input.organizationId ?? "" }
+    ? { scope: "ONE", organizationId: input.organizationId ?? "", ...(input.teamKey ? { teamKey: input.teamKey } : {}) }
     : { scope: "ALL_SET" };
   let transactionResult:
     | (Omit<ClubAssignmentBatchOperation, "capturedCount"> & { existingCapturedCount: number })
@@ -2359,7 +2366,7 @@ export async function enqueueClubAssignmentBatch(
               `The club assignments template has unresolved tokens: ${rendered.unresolvedTokens.join(", ")}.`,
             );
           }
-          const idempotencyKey = `club-assignments:${eventId}:${input.batchId}:${recipient.organizationId}`;
+          const idempotencyKey = `club-assignments:${eventId}:${input.batchId}:${assignmentRecipientKey(recipient)}`;
           const message = await tx.messageOutbox.upsert({
             where: { idempotencyKey },
             update: {},
@@ -2382,6 +2389,7 @@ export async function enqueueClubAssignmentBatch(
                 batchId: input.batchId,
                 previewFingerprint: input.previewFingerprint,
                 organizationId: recipient.organizationId,
+                ...(recipient.teamKey ? { teamKey: recipient.teamKey } : {}),
                 confirmationCode: recipient.confirmationCode,
                 deliveryMode: state.settings.deliveryMode,
                 realDelivery: state.settings.deliveryMode === "EXTERNAL_EMAIL",

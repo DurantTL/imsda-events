@@ -139,6 +139,8 @@ export type HealthAttendeeRow = {
 
 export type HealthClubSheet = {
   organizationId: string;
+  /** The team's key (#809), when the club registered several; tells a club's sheets apart. */
+  teamKey?: string;
   clubName: string;
   attendees: HealthAttendeeRow[];
 };

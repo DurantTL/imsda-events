@@ -163,6 +163,7 @@ export type RegistrationMoveBlocker =
   | "DESTINATION_WAITLISTED"
   | "DESTINATION_CANCELLED"
   | "ALREADY_ON_DESTINATION"
+  | "DESTINATION_AMBIGUOUS"
   | "CLUB_CLASS_LIMIT"
   | "LOCATION_FULL"
   | "CLASS_PICKS_OTHER_SITE"
@@ -178,6 +179,7 @@ export const registrationMoveBlockerLabels: Record<RegistrationMoveBlocker, stri
   DESTINATION_DRAFT: "The new club's registration is still a draft.",
   DESTINATION_WAITLISTED: "The new club's registration is on the waitlist.",
   DESTINATION_CANCELLED: "The new club's registration was cancelled.",
+  DESTINATION_AMBIGUOUS: "The new club registered more than one team for this event, so it is not clear which team this person joins. Skip this move and add them to the right team by hand.",
   ALREADY_ON_DESTINATION: "This person is already on the new club's registration. Resolve it there, then skip this move.",
   CLUB_CLASS_LIMIT: "Moving this person's class seat would put the new club over that class's per-club limit. Change their class first.",
   CLASS_PICKS_OTHER_SITE: "This person has Honors class picks at a different site than the new club's location, and the move would carry them along. Change their classes first, or move the club to that site.",
@@ -212,6 +214,8 @@ export function registrationMoveBlocker(input: {
   sourceStatus: string | null;
   receivingMemberActive?: boolean;
   destination: { status: string; waitlisted: boolean; personAlreadyThere: boolean } | null;
+  /** The new club has several registrations for the event (#809, teams), so no one of them is the destination. */
+  destinationAmbiguous?: boolean;
   classLimitExceeded?: boolean;
   /** The new club's location (#413) has no room for one more person. */
   locationFull?: boolean;
@@ -222,7 +226,7 @@ export function registrationMoveBlocker(input: {
   if (!input.attendeeOnSource) return "ATTENDEE_GONE";
   if (input.sourceStatus !== "SUBMITTED" && input.sourceStatus !== "CONFIRMED") return "SOURCE_NOT_OPEN";
   if (input.receivingMemberActive === false) return "MEMBER_LEFT_RECEIVING_CLUB";
-  if (!input.destination) return "NO_DESTINATION";
+  if (!input.destination) return input.destinationAmbiguous ? "DESTINATION_AMBIGUOUS" : "NO_DESTINATION";
   if (input.destination.status === "DRAFT") return "DESTINATION_DRAFT";
   if (input.destination.status === "WAITLISTED" || input.destination.waitlisted) return "DESTINATION_WAITLISTED";
   if (input.destination.status === "CANCELLED") return "DESTINATION_CANCELLED";
