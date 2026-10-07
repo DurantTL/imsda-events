@@ -119,6 +119,13 @@ jobs:
       # duplicates, and key reuse (#157).
       - run: npm run test:event-cloning
 
+      # Real-database check of the public event page content blocks: every kind saves and
+      # reads back, custom HTML is stored sanitized and system-administrator only (a refused
+      # save changes nothing), block images must be the event's own uploaded images and are
+      # public only while published, an image a block shows cannot be deleted, drafts stay
+      # off the public listing, and deleting an event removes its blocks (#816).
+      - run: npm run test:event-content-blocks
+
       # Real-database check of church-sponsored promo codes: linking rules, the
       # owed line per redemption, cancellation dropping it, parallel redemptions,
       # and no double billing on church-billed events (#545).
