@@ -423,7 +423,7 @@ describe("approving", () => {
   it("approves a club under a company sponsor, and refuses a school chosen at approval (#822)", async () => {
     await submitNewClubApplication(input({ clubName: "Company Club", sponsoringChurchId: "company-1" }), { now: NOW });
     const record = (await listNewClubApplications("SYSTEM_ADMIN", NOW)).find((candidate) => candidate.clubName === "Company Club")!;
-    expect(record.church).toMatchObject({ id: "company-1", name: "Synthetic Company Congregation", unavailable: false, needsChoice: false });
+    expect(record.church).toMatchObject({ id: "company-1", name: "Synthetic Company Congregation", type: "COMPANY", unavailable: false, needsChoice: false });
     await decideNewClubApplication(systemAdmin, record.id, { decision: "approve" }, NOW);
     expect([...db.organizations.values()].find((org) => org.name === "Company Club")).toMatchObject({ type: "CLUB", parentOrganizationId: "company-1", isActive: true });
 

@@ -128,7 +128,7 @@ export function NewClubApplicationsQueue({ applications, canDecide, churches, in
               {newClubTypeLabels[application.clubType]} · sponsored by{" "}
               {application.church.unavailable && !application.church.name
                 ? <em>the church is no longer in the directory</em>
-                : <span translate="no">{application.church.name}</span>}
+                : <span translate="no">{application.church.type ? sponsorOptionLabel({ name: application.church.name, type: application.church.type }) : application.church.name}</span>}
               {application.church.isOther && " (typed by the applicant, not in the directory)"}
               {application.church.unavailable && application.church.name && " (no longer an active church in the directory)"}
             </p>

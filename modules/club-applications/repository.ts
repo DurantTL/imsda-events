@@ -488,6 +488,8 @@ async function toRecords(rows: Row[], now: Date): Promise<NewClubApplicationReco
     church: {
       id: row.sponsoringChurchId,
       name: row.sponsoringChurch?.name ?? row.sponsoringChurchOther ?? "",
+      /** The directory sponsor's kind (#822); null for a typed name. */
+      type: row.sponsoringChurch?.type ?? null,
       isOther: !row.sponsoringChurchId && Boolean(row.sponsoringChurchOther),
       unavailable: churchUnavailable(row),
       needsChoice: !row.sponsoringChurchId || churchUnavailable(row),
