@@ -2,14 +2,14 @@ import Link from "next/link";
 import { BrandMark } from "@/components/brand-mark";
 import { NewClubApplicationForm } from "@/components/new-club-application-form";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
-import { listPublicChurchOptions } from "@/modules/club-applications/repository";
+import { listPublicSponsorOptions } from "@/modules/club-applications/repository";
 
 /**
  * The page around the new club application (#817), shared by the public
  * "Register a new club" page and the private invite link's page.
  */
 export async function NewClubApplicationPage({ invite }: { invite?: { token: string; email: string; name: string } }) {
-  const churches = await listPublicChurchOptions();
+  const churches = await listPublicSponsorOptions();
   const today = calendarDateInEventTimeZone(new Date(), "America/Chicago");
   const todayLabel = new Date(`${today}T12:00:00Z`).toLocaleDateString("en-US", { dateStyle: "long", timeZone: "UTC" });
   return (

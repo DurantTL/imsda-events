@@ -14,7 +14,10 @@
  * - a second registration for the same club and year is refused and says
  *   what to do;
  * - two people with the same name and section: one is skipped unless "Keep
- *   both" is sent, and "Jr." stays with the last name.
+ *   both" is sent, and "Jr." stays with the last name;
+ * - a club can be imported under a company or group (#822): the preview
+ *   matches a form that names the company, an existing company is linked
+ *   instead of a church being created, and a school is refused.
  *
  * Creates and removes its own rows. Needs a local database with a system
  * administrator (npm run db:seed).
@@ -46,7 +49,7 @@ async function cleanup(userId: string) {
   await prisma.clubInvite.deleteMany({ where: { organizationId: { in: ids } } });
   await prisma.auditLog.deleteMany({ where: { actorUserId: userId, entityId: { in: ids } } });
   await prisma.organization.deleteMany({ where: { type: "CLUB", id: { in: ids } } });
-  await prisma.organization.deleteMany({ where: { type: "CHURCH", name: { startsWith: stamp } } });
+  await prisma.organization.deleteMany({ where: { type: { in: ["CHURCH", "COMPANY", "GROUP", "SCHOOL"] }, name: { startsWith: stamp } } });
 }
 
 async function main() {
@@ -221,6 +224,38 @@ async function main() {
     const cleared = await moveImportYear(handClub, "2025-26", "2026-27", admin.id, now);
     assert(cleared.rowsMoved === 48, "the move goes through once the duplicate is removed");
     await prisma.person.delete({ where: { id: separatePerson.id } });
+
+    // #822: a company or group may sponsor a club; a school may not.
+    const company = await prisma.organization.create({ data: { type: "COMPANY", name: `${stamp} Youth Company`, normalizedName: `${stamp} youth company` }, select: { id: true } });
+    const group = await prisma.organization.create({ data: { type: "GROUP", name: `${stamp} Fellowship Group`, normalizedName: `${stamp} fellowship group` }, select: { id: true } });
+    const school = await prisma.organization.create({ data: { type: "SCHOOL", name: `${stamp} Sample School`, normalizedName: `${stamp} sample school` }, select: { id: true } });
+    const churchesBefore = await prisma.organization.count({ where: { type: "CHURCH" } });
+    const sponsorEntry = syntheticExportEntry({ id: `${stamp}s1` });
+    const sponsorDrafts = parseClubRegistrationExport([sponsorEntry], now).drafts.map((draft) => ({ ...draft, churchName: `${stamp} Youth Company` }));
+    const annotatedSponsors = await annotateImportDrafts(sponsorDrafts);
+    assert(annotatedSponsors.churches.some((option) => option.id === company.id && option.type === "COMPANY") && annotatedSponsors.churches.some((option) => option.id === group.id && option.type === "GROUP"), "the picker offers companies and groups with their kind");
+    assert(!annotatedSponsors.churches.some((option) => option.id === school.id), "the picker does not offer a school");
+    assert(annotatedSponsors.drafts[0].churchId === company.id && annotatedSponsors.drafts[0].newChurchName === "", "a form naming a company matches the company, not a new church");
+    const sponsorItems = (overrides: { churchId: string | null; newChurchName: string; name: string; id: string }) => clubImportConfirmSchema.parse(confirmPayload(
+      parseClubRegistrationExport([syntheticExportEntry({ id: overrides.id })], now).drafts.map((draft) => ({
+        ...draft, clubName: overrides.name, churchId: overrides.churchId, newChurchName: overrides.newChurchName, include: true,
+        people: draft.people.map((person) => ({ ...person, keepBoth: false })),
+      })),
+    )).clubs;
+    const [underCompany] = await importClubs(sponsorItems({ id: `${stamp}s1`, name: `${stamp} Company Pathfinders`, churchId: company.id, newChurchName: "" }), admin.id, now);
+    assert(underCompany.status === "IMPORTED", `a club imports under a company (${underCompany.message})`);
+    const companyClub = await prisma.organization.findUnique({ where: { id: underCompany.organizationId! }, select: { parentOrganizationId: true } });
+    assert(companyClub?.parentOrganizationId === company.id, "the club's sponsor is the company");
+    const [underGroup] = await importClubs(sponsorItems({ id: `${stamp}s2`, name: `${stamp} Group Pathfinders`, churchId: group.id, newChurchName: "" }), admin.id, now);
+    assert(underGroup.status === "IMPORTED", `a club imports under a group (${underGroup.message})`);
+    const [typedCompany] = await importClubs(sponsorItems({ id: `${stamp}s3`, name: `${stamp} Typed Pathfinders`, churchId: null, newChurchName: `${stamp} Youth Company` }), admin.id, now);
+    assert(typedCompany.status === "IMPORTED", "a typed company name imports");
+    const typedClub = await prisma.organization.findUnique({ where: { id: typedCompany.organizationId! }, select: { parentOrganizationId: true } });
+    assert(typedClub?.parentOrganizationId === company.id, "a typed name that is an existing company links to it");
+    assert(await prisma.organization.count({ where: { type: "CHURCH" } }) === churchesBefore, "no church was created for a company's name");
+    const [underSchool] = await importClubs(sponsorItems({ id: `${stamp}s4`, name: `${stamp} School Pathfinders`, churchId: school.id, newChurchName: "" }), admin.id, now);
+    assert(underSchool.status === "FAILED" && /no longer available/.test(underSchool.message), `a school is refused as a sponsor (${underSchool.message})`);
+    assert(!(await prisma.organization.findFirst({ where: { name: `${stamp} School Pathfinders` } })), "no club was created under the school");
 
     console.log("club imports verified: wrong-year import moved to 2026-27 (48 rows, Person count unchanged, 0 left in 2025-26), re-upload reports 2026-27, conflicting moves refused, second registration refused with next steps, Keep both and Jr. handled");
   } finally {

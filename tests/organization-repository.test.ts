@@ -83,6 +83,52 @@ describe("organization repository invariants", () => {
     expect(mocks.create).not.toHaveBeenCalled();
   });
 
+  it.each(["COMPANY", "GROUP"])("accepts an active %s as a club sponsor, on create and on edit (#822)", async (type) => {
+    mocks.findUnique.mockResolvedValue({ type, isActive: true });
+    mocks.create.mockResolvedValue({ id: "club-1", type: "CLUB", name: "North Pathfinders", parentOrganizationId: "sponsor-1" });
+    await expect(createOrganization({
+      type: "CLUB",
+      name: "North Pathfinders",
+      parentOrganizationId: "sponsor-1",
+      isActive: true,
+    }, "actor-1")).resolves.toEqual([]);
+    expect(mocks.create).toHaveBeenCalledWith({ data: expect.objectContaining({ type: "CLUB", parentOrganizationId: "sponsor-1" }) });
+
+    mocks.findUnique.mockReset();
+    mocks.findUnique
+      .mockResolvedValueOnce({ id: "club-1", type: "CLUB", name: "North Pathfinders", isActive: true })
+      .mockResolvedValue({ type, isActive: true });
+    mocks.updateMany.mockResolvedValue({ count: 1 });
+    await updateOrganization("club-1", {
+      name: "North Pathfinders",
+      parentOrganizationId: "sponsor-1",
+      isActive: true,
+      expectedUpdatedAt: "2026-07-27T12:00:00.000Z",
+    }, "actor-1");
+    expect(mocks.updateMany).toHaveBeenCalled();
+  });
+
+  it.each(["SCHOOL", "CAMP", "CLUB", "CONFERENCE"])("refuses a %s as a club sponsor (#822)", async (type) => {
+    mocks.findUnique.mockResolvedValue({ type, isActive: true });
+    await expect(createOrganization({
+      type: "CLUB",
+      name: "North Pathfinders",
+      parentOrganizationId: "not-a-sponsor",
+      isActive: true,
+    }, "actor-1")).rejects.toMatchObject({ code: "ORGANIZATION_PARENT_INVALID" });
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses an inactive company as a club sponsor (#822)", async () => {
+    mocks.findUnique.mockResolvedValue({ type: "COMPANY", isActive: false });
+    await expect(createOrganization({
+      type: "CLUB",
+      name: "North Pathfinders",
+      parentOrganizationId: "company-1",
+      isActive: true,
+    }, "actor-1")).rejects.toMatchObject({ code: "ORGANIZATION_PARENT_INVALID" });
+  });
+
   it("requires every club to have a sponsoring church, on create and on edit", async () => {
     await expect(createOrganization({
       type: "CLUB",

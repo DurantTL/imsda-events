@@ -40,6 +40,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.findOrganization.mockImplementation(({ where }: { where: { id: string } }) => Promise.resolve(
     where.id === "church-2" ? { type: "CHURCH", isActive: true }
+      : where.id === "company-1" ? { type: "COMPANY", isActive: true }
+        : where.id === "group-1" ? { type: "GROUP", isActive: true }
+          : where.id === "school-1" ? { type: "SCHOOL", isActive: true }
+            : where.id === "company-closed" ? { type: "COMPANY", isActive: false }
       : where.id === "club-9" ? { type: "CLUB", isActive: true }
         : stored,
   ));
@@ -73,6 +77,18 @@ describe("club profile (#375)", () => {
     expect(mocks.updateOrganization).toHaveBeenCalled();
     await expect(updateClubProfile("club-1", input({ sponsoringChurchId: "club-9" }), { accountId: "account-1" }))
       .rejects.toMatchObject({ code: "ORGANIZATION_PARENT_INVALID" });
+  });
+
+  it("accepts an active company or group as sponsor, and refuses a school or a closed company (#822)", async () => {
+    for (const id of ["company-1", "group-1"]) {
+      mocks.updateOrganization.mockClear();
+      await updateClubProfile("club-1", input({ sponsoringChurchId: id }), { accountId: "account-1" });
+      expect(mocks.updateOrganization).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ parentOrganizationId: id }) }));
+    }
+    for (const id of ["school-1", "company-closed"]) {
+      await expect(updateClubProfile("club-1", input({ sponsoringChurchId: id }), { accountId: "account-1" }))
+        .rejects.toMatchObject({ code: "ORGANIZATION_PARENT_INVALID" });
+    }
   });
 
   it("requires a sponsoring church; a club can't be left without one", async () => {

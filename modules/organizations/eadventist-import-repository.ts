@@ -3,7 +3,7 @@ import "server-only";
 import { Prisma, type OrganizationType } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { normalizeOrganizationName } from "@/modules/organizations/domain";
+import { isSponsorOrganizationType, normalizeOrganizationName } from "@/modules/organizations/domain";
 import {
   EadventistImportError,
   parseEadventistCsv,
@@ -282,7 +282,7 @@ export async function setDirectoryOrganizationActive(organizationId: string, isA
       throw new OrganizationOperationError("ORGANIZATION_NOT_FOUND", "That organization could not be found.");
     }
     if (existing.isActive === isActive) return;
-    if (!isActive && existing.type === "CHURCH") {
+    if (!isActive && isSponsorOrganizationType(existing.type)) {
       const activeClub = await tx.organization.findFirst({ where: { parentOrganizationId: organizationId, type: "CLUB", isActive: true }, select: { id: true } });
       if (activeClub) {
         throw new OrganizationOperationError("ORGANIZATION_HAS_ACTIVE_CLUBS", "Move or deactivate this church's active clubs before deactivating the church.");

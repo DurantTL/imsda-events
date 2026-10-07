@@ -29,9 +29,15 @@ export type InvoiceGroupingMode = "PER_CHURCH" | "PER_CLUB";
 
 export const INVOICE_GROUPINGS: readonly InvoiceGroupingMode[] = ["PER_CHURCH", "PER_CLUB"];
 
-/** Organization types staff may name as the responsible party (churches, schools, clubs, ministries). */
+/**
+ * Organization types staff may name as the responsible party (churches, companies and groups,
+ * schools, clubs, ministries). A company or group can sponsor a club (#822), so the club's
+ * church-billed charges are billed to it and it needs a billing contact like a church.
+ */
 export const RESPONSIBLE_ORGANIZATION_TYPES = [
   "CHURCH",
+  "COMPANY",
+  "GROUP",
   "SCHOOL",
   "EARLY_CHILDHOOD",
   "CLUB",
@@ -106,7 +112,7 @@ export function staffSourceFor(rule: Resolution): "STAFF_LINKED" | "STAFF_OVERRI
 }
 
 export function unresolvedReasonLabel(source: BillingResponsibilitySource) {
-  if (source === "UNRESOLVED_CLUB_HAS_NO_CHURCH") return "The club has no sponsoring church on file";
+  if (source === "UNRESOLVED_CLUB_HAS_NO_CHURCH") return "The club has no sponsoring church or company on file";
   if (source === "UNRESOLVED_NO_ORGANIZATION_LINKED") return "Not linked to an organization yet";
   return "Unresolved";
 }

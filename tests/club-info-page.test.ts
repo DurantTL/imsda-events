@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getRosterAccessStateForPage: vi.fn(),
   getClubProfile: vi.fn(),
-  listChurchOptions: vi.fn(),
+  listSponsorOptions: vi.fn(),
   listClubTeam: vi.fn(),
   listPendingClubTeamInvites: vi.fn(),
   redirect: vi.fn((to: string) => { throw new Error(`REDIRECT ${to}`); }),
@@ -17,7 +17,7 @@ vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/modules/club-rosters/access", () => ({ getRosterAccessStateForPage: mocks.getRosterAccessStateForPage }));
 vi.mock("@/modules/organizations/club-profile-repository", () => ({
   getClubProfile: mocks.getClubProfile,
-  listChurchOptions: mocks.listChurchOptions,
+  listSponsorOptions: mocks.listSponsorOptions,
 }));
 vi.mock("@/modules/organizations/director-grants-repository", () => ({ listClubTeam: mocks.listClubTeam }));
 vi.mock("@/modules/club-imports/invites", () => ({ listPendingClubTeamInvites: mocks.listPendingClubTeamInvites }));
@@ -54,7 +54,7 @@ const typesIn = (tree: ReactNode) => elements(tree).map((element) => element.typ
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.getClubProfile.mockResolvedValue({ name: "Test Pathfinders", sponsoringChurchId: "church-1", updatedAt: null });
-  mocks.listChurchOptions.mockResolvedValue([]);
+  mocks.listSponsorOptions.mockResolvedValue([]);
   mocks.listClubTeam.mockResolvedValue([]);
   mocks.listPendingClubTeamInvites.mockResolvedValue([]);
 });

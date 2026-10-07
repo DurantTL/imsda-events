@@ -392,7 +392,7 @@ export async function linkRegistrationToOrganization(input: {
         select: { id: true },
       });
       if (!organization) {
-        throw new BillingResponsibilityError("Choose an active church, school, club or ministry from the list.", "ORGANIZATION_NOT_ELIGIBLE");
+        throw new BillingResponsibilityError("Choose an active church, company, school, club or ministry from the list.", "ORGANIZATION_NOT_ELIGIBLE");
       }
       const rule = ruleFor(row);
       const source = staffSourceFor(rule);
@@ -601,7 +601,7 @@ async function requireBillableOrganization(tx: Client, organizationId: string) {
     select: { id: true },
   });
   if (!organization) {
-    throw new BillingResponsibilityError("Billing contacts are kept for active churches, schools, clubs and ministries only.", "ORGANIZATION_NOT_ELIGIBLE");
+    throw new BillingResponsibilityError("Billing contacts are kept for active churches, companies, schools, clubs and ministries only.", "ORGANIZATION_NOT_ELIGIBLE");
   }
 }
 
@@ -767,7 +767,7 @@ export async function getOrganizationBillingContactAdminView(organizationId: str
 export type OrganizationOption = { id: string; name: string; type: string; city: string | null };
 
 /**
- * Staff search for an organization to link: active churches, schools, clubs and ministries,
+ * Staff search for an organization to link: active churches, companies, schools, clubs and ministries,
  * matched on the name only, and returning only the name, type and city (to tell two
  * same-named churches apart). Never an address, code, contact or roster.
  */

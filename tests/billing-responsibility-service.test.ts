@@ -138,6 +138,7 @@ beforeEach(() => {
     { id: "church-2", isActive: true, type: "CHURCH" },
     { id: "closed", isActive: false, type: "CHURCH" },
     { id: "company-1", isActive: true, type: "COMPANY" },
+    { id: "bookstore-1", isActive: true, type: "BOOKSTORE" },
   ];
 });
 
@@ -262,11 +263,16 @@ describe("billing contacts (#165): conference-wide, system administrators only",
     expect(JSON.stringify(audit)).not.toContain("New Treasurer");
   });
 
-  it("keeps contacts for active churches, schools, clubs and ministries only", async () => {
-    for (const organizationId of ["closed", "company-1", "missing"]) {
+  it("keeps contacts for active churches, companies, schools, clubs and ministries only", async () => {
+    for (const organizationId of ["closed", "bookstore-1", "missing"]) {
       await expect(setOrganizationBillingContact({ organizationId, contact, actor: admin })).rejects.toMatchObject({ code: "ORGANIZATION_NOT_ELIGIBLE" });
     }
     expect(state.contacts).toHaveLength(0);
+  });
+
+  it("keeps a billing contact for a company that sponsors a club (#822)", async () => {
+    await expect(setOrganizationBillingContact({ organizationId: "company-1", contact, actor: admin })).resolves.toMatchObject({ replaced: false });
+    expect(state.contacts).toHaveLength(1);
   });
 
   it("refuses a finance manager or anyone who is not a system administrator, for every contact action", async () => {

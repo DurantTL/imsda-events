@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { BackLink } from "@/components/back-link";
 import { NewClubApplicationsQueue } from "@/components/new-club-applications-queue";
 import { getCurrentSession } from "@/modules/access/current-session";
-import { listNewClubApplications, listNewClubInvites, listPublicChurchOptions } from "@/modules/club-applications/repository";
+import { listNewClubApplications, listNewClubInvites, listPublicSponsorOptions } from "@/modules/club-applications/repository";
 import { isAccountEmailConfigured } from "@/modules/communications/account-email";
 
 export const metadata: Metadata = { title: "New club applications" };
@@ -23,7 +23,7 @@ export default async function NewClubApplicationsAdminPage() {
   const [applications, invites, churches] = await Promise.all([
     listNewClubApplications("SYSTEM_ADMIN"),
     listNewClubInvites("SYSTEM_ADMIN"),
-    listPublicChurchOptions(),
+    listPublicSponsorOptions(),
   ]);
   return (
     <>
@@ -38,7 +38,7 @@ export default async function NewClubApplicationsAdminPage() {
           <h2>New club applications</h2>
           <p>
             Directors apply from the public &ldquo;Register a new club&rdquo; page or a private link you send. Approving creates the club under its
-            sponsoring church and emails the director the club invite. The Sterling Volunteers status is a flag to review, not a block.
+            sponsoring church or company and emails the director the club invite. The Sterling Volunteers status is a flag to review, not a block.
           </p>
         </div>
       </div>

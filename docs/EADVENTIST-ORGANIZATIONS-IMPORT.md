@@ -30,9 +30,24 @@ school types (PK-08, PK-10, 9-12) all become `SCHOOL`; the export's own
 
 `SubOrgOf` is resolved by name to another row in the same file and stored in
 `affiliatedOrganizationId`. It is deliberately not `parentOrganizationId`,
-which means "sponsoring church" for a club. A parent that names the conference
+which means "sponsoring church or company" for a club. A parent that names the conference
 itself, is not in the file, or matches two rows is ignored (the preview says
 which).
+
+## Who can sponsor a club (#822)
+
+A club's sponsor (`parentOrganizationId`) can be an active **Church, Company or
+Group**: companies and groups are congregations not yet organized as churches
+(for example a Pathfinder club at a company congregation). The rule is one
+constant, `SPONSOR_ORGANIZATION_TYPES` in `modules/organizations/domain.ts`, used
+by club create and edit, the club profile, club imports, new club applications,
+promo code sponsors, the directory options and the Sterling Volunteers name
+check. Any other kind (school, camp, conference and so on) is refused. Pickers
+show the kind after the name for a non-church, for example "Sample Youth
+Company (Company)". A company-sponsored club's church-billed charges go to the
+company (invoices, amounts owed, billing contact). No migration is involved: the
+kinds already exist. Church-only behavior is unchanged: the church location and
+geocoding, and the import's name matching to stored churches.
 
 ## Upload flow
 

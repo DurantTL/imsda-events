@@ -7,6 +7,7 @@ import { logError, logInfo } from "@/lib/logger";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { openBirthDate, sealBirthDate } from "@/modules/club-rosters/birth-dates";
 import { ageOn, clubYearChoices, clubYearFor } from "@/modules/club-rosters/domain";
+import { SPONSOR_ORGANIZATION_TYPES } from "@/modules/organizations/domain";
 import type { ClubCapabilities } from "@/modules/organizations/director-grants-domain";
 import { activeRegistrationStatuses, calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 import { BackgroundCheckOperationError } from "@/modules/background-checks/errors";
@@ -351,9 +352,9 @@ export async function buildCandidateIndex(tx: PrismaLike, now: Date, scope?: { p
         registration: { select: { clubRegistration: { select: { organization: clubSelect } } } },
       },
     }),
-    // Every club and church name, active or not: a row that names one of them
+    // Every club and sponsoring church, company or group name, active or not: a row that names one of them
     // exactly never falls back to its suffix-stripped key (#572).
-    tx.organization.findMany({ where: { type: { in: ["CLUB", "CHURCH"] } }, select: { name: true } }),
+    tx.organization.findMany({ where: { type: { in: ["CLUB", ...SPONSOR_ORGANIZATION_TYPES] } }, select: { name: true } }),
   ]);
 
   const byPerson = new Map<string, NameCandidate>();

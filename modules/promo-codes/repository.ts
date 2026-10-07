@@ -36,6 +36,7 @@ import {
   type PromoCodeFailureReason,
   type PromoCodeRule,
 } from "@/modules/promo-codes/domain";
+import { SPONSOR_ORGANIZATION_TYPES, canSponsorClub } from "@/modules/organizations/domain";
 import { eventBillsSponsoredPromoCodes } from "@/modules/promo-codes/church-sponsored";
 import { isChurchBilledBillingMode, perPersonPrice, type PerPersonPrice } from "@/modules/club-registrations/per-person-price";
 import type {
@@ -210,20 +211,20 @@ async function assertSponsorAllowed(
     where: { id: sponsoringOrganizationId },
     select: { type: true, isActive: true },
   });
-  if (!church || church.type !== "CHURCH" || !church.isActive) {
+  if (!canSponsorClub(church)) {
     throw new PromoCodeOperationError(
       "PROMO_CODE_SPONSOR_INVALID",
-      "Choose an active church as the sponsor.",
+      "Choose an active church or company as the sponsor.",
     );
   }
 }
 
-/** Active churches staff may pick as a code's sponsor. Names only. */
+/** Active churches, companies and groups (#822) staff may pick as a code's sponsor. Names and kind only. */
 export async function listSponsorChurchOptions() {
   return getPrisma().organization.findMany({
-    where: { type: "CHURCH", isActive: true },
+    where: { type: { in: [...SPONSOR_ORGANIZATION_TYPES] }, isActive: true },
     orderBy: { name: "asc" },
-    select: { id: true, name: true },
+    select: { id: true, name: true, type: true },
   });
 }
 

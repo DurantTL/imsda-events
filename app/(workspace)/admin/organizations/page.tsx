@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import { BackLink } from "@/components/back-link";
 import { OrganizationDirectoryWorkspace } from "@/components/organization-directory-workspace";
 import { getCurrentSession } from "@/modules/access/current-session";
-import { getOrganizationSummary, listChurchOptions, listOrganizationsPage } from "@/modules/organizations/repository";
+import { getOrganizationSummary, listSponsorOptions, listOrganizationsPage } from "@/modules/organizations/repository";
 import { cleanSearchQuery, parsePageParam } from "@/modules/organizations/search";
 
 export const metadata: Metadata = { title: "Clubs and churches" };
@@ -21,10 +21,10 @@ export default async function OrganizationsPage({ searchParams }: { searchParams
   const kind = params.kind === "CHURCH" || params.kind === "CLUB" ? params.kind : null;
   const status = statuses.find((candidate) => candidate === params.status) ?? "ALL";
   const query = cleanSearchQuery(params.q);
-  const [list, summary, churchOptions] = await Promise.all([
+  const [list, summary, sponsorOptions] = await Promise.all([
     listOrganizationsPage({ query, kind, status, page: parsePageParam(params.page) }),
     getOrganizationSummary(),
-    listChurchOptions(),
+    listSponsorOptions(),
   ]);
 
   return (
@@ -42,7 +42,7 @@ export default async function OrganizationsPage({ searchParams }: { searchParams
         <Link className="secondary-button" href="/admin/organizations/background-checks">Sterling Volunteers</Link>
       </div>
       <OrganizationDirectoryWorkspace
-        churchOptions={churchOptions}
+        sponsorOptions={sponsorOptions}
         filters={{ q: query, kind: kind ?? "", status }}
         organizations={list.organizations}
         page={list.page}
