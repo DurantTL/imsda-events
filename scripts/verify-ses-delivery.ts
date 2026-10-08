@@ -5,7 +5,7 @@
  * - an announcement with a file attachment, an uploaded picture, and one check-in QR per attendee goes through the
  *   outbox worker as one MIME message: the attachment, the inline picture and each attendee's QR (with Content-IDs the
  *   HTML refers to as cid:), the reply-to, and a stable X-IMSDA-Message-Id;
- * - the first attempt meets SES throttling (454) and is rescheduled as PROVIDER_THROTTLED, the second the daily quota
+ * - the first attempt meets SES throttling (454) and is rescheduled as PROVIDER_RATE_LIMITED, the second the daily quota
  *   (454) and is rescheduled as PROVIDER_QUOTA, and the third is accepted, with the provider recorded as SES;
  * - a 554 "Email address is not verified" fails the message for good with a staff-readable error and no retry;
  * - an authentication failure (535) is a configuration error, and a server that offers no STARTTLS is refused
@@ -72,12 +72,14 @@ function startSmtpStub(options: { starttls?: boolean } = {}) {
   /** Per AUTH: "fail" answers 535; anything else (or an empty list) accepts. */
   const authReplies: Array<"ok" | "fail"> = [];
   let accepted = 0;
+  let authCount = 0;
   const server = new SMTPServer({
     authOptional: false,
     allowInsecureAuth: false,
     disabledCommands: options.starttls === false ? ["STARTTLS", "AUTH"] : [],
     logger: false,
     onAuth(auth, _session, callback) {
+      authCount += 1;
       if (authReplies.shift() === "fail") {
         return callback(Object.assign(new Error("Authentication Credentials Invalid"), { responseCode: 535 }));
       }
@@ -108,11 +110,12 @@ function startSmtpStub(options: { starttls?: boolean } = {}) {
     received: ReceivedMessage[];
     script: Reply[];
     authReplies: Array<"ok" | "fail">;
+    logins: () => number;
     close: () => Promise<void>;
   }>((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.server.address() as AddressInfo;
-      resolve({ port, received, script, authReplies, close: () => new Promise((done) => { server.close(() => done()); }) });
+      resolve({ port, received, script, authReplies, logins: () => authCount, close: () => new Promise((done) => { server.close(() => done()); }) });
     });
   });
 }
@@ -162,6 +165,7 @@ async function runChecks(stub: Awaited<ReturnType<typeof startSmtpStub>>) {
   } = await import("@/modules/communications/messaging-repository");
   const { renderAttendeePassQrPng } = await import("@/modules/checkin/pass-qr-image");
   const { sendEmailWithSes, getSesEmailConfiguration } = await import("@/integrations/email/ses");
+  const { resetEmailPreflightCache } = await import("@/integrations/email/provider");
   const { EmailProviderConfigurationError, EmailProviderRequestError } = await import("@/integrations/email/types");
 
   await cleanup();
@@ -305,7 +309,7 @@ async function runChecks(stub: Awaited<ReturnType<typeof startSmtpStub>>) {
   assert(current.provider === "SES", `the outbox row records SES: ${current.provider}`);
   assert(current.providerMessageId === "0100synthetic0001-000000", `the SES message id is recorded: ${current.providerMessageId}`);
   const history = await attempts(message.id);
-  assert(history.map((row) => `${row.provider}:${row.status}:${row.errorCode ?? ""}`).join() === "SES:FAILED:PROVIDER_THROTTLED,SES:FAILED:PROVIDER_QUOTA,SES:SENT:", `attempt history: ${JSON.stringify(history)}`);
+  assert(history.map((row) => `${row.provider}:${row.status}:${row.errorCode ?? ""}`).join() === "SES:FAILED:PROVIDER_RATE_LIMITED,SES:FAILED:PROVIDER_QUOTA,SES:SENT:", `attempt history: ${JSON.stringify(history)}`);
   assert(history.slice(0, 2).every((row) => (row.providerMetadata as { retryable?: boolean }).retryable === true), "both failures were retryable");
   assert(Number(stub.received.length) === 1, `only the accepted attempt reached the stub: ${stub.received.length}`);
 
@@ -379,7 +383,27 @@ async function runChecks(stub: Awaited<ReturnType<typeof startSmtpStub>>) {
   assert(untouched.status === "PENDING" && untouched.attemptCount === 0, `wrong credentials leave the message PENDING with no attempt: ${JSON.stringify(untouched)}`);
   assert((await attempts(pendingId)).length === 0 && stub.received.length === receivedBefore, "no attempt row was written and nothing was sent");
 
+  // Nothing due: the pre-flight does not even log in (a queued failure is left unused).
+  await prisma.messageOutbox.update({ where: { id: pendingId }, data: { availableAt: new Date(Date.now() + 3_600_000) } });
+  let logins = stub.logins();
+  stub.authReplies.push("fail");
+  await processPendingMessages(ids.event, ids.staff);
+  assert(stub.logins() === logins && stub.authReplies.length === 1, "a run with nothing due opens no SMTP login");
+  stub.authReplies.length = 0;
+  await prisma.messageOutbox.update({ where: { id: pendingId }, data: { availableAt: new Date(Date.now() - 1000) } });
+
+  // An unreachable provider ends the run quietly: nothing claimed, nothing counted.
+  const goodPort = process.env.SES_SMTP_PORT;
+  process.env.SES_SMTP_PORT = "1";
+  const unreachableStarted = Date.now();
+  await processPendingMessages(ids.event, ids.staff);
+  process.env.SES_SMTP_PORT = goodPort;
+  assert(Date.now() - unreachableStarted < 10_000, "an unreachable provider is detected once, not after repeated timeouts");
+  untouched = await state(pendingId);
+  assert(untouched.status === "PENDING" && untouched.attemptCount === 0 && (await attempts(pendingId)).length === 0, `an unreachable provider leaves the message untouched: ${JSON.stringify(untouched)}`);
+
   // The pre-flight passes, then the send itself is refused with 535.
+  resetEmailPreflightCache();
   stub.authReplies.push("ok", "fail");
   let midBatchError: unknown;
   try {
@@ -391,9 +415,18 @@ async function runChecks(stub: Awaited<ReturnType<typeof startSmtpStub>>) {
   untouched = await state(pendingId);
   assert(untouched.status === "PENDING" && untouched.attemptCount === 0, `the claim was released without counting an attempt: ${JSON.stringify(untouched)}`);
   assert((await attempts(pendingId)).length === 0 && stub.received.length === receivedBefore, "no attempt row and nothing sent");
+  resetEmailPreflightCache();
+  logins = stub.logins();
   await processPendingMessages(ids.event, ids.staff);
   const recovered = await state(pendingId);
   assert(recovered.status === "SENT" && recovered.attemptCount === 1 && recovered.provider === "SES", `with good credentials the same message goes out: ${JSON.stringify(recovered)}`);
+
+  // A pre-flight that worked is trusted for five minutes: the next run logs in once (to send), not twice.
+  assert(stub.logins() - logins === 2, `the first run verifies and sends: ${stub.logins() - logins} logins`);
+  const cachedId = await queueAgain();
+  logins = stub.logins();
+  await processPendingMessages(ids.event, ids.staff);
+  assert((await state(cachedId)).status === "SENT" && stub.logins() - logins === 1, `a cached pre-flight is not repeated: ${stub.logins() - logins} logins`);
 
   // 4. Authentication failure is a configuration error; a server without STARTTLS is refused and nothing is sent.
   const input = {

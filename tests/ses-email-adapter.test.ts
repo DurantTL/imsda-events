@@ -155,7 +155,7 @@ describe("SES error mapping", () => {
 
   it("treats throttling as retryable", () => {
     const mapped = mapSesError(smtp(454, "454 Throttling failure: Maximum sending rate exceeded."));
-    expect(mapped).toMatchObject({ code: "PROVIDER_THROTTLED", retryable: true, status: 454 });
+    expect(mapped).toMatchObject({ code: "PROVIDER_RATE_LIMITED", retryable: true, status: 454 });
   });
 
   it("maps the daily quota to PROVIDER_QUOTA, retryable", () => {
@@ -195,6 +195,10 @@ describe("SES error mapping", () => {
     for (const code of ["ETIMEDOUT", "ECONNRESET", "EPIPE"]) {
       expect(mapSesError(smtp(undefined, "boom", code))).toMatchObject({ retryable: true });
     }
+    for (const code of ["ERR_STREAM_PREMATURE_CLOSE", "EADDRNOTAVAIL", "ERR_SSL_WRONG_VERSION_NUMBER"]) {
+      expect(mapSesError(smtp(undefined, "boom", code))).toMatchObject({ code: "NETWORK_ERROR", retryable: true });
+    }
+    expect(mapSesError(smtp(undefined, "bad", "EENVELOPE"))).toMatchObject({ code: "INVALID_MESSAGE", retryable: false });
     expect(mapSesError(new Error("something odd"))).toMatchObject({ code: "UNEXPECTED_PROVIDER_ERROR", retryable: false });
   });
 

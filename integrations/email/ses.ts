@@ -208,7 +208,7 @@ export function mapSesError(error: unknown): EmailProviderRequestError | EmailPr
   if (status === 454 || /maximum sending rate exceeded|throttl/i.test(reply)) {
     return new EmailProviderRequestError(
       "Amazon SES is limiting the sending rate. The message will be retried.",
-      "PROVIDER_THROTTLED",
+      "PROVIDER_RATE_LIMITED",
       true,
       status || 454,
     );
@@ -242,7 +242,12 @@ export function mapSesError(error: unknown): EmailProviderRequestError | EmailPr
   if (smtp.code === "EENVELOPE" || smtp.code === "EMESSAGE") {
     return new EmailProviderRequestError("The message could not be built for delivery.", "INVALID_MESSAGE", false, 0);
   }
-  // Unknown and uncategorised: final, as for every other adapter, so an unrecognised fault is looked at, not looped.
+  // A socket, stream or TLS fault (ERR_STREAM_PREMATURE_CLOSE, EADDRNOTAVAIL, ERR_SSL_*...): it has a code but no
+  // SMTP reply, so the message never reached SES's decision and is safe to retry.
+  if (smtp.code && typeof smtp.responseCode !== "number") {
+    return new EmailProviderRequestError("The email provider could not be reached.", "NETWORK_ERROR", true, 0);
+  }
+  // No code at all: unknown and uncategorised. Final, as for every other adapter, so it is looked at, not looped.
   return new EmailProviderRequestError("The email provider request failed.", "UNEXPECTED_PROVIDER_ERROR", false, 0);
 }
 
@@ -316,8 +321,8 @@ export async function sendEmailWithSes(
 }
 
 /**
- * Checks the connection and credentials once, before a batch claims anything. Only a configuration error (bad
- * credentials) is raised; a network failure is left to the per-message handling, which already retries it.
+ * Checks the connection and credentials before a batch claims anything. Throws a configuration error for bad
+ * credentials and a request error for an unreachable provider.
  */
 export async function verifySesConnection(configuration: SesEmailConfiguration) {
   const transport = nodemailer.createTransport({
@@ -337,8 +342,8 @@ export async function verifySesConnection(configuration: SesEmailConfiguration) 
   try {
     await transport.verify();
   } catch (error) {
-    const mapped = mapSesError(error);
-    if (mapped instanceof EmailProviderConfigurationError) throw mapped;
+    // Bad credentials, or an unreachable provider: either way the run should stop before claiming anything.
+    throw mapSesError(error);
   } finally {
     transport.close();
   }

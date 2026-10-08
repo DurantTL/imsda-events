@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import {
   getResendEmailAvailability,
   getResendEmailConfiguration,
@@ -71,6 +73,25 @@ export function providerNameForConfiguration(configuration: EmailProviderConfigu
 }
 
 /** Run before a batch claims any message: bad credentials stop here, with every message left untouched. */
-export async function preflightEmailProvider(configuration: EmailProviderConfiguration) {
-  if (isSesEmailConfiguration(configuration)) await verifySesConnection(configuration);
+export async function preflightEmailProvider(
+  configuration: EmailProviderConfiguration,
+  now: () => number = Date.now,
+) {
+  if (!isSesEmailConfiguration(configuration)) return;
+  // A login that worked is trusted for a few minutes, so a busy sweep or a run of inline sends logs in once.
+  const key = createHash("sha256")
+    .update([configuration.smtpHost, configuration.smtpPort, configuration.username, configuration.password].join("\u0000"))
+    .digest("hex");
+  const verifiedAt = verifiedConfigurations.get(key);
+  if (verifiedAt !== undefined && now() - verifiedAt < PREFLIGHT_CACHE_MS) return;
+  await verifySesConnection(configuration);
+  verifiedConfigurations.set(key, now());
+}
+
+export const PREFLIGHT_CACHE_MS = 5 * 60 * 1000;
+const verifiedConfigurations = new Map<string, number>();
+
+/** Test hook: forget every cached pre-flight. */
+export function resetEmailPreflightCache() {
+  verifiedConfigurations.clear();
 }

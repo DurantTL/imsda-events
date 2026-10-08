@@ -10,6 +10,7 @@ import {
   sendEmail as sendEmailWithProvider,
   type EmailProviderConfiguration,
 } from "@/integrations/email/provider";
+import { isSesEmailConfiguration } from "@/integrations/email/ses";
 import {
   EmailProviderConfigurationError,
   EmailProviderRequestError,
@@ -200,6 +201,8 @@ export class ExternalEmailDeliveryError extends Error {
       | "EXTERNAL_EMAIL_NOT_CONFIGURED"
       | "ACCOUNT_EMAIL_NOT_CONFIGURED",
     message: string,
+    /** What this run had already done when it stopped, so callers don't report finished messages as skipped. */
+    public partial?: ExternalEmailQueueResult,
   ) {
     super(message);
     this.name = "ExternalEmailDeliveryError";
@@ -677,17 +680,6 @@ async function runDeliveryLoop(
   const configuration = resolveConfiguration(dependencies);
   // What this run actually uses, not what the environment says later.
   const configuredProvider = providerNameForConfiguration(configuration);
-  if (!dependencies.sendEmail) {
-    // Bad credentials stop here, before any message is claimed or any attempt is spent.
-    try {
-      await preflightEmailProvider(configuration);
-    } catch (error) {
-      if (error instanceof EmailProviderConfigurationError) {
-        throw new ExternalEmailDeliveryError("EXTERNAL_EMAIL_NOT_CONFIGURED", error.message);
-      }
-      throw error;
-    }
-  }
   const sendEmail = dependencies.sendEmail ?? sendEmailWithProvider;
   const now = dependencies.now ?? (() => new Date());
   const fileCache = new BoundedFileCache();
@@ -712,6 +704,35 @@ async function runDeliveryLoop(
     failedIds: [],
     rescheduledIds: [],
   };
+  // Only when something is due, so an empty sweep or an inline send with nothing to do never opens an SMTP login.
+  // Bad credentials stop here, before any message is claimed or any attempt is spent; an unreachable provider
+  // ends the run quietly (nothing claimed, the next run tries again) instead of waiting through two timeouts.
+  if (!dependencies.sendEmail && isSesEmailConfiguration(configuration)) {
+    const due = await prisma.messageOutbox.findFirst({
+      where: {
+        ...scope,
+        status: "PENDING",
+        availableAt: { lte: now() },
+        attemptCount: { lt: MAX_EMAIL_DELIVERY_ATTEMPTS },
+        ...(uniqueMessageIds ? { id: { in: uniqueMessageIds } } : {}),
+      },
+      select: { id: true },
+    });
+    if (due) {
+      try {
+        await preflightEmailProvider(configuration);
+      } catch (error) {
+        if (error instanceof EmailProviderConfigurationError) {
+          throw new ExternalEmailDeliveryError("EXTERNAL_EMAIL_NOT_CONFIGURED", error.message, result);
+        }
+        if (error instanceof EmailProviderRequestError) {
+          logWarn("The email provider could not be reached before a delivery run; nothing was claimed.", { code: error.code });
+          return result;
+        }
+        throw error;
+      }
+    }
+  }
   for (let processed = 0; processed < limit; processed += 1) {
     const message = await claimNextMessage(
       prisma,
@@ -803,7 +824,7 @@ async function runDeliveryLoop(
           where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
           data: { status: "PENDING", lockedAt: null, lockToken: null },
         });
-        throw new ExternalEmailDeliveryError("EXTERNAL_EMAIL_NOT_CONFIGURED", caught.message);
+        throw new ExternalEmailDeliveryError("EXTERNAL_EMAIL_NOT_CONFIGURED", caught.message, result);
       }
       const normalized = normalizeEmailDeliveryError(caught);
       if (!normalized.retryable && preparedBody?.revokeOnDefinitiveFailure) {
