@@ -1,7 +1,7 @@
 /**
  * Why a member's card on the club registration form "needs attention" (#853),
  * and how to fix it. Pure and client-safe. These only explain; the server's
- * save rules are unchanged, and a background check never blocks a submission.
+ * save rules are unchanged, and a Sterling Volunteers check never blocks a submission.
  */
 import type { ClubComplianceState } from "@/modules/background-checks/display";
 import type { PersonClassReadiness } from "@/modules/honors/class-readiness";
@@ -43,13 +43,13 @@ export function classAttention(person: Pick<PersonClassReadiness, "required" | "
 /** A staff or adult member without a current Sterling Volunteers check. Advisory: nothing is blocked. */
 export function backgroundCheckAttention(state: ClubComplianceState | null | undefined): AttentionItem[] {
   if (state === "NO_RECORD") {
-    return [{ reason: "Background check needed", fix: "Ask them to complete a Sterling Volunteers check; your roster updates when it is on file. You can still register them." }];
+    return [{ reason: "Sterling Volunteers check needed", fix: "Ask them to complete a Sterling Volunteers check; your roster updates when it is on file. You can still register them." }];
   }
   if (state === "NOT_COMPLIANT") {
-    return [{ reason: "Background check expired or not in compliance", fix: "Ask them to renew their Sterling Volunteers check. You can still register them." }];
+    return [{ reason: "Sterling Volunteers check expired or not in compliance", fix: "Ask them to renew their Sterling Volunteers check. You can still register them." }];
   }
   if (state === "FLAGGED") {
-    return [{ reason: "Background check expiring soon", fix: "Ask them to renew their Sterling Volunteers check before it expires.", advisory: true }];
+    return [{ reason: "Sterling Volunteers check expiring soon", fix: "Ask them to renew their Sterling Volunteers check before it expires.", advisory: true }];
   }
   return [];
 }

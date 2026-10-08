@@ -115,7 +115,7 @@ export default async function ClubEventRegistrationPage({
   // registering — never a personal preference, so it applies either way.
   contactPrefill = { ...contactPrefill, ...workspace.directory.prefillResponses };
 
-  // Staff and adults without a current background check say so on their card (#853): only for a director or deputy,
+  // Staff and adults without a current Sterling Volunteers check say so on their card (#853): only for a director or deputy,
   // the same people who see these statuses on the roster, and only status, never a note.
   const showingNewForm = showingTeam && !workspace.registration && !workspace.problem && workspace.event.phase === "OPEN" && Boolean(workspace.experience);
   const complianceStatuses = showingNewForm

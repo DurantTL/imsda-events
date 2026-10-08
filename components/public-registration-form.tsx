@@ -298,7 +298,7 @@ export type PublicRegistrationFormProps = {
     /** Rendered under a person's details: their location and classes, chosen here rather than on a separate step (#650). */
     renderAttendeeExtras?: (attendee: RosterAttendee, index: number) => ReactNode;
     /**
-     * Extra reasons a person's card needs attention (#853): a class still owed, a background check. Each says
+     * Extra reasons a person's card needs attention (#853): a class still owed, a Sterling Volunteers check. Each says
      * what is wrong and how to fix it; the card is not "Complete" while any remain.
      */
     attendeeAttention?: (attendee: RosterAttendee, index: number) => AttentionItem[];

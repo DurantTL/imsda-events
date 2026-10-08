@@ -93,19 +93,19 @@ describe("roster answers on a club card (#853)", () => {
 });
 
 describe("the attention list on a card (#853)", () => {
-  const needsCheck = (): AttentionItem[] => [{ reason: "Background check needed", fix: "Ask them to complete a Sterling Volunteers check." }];
-  const expiring = (): AttentionItem[] => [{ reason: "Background check expiring soon", fix: "Ask them to renew.", advisory: true }];
+  const needsCheck = (): AttentionItem[] => [{ reason: "Sterling Volunteers check needed", fix: "Ask them to complete a Sterling Volunteers check." }];
+  const expiring = (): AttentionItem[] => [{ reason: "Sterling Volunteers check expiring soon", fix: "Ask them to renew.", advisory: true }];
 
   it("names the reason on a collapsed club card, and takes Complete away", () => {
     const markup = renderClub(people(), { attendeeAttention: needsCheck });
-    expect(markup).toContain("Background check needed.");
+    expect(markup).toContain("Sterling Volunteers check needed.");
     expect(markup).toContain("needs-attention");
     expect(markup).not.toContain("status-complete");
   });
 
   it("shows an expiring check as a note and keeps Complete", () => {
     const markup = renderClub(people(), { attendeeAttention: expiring });
-    expect(markup).toContain("Background check expiring soon.");
+    expect(markup).toContain("Sterling Volunteers check expiring soon.");
     expect(markup).toContain("status-complete");
     expect(markup).not.toContain("needs-attention");
   });

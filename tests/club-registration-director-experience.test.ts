@@ -86,7 +86,7 @@ describe("needs-attention reasons (#853)", () => {
   });
 
   it("says a background check is needed and how to fix it", () => {
-    expect(backgroundCheckAttention("NO_RECORD")[0]).toMatchObject({ reason: "Background check needed" });
+    expect(backgroundCheckAttention("NO_RECORD")[0]).toMatchObject({ reason: "Sterling Volunteers check needed" });
     expect(backgroundCheckAttention("NO_RECORD")[0]!.fix).toMatch(/Sterling Volunteers/);
     expect(backgroundCheckAttention("NOT_COMPLIANT")[0]!.reason).toMatch(/not in compliance/);
     expect(backgroundCheckAttention("FLAGGED")[0]!.reason).toMatch(/expiring/);
