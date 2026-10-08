@@ -99,3 +99,10 @@ describe("badge print CSS (#717)", () => {
     }
   });
 });
+
+describe("badge names fit the label", () => {
+  it("shrinks a long name to the label width instead of cutting it off, never above the chosen size", () => {
+    expect(css).toMatch(/\.badge-label-inner\s*\{[^}]*container-type:\s*inline-size/);
+    expect(css).toMatch(/\.badge-label-name strong\[style\]\s*\{\s*font-size:\s*min\(calc\(var\(--name-base\) \* var\(--badge-font-scale, 1\)\), calc\(100cqi \/ \(var\(--name-chars\) \* 0\.62\)\)\);/);
+  });
+});
