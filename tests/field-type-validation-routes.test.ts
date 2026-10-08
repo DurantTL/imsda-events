@@ -66,6 +66,7 @@ vi.mock("@/lib/logger", () => ({ logError: mocks.logError, logInfo: mocks.logger
 
 import { PUT as HEALTH_PUT } from "@/app/api/attendee/clubs/[organizationId]/health/[memberId]/route";
 import { POST as SLIP_SAVE } from "@/app/api/attendee/clubs/[organizationId]/forms/submissions/route";
+import { sealSensitiveAnswers } from "@/modules/club-forms/sealed-answers";
 import { sealHealthField } from "@/modules/health-records/crypto";
 
 const club = { params: Promise.resolve({ organizationId: "club-a" }) };
@@ -194,6 +195,18 @@ describe("permission slip saves (#854, #855)", () => {
   });
 });
 
+describe("permission slip draft with sealed answers (#855)", () => {
+  it("compares against sealed stored answers, so an unchanged old physician phone saves and a changed one does not", async () => {
+    const sealed = sealSensitiveAnswers("draft-2", { physician_phone: "idk" });
+    mocks.submissionFindFirst.mockResolvedValue({ id: "draft-2", status: "DRAFT", answers: {}, sealedSensitiveAnswers: sealed });
+    const base = { ...slipAnswers, physician_phone: "idk" };
+    const unchanged = await saveSlip(base, { submissionId: "draft-2", submit: false });
+    expect(unchanged.status).toBe(201);
+    const changed = await saveSlip({ ...base, physician_phone: "idk2" }, { submissionId: "draft-2", submit: false });
+    expect(changed.status).toBe(400);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Club member health record
 
@@ -223,6 +236,32 @@ describe("club member health record saves (#855)", () => {
     expect(text).not.toContain("call mom");
     expect(mocks.healthRecordCreate).not.toHaveBeenCalled();
     expect(JSON.stringify(mocks.logError.mock.calls)).not.toMatch(/Mine|idk|911|nope|call mom/);
+  });
+
+  it("opens nothing stored when the failure is not a typed field", async () => {
+    mocks.healthRecordFindUnique.mockClear();
+    const response = await save({ guardianFirstName: "" });
+    expect(response.status).toBe(400);
+    const typedAndPlain = await save({ guardianFirstName: "", guardianPhone: "idk" });
+    expect(typedAndPlain.status).toBe(400);
+    expect(mocks.healthRecordFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("excuses an old bad contact phone only for that same contact, by position", async () => {
+    const recordId = "record-2";
+    const stored = [{ firstName: "Alex", lastName: "Sample", phone: "call mom", relationship: "Aunt" }];
+    mocks.healthRecordFindUnique.mockResolvedValue({
+      id: recordId,
+      confirmedClubYear: "2025",
+      hasHealthNote: false,
+      lastEnteredVia: "DIRECTOR",
+      fields: [{ fieldKey: "emergencyContacts", sealedValue: sealHealthField(recordId, "emergencyContacts", stored) }],
+    });
+    const second = { firstName: "Bo", lastName: "Sample", relationship: "Uncle" };
+    const kept = await save({ emergencyContacts: [stored[0], { ...second, phone: "515-555-0150" }] });
+    expect(kept.status).toBe(200);
+    const copied = await save({ emergencyContacts: [stored[0], { ...second, phone: "call mom" }] });
+    expect(copied.status).toBe(400);
   });
 
   it("does not fail on a stored old answer the person did not touch, but does on a changed one", async () => {
@@ -277,7 +316,7 @@ describe("registration answers (#855)", () => {
 
   it.each([
     ["email", { email: "avery at example" }, "Email must be a valid email address"],
-    ["phone", { phone: "idk" }, "Phone must be a valid US phone number"],
+    ["phone", { phone: "idk" }, "Phone must be a 10-digit US number"],
     ["number", { party_size: "a few" }, "Party size must be a number"],
   ])("rejects a bad %s without echoing it", (_name, patch, message) => {
     const prepared = prepare({ ...good, ...patch });

@@ -93,8 +93,8 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
       const value = text[key] ?? "";
       if (!validateByType(spec.type, value).ok && !isUnchangedFromStored(value, initialValues[key])) return true;
     }
-    const storedPhones = contactsFrom(initialValues).map((contact) => contact.phone.trim());
-    return contacts.some((contact) => !validateByType("phone", contact.phone).ok && !storedPhones.includes(contact.phone.trim()));
+    const storedContacts = contactsFrom(initialValues);
+    return contacts.some((contact, index) => !validateByType("phone", contact.phone).ok && !isUnchangedFromStored(contact.phone, storedContacts[index]?.phone));
   };
 
   const set = (key: string, value: string) => setText((current) => ({ ...current, [key]: value }));
@@ -255,7 +255,7 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
               const message = problemFor(
                 `contact-${index}`,
                 contact.phone,
-                contactsFrom(initialValues).map((item) => item.phone).find((phone) => phone.trim() === contact.phone.trim()),
+                contactsFrom(initialValues)[index]?.phone,
                 { type: "phone", label: "Phone" },
               );
               return (

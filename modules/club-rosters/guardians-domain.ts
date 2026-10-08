@@ -1,4 +1,7 @@
 import { z } from "zod";
+import { normalizePhoneAnswer, validatePhone } from "@/lib/field-validation";
+
+const GUARDIAN_PHONE_MESSAGE = "Enter a phone number like (515) 555-0134.";
 
 /**
  * Guardian contacts on club roster members (#510). Pure rules: the shape, light
@@ -40,17 +43,11 @@ export function guardianEmailProblem(value: string): string | null {
   return EMAIL_PATTERN.test(email) && email.length <= 254 ? null : "Enter an email like name@example.com.";
 }
 
-/**
- * Light check: digits with the usual separators, 7 to 15 digits, and an
- * optional extension ("x123" or "ext. 123"). No country-specific rules.
- */
+/** The shared phone check (#855): a US number or an international one starting with +, optional extension. */
 export function guardianPhoneProblem(value: string): string | null {
   const phone = value.trim();
   if (!phone) return null;
-  const main = phone.replace(/\s*(?:x|ext\.?)\s*\d{1,6}$/i, "");
-  const digits = main.replace(/\D/g, "");
-  const onlyPhoneCharacters = /^[0-9+().\-\s]+$/.test(main);
-  return onlyPhoneCharacters && digits.length >= 7 && digits.length <= 15 ? null : "Enter a phone number like (555) 123-4567.";
+  return validatePhone(phone).ok ? null : GUARDIAN_PHONE_MESSAGE;
 }
 
 const text = (max: number) => z.string().trim().max(max, `Keep this under ${max} characters.`).default("");
@@ -59,7 +56,7 @@ export const guardianInputSchema = z.object({
   name: text(120),
   relationship: text(60),
   email: text(254).refine((value) => guardianEmailProblem(value) === null, { message: "Enter an email like name@example.com." }),
-  phone: text(40).refine((value) => guardianPhoneProblem(value) === null, { message: "Enter a phone number like (555) 123-4567." }),
+  phone: text(40).refine((value) => guardianPhoneProblem(value) === null, { message: GUARDIAN_PHONE_MESSAGE }),
 }).strict();
 
 /**
@@ -85,7 +82,7 @@ export function guardianSlotsFrom(guardians: readonly GuardianValues[]): Guardia
       name: guardian.name.trim(),
       relationship: guardian.relationship.trim(),
       email: guardian.email.trim(),
-      phone: guardian.phone.trim(),
+      phone: normalizePhoneAnswer(guardian.phone.trim()),
     }))
     .filter((guardian) => !guardianIsBlank(guardian));
 }

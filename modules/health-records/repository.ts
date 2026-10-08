@@ -20,9 +20,11 @@ import {
   fieldValuesFromInput,
   hasHealthNoteFor,
   healthAuditActor,
+  failsOnlyTypedChecks,
   healthFieldsNeedingCorrection,
   healthRecordInputSchemaFor,
   healthRecordStatus,
+  TYPED_HEALTH_KEYS,
   isHealthFieldKey,
   viewerActorId,
   viewerCan,
@@ -280,12 +282,14 @@ async function writeRecord(
 }
 
 /** The member's stored values, opened for comparison only. Null when there is no record or it cannot be opened. */
-async function storedValuesForMember(organizationId: string, memberId: string, now: Date): Promise<Record<string, unknown> | null> {
+async function storedTypedValuesForMember(organizationId: string, memberId: string, now: Date): Promise<Record<string, unknown> | null> {
   try {
     const prisma = getPrisma();
     const member = await loadMember(prisma, organizationId, memberId, now);
     const record = await findRecord(prisma, organizationId, member);
-    return record ? openFields(record.id, record.fields) : null;
+    // Only the typed keys are opened, never the clinical fields.
+    const typed = TYPED_HEALTH_KEYS as readonly string[];
+    return record ? openFields(record.id, record.fields.filter((field) => typed.includes(field.fieldKey))) : null;
   } catch {
     return null;
   }
@@ -300,9 +304,12 @@ export async function saveHealthRecord(viewer: HealthViewer, organizationId: str
     input = parseHealthRecordInput(rawInput);
   } catch (error) {
     if (!(error instanceof HealthRecordError) || error.code !== "VALIDATION_FAILED") throw error;
+    // Only when every failure is a typed phone, email or ZIP check: a plain failure opens nothing.
+    const check = healthRecordInputSchemaFor().safeParse(rawInput);
+    if (check.success || !failsOnlyTypedChecks(check.error.issues)) throw error;
     // Editing (#855): an old answer that fails today's checks and was not changed does not block the save. The
     // stored values are opened only to compare; no message or log carries one.
-    const stored = await storedValuesForMember(organizationId, memberId, now);
+    const stored = await storedTypedValuesForMember(organizationId, memberId, now);
     if (!stored) throw error;
     input = parseHealthRecordInput(rawInput, stored);
   }

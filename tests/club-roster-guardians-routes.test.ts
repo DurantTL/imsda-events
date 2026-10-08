@@ -58,10 +58,10 @@ const request = (method: string, body?: unknown) => new Request("https://events.
 
 const newMember = { firstName: "Test", lastName: "Youth", birthDate: "2014-12-06", attendeeType: "YOUTH", gender: "FEMALE" };
 const guardians = [
-  { name: "Synthetic Guardian", relationship: "Mother", email: "guardian@example.test", phone: "(555) 010-0101" },
+  { name: "Synthetic Guardian", relationship: "Mother", email: "guardian@example.test", phone: "(515) 555-0101" },
   { name: "", relationship: "", email: "", phone: "" },
 ];
-const storedGuardians = { "member-1": [{ position: 1, name: "Synthetic Guardian", relationship: "Mother", email: "guardian@example.test", phone: "(555) 010-0101" }] };
+const storedGuardians = { "member-1": [{ position: 1, name: "Synthetic Guardian", relationship: "Mother", email: "guardian@example.test", phone: "(515) 555-0101" }] };
 
 beforeEach(() => {
   vi.clearAllMocks();

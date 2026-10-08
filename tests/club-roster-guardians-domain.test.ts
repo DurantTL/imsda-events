@@ -52,8 +52,8 @@ describe("guardian contacts: schema and migration (#510)", () => {
 describe("guardian validation (#510)", () => {
   it("accepts every field blank and trims what it keeps", () => {
     expect(guardianInputSchema.parse({})).toEqual({ name: "", relationship: "", email: "", phone: "" });
-    expect(guardianInputSchema.parse({ name: "  Synthetic Guardian  ", relationship: " Aunt ", email: " g@example.test ", phone: " (555) 010-0101 " }))
-      .toEqual({ name: "Synthetic Guardian", relationship: "Aunt", email: "g@example.test", phone: "(555) 010-0101" });
+    expect(guardianInputSchema.parse({ name: "  Synthetic Guardian  ", relationship: " Aunt ", email: " g@example.test ", phone: " (515) 555-0101 " }))
+      .toEqual({ name: "Synthetic Guardian", relationship: "Aunt", email: "g@example.test", phone: "(515) 555-0101" });
   });
 
   it("checks email and phone lightly, and only when something was typed", () => {
@@ -61,10 +61,10 @@ describe("guardian validation (#510)", () => {
     expect(guardianEmailProblem("name@example.test")).toBeNull();
     for (const bad of ["name", "name@", "@example.test", "a b@example.test", "name@example"]) expect(guardianEmailProblem(bad)).not.toBeNull();
     expect(guardianPhoneProblem("")).toBeNull();
-    for (const good of ["555-010-0101", "(555) 010-0101", "+1 555 010 0101", "555.010.0101", "555 010 0101 x12", "555-010-0101 ext. 4"]) {
+    for (const good of ["515-555-0101", "(515) 555-0101", "+1 515 555 0101", "515.555.0101", "515 555 0101 x12", "515-555-0101 ext. 4"]) {
       expect(guardianPhoneProblem(good)).toBeNull();
     }
-    for (const bad of ["12345", "call me", "555-010-0101 now", "1".repeat(20)]) expect(guardianPhoneProblem(bad)).not.toBeNull();
+    for (const bad of ["12345", "call me", "515-555-0101 now", "1".repeat(20)]) expect(guardianPhoneProblem(bad)).not.toBeNull();
     expect(() => guardianInputSchema.parse({ email: "nope" })).toThrow();
     expect(() => guardianInputSchema.parse({ phone: "nope" })).toThrow();
   });
@@ -93,7 +93,7 @@ describe("guardian validation (#510)", () => {
   it("reports dialog errors per slot and field", () => {
     expect(validateGuardianForm([{ email: "bad", phone: "" }, { email: "", phone: "bad" }])).toEqual({
       g1Email: "Enter an email like name@example.com.",
-      g2Phone: "Enter a phone number like (555) 123-4567.",
+      g2Phone: "Enter a phone number like (515) 555-0134.",
     });
     expect(validateGuardianForm([{ email: "", phone: "" }, { email: "", phone: "" }])).toEqual({});
   });

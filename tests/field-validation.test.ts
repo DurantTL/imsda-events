@@ -21,11 +21,19 @@ describe("phone (#855)", () => {
     ["5155550134", "(515) 555-0134"],
     ["+1 515 555 0134", "(515) 555-0134"],
     ["1-515-555-0134", "(515) 555-0134"],
+    ["515\u2013555\u20130134", "(515) 555-0134"],
+    ["515/555/0134", "(515) 555-0134"],
+    ["515-555-0134 x2", "(515) 555-0134 x2"],
+    ["(515) 555-0134 ext. 45", "(515) 555-0134 x45"],
+    ["515.555.0134 Extension 123456", "(515) 555-0134 x123456"],
+    ["+52 55 1234 5678", "+52 55 1234 5678"],
+    ["+44 (20) 7946-0958", "+44 20 7946 0958"],
+    ["+442079460958 x7", "+442079460958 x7"],
   ])("accepts %s and stores it as %s", (input, stored) => {
     expect(validatePhone(input)).toEqual({ ok: true, value: stored });
   });
 
-  it.each(["Mine", "idk", "911? duh", "911", "555-0134", "515-555-013", "515-555-01345", "015-555-0134", "515-155-0134", "+44 20 7946 0958", "515-555-0134 ext 5", ""])(
+  it.each(["Mine", "idk", "911? duh", "911", "555-0134", "515-555-013", "515-555-01345", "015-555-0134", "515-155-0134", "+52 1234", "+0 55 1234 5678", "+1234567890123456", "515-555-0134 x1234567", ""])(
     "rejects %j",
     (input) => {
       expect(validatePhone(input).ok).toBe(false);
@@ -36,7 +44,7 @@ describe("phone (#855)", () => {
     const result = validatePhone("secret idk");
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(problemMessage("Physician's phone", result.problem)).toMatch(/^Physician's phone must be a valid US phone number/);
+      expect(problemMessage("Physician's phone", result.problem)).toMatch(/^Physician's phone must be a 10-digit US number, like \(515\) 555-0134, or an international number starting with \+/);
       expect(result.problem).not.toContain("secret");
     }
   });
@@ -62,6 +70,10 @@ describe("number", () => {
     expect(validateNumber("12", { min: 0, max: 20 }).ok).toBe(true);
     expect(validateNumber(0, { min: 0 }).ok).toBe(true);
     expect(validateNumber("1.5").ok).toBe(true);
+    expect(validateNumber(".5").ok).toBe(true);
+    expect(validateNumber(7, { min: 1, max: 10, integer: true }).ok).toBe(true);
+    expect(validateNumber(Number.NaN).ok).toBe(false);
+    expect(validateNumber(Number.POSITIVE_INFINITY).ok).toBe(false);
   });
 
   it.each(["abc", "1e3", "0x10", "1,000", "12 kids", "", "NaN", "Infinity"])("rejects %j", (input) => {

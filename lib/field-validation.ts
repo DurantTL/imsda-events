@@ -16,7 +16,7 @@ export type FieldValueType = (typeof fieldValueTypes)[number];
 /** `value` is the normalised form to store. `problem` reads after a label: "Phone <problem>". */
 export type FieldCheck = { ok: true; value: string } | { ok: false; problem: string };
 
-export const PHONE_PROBLEM = "must be a valid US phone number with 10 digits, like (515) 555-0134";
+export const PHONE_PROBLEM = "must be a 10-digit US number, like (515) 555-0134, or an international number starting with +";
 export const EMAIL_PROBLEM = "must be a valid email address";
 export const DATE_PROBLEM = "must be a valid date";
 export const ZIP_PROBLEM = "must be a 5-digit ZIP code, like 50010, or ZIP+4";
@@ -35,18 +35,35 @@ export function problemMessage(label: string, problem: string) {
 }
 
 /**
- * A US phone number: digits with optional spacing, dots, dashes and
- * parentheses, and an optional leading +1 or 1. Needs 10 digits, with the
- * area code and exchange not starting with 0 or 1. Stored as "(515) 555-0134".
+ * A phone number (#855), in one of two forms:
+ * - US or Canada: 10 digits (a leading 1 or +1 is allowed), the area code and
+ *   exchange not starting with 0 or 1. Stored as "(515) 555-0134".
+ * - International: starts with "+" and a country code other than 1, 8 to 15
+ *   digits in all (E.164). Stored as "+" and the digits in their groups, single
+ *   spaces between, e.g. "+52 55 1234 5678".
+ * Either may end in an extension (x, ext, ext. or extension, then 1 to 6
+ * digits), stored as " x2". Spaces, dots, dashes (including en and em dashes),
+ * slashes and parentheses are accepted as separators.
  */
 export function validatePhone(raw: string): FieldCheck {
-  const text = raw.trim();
-  if (text.length > MAX_PHONE_LENGTH || !/^\+?[\d\s().-]+$/.test(text)) return bad(PHONE_PROBLEM);
-  let digits = text.replace(/\D/g, "");
-  if (digits.length === 11 && digits.startsWith("1")) digits = digits.slice(1);
-  else if (text.startsWith("+") && digits.length !== 11) return bad(PHONE_PROBLEM);
-  if (digits.length !== 10 || !/^[2-9]\d\d[2-9]/.test(digits)) return bad(PHONE_PROBLEM);
-  return ok(`(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`);
+  let text = raw.trim();
+  if (text.length > MAX_PHONE_LENGTH) return bad(PHONE_PROBLEM);
+  let extension = "";
+  const ext = /^(.*?)[\s,]*(?:x|ext\.?|extension)\s*(\d{1,6})$/i.exec(text);
+  if (ext) {
+    text = ext[1].trim();
+    extension = ` x${ext[2]}`;
+  }
+  if (!/^\+?[\d\s().\-\u2013\u2014/]+$/.test(text)) return bad(PHONE_PROBLEM);
+  const digits = text.replace(/\D/g, "");
+  if (text.startsWith("+") && !(digits.length === 11 && digits.startsWith("1"))) {
+    if (digits.startsWith("1") || digits.startsWith("0") || digits.length < 8 || digits.length > 15) return bad(PHONE_PROBLEM);
+    const grouped = text.slice(1).replace(/[^\d]+/g, " ").trim();
+    return ok(`+${grouped}${extension}`);
+  }
+  const national = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  if (national.length !== 10 || !/^[2-9]\d\d[2-9]/.test(national)) return bad(PHONE_PROBLEM);
+  return ok(`(${national.slice(0, 3)}) ${national.slice(3, 6)}-${national.slice(6)}${extension}`);
 }
 
 export function validateEmail(raw: string): FieldCheck {
@@ -60,7 +77,7 @@ export type NumberRules = { min?: number; max?: number; integer?: boolean };
 /** Plain decimal numbers only: no exponents, hex, thousands separators or text. */
 export function validateNumber(raw: string | number, rules: NumberRules = {}): FieldCheck {
   const text = String(raw).trim();
-  const numeric = /^-?\d+(\.\d+)?$/.test(text) ? Number(text) : Number.NaN;
+  const numeric = typeof raw === "number" ? raw : /^-?(\d+(\.\d*)?|\.\d+)$/.test(text) ? Number(text) : Number.NaN;
   const kind = rules.integer ? "whole number" : "number";
   const range = rules.min !== undefined && rules.max !== undefined
     ? ` from ${rules.min} to ${rules.max}`
@@ -118,6 +135,39 @@ export function validateByType(type: FieldValueType, raw: string, rules: NumberR
 export function isUnchangedFromStored(submitted: unknown, stored: unknown) {
   if (stored === undefined || stored === null || stored === "") return false;
   return typeof submitted === typeof stored && String(submitted).trim() === String(stored).trim();
+}
+
+/** The value type a form field type is checked as, or null for text and choice fields. */
+export function valueTypeForFieldType(fieldType: string): FieldValueType | null {
+  switch (fieldType) {
+    case "EMAIL": return "email";
+    case "PHONE": return "phone";
+    case "DATE": return "date";
+    case "NUMBER": return "number";
+    default: return null;
+  }
+}
+
+/**
+ * The inline browser message for one typed value (#855). A changed value that
+ * fails is `blocking` and its message shows once `shown` (after blur or a save
+ * attempt). An old stored value left alone is never blocking, but is always
+ * flagged "needs correcting".
+ */
+export function inlineFieldProblem(
+  label: string,
+  type: FieldValueType,
+  value: unknown,
+  stored: unknown,
+  shown: boolean,
+  rules: NumberRules = {},
+): { message: string; blocking: boolean } {
+  if (value === undefined || value === null || value === "") return { message: "", blocking: false };
+  const check = validateByType(type, String(value), rules);
+  if (check.ok) return { message: "", blocking: false };
+  const text = problemMessage(label, check.problem);
+  if (isUnchangedFromStored(value, stored)) return { message: `${text} This saved answer needs correcting.`, blocking: false };
+  return { message: shown ? text : "", blocking: true };
 }
 
 /** A valid phone in its stored form; anything else comes back as it was, for the validator to judge. */

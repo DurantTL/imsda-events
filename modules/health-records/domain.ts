@@ -128,14 +128,14 @@ type TypedHealthCheck = (value: string) => FieldCheck;
 
 const typedChecks: Array<{ key: "zip" | "phone" | "email" | "insurancePhone" | "guardianPhone" | "guardianEmail"; check: TypedHealthCheck; message: string }> = [
   { key: "zip", check: validateZip, message: "Enter a 5-digit ZIP code, like 50010." },
-  { key: "phone", check: validatePhone, message: "Enter a valid US phone number with 10 digits, like (515) 555-0134." },
+  { key: "phone", check: validatePhone, message: "Enter a 10-digit US number, like (515) 555-0134, or an international number starting with +." },
   { key: "email", check: validateEmail, message: "Enter a valid email address." },
-  { key: "insurancePhone", check: validatePhone, message: "Enter a valid US phone number with 10 digits, like (515) 555-0134." },
-  { key: "guardianPhone", check: validatePhone, message: "Enter a valid US phone number with 10 digits, like (515) 555-0134." },
+  { key: "insurancePhone", check: validatePhone, message: "Enter a 10-digit US number, like (515) 555-0134, or an international number starting with +." },
+  { key: "guardianPhone", check: validatePhone, message: "Enter a 10-digit US number, like (515) 555-0134, or an international number starting with +." },
   { key: "guardianEmail", check: validateEmail, message: "Enter a valid email address." },
 ];
 
-const CONTACT_PHONE_MESSAGE = "Enter a valid US phone number with 10 digits, like (515) 555-0134.";
+const CONTACT_PHONE_MESSAGE = "Enter a 10-digit US number, like (515) 555-0134, or an international number starting with +.";
 
 /**
  * The input schema (#855). Phones, emails and ZIP codes are checked by type
@@ -145,14 +145,11 @@ const CONTACT_PHONE_MESSAGE = "Enter a valid US phone number with 10 digits, lik
  * submitted value.
  */
 export function healthRecordInputSchemaFor(stored: Record<string, unknown> = {}) {
-  const storedContactPhones = new Set(
-    Array.isArray(stored.emergencyContacts)
-      ? stored.emergencyContacts.flatMap((contact) => {
-          const phone = (contact as { phone?: unknown } | null)?.phone;
-          return typeof phone === "string" ? [phone.trim()] : [];
-        })
-      : [],
-  );
+  // Per contact, by position: a stored bad phone excuses only the same contact's unchanged phone, never the
+  // same text typed into another contact.
+  const storedContactPhones: unknown[] = Array.isArray(stored.emergencyContacts)
+    ? stored.emergencyContacts.map((contact) => (contact as { phone?: unknown } | null)?.phone)
+    : [];
   return healthRecordShape
     .superRefine((value, context) => {
       if (value.hasAllergies === "YES" && value.allergyDetails === "") {
@@ -167,7 +164,7 @@ export function healthRecordInputSchemaFor(stored: Record<string, unknown> = {})
         if (!check(submitted).ok) context.addIssue({ code: "custom", path: [key], message });
       }
       value.emergencyContacts.forEach((contact, index) => {
-        if (contact.phone === "" || storedContactPhones.has(contact.phone)) return;
+        if (contact.phone === "" || isUnchangedFromStored(contact.phone, storedContactPhones[index])) return;
         if (!validatePhone(contact.phone).ok) context.addIssue({ code: "custom", path: ["emergencyContacts", index, "phone"], message: CONTACT_PHONE_MESSAGE });
       });
     })
@@ -181,6 +178,22 @@ export function healthRecordInputSchemaFor(stored: Record<string, unknown> = {})
 }
 
 export const healthRecordInputSchema = healthRecordInputSchemaFor();
+
+/** The stored keys a typed check can need to compare against (#855). */
+export const TYPED_HEALTH_KEYS = ["zip", "phone", "email", "insurancePhone", "guardianPhone", "guardianEmail", "emergencyContacts"] as const;
+
+/**
+ * True when every issue is a typed phone, email or ZIP failure, the only kind a
+ * stored old answer could excuse. Anything else is a plain failure: nothing
+ * stored needs to be opened to report it.
+ */
+export function failsOnlyTypedChecks(issues: ReadonlyArray<{ path: ReadonlyArray<PropertyKey> }>) {
+  return issues.length > 0 && issues.every((issue) => {
+    const [first, index, last] = issue.path;
+    if (first === "emergencyContacts") return issue.path.length === 3 && typeof index === "number" && last === "phone";
+    return typeof first === "string" && (TYPED_HEALTH_KEYS as readonly string[]).includes(first) && first !== "emergencyContacts";
+  });
+}
 
 export type HealthRecordInput = z.infer<typeof healthRecordInputSchema>;
 

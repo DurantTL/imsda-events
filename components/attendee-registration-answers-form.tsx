@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { CheckCircle2, ListChecks, Save } from "lucide-react";
 import { AddressFieldGroup } from "@/components/address-field-group";
 import { SearchableSelect } from "@/components/searchable-select";
+import { inlineFieldProblem } from "@/lib/field-validation";
 import type { EditableAttendeeField } from "@/modules/attendee-accounts/registration-answer-policy";
 import { formatAddressDisplay, isPlainAddressObject, type AddressValue } from "@/modules/forms/address";
 
@@ -68,6 +69,19 @@ export function AttendeeRegistrationAnswersForm({
   const [clientRequestId, setClientRequestId] = useState(() => crypto.randomUUID());
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Inline checks (#855): an old stored value that fails is flagged but never blocks the save.
+  const [attempted, setAttempted] = useState(false);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const numberRules = { min: 0, max: 100000 };
+  const storedAnswer = (attendeeId: string, key: string) => saved.find((attendee) => attendee.attendeeId === attendeeId)?.responses[key];
+  const numberProblem = (field: EditableAttendeeField, attendee: EditableAttendee) => inlineFieldProblem(
+    field.label,
+    "number",
+    attendee.responses[field.key],
+    storedAnswer(attendee.attendeeId, field.key),
+    attempted || Boolean(touched[`${attendee.attendeeId}:${field.key}`]),
+    numberRules,
+  );
   const dirty = useMemo(() => !valuesEqual(saved, attendees), [attendees, saved]);
   const endpoint = answerEndpoint
     ?? `/api/attendee/registrations/${encodeURIComponent(registrationId ?? "")}/answers`;
@@ -87,6 +101,16 @@ export function AttendeeRegistrationAnswersForm({
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setAttempted(true);
+    const blocked = attendees.some((attendee) => fields.some((field) => (
+      field.type === "NUMBER"
+      && !(attendee.lockedFieldKeys ?? []).includes(field.key)
+      && numberProblem(field, attendee).blocking
+    )));
+    if (blocked) {
+      setError("Check the highlighted answers and try again.");
+      return;
+    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -238,9 +262,13 @@ export function AttendeeRegistrationAnswersForm({
                       disabled={locked}
                       required={field.required}
                       value={typeof value === "number" || typeof value === "string" ? value : ""}
+                      aria-invalid={numberProblem(field, attendee).message ? true : undefined}
+                      inputMode="numeric"
+                      onBlur={() => setTouched((current) => ({ ...current, [`${attendee.attendeeId}:${field.key}`]: true }))}
                       onChange={(event) => updateAnswer(attendee.attendeeId, field.key, event.target.value)}
                     />
                     {field.helpText && <small>{field.helpText}</small>}
+                    {numberProblem(field, attendee).message && <small className="field-error" role="alert">{numberProblem(field, attendee).message}</small>}
                   </label>
                 );
               }
