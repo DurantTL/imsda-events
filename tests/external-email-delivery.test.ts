@@ -13,6 +13,9 @@ import { EmailProviderRequestError } from "@/integrations/email/resend";
 import {
   EMAIL_DELIVERY_LOCK_TIMEOUT_MS,
   emailRetryDelayMs,
+  normalizeEmailDeliveryError,
+  PROVIDER_QUOTA_ERROR_CODE,
+  PROVIDER_QUOTA_MESSAGE,
   processAccountEmailQueue,
   processExternalEmailQueue,
 } from "@/modules/communications/email-delivery";
@@ -433,9 +436,9 @@ describe("external email queue", () => {
     const sendEmail = vi.fn(async () => {
       throw new EmailProviderRequestError(
         "Try again later.",
-        "rate_limit_exceeded",
+        "HTTP_503",
         true,
-        429,
+        503,
       );
     });
 
@@ -458,9 +461,56 @@ describe("external email queue", () => {
     expect(store.message.availableAt.toISOString()).toBe("2026-07-23T12:01:00.000Z");
     expect(store.attempts[0]).toMatchObject({
       status: "FAILED",
-      errorCode: "rate_limit_exceeded",
+      errorCode: "HTTP_503",
     });
     expect(emailRetryDelayMs(99)).toBe(60 * 60 * 1000);
+  });
+
+  it("records a provider quota as PROVIDER_QUOTA with a staff-readable reason and backs off in hours (#860)", async () => {
+    for (const name of ["daily_quota_exceeded", "monthly_quota_exceeded", "rate_limit_exceeded"]) {
+      const store = fakeDeliveryStore();
+      const sendEmail = vi.fn(async () => {
+        throw new EmailProviderRequestError("You have reached your daily email sending quota.", name, true, 429);
+      });
+      const result = await processExternalEmailQueue("event-1", {
+        dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail },
+      });
+      expect(result.rescheduledIds).toEqual(["message-1"]);
+      expect(store.message).toMatchObject({
+        status: "PENDING",
+        attemptCount: 1,
+        lastError: PROVIDER_QUOTA_MESSAGE,
+      });
+      expect(store.message.lastError).toBe("The email provider's sending limit was reached. The message will be tried again later; staff can also retry it from the delivery log once the limit resets.");
+      // Two hours after the attempt, not one minute.
+      expect(store.message.availableAt.getTime()).toBe(dependencies.now().getTime() + 2 * 60 * 60 * 1000);
+      expect(store.attempts[0]).toMatchObject({ status: "FAILED", errorCode: "PROVIDER_QUOTA" });
+    }
+  });
+
+  it("keeps a quota from using all five attempts in minutes: the delays grow in hours and the last attempt still ends FAILED", async () => {
+    expect([1, 2, 3, 4].map((attempt) => emailRetryDelayMs(attempt, PROVIDER_QUOTA_ERROR_CODE) / 3_600_000)).toEqual([2, 4, 8, 16]);
+    expect(emailRetryDelayMs(10, PROVIDER_QUOTA_ERROR_CODE)).toBe(24 * 60 * 60 * 1000);
+    // Other errors keep the minute-scale backoff.
+    expect([1, 2, 3, 4].map((attempt) => emailRetryDelayMs(attempt) / 60_000)).toEqual([1, 2, 4, 8]);
+    expect(emailRetryDelayMs(3, "HTTP_503")).toBe(emailRetryDelayMs(3));
+    const last = fakeDeliveryStore({ attemptCount: 4 });
+    const sendEmail = vi.fn(async () => {
+      throw new EmailProviderRequestError("quota", "daily_quota_exceeded", true, 429);
+    });
+    const result = await processExternalEmailQueue("event-1", {
+      dependencies: { ...dependencies, prisma: last.prisma as never, sendEmail },
+    });
+    expect(result.failedIds).toEqual(["message-1"]);
+    expect(last.message).toMatchObject({ status: "FAILED", lastError: PROVIDER_QUOTA_MESSAGE });
+    expect(last.attempts[0]).toMatchObject({ errorCode: "PROVIDER_QUOTA" });
+  });
+
+  it("recognises only a 429 with a quota or rate-limit name as a provider quota", () => {
+    expect(normalizeEmailDeliveryError(new EmailProviderRequestError("x", "daily_quota_exceeded", true, 429))).toMatchObject({ code: "PROVIDER_QUOTA", retryable: true });
+    expect(normalizeEmailDeliveryError(new EmailProviderRequestError("x", "HTTP_429", true, 429))).toMatchObject({ code: "HTTP_429", message: "x" });
+    expect(normalizeEmailDeliveryError(new EmailProviderRequestError("x", "quota_not_a_429", true, 503))).toMatchObject({ code: "quota_not_a_429" });
+    expect(normalizeEmailDeliveryError(new EmailProviderRequestError("x", "invalid_from_address", false, 422))).toMatchObject({ code: "invalid_from_address", retryable: false });
   });
 
   it("does not claim or send any message when provider credentials are absent", async () => {

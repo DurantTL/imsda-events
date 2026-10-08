@@ -187,6 +187,9 @@ jobs:
       # Real-database check of attachments, embedded pictures and button links in announcement emails (#824), through a local stand-in for the email provider: files stored under generated names after a byte check, the 10 MB and 20 MB limits, attachments carried forward between template versions, the announcement's and the template's files and an inline part for the picture and each attendee's QR reaching the adapter with the HTML rewritten to cid:, a retry and a staff retry copy sending the same parts, and an audit trail of file names and sizes only.
       - run: npm run test:announcement-attachments
 
+      # Real-database check of "Retry failed" after a provider quota (#860), through a local stand-in for the email provider: a 429 daily quota recorded as PROVIDER_QUOTA with a staff-readable reason and a backoff in hours, a bulk send where some guests were sent and some failed, a preview naming every skip, one new copy for each failed guest and none for anyone who was sent the email, nothing sent inside the request, a re-post and a double click adding no second copy, exactly one email per guest once the worker has run, and an audit row with ids and counts only.
+      - run: npm run test:retry-failed
+
       # Real-database check of module requests: one pending per event and module under concurrent submits, approve enables in one transaction, decline needs a reason, audit holds ids only, and free text cannot become an email placeholder (#741).
       - run: npm run test:module-requests
 

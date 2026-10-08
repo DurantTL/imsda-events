@@ -61,6 +61,11 @@ export const EMAIL_DELIVERY_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 export const EMAIL_DELIVERY_BATCH_SIZE = 50;
 const EMAIL_RETRY_BASE_MS = 60 * 1000;
 const EMAIL_RETRY_MAX_MS = 60 * 60 * 1000;
+// A provider quota does not clear in minutes (Resend's free plan resets daily), so it backs off in hours (#860).
+const EMAIL_QUOTA_RETRY_BASE_MS = 2 * 60 * 60 * 1000;
+const EMAIL_QUOTA_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
+export const PROVIDER_QUOTA_ERROR_CODE = "PROVIDER_QUOTA";
+export const PROVIDER_QUOTA_MESSAGE = "The email provider's sending limit was reached. The message will be tried again later; staff can also retry it from the delivery log once the limit resets.";
 
 type DeliveryPrisma = Pick<
   PrismaClient,
@@ -200,9 +205,17 @@ export class ExternalEmailDeliveryError extends Error {
   }
 }
 
-export function emailRetryDelayMs(attemptNumber: number) {
+export function emailRetryDelayMs(attemptNumber: number, errorCode?: string | null) {
   const exponent = Math.max(0, Math.min(10, attemptNumber - 1));
+  if (errorCode === PROVIDER_QUOTA_ERROR_CODE) {
+    return Math.min(EMAIL_QUOTA_RETRY_MAX_MS, EMAIL_QUOTA_RETRY_BASE_MS * (2 ** exponent));
+  }
   return Math.min(EMAIL_RETRY_MAX_MS, EMAIL_RETRY_BASE_MS * (2 ** exponent));
+}
+
+/** A 429 whose provider error name is a quota or rate limit (Resend: daily_quota_exceeded, rate_limit_exceeded). */
+export function isProviderQuotaError(error: EmailProviderRequestError) {
+  return error.status === 429 && /quota|rate[_ -]?limit/i.test(error.code);
 }
 
 export function normalizeEmailDeliveryError(error: unknown): NormalizedEmailDeliveryError {
@@ -211,6 +224,13 @@ export function normalizeEmailDeliveryError(error: unknown): NormalizedEmailDeli
     return { code: error.code, message: error.message, retryable: error.retryable };
   }
   if (error instanceof EmailProviderRequestError) {
+    if (isProviderQuotaError(error)) {
+      return {
+        code: PROVIDER_QUOTA_ERROR_CODE,
+        message: PROVIDER_QUOTA_MESSAGE,
+        retryable: true,
+      };
+    }
     return {
       code: error.code,
       message: error.message,
@@ -608,7 +628,7 @@ async function finalizeFailedAttempt(
 ) {
   const attemptNumber = message.attemptCount + 1;
   const reschedule = error.retryable && attemptNumber < MAX_EMAIL_DELIVERY_ATTEMPTS;
-  const availableAt = new Date(completedAt.getTime() + emailRetryDelayMs(attemptNumber));
+  const availableAt = new Date(completedAt.getTime() + emailRetryDelayMs(attemptNumber, error.code));
   const finalized = await prisma.$transaction(async (tx) => {
     const updated = await tx.messageOutbox.updateMany({
       where: {
