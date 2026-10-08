@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash, randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import { MessagingError } from "@/modules/communications/messaging-error";
 import { REGISTRATION_MANAGE_LINK_SENTINEL } from "@/modules/communications/manage-link";
 import {
   DEFAULT_MESSAGE_TEMPLATES,
@@ -437,6 +438,13 @@ async function enqueueTransactionalMessage(
     ?? registration.waitlistEntry?.position
     ?? 0;
   const source = template?.versions[0];
+  // The custom message has no default text: never fall back to the blank one.
+  if (input.templateKey === "CUSTOM_MESSAGE" && !source) {
+    throw new MessagingError(
+      "TEMPLATE_NOT_PUBLISHED",
+      "The Custom message template has not been published for this event. Write and publish it in Communications, then try again.",
+    );
+  }
   const fallback = DEFAULT_MESSAGE_TEMPLATES[input.templateKey];
   const instructions = paymentInstructions(
     input.templateKey,
@@ -590,6 +598,12 @@ async function enqueueTransactionalMessage(
     context,
   );
   if (!rendered.isComplete) {
+    if (input.templateKey === "CUSTOM_MESSAGE") {
+      throw new MessagingError(
+        "INVALID_TEMPLATE",
+        `The Custom message cannot be sent because it uses ${rendered.unresolvedTokens.map((token) => `{{${token}}}`).join(", ")}, which has no value for these registrations. Edit and publish the template without it.`,
+      );
+    }
     throw new Error(
       `The ${input.templateKey} template has unresolved tokens: ${rendered.unresolvedTokens.join(", ")}.`,
     );

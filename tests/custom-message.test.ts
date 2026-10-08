@@ -176,6 +176,20 @@ describe("custom message template kind", () => {
     expect(CUSTOM_MESSAGE_TOKEN_KEYS).not.toContain("refund_amount");
   });
 
+  it("rejects tokens outside the custom message's own list, naming the token", () => {
+    const allowed = new Set<string>(CUSTOM_MESSAGE_TOKEN_KEYS);
+    for (const token of ["refund_amount", "club_assignments_block", "payment_instructions", "announcement_body"]) {
+      const result = validateMessageTemplate({ subject: "Hi", body: `Text {{${token}}}`, allowedTokens: allowed });
+      expect(result.isValid).toBe(false);
+      expect(result.issues).toEqual([expect.objectContaining({ field: "body", code: "UNKNOWN_TOKEN", token, message: expect.stringContaining(`{{${token}}}`) })]);
+    }
+    expect(validateMessageTemplate({
+      subject: "{{event_name}}",
+      body: CUSTOM_MESSAGE_TOKEN_KEYS.map((token) => `{{${token}}}`).join(" "),
+      allowedTokens: allowed,
+    }).isValid).toBe(true);
+  });
+
   it("shows per-attendee QR codes for the announcement and the custom message only", () => {
     expect(showsPerAttendeeQrs("EVENT_ANNOUNCEMENT")).toBe(true);
     expect(showsPerAttendeeQrs("CUSTOM_MESSAGE")).toBe(true);
@@ -220,6 +234,31 @@ describe("custom message to a party on the selected-audience path", () => {
 
     expect(html.match(/<img /g)).toHaveLength(2);
     expect(html).toContain("Assigned: Prayer");
+  });
+
+  it("links to the portal above 8 attendees from the plural token too", async () => {
+    const { tx, upsert } = customFixture(9, "{{checkin_qr_images}}\n\nAfter");
+    await sendCustom(tx);
+    const created = (upsert.mock.calls[0][0] as { create: Record<string, string> }).create;
+
+    expect(created.bodyHtmlSnapshot).not.toContain("<img ");
+    expect(created.bodyTextSnapshot).toContain("[Show our check-in passes](");
+    expect(created.bodyHtmlSnapshot).toContain(">Show our check-in passes</a>");
+    expect(created.bodyTextSnapshot).not.toContain("{{");
+  });
+
+  it("refuses to send, rather than use the blank default, when nothing is published", async () => {
+    const { tx, upsert } = customFixture(2);
+    tx.eventMessageTemplate.findUnique.mockResolvedValue({ isEnabled: true, versions: [] });
+
+    await expect(sendCustom(tx)).rejects.toMatchObject({ code: "TEMPLATE_NOT_PUBLISHED" });
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses a token with no value for the registration with a message, not a crash", async () => {
+    const { tx, upsert } = customFixture(2, "Hello {{club_assignments_block}}");
+    await expect(sendCustom(tx)).rejects.toMatchObject({ code: "INVALID_TEMPLATE", message: expect.stringContaining("club_assignments_block") });
+    expect(upsert).not.toHaveBeenCalled();
   });
 
   it("links to the portal above 8 attendees, as the announcement does", async () => {

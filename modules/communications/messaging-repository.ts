@@ -1,5 +1,7 @@
 import "server-only";
 
+import { MessagingError } from "@/modules/communications/messaging-error";
+
 import { createHash, randomUUID } from "node:crypto";
 import {
   MessageOutboxStatus,
@@ -69,6 +71,8 @@ import {
   renderMessageTemplate,
   selectRegistrationMessageTemplate,
   showsPerAttendeeQrs,
+  validateMessageTemplate,
+  CUSTOM_MESSAGE_TOKEN_KEYS,
   type MessageTemplateContext,
   type MessageTemplateKey,
   withChurchBilledLinkWording,
@@ -188,29 +192,7 @@ export type QueuedRegistrationMessages = {
   deliveryMode: "DISABLED" | "LOCAL_CAPTURE" | "EXTERNAL_EMAIL";
 };
 
-export class MessagingError extends Error {
-  constructor(
-    public readonly code:
-      | "MESSAGE_NOT_FOUND"
-      | "TEMPLATE_NOT_FOUND"
-      | "DELIVERY_DISABLED"
-      | "EXTERNAL_EMAIL_NOT_CONFIGURED"
-      | "MESSAGE_NOT_RETRYABLE"
-      | "MESSAGE_NOT_RESENDABLE"
-      | "PREVIEW_CHANGED"
-      | "EMPTY_AUDIENCE"
-      | "IDEMPOTENCY_KEY_REUSED"
-      | "EVENT_NOT_ELIGIBLE"
-      | "INVALID_TEMPLATE"
-      | "TEMPLATE_NOT_PUBLISHED"
-      | "ATTACHMENTS_INVALID",
-    message: string,
-    public readonly details?: Record<string, unknown>,
-  ) {
-    super(message);
-    this.name = "MessagingError";
-  }
-}
+export { MessagingError };
 
 function stringArrayFromJson(value: Prisma.JsonValue | null | undefined) {
   if (!Array.isArray(value)) return [];
@@ -990,6 +972,19 @@ export async function publishMessageTemplateVersion(
       include: { versions: { select: { versionNumber: true } } },
     });
     if (!template) throw new MessagingError("TEMPLATE_NOT_FOUND", "That message template does not exist for this event.");
+    // The custom message offers a shorter token list. A token outside it (a refund amount, a club block) would
+    // render stock text or fail the send, so it is refused here, naming the token.
+    if (template.key === "CUSTOM_MESSAGE") {
+      const validation = validateMessageTemplate({
+        subject: input.subjectTemplate,
+        body: input.bodyTemplate,
+        allowedTokens: new Set<string>(CUSTOM_MESSAGE_TOKEN_KEYS),
+      });
+      const issue = validation.issues.find((candidate) => candidate.code === "UNKNOWN_TOKEN");
+      if (issue) {
+        throw new MessagingError("INVALID_TEMPLATE", issue.message, { field: issue.field, token: issue.token });
+      }
+    }
     const nextVersion = Math.max(0, ...template.versions.map((version) => version.versionNumber)) + 1;
     // Attachments carry forward unless the author sent a list, which then is the whole set (#824).
     const attachmentFileIds = input.attachmentFileIds

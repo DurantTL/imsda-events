@@ -59,6 +59,7 @@ const ids = {
   event: `${P}_event`,
   other: `${P}_other`,
   fresh: `${P}_fresh`,
+  scale: `${P}_scale`,
   form: `${P}_form`,
   version: `${P}_version`,
 };
@@ -121,7 +122,8 @@ function startProviderStub() {
   });
 }
 
-const eventIds = [ids.event, ids.other, ids.fresh];
+const eventIds = [ids.event, ids.other, ids.fresh, ids.scale];
+const SCALE_COUNT = 250;
 
 async function cleanup() {
   await prisma.auditLog.deleteMany({ where: { OR: [{ eventId: { in: eventIds } }, { actorUserId: ids.staff }] } });
@@ -131,6 +133,7 @@ async function cleanup() {
   await prisma.eventMessageTemplate.deleteMany({ where: inEvents });
   await prisma.messageFile.deleteMany({ where: inEvents });
   await prisma.event.deleteMany({ where: { id: { in: eventIds } } });
+  await prisma.person.deleteMany({ where: { id: { startsWith: `${P}_sc` } } });
   await prisma.person.deleteMany({ where: { id: { in: [ids.holderA, ids.holderB, ids.holderC, ids.ann, ids.bo, ids.cy, ids.dee] } } });
   await prisma.user.deleteMany({ where: { id: ids.staff } });
 }
@@ -176,7 +179,7 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>) {
       { id: ids.dee, firstName: "Dee", lastName: "Gone" },
     ],
   });
-  for (const [eventId, name] of [[ids.event, "Custom Message Retreat"], [ids.other, "Another Synthetic Event"], [ids.fresh, "Brand New Synthetic Event"]] as const) {
+  for (const [eventId, name] of [[ids.event, "Custom Message Retreat"], [ids.other, "Another Synthetic Event"], [ids.fresh, "Brand New Synthetic Event"], [ids.scale, "Scale Synthetic Event"]] as const) {
     await prisma.event.create({
       data: { id: eventId, slug: `${eventId}-slug`, name, startsAt: new Date("2027-10-08T21:00:00Z"), endsAt: new Date("2027-10-10T17:00:00Z"), location: "Synthetic Camp" },
     });
@@ -423,10 +426,75 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>) {
   );
   assert(withTokens.bodyTextSnapshot.includes("Ann Synthetic\n- 1st choice: Service") && withTokens.bodyTextSnapshot.includes("Bo Synthetic\n- 1st choice: Music"), "and {{seminar_preferences}} per attendee");
 
+  // 7b. Tokens outside the custom message's own list cannot be published: they would render stock text or fail a send.
+  for (const token of ["refund_amount", "club_assignments_block", "payment_instructions"]) {
+    let refusal = "";
+    try {
+      await publishMessageTemplateVersion(ids.event, listed.id, {
+        subjectTemplate: "Hello", bodyTemplate: `Text {{${token}}}`, isEnabled: true,
+      }, ids.staff);
+    } catch (error) {
+      const failure = error as { code?: string; message?: string };
+      refusal = failure.code === "INVALID_TEMPLATE" ? failure.message ?? "" : "";
+    }
+    assert(refusal.includes(`{{${token}}}`), `publishing {{${token}}} in a custom message is refused, naming the token: "${refusal}"`);
+  }
+  const stillPublished = await prisma.messageTemplateVersion.findFirstOrThrow({
+    where: { templateId: listed.id, status: "PUBLISHED" }, select: { versionNumber: true },
+  });
+  assert(stillPublished.versionNumber === 1, "the refused publishes left the published version alone");
+
   // 8. Balance reminder through Email selected is unchanged.
   const reminderPreview = await getSelectedAudiencePreview(ids.event, "BALANCE_REMINDER", [party]);
   assert(reminderPreview.templatePublished && reminderPreview.templateId === null && reminderPreview.attachments.length === 0 && !reminderPreview.carriesFiles, "a balance reminder review is unchanged by the new fields");
   assert(reminderPreview.includedCount === 1 && reminderPreview.recipients[0].resolvedTemplateKey === "BALANCE_REMINDER", "a balance reminder still goes to the registration with a balance");
+
+  // 9. Scale: 250 recipients, each with the template's one attachment, in one serializable transaction.
+  const scaleIds = Array.from({ length: SCALE_COUNT }, (_, index) => `${P}_sc${index}`);
+  await prisma.person.createMany({
+    data: scaleIds.flatMap((id, index) => [
+      { id: `${id}h`, firstName: `Holder${index}`, lastName: "Scale", normalizedEmail: EMAIL(`scale${index}`) },
+      { id: `${id}a`, firstName: `Guest${index}`, lastName: "Scale" },
+    ]),
+  });
+  await prisma.registration.createMany({
+    data: scaleIds.map((id, index) => ({
+      id: `${id}r`, eventId: ids.scale, accountHolderPersonId: `${id}h`, confirmationCode: `${P}-SC${index}`.toUpperCase(),
+      status: "CONFIRMED" as const, totalAmount: "50.00", submittedAt: new Date("2027-09-01T10:00:00Z"),
+      contactSnapshot: { firstName: `Holder${index}`, lastName: "Scale", email: EMAIL(`scale${index}`) },
+    })),
+  });
+  await prisma.registrationAttendee.createMany({
+    data: scaleIds.map((id, index) => ({
+      id: `${id}t`, eventId: ids.scale, registrationId: `${id}r`, personId: `${id}a`, attendeeType: "ADULT" as const, position: 0,
+      profileSnapshot: { firstName: `Guest${index}`, lastName: "Scale" },
+    })),
+  });
+  await ensureEventMessagingDefaults(ids.scale);
+  const scaleTemplate = await prisma.eventMessageTemplate.findUniqueOrThrow({
+    where: { eventId_key: { eventId: ids.scale, key: "CUSTOM_MESSAGE" } }, select: { id: true },
+  });
+  const scaleFile = await createMessageFile(ids.scale, file(pdfOf("scale-agenda"), "Agenda.pdf", "application/pdf"), ids.staff, "attachment", prisma);
+  await publishMessageTemplateVersion(ids.scale, scaleTemplate.id, {
+    subjectTemplate: "Hello {{recipient_name}}", bodyTemplate: "**Hi** {{recipient_name}}\n\n![QR]({{checkin_qr_image}})\n\n{{seminar_preferences}}", isEnabled: true,
+    attachmentFileIds: [scaleFile.id],
+  }, ids.staff);
+  const scaleRegistrationIds = scaleIds.map((id) => `${id}r`);
+  const scalePreview = await getSelectedAudiencePreview(ids.scale, "CUSTOM_MESSAGE", scaleRegistrationIds);
+  assert(scalePreview.includedCount === SCALE_COUNT, `all ${SCALE_COUNT} are included`);
+  const scaleStart = Date.now();
+  const scaleSent = await enqueueSelectedAudienceBatch(ids.scale, {
+    batchId: randomUUID(), templateKey: "CUSTOM_MESSAGE", registrationIds: scaleRegistrationIds, announcementTitle: "", announcementBody: "",
+    previewFingerprint: scalePreview.fingerprint,
+  }, ids.staff);
+  const scaleMs = Date.now() - scaleStart;
+  assert(scaleSent.includedCount === SCALE_COUNT, "all 250 are queued");
+  assert(
+    (await prisma.messageOutboxFile.count({ where: { message: { eventId: ids.scale }, disposition: "ATTACHMENT" } })) === SCALE_COUNT,
+    "every message links its attachment",
+  );
+  console.log(`scale: ${SCALE_COUNT} recipients with 1 attachment queued in ${scaleMs} ms (transaction timeout 120000 ms)`);
+  assert(scaleMs < 60_000, `the 250-recipient send stays well inside the transaction timeout, took ${scaleMs} ms`);
 
   console.log("custom message verification passed");
 }

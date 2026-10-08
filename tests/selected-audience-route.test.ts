@@ -122,6 +122,23 @@ describe("selected-audience route and the custom message", () => {
     expect(await response.json()).toMatchObject({ error: "TEMPLATE_NOT_PUBLISHED" });
   });
 
+  it("denies both the preview and the send without communications access", async () => {
+    mocks.requirePermission.mockRejectedValue(new mocks.AccessDeniedError("You do not have access to this event's messages."));
+    const denied = [
+      await POST(request({ mode: "preview", templateKey: "CUSTOM_MESSAGE", registrationIds: ["registration-1"] }), context),
+      await POST(request({
+        batchId,
+        templateKey: "CUSTOM_MESSAGE",
+        registrationIds: ["registration-1"],
+        previewFingerprint: "a".repeat(64),
+      }), context),
+    ];
+
+    expect(denied.map((response) => response.status)).toEqual([403, 403]);
+    expect(mocks.getSelectedAudiencePreview).not.toHaveBeenCalled();
+    expect(mocks.enqueueSelectedAudienceBatch).not.toHaveBeenCalled();
+  });
+
   it("still requires a title and message for the event announcement", async () => {
     const response = await POST(request({
       batchId,

@@ -884,7 +884,7 @@ export const MESSAGE_TEMPLATE_TOKEN_OPTIONS: readonly {
     key: "checkin_qr_images",
     label: "Check-in QR codes (one per attendee)",
     description:
-      "Each attendee's own QR code image, labelled with their name. Written on its own line, with no image markup around it. Event announcements and custom messages fill it for every attendee (the portal link above 8 attendees).",
+      "Each attendee's own QR code image, labelled with their name. Written on its own line, with no image markup around it. Event announcements and custom messages fill it for every attendee; above 8 attendees it is a single link to the check-in passes instead.",
   },
   {
     key: "club_assignments_block",
@@ -1060,6 +1060,8 @@ export type MessageTemplateValidationResult = {
 export function validateMessageTemplate(input: {
   subject: string;
   body: string;
+  /** When given, only these tokens are allowed (the custom message offers a shorter list than the rest). */
+  allowedTokens?: ReadonlySet<string>;
 }): MessageTemplateValidationResult {
   const issues: MessageTemplateValidationIssue[] = [];
   const unknownTokens: string[] = [];
@@ -1096,6 +1098,14 @@ export function validateMessageTemplate(input: {
           field,
           code: "UNKNOWN_TOKEN",
           message: `{{${token}}} is not an allowed message token.`,
+          token,
+        });
+      } else if (input.allowedTokens && !input.allowedTokens.has(token)) {
+        unknownTokens.push(token);
+        issues.push({
+          field,
+          code: "UNKNOWN_TOKEN",
+          message: `{{${token}}} cannot be used in this message. Choose a token from the list in the editor.`,
           token,
         });
       }

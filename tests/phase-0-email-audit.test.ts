@@ -283,8 +283,8 @@ function contextFor(fixture: EventFixture, registration: RegistrationFixture): M
   };
 }
 
-/** The custom message ships blank on purpose (#850), so it has no default text to audit. */
-const shipsDefaultText = (template: { subject: string; body: string }) => template.subject !== "" && template.body !== "";
+/** The custom message ships blank on purpose (#850), so it has no default text to audit. It is excluded by key. */
+const shipsDefaultText = (template: { key: string }) => template.key !== "CUSTOM_MESSAGE";
 
 describe("Phase 0 email audit fixtures", () => {
   it("covers the nine supported form templates with synthetic registrations", () => {
@@ -322,6 +322,13 @@ describe("Phase 0 email audit fixtures", () => {
     expect(registrationTypes.fall_camporee).toEqual(["group", "group"]);
     expect(registrationTypes.camp_meeting_export).toEqual(["individual", "group", "individual", "individual"]);
     expect(registrationTypes.honors_weekend).toEqual(["group", "group"]);
+  });
+
+  it("has exactly one blank default, the custom message", () => {
+    const blank = DEFAULT_MESSAGE_TEMPLATE_LIST.filter((template) => template.subject === "" || template.body === "");
+    expect(blank.map((template) => template.key)).toEqual(["CUSTOM_MESSAGE"]);
+    expect(DEFAULT_MESSAGE_TEMPLATE_LIST.filter((template) => !shipsDefaultText(template)).map((template) => template.key))
+      .toEqual(["CUSTOM_MESSAGE"]);
   });
 
   it("renders every available default through the production HTML and text pipeline for every applicable registration state", () => {
