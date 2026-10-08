@@ -274,6 +274,9 @@ script and pattern. When this happens, **file an xCloud support ticket**: this
 is a platform-level regression, not something fixable from inside the site.
 Until it's resolved, every deploy needs the manual rebuild-and-swap below
 instead of the dashboard Deploy button.
+A single failed guard run during a manual swap is expected and harmless: it can
+happen between the stop and the rename, and between the run and the network
+connect.
 
 #### Manual rebuild-and-swap
 
@@ -301,9 +304,16 @@ the override file above, and the commit SHA being deployed.
      mv "$TMP" "$DBURL"
    else
      rm -f "$TMP"
-     echo "WARNING: no DATABASE_URL found; keeping the existing $DBURL" >&2
+     if [ -s "$DBURL" ]; then
+       echo "WARNING: no DATABASE_URL found in the container; keeping the existing $DBURL" >&2
+     else
+       echo "No DATABASE_URL found anywhere - stop here, do not continue to step 3." >&2
+     fi
    fi
 ```
+
+If the "No DATABASE_URL found anywhere" message appears, do not go past step 1:
+there is no database URL to give the new container.
 
 2. **Build the new image from the current checkout:**
 
