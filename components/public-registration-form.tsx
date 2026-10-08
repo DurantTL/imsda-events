@@ -2069,7 +2069,7 @@ export function PublicRegistrationForm({
             type={field.type === "EMAIL" ? "email" : field.type === "PHONE" ? "tel" : field.type === "DATE" ? "date" : field.type === "NUMBER" ? "number" : "text"}
             min={field.type === "NUMBER" ? numberFieldBounds(field)?.minimumAge ?? 0 : field.type === "DATE" ? dateFieldBounds(field).min : undefined}
             max={field.type === "NUMBER" ? numberFieldBounds(field)?.maximumAge : field.type === "DATE" ? (isBirthDateField(field) ? pricingDate : undefined) : undefined}
-            inputMode={field.type === "PHONE" ? "tel" : field.type === "NUMBER" ? "numeric" : undefined}
+            inputMode={field.type === "PHONE" ? "tel" : field.type === "EMAIL" ? "email" : field.type === "NUMBER" ? "numeric" : undefined}
             autoComplete={autoComplete}
             required={field.required && !excused}
             readOnly={context.attendeeIndex !== null && lockedAttendeeFieldKeys.has(field.key)}

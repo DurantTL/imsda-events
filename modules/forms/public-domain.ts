@@ -1,3 +1,4 @@
+import { normalizePhoneAnswer } from "@/lib/field-validation";
 import { z } from "zod";
 import { pluralAttendeeLabel } from "@/modules/forms/attendee-label";
 import { sanitizeAddressInput } from "@/modules/forms/address";
@@ -188,7 +189,7 @@ function normalizeResponsesForScope(
       continue;
     }
     if (field.type === "CALCULATED") continue;
-    responses[key] = field.type === "ADDRESS" ? sanitizeAddressInput(value) : normalizeResponseValue(value);
+    responses[key] = field.type === "ADDRESS" ? sanitizeAddressInput(value) : field.type === "PHONE" ? normalizePhoneAnswer(normalizeResponseValue(value)) : normalizeResponseValue(value);
   }
 
   // Re-evaluate until stable so a hidden controlling field cannot make another

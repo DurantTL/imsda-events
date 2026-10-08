@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isUnchangedFromStored, normalizePhoneAnswer, validateEmail, validatePhone, validateZip, type FieldCheck } from "@/lib/field-validation";
 import { clubYearFor, parseCalendarDate } from "@/modules/club-rosters/domain";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 
@@ -89,7 +90,7 @@ const isoDate = z
   .refine((value) => value === "" || parseCalendarDate(value) !== null, "Enter the date as year-month-day.");
 
 /** What a director or parent submits. Unknown keys are dropped, never stored. */
-export const healthRecordInputSchema = z
+const healthRecordShape = z
   .object({
     addressLine1: optionalText(120),
     addressLine2: optionalText(120),
@@ -121,17 +122,86 @@ export const healthRecordInputSchema = z
     consentActivities: z.literal(true, { error: "The attendance and activity permission statement must be agreed to." }),
     consentPhotocopy: z.literal(true, { error: "The permission for photocopying must be agreed to." }),
     signature: text(160).pipe(z.string().min(1, "Type the guardian's name as the signature.")),
-  })
-  .superRefine((value, context) => {
-    if (value.hasAllergies === "YES" && value.allergyDetails === "") {
-      context.addIssue({ code: "custom", path: ["allergyDetails"], message: "Describe the allergies, reactions, severity and normal remedy." });
-    }
-    if (value.hasInsurance === "YES" && value.insuranceCompany === "") {
-      context.addIssue({ code: "custom", path: ["insuranceCompany"], message: "Enter the insurance company." });
-    }
   });
 
+type TypedHealthCheck = (value: string) => FieldCheck;
+
+const typedChecks: Array<{ key: "zip" | "phone" | "email" | "insurancePhone" | "guardianPhone" | "guardianEmail"; check: TypedHealthCheck; message: string }> = [
+  { key: "zip", check: validateZip, message: "Enter a 5-digit ZIP code, like 50010." },
+  { key: "phone", check: validatePhone, message: "Enter a valid US phone number with 10 digits, like (515) 555-0134." },
+  { key: "email", check: validateEmail, message: "Enter a valid email address." },
+  { key: "insurancePhone", check: validatePhone, message: "Enter a valid US phone number with 10 digits, like (515) 555-0134." },
+  { key: "guardianPhone", check: validatePhone, message: "Enter a valid US phone number with 10 digits, like (515) 555-0134." },
+  { key: "guardianEmail", check: validateEmail, message: "Enter a valid email address." },
+];
+
+const CONTACT_PHONE_MESSAGE = "Enter a valid US phone number with 10 digits, like (515) 555-0134.";
+
+/**
+ * The input schema (#855). Phones, emails and ZIP codes are checked by type
+ * and phones are stored in one form. `stored` holds the record's current
+ * values, so an old answer that fails today's checks and was left alone does
+ * not block the save (it is flagged on the form instead). Messages carry no
+ * submitted value.
+ */
+export function healthRecordInputSchemaFor(stored: Record<string, unknown> = {}) {
+  const storedContactPhones = new Set(
+    Array.isArray(stored.emergencyContacts)
+      ? stored.emergencyContacts.flatMap((contact) => {
+          const phone = (contact as { phone?: unknown } | null)?.phone;
+          return typeof phone === "string" ? [phone.trim()] : [];
+        })
+      : [],
+  );
+  return healthRecordShape
+    .superRefine((value, context) => {
+      if (value.hasAllergies === "YES" && value.allergyDetails === "") {
+        context.addIssue({ code: "custom", path: ["allergyDetails"], message: "Describe the allergies, reactions, severity and normal remedy." });
+      }
+      if (value.hasInsurance === "YES" && value.insuranceCompany === "") {
+        context.addIssue({ code: "custom", path: ["insuranceCompany"], message: "Enter the insurance company." });
+      }
+      for (const { key, check, message } of typedChecks) {
+        const submitted = value[key];
+        if (submitted === "" || isUnchangedFromStored(submitted, stored[key])) continue;
+        if (!check(submitted).ok) context.addIssue({ code: "custom", path: [key], message });
+      }
+      value.emergencyContacts.forEach((contact, index) => {
+        if (contact.phone === "" || storedContactPhones.has(contact.phone)) return;
+        if (!validatePhone(contact.phone).ok) context.addIssue({ code: "custom", path: ["emergencyContacts", index, "phone"], message: CONTACT_PHONE_MESSAGE });
+      });
+    })
+    .transform((value) => ({
+      ...value,
+      phone: normalizePhoneAnswer(value.phone) as string,
+      insurancePhone: normalizePhoneAnswer(value.insurancePhone) as string,
+      guardianPhone: normalizePhoneAnswer(value.guardianPhone) as string,
+      emergencyContacts: value.emergencyContacts.map((contact) => ({ ...contact, phone: normalizePhoneAnswer(contact.phone) as string })),
+    }));
+}
+
+export const healthRecordInputSchema = healthRecordInputSchemaFor();
+
 export type HealthRecordInput = z.infer<typeof healthRecordInputSchema>;
+
+/**
+ * The fields of a stored record that fail today's checks, so the form can flag
+ * them for correction (#855). Keys only, never a value.
+ */
+export function healthFieldsNeedingCorrection(values: Record<string, unknown>): string[] {
+  const flagged: string[] = [];
+  for (const { key, check } of typedChecks) {
+    const value = values[key];
+    if (typeof value === "string" && value.trim() !== "" && !check(value).ok) flagged.push(key);
+  }
+  if (Array.isArray(values.emergencyContacts)) {
+    values.emergencyContacts.forEach((contact, index) => {
+      const phone = (contact as { phone?: unknown } | null)?.phone;
+      if (typeof phone === "string" && phone.trim() !== "" && !validatePhone(phone).ok) flagged.push(`emergencyContacts.${index}.phone`);
+    });
+  }
+  return flagged;
+}
 
 /**
  * The record as stored: one value per field key. `consent` and `signature`

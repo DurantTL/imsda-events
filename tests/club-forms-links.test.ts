@@ -98,14 +98,14 @@ const slipAnswers = {
   city: "Exampleville",
   state: "IA",
   zip: "50001",
-  phone: "555-0110",
+  phone: "515-555-0110",
   activity: "Canoe trip",
   activity_date: "2026-11-07",
   ride_with: "Pat Sample",
   parent_signature: "Pat Sample",
   parent_signature_date: "2026-10-30",
   relationship: "Parent",
-  emergency_contact_phone: "555-0111",
+  emergency_contact_phone: "515-555-0111",
   physician_name: SECRET_HEALTH,
 };
 
@@ -457,9 +457,9 @@ describe("submitting through a private link (#610)", () => {
     const answers = {
       full_name: "Alex Volunteer", birth_date: "1985-06-15", gender: "Male", street: "2 Example Road", city: "Exampleville", state: "MO", zip: "64000",
       email: "alex@example.test", church: "Example Church", club: "Example Church", health_limitation: "No", conduct_accused: "No",
-      reference_1_name: "A", reference_1_address: "B", reference_1_phone: "C",
-      reference_2_name: "A", reference_2_address: "B", reference_2_phone: "C",
-      reference_3_name: "A", reference_3_address: "B", reference_3_phone: "C",
+      reference_1_name: "A", reference_1_address: "B", reference_1_phone: "515-555-0140",
+      reference_2_name: "A", reference_2_address: "B", reference_2_phone: "515-555-0140",
+      reference_3_name: "A", reference_3_address: "B", reference_3_phone: "515-555-0140",
       signature: "Alex Volunteer", signature_date: "2026-10-02", signature_acknowledgment: true,
       office_signature: "Forged office signature", office_recommendation: "Recommended",
     };

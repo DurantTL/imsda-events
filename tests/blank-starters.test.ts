@@ -62,7 +62,7 @@ describe("blank form templates (#592)", () => {
 
   it("can be test-submitted: the general form", () => {
     const { definition } = getFormTemplate(BLANK_FORM_KEY)!;
-    const ok = validateTestResponses(definition, { first_name: "Sam", last_name: "Sample", email: "sam@example.test", phone: "555-0100" });
+    const ok = validateTestResponses(definition, { first_name: "Sam", last_name: "Sample", email: "sam@example.test", phone: "515-555-0100" });
     expect(ok.isValid).toBe(true);
     expect(validateTestResponses(definition, {}).isValid).toBe(false);
   });
@@ -74,7 +74,7 @@ describe("blank form templates (#592)", () => {
       director_name: "Dana Director",
       church_name: "Sample Church",
       email: "director@example.test",
-      phone: "555-0101",
+      phone: "515-555-0101",
       first_name: "Alex",
       last_name: "Demo",
       attendee_type: "Pathfinder",

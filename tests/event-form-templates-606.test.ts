@@ -104,7 +104,7 @@ describe("the #606 form templates", () => {
 describe("Pathfinder Leadership Weekend", () => {
   const key = "leadership_weekend";
   const leader = {
-    first_name: "Sam", last_name: "Sample", gender: "Male", email: "leader@example.test", club_position: "Counselor", phone: "555-0100", years_as_leader: 3,
+    first_name: "Sam", last_name: "Sample", gender: "Male", email: "leader@example.test", club_position: "Counselor", phone: "515-555-0100", years_as_leader: 3,
     pathfinder_club: "Sample Trail Pathfinders", church_name: "Sample Hills SDA Church", training_track: "Master Guide", induction: "No", teaching_class: "No",
     lodging: "Tent or Camper", church_billing_acknowledgment: true,
   };
@@ -185,7 +185,7 @@ describe("TLT Retreat", () => {
 
 describe("Outdoor School", () => {
   const key = "outdoor_school";
-  const registration = { responsible_organization: "Sample Elementary School", contact_name: "Pat Teacher", email: "school@example.test", phone: "555-0101" };
+  const registration = { responsible_organization: "Sample Elementary School", contact_name: "Pat Teacher", email: "school@example.test", phone: "515-555-0101" };
   const students = [
     { clientId: "student-1", responses: { first_name: "Robin", last_name: "Sample", attendee_age: 11, gender: "Female" } },
     { clientId: "student-2", responses: { first_name: "Lee", last_name: "Sample", attendee_age: 12, gender: "Male" } },
@@ -221,7 +221,7 @@ describe("Outdoor School", () => {
 describe("Hispanic Institute of Evangelism", () => {
   const key = "hispanic_institute";
   const attendee = {
-    first_name: "Ana", last_name: "Sample", church_name: "Sample Hills SDA Church", church_position: "Elder", phone: "555-0102", email: "ana@example.test",
+    first_name: "Ana", last_name: "Sample", church_name: "Sample Hills SDA Church", church_position: "Elder", phone: "515-555-0102", email: "ana@example.test",
     payment_method: "Credit / debit card",
   };
 
@@ -249,7 +249,7 @@ describe("Hispanic Institute of Evangelism", () => {
 
 describe("TLT Opportunities", () => {
   const key = "tlt_opportunities";
-  const tlt = { first_name: "Jo", last_name: "Sample", club_name: "Sample Creek Pathfinders", email: "jo@example.test", phone: "555-0103", need_tlt_shirt: "No", trading_in_old_shirt: "No" };
+  const tlt = { first_name: "Jo", last_name: "Sample", club_name: "Sample Creek Pathfinders", email: "jo@example.test", phone: "515-555-0103", need_tlt_shirt: "No", trading_in_old_shirt: "No" };
 
   it("lists all 21 leadership opportunities, 7 Friday morning events and 12 Oregon Trail stations", () => {
     expect(fieldOf(key, "leadership_opportunities").options).toHaveLength(21);
@@ -497,7 +497,7 @@ describe("number checks (#606)", () => {
   it("years as a leader must be a whole number", () => {
     const key = "leadership_weekend";
     const leader = {
-      first_name: "Sam", last_name: "Sample", gender: "Male", email: "leader@example.test", club_position: "Counselor", phone: "555-0100", years_as_leader: 3,
+      first_name: "Sam", last_name: "Sample", gender: "Male", email: "leader@example.test", club_position: "Counselor", phone: "515-555-0100", years_as_leader: 3,
       pathfinder_club: "Sample Trail Pathfinders", church_name: "Sample Hills SDA Church", training_track: "Master Guide", induction: "No", teaching_class: "No",
       lodging: "Tent or Camper", church_billing_acknowledgment: true,
     };

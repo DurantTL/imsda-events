@@ -9,7 +9,9 @@ import {
   fieldValuesFromInput,
   hasHealthNoteFor,
   healthAuditActor,
+  healthFieldsNeedingCorrection,
   healthRecordInputSchema,
+  healthRecordInputSchemaFor,
   healthRecordStatus,
   viewerCan,
   type HealthViewer,
@@ -60,6 +62,29 @@ describe("health record input", () => {
     expect(values.signature).toEqual({ typedName: "Pat Sample", signedOn: "2026-10-05" });
     expect(hasHealthNoteFor(values)).toBe(true);
     expect(hasHealthNoteFor({ hasAllergies: "NO" })).toBe(false);
+  });
+});
+
+describe("typed health fields (#855)", () => {
+  it("normalises phones and rejects free text with a field path and no value", () => {
+    const parsed = healthRecordInputSchema.parse({ ...syntheticRecord, phone: "5155550100" });
+    expect(parsed.phone).toBe("(515) 555-0100");
+    expect(parsed.emergencyContacts[0].phone).toBe("(515) 555-0103");
+    const result = healthRecordInputSchema.safeParse({ ...syntheticRecord, guardianPhone: "idk", zip: "ABCDE", email: "nope" });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((issue) => issue.path[0]).sort()).toEqual(["email", "guardianPhone", "zip"]);
+      expect(JSON.stringify(result.error.issues)).not.toMatch(/idk|ABCDE|nope/);
+    }
+  });
+
+  it("lets an unchanged old answer through and flags it for correction", () => {
+    const stored = { phone: "Mine", emergencyContacts: [{ firstName: "A", lastName: "B", phone: "911? duh", relationship: "Aunt" }] };
+    const input = { ...syntheticRecord, phone: "Mine", emergencyContacts: stored.emergencyContacts };
+    expect(healthRecordInputSchema.safeParse(input).success).toBe(false);
+    expect(healthRecordInputSchemaFor(stored).safeParse(input).success).toBe(true);
+    expect(healthRecordInputSchemaFor(stored).safeParse({ ...input, phone: "Mine too" }).success).toBe(false);
+    expect(healthFieldsNeedingCorrection(stored)).toEqual(["phone", "emergencyContacts.0.phone"]);
   });
 });
 

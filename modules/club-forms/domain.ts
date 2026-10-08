@@ -4,6 +4,7 @@ import { parseRosterMapping, rosterMappingProblems, type RosterMapping } from "@
 import { formatAddressDisplay, isPlainAddressObject, sanitizeAddressInput } from "@/modules/forms/address";
 import {
   isFieldVisible,
+  normalizeTypedAnswers,
   registrationFormDefinitionSchema,
   todayDateValue,
   validateTestResponses,
@@ -233,7 +234,7 @@ export function sanitizeClubFormAnswers(
     if (!(field.key in cleaned)) continue;
     if (isFieldVisible(field, cleaned)) visible[field.key] = cleaned[field.key];
   }
-  return visible;
+  return normalizeTypedAnswers(definition, visible);
 }
 
 export type ClubFormIssue = { key: string; message: string };
@@ -246,13 +247,14 @@ export type ClubFormIssue = { key: string; message: string };
 export function validateClubFormAnswers(
   definition: RegistrationFormDefinition,
   answers: Record<string, unknown>,
-  options: { draft?: boolean; excludeKeys?: readonly string[] } = {},
+  options: { draft?: boolean; excludeKeys?: readonly string[]; previousAnswers?: Record<string, unknown> } = {},
 ): ClubFormIssue[] {
   const fieldKeys = allFields(definition).map((field) => field.key);
   const result = validateTestResponses(definition, answers, {}, undefined, {
     ignoreAvailability: true,
     ignoredFieldKeys: options.excludeKeys ?? [],
     optionalFieldKeys: options.draft ? fieldKeys : [],
+    previousResponses: options.previousAnswers,
   });
   return result.issues.map((issue) => ({ key: issue.key, message: issue.message }));
 }

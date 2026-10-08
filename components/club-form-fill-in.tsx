@@ -6,12 +6,14 @@ import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { LockKeyhole } from "lucide-react";
 import { ClubFormSectionTitle } from "@/components/club-form-section-title";
 import { DateInput } from "@/components/club-form-date-input";
+import { inputAttributesFor } from "@/lib/field-validation";
 import { addressComponentKeys, addressComponentLabels } from "@/modules/forms/address";
 import {
   dateFieldBounds,
   isFieldRequired,
   isFieldVisible,
   todayDateValue,
+  typedAnswerProblem,
   type RegistrationFormDefinition,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
@@ -81,12 +83,32 @@ export function ClubFormFillIn(props: Props) {
   const current = { answers, rosterMemberId, subjectName };
   const dirty = !doneMessage && clubFormIsDirty(current, saved);
   const allowNavigation = useUnsavedChangesGuard(dirty, clubFormUnsavedMessage);
+  // Inline checks (#855): the same validators the server runs. An old answer that fails and was not changed is
+  // flagged for correction but never blocks saving the rest of the form.
+  const [attempted, setAttempted] = useState(false);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const problemFor = (field: RegistrationFormField) => {
+    const raw = typedAnswerProblem(field, answers[field.key]);
+    if (!raw) return "";
+    const legacy = typedAnswerProblem(field, answers[field.key], initialAnswers[field.key]) === null;
+    if (!legacy && !attempted && !touched[field.key]) return "";
+    return legacy ? `${raw} This saved answer needs correcting.` : raw;
+  };
+  const blockingProblems = definition.sections.flatMap((section) => section.fields)
+    .filter((field) => isFieldVisible(field, answers) && !(props.mode === "link" && field.autoDate === "TODAY"))
+    .filter((field) => typedAnswerProblem(field, answers[field.key]) && typedAnswerProblem(field, answers[field.key], initialAnswers[field.key]));
 
   function set(key: string, value: unknown) {
     setAnswers((current) => ({ ...current, [key]: value }));
   }
 
   async function send(submit: boolean) {
+    setAttempted(true);
+    if (blockingProblems.length > 0) {
+      setError("Check the highlighted answers and try again.");
+      setIssues([]);
+      return;
+    }
     setSaving(true);
     setError("");
     setIssues([]);
@@ -195,7 +217,9 @@ export function ClubFormFillIn(props: Props) {
                   isSensitive={sensitive.has(field.key)}
                   key={field.id}
                   lockedDate={props.mode === "link" && field.autoDate === "TODAY"}
+                  onBlur={() => setTouched((current) => ({ ...current, [field.key]: true }))}
                   onChange={(value) => set(field.key, value)}
+                  problem={problemFor(field)}
                   value={answers[field.key]}
                 />
               ))}
@@ -227,7 +251,9 @@ function FieldInput({
   answers,
   isSensitive,
   lockedDate,
+  onBlur,
   onChange,
+  problem,
 }: {
   field: RegistrationFormField;
   value: unknown;
@@ -235,7 +261,10 @@ function FieldInput({
   isSensitive: boolean;
   /** An auto-date field on a private link: shown, not editable. */
   lockedDate: boolean;
+  onBlur: () => void;
   onChange: (value: unknown) => void;
+  /** The inline message for a typed answer that fails its check, or "". */
+  problem: string;
 }) {
   const required = isFieldRequired(field, answers);
   const label = (
@@ -245,7 +274,15 @@ function FieldInput({
       {isSensitive && <small className="club-form-private"><LockKeyhole aria-hidden="true" size={11} /> Private</small>}
     </span>
   );
-  const help = field.helpText ? <small className="field-help">{field.helpText}</small> : null;
+  const problemId = `club-form-${field.id}-problem`;
+  const help = (
+    <>
+      {field.helpText ? <small className="field-help">{field.helpText}</small> : null}
+      {problem ? <small className="field-error" id={problemId} role="alert">{problem}</small> : null}
+    </>
+  );
+  const invalid = problem ? true : undefined;
+  const describedBy = problem ? problemId : undefined;
   const wide = field.type === "LONG_TEXT" || field.type === "ADDRESS" || field.type === "RADIO" || field.type === "MULTISELECT" || field.type === "RANKED_CHOICE" || field.label.length > 60;
   const className = wide ? "club-form-field-wide" : undefined;
 
@@ -376,15 +413,26 @@ function FieldInput({
     case "NUMBER":
       return (
         <label className={className}>{label}
-          <input inputMode="decimal" required={required} step="any" type="number" value={typeof value === "number" || typeof value === "string" ? String(value) : ""} onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))} />
+          <input aria-describedby={describedBy} aria-invalid={invalid} inputMode="decimal" onBlur={onBlur} required={required} step="any" type="number" value={typeof value === "number" || typeof value === "string" ? String(value) : ""} onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))} />
           {help}
         </label>
       );
     default: {
-      const inputType = field.type === "EMAIL" ? "email" : field.type === "PHONE" ? "tel" : "text";
+      const attributes = field.type === "EMAIL" ? inputAttributesFor("email") : field.type === "PHONE" ? inputAttributesFor("phone") : null;
       return (
         <label className={className}>{label}
-          <input maxLength={field.type === "EMAIL" ? 160 : 500} required={required} type={inputType} value={textOf(value)} onChange={(event) => onChange(event.target.value)} />
+          <input
+            aria-describedby={describedBy}
+            aria-invalid={invalid}
+            autoComplete={attributes?.autoComplete}
+            inputMode={attributes?.inputMode}
+            maxLength={field.type === "EMAIL" ? 160 : field.type === "PHONE" ? 40 : 500}
+            onBlur={onBlur}
+            required={required}
+            type={attributes?.type ?? "text"}
+            value={textOf(value)}
+            onChange={(event) => onChange(event.target.value)}
+          />
           {help}
         </label>
       );

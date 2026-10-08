@@ -142,7 +142,29 @@ export async function saveClubFormSubmission(viewer: ClubFormsViewer, input: Sav
     : "";
 
   const answers = sanitizeClubFormAnswers(definition, input.answers);
-  const issues = validateClubFormAnswers(definition, answers, { draft: !input.submit });
+  let issues = validateClubFormAnswers(definition, answers, { draft: !input.submit });
+  if (issues.length > 0 && input.submissionId) {
+    // Editing a draft (#855): an old answer that fails today's checks is flagged on the form but does not block
+    // the save when it was not changed. The stored values are read only to compare, and never put in a message.
+    const stored = await prisma.clubFormSubmission.findFirst({
+      where: { id: input.submissionId, organizationId: input.organizationId, templateId: template.id, status: "DRAFT" },
+      select: { answers: true, sealedSensitiveAnswers: true },
+    });
+    if (stored) {
+      let sealedAnswers: Record<string, unknown> = {};
+      if (stored.sealedSensitiveAnswers) {
+        try {
+          sealedAnswers = openSensitiveAnswers(input.submissionId, stored.sealedSensitiveAnswers);
+        } catch {
+          sealedAnswers = {};
+        }
+      }
+      issues = validateClubFormAnswers(definition, answers, {
+        draft: !input.submit,
+        previousAnswers: { ...((stored.answers ?? {}) as Record<string, unknown>), ...sealedAnswers },
+      });
+    }
+  }
   if (issues.length > 0) throw new ClubFormError("VALIDATION_FAILED", issues[0].message, issues);
   const subjectName = memberName || input.subjectName?.trim().slice(0, 120) || deriveSubjectName(answers);
   const who = attribution(leader.actor);

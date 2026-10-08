@@ -59,7 +59,7 @@ const staffSensitive: ClubFormsViewer = { kind: "STAFF", userId: "staff-1", syst
 const staffPlain: ClubFormsViewer = { kind: "STAFF", userId: "staff-2", systemAdmin: false };
 
 const SECRET_PHYSICIAN = "Dr. Synthetic Physician";
-const SECRET_PHONE = "555-0199";
+const SECRET_PHONE = "(515) 555-0199";
 
 function slipTemplateRow() {
   const seed = clubFormTemplateSeeds.find((template) => template.key === "off_premises_permission_slip");
@@ -86,7 +86,7 @@ const slipAnswers = {
   city: "Exampleville",
   state: "IA",
   zip: "50001",
-  phone: "555-0110",
+  phone: "515-555-0110",
   activity: "Canoe trip",
   activity_date: "2026-11-07",
   ride_with: "Pat Sample",

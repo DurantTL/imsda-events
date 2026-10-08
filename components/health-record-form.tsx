@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ClubFormSectionTitle } from "@/components/club-form-section-title";
 import { DateInput } from "@/components/club-form-date-input";
+import { inputAttributesFor, isUnchangedFromStored, problemMessage, validateByType, type FieldValueType } from "@/lib/field-validation";
 
 /**
  * The Pathfinder Health Record form (#611), used for a parent opening a
@@ -22,6 +23,18 @@ type Props = {
   sponsoringChurch?: string | null;
   memberName: string;
   doneHref?: string;
+  /** Stored fields that fail today's checks (#855), by key: shown as needing a correction, never blocking when left alone. */
+  needsCorrection?: string[];
+};
+
+/** Typed fields, checked in the browser with the same validators the server runs. */
+const typedKeys: Record<string, { type: FieldValueType; label: string }> = {
+  zip: { type: "zip", label: "ZIP" },
+  phone: { type: "phone", label: "Phone" },
+  email: { type: "email", label: "Email" },
+  insurancePhone: { type: "phone", label: "Insurance phone" },
+  guardianPhone: { type: "phone", label: "Phone" },
+  guardianEmail: { type: "email", label: "Email" },
 };
 
 const emptyContact: Contact = { firstName: "", lastName: "", phone: "", relationship: "" };
@@ -52,7 +65,7 @@ const textKeys = [
   "guardianFirstName", "guardianLastName", "guardianAddress", "guardianPhone", "guardianEmail",
 ] as const;
 
-export function HealthRecordForm({ mode, initialValues, consentText, clubName, sponsoringChurch, memberName, doneHref }: Props) {
+export function HealthRecordForm({ mode, initialValues, consentText, clubName, sponsoringChurch, memberName, doneHref, needsCorrection = [] }: Props) {
   const [text, setText] = useState<Record<string, string>>(() => Object.fromEntries(textKeys.map((key) => [key, str(initialValues, key)])));
   const [hasAllergies, setHasAllergies] = useState(str(initialValues, "hasAllergies") || "NO");
   const [hasInsurance, setHasInsurance] = useState(str(initialValues, "hasInsurance") || "NO");
@@ -63,12 +76,38 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
   const [error, setError] = useState("");
   const [done, setDone] = useState(false);
 
+  const [attempted, setAttempted] = useState(false);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const touch = (key: string) => setTouched((current) => ({ ...current, [key]: true }));
+
+  /** The inline message for a typed value, or "". An unchanged old value that fails shows as needing a correction. */
+  const problemFor = (key: string, value: string, stored: unknown, spec: { type: FieldValueType; label: string }) => {
+    const check = validateByType(spec.type, value);
+    if (check.ok) return "";
+    const unchanged = isUnchangedFromStored(value, stored);
+    if (!unchanged && !attempted && !touched[key]) return "";
+    return `${problemMessage(spec.label, check.problem)}${unchanged ? " This saved answer needs correcting." : ""}`;
+  };
+  const blockingProblem = () => {
+    for (const [key, spec] of Object.entries(typedKeys)) {
+      const value = text[key] ?? "";
+      if (!validateByType(spec.type, value).ok && !isUnchangedFromStored(value, initialValues[key])) return true;
+    }
+    const storedPhones = contactsFrom(initialValues).map((contact) => contact.phone.trim());
+    return contacts.some((contact) => !validateByType("phone", contact.phone).ok && !storedPhones.includes(contact.phone.trim()));
+  };
+
   const set = (key: string, value: string) => setText((current) => ({ ...current, [key]: value }));
   const updateContact = (index: number, key: keyof Contact, value: string) =>
     setContacts((current) => current.map((contact, i) => (i === index ? { ...contact, [key]: value } : contact)));
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    setAttempted(true);
+    if (blockingProblem()) {
+      setError("Check the highlighted fields and try again.");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -115,18 +154,36 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
     );
   }
 
-  const field = (key: string, label: string, options: { wide?: boolean; area?: boolean; date?: boolean; type?: string } = {}) => options.date ? (
+  const field = (key: string, label: string, options: { wide?: boolean; area?: boolean; date?: boolean } = {}) => options.date ? (
     <DateInput className={options.wide ? "club-form-field-wide" : undefined} key={key} label={label} labelText={label} onChange={(value) => set(key, value)} value={text[key] ?? ""} />
-  ) : (
-    <label className={options.wide ? "club-form-field-wide" : undefined}>{label}
-      {options.area
-        ? <textarea maxLength={2000} onChange={(event) => set(key, event.target.value)} rows={3} value={text[key] ?? ""} />
-        : <input autoComplete="off" onChange={(event) => set(key, event.target.value)} type={options.type ?? "text"} value={text[key] ?? ""} />}
-    </label>
-  );
+  ) : (() => {
+    const spec = typedKeys[key];
+    const message = spec ? problemFor(key, text[key] ?? "", initialValues[key], spec) : "";
+    const attributes = spec ? inputAttributesFor(spec.type) : null;
+    return (
+      <label className={options.wide ? "club-form-field-wide" : undefined} key={key}>{label}
+        {options.area
+          ? <textarea maxLength={2000} onChange={(event) => set(key, event.target.value)} rows={3} value={text[key] ?? ""} />
+          : (
+            <input
+              aria-describedby={message ? `health-${key}-problem` : undefined}
+              aria-invalid={message ? true : undefined}
+              autoComplete={attributes?.autoComplete ?? "off"}
+              inputMode={attributes?.inputMode}
+              onBlur={() => touch(key)}
+              onChange={(event) => set(key, event.target.value)}
+              type={attributes?.type ?? "text"}
+              value={text[key] ?? ""}
+            />
+          )}
+        {message && <small className="field-error" id={`health-${key}-problem`} role="alert">{message}</small>}
+      </label>
+    );
+  })();
 
   return (
     <form className="club-form-fill" onSubmit={(event) => void submit(event)}>
+      {needsCorrection.length > 0 && <div className="inline-notice warning" role="status">Some saved answers are not valid phone numbers, emails or ZIP codes. They are marked below; please correct them.</div>}
       <fieldset className="public-manage-card form-stack" disabled={saving}>
         <ClubFormSectionTitle>Participant</ClubFormSectionTitle>
         <p><strong translate="no">{memberName}</strong></p>
@@ -136,8 +193,8 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
           {field("city", "City")}
           {field("state", "State")}
           {field("zip", "ZIP")}
-          {field("phone", "Phone", { type: "tel" })}
-          {field("email", "Email", { type: "email" })}
+          {field("phone", "Phone")}
+          {field("email", "Email")}
         </div>
       </fieldset>
 
@@ -171,7 +228,7 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
               {field("insuranceCompany", "Insurance company")}
               {field("insuranceGroupNumber", "Group number")}
               {field("insurancePolicyNumber", "Policy number")}
-              {field("insurancePhone", "Insurance phone", { type: "tel" })}
+              {field("insurancePhone", "Insurance phone")}
             </>
           )}
         </div>
@@ -183,8 +240,8 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
           {field("guardianFirstName", "First name")}
           {field("guardianLastName", "Last name")}
           {field("guardianAddress", "Address, if different", { wide: true })}
-          {field("guardianPhone", "Phone", { type: "tel" })}
-          {field("guardianEmail", "Email", { type: "email" })}
+          {field("guardianPhone", "Phone")}
+          {field("guardianEmail", "Email")}
         </div>
       </fieldset>
 
@@ -194,7 +251,29 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
           <div className="form-grid two-column" key={index}>
             <label>First name<input onChange={(event) => updateContact(index, "firstName", event.target.value)} type="text" value={contact.firstName} /></label>
             <label>Last name<input onChange={(event) => updateContact(index, "lastName", event.target.value)} type="text" value={contact.lastName} /></label>
-            <label>Phone<input onChange={(event) => updateContact(index, "phone", event.target.value)} type="tel" value={contact.phone} /></label>
+            {(() => {
+              const message = problemFor(
+                `contact-${index}`,
+                contact.phone,
+                contactsFrom(initialValues).map((item) => item.phone).find((phone) => phone.trim() === contact.phone.trim()),
+                { type: "phone", label: "Phone" },
+              );
+              return (
+                <label>Phone
+                  <input
+                    aria-describedby={message ? `health-contact-${index}-problem` : undefined}
+                    aria-invalid={message ? true : undefined}
+                    autoComplete="tel"
+                    inputMode="tel"
+                    onBlur={() => touch(`contact-${index}`)}
+                    onChange={(event) => updateContact(index, "phone", event.target.value)}
+                    type="tel"
+                    value={contact.phone}
+                  />
+                  {message && <small className="field-error" id={`health-contact-${index}-problem`} role="alert">{message}</small>}
+                </label>
+              );
+            })()}
             <label>Relationship to the minor<input onChange={(event) => updateContact(index, "relationship", event.target.value)} type="text" value={contact.relationship} /></label>
             {contacts.length > 1 && (
               <button className="secondary-button" onClick={() => setContacts((current) => current.filter((_, i) => i !== index))} type="button">Remove this contact</button>
