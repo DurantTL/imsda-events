@@ -916,7 +916,7 @@ export async function updateMessagingSettings(
   ) {
     throw new MessagingError(
       "EXTERNAL_EMAIL_NOT_CONFIGURED",
-      "Add the Resend API key before enabling real email delivery.",
+      "Finish the email provider setup on the server before enabling real email delivery.",
     );
   }
   const prisma = getPrisma();
@@ -3092,7 +3092,7 @@ export async function retryMessage(
       ) {
         throw new MessagingError(
           "EXTERNAL_EMAIL_NOT_CONFIGURED",
-          "Add the Resend API key before retrying real email.",
+          "Finish the email provider setup on the server before retrying real email.",
         );
       }
       const repairMissingSenderSnapshot = (

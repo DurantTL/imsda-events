@@ -872,7 +872,7 @@ export function CommunicationsWorkspace({
       `/api/events/${eventId}/messages/process`,
       { method: "POST" },
       messaging?.settings.deliveryMode === "EXTERNAL_EMAIL"
-        ? "The available email queue was processed. Delivery status will continue updating from Resend."
+        ? "The available email queue was processed. Delivery status will keep updating as the email provider reports back."
         : "All available queued messages were processed into local previews.",
     );
   }
@@ -2144,7 +2144,7 @@ export function CommunicationsWorkspace({
               </label>
               <label className={!messaging.settings.providerConfigured ? "disabled" : ""}>
                 <input type="radio" name="deliveryMode" value="EXTERNAL_EMAIL" checked={settingsDraft.deliveryMode === "EXTERNAL_EMAIL"} disabled={!messaging.settings.providerConfigured} onChange={() => setSettingsDraft((current) => ({ ...current, deliveryMode: "EXTERNAL_EMAIL" }))} />
-                <span><strong>Send real email</strong><small>{messaging.settings.providerConfigured ? "Send immutable message snapshots through Resend." : "Add the Resend API key on the server first."}</small></span>
+                <span><strong>Send real email</strong><small>{messaging.settings.providerConfigured ? "Send immutable message snapshots through the email provider." : "Finish the email provider setup on the server first."}</small></span>
               </label>
             </fieldset>
             <div className="form-grid two-column">
@@ -2158,7 +2158,7 @@ export function CommunicationsWorkspace({
           <aside className="panel message-boundary-card">
             <span>{messaging.settings.providerConfigured ? <Send size={22} aria-hidden="true" /> : <FlaskConical size={22} aria-hidden="true" />}</span>
             <p className="eyebrow">Delivery readiness</p>
-            <h2>{messaging.settings.providerConfigured ? "Resend is configured" : "Real email is locked"}</h2>
+            <h2>{messaging.settings.providerConfigured ? "Email provider is configured" : "Real email is locked"}</h2>
             <p>{messaging.settings.providerConfigured ? "Real delivery can be enabled after a verified sender is entered. Local template tests remain previews." : "Local preview exercises rendering, outbox idempotency, attempts, and staff review without transmitting attendee data."}</p>
             <ul><li>Provider API: {messaging.settings.providerConfigured ? "configured" : "not configured"}</li><li>Delivery webhook: {messaging.settings.webhookConfigured ? "configured" : "not configured"}</li><li>Registration commits before processing</li><li>Retries preserve the original message snapshot</li></ul>
           </aside>
