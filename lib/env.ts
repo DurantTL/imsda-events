@@ -59,6 +59,18 @@ export const serverEnvSchema = z
     RESEND_API_URL: z.string().url().default("https://api.resend.com"),
     RESEND_WEBHOOK_SECRET: optionalTrimmed,
 
+    // Which provider sends external email (#861). Unset keeps Resend. `ses` sends through Amazon SES over SMTP
+    // with IAM SMTP credentials; the Resend variables above are then unused.
+    EMAIL_PROVIDER: z.enum(["resend", "ses"]).default("resend"),
+    SES_REGION: z.string().trim().regex(/^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/, "must be an AWS region such as us-east-2").optional(),
+    SES_SMTP_USERNAME: optionalTrimmed,
+    SES_SMTP_PASSWORD: optionalTrimmed,
+    // Test-only overrides and tuning; the defaults are email-smtp.<region>.amazonaws.com, 587 and 10 a second.
+    SES_SMTP_HOST: optionalTrimmed,
+    SES_SMTP_PORT: z.string().trim().regex(/^\d{1,5}$/, "must be a port number").optional(),
+    SES_CONFIGURATION_SET: optionalTrimmed,
+    SES_MAX_SEND_RATE: z.string().trim().regex(/^\d+(\.\d+)?$/, "must be a number of messages per second").optional(),
+
     // Sender identity for account email. Event messages take theirs from
     // EventMessageSettings; activation and password reset belong to no event.
     ACCOUNT_EMAIL_SENDER_NAME: z.string().trim().min(1).max(100).default("IMSDA Events"),
@@ -206,12 +218,23 @@ export const serverEnvSchema = z
           "is required in production so activation and password reset email can be sent",
       });
     }
-    if (isProduction && !value.RESEND_API_KEY) {
+    if (isProduction && value.EMAIL_PROVIDER === "resend" && !value.RESEND_API_KEY) {
       context.addIssue({
         code: "custom",
         path: ["RESEND_API_KEY"],
         message: "is required in production so account recovery email can be delivered",
       });
+    }
+    if (value.EMAIL_PROVIDER === "ses") {
+      for (const key of ["SES_REGION", "SES_SMTP_USERNAME", "SES_SMTP_PASSWORD"] as const) {
+        if (isProduction && !value[key]) {
+          context.addIssue({
+            code: "custom",
+            path: [key],
+            message: "is required in production when EMAIL_PROVIDER=ses so account recovery email can be delivered",
+          });
+        }
+      }
     }
 
     // Half a client is worse than none: the button would appear and every
@@ -325,6 +348,14 @@ export const SERVER_ENV_KEYS = [
     "RESEND_API_KEY",
     "RESEND_API_URL",
     "RESEND_WEBHOOK_SECRET",
+    "EMAIL_PROVIDER",
+    "SES_REGION",
+    "SES_SMTP_USERNAME",
+    "SES_SMTP_PASSWORD",
+    "SES_SMTP_HOST",
+    "SES_SMTP_PORT",
+    "SES_CONFIGURATION_SET",
+    "SES_MAX_SEND_RATE",
     "ACCOUNT_EMAIL_SENDER_NAME",
     "ACCOUNT_EMAIL_SENDER_ADDRESS",
     "ACCOUNT_EMAIL_REPLY_TO",

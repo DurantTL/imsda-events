@@ -372,7 +372,7 @@ async function main() {
       configuration: { apiKey: "synthetic-not-a-key", apiUrl: "http://127.0.0.1:9" },
       sendEmail: async (input) => {
         for (const attachment of input.attachments ?? []) provided.push({ filename: attachment.filename, contentType: attachment.contentType, sha: sha(attachment.content) });
-        return { provider: "RESEND", providerMessageId: `synthetic-${randomUUID()}` };
+        return { provider: "RESEND" as const, providerMessageId: `synthetic-${randomUUID()}` };
       },
     },
   });

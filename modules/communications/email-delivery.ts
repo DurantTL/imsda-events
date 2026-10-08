@@ -3,12 +3,15 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import {
+  getActiveEmailProviderName,
+  getEmailConfiguration,
+  sendEmail as sendEmailWithProvider,
+  type EmailProviderConfiguration,
+} from "@/integrations/email/provider";
+import {
   EmailProviderConfigurationError,
   EmailProviderRequestError,
-  getResendEmailConfiguration,
-  sendEmailWithResend,
-  type ResendEmailConfiguration,
-} from "@/integrations/email/resend";
+} from "@/integrations/email/types";
 import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import {
@@ -70,8 +73,8 @@ type DeliveryPrisma = Pick<
 export type ExternalEmailDeliveryDependencies = {
   prisma?: DeliveryPrisma;
   now?: () => Date;
-  configuration?: ResendEmailConfiguration;
-  sendEmail?: typeof sendEmailWithResend;
+  configuration?: EmailProviderConfiguration;
+  sendEmail?: typeof sendEmailWithProvider;
   prepareBodyText?: (input: EmailBodyPreparationInput) => Promise<PreparedEmailBody>;
   /** How stored files and pass images are read for embedding (#824); the defaults read private storage and render in-process. */
   emailParts?: Partial<EmailPartDependencies>;
@@ -274,7 +277,7 @@ function resolveEmailPartDependencies(
 
 function resolveConfiguration(dependencies: ExternalEmailDeliveryDependencies) {
   try {
-    return dependencies.configuration ?? getResendEmailConfiguration();
+    return dependencies.configuration ?? getEmailConfiguration();
   } catch (error) {
     if (error instanceof EmailProviderConfigurationError) {
       throw new ExternalEmailDeliveryError(
@@ -404,7 +407,7 @@ async function recoverStaleClaims(
         data: {
           messageOutboxId: candidate.id,
           attemptNumber,
-          provider: "RESEND",
+          provider: getActiveEmailProviderName(),
           status: "FAILED",
           errorCode: "STALE_DELIVERY_LOCK",
           errorMessage: terminal
@@ -539,7 +542,7 @@ async function finalizeSuccessfulAttempt(
         status: "SENT",
         attemptCount: attemptNumber,
         sentAt: completedAt,
-        provider: "RESEND",
+        provider: getActiveEmailProviderName(),
         providerMessageId,
         providerDeliveryStatus: "ACCEPTED",
         providerStatusAt: completedAt,
@@ -553,7 +556,7 @@ async function finalizeSuccessfulAttempt(
       data: {
         messageOutboxId: message.id,
         attemptNumber,
-        provider: "RESEND",
+        provider: getActiveEmailProviderName(),
         status: "SENT",
         providerMessageId,
         providerMetadata: {
@@ -568,7 +571,7 @@ async function finalizeSuccessfulAttempt(
 
     await tx.messageProviderEvent.updateMany({
       where: {
-        provider: "RESEND",
+        provider: getActiveEmailProviderName(),
         providerMessageId,
         messageOutboxId: null,
       },
@@ -576,7 +579,7 @@ async function finalizeSuccessfulAttempt(
     });
     const latestEvent = await tx.messageProviderEvent.findFirst({
       where: {
-        provider: "RESEND",
+        provider: getActiveEmailProviderName(),
         providerMessageId,
         mappedDeliveryStatus: { not: null },
       },
@@ -623,7 +626,7 @@ async function finalizeFailedAttempt(
         lockedAt: null,
         lockToken: null,
         failedAt: reschedule ? null : completedAt,
-        provider: internal ? undefined : "RESEND",
+        provider: internal ? undefined : getActiveEmailProviderName(),
         providerDeliveryStatus: reschedule || internal ? undefined : "FAILED",
         providerStatusAt: reschedule || internal ? undefined : completedAt,
         lastError: error.message,
@@ -634,7 +637,7 @@ async function finalizeFailedAttempt(
       data: {
         messageOutboxId: message.id,
         attemptNumber,
-        provider: internal ? "INTERNAL" : "RESEND",
+        provider: internal ? "INTERNAL" : getActiveEmailProviderName(),
         status: "FAILED",
         errorCode: error.code,
         errorMessage: error.message,
@@ -666,7 +669,7 @@ async function runDeliveryLoop(
   const dependencies = options.dependencies ?? {};
   const prisma = resolvePrisma(dependencies);
   const configuration = resolveConfiguration(dependencies);
-  const sendEmail = dependencies.sendEmail ?? sendEmailWithResend;
+  const sendEmail = dependencies.sendEmail ?? sendEmailWithProvider;
   const now = dependencies.now ?? (() => new Date());
   const fileCache = new BoundedFileCache();
   const uniqueMessageIds = options.messageIds

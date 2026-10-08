@@ -12,8 +12,8 @@ import {
   Prisma,
 } from "@prisma/client";
 import {
-  getResendEmailAvailability,
-} from "@/integrations/email/resend";
+  getEmailAvailability,
+} from "@/integrations/email/provider";
 import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import {
@@ -266,7 +266,7 @@ function settingsRecord(settings: {
   replyToEmail: string | null;
   internalNotificationEmails: Prisma.JsonValue;
 }) {
-  const availability = getResendEmailAvailability();
+  const availability = getEmailAvailability();
   return {
     deliveryMode: settings.deliveryMode,
     senderName: settings.senderName,
@@ -910,7 +910,7 @@ export async function updateMessagingSettings(
 ) {
   if (
     input.deliveryMode === "EXTERNAL_EMAIL"
-    && !getResendEmailAvailability().deliveryConfigured
+    && !getEmailAvailability().deliveryConfigured
   ) {
     throw new MessagingError(
       "EXTERNAL_EMAIL_NOT_CONFIGURED",
@@ -950,7 +950,7 @@ export async function updateMessagingSettings(
           internalRecipientCount: input.internalNotificationEmails.length,
           senderEmailConfigured: Boolean(input.senderEmail),
           replyToConfigured: Boolean(input.replyToEmail),
-          providerConfigured: getResendEmailAvailability().deliveryConfigured,
+          providerConfigured: getEmailAvailability().deliveryConfigured,
           realDelivery: input.deliveryMode === "EXTERNAL_EMAIL",
         },
       },
@@ -2997,7 +2997,7 @@ export async function retryMessage(
       }
       if (
         settings.deliveryMode === "EXTERNAL_EMAIL"
-        && !getResendEmailAvailability().deliveryConfigured
+        && !getEmailAvailability().deliveryConfigured
         && !dependencies?.configuration
       ) {
         throw new MessagingError(
