@@ -80,6 +80,7 @@ import {
   withChurchBilledLinkWording,
   withChurchBilledPriceWording,
   withGroupBilledWording,
+  unescapeTokenUnderscores,
 } from "@/modules/communications/templates";
 import { perPersonPrice, perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
 import {
@@ -1002,8 +1003,8 @@ export async function publishMessageTemplateVersion(
         createdByUserId: actorUserId,
         versionNumber: nextVersion,
         status: "PUBLISHED",
-        subjectTemplate: input.subjectTemplate,
-        bodyTemplate: input.bodyTemplate,
+        subjectTemplate: unescapeTokenUnderscores(input.subjectTemplate),
+        bodyTemplate: unescapeTokenUnderscores(input.bodyTemplate),
         publishedAt: new Date(),
       },
     });

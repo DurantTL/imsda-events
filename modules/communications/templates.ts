@@ -1031,7 +1031,7 @@ const templateTokenPattern = /\{\{([^{}]+)\}\}/g;
  * Drafts saved before #859 may hold `{{announcement\_body}}`, because the
  * editor escaped underscores. Read `\_` inside a token as `_`.
  */
-function unescapeTokenUnderscores(value: string) {
+export function unescapeTokenUnderscores(value: string) {
   return value.replace(templateTokenPattern, (span) => span.replace(/\\_/g, "_"));
 }
 
