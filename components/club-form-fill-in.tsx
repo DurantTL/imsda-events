@@ -204,7 +204,7 @@ export function ClubFormFillIn(props: Props) {
               return run.group
                 ? (
                   <div className="club-form-field-group" key={`${run.group}-${runIndex}`} role="group" aria-label={run.group}>
-                    <h4 className="club-form-field-group-heading">{run.group}</h4>
+                    <p aria-hidden="true" className="club-form-field-group-heading">{run.group}</p>
                     <div className="form-grid club-form-group-row">{inputs}</div>
                   </div>
                 )

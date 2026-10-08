@@ -8264,7 +8264,7 @@ th[aria-sort="descending"] .table-sort-button { color: var(--imsda-navy); font-w
 /* #856: a group of fields (one reference) is its own card under a small heading; name, address and phone sit in
    one row on a wide card and stack on a phone. */
 .club-form-field-group { display: grid; gap: 8px; min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
-.club-form-field-group-heading { margin: 0; font-size: 0.95rem; }
+.club-form-field-group-heading { margin: 0; font-size: 0.95rem; font-weight: 700; }
 .club-form-group-row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); min-width: 0; }
 .club-form-group-row > * { min-width: 0; }
 .club-form-fill .form-grid.two-column { min-width: 0; }
