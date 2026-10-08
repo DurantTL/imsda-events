@@ -53,18 +53,30 @@ container_has_expected_network() {
 # rebuild-and-swap in docs/DEPLOY-DOCKER.md. There is nothing to recreate from,
 # so only check that the running app container has its runtime settings.
 if [ ! -s "$IMSDA_XCLOUD_BASE_COMPOSE" ]; then
-  IMSDA_XCLOUD_CONTAINER_NAMES="$(
-    docker ps --format '{{.Names}}' | grep -E "^${IMSDA_XCLOUD_CONTAINER_PATTERN:-xcloud-site-[0-9]+-app-1}\$" || true
+  IMSDA_XCLOUD_PATTERN="${IMSDA_XCLOUD_CONTAINER_PATTERN:-xcloud-site-[0-9]+-app-1}"
+  # Separate command so a docker failure fails the script under set -e.
+  IMSDA_XCLOUD_ALL_CONTAINERS="$(docker ps -a --format '{{.Names}} {{.State}}')"
+  IMSDA_XCLOUD_MATCHES="$(
+    printf '%s\n' "$IMSDA_XCLOUD_ALL_CONTAINERS" | grep -E "^(${IMSDA_XCLOUD_PATTERN}) " || true
   )"
-  IMSDA_XCLOUD_CONTAINER_COUNT="$(printf '%s' "$IMSDA_XCLOUD_CONTAINER_NAMES" | grep -c . || true)"
-  if [ "$IMSDA_XCLOUD_CONTAINER_COUNT" -eq 0 ]; then
-    echo "[xcloud-post-deploy] No base Compose file and no running app container; deferring (manual deployment in progress?)."
-    exit 0
+  if [ -z "$IMSDA_XCLOUD_MATCHES" ]; then
+    if printf '%s\n' "$IMSDA_XCLOUD_ALL_CONTAINERS" | grep -Eq "^(${IMSDA_XCLOUD_PATTERN})-old "; then
+      echo "[xcloud-post-deploy] No base Compose file and no app container, but an -old container exists; deferring (manual swap in progress)."
+      exit 0
+    fi
+    echo "[xcloud-post-deploy] No base Compose file and no app container." >&2
+    exit 1
   fi
-  if [ "$IMSDA_XCLOUD_CONTAINER_COUNT" -gt 1 ]; then
+  IMSDA_XCLOUD_NOT_RUNNING="$(printf '%s\n' "$IMSDA_XCLOUD_MATCHES" | grep -v ' running$' || true)"
+  if [ -n "$IMSDA_XCLOUD_NOT_RUNNING" ]; then
+    echo "[xcloud-post-deploy] App container is not running: $IMSDA_XCLOUD_NOT_RUNNING" >&2
+    exit 1
+  fi
+  if [ "$(printf '%s\n' "$IMSDA_XCLOUD_MATCHES" | grep -c .)" -gt 1 ]; then
     echo "[xcloud-post-deploy] No base Compose file and more than one running app container; set IMSDA_XCLOUD_CONTAINER_PATTERN." >&2
     exit 1
   fi
+  IMSDA_XCLOUD_CONTAINER_NAMES="${IMSDA_XCLOUD_MATCHES%% *}"
   if ! container_has_database_url "$IMSDA_XCLOUD_CONTAINER_NAMES"; then
     echo "[xcloud-post-deploy] No base Compose file to repair from, and $IMSDA_XCLOUD_CONTAINER_NAMES is missing DATABASE_URL. Redeploy with the manual rebuild-and-swap." >&2
     exit 1
@@ -75,15 +87,6 @@ if [ ! -s "$IMSDA_XCLOUD_BASE_COMPOSE" ]; then
   fi
   echo "[xcloud-post-deploy] Manual deployment: $IMSDA_XCLOUD_CONTAINER_NAMES has its runtime settings; no change needed."
   exit 0
-fi
-
-# Recreating through the override only carries DATABASE_URL when it is in .env
-# or the override also loads .env.dburl; refuse rather than start the app without it.
-if [ "$IMSDA_XCLOUD_DATABASE_URL_IN_ENV" = false ] \
-  && ! grep -q '\.env\.dburl' "$IMSDA_XCLOUD_OVERRIDE_COMPOSE"
-then
-  echo "[xcloud-post-deploy] DATABASE_URL is only in $IMSDA_XCLOUD_DBURL_FILE, which $IMSDA_XCLOUD_OVERRIDE_COMPOSE does not load; add it under env_file." >&2
-  exit 1
 fi
 
 IMSDA_XCLOUD_RELEASE_SHA="${XCLOUD_DEPLOYED_COMMIT:-${APP_RELEASE_SHA:-}}"
@@ -165,6 +168,15 @@ if [ "$IMSDA_XCLOUD_HAS_DATABASE_URL" = true ] \
 then
   echo "[xcloud-post-deploy] Runtime override is already present; no container change needed."
   exit 0
+fi
+
+# Recreating through the override only carries DATABASE_URL when it is in .env
+# or the override also loads .env.dburl; refuse rather than start the app without it.
+if [ "$IMSDA_XCLOUD_DATABASE_URL_IN_ENV" = false ] \
+  && ! grep -q '^[[:space:]]*-[[:space:]]*\.env\.dburl' "$IMSDA_XCLOUD_OVERRIDE_COMPOSE"
+then
+  echo "[xcloud-post-deploy] DATABASE_URL is only in $IMSDA_XCLOUD_DBURL_FILE, which $IMSDA_XCLOUD_OVERRIDE_COMPOSE does not load; add it under env_file." >&2
+  exit 1
 fi
 
 echo "[xcloud-post-deploy] Recreating $IMSDA_XCLOUD_SERVICE with its runtime environment and database network..."

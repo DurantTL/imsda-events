@@ -149,8 +149,10 @@ PostgreSQL network unless the override is reapplied.
 Keep these server-owned files in `/home/u_events/.xcloud`:
 
 - `.env` — mode `600`, containing the production environment.
-- `docker-compose.env.yml` — adds `.env` through `env_file` and attaches the
-  external PostgreSQL network.
+- `.env.dburl` — mode `600`, containing only `DATABASE_URL=...` (used by the
+  manual deployments below).
+- `docker-compose.env.yml` — adds `.env` and `.env.dburl` through `env_file`
+  and attaches the external PostgreSQL network.
 
 The app service in `docker-compose.env.yml` must also map the release value; an
 `env_file` alone cannot see xCloud’s shell-only deployment variable:
@@ -160,6 +162,7 @@ services:
   app:
     env_file:
       - .env
+      - .env.dburl
     environment:
       APP_RELEASE_SHA: ${APP_RELEASE_SHA:-}
     networks:
@@ -171,6 +174,9 @@ networks:
     external: true
     name: postgresql_9kgaw_239292_xcloud-network
 ```
+
+`.env.dburl` is a plain `env_file` entry, so it must exist; Compose refuses to
+start without it. If `DATABASE_URL` is in `.env`, you can omit the entry.
 
 Then configure the xCloud site's **Deployment Script** to run:
 
@@ -221,7 +227,7 @@ keeps the current site reliable without another database or domain move.
 
 The production host runs `/root/xcloud-cleanup.sh` daily at 13:12, which
 deletes anything under any site's `.xcloud/` directory that hasn't been
-modified in 30 days. That sweep does not know these three files are a
+modified in 30 days. That sweep does not know these four files are a
 permanent, hand-maintained override rather than deploy scratch space, so it
 will delete `.env`, `.env.dburl`, `docker-compose.yml`, and `docker-compose.env.yml` out
 from under a site that hasn't deployed (and therefore hasn't touched them)
@@ -255,12 +261,18 @@ on deploy entirely — the dashboard's **Deploy** button reports success (or an
 `empty compose file` error) but the file is missing or empty afterward, and
 neither `scripts/xcloud-post-deploy.sh` nor the systemd guard above can repair
 a container, because both depend on xCloud having produced *some* base Compose
-file to patch. In this mode the guard only checks the running
-`xcloud-site-<id>-app-1` container: it passes while that container has
-`DATABASE_URL` and the PostgreSQL network, defers while no container is running
-(mid-swap), and fails when either is missing so the journal shows it. When this happens, **file an xCloud support ticket** — this is a
-platform-level regression, not something fixable from inside the site — and
-until it's resolved, every deploy needs the manual rebuild-and-swap below
+file to patch. In this mode the guard only checks the app container (set
+`IMSDA_XCLOUD_CONTAINER_PATTERN` in `/etc/default/imsda-xcloud-runtime-guard`;
+the installer sets it to `xcloud-site-239298-app-1`). It passes while exactly
+one matching container is running with `DATABASE_URL` and the PostgreSQL
+network. It defers only when no matching container exists but a matching
+`-old` container does (a swap in progress). It fails, so the journal shows it,
+when there is no matching container at all, when a matching container is not
+running, when more than one is running, or when either setting is missing.
+**Re-run the installer after this change merges** so production gets the new
+script and pattern. When this happens, **file an xCloud support ticket**: this
+is a platform-level regression, not something fixable from inside the site.
+Until it's resolved, every deploy needs the manual rebuild-and-swap below
 instead of the dashboard Deploy button.
 
 #### Manual rebuild-and-swap
@@ -279,10 +291,18 @@ the override file above, and the commit SHA being deployed.
 
 ```bash
    umask 077
+   DBURL=/home/u_events/.xcloud/.env.dburl
+   TMP="$(mktemp /home/u_events/.xcloud/.env.dburl.XXXXXX)"
    docker inspect xcloud-site-<id>-app-1 --format '{{range .Config.Env}}{{println .}}{{end}}' \
-     | grep '^DATABASE_URL=' > /home/u_events/.xcloud/.env.dburl
-   chown u_events:u_events /home/u_events/.xcloud/.env.dburl
-   chmod 600 /home/u_events/.xcloud/.env.dburl
+     | grep '^DATABASE_URL=' > "$TMP" || true
+   if [ -s "$TMP" ] && grep -q '^DATABASE_URL=postgres' "$TMP"; then
+     chown u_events:u_events "$TMP"
+     chmod 600 "$TMP"
+     mv "$TMP" "$DBURL"
+   else
+     rm -f "$TMP"
+     echo "WARNING: no DATABASE_URL found; keeping the existing $DBURL" >&2
+   fi
 ```
 
 2. **Build the new image from the current checkout:**
