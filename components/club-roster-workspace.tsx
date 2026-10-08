@@ -270,7 +270,7 @@ export function ClubRosterWorkspace({
         phone: String(form.get(`g${index + 1}Phone`) ?? "").trim(),
       }))
       : null;
-    const guardianProblems = guardianSlots ? validateGuardianForm(guardianSlots) : {};
+    const guardianProblems = guardianSlots ? validateGuardianForm(guardianSlots, (editing ? guardianMap?.[editing.id] : undefined) ?? []) : {};
     setGuardianErrors(guardianProblems);
     const firstInvalid = rosterFormFieldOrder.find((field) => errors[field]);
     if (firstInvalid) {

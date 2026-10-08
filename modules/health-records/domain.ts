@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isUnchangedFromStored, normalizePhoneAnswer, validateEmail, validatePhone, validateZip, type FieldCheck } from "@/lib/field-validation";
+import { isUnchangedFromStored, storedContactPhone, normalizePhoneAnswer, validateEmail, validatePhone, validateZip, type FieldCheck } from "@/lib/field-validation";
 import { clubYearFor, parseCalendarDate } from "@/modules/club-rosters/domain";
 import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
 
@@ -145,11 +145,9 @@ const CONTACT_PHONE_MESSAGE = "Enter a 10-digit US number, like (515) 555-0134, 
  * submitted value.
  */
 export function healthRecordInputSchemaFor(stored: Record<string, unknown> = {}) {
-  // Per contact, by position: a stored bad phone excuses only the same contact's unchanged phone, never the
-  // same text typed into another contact.
-  const storedContactPhones: unknown[] = Array.isArray(stored.emergencyContacts)
-    ? stored.emergencyContacts.map((contact) => (contact as { phone?: unknown } | null)?.phone)
-    : [];
+  // Per contact: the same position, or the same name with the same phone. A stored bad phone excuses only that
+  // contact's unchanged phone, never the same text typed into another contact.
+  const storedContacts: unknown[] = Array.isArray(stored.emergencyContacts) ? stored.emergencyContacts : [];
   return healthRecordShape
     .superRefine((value, context) => {
       if (value.hasAllergies === "YES" && value.allergyDetails === "") {
@@ -164,7 +162,7 @@ export function healthRecordInputSchemaFor(stored: Record<string, unknown> = {})
         if (!check(submitted).ok) context.addIssue({ code: "custom", path: [key], message });
       }
       value.emergencyContacts.forEach((contact, index) => {
-        if (contact.phone === "" || isUnchangedFromStored(contact.phone, storedContactPhones[index])) return;
+        if (contact.phone === "" || isUnchangedFromStored(contact.phone, storedContactPhone(storedContacts as never[], index, contact))) return;
         if (!validatePhone(contact.phone).ok) context.addIssue({ code: "custom", path: ["emergencyContacts", index, "phone"], message: CONTACT_PHONE_MESSAGE });
       });
     })

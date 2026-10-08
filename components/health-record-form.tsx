@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ClubFormSectionTitle } from "@/components/club-form-section-title";
 import { DateInput } from "@/components/club-form-date-input";
-import { inputAttributesFor, isUnchangedFromStored, problemMessage, validateByType, type FieldValueType } from "@/lib/field-validation";
+import { inputAttributesFor, isUnchangedFromStored, storedContactPhone, problemMessage, validateByType, type FieldValueType } from "@/lib/field-validation";
 
 /**
  * The Pathfinder Health Record form (#611), used for a parent opening a
@@ -94,7 +94,7 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
       if (!validateByType(spec.type, value).ok && !isUnchangedFromStored(value, initialValues[key])) return true;
     }
     const storedContacts = contactsFrom(initialValues);
-    return contacts.some((contact, index) => !validateByType("phone", contact.phone).ok && !isUnchangedFromStored(contact.phone, storedContacts[index]?.phone));
+    return contacts.some((contact, index) => !validateByType("phone", contact.phone).ok && !isUnchangedFromStored(contact.phone, storedContactPhone(storedContacts, index, contact)));
   };
 
   const set = (key: string, value: string) => setText((current) => ({ ...current, [key]: value }));
@@ -182,7 +182,7 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
   })();
 
   return (
-    <form className="club-form-fill" onSubmit={(event) => void submit(event)}>
+    <form className="club-form-fill" noValidate onSubmit={(event) => void submit(event)}>
       {needsCorrection.length > 0 && <div className="inline-notice warning" role="status">Some saved answers are not valid phone numbers, emails or ZIP codes. They are marked below; please correct them.</div>}
       <fieldset className="public-manage-card form-stack" disabled={saving}>
         <ClubFormSectionTitle>Participant</ClubFormSectionTitle>
@@ -255,7 +255,7 @@ export function HealthRecordForm({ mode, initialValues, consentText, clubName, s
               const message = problemFor(
                 `contact-${index}`,
                 contact.phone,
-                contactsFrom(initialValues)[index]?.phone,
+                storedContactPhone(contactsFrom(initialValues), index, contact),
                 { type: "phone", label: "Phone" },
               );
               return (

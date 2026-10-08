@@ -4,6 +4,7 @@ import {
   isUnchangedFromStored,
   normalizePhoneAnswer,
   problemMessage,
+  storedContactPhone,
   validateByType,
   validateDate,
   validateEmail,
@@ -109,6 +110,25 @@ describe("date, ZIP and URL", () => {
     expect(validateUrl("javascript:alert(1)").ok).toBe(false);
     expect(validateUrl("example").ok).toBe(false);
     expect(validateUrl("ftp://example.test").ok).toBe(false);
+  });
+});
+
+describe("emergency contact grandfathering (#855)", () => {
+  const stored = [
+    { firstName: "Alex", lastName: "Sample", phone: "call mom" },
+    { firstName: "Bo", lastName: "Sample", phone: "idk" },
+  ];
+
+  it("matches by position or by the same name with the same phone", () => {
+    expect(storedContactPhone(stored, 0, { firstName: "Alex", lastName: "Sample", phone: "call mom" })).toBe("call mom");
+    // Contact A removed: B moves to index 0 but is matched by name.
+    expect(storedContactPhone(stored, 0, { firstName: " bo ", lastName: "SAMPLE", phone: "idk" })).toBe("idk");
+  });
+
+  it("never excuses the same text typed into a different contact", () => {
+    expect(storedContactPhone(stored, 2, { firstName: "Cy", lastName: "Sample", phone: "idk" })).toBeUndefined();
+    expect(storedContactPhone(stored, 1, { firstName: "Bo", lastName: "Sample", phone: "idk 2" })).toBeUndefined();
+    expect(storedContactPhone(stored, 0, { firstName: "", lastName: "", phone: "idk" })).toBeUndefined();
   });
 });
 

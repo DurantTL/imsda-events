@@ -44,10 +44,24 @@ export function guardianEmailProblem(value: string): string | null {
 }
 
 /** The shared phone check (#855): a US number or an international one starting with +, optional extension. */
-export function guardianPhoneProblem(value: string): string | null {
+export function guardianPhoneProblem(value: string, stored?: string): string | null {
   const phone = value.trim();
   if (!phone) return null;
+  // An old saved phone left alone is not held against the edit (#855).
+  if (stored !== undefined && stored.trim() !== "" && stored.trim() === phone) return null;
   return validatePhone(phone).ok ? null : GUARDIAN_PHONE_MESSAGE;
+}
+
+/** The first problem with a guardian set's phones, slot by slot against what is stored in that slot, or null. */
+export function guardianSetPhoneProblem(
+  guardians: readonly Pick<GuardianValues, "phone">[],
+  stored: ReadonlyArray<{ position: number; phone: string }>,
+): string | null {
+  for (const [index, guardian] of guardians.slice(0, GUARDIAN_SLOTS).entries()) {
+    const problem = guardianPhoneProblem(guardian.phone, stored.find((record) => record.position === index + 1)?.phone);
+    if (problem) return problem;
+  }
+  return null;
 }
 
 const text = (max: number) => z.string().trim().max(max, `Keep this under ${max} characters.`).default("");
@@ -58,6 +72,14 @@ export const guardianInputSchema = z.object({
   email: text(254).refine((value) => guardianEmailProblem(value) === null, { message: "Enter an email like name@example.com." }),
   phone: text(40).refine((value) => guardianPhoneProblem(value) === null, { message: GUARDIAN_PHONE_MESSAGE }),
 }).strict();
+
+/**
+ * A guardian in a roster edit: the phone is checked against the stored one for
+ * that slot where the member is loaded (#855), not here, so an old saved phone
+ * does not block the edit.
+ */
+export const guardianUpdateInputSchema = guardianInputSchema.extend({ phone: text(40) });
+export const guardiansUpdateSchema = z.array(guardianUpdateInputSchema).max(GUARDIAN_SLOTS, "A member can have two guardians at most.");
 
 /**
  * The guardian set sent with a roster add or edit: slot 1 first, slot 2
@@ -90,12 +112,15 @@ export function guardianSlotsFrom(guardians: readonly GuardianValues[]): Guardia
 /** Inline errors for the dialog, keyed `g1Email`, `g2Phone` and so on. */
 export type GuardianFormErrors = Partial<Record<`g${1 | 2}${"Email" | "Phone"}`, string>>;
 
-export function validateGuardianForm(guardians: readonly Pick<GuardianValues, "email" | "phone">[]): GuardianFormErrors {
+export function validateGuardianForm(
+  guardians: readonly Pick<GuardianValues, "email" | "phone">[],
+  stored: ReadonlyArray<{ position: number; phone: string }> = [],
+): GuardianFormErrors {
   const errors: GuardianFormErrors = {};
   guardians.slice(0, GUARDIAN_SLOTS).forEach((guardian, index) => {
     const slot = (index + 1) as 1 | 2;
     const email = guardianEmailProblem(guardian.email);
-    const phone = guardianPhoneProblem(guardian.phone);
+    const phone = guardianPhoneProblem(guardian.phone, stored.find((record) => record.position === slot)?.phone);
     if (email) errors[`g${slot}Email`] = email;
     if (phone) errors[`g${slot}Phone`] = phone;
   });

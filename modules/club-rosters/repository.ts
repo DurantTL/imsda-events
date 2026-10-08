@@ -6,6 +6,7 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import { lockClubOrders } from "@/modules/club-orders/repository";
 import { openBirthDate, sealBirthDate } from "@/modules/club-rosters/birth-dates";
 import { ageOn, birthDateProblem, calendarDateOf, clubYearFor, defaultRosterRole } from "@/modules/club-rosters/domain";
+import { guardianSetPhoneProblem } from "@/modules/club-rosters/guardians-domain";
 import { deleteGuardiansForMember, replaceGuardians } from "@/modules/club-rosters/guardians-repository";
 import type { RosterMemberInput, RosterMemberUpdate } from "@/modules/club-rosters/schemas";
 
@@ -21,7 +22,8 @@ export type RosterErrorCode =
   | "BIRTH_DATE_INVALID"
   | "MEMBER_REMOVED"
   | "GENDER_REQUIRED"
-  | "GUARDIANS_PRIOR_YEAR";
+  | "GUARDIANS_PRIOR_YEAR"
+  | "GUARDIAN_PHONE_INVALID";
 
 export class RosterOperationError extends Error {
   constructor(public readonly code: RosterErrorCode, message: string) {
@@ -331,6 +333,12 @@ export async function updateRosterMember(
         ...(input.birthDate === undefined ? {} : { sealedBirthDate: sealBirthDate(input.birthDate), reportedAge: null }),
       },
     });
+    if (input.guardians) {
+      // An old saved phone left alone passes; a changed one must be valid (#855). Stored rows are this member's only.
+      const storedGuardians = await tx.clubRosterGuardian.findMany({ where: { rosterMemberId: memberId }, select: { position: true, phone: true } });
+      const phoneProblem = guardianSetPhoneProblem(input.guardians, storedGuardians);
+      if (phoneProblem) throw new RosterOperationError("GUARDIAN_PHONE_INVALID", phoneProblem);
+    }
     const guardianCounts = input.guardians ? await replaceGuardians(tx, memberId, input.guardians) : null;
     const action = input.status === "INACTIVE" && member.status !== "INACTIVE"
       ? "CLUB_ROSTER_MEMBER_DEACTIVATED"

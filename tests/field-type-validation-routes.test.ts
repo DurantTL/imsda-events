@@ -264,6 +264,25 @@ describe("club member health record saves (#855)", () => {
     expect(copied.status).toBe(400);
   });
 
+  it("keeps a contact's old phone excused when another contact is removed", async () => {
+    const recordId = "record-3";
+    const stored = [
+      { firstName: "Alex", lastName: "Sample", phone: "call mom", relationship: "Aunt" },
+      { firstName: "Bo", lastName: "Sample", phone: "idk", relationship: "Uncle" },
+    ];
+    mocks.healthRecordFindUnique.mockResolvedValue({
+      id: recordId,
+      confirmedClubYear: "2025",
+      hasHealthNote: false,
+      lastEnteredVia: "DIRECTOR",
+      fields: [{ fieldKey: "emergencyContacts", sealedValue: sealHealthField(recordId, "emergencyContacts", stored) }],
+    });
+    const removedFirst = await save({ emergencyContacts: [stored[1]] });
+    expect(removedFirst.status).toBe(200);
+    const renamedCopy = await save({ emergencyContacts: [{ ...stored[1], firstName: "Cy" }] });
+    expect(renamedCopy.status).toBe(400);
+  });
+
   it("does not fail on a stored old answer the person did not touch, but does on a changed one", async () => {
     const recordId = "record-1";
     mocks.healthRecordFindUnique.mockResolvedValue({

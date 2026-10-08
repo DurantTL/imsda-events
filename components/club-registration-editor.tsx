@@ -282,8 +282,19 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     return { ok: false as const, message: result.message ?? "That change couldn't be saved. Refresh and try again.", issues };
   }, [organizationId, workspace.event.id, workspace.registration.updatedAt, workspace.registration.teamKey, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests, typedAges, startingAges, saveAgeOff, locationId, currentLocationId]);
 
+  // Answers as registered, by client id, so an old answer left alone never blocks the edit (#855).
+  const previousResponses = useMemo(() => Object.fromEntries([
+    ...workspace.roster.flatMap((person) => {
+      const current = registeredByMemberId.get(person.memberId);
+      return current ? [[clubAttendeeClientId(person.memberId), current.responses as FormResponses] as const] : [];
+    }),
+    ...offRoster.map((attendee) => [clubExistingAttendeeClientId(attendee.attendeeId), attendee.responses as FormResponses] as const),
+    ...existingGuests.map((guest) => [clubGuestClientId(guest.guestId!), guest.responses as FormResponses] as const),
+  ]), [workspace.roster, registeredByMemberId, offRoster, existingGuests]);
+
   const club = useMemo(() => ({
     initialAttendees,
+    previousResponses,
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
     submitUrl: "",
     onDraftChange,
@@ -296,7 +307,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
       setStep("who");
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router, allowNextNavigation]);
+  }), [initialAttendees, previousResponses, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router, allowNextNavigation]);
 
   // Reopening confirms itself: scroll to and highlight the roster section (#571 F-23).
   useEffect(() => {

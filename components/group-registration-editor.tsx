@@ -144,8 +144,15 @@ export function GroupRegistrationEditor({ token, workspace }: { token: string; w
     return { ok: false as const, message: result.message ?? "That change couldn't be saved. Refresh and try again.", issues };
   }, [token, registered, workspace.registration.updatedAt, locationId, currentLocationId]);
 
+  // Answers as registered, by client id, so an old answer left alone never blocks the edit (#855).
+  const previousResponses = useMemo(
+    () => Object.fromEntries(registered.map((person) => [person.clientId, person.responses as FormResponses])),
+    [registered],
+  );
+
   const club = useMemo(() => ({
     initialAttendees,
+    previousResponses,
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
     submitUrl: "",
     onDraftChange,
@@ -158,7 +165,7 @@ export function GroupRegistrationEditor({ token, workspace }: { token: string; w
       setAnswers({});
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router]);
+  }), [initialAttendees, previousResponses, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router]);
 
   if (!workspace.event.edit.open) {
     return <p className="field-help" role="status">{workspace.event.edit.message}</p>;

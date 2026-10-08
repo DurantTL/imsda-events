@@ -294,6 +294,12 @@ export type PublicRegistrationFormProps = {
      * Field issues come back with the attendee index they belong to.
      */
     submitEdit?: (attendees: RosterAttendee[]) => Promise<{ ok: true } | { ok: false; message: string; issues: FormIssue[] }>;
+    /**
+     * Each kept person's answers as saved, by client id (#855). A phone, email, number or date they did not change is
+     * not re-checked, so an old answer that fails today's rules never blocks reopening the registration; a changed one
+     * still must pass. The server applies the same rule.
+     */
+    previousResponses?: Record<string, FormResponses>;
     submitLabel?: string;
     /** Rendered under a person's details: their location and classes, chosen here rather than on a separate step (#650). */
     renderAttendeeExtras?: (attendee: RosterAttendee, index: number) => ReactNode;
@@ -2870,6 +2876,7 @@ export function PublicRegistrationForm({
         projectedUsage,
         "ATTENDEE",
         {
+          previousResponses: club?.previousResponses?.[attendee.clientId],
           ignoredFieldKeys: joiningWaitlist && definition.payment?.enabled
             ? [definition.payment.paymentMethodFieldKey]
             : undefined,

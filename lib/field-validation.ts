@@ -188,3 +188,24 @@ export function inputAttributesFor(type: FieldValueType, options: { integer?: bo
     case "url": return { type: "url", inputMode: "url", autoComplete: "url" } as const;
   }
 }
+
+type ContactLike = { firstName?: unknown; lastName?: unknown; phone?: unknown };
+
+const contactName = (contact: ContactLike) =>
+  `${String(contact.firstName ?? "").trim()} ${String(contact.lastName ?? "").trim()}`.toLowerCase();
+
+/**
+ * The stored phone an emergency contact's phone is compared against (#855): the
+ * contact at the same position, or the one with the same first and last name
+ * (trimmed, any case), so removing another contact does not shift a stored
+ * phone onto the wrong one. Undefined when neither has the same phone, so a
+ * stored bad phone never excuses the same text typed for a different contact.
+ */
+export function storedContactPhone(stored: readonly ContactLike[], index: number, contact: ContactLike): string | undefined {
+  const phone = String(contact.phone ?? "").trim();
+  const same = (candidate: ContactLike | undefined) => candidate !== undefined && typeof candidate.phone === "string" && candidate.phone.trim() === phone;
+  if (same(stored[index])) return phone;
+  const name = contactName(contact);
+  if (name.trim() !== "" && stored.some((candidate) => contactName(candidate) === name && same(candidate))) return phone;
+  return undefined;
+}

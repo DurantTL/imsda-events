@@ -6,6 +6,7 @@ import {
   guardianEmailProblem,
   guardianInputSchema,
   guardianPhoneProblem,
+  guardianSetPhoneProblem,
   guardianSlotValues,
   guardianSlotsFrom,
   guardianViewerCanEdit,
@@ -54,6 +55,16 @@ describe("guardian validation (#510)", () => {
     expect(guardianInputSchema.parse({})).toEqual({ name: "", relationship: "", email: "", phone: "" });
     expect(guardianInputSchema.parse({ name: "  Synthetic Guardian  ", relationship: " Aunt ", email: " g@example.test ", phone: " (515) 555-0101 " }))
       .toEqual({ name: "Synthetic Guardian", relationship: "Aunt", email: "g@example.test", phone: "(515) 555-0101" });
+  });
+
+  it("passes a stored phone unchanged in the same slot, for the dialog and the set check (#855)", () => {
+    expect(guardianPhoneProblem("555-0134", "555-0134")).toBeNull();
+    expect(guardianPhoneProblem("555-0134", "515-555-0134")).not.toBeNull();
+    expect(guardianPhoneProblem("555-0134", "")).not.toBeNull();
+    expect(validateGuardianForm([{ email: "", phone: "555-0134" }, { email: "", phone: "555-0134" }], [{ position: 1, phone: "555-0134" }]))
+      .toEqual({ g2Phone: "Enter a phone number like (515) 555-0134." });
+    expect(guardianSetPhoneProblem([{ phone: "555-0134" }], [{ position: 1, phone: "555-0134" }])).toBeNull();
+    expect(guardianSetPhoneProblem([{ phone: "555-0134" }], [{ position: 2, phone: "555-0134" }])).not.toBeNull();
   });
 
   it("checks email and phone lightly, and only when something was typed", () => {
