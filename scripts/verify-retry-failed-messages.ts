@@ -347,6 +347,17 @@ async function runChecks(state: StubState) {
   const later = await previewFailedMessagesRetry(ids.event, { type: "BATCH", batchId: laterBatch });
   assert(later.eligibleCount === 0 && later.skipped.some((item) => item.reason === "LATER_DELIVERY"), `a later separate send blocks the retry: ${JSON.stringify(later.skipped)}`);
 
+  // A later send that is still queued also blocks the retry, and so does one being sent right now.
+  const queuedBatch = `${P}-queued-later-batch`;
+  await prisma.messageOutbox.create({ data: treeRow("queued-failed", { status: "FAILED", failedAt: new Date(), registrationId: registrationIds[3], recipientEmail: EMAIL("guest4"), metadata: { batchId: queuedBatch }, createdAt: new Date(Date.now() - 4 * 3600_000) }) });
+  await prisma.messageOutbox.create({ data: treeRow("queued-pending", { status: "PENDING", registrationId: registrationIds[3], recipientEmail: EMAIL("guest4"), metadata: { batchId: `${P}-another-queued-send` }, createdAt: new Date(Date.now() - 3600_000), availableAt: new Date(Date.now() + 3600_000) }) });
+  const queuedLater = await previewFailedMessagesRetry(ids.event, { type: "BATCH", batchId: queuedBatch });
+  assert(queuedLater.eligibleCount === 0 && queuedLater.skipped.some((item) => item.reason === "LATER_QUEUED"), `a PENDING later send blocks the retry: ${JSON.stringify(queuedLater.skipped)}`);
+  await prisma.messageOutbox.deleteMany({ where: { idempotencyKey: `${P}-tree-queued-pending` } });
+  await prisma.messageOutbox.create({ data: treeRow("queued-processing", { status: "PROCESSING", lockedAt: new Date(), lockToken: "synthetic-lock", registrationId: registrationIds[3], recipientEmail: EMAIL("guest4"), metadata: { batchId: `${P}-another-queued-send` }, createdAt: new Date(Date.now() - 3600_000) }) });
+  const processingLater = await previewFailedMessagesRetry(ids.event, { type: "BATCH", batchId: queuedBatch });
+  assert(processingLater.eligibleCount === 0 && processingLater.skipped.some((item) => item.reason === "LATER_QUEUED"), "a PROCESSING later send blocks the retry");
+
   // 9c. Two simultaneous confirmations of one fresh preview, two ways: the same request id twice (a double click) and
   //     two different ids (two tabs). Either way every source message ends with exactly one copy.
   for (const [label, sameId] of [["double click", true], ["two tabs", false]] as const) {

@@ -173,16 +173,19 @@ async function buildPlan(
     : await db.messageOutbox.findMany({
         where: {
           eventId,
-          status: { in: ["SENT", "CAPTURED"] },
+          status: { in: ["SENT", "CAPTURED", "PENDING", "PROCESSING"] },
           registrationId: { in: registrationIds },
           templateKey: { in: templateKeys },
         },
-        select: { registrationId: true, templateKey: true, recipientEmail: true, createdAt: true },
+        select: { registrationId: true, templateKey: true, recipientEmail: true, createdAt: true, status: true },
       });
-  const laterByRecipient = new Map<string, Date[]>();
+  const laterByRecipient = new Map<string, Array<{ createdAt: Date; queued: boolean }>>();
   for (const send of laterSends) {
     const key = `${send.registrationId}|${send.templateKey}|${send.recipientEmail.trim().toLowerCase()}`;
-    laterByRecipient.set(key, [...(laterByRecipient.get(key) ?? []), send.createdAt]);
+    laterByRecipient.set(key, [
+      ...(laterByRecipient.get(key) ?? []),
+      { createdAt: send.createdAt, queued: send.status === "PENDING" || send.status === "PROCESSING" },
+    ]);
   }
 
   const batchMap = new Map<string, FailedBatchSummary>();
@@ -230,7 +233,9 @@ async function buildPlan(
       treeStatuses: members.filter((member) => member.id !== message.id).map((member) => member.status),
       isNewestFailedInTree: newestFailed?.id === message.id,
       laterDelivery: Boolean(message.registrationId)
-        && (laterByRecipient.get(recipientKey) ?? []).some((sentAt) => sentAt.getTime() > message.createdAt.getTime()),
+        && (laterByRecipient.get(recipientKey) ?? []).some((send) => !send.queued && send.createdAt.getTime() > message.createdAt.getTime()),
+      laterQueued: Boolean(message.registrationId)
+        && (laterByRecipient.get(recipientKey) ?? []).some((send) => send.queued && send.createdAt.getTime() > message.createdAt.getTime()),
       tooOld: scope.type === "EVENT" && (message.failedAt ?? message.createdAt).getTime() < oldestAllowed,
       registrationId: message.registrationId,
       registrationStatus: message.registration?.status ?? null,

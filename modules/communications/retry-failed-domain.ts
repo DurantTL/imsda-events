@@ -31,6 +31,7 @@ export type RetryFailedSkipReason =
   | "ALREADY_RETRIED"
   | "NEWER_COPY_FAILED"
   | "LATER_DELIVERY"
+  | "LATER_QUEUED"
   | "REGISTRATION_NOT_ACTIVE"
   | "MISSING_SENDER";
 
@@ -45,7 +46,8 @@ export const RETRY_FAILED_SKIP_LABELS: Record<RetryFailedSkipReason, string> = {
   ALREADY_QUEUED: "A copy in its retry chain is already queued or being sent",
   ALREADY_RETRIED: "Another message in its retry chain was already sent, captured, suppressed or cancelled",
   NEWER_COPY_FAILED: "A newer copy in its retry chain also failed; that newest copy is retried instead",
-  LATER_DELIVERY: "The same person was sent the same email after this one failed",
+  LATER_DELIVERY: "The same email was sent to the same person after this one failed (a later email of the same kind counts)",
+  LATER_QUEUED: "A later send of this email to the same person is already queued",
   REGISTRATION_NOT_ACTIVE: "The registration is no longer active",
   MISSING_SENDER: "No sender is saved for this message or this event",
 };
@@ -123,6 +125,8 @@ export function classifyFailedMessage(input: {
   isNewestFailedInTree: boolean;
   /** The same registration and address was sent the same template after this message failed. */
   laterDelivery: boolean;
+  /** The same registration and address has a later send of the same template that is still PENDING or PROCESSING. */
+  laterQueued: boolean;
   tooOld: boolean;
   registrationId: string | null;
   registrationStatus: string | null;
@@ -139,6 +143,7 @@ export function classifyFailedMessage(input: {
   if (input.treeStatuses.some((status) => status !== "FAILED")) return "ALREADY_RETRIED";
   if (!input.isNewestFailedInTree) return "NEWER_COPY_FAILED";
   if (input.laterDelivery) return "LATER_DELIVERY";
+  if (input.laterQueued) return "LATER_QUEUED";
   if (input.tooOld) return "TOO_OLD";
   if (
     input.registrationId

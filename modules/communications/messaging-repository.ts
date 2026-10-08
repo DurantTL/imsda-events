@@ -18,6 +18,7 @@ import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import {
   ExternalEmailDeliveryError,
+  nextAttemptRowNumber,
   processExternalEmailQueue,
   type ExternalEmailDeliveryDependencies,
 } from "@/modules/communications/email-delivery";
@@ -1105,13 +1106,15 @@ async function captureOneMessageLocally(messageId: string, eventId?: string) {
 
     const completedAt = new Date();
     const attemptNumber = message.attemptCount + 1;
+    // Numbered from the highest recorded row: a quota deferral (#860) records a row without counting an attempt.
+    const rowNumber = await nextAttemptRowNumber(tx, message.id, message.attemptCount);
     await tx.messageDeliveryAttempt.create({
       data: {
         messageOutboxId: message.id,
-        attemptNumber,
+        attemptNumber: rowNumber,
         provider: "LOCAL_CAPTURE",
         status: "CAPTURED",
-        providerMessageId: `local:${message.id}:${attemptNumber}`,
+        providerMessageId: `local:${message.id}:${rowNumber}`,
         providerMetadata: { realDelivery: false },
         completedAt,
       },

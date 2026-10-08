@@ -13,6 +13,7 @@ const base = {
   treeStatuses: [] as string[],
   isNewestFailedInTree: true,
   laterDelivery: false,
+  laterQueued: false,
   tooOld: false,
   registrationId: "registration-1" as string | null,
   registrationStatus: "CONFIRMED" as string | null,
@@ -44,6 +45,9 @@ describe("classifyFailedMessage", () => {
 
   it("skips a message whose recipient was sent the same email after it failed", () => {
     expect(classifyFailedMessage({ ...base, laterDelivery: true })).toBe("LATER_DELIVERY");
+    expect(classifyFailedMessage({ ...base, laterQueued: true })).toBe("LATER_QUEUED");
+    expect(RETRY_FAILED_SKIP_LABELS.LATER_DELIVERY).toContain("same email was sent to the same person");
+    expect(RETRY_FAILED_SKIP_LABELS.LATER_QUEUED).toBe("A later send of this email to the same person is already queued");
   });
 
   it("names the other reasons in priority order", () => {

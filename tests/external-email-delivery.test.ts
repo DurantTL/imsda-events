@@ -124,6 +124,12 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
         attempts.push(data);
         return data;
       }),
+      findFirst: vi.fn(async ({ where }: { where: { errorCode?: string } }) => {
+        const rows = attempts
+          .filter((attempt) => attempt.errorCode === where.errorCode && attempt.completedAt instanceof Date)
+          .sort((a, b) => (a.completedAt as Date).getTime() - (b.completedAt as Date).getTime());
+        return rows[0] ? { completedAt: rows[0].completedAt } : null;
+      }),
       aggregate: vi.fn(async () => ({
         _max: { attemptNumber: attempts.length > 0 ? Math.max(...attempts.map((attempt) => Number(attempt.attemptNumber))) : null },
       })),
@@ -556,6 +562,34 @@ describe("external email queue", () => {
     expect(result.sentIds).toEqual(["message-1"]);
     expect(store.message).toMatchObject({ status: "SENT", attemptCount: 1 });
     expect(store.attempts[7]).toMatchObject({ attemptNumber: 8, status: "SENT" });
+  });
+
+  it("gives up after 72 hours of quota deferral: FAILED with PROVIDER_QUOTA and the gave-up message, measured from the first deferral (#860)", async () => {
+    const now = dependencies.now().getTime();
+    const quotaError = async () => {
+      throw new EmailProviderRequestError("quota", "daily_quota_exceeded", true, 429);
+    };
+    // First deferral 71 hours ago: still waiting.
+    const waiting = fakeDeliveryStore();
+    waiting.attempts.push({ attemptNumber: 1, errorCode: "PROVIDER_QUOTA", completedAt: new Date(now - 71 * 3_600_000) });
+    const stillWaiting = await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: waiting.prisma as never, sendEmail: quotaError } });
+    expect(stillWaiting.failedIds).toEqual([]);
+    expect(waiting.message).toMatchObject({ status: "PENDING", lastError: PROVIDER_QUOTA_MESSAGE });
+
+    // First deferral 73 hours ago: gives up through the normal final-failure path.
+    const expired = fakeDeliveryStore();
+    expired.attempts.push({ attemptNumber: 1, errorCode: "PROVIDER_QUOTA", completedAt: new Date(now - 73 * 3_600_000) });
+    const result = await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: expired.prisma as never, sendEmail: quotaError } });
+    expect(result.failedIds).toEqual(["message-1"]);
+    expect(expired.message).toMatchObject({ status: "FAILED", lastError: "Gave up waiting for the email provider's sending limit", attemptCount: 1 });
+    expect(expired.message.failedAt).toEqual(dependencies.now());
+    expect(expired.attempts[1]).toMatchObject({ errorCode: "PROVIDER_QUOTA", errorMessage: "Gave up waiting for the email provider's sending limit", attemptNumber: 2, providerMetadata: expect.objectContaining({ quotaGaveUp: true, rescheduled: false }) });
+    // Exactly at the limit counts as expired; the run stops after it.
+    expect(claimQueries(expired)).toHaveLength(1);
+    const boundary = fakeDeliveryStore();
+    boundary.attempts.push({ attemptNumber: 1, errorCode: "PROVIDER_QUOTA", completedAt: new Date(now - 72 * 3_600_000) });
+    await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: boundary.prisma as never, sendEmail: quotaError } });
+    expect(boundary.message.status).toBe("FAILED");
   });
 
   it("stops the run at the first quota error so the rest of the queue is not tried", async () => {

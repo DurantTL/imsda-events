@@ -429,6 +429,20 @@ describe("retry failed messages", () => {
     expect(preview.skipped).toEqual([expect.objectContaining({ reason: "LATER_DELIVERY", count: 1 })]);
   });
 
+  it("skips a failed message when a later send of the same email to the same person is still queued", async () => {
+    fixture([
+      row("failed-1", { createdAt: new Date(Date.now() - 3 * 3600_000) }),
+      row("queued-later", { status: "PENDING", registrationId: "registration-failed-1", recipientEmail: "failed-1@example.test", metadata: { batchId: "another-batch" }, correlationId: "another-batch", createdAt: new Date(Date.now() - 3600_000) }),
+      row("processing-later", { status: "PROCESSING", registrationId: "registration-failed-2", recipientEmail: "failed-2@example.test", metadata: { batchId: "another-batch" }, correlationId: "another-batch", createdAt: new Date(Date.now() - 3600_000) }),
+      row("failed-2", { createdAt: new Date(Date.now() - 3 * 3600_000) }),
+      row("failed-3", { createdAt: new Date(Date.now() - 3 * 3600_000) }),
+    ]);
+    const preview = await previewFailedMessagesRetry("event-1", batchScope);
+    expect(preview.failedCount).toBe(3);
+    expect(preview.eligibleCount).toBe(1);
+    expect(preview.skipped).toEqual([expect.objectContaining({ reason: "LATER_QUEUED", count: 2 })]);
+  });
+
   it("skips link emails and balance reminders, each with its own reason", async () => {
     fixture([
       row("ok"),
