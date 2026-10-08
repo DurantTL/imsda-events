@@ -276,7 +276,7 @@ function attendeePassQrUrl(attendeeId: string) {
   return `${REGISTRATION_MANAGE_API_SENTINEL}/attendee-passes/${encodeURIComponent(attendeeId)}/qr?format=png`;
 }
 
-const CHECKIN_QR_IMAGE_MARKDOWN = /!\[[^\]]*\]\(\s*\{\{\s*checkin_qr_image\s*\}\}\s*\)/g;
+const CHECKIN_QR_IMAGE_MARKDOWN = /!\[[^\]]*\]\(\s*\{\{\s*checkin\\?_qr\\?_image\s*\}\}\s*\)/g;
 
 /**
  * A single image token cannot hold several pictures, so for a party that gets

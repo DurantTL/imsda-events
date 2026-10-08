@@ -3971,7 +3971,7 @@ export async function enqueueSelectedAudienceBatch(
               },
             })
           : [];
-        const usesSeminarToken = sentTemplates.some((template) => /\{\{\s*seminar_preferences\s*\}\}/.test(
+        const usesSeminarToken = sentTemplates.some((template) => /\{\{\s*seminar\\?_preferences\s*\}\}/.test(
           `${template.versions[0]?.subjectTemplate ?? ""}\n${template.versions[0]?.bodyTemplate ?? ""}`,
         ));
         const seminarBlocks = usesSeminarToken

@@ -1026,6 +1026,15 @@ export const NO_VALUE_MESSAGE_TEMPLATE_CONTEXT: Readonly<
 ) as Record<MessageTemplateToken, string>);
 
 const templateTokenPattern = /\{\{([^{}]+)\}\}/g;
+
+/**
+ * Drafts saved before #859 may hold `{{announcement\_body}}`, because the
+ * editor escaped underscores. Read `\_` inside a token as `_`.
+ */
+function unescapeTokenUnderscores(value: string) {
+  return value.replace(templateTokenPattern, (span) => span.replace(/\\_/g, "_"));
+}
+
 const subjectLineBreakPattern = /[\r\n]/;
 
 function uniqueInOrder<T>(values: readonly T[]): T[] {
@@ -1038,7 +1047,7 @@ export function formatMessageTemplateToken(token: MessageTemplateToken) {
 
 export function extractMessageTemplateTokens(value: string) {
   const tokens: string[] = [];
-  for (const match of value.matchAll(templateTokenPattern)) {
+  for (const match of unescapeTokenUnderscores(value).matchAll(templateTokenPattern)) {
     tokens.push(match[1].trim());
   }
   return uniqueInOrder(tokens);
@@ -1162,7 +1171,7 @@ export function renderTemplateText(
   const missingTokens: MessageTemplateToken[] = [];
   const unresolvedTokens: string[] = [];
 
-  const text = withoutEmptyBlockHeadings(template, context).replace(templateTokenPattern, (placeholder, rawToken: string) => {
+  const text = withoutEmptyBlockHeadings(unescapeTokenUnderscores(template), context).replace(templateTokenPattern, (placeholder, rawToken: string) => {
     const token = rawToken.trim();
     if (!ALLOWED_MESSAGE_TEMPLATE_TOKENS.has(token as MessageTemplateToken)) {
       unresolvedTokens.push(token);

@@ -245,7 +245,7 @@ export async function broadcastPublishedAnnouncement(input: {
       },
     });
     const publishedVersion = publishedTemplate?.versions[0];
-    const seminarBlocks = /\{\{\s*seminar_preferences\s*\}\}/.test(
+    const seminarBlocks = /\{\{\s*seminar\\?_preferences\s*\}\}/.test(
       `${publishedVersion?.subjectTemplate ?? ""}\n${publishedVersion?.bodyTemplate ?? ""}`,
     )
       ? await buildSeminarPreferencesBlocks(tx, {

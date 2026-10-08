@@ -129,7 +129,7 @@ const fallbackSettings = {
   replyToEmail: null,
 };
 
-const SEMINAR_TOKEN_PATTERN = /\{\{\s*seminar_preferences\s*\}\}/;
+const SEMINAR_TOKEN_PATTERN = /\{\{\s*seminar\\?_preferences\s*\}\}/;
 
 const waitlistTemplateKeys: ReadonlySet<TransactionalTemplateKey> = new Set([
   "WAITLIST_JOINED",

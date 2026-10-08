@@ -1,4 +1,4 @@
-import { $getRoot, createEditor } from "lexical";
+import { $createParagraphNode, $createTextNode, $getRoot, createEditor } from "lexical";
 import { LinkNode } from "@lexical/link";
 import { ListItemNode, ListNode } from "@lexical/list";
 import { HeadingNode } from "@lexical/rich-text";
@@ -195,5 +195,31 @@ describe("message body editor buttons and images (#824)", () => {
     for (const bad of ["", "javascript:alert(1)", "data:text/html,x", "example.test", "https://a b", "ftp://example.test", "{{portal url}}", "https://x.test/a(b)"]) {
       expect(isAllowedEmailLinkTarget(bad), bad).toBe(false);
     }
+  });
+});
+
+describe("hand-typed tokens (#859)", () => {
+  function exportTyped(text: string) {
+    const editor = loadMarkdown("");
+    editor.update(() => {
+      const paragraph = $createParagraphNode();
+      paragraph.append($createTextNode(text));
+      $getRoot().clear().append(paragraph);
+    }, { discrete: true });
+    return editor.getEditorState().read(() => $exportEmailMarkdown());
+  }
+
+  it.each(["seminar_preferences", "checkin_qr_image", "announcement_body"])(
+    "exports a typed {{%s}} without escaped underscores",
+    (token) => {
+      expect(exportTyped(`{{${token}}}`)).toBe(`{{${token}}}`);
+    },
+  );
+
+  it("still escapes underscores outside tokens", () => {
+    const out = exportTyped("snake_case {{announcement_body}} other_word");
+    expect(out).toContain("snake\\_case");
+    expect(out).toContain("{{announcement_body}}");
+    expect(out).toContain("other\\_word");
   });
 });
