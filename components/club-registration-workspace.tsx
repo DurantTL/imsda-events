@@ -401,6 +401,7 @@ export function ClubRegistrationWorkspace({
       // option is prompted for instead of left silently blank.
       carriedFromRoster: true,
       carryoverMismatches: person.carryoverMismatches,
+      rosterValues: person.prefillResponses as Record<string, string>,
     })),
     // Extra people: names and age come from Who's going, like roster people.
     ...draft.guests.map((guest) => {

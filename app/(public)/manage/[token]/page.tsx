@@ -406,7 +406,7 @@ export default async function PublicManagePage({
             </a>
           </section>
 
-          {accountPromptVisible({ signedIn: Boolean(signedInAccount), clubEvent: view.isGroup }) && (
+          {accountPromptVisible({ signedIn: Boolean(signedInAccount), clubRegistration: view.isClub }) && (
             <RegistrationAccountPrompt
               email={view.contact.email}
               embedded={false}

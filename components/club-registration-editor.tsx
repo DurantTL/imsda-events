@@ -188,6 +188,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
           // option is prompted for rather than left silently blank.
           carriedFromRoster: true,
           carryoverMismatches: person.carryoverMismatches,
+          rosterValues: person.prefillResponses as Record<string, string>,
         };
       }),
       ...offRoster.filter((attendee) => keptOffRosterIds.includes(attendee.attendeeId))

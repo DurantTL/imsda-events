@@ -6,7 +6,8 @@
 import type { ClubComplianceState } from "@/modules/background-checks/display";
 import type { PersonClassReadiness } from "@/modules/honors/class-readiness";
 
-export type AttentionItem = { reason: string; fix: string };
+/** `advisory` items are shown as a note and never take away "Complete". */
+export type AttentionItem = { reason: string; fix: string; advisory?: boolean };
 
 function joinLabels(labels: readonly string[]) {
   return labels.length <= 1 ? (labels[0] ?? "") : `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
@@ -17,7 +18,7 @@ export function missingAnswersAttention(labels: readonly string[]): AttentionIte
   if (labels.length === 0) return [];
   return [{
     reason: `Answer needed: ${joinLabels(labels)}`,
-    fix: "Open this card with Edit and fill in the highlighted questions.",
+    fix: "Open this card and answer the highlighted questions.",
   }];
 }
 
@@ -26,7 +27,7 @@ export function carryoverAttention(count: number): AttentionItem[] {
   if (count <= 0) return [];
   return [{
     reason: count === 1 ? "A roster value didn't match the form" : `${count} roster values didn't match the form`,
-    fix: "Open this card with Edit and pick the right option.",
+    fix: "Open this card and pick the right option.",
   }];
 }
 
@@ -48,7 +49,7 @@ export function backgroundCheckAttention(state: ClubComplianceState | null | und
     return [{ reason: "Background check expired or not in compliance", fix: "Ask them to renew their Sterling Volunteers check. You can still register them." }];
   }
   if (state === "FLAGGED") {
-    return [{ reason: "Background check expiring soon", fix: "Ask them to renew their Sterling Volunteers check before it expires." }];
+    return [{ reason: "Background check expiring soon", fix: "Ask them to renew their Sterling Volunteers check before it expires.", advisory: true }];
   }
   return [];
 }

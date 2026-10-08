@@ -153,6 +153,8 @@ export type RosterAttendee = {
    * form can prompt for them instead of leaving the field silently blank. */
   carriedFromRoster?: boolean;
   carryoverMismatches?: Array<{ fieldKey: string; label: string; value: string }>;
+  /** The roster's own gender and role answers (#853): while the card still holds them, they sit behind "Change". */
+  rosterValues?: Record<string, string>;
 };
 type FieldRenderContext = {
   values: FormResponses;
@@ -659,10 +661,27 @@ export function PublicRegistrationForm({
   const [promoCodeApplying, setPromoCodeApplying] = useState(false);
   const [promoCodeNotice, setPromoCodeNotice] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
+  // Club cards tuck roster-known answers away (#853); once a question has been shown (a server issue, or "Change"),
+  // it stays shown for the rest of the visit. Keyed by `${clientId}:${fieldKey}`, or `${clientId}:*` for "Change".
+  const [revealedFields, setRevealedFields] = useState<Record<string, true>>({});
+  useEffect(() => {
+    if (!club || issues.length === 0) return;
+    const reveal: Record<string, true> = {};
+    for (const issue of issues) {
+      const match = /^attendees\.(\d+)\.responses\.(.+)$/.exec(issue.path ?? "");
+      const target = match ? attendees[Number(match[1])] : undefined;
+      if (match && target) reveal[`${target.clientId}:${match[2]}`] = true;
+    }
+    if (Object.keys(reveal).length === 0) return;
+    const timer = window.setTimeout(() => setRevealedFields((current) => ({ ...current, ...reveal })), 0);
+    return () => window.clearTimeout(timer);
+    // `attendees` is read for ids only; a keystroke should not re-run this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issues]);
   const [accountChoice, setAccountChoice] = useState<"without" | "create">("without");
   // The optional-account offer (#854): never for someone already signed in, and
-  // never on a club event's registrations (a club's or a group's).
-  const showAccountPrompt = accountPromptVisible({ signedIn: disableDrafts, clubEvent: Boolean(club || group) });
+  // never on a club's own registration.
+  const showAccountPrompt = accountPromptVisible({ signedIn: disableDrafts, clubRegistration: Boolean(club) });
   const lockedAttendeeFieldKeys = useMemo(
     () => new Set(club?.lockedAttendeeFieldKeys ?? []),
     [club?.lockedAttendeeFieldKeys],
@@ -2184,34 +2203,52 @@ export function PublicRegistrationForm({
             });
             const cardId = `public_attendee_${safeId(attendee.clientId)}`;
             // Roster answers are not asked again (#853): the person's name, age, gender and role are already known.
-            const rosterAnswered = club
-              ? new Set(rosterAnsweredFieldKeys(definition, attendee.responses, {
+            const rosterKnown = club
+              ? rosterAnsweredFieldKeys(definition, attendee.responses, {
                 carriedFromRoster: Boolean(attendee.carriedFromRoster),
                 unresolvedKeys: (attendee.carryoverMismatches ?? []).map((mismatch) => mismatch.fieldKey),
-              }))
-              : new Set<string>();
+                rosterValues: attendee.rosterValues,
+                // Reopening a submitted registration asks for them again.
+                askChangeable: Boolean(club.submitEdit),
+              })
+              : { locked: [], changeable: [] };
+            const changeOpen = Boolean(revealedFields[`${attendee.clientId}:*`]);
+            const fieldsByKey = new Map(attendeeSections.flatMap((section) => section.fields).map((field) => [field.key, field]));
+            const rosterAnswered = new Set([...rosterKnown.locked, ...rosterKnown.changeable].filter((key) => {
+              const field = fieldsByKey.get(key);
+              if (!field) return false;
+              const shown = revealedFields[`${attendee.clientId}:${key}`]
+                || issueFor(field, context)
+                || (changeOpen && rosterKnown.changeable.includes(key));
+              return !shown;
+            }));
+            const changeableHidden = rosterKnown.changeable.filter((key) => rosterAnswered.has(key));
             const visibleAttendeeSections = attendeeSections.map((section) => ({
               ...section,
               fields: section.fields.filter((field) => (
                 allowedFieldKeys.has(field.key)
                 && isFieldVisible(field, context.visibilityResponses)
                 // A problem the server found with a roster answer still shows its question.
-                && (!rosterAnswered.has(field.key) || issueFor(field, context))
+                && !rosterAnswered.has(field.key)
               )),
             })).filter((section) => section.fields.length > 0);
             const rosterSummary = rosterAnsweredSummary(
-              attendeeSections.flatMap((section) => section.fields).filter((field) => rosterAnswered.has(field.key) && !issueFor(field, context)),
+              attendeeSections.flatMap((section) => section.fields).filter((field) => rosterAnswered.has(field.key)),
               attendee.responses,
             );
             // An unresolved carried-over prompt (a value that did not match, or a blank role) is still "Needs attention".
             const unresolvedCarryovers = attendeeSections.flatMap((section) => section.fields)
               .filter((field) => allowedFieldKeys.has(field.key) && isFieldVisible(field, context.visibilityResponses) && carryoverMismatchNotice(field, context)).length;
-            const attention: AttentionItem[] = [
-              ...(complete ? [] : missingAnswersAttention(attendeeMissingFieldLabels(definition, registrationResponses, attendee.responses))),
-              ...carryoverAttention(unresolvedCarryovers),
-              ...(club?.attendeeAttention?.(attendee, attendeeIndex) ?? []),
-            ];
-            const statusComplete = cardStatusComplete(complete, unresolvedCarryovers) && attention.length === 0;
+            // Only a club registration says why, and only on the collapsed card; other forms keep the plain badge.
+            const attention: AttentionItem[] = club
+              ? [
+                ...(complete ? [] : missingAnswersAttention(attendeeMissingFieldLabels(definition, registrationResponses, attendee.responses))),
+                ...carryoverAttention(unresolvedCarryovers),
+                ...(club.attendeeAttention?.(attendee, attendeeIndex) ?? []),
+              ]
+              : [];
+            // An advisory note (a check expiring soon) never takes away "Complete".
+            const statusComplete = cardStatusComplete(complete, unresolvedCarryovers) && attention.every((item) => item.advisory);
             return (
               <article
                 className={`public-registration-attendee${collapsed ? " is-collapsed" : " is-active"}${inSheet ? " is-sheet" : ""}`}
@@ -2238,7 +2275,7 @@ export function PublicRegistrationForm({
                         {statusComplete ? <StatusComplete /> : <NeedsAttention />}
                       </small>
                     )}
-                    {!statusComplete && attention.length > 0 && (
+                    {collapsed && attention.length > 0 && (
                       <ul className="public-registration-attendee-attention">
                         {attention.map((item) => (
                           <li key={item.reason}><strong>{item.reason}.</strong> {item.fix}</li>
@@ -2313,6 +2350,19 @@ export function PublicRegistrationForm({
                     {rosterSummary && (
                       <p className="public-registration-attendee-roster-note">
                         From your roster, not asked again: {rosterSummary}.
+                        {changeableHidden.length > 0 && (
+                          <>
+                            {" "}
+                            <button
+                              className="text-button"
+                              type="button"
+                              aria-label={`Change gender or role for ${displayName}`}
+                              onClick={() => setRevealedFields((current) => ({ ...current, [`${attendee.clientId}:*`]: true }))}
+                            >
+                              Change
+                            </button>
+                          </>
+                        )}
                       </p>
                     )}
                     {visibleAttendeeSections.map((section) => (

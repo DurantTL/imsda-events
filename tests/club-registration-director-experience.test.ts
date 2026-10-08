@@ -7,7 +7,7 @@ import {
 } from "@/modules/club-registrations/attention";
 import { rosterAnsweredFieldKeys, rosterAnsweredSummary } from "@/modules/club-registrations/domain";
 import { accountPromptVisible } from "@/modules/forms/account-prompt";
-import { attendeeMissingFieldLabels, cardStatusComplete, isAttendeeCardComplete } from "@/modules/forms/roster-cards";
+import { attendeeMissingFieldLabels, isAttendeeCardComplete } from "@/modules/forms/roster-cards";
 import { classChoiceReadiness } from "@/modules/honors/class-readiness";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 
@@ -36,39 +36,42 @@ const definition = registrationFormDefinitionSchema.parse({
 });
 
 describe("optional-account panel (#854)", () => {
-  it("shows only to a signed-out visitor on a regular event", () => {
-    expect(accountPromptVisible({ signedIn: false, clubEvent: false })).toBe(true);
-    expect(accountPromptVisible({ signedIn: true, clubEvent: false })).toBe(false);
-    expect(accountPromptVisible({ signedIn: false, clubEvent: true })).toBe(false);
-    expect(accountPromptVisible({ signedIn: true, clubEvent: true })).toBe(false);
+  it("shows to a signed-out registrant, and to a group contact", () => {
+    expect(accountPromptVisible({ signedIn: false, clubRegistration: false })).toBe(true);
+  });
+
+  it("is hidden for anyone signed in, and on a club's own registration", () => {
+    expect(accountPromptVisible({ signedIn: true, clubRegistration: false })).toBe(false);
+    expect(accountPromptVisible({ signedIn: false, clubRegistration: true })).toBe(false);
+    expect(accountPromptVisible({ signedIn: true, clubRegistration: true })).toBe(false);
   });
 });
 
 describe("roster answers are not asked again (#853)", () => {
   const known = { first_name: "Alex", last_name: "Sample", attendee_age: "11", gender: "Female", attendee_type: "Pathfinder" };
-
-  it("hides name, age, gender and role for a roster person", () => {
-    expect(rosterAnsweredFieldKeys(definition, known, { carriedFromRoster: true }))
-      .toEqual(["first_name", "last_name", "attendee_age", "gender", "attendee_type"]);
-  });
+  const rosterValues = { gender: "Female", attendee_type: "Pathfinder" };
 
   it("still asks for a value the roster lacks or the form could not match", () => {
     const keys = rosterAnsweredFieldKeys(
       definition,
       { ...known, attendee_age: "", attendee_type: "" },
-      { carriedFromRoster: true, unresolvedKeys: ["gender"] },
+      { carriedFromRoster: true, rosterValues, unresolvedKeys: ["gender"] },
     );
-    expect(keys).toEqual(["first_name", "last_name"]);
+    expect(keys).toEqual({ locked: ["first_name", "last_name"], changeable: [] });
   });
 
-  it("only hides what the roster owns for an extra person, and never other questions", () => {
-    const keys = rosterAnsweredFieldKeys(definition, { ...known, vegetarian: "true" }, { carriedFromRoster: false });
-    expect(keys).toEqual(["first_name", "last_name", "attendee_age"]);
-    expect(keys).not.toContain("vegetarian");
+  it("asks both gender and role once either differs from the roster", () => {
+    const keys = rosterAnsweredFieldKeys(definition, { ...known, attendee_type: "Staff" }, { carriedFromRoster: true, rosterValues });
+    expect(keys.changeable).toEqual([]);
   });
 
-  it("summarises the hidden answers in words", () => {
-    const hidden = definition.sections[0]!.fields.filter((candidate) => ["attendee_age", "gender", "attendee_type"].includes(candidate.key));
+  it("never hides other questions such as diet", () => {
+    const keys = rosterAnsweredFieldKeys(definition, { ...known, vegetarian: "true" }, { carriedFromRoster: true, rosterValues });
+    expect([...keys.locked, ...keys.changeable]).not.toContain("vegetarian");
+  });
+
+  it("summarises the hidden answers in words, without the name", () => {
+    const hidden = definition.sections[0]!.fields.filter((candidate) => ["first_name", "attendee_age", "gender", "attendee_type"].includes(candidate.key));
     expect(rosterAnsweredSummary(hidden, known)).toBe("age 11, Female, Pathfinder");
   });
 });
@@ -87,6 +90,10 @@ describe("needs-attention reasons (#853)", () => {
     expect(backgroundCheckAttention("NO_RECORD")[0]!.fix).toMatch(/Sterling Volunteers/);
     expect(backgroundCheckAttention("NOT_COMPLIANT")[0]!.reason).toMatch(/not in compliance/);
     expect(backgroundCheckAttention("FLAGGED")[0]!.reason).toMatch(/expiring/);
+    // Only missing, expired or not-in-compliance are blocking; "expiring soon" is a note.
+    expect(backgroundCheckAttention("FLAGGED")[0]!.advisory).toBe(true);
+    expect(backgroundCheckAttention("NO_RECORD")[0]!.advisory).toBeUndefined();
+    expect(backgroundCheckAttention("NOT_COMPLIANT")[0]!.advisory).toBeUndefined();
     expect(backgroundCheckAttention("CLEAR")).toEqual([]);
     expect(backgroundCheckAttention(undefined)).toEqual([]);
   });
@@ -107,8 +114,8 @@ describe("needs-attention reasons (#853)", () => {
     const items = classAttention(none);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ reason: "Class needed for Session 1" });
-    // The form answers alone would read Complete; the class makes the card need attention.
-    expect(cardStatusComplete(true, 0) && items.length === 0).toBe(false);
+    // Every form answer is in, yet the owed class is a blocking (non-advisory) reason.
+    expect(items.some((item) => !item.advisory)).toBe(true);
 
     const chosen = classChoiceReadiness({ attendees: [youth], sessions, offerings, selections: { "member:1": ["o1"] } }).people[0];
     expect(classAttention(chosen)).toEqual([]);
