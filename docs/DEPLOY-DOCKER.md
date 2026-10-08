@@ -223,7 +223,7 @@ The production host runs `/root/xcloud-cleanup.sh` daily at 13:12, which
 deletes anything under any site's `.xcloud/` directory that hasn't been
 modified in 30 days. That sweep does not know these three files are a
 permanent, hand-maintained override rather than deploy scratch space, so it
-will delete `.env`, `docker-compose.yml`, and `docker-compose.env.yml` out
+will delete `.env`, `.env.dburl`, `docker-compose.yml`, and `docker-compose.env.yml` out
 from under a site that hasn't deployed (and therefore hasn't touched them)
 in a month.
 
@@ -234,7 +234,7 @@ cat > /etc/cron.d/imsda-xcloud-touch <<'EOF'
 # Keep the persistent xCloud runtime override files from being swept by
 # /root/xcloud-cleanup.sh's blanket "delete anything in .xcloud/ older than
 # 30 days" logic — see docs/DEPLOY-DOCKER.md for why these files must persist.
-0 5 * * * root touch /home/u_events/.xcloud/.env /home/u_events/.xcloud/docker-compose.yml /home/u_events/.xcloud/docker-compose.env.yml 2>/dev/null
+0 5 * * * root touch /home/u_events/.xcloud/.env /home/u_events/.xcloud/.env.dburl /home/u_events/.xcloud/docker-compose.yml /home/u_events/.xcloud/docker-compose.env.yml 2>/dev/null
 EOF
 chmod 644 /etc/cron.d/imsda-xcloud-touch
 ```
@@ -253,9 +253,12 @@ no-op until the file is restored — leave it in the list as-is.
 Occasionally this site type stops writing `/home/u_events/.xcloud/docker-compose.yml`
 on deploy entirely — the dashboard's **Deploy** button reports success (or an
 `empty compose file` error) but the file is missing or empty afterward, and
-neither `scripts/xcloud-post-deploy.sh` nor the systemd guard above can help,
-because both depend on xCloud having produced *some* base Compose file to
-patch. When this happens, **file an xCloud support ticket** — this is a
+neither `scripts/xcloud-post-deploy.sh` nor the systemd guard above can repair
+a container, because both depend on xCloud having produced *some* base Compose
+file to patch. In this mode the guard only checks the running
+`xcloud-site-<id>-app-1` container: it passes while that container has
+`DATABASE_URL` and the PostgreSQL network, defers while no container is running
+(mid-swap), and fails when either is missing so the journal shows it. When this happens, **file an xCloud support ticket** — this is a
 platform-level regression, not something fixable from inside the site — and
 until it's resolved, every deploy needs the manual rebuild-and-swap below
 instead of the dashboard Deploy button.
@@ -362,8 +365,10 @@ can be kept a day or two first for extra insurance, no rush):
 
 ```bash
 docker rm xcloud-site-<id>-app-1-old
-rm -f /home/u_events/.xcloud/.env.dburl
 ```
+
+Keep `/home/u_events/.xcloud/.env.dburl`: the next manual swap reads it, and
+the runtime guard accepts it as the home of `DATABASE_URL`.
 
 A `messageOutbox` `failed` count greater than zero in the health check is
 usually pre-existing and unrelated to the deploy itself — worth a look in the
