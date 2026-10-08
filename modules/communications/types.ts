@@ -22,7 +22,8 @@ export type MessageTemplateKeyValue =
   | "SHIRT_SIZE_REQUEST"
   | "REGISTRATION_ACCESS_RECOVERY"
   | "EVENT_ANNOUNCEMENT"
-  | "CLUB_ASSIGNMENTS";
+  | "CLUB_ASSIGNMENTS"
+  | "CUSTOM_MESSAGE";
 
 export type MessageOutboxStatusValue =
   | "PENDING"

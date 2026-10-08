@@ -359,7 +359,8 @@ describe("large parties", () => {
       attendees: party(9),
     });
 
-    expect(tokens.checkin_qr_images).toBe("");
+    // The plural token is the portal link above the cap, never nothing.
+    expect(tokens.checkin_qr_images).toBe(`[Show our check-in passes](${tokens.checkin_qr_url})`);
     expect(tokens.checkin_block).toContain("Show our check-in passes");
     expect(tokens.checkin_block).not.toContain("![");
     expect(withPerAttendeeQrImages("![x]({{checkin_qr_image}})", 9)).toBe(

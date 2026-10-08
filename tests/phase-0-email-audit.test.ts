@@ -283,6 +283,9 @@ function contextFor(fixture: EventFixture, registration: RegistrationFixture): M
   };
 }
 
+/** The custom message ships blank on purpose (#850), so it has no default text to audit. It is excluded by key. */
+const shipsDefaultText = (template: { key: string }) => template.key !== "CUSTOM_MESSAGE";
+
 describe("Phase 0 email audit fixtures", () => {
   it("covers the nine supported form templates with synthetic registrations", () => {
     expect(eventFixtures.map((fixture) => fixture.formKey)).toEqual(formTemplates.map((template) => template.key));
@@ -321,11 +324,18 @@ describe("Phase 0 email audit fixtures", () => {
     expect(registrationTypes.honors_weekend).toEqual(["group", "group"]);
   });
 
+  it("has exactly one blank default, the custom message", () => {
+    const blank = DEFAULT_MESSAGE_TEMPLATE_LIST.filter((template) => template.subject === "" || template.body === "");
+    expect(blank.map((template) => template.key)).toEqual(["CUSTOM_MESSAGE"]);
+    expect(DEFAULT_MESSAGE_TEMPLATE_LIST.filter((template) => !shipsDefaultText(template)).map((template) => template.key))
+      .toEqual(["CUSTOM_MESSAGE"]);
+  });
+
   it("renders every available default through the production HTML and text pipeline for every applicable registration state", () => {
     const captures = eventFixtures.flatMap((fixture) => {
       return fixture.registrations.flatMap((registration) => {
         const context = contextFor(fixture, registration);
-        return DEFAULT_MESSAGE_TEMPLATE_LIST.map((template) => {
+        return DEFAULT_MESSAGE_TEMPLATE_LIST.filter(shipsDefaultText).map((template) => {
           const rendered = renderMessageTemplate(template, context);
           return {
             formKey: fixture.formKey,
@@ -348,7 +358,7 @@ describe("Phase 0 email audit fixtures", () => {
     });
 
     const expectedEvidence = eventFixtures.flatMap((fixture) => fixture.registrations.flatMap((registration) =>
-      DEFAULT_MESSAGE_TEMPLATE_LIST.map((template) => ({
+      DEFAULT_MESSAGE_TEMPLATE_LIST.filter(shipsDefaultText).map((template) => ({
         formKey: fixture.formKey,
         eventName: fixture.eventName,
         templateKey: template.key,

@@ -1,5 +1,7 @@
 import "server-only";
 
+import { MessagingError } from "@/modules/communications/messaging-error";
+
 import { createHash, randomUUID } from "node:crypto";
 import {
   MessageOutboxStatus,
@@ -31,7 +33,7 @@ import {
   setTemplateVersionFiles,
 } from "@/modules/communications/message-files";
 import { BATCH_TRANSACTION_MAX_WAIT_MS, BATCH_TRANSACTION_TIMEOUT_MS } from "@/modules/communications/batch-transaction";
-import { messageFileIdsInMarkdown, type MessageFileRecord } from "@/modules/communications/message-file-rules";
+import { inlineImageSetIssue, messageFileIdsInMarkdown, type MessageFileRecord } from "@/modules/communications/message-file-rules";
 import type {
   BalanceReminderBatchInput,
   ClubAssignmentBatchInput,
@@ -68,6 +70,9 @@ import {
   formatMessageMoney,
   renderMessageTemplate,
   selectRegistrationMessageTemplate,
+  showsPerAttendeeQrs,
+  validateMessageTemplate,
+  CUSTOM_MESSAGE_TOKEN_KEYS,
   type MessageTemplateContext,
   type MessageTemplateKey,
   withChurchBilledLinkWording,
@@ -187,27 +192,7 @@ export type QueuedRegistrationMessages = {
   deliveryMode: "DISABLED" | "LOCAL_CAPTURE" | "EXTERNAL_EMAIL";
 };
 
-export class MessagingError extends Error {
-  constructor(
-    public readonly code:
-      | "MESSAGE_NOT_FOUND"
-      | "TEMPLATE_NOT_FOUND"
-      | "DELIVERY_DISABLED"
-      | "EXTERNAL_EMAIL_NOT_CONFIGURED"
-      | "MESSAGE_NOT_RETRYABLE"
-      | "MESSAGE_NOT_RESENDABLE"
-      | "PREVIEW_CHANGED"
-      | "EMPTY_AUDIENCE"
-      | "IDEMPOTENCY_KEY_REUSED"
-      | "EVENT_NOT_ELIGIBLE"
-      | "INVALID_TEMPLATE",
-    message: string,
-    public readonly details?: Record<string, unknown>,
-  ) {
-    super(message);
-    this.name = "MessagingError";
-  }
-}
+export { MessagingError };
 
 function stringArrayFromJson(value: Prisma.JsonValue | null | undefined) {
   if (!Array.isArray(value)) return [];
@@ -514,7 +499,9 @@ export async function ensureEventMessagingDefaults(eventId: string) {
               versions: { select: { id: true }, take: 1 },
             },
           });
-          if (template.versions.length === 0) {
+          // The custom message starts blank and unpublished (#850): staff write it, and publishing is what makes it
+          // sendable. Every other template ships with a published default.
+          if (template.versions.length === 0 && definition.subject && definition.body) {
             await tx.messageTemplateVersion.create({
               data: {
                 templateId: template.id,
@@ -985,6 +972,19 @@ export async function publishMessageTemplateVersion(
       include: { versions: { select: { versionNumber: true } } },
     });
     if (!template) throw new MessagingError("TEMPLATE_NOT_FOUND", "That message template does not exist for this event.");
+    // The custom message offers a shorter token list. A token outside it (a refund amount, a club block) would
+    // render stock text or fail the send, so it is refused here, naming the token.
+    if (template.key === "CUSTOM_MESSAGE") {
+      const validation = validateMessageTemplate({
+        subject: input.subjectTemplate,
+        body: input.bodyTemplate,
+        allowedTokens: new Set<string>(CUSTOM_MESSAGE_TOKEN_KEYS),
+      });
+      const issue = validation.issues.find((candidate) => candidate.code === "UNKNOWN_TOKEN");
+      if (issue) {
+        throw new MessagingError("INVALID_TEMPLATE", issue.message, { field: issue.field, token: issue.token });
+      }
+    }
     const nextVersion = Math.max(0, ...template.versions.map((version) => version.versionNumber)) + 1;
     // Attachments carry forward unless the author sent a list, which then is the whole set (#824).
     const attachmentFileIds = input.attachmentFileIds
@@ -1397,7 +1397,7 @@ async function loadTestRegistrationContext(
         confirmationCode: registration.confirmationCode,
         attendeeIds: registration.attendees.map((attendee) => attendee.id),
         // An announcement shows each attendee's own labelled QR, as it will when sent.
-        attendees: templateKey === "EVENT_ANNOUNCEMENT"
+        attendees: showsPerAttendeeQrs(templateKey)
           ? registration.attendees.map((attendee) => ({
               id: attendee.id,
               name: publicAttendeeName(attendee.profileSnapshot, attendee.person) || "Attendee",
@@ -1513,7 +1513,7 @@ export async function sendTestMessage(
           version.bodyTemplate,
           event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
         ),
-        template.key === "EVENT_ANNOUNCEMENT" ? source?.attendeeCount ?? 0 : 0,
+        showsPerAttendeeQrs(template.key) ? source?.attendeeCount ?? 0 : 0,
       ),
     },
     context,
@@ -3624,6 +3624,12 @@ async function loadSelectedAudienceState(
           where: { status: "PUBLISHED" },
           orderBy: { versionNumber: "desc" },
           take: 1,
+          include: {
+            files: {
+              orderBy: { position: "asc" },
+              select: { file: { select: { id: true, filename: true, sizeBytes: true } } },
+            },
+          },
         },
       },
     }),
@@ -3703,6 +3709,22 @@ async function loadSelectedAudienceState(
     };
   });
 
+  // The custom message carries what its published version carries (#850): the attachments, and any pictures in the
+  // body. They are checked here, in the review, so a send never fails on one.
+  const isCustom = templateKey === "CUSTOM_MESSAGE";
+  const customAttachments = isCustom ? (staticVersion?.files ?? []).map((link) => link.file) : [];
+  const customPictureIds = isCustom ? messageFileIdsInMarkdown(staticVersion?.bodyTemplate ?? "") : [];
+  let pictureProblem: string | null = null;
+  if (customPictureIds.length > 0) {
+    const pictures = await client.messageFile.findMany({
+      where: { id: { in: customPictureIds }, eventId, isInlineImage: true },
+      select: { sizeBytes: true },
+    });
+    pictureProblem = pictures.length !== new Set(customPictureIds).size
+      ? "A picture in this message is no longer available. Edit the template and insert the picture again."
+      : inlineImageSetIssue(pictures)?.message ?? null;
+  }
+
   const preview = computeSelectedAudiencePreview(uniqueIds, candidates, {
     eventId,
     templateKey,
@@ -3718,6 +3740,11 @@ async function loadSelectedAudienceState(
     templateEnabled: staticTemplate?.isEnabled ?? true,
     templateVersionId: staticVersion?.id ?? null,
     templateVersionNumber: staticVersion?.versionNumber ?? null,
+    templateId: isCustom ? staticTemplate?.id ?? null : null,
+    templatePublished: !isCustom || Boolean(staticVersion),
+    attachments: customAttachments,
+    pictureIds: customPictureIds,
+    pictureProblem,
     confirmationTemplates,
   }, now);
 
@@ -3838,6 +3865,13 @@ export async function enqueueSelectedAudienceBatch(
           input.registrationIds,
           tx,
         );
+        if (!state.preview.templatePublished) {
+          throw new MessagingError(
+            "TEMPLATE_NOT_PUBLISHED",
+            "The Custom message template has not been published for this event. Write and publish it in Communications, then try again.",
+            { selectedAudiencePreview: state.preview },
+          );
+        }
         if (state.preview.fingerprint !== input.previewFingerprint) {
           throw new MessagingError(
             "PREVIEW_CHANGED",
@@ -3849,6 +3883,13 @@ export async function enqueueSelectedAudienceBatch(
           throw new MessagingError(
             "EMPTY_AUDIENCE",
             "None of the selected registrations can receive this message.",
+            { selectedAudiencePreview: state.preview },
+          );
+        }
+        if (state.preview.attachmentProblem) {
+          throw new MessagingError(
+            "ATTACHMENTS_INVALID",
+            state.preview.attachmentProblem,
             { selectedAudiencePreview: state.preview },
           );
         }
@@ -3892,8 +3933,9 @@ export async function enqueueSelectedAudienceBatch(
             templateKey: recipient.resolvedTemplateKey,
             batchId: input.batchId,
             correlationId: input.batchId,
-            announcementTitle: input.announcementTitle || undefined,
-            announcementBody: input.announcementBody || undefined,
+            // Only the announcement takes a typed title and message; the custom message is the template alone.
+            announcementTitle: input.templateKey === "EVENT_ANNOUNCEMENT" ? input.announcementTitle || undefined : undefined,
+            announcementBody: input.templateKey === "EVENT_ANNOUNCEMENT" ? input.announcementBody || undefined : undefined,
             ...(seminarBlocks
               ? { seminarPreferencesBlock: seminarBlocks.get(recipient.registrationId) ?? "" }
               : {}),

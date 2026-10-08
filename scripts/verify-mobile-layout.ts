@@ -181,6 +181,8 @@ const pages: PageSpec[] = [
   // Staff, as an event administrator.
   staff("overview", "/overview"),
   staff("people-registrations", "/people"),
+  // Email selected (#850): the dialog with Custom message (unpublished, so its notice and link show) and the announcement hint.
+  staff("people-email-selected", "/people"),
   staff("attendee-listing", "/people/attendees"),
   staff("duplicates", "/people/duplicates"),
   staff("finance", "/finance"),
@@ -1486,6 +1488,67 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
       record("dialog-open-failed", `${spec.name} (attachments editor)`, width, (error as Error).message.split("\n")[0] ?? "failed");
     }
     if (page.url() !== editorBefore) await page.goto(editorBefore, { waitUntil: "load" });
+  }
+
+  // The Custom message template (#850) starts blank and unpublished: its explanation, empty fields and the shorter token
+  // list fit the screen, and the token picker opens without anything sticking out.
+  if (spec.name === "staff-communications-editor") {
+    const customBefore = page.url();
+    const auditCustom = async (state: string, shot: string) => {
+      const stateName = `${spec.name} (${state})`;
+      const open = await page.evaluate(auditInPage, { touch, cards: width <= cardsMaxWidth, minTarget: touchTarget, tolerance: touchTolerance });
+      if (open.scrollWidth > open.innerWidth) record("horizontal-scroll", stateName, width, `page is ${open.scrollWidth}px wide in a ${open.innerWidth}px window; sticking out: ${open.overflowers.join("; ") || "(nothing identified)"}`);
+      for (const target of open.smallTargets) record("small-tap-target", stateName, width, target);
+      if (takeShots) await page.screenshot({ path: `${prefix}-${shot}.jpg`, type: "jpeg", quality: 60 });
+    };
+    try {
+      await page.locator('.message-template-list button:has-text("Custom message"):visible').first().click({ timeout: 5000 });
+      await page.waitForTimeout(300);
+      const subject = await page.locator('.message-template-editor label:has-text("Subject") input:visible').first().inputValue({ timeout: 5000 });
+      if (subject !== "") record("dialog-open-failed", `${spec.name} (custom message)`, width, `the custom message should start blank, its subject was "${subject}"`);
+      await auditCustom("custom message blank", "custom-message");
+    } catch (error) {
+      record("dialog-open-failed", `${spec.name} (custom message)`, width, (error as Error).message.split("\n")[0] ?? "failed");
+    }
+    if (page.url() !== customBefore) await page.goto(customBefore, { waitUntil: "load" });
+  }
+
+  // Email selected (#850): tick a registration, open the dialog, and look at Custom message (not yet published for
+  // this event) and Event announcement (with its formatting hint). Nothing is sent.
+  if (spec.name === "staff-people-email-selected") {
+    const peopleBefore = page.url();
+    const auditDialog = async (state: string, shot: string) => {
+      const stateName = `${spec.name} (${state})`;
+      const fit = await page.evaluate(dialogFitInPage);
+      dialogsOpened += fit.count;
+      for (const problem of fit.problems) record("dialog-too-tall", stateName, width, problem);
+      const open = await page.evaluate(auditInPage, { touch, cards: width <= cardsMaxWidth, minTarget: touchTarget, tolerance: touchTolerance });
+      if (open.scrollWidth > open.innerWidth) record("horizontal-scroll", stateName, width, `page is ${open.scrollWidth}px wide in a ${open.innerWidth}px window; sticking out: ${open.overflowers.join("; ") || "(nothing identified)"}`);
+      for (const target of open.smallTargets) record("small-tap-target", stateName, width, target);
+      if (takeShots) await page.screenshot({ path: `${prefix}-${shot}.jpg`, type: "jpeg", quality: 60 });
+    };
+    try {
+      await page.locator(".record-select input:visible").first().check({ timeout: 5000 });
+      await page.locator('button:has-text("Email selected"):visible').first().click({ timeout: 5000 });
+      await page.waitForTimeout(400);
+      const select = page.locator('[role="dialog"] select').first();
+      await select.selectOption("CUSTOM_MESSAGE", { timeout: 5000 });
+      await page.waitForTimeout(600);
+      const notice = await page.locator('[role="dialog"]:has-text("Custom message template has not been published")').count();
+      if (notice === 0) record("dialog-open-failed", `${spec.name} (custom message)`, width, "the dialog did not say the custom message is unpublished");
+      const sendDisabled = await page.locator('[role="dialog"] button.primary-button').first().isDisabled();
+      if (!sendDisabled) record("dialog-open-failed", `${spec.name} (custom message)`, width, "Send is enabled while the custom message is unpublished");
+      await auditDialog("custom message unpublished", "email-selected-custom");
+      await select.selectOption("EVENT_ANNOUNCEMENT", { timeout: 5000 });
+      await page.waitForTimeout(400);
+      if ((await page.locator('[role="dialog"]:has-text("Formatting:")').count()) === 0) record("dialog-open-failed", `${spec.name} (announcement)`, width, "the announcement message has no formatting hint");
+      await auditDialog("event announcement hint", "email-selected-announcement");
+    } catch (error) {
+      record("dialog-open-failed", `${spec.name} (email selected)`, width, (error as Error).message.split("\n")[0] ?? "failed");
+    }
+    await page.keyboard.press("Escape").catch(() => undefined);
+    await page.waitForTimeout(100);
+    if (page.url() !== peopleBefore) await page.goto(peopleBefore, { waitUntil: "load" });
   }
 
   // A draft announcement with attachments (#824): the edit dialog lists them and fits the screen.

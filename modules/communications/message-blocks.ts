@@ -334,7 +334,13 @@ export function buildRegistrationCheckinTokens(input: {
   return {
     checkin_qr_url: REGISTRATION_MANAGE_LINK_SENTINEL,
     checkin_qr_image: qrImageUrl ?? "",
-    checkin_qr_images: inlineQrs.length > 0 ? buildAttendeeQrImagesBlock(inlineQrs) : "",
+    // Above the cap there are too many pictures for one email, so the token is the portal link (the same wording the
+    // single-image token falls back to), never nothing.
+    checkin_qr_images: inlineQrs.length > 0
+      ? buildAttendeeQrImagesBlock(inlineQrs)
+      : attendeeQrs.length > MAX_INLINE_ATTENDEE_QRS
+        ? `[Show our check-in passes](${REGISTRATION_MANAGE_LINK_SENTINEL})`
+        : "",
     checkin_block: buildCheckinBlock({
       confirmationCode: input.confirmationCode,
       passUrl: REGISTRATION_MANAGE_LINK_SENTINEL,
