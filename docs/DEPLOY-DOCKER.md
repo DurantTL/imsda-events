@@ -477,6 +477,37 @@ A `messageOutbox` `failed` count greater than zero in the health check is
 usually pre-existing and unrelated to the deploy itself — worth a look in the
 admin/ops view separately, but not a reason to roll back.
 
+## Prebuilt images from GitHub (no build on the server)
+
+Building the image on the 4 GB server takes about 40 minutes (`next build`).
+`.github/workflows/docker-image.yml` builds it on GitHub after every merge to
+`main` (and by hand from the Actions tab) and publishes:
+
+- `ghcr.io/duranttl/imsda-events:<full commit sha>` — deploy this exact tag
+- `ghcr.io/duranttl/imsda-events:main` — the latest merge
+
+The image holds no secrets; everything sensitive still comes from the env files
+at runtime. A few public values are baked in while Next compiles metadata and
+security headers, so set these **repository variables** (Settings → Secrets and
+variables → Actions → Variables) to match the server `.env`:
+`APP_BASE_URL`, `EMBED_ALLOWED_ORIGINS`, `SQUARE_ENVIRONMENT`,
+`SQUARE_ENABLE_PRODUCTION`. Unset ones fall back to
+`https://events.imsda.org`, `'self' https://imsda.org https://*.imsda.org`,
+`sandbox` and `false`.
+
+To deploy, pull the image for the commit instead of building it, then run the
+same rename-and-start steps as the manual rebuild-and-swap (same env files,
+volume `imsda_events_assets`, port and networks):
+
+```bash
+IMAGE=ghcr.io/duranttl/imsda-events:<full commit sha>
+docker pull "$IMAGE"
+```
+
+If the pull asks for a login, make the package public once (GitHub → the
+repository → Packages → imsda-events → Package settings → Change visibility),
+or `docker login ghcr.io` with a token that has `read:packages`.
+
 ## Moving to a clean server and a new URL
 
 This deployment is designed to start from an empty server. It does not need a
