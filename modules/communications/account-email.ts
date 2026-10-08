@@ -10,7 +10,7 @@ import {
   issueAccountTokenForUser,
   revokeAccountToken,
 } from "@/modules/access/auth-service";
-import { getResendEmailAvailability } from "@/integrations/email/resend";
+import { getEmailAvailability } from "@/integrations/email/provider";
 
 /**
  * Activation and password reset email.
@@ -56,7 +56,7 @@ export class AccountEmailNotConfiguredError extends Error {
 export function isAccountEmailConfigured() {
   const env = getServerEnv();
   return Boolean(env.ACCOUNT_EMAIL_SENDER_ADDRESS)
-    && getResendEmailAvailability().deliveryConfigured;
+    && getEmailAvailability().deliveryConfigured;
 }
 
 export function getAccountEmailSender(): AccountEmailSender {

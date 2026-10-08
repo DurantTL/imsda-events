@@ -91,8 +91,9 @@ the key backup in `docs/SERVER-SECURITY-CHECKLIST.md` (items 2, 3, 9, and 11).
 The last two are what send activation and password-reset email. They are
 required rather than optional because there is no manual substitute at scale: an
 invited colleague who never receives a link cannot obtain a credential at all.
-The address must be verified with Resend, or every account email fails at the
-provider. `ACCOUNT_EMAIL_SENDER_NAME` defaults to `IMSDA Events`, and
+The address must be verified with the active provider (Resend, or the SES
+domain; see "Sending email through Amazon SES" below), or every account email
+fails at the provider. `ACCOUNT_EMAIL_SENDER_NAME` defaults to `IMSDA Events`, and
 `ACCOUNT_EMAIL_REPLY_TO` is optional.
 
 `NODE_ENV` and `DATABASE_URL` are set by `docker-compose.yml` — you do **not**
@@ -137,6 +138,78 @@ to the host at all. That variable only matters for the local `docker-compose.dev
 Email (Resend) and Square are left disabled unless you supply their credentials;
 Square stays in Sandbox until `SQUARE_ENVIRONMENT=production` **and**
 `SQUARE_ENABLE_PRODUCTION=true` are both set. See the main README for those.
+
+## Sending email through Amazon SES (#861)
+
+Email can go out through Amazon SES instead of Resend. The conference's SES
+account is in **US East (Ohio), `us-east-2`**, with production access and the
+verified domains `imsda.org` and `imadventist.org`. The app talks to SES over
+SMTP (`email-smtp.us-east-2.amazonaws.com`, port 587, STARTTLS required) with
+**IAM SMTP credentials**, not Mail Manager.
+
+**1. Create IAM SMTP credentials** (an AWS administrator does this once):
+
+1. Open the SES console in `us-east-2`, then **SMTP settings**, then **Create SMTP credentials**.
+2. Accept the suggested IAM user name (or name it `imsda-events-smtp`) and create it.
+3. Download or copy the **SMTP username** and **SMTP password** now. AWS shows the password only once. These are not the IAM access key and secret; an ordinary access key will not work.
+
+**2. Add these lines to the xCloud environment panel** (the values below are placeholders):
+
+```
+EMAIL_PROVIDER=ses
+SES_REGION=us-east-2
+SES_SMTP_USERNAME=<SMTP username from step 1>
+SES_SMTP_PASSWORD=<SMTP password from step 1>
+```
+
+Optional: `SES_CONFIGURATION_SET=<name>` to tag sends with a configuration set,
+and `SES_MAX_SEND_RATE=<messages per second>` (default `10`; keep it at or below
+the "maximum send rate" shown on the SES **Account dashboard**). `SES_SMTP_HOST`
+and `SES_SMTP_PORT` exist for tests and are left unset. `RESEND_API_KEY` is no
+longer required once `EMAIL_PROVIDER=ses`. Redeploy so the container restarts
+with the new values.
+
+**3. Check the sender is on a verified identity.** SES refuses mail from an
+address that is not on a verified domain or address. The sender used by each
+event's message settings, and `ACCOUNT_EMAIL_SENDER_ADDRESS`, must end in
+`@imsda.org` or `@imadventist.org` (or be a separately verified address). In the
+SES console, **Verified identities** must show that domain as *Verified*.
+A rejected sender appears in the message's delivery history as
+"sender address is not on a verified domain" and is not retried.
+
+**Send one test message after switching.** Before relying on SES for a real
+send, use an event's "send test message" with real delivery (or any single
+registration email) to an address you can read, and confirm it arrives from the
+expected sender and the delivery log shows provider `SES`. This also proves the
+SMTP credentials and the verified sender together.
+
+**What staff will see.**
+
+- Throttling replies from SES ("Maximum sending rate exceeded"), temporary
+  authentication failures, and network faults are retried automatically with the
+  usual backoff. The app also spaces sends (`SES_MAX_SEND_RATE`).
+- A wrong SMTP username or password is checked at the start of each delivery
+  run, before any message is picked up. The run stops with one error naming
+  `SES_SMTP_USERNAME` and `SES_SMTP_PASSWORD`; every queued message stays
+  waiting, no attempt is used up, and nothing is sent. Fix the values, redeploy,
+  and the next run sends them.
+- A sender address that is not on a verified identity, or an SES rejection
+  (554), fails that message for good, with a message saying what to fix.
+- When SES reports the **daily sending quota** is used up, the message is
+  recorded with the error code `PROVIDER_QUOTA` and follows the normal retry
+  schedule. A longer wait for quota errors is tracked in #860. If quota errors
+  appear, ask AWS for a higher sending quota.
+- **A send that times out can arrive twice.** If the connection drops after SES
+  has accepted a message but before the app hears back, the app retries it, and
+  the recipient may get two copies. Every message carries an
+  `X-IMSDA-Message-Id` header holding the outbox message id; the two copies have
+  the same value, which tells a duplicate from two separate messages.
+
+**Switching back.** Set `EMAIL_PROVIDER=resend` (or remove the line) and
+redeploy. Resend then sends exactly as before, and `RESEND_API_KEY` is required
+again. Resend's delivery and bounce webhooks stay in place but receive nothing
+while SES is active. SES bounce and complaint reporting (through SNS) is not
+built yet, so the delivery status for SES mail stops at "accepted".
 
 ## Permanent xCloud Dockerfile-only runtime override
 

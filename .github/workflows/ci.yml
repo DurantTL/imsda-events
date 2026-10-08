@@ -181,6 +181,9 @@ jobs:
       # Real-database check of invoice delivery (#168): one stored, hash-checked PDF per finalized version, sends with the exact recipients and the same attachment on every resend, superseded versions refused, bounce and suppression recorded, append-only AR postings and payments (partial, void, overpaid, carried across a revision), statements scoped to the event, a formula-safe treasurer CSV, and no audit row holding an address or a contact name.
       - run: npm run test:invoice-delivery
 
+      # Real-database check of Amazon SES delivery (#861) against a local SMTP stand-in (no AWS): one message through the outbox worker with an attachment, an inline picture and a QR per attendee, throttling and daily-quota retries, a final 554 rejection, an authentication failure, and STARTTLS required.
+      - run: npm run test:ses-delivery
+
       # Real-database check of announcement emails (#824): each attendee's own seminar choices in ranked order, one labelled QR per attendee, paragraph spacing, and a real test naming a registration showing no sample value.
       - run: npm run test:announcement-email
 
