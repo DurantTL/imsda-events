@@ -69,6 +69,8 @@ function pdfOf(label: string) {
 function startSmtpStub(options: { starttls?: boolean } = {}) {
   const received: ReceivedMessage[] = [];
   const script: Reply[] = [];
+  /** Per AUTH: "fail" answers 535; anything else (or an empty list) accepts. */
+  const authReplies: Array<"ok" | "fail"> = [];
   let accepted = 0;
   const server = new SMTPServer({
     authOptional: false,
@@ -76,6 +78,9 @@ function startSmtpStub(options: { starttls?: boolean } = {}) {
     disabledCommands: options.starttls === false ? ["STARTTLS", "AUTH"] : [],
     logger: false,
     onAuth(auth, _session, callback) {
+      if (authReplies.shift() === "fail") {
+        return callback(Object.assign(new Error("Authentication Credentials Invalid"), { responseCode: 535 }));
+      }
       if (auth.username === SMTP_USER && auth.password === SMTP_PASSWORD) return callback(null, { user: auth.username });
       return callback(Object.assign(new Error("Authentication Credentials Invalid"), { responseCode: 535 }));
     },
@@ -102,11 +107,12 @@ function startSmtpStub(options: { starttls?: boolean } = {}) {
     port: number;
     received: ReceivedMessage[];
     script: Reply[];
+    authReplies: Array<"ok" | "fail">;
     close: () => Promise<void>;
   }>((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       const { port } = server.server.address() as AddressInfo;
-      resolve({ port, received, script, close: () => new Promise((done) => { server.close(() => done()); }) });
+      resolve({ port, received, script, authReplies, close: () => new Promise((done) => { server.close(() => done()); }) });
     });
   });
 }
@@ -342,6 +348,52 @@ async function runChecks(stub: Awaited<ReturnType<typeof startSmtpStub>>) {
   assert(/verified domain/.test(rejectedAttempts[0].errorMessage ?? ""), "the message tells staff to verify the sender");
   assert(!(rejected.lastError ?? "").includes(SMTP_PASSWORD) && !JSON.stringify(rejectedAttempts).includes(SMTP_PASSWORD), "no credential is logged");
   assert(Number(stub.received.length) === 1, "the rejected message was not delivered");
+
+  // 3b. Bad credentials stop a batch before any message is claimed; credentials that fail mid-batch hand the claimed
+  //     message back untouched. Either way nothing is counted as an attempt, and the error is raised once.
+  const queueAgain = async () => {
+    const again = await getSelectedAudiencePreview(ids.event, "EVENT_ANNOUNCEMENT", [registration.id]);
+    const batch = await enqueueSelectedAudienceBatch(ids.event, {
+      batchId: randomUUID(),
+      templateKey: "EVENT_ANNOUNCEMENT",
+      registrationIds: [registration.id],
+      announcementTitle: "Another note",
+      announcementBody: "Second batch.",
+      previewFingerprint: again.fingerprint,
+    }, ids.staff);
+    return batch.messageIds[0];
+  };
+  const pendingId = await queueAgain();
+  const receivedBefore = stub.received.length;
+  process.env.SES_SMTP_PASSWORD = "wrong-password";
+  let preflightError: unknown;
+  try {
+    await processPendingMessages(ids.event, ids.staff);
+  } catch (error) {
+    preflightError = error;
+  }
+  process.env.SES_SMTP_PASSWORD = SMTP_PASSWORD;
+  assert(preflightError instanceof Error && /SES_SMTP_USERNAME/.test(preflightError.message), `wrong credentials raise one configuration error: ${String(preflightError)}`);
+  assert(!String((preflightError as Error).message).includes("wrong-password"), "the error does not echo the password");
+  let untouched = await state(pendingId);
+  assert(untouched.status === "PENDING" && untouched.attemptCount === 0, `wrong credentials leave the message PENDING with no attempt: ${JSON.stringify(untouched)}`);
+  assert((await attempts(pendingId)).length === 0 && stub.received.length === receivedBefore, "no attempt row was written and nothing was sent");
+
+  // The pre-flight passes, then the send itself is refused with 535.
+  stub.authReplies.push("ok", "fail");
+  let midBatchError: unknown;
+  try {
+    await processPendingMessages(ids.event, ids.staff);
+  } catch (error) {
+    midBatchError = error;
+  }
+  assert(midBatchError instanceof Error && /SES_SMTP_USERNAME/.test(midBatchError.message), `a mid-batch 535 raises one configuration error: ${String(midBatchError)}`);
+  untouched = await state(pendingId);
+  assert(untouched.status === "PENDING" && untouched.attemptCount === 0, `the claim was released without counting an attempt: ${JSON.stringify(untouched)}`);
+  assert((await attempts(pendingId)).length === 0 && stub.received.length === receivedBefore, "no attempt row and nothing sent");
+  await processPendingMessages(ids.event, ids.staff);
+  const recovered = await state(pendingId);
+  assert(recovered.status === "SENT" && recovered.attemptCount === 1 && recovered.provider === "SES", `with good credentials the same message goes out: ${JSON.stringify(recovered)}`);
 
   // 4. Authentication failure is a configuration error; a server without STARTTLS is refused and nothing is sent.
   const input = {

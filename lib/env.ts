@@ -61,7 +61,10 @@ export const serverEnvSchema = z
 
     // Which provider sends external email (#861). Unset keeps Resend. `ses` sends through Amazon SES over SMTP
     // with IAM SMTP credentials; the Resend variables above are then unused.
-    EMAIL_PROVIDER: z.enum(["resend", "ses"]).default("resend"),
+    EMAIL_PROVIDER: z.preprocess(
+      (value) => (typeof value === "string" ? value.trim().toLowerCase() : value),
+      z.enum(["resend", "ses"]).default("resend"),
+    ),
     SES_REGION: z.string().trim().regex(/^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/, "must be an AWS region such as us-east-2").optional(),
     SES_SMTP_USERNAME: optionalTrimmed,
     SES_SMTP_PASSWORD: optionalTrimmed,

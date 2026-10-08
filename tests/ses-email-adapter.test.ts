@@ -125,6 +125,20 @@ describe("SES sending", () => {
     expect(transport.sendMail).not.toHaveBeenCalled();
   });
 
+  it("refuses a recipient or reply-to that is not exactly one address, as a final error", async () => {
+    const transport = { sendMail: vi.fn() };
+    for (const overrides of [
+      { toEmail: "a@example.test, b@example.test" },
+      { toEmail: "Name <a@example.test>" },
+      { replyToEmail: "help@imsda.org, other@example.test" },
+    ]) {
+      const failure = await sendEmailWithSes({ ...input, ...overrides }, configuration, { transport, pace: async () => {} }).catch((e) => e);
+      expect(failure).toBeInstanceOf(EmailProviderRequestError);
+      expect(failure).toMatchObject({ code: "INVALID_ADDRESS", retryable: false });
+    }
+    expect(transport.sendMail).not.toHaveBeenCalled();
+  });
+
   it("maps a transport failure without leaking credentials or the message", async () => {
     const error = Object.assign(new Error("Daily message quota exceeded. synthetic-smtp-password"), { responseCode: 454 });
     const sendMail = vi.fn(async () => { throw error; });
@@ -168,6 +182,20 @@ describe("SES error mapping", () => {
     expect(mapped).toMatchObject({ code: "SES_IDENTITY_NOT_VERIFIED", retryable: false });
     expect(mapped.message).toMatch(/verified domain/);
     expect(mapSesError(smtp(554, "554 Message rejected: Sending paused"))).toMatchObject({ code: "SES_MESSAGE_REJECTED", retryable: false });
+  });
+
+  it("retries a temporary authentication failure, but not a rejected password", () => {
+    expect(mapSesError(smtp(454, "454 4.7.0 Temporary authentication failure", "EAUTH")))
+      .toMatchObject({ code: "SES_AUTH_TEMPORARY", retryable: true, status: 454 });
+    expect(mapSesError(smtp(535, "535 Authentication Credentials Invalid", "EAUTH"))).toBeInstanceOf(EmailProviderConfigurationError);
+    expect(mapSesError(smtp(534, "534 mechanism too weak", "EAUTH"))).toBeInstanceOf(EmailProviderConfigurationError);
+  });
+
+  it("keeps timeouts and resets retryable, and an unrecognised fault final", () => {
+    for (const code of ["ETIMEDOUT", "ECONNRESET", "EPIPE"]) {
+      expect(mapSesError(smtp(undefined, "boom", code))).toMatchObject({ retryable: true });
+    }
+    expect(mapSesError(new Error("something odd"))).toMatchObject({ code: "UNEXPECTED_PROVIDER_ERROR", retryable: false });
   });
 
   it("treats authentication failure as a configuration error", () => {

@@ -1,6 +1,7 @@
 import "server-only";
 
 import nodemailer from "nodemailer";
+import { z } from "zod";
 import type Mail from "nodemailer/lib/mailer";
 import {
   EmailProviderConfigurationError,
@@ -169,6 +170,7 @@ type SmtpError = Error & {
 
 const NETWORK_ERROR_CODES = new Set([
   "ECONNECTION", "ETIMEDOUT", "ESOCKET", "ECONNRESET", "ECONNREFUSED", "EDNS", "EPROTOCOL", "ETLS", "ENOTFOUND", "EAI_AGAIN",
+  "EPIPE", "EHOSTUNREACH", "ENETUNREACH", "ECONNABORTED",
 ]);
 
 /** Turns an SMTP failure into the error the outbox worker understands. Never includes the message or credentials. */
@@ -177,6 +179,15 @@ export function mapSesError(error: unknown): EmailProviderRequestError | EmailPr
   const reply = `${smtp.response ?? ""} ${smtp.message ?? ""}`;
   const status = typeof smtp.responseCode === "number" ? smtp.responseCode : 0;
 
+  // A 4xx during AUTH ("454 4.7.0 Temporary authentication failure") is SES being briefly unwell, not wrong credentials.
+  if (smtp.code === "EAUTH" && status >= 400 && status < 500) {
+    return new EmailProviderRequestError(
+      "Amazon SES could not authenticate right now. The message will be retried.",
+      "SES_AUTH_TEMPORARY",
+      true,
+      status,
+    );
+  }
   if (smtp.code === "EAUTH" || status === 535) {
     return new EmailProviderConfigurationError(
       "Amazon SES rejected the SMTP username or password. Check SES_SMTP_USERNAME and SES_SMTP_PASSWORD (IAM SMTP credentials for this region).",
@@ -231,8 +242,8 @@ export function mapSesError(error: unknown): EmailProviderRequestError | EmailPr
   if (smtp.code === "EENVELOPE" || smtp.code === "EMESSAGE") {
     return new EmailProviderRequestError("The message could not be built for delivery.", "INVALID_MESSAGE", false, 0);
   }
-  // Unknown and uncategorised: treat as a transport problem so a transient fault is not lost for good.
-  return new EmailProviderRequestError("The email provider could not be reached.", "NETWORK_ERROR", true, 0);
+  // Unknown and uncategorised: final, as for every other adapter, so an unrecognised fault is looked at, not looped.
+  return new EmailProviderRequestError("The email provider request failed.", "UNEXPECTED_PROVIDER_ERROR", false, 0);
 }
 
 function createTransport(configuration: SesEmailConfiguration): SesTransport {
@@ -269,10 +280,22 @@ export async function sendEmailWithSes(
   if (!input.fromEmail.trim()) {
     throw new EmailProviderConfigurationError(
       "A verified sender email is required before external delivery can be enabled.",
+      false,
     );
   }
   if (!input.idempotencyKey.trim() || input.idempotencyKey.length > 256) {
     throw new Error("Email idempotency keys must contain 1 to 256 characters.");
+  }
+  // Exactly one address each: a comma-separated or display-name value would address a second person.
+  const recipient = z.email().safeParse(input.toEmail.trim());
+  const replyTo = input.replyToEmail?.trim() ? z.email().safeParse(input.replyToEmail.trim()) : null;
+  if (!recipient.success || (replyTo && !replyTo.success)) {
+    throw new EmailProviderRequestError(
+      "The recipient or reply-to address is not a single valid email address, so the message was not sent.",
+      "INVALID_ADDRESS",
+      false,
+      0,
+    );
   }
   const mail = buildSesMailOptions(input, configuration);
   await (options.pace ?? defaultPacer)(configuration.maxSendRate);
@@ -290,4 +313,33 @@ export async function sendEmailWithSes(
     throw new EmailProviderRequestError("The email provider did not accept this message.", "SES_NO_MESSAGE_ID", false, 0);
   }
   return { provider: "SES", providerMessageId };
+}
+
+/**
+ * Checks the connection and credentials once, before a batch claims anything. Only a configuration error (bad
+ * credentials) is raised; a network failure is left to the per-message handling, which already retries it.
+ */
+export async function verifySesConnection(configuration: SesEmailConfiguration) {
+  const transport = nodemailer.createTransport({
+    host: configuration.smtpHost,
+    port: configuration.smtpPort,
+    secure: configuration.smtpPort === 465,
+    requireTLS: configuration.smtpPort !== 465,
+    auth: { user: configuration.username, pass: configuration.password },
+    tls: {
+      minVersion: "TLSv1.2",
+      ...(configuration.tlsRejectUnauthorized === false ? { rejectUnauthorized: false } : {}),
+    },
+    connectionTimeout: 15_000,
+    greetingTimeout: 15_000,
+    socketTimeout: 30_000,
+  });
+  try {
+    await transport.verify();
+  } catch (error) {
+    const mapped = mapSesError(error);
+    if (mapped instanceof EmailProviderConfigurationError) throw mapped;
+  } finally {
+    transport.close();
+  }
 }

@@ -51,6 +51,7 @@ export async function sendEmailWithResend(
   if (!input.fromEmail.trim()) {
     throw new EmailProviderConfigurationError(
       "A verified sender email is required before external delivery can be enabled.",
+      false,
     );
   }
   if (!input.idempotencyKey.trim() || input.idempotencyKey.length > 256) {

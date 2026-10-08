@@ -177,11 +177,33 @@ SES console, **Verified identities** must show that domain as *Verified*.
 A rejected sender appears in the message's delivery history as
 "sender address is not on a verified domain" and is not retried.
 
-**What staff will see.** Throttling replies from SES ("Maximum sending rate
-exceeded") and network faults are retried automatically. When SES reports that
-the **daily sending quota** is used up, messages wait and retry later; ask AWS
-for a quota increase if that happens. An authentication failure (wrong SMTP
-username or password) shows as an email configuration error and nothing is sent.
+**Send one test message after switching.** Before relying on SES for a real
+send, use an event's "send test message" with real delivery (or any single
+registration email) to an address you can read, and confirm it arrives from the
+expected sender and the delivery log shows provider `SES`. This also proves the
+SMTP credentials and the verified sender together.
+
+**What staff will see.**
+
+- Throttling replies from SES ("Maximum sending rate exceeded"), temporary
+  authentication failures, and network faults are retried automatically with the
+  usual backoff. The app also spaces sends (`SES_MAX_SEND_RATE`).
+- A wrong SMTP username or password is checked at the start of each delivery
+  run, before any message is picked up. The run stops with one error naming
+  `SES_SMTP_USERNAME` and `SES_SMTP_PASSWORD`; every queued message stays
+  waiting, no attempt is used up, and nothing is sent. Fix the values, redeploy,
+  and the next run sends them.
+- A sender address that is not on a verified identity, or an SES rejection
+  (554), fails that message for good, with a message saying what to fix.
+- When SES reports the **daily sending quota** is used up, the message is
+  recorded with the error code `PROVIDER_QUOTA` and follows the normal retry
+  schedule. A longer wait for quota errors is tracked in #860. If quota errors
+  appear, ask AWS for a higher sending quota.
+- **A send that times out can arrive twice.** If the connection drops after SES
+  has accepted a message but before the app hears back, the app retries it, and
+  the recipient may get two copies. Every message carries an
+  `X-IMSDA-Message-Id` header holding the outbox message id; the two copies have
+  the same value, which tells a duplicate from two separate messages.
 
 **Switching back.** Set `EMAIL_PROVIDER=resend` (or remove the line) and
 redeploy. Resend then sends exactly as before, and `RESEND_API_KEY` is required

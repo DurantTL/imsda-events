@@ -11,6 +11,7 @@ import {
   getSesEmailConfiguration,
   isSesEmailConfiguration,
   sendEmailWithSes,
+  verifySesConnection,
   type SesEmailConfiguration,
 } from "./ses";
 import {
@@ -62,4 +63,14 @@ export async function sendEmail(
   return isSesEmailConfiguration(resolved)
     ? sendEmailWithSes(input, resolved)
     : sendEmailWithResend(input, resolved);
+}
+
+/** The provider a configuration belongs to, which is what was actually used, whatever the environment says now. */
+export function providerNameForConfiguration(configuration: EmailProviderConfiguration): EmailProviderName {
+  return isSesEmailConfiguration(configuration) ? "SES" : "RESEND";
+}
+
+/** Run before a batch claims any message: bad credentials stop here, with every message left untouched. */
+export async function preflightEmailProvider(configuration: EmailProviderConfiguration) {
+  if (isSesEmailConfiguration(configuration)) await verifySesConnection(configuration);
 }

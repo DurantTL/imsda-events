@@ -37,7 +37,11 @@ export type EmailDeliveryResult = {
 };
 
 export class EmailProviderConfigurationError extends Error {
-  constructor(message: string) {
+  /**
+   * `batchWide` (the default): the provider setup is wrong (credentials, region), so every message would fail the
+   * same way and a delivery run stops rather than spending an attempt on each. `false`: only this message is at fault.
+   */
+  constructor(message: string, public readonly batchWide = true) {
     super(message);
     this.name = "EmailProviderConfigurationError";
   }
