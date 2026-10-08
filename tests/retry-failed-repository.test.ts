@@ -10,8 +10,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({ getPrisma: mocks.getPrisma }));
-vi.mock("@/integrations/email/resend", () => ({
-  getResendEmailAvailability: () => ({
+vi.mock("@/integrations/email/provider", () => ({
+  getEmailAvailability: () => ({
     deliveryConfigured: mocks.deliveryConfigured,
     webhookConfigured: false,
   }),

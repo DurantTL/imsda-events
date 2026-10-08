@@ -65,7 +65,7 @@ function deliveryBlocker(deliveryMode: DeliveryMode): Plan["blocker"] {
   if (deliveryMode === "EXTERNAL_EMAIL" && !getEmailAvailability().deliveryConfigured) {
     return {
       code: "EXTERNAL_EMAIL_NOT_CONFIGURED",
-      message: "Add the Resend API key before retrying real email.",
+      message: "Finish the email provider setup on the server before retrying real email.",
     };
   }
   return null;

@@ -250,7 +250,8 @@ export function normalizeEmailDeliveryError(error: unknown): NormalizedEmailDeli
         retryable: true,
       };
     }
-    if (isProviderQuotaError(error)) {
+    // SES reports its daily quota with its own status (454) and already uses the code.
+    if (isProviderQuotaError(error) || error.code === PROVIDER_QUOTA_ERROR_CODE) {
       return {
         code: PROVIDER_QUOTA_ERROR_CODE,
         message: PROVIDER_QUOTA_MESSAGE,
