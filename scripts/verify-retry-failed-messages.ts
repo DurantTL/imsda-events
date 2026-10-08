@@ -387,6 +387,9 @@ async function runChecks(state: StubState) {
       const count = await prisma.messageOutbox.count({ where: { retryOfMessageId: sourceId } });
       assert(count === 1, `exactly one copy of each source after the ${label}, got ${count}`);
     }
+    // The queued copies would (rightly) block the same guests in the next round, so clear this round's rows.
+    await prisma.messageOutbox.deleteMany({ where: { retryOfMessageId: { in: sources } } });
+    await prisma.messageOutbox.deleteMany({ where: { id: { in: sources } } });
   }
 
   // 10. Delivery turned off: the preview says so and a confirmation is refused.
