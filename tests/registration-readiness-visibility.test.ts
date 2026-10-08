@@ -252,3 +252,28 @@ describe("Women’s Retreat registration visibility", () => {
     expect(values.size).toBe(0);
   });
 });
+
+describe("People bulk-email selection", () => {
+  function renderPeople(canEmail: boolean) {
+    return renderToStaticMarkup(createElement(PeopleWorkspace, {
+      eventId: "event-1",
+      eventSlug: "womens-retreat-2026",
+      eventTimezone: "America/Chicago",
+      waitlistEnabled: true,
+      initialRegistrations: [registration("2026-07-30T18:13:05.955Z")],
+      canEdit: true,
+      canEmail,
+    }));
+  }
+
+  it("offers Select all before anything is ticked", () => {
+    const markup = renderPeople(true);
+    expect(markup).toContain("Select all 1 shown");
+    expect(markup).toContain("select everyone shown");
+    expect(markup).not.toContain("Clear selection");
+  });
+
+  it("shows no selection bar to staff who cannot email", () => {
+    expect(renderPeople(false)).not.toContain("Select all");
+  });
+});
