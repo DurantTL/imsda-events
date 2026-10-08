@@ -744,10 +744,10 @@ export function PeopleWorkspace({
       {/* Always shown, so "Select all" is findable before anything is ticked. */}
       {canEmail && (selectedIds.size > 0 || visible.length > 0) && (
         <div className="panel selection-bar">
-          <span>
+          <span role="status">
             {selectedIds.size > 0
               ? <><strong>{selectedIds.size}</strong> selected{visibleSelectedCount !== selectedIds.size ? ` · ${visibleSelectedCount} in this view` : ""}</>
-              : "Tick registrations to email them, or select everyone shown."}
+              : "Tick registrations to email them, or use Select all."}
           </span>
           <div className="selection-bar-actions">
             {visibleSelectedCount < visible.length && (
