@@ -42,6 +42,7 @@ import {
   REGISTRATION_MANAGE_LINK_SENTINEL,
 } from "@/modules/communications/manage-link";
 import {
+  CUSTOM_MESSAGE_TOKEN_KEYS,
   MESSAGE_TEMPLATE_TOKEN_KEYS,
   MESSAGE_TEMPLATE_TOKEN_OPTIONS,
   renderMessageTemplate,
@@ -123,6 +124,7 @@ function settingsDraftFromMessaging(
  * the kind of mismatch a preview exists to rule out.
  */
 const templateTokenKeys: readonly string[] = MESSAGE_TEMPLATE_TOKEN_KEYS;
+const customMessageTokenKeys: readonly string[] = CUSTOM_MESSAGE_TOKEN_KEYS;
 const templateTokenLabels: Readonly<Record<string, string>> = Object.fromEntries(
   MESSAGE_TEMPLATE_TOKEN_OPTIONS.map((option) => [option.key, option.label]),
 );
@@ -172,6 +174,7 @@ const templateLabels: Record<string, string> = {
   REGISTRATION_TRANSFERRED_PRIOR_CONTACT: "Transfer · prior contact",
   ATTENDEE_SUBSTITUTED: "Attendee substituted",
   EVENT_ANNOUNCEMENT: "Event announcement",
+  CUSTOM_MESSAGE: "Custom message",
 };
 
 /**
@@ -1524,7 +1527,7 @@ export function CommunicationsWorkspace({
                   key={template.id}
                 >
                   <span className="message-template-mark"><Mail size={16} aria-hidden="true" /></span>
-                  <span><strong>{template.name}</strong><small>Version {template.activeVersion?.versionNumber ?? "—"} · {template.isEnabled ? "enabled" : "disabled"}</small></span>
+                  <span><strong>{template.name}</strong><small>{template.activeVersion ? `Version ${template.activeVersion.versionNumber}` : "Not published yet"} · {template.isEnabled ? "enabled" : "disabled"}</small></span>
                 </button>
               ))}
             </div>
@@ -1537,13 +1540,18 @@ export function CommunicationsWorkspace({
                 <span className={`status-chip ${templateEnabled ? "green" : "purple"}`}>{templateEnabled ? "enabled" : "disabled"}</span>
               </div>
               <div className="message-safety-banner"><Clock3 size={18} aria-hidden="true" /><span><strong>Publishing affects future messages only.</strong><small>Existing queued and captured rows keep their exact subject and body snapshots.</small></span></div>
+              {selectedTemplate.key === "CUSTOM_MESSAGE" && (
+                <p className="quiet-copy">
+                  This starts blank. Write the subject and message, add pictures, links, and attachments, then publish. Email selected sends it, with each person&apos;s own check-in QR codes and seminar choices where you add them from the token list.
+                </p>
+              )}
               <label>Subject<input value={templateSubject} maxLength={180} required onChange={(event) => setTemplateSubject(event.target.value)} /></label>
               <div className="message-body-field">
                 <strong>Message body</strong>
                 <MessageBodyEditor
                   key={selectedTemplate.id}
                   value={templateBody}
-                  tokens={templateTokenKeys}
+                  tokens={selectedTemplate.key === "CUSTOM_MESSAGE" ? customMessageTokenKeys : templateTokenKeys}
                   tokenLabels={templateTokenLabels}
                   imageLibrary={{
                     eventId,

@@ -283,6 +283,9 @@ function contextFor(fixture: EventFixture, registration: RegistrationFixture): M
   };
 }
 
+/** The custom message ships blank on purpose (#850), so it has no default text to audit. */
+const shipsDefaultText = (template: { subject: string; body: string }) => template.subject !== "" && template.body !== "";
+
 describe("Phase 0 email audit fixtures", () => {
   it("covers the nine supported form templates with synthetic registrations", () => {
     expect(eventFixtures.map((fixture) => fixture.formKey)).toEqual(formTemplates.map((template) => template.key));
@@ -325,7 +328,7 @@ describe("Phase 0 email audit fixtures", () => {
     const captures = eventFixtures.flatMap((fixture) => {
       return fixture.registrations.flatMap((registration) => {
         const context = contextFor(fixture, registration);
-        return DEFAULT_MESSAGE_TEMPLATE_LIST.map((template) => {
+        return DEFAULT_MESSAGE_TEMPLATE_LIST.filter(shipsDefaultText).map((template) => {
           const rendered = renderMessageTemplate(template, context);
           return {
             formKey: fixture.formKey,
@@ -348,7 +351,7 @@ describe("Phase 0 email audit fixtures", () => {
     });
 
     const expectedEvidence = eventFixtures.flatMap((fixture) => fixture.registrations.flatMap((registration) =>
-      DEFAULT_MESSAGE_TEMPLATE_LIST.map((template) => ({
+      DEFAULT_MESSAGE_TEMPLATE_LIST.filter(shipsDefaultText).map((template) => ({
         formKey: fixture.formKey,
         eventName: fixture.eventName,
         templateKey: template.key,

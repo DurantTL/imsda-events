@@ -24,6 +24,7 @@ export const MESSAGE_TEMPLATE_KEYS = [
   "REGISTRATION_ACCESS_RECOVERY",
   "EVENT_ANNOUNCEMENT",
   "CLUB_ASSIGNMENTS",
+  "CUSTOM_MESSAGE",
 ] as const;
 
 export type MessageTemplateKey = (typeof MESSAGE_TEMPLATE_KEYS)[number];
@@ -37,6 +38,14 @@ const EVENT_TEMPLATE_KEYS: ReadonlySet<string> = new Set(MESSAGE_TEMPLATE_KEYS);
  */
 export function isEventMessageTemplateKey(key: string): key is MessageTemplateKey {
   return EVENT_TEMPLATE_KEYS.has(key);
+}
+
+/**
+ * Templates that show each attendee's own labelled check-in QR to a party, rather than the portal link: the
+ * announcement and the custom message, which staff write to be read by everyone on a registration (#850).
+ */
+export function showsPerAttendeeQrs(key: string | null | undefined) {
+  return key === "EVENT_ANNOUNCEMENT" || key === "CUSTOM_MESSAGE";
 }
 
 export const MESSAGE_TEMPLATE_TOKEN_KEYS = [
@@ -183,6 +192,7 @@ export const DEFAULT_MESSAGE_TEMPLATE_NAMES: Readonly<Record<MessageTemplateKey,
   REGISTRATION_ACCESS_RECOVERY: "Private registration link recovery",
   EVENT_ANNOUNCEMENT: "Event announcement",
   CLUB_ASSIGNMENTS: "Club assignments",
+  CUSTOM_MESSAGE: "Custom message",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
@@ -232,6 +242,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_DESCRIPTIONS: Readonly<
     "Sends a published event-feed announcement to active registration contacts after an explicit staff broadcast action.",
   CLUB_ASSIGNMENTS:
     "Sent only after staff review a batch of clubs whose campsite, duty, and activity are all set. Tells a club director what staff assigned; re-sent after an assignment changes.",
+  CUSTOM_MESSAGE:
+    "Your own message, written from a blank page. Sent only when staff choose registrations under Email selected and publish this template first; no workflow sends it on its own.",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
@@ -275,6 +287,8 @@ export const DEFAULT_MESSAGE_TEMPLATE_SUBJECTS: Readonly<
     "{{event_name}} update: {{announcement_title}}",
   CLUB_ASSIGNMENTS:
     "Your club's assignments for {{event_name}}",
+  // Starts blank: staff write it, and publishing needs both fields.
+  CUSTOM_MESSAGE: "",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey, string>> = {
@@ -689,6 +703,7 @@ export const DEFAULT_MESSAGE_TEMPLATE_BODIES: Readonly<Record<MessageTemplateKey
     "",
     "Questions? Contact {{contact_email}}.",
   ].join("\n"),
+  CUSTOM_MESSAGE: "",
 };
 
 export const DEFAULT_MESSAGE_TEMPLATES: Readonly<
@@ -863,19 +878,47 @@ export const MESSAGE_TEMPLATE_TOKEN_OPTIONS: readonly {
     key: "checkin_qr_image",
     label: "Check-in QR code (image)",
     description:
-      "The pass QR image, written as ![Check-in QR code]({{checkin_qr_image}}). For a single-attendee registration only; in an event announcement to a party, each attendee's own labelled QR is shown instead. Other messages to a party link to the portal.",
+      "The pass QR image, written as ![Check-in QR code]({{checkin_qr_image}}). For a single-attendee registration only; in an event announcement or custom message to a party, each attendee's own labelled QR is shown instead (the portal link above 8 attendees). Other messages to a party link to the portal.",
   },
   {
     key: "checkin_qr_images",
     label: "Check-in QR codes (one per attendee)",
     description:
-      "Each attendee's own QR code image, labelled with their name. Written on its own line, with no image markup around it. Event announcements fill it for every attendee.",
+      "Each attendee's own QR code image, labelled with their name. Written on its own line, with no image markup around it. Event announcements and custom messages fill it for every attendee (the portal link above 8 attendees).",
   },
   {
     key: "club_assignments_block",
     label: "Club assignments block",
     description: "The club's staff-set campsite, duty, and activity, as a short list. Only what staff set is shown.",
   },
+];
+
+/**
+ * What the Custom message editor offers. It is a message about a registration, so the registration's own tokens are
+ * here, with the check-in QR codes and seminar choices first; the tokens that only mean something inside one
+ * operation (a refund, a waitlist change, a transfer, an announcement) are left out.
+ */
+export const CUSTOM_MESSAGE_TOKEN_KEYS: readonly MessageTemplateToken[] = [
+  "checkin_qr_images",
+  "checkin_qr_image",
+  "checkin_qr_url",
+  "checkin_block",
+  "seminar_preferences",
+  "recipient_name",
+  "registrant_name",
+  "event_name",
+  "event_dates",
+  "event_location",
+  "confirmation_code",
+  "attendee_summary",
+  "total_amount",
+  "balance_amount",
+  "payment_status_block",
+  "portal_url",
+  "hotel_information",
+  "contact_email",
+  "reply_to_email",
+  "registration_contact_email",
 ];
 
 /**

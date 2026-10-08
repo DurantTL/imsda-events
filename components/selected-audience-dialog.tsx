@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { LoaderCircle, MailCheck, Send, TriangleAlert, X } from "lucide-react";
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
+import Link from "next/link";
+import { formatFileSize } from "@/modules/communications/message-file-rules";
 import type { SelectedAudiencePreview } from "@/modules/communications/selected-audience";
 import {
   selectedAudienceTemplateKeys,
@@ -159,7 +161,7 @@ export function SelectedAudienceDialog({
               {operation ? "Message batch created" : "Email the selected registrations"}
             </h2>
           </div>
-          <button aria-label="Close dialog" className="icon-button" disabled={sending} onClick={onClose} type="button">
+          <button aria-label="Close dialog" className="icon-button modal-close-button" disabled={sending} onClick={onClose} type="button">
             <X aria-hidden="true" size={18} />
           </button>
         </div>
@@ -223,6 +225,7 @@ export function SelectedAudienceDialog({
                     value={announcementBody}
                   />
                 </label>
+                <p className="quiet-copy">Formatting: **bold**, *italic*, a blank line between paragraphs, - lists, [link text](https://…)</p>
               </>
             )}
 
@@ -241,6 +244,29 @@ export function SelectedAudienceDialog({
                   <MailCheck aria-hidden="true" size={16} /> {previewDeliveryNote(preview)}
                 </div>
                 <p className="quiet-copy">You selected registrations, so delivery goes to each registration contact shown below—not automatically to every attendee. Registrations that share an address still receive separate registration-specific messages.</p>
+                {templateKey === "CUSTOM_MESSAGE" && !preview.templatePublished && (
+                  <div className="inline-notice" role="alert">
+                    <TriangleAlert aria-hidden="true" size={16} /> The Custom message template has not been published for this event, so there is nothing to send yet.{" "}
+                    <Link href={`/communications?event=${encodeURIComponent(eventId)}&view=templates${preview.templateId ? `&template=${encodeURIComponent(preview.templateId)}` : ""}`}>
+                      Write and publish it
+                    </Link>
+                  </div>
+                )}
+                {templateKey === "CUSTOM_MESSAGE" && preview.templatePublished && (
+                  <div className="detail-stack">
+                    <p className="quiet-copy">
+                      Attachments: {preview.attachments.length === 0
+                        ? "none"
+                        : preview.attachments.map((file) => `${file.filename} (${formatFileSize(file.sizeBytes)})`).join(", ")}
+                    </p>
+                    {preview.deliveryMode === "EXTERNAL_EMAIL" && preview.carriesFiles && (
+                      <p className="quiet-copy">This message carries files or pictures, so the background mailer sends it in batches every few minutes rather than all at once.</p>
+                    )}
+                    {preview.attachmentProblem && (
+                      <p className="form-error" role="alert">{preview.attachmentProblem}</p>
+                    )}
+                  </div>
+                )}
                 {!preview.templateEnabled && (
                   <div className="inline-notice">
                     <TriangleAlert aria-hidden="true" size={16} /> {templateKey === "REGISTRATION_CONFIRMATION"
@@ -287,7 +313,7 @@ export function SelectedAudienceDialog({
               <button className="secondary-button" disabled={sending} onClick={onClose} type="button">Cancel</button>
               <button
                 className="primary-button"
-                disabled={sending || loading || !announcementReady || (preview?.includedCount ?? 0) === 0}
+                disabled={sending || loading || !announcementReady || (preview?.includedCount ?? 0) === 0 || (templateKey === "CUSTOM_MESSAGE" && (!preview?.templatePublished || Boolean(preview?.attachmentProblem)))}
                 onClick={() => void send()}
                 type="button"
               >

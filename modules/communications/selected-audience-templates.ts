@@ -14,6 +14,7 @@
 export const selectedAudienceTemplateKeys = [
   "BALANCE_REMINDER",
   "EVENT_ANNOUNCEMENT",
+  "CUSTOM_MESSAGE",
   "REGISTRATION_CONFIRMATION",
 ] as const;
 
@@ -24,5 +25,6 @@ export const selectedAudienceTemplateLabels:
   Readonly<Record<SelectedAudienceTemplateKey, string>> = {
   BALANCE_REMINDER: "Balance reminder",
   EVENT_ANNOUNCEMENT: "Event announcement",
+  CUSTOM_MESSAGE: "Custom message",
   REGISTRATION_CONFIRMATION: "Send confirmation again",
 };

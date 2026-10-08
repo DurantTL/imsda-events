@@ -8,6 +8,7 @@ import {
   formatMessageDateRange,
   formatMessageMoney,
   renderMessageTemplate,
+  showsPerAttendeeQrs,
   type MessageTemplateContext,
   withChurchBilledLinkWording,
   withChurchBilledPriceWording,
@@ -43,6 +44,7 @@ type TransactionalTemplateKey =
   | "ATTENDEE_SUBSTITUTED"
   | "REGISTRATION_ACCESS_RECOVERY"
   | "EVENT_ANNOUNCEMENT"
+  | "CUSTOM_MESSAGE"
   | "PAYMENT_RECEIPT"
   | "REFUND_NOTICE"
   // Sent one at a time by the transactional path only when staff choose a set
@@ -53,6 +55,7 @@ type TransactionalTemplateKey =
 type SelectedAudienceMessageTemplateKey =
   | "BALANCE_REMINDER"
   | "EVENT_ANNOUNCEMENT"
+  | "CUSTOM_MESSAGE"
   | "REGISTRATION_CONFIRMATION_PAID"
   | "REGISTRATION_CONFIRMATION_UNPAID"
   | "REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED"
@@ -480,7 +483,7 @@ async function enqueueTransactionalMessage(
   // An announcement shows every attendee's own labelled pass QR. One image token
   // cannot hold several pictures, so a party's `![…]({{checkin_qr_image}})` is
   // swapped for the per-attendee block.
-  const announcementBody = input.templateKey === "EVENT_ANNOUNCEMENT"
+  const announcementBody = showsPerAttendeeQrs(input.templateKey)
     ? withPerAttendeeQrImages(publishedBody, registration.attendees.length)
     : publishedBody;
   const bodyTemplate = input.changeCategory === "SEMINAR_PREFERENCES"
@@ -559,7 +562,7 @@ async function enqueueTransactionalMessage(
     ...buildRegistrationCheckinTokens({
       confirmationCode: registration.confirmationCode,
       attendeeIds: registration.attendees.map((attendee) => attendee.id),
-      attendees: input.templateKey === "EVENT_ANNOUNCEMENT"
+      attendees: showsPerAttendeeQrs(input.templateKey)
         ? registration.attendees.map((attendee) => ({
             id: attendee.id,
             name: attendeeName(attendee),

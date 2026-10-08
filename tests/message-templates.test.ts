@@ -70,7 +70,7 @@ function sqlLiteral(source: string) {
   return escaped ? inner.replaceAll("\\n", "\n") : inner;
 }
 describe("message templates", () => {
-  it("ships twenty-two valid plaintext defaults", () => {
+  it("ships twenty-two valid plaintext defaults and one blank custom message", () => {
     expect(MESSAGE_TEMPLATE_KEYS).toEqual([
       "REGISTRATION_CONFIRMATION_PAID",
       "REGISTRATION_CONFIRMATION_UNPAID",
@@ -94,10 +94,15 @@ describe("message templates", () => {
       "REGISTRATION_ACCESS_RECOVERY",
       "EVENT_ANNOUNCEMENT",
       "CLUB_ASSIGNMENTS",
+      "CUSTOM_MESSAGE",
     ]);
-    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(22);
+    expect(DEFAULT_MESSAGE_TEMPLATE_LIST).toHaveLength(23);
 
-    for (const key of MESSAGE_TEMPLATE_KEYS) {
+    // The custom message starts blank (#850): it is not a default anyone could send, and publishing needs both fields.
+    expect(DEFAULT_MESSAGE_TEMPLATES.CUSTOM_MESSAGE).toMatchObject({ name: "Custom message", subject: "", body: "" });
+    expect(validateMessageTemplate(DEFAULT_MESSAGE_TEMPLATES.CUSTOM_MESSAGE).isValid).toBe(false);
+
+    for (const key of MESSAGE_TEMPLATE_KEYS.filter((candidate) => candidate !== "CUSTOM_MESSAGE")) {
       const template = DEFAULT_MESSAGE_TEMPLATES[key];
       expect(template.key).toBe(key);
       expect(template.name).not.toBe("");
@@ -217,7 +222,7 @@ describe("message templates", () => {
   });
 
   it("renders every default completely with the sample context", () => {
-    for (const template of DEFAULT_MESSAGE_TEMPLATE_LIST) {
+    for (const template of DEFAULT_MESSAGE_TEMPLATE_LIST.filter((candidate) => candidate.key !== "CUSTOM_MESSAGE")) {
       const rendered = renderMessageTemplate(template, SAMPLE_MESSAGE_TEMPLATE_CONTEXT);
       expect(rendered.isComplete).toBe(true);
       expect(rendered.missingTokens).toEqual([]);

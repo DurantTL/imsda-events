@@ -365,3 +365,132 @@ describe("selected-audience batch repository", () => {
     }));
   });
 });
+
+describe("custom message on the selected-audience path (#850)", () => {
+  const customVersion = {
+    id: "version-custom-1",
+    versionNumber: 1,
+    subjectTemplate: "A note for {{recipient_name}}",
+    bodyTemplate: "Hello {{recipient_name}}, **please read**.",
+    files: [{ file: { id: "file-1", filename: "schedule.pdf", sizeBytes: 1_024 } }],
+  };
+
+  function customTransaction(versions: unknown[], isEnabled = true) {
+    const tx = baseTransaction();
+    const template = { id: "template-custom", key: "CUSTOM_MESSAGE", isEnabled, versions };
+    tx.eventMessageTemplate.findMany.mockResolvedValue([template]);
+    // Delivery reads the version without the files link, which the unit test does not model.
+    tx.eventMessageTemplate.findUnique.mockResolvedValue({
+      ...template,
+      versions: versions.map((version) => ({ ...(version as object), files: [] })),
+    });
+    tx.registration.findMany.mockResolvedValue([
+      listedRegistration({ id: "registration-active", confirmationCode: "REG-ACTIVE", status: "CONFIRMED" }),
+      listedRegistration({ id: "registration-cancelled", confirmationCode: "REG-GONE", status: "CANCELLED" }),
+    ]);
+    return tx;
+  }
+
+  const input = (fingerprint: string) => ({
+    batchId,
+    templateKey: "CUSTOM_MESSAGE" as const,
+    registrationIds: ["registration-active", "registration-cancelled"],
+    announcementTitle: "",
+    announcementBody: "",
+    previewFingerprint: fingerprint,
+  });
+
+  it("blocks sending while the template is unpublished", async () => {
+    const tx = customTransaction([]);
+    mocks.getPrisma.mockReturnValue(prismaFor(tx));
+    const preview = await getSelectedAudiencePreview("event-1", "CUSTOM_MESSAGE", ["registration-active"]);
+
+    expect(preview).toMatchObject({ templatePublished: false, templateId: "template-custom", templateVersionNumber: null });
+    await expect(enqueueSelectedAudienceBatch("event-1", input(preview.fingerprint), "user-1"))
+      .rejects.toMatchObject({ code: "TEMPLATE_NOT_PUBLISHED" });
+    expect(tx.messageOutbox.upsert).not.toHaveBeenCalled();
+  });
+
+  it("sends the published template to active registrations only, with files left to the worker", async () => {
+    const tx = customTransaction([customVersion]);
+    mocks.getPrisma.mockReturnValue(prismaFor(tx));
+    const preview = await getSelectedAudiencePreview(
+      "event-1",
+      "CUSTOM_MESSAGE",
+      ["registration-active", "registration-cancelled"],
+    );
+
+    expect(preview).toMatchObject({
+      templatePublished: true,
+      templateVersionNumber: 1,
+      includedCount: 1,
+      attachmentProblem: null,
+      carriesFiles: true,
+      attachments: [{ filename: "schedule.pdf", sizeBytes: 1_024 }],
+    });
+    expect(preview.skipped.map((entry) => [entry.confirmationCode, entry.code])).toEqual([
+      ["REG-GONE", "INACTIVE_REGISTRATION"],
+    ]);
+
+    const operation = await enqueueSelectedAudienceBatch("event-1", input(preview.fingerprint), "user-1");
+
+    expect(operation).toMatchObject({ includedCount: 1, skippedCount: 1, queuedCount: 1 });
+    expect(tx.messageOutbox.upsert).toHaveBeenCalledTimes(1);
+    expect(tx.messageOutbox.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        templateKey: "CUSTOM_MESSAGE",
+        subjectSnapshot: "A note for Avery Johnson",
+        bodyHtmlSnapshot: expect.stringContaining("<strong>please read</strong>"),
+        status: "PENDING",
+      }),
+    }));
+    // Real delivery of a message with files belongs to the outbox worker, never this request.
+    expect(mocks.processExternalEmailQueue).not.toHaveBeenCalled();
+  });
+
+  it("refuses an attachment set that is over the limits, with the reason", async () => {
+    const tooMany = Array.from({ length: 11 }, (_, index) => ({
+      file: { id: `file-${index}`, filename: `f${index}.pdf`, sizeBytes: 10 },
+    }));
+    const tx = customTransaction([{ ...customVersion, files: tooMany }]);
+    mocks.getPrisma.mockReturnValue(prismaFor(tx));
+    const preview = await getSelectedAudiencePreview("event-1", "CUSTOM_MESSAGE", ["registration-active", "registration-cancelled"]);
+
+    expect(preview.attachmentProblem).toMatch(/attach/i);
+    await expect(enqueueSelectedAudienceBatch("event-1", input(preview.fingerprint), "user-1"))
+      .rejects.toMatchObject({ code: "ATTACHMENTS_INVALID" });
+    expect(tx.messageOutbox.upsert).not.toHaveBeenCalled();
+  });
+
+  it("changes the fingerprint when the template is republished", async () => {
+    const first = customTransaction([customVersion]);
+    mocks.getPrisma.mockReturnValue(prismaFor(first));
+    const before = await getSelectedAudiencePreview("event-1", "CUSTOM_MESSAGE", ["registration-active"]);
+    const second = customTransaction([{ ...customVersion, id: "version-custom-2", versionNumber: 2 }]);
+    mocks.getPrisma.mockReturnValue(prismaFor(second));
+    const after = await getSelectedAudiencePreview("event-1", "CUSTOM_MESSAGE", ["registration-active"]);
+
+    expect(after.fingerprint).not.toBe(before.fingerprint);
+  });
+
+  it("provisions the custom message blank and unpublished, and every other template published", async () => {
+    const tx = baseTransaction();
+    tx.eventMessageTemplate.upsert.mockImplementation(async (args: { create: { key: string } }) => ({
+      id: `template-${args.create.key}`,
+      versions: [],
+    }));
+    mocks.getPrisma.mockReturnValue(prismaFor(tx));
+
+    await getSelectedAudiencePreview("event-1", "BALANCE_REMINDER", ["registration-1"]);
+
+    const created = tx.messageTemplateVersion.create.mock.calls.map(
+      (call: Array<{ data: { templateId: string } }>) => call[0].data.templateId,
+    );
+    expect(tx.eventMessageTemplate.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({ key: "CUSTOM_MESSAGE" }),
+    }));
+    expect(created).not.toContain("template-CUSTOM_MESSAGE");
+    expect(created).toContain("template-EVENT_ANNOUNCEMENT");
+    expect(created).toHaveLength(22);
+  });
+});

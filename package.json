@@ -42,6 +42,7 @@
     "test:invoices": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-invoices.ts",
     "test:announcement-email": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-announcement-email.ts",
     "test:announcement-attachments": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-announcement-attachments.ts",
+    "test:custom-message": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-custom-message.ts",
     "test:invoice-delivery": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-invoice-delivery.ts",
     "test:module-requests": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-module-requests.ts",
     "test:pbe-registration": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-pbe-registration.ts",

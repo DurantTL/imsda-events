@@ -532,6 +532,8 @@ enum MessageTemplateKey {
   REGISTRATION_CONFIRMATION_ORGANIZATION_BILLED
   CLUB_INVITE
   CLUB_ASSIGNMENTS
+  /// A staff-written message sent only by hand to chosen registrations (#850).
+  CUSTOM_MESSAGE
   CLUB_TEAM_ROLE_NOTIFICATION
   /// A staff sign-in was locked by repeated wrong passwords or wrong two-step
   /// codes (#456). Covers both the email to the account holder and the short

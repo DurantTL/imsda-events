@@ -10,6 +10,7 @@ import {
   selectRegistrationMessageTemplate,
   type MessageTemplateKey,
 } from "@/modules/communications/templates";
+import { attachmentSetIssue } from "@/modules/communications/message-file-rules";
 import type { MessagingSettingsRecord } from "@/modules/communications/types";
 
 export { selectedAudienceTemplateKeys, selectedAudienceTemplateLabels, type SelectedAudienceTemplateKey };
@@ -41,6 +42,7 @@ export type SelectedAudienceConfirmationTemplateKey =
 export type SelectedAudienceResolvedTemplateKey =
   | "BALANCE_REMINDER"
   | "EVENT_ANNOUNCEMENT"
+  | "CUSTOM_MESSAGE"
   | SelectedAudienceConfirmationTemplateKey;
 
 export const selectedAudienceBatchInputSchema = z.strictObject({
@@ -134,6 +136,19 @@ export type SelectedAudiencePreview = {
   deliveryMode: MessagingSettingsRecord["deliveryMode"];
   templateEnabled: boolean;
   templateVersionNumber: number | null;
+  /** The template row the send reads, for a link to it; null for a confirmation, which has four. */
+  templateId: string | null;
+  /**
+   * False when the template this send uses has no published version. Only the custom message can be in that state:
+   * it starts blank, and every other template ships published.
+   */
+  templatePublished: boolean;
+  /** Files each message carries (the published version's attachments), as in the announcement review (#824). */
+  attachments: Array<{ filename: string; sizeBytes: number }>;
+  /** Why the files or pictures cannot be sent, if so; sending is refused until a human fixes the template. */
+  attachmentProblem: string | null;
+  /** Whether the messages carry any file or picture; real email that does is sent by the background mailer. */
+  carriesFiles: boolean;
   recipients: SelectedAudienceRecipient[];
   skipped: SelectedAudienceSkip[];
 };
@@ -149,6 +164,12 @@ export type SelectedAudiencePreviewContext = {
   templateEnabled: boolean;
   templateVersionId: string | null;
   templateVersionNumber: number | null;
+  templateId?: string | null;
+  /** Defaults to true: only the custom message can lack a published version. */
+  templatePublished?: boolean;
+  attachments?: ReadonlyArray<{ id: string; filename: string; sizeBytes: number }>;
+  pictureIds?: readonly string[];
+  pictureProblem?: string | null;
   /** Published sources for the four current-state confirmation variants. */
   confirmationTemplates?: Partial<Record<
     SelectedAudienceConfirmationTemplateKey,
@@ -261,6 +282,11 @@ export function computeSelectedAudiencePreview(
     });
   }
 
+  const attachments = context.attachments ?? [];
+  const pictureIds = context.pictureIds ?? [];
+  const attachmentProblem = attachmentSetIssue(attachments)?.message ?? context.pictureProblem ?? null;
+  const templatePublished = context.templatePublished ?? true;
+
   const fingerprint = createHash("sha256").update(JSON.stringify({
     version: 1,
     eventId: context.eventId,
@@ -269,6 +295,9 @@ export function computeSelectedAudiencePreview(
     senderName: context.senderName,
     senderEmail: context.senderEmail,
     replyToEmail: context.replyToEmail,
+    templatePublished,
+    attachments: attachments.map((file) => file.id),
+    pictures: [...pictureIds],
     recipients: recipients.map((recipient) => ({
       registrationId: recipient.registrationId,
       confirmationCode: recipient.confirmationCode,
@@ -303,6 +332,11 @@ export function computeSelectedAudiencePreview(
     templateVersionNumber: context.templateKey === "REGISTRATION_CONFIRMATION"
       ? null
       : context.templateVersionNumber,
+    templateId: context.templateId ?? null,
+    templatePublished,
+    attachments: attachments.map((file) => ({ filename: file.filename, sizeBytes: file.sizeBytes })),
+    attachmentProblem,
+    carriesFiles: attachments.length > 0 || pictureIds.length > 0,
     recipients,
     skipped,
   };
