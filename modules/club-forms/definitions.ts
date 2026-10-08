@@ -201,18 +201,22 @@ const honorFields = rows(8, (n) => [
   text(`honor_${n}_name`, `${n}. Honor or craft`),
   field(`honor_${n}_role`, `${n}. T, A or I`, "SELECT", false, { options: honorRoles }),
 ]);
-const referenceRoles = ["Pastor", "Local", "Other"];
-const referenceFields = rows(3, (n) => [
-  text(`reference_${n}_name`, `${n}. ${referenceRoles[n - 1]}: name`, true),
-  text(`reference_${n}_address`, `${n}. ${referenceRoles[n - 1]}: address`, true),
-  phone(`reference_${n}_phone`, `${n}. ${referenceRoles[n - 1]}: phone`, true),
-]);
+const referenceHeadings = ["1. Pastor", "2. Local reference", "3. Other reference"];
+// v4 (#856): each reference is its own group (row) with plain labels. Keys and answers are unchanged.
+const referenceFields = rows(3, (n) => {
+  const group = referenceHeadings[n - 1];
+  return [
+    text(`reference_${n}_name`, "Name", true, { group }),
+    text(`reference_${n}_address`, "Address", true, { group }),
+    phone(`reference_${n}_phone`, "Phone", true, { group }),
+  ];
+});
 
 const staffForm: ClubFormTemplateSeed = {
   key: "pathfinder_staff_service_information",
   name: "Pathfinder Staff/Volunteer Service Information Form",
   description: "A staff or volunteer's record, health history, experience, honors to teach, conduct disclosure and references.",
-  version: 3,
+  version: 4,
   sortOrder: 20,
   printLayout: "STANDARD",
   // #721: staff are added as staff roster members, from the name and birth date. The health and conduct answers

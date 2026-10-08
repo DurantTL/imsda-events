@@ -149,6 +149,15 @@ export const formFieldSchema = z.object({
    */
   filterable: z.boolean().optional(),
   /**
+   * A small heading shared by consecutive fields (#856), e.g. "1. Pastor" over
+   * a reference's name, address and phone. The fill-in form lays each run of
+   * fields with the same group out as its own row under that heading, so the
+   * labels inside can be short ("Name"); read-only views, CSV headings and the
+   * builder prefix the group ("1. Pastor — Name") so a label is never
+   * ambiguous. Display only: the field key and stored answer are unchanged.
+   */
+  group: z.string().trim().min(2).max(80).optional(),
+  /**
    * "Sensitive" (#743): only staff with VIEW_SENSITIVE_DATA see the answer or
    * filter on it. Absent means the read-time default (health-type fields are
    * sensitive) in `modules/forms/field-flags.ts`.
@@ -223,6 +232,22 @@ export const formFieldSchema = z.object({
     context.addIssue({ code: "custom", path: ["capUnitsAtAttendeeCount"], message: "Capping at the headcount requires a per-unit credit." });
   }
 });
+
+/** A field's label with its group heading in front ("1. Pastor — Name"), for views where the heading is not shown beside it. */
+export function fieldDisplayLabel(field: { label: string; group?: string }) {
+  return field.group ? `${field.group} \u2014 ${field.label}` : field.label;
+}
+
+/** Splits a section's fields into runs of consecutive fields with the same group (or none), keeping their order. */
+export function fieldRuns<T extends { group?: string }>(fields: readonly T[]) {
+  const runs: { group: string | undefined; fields: T[] }[] = [];
+  for (const field of fields) {
+    const last = runs[runs.length - 1];
+    if (last && last.group === field.group) last.fields.push(field);
+    else runs.push({ group: field.group, fields: [field] });
+  }
+  return runs;
+}
 
 export const formSectionSchema = z.object({
   id: z.string().trim().min(3).max(80),

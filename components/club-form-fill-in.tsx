@@ -9,6 +9,7 @@ import { DateInput } from "@/components/club-form-date-input";
 import { addressComponentKeys, addressComponentLabels } from "@/modules/forms/address";
 import {
   dateFieldBounds,
+  fieldRuns,
   isFieldRequired,
   isFieldVisible,
   todayDateValue,
@@ -187,8 +188,8 @@ export function ClubFormFillIn(props: Props) {
             <ClubFormSectionTitle>{section.title}</ClubFormSectionTitle>
             {section.description && <p className="field-help">{section.description}</p>}
             {(sectionNotes[section.id] ?? []).map((note, index) => <p className="club-form-note" key={index}>{note}</p>)}
-            <div className="form-grid two-column">
-              {fields.map((field) => (
+            {fieldRuns(fields).map((run, runIndex) => {
+              const inputs = run.fields.map((field) => (
                 <FieldInput
                   answers={answers}
                   field={field}
@@ -198,8 +199,17 @@ export function ClubFormFillIn(props: Props) {
                   onChange={(value) => set(field.key, value)}
                   value={answers[field.key]}
                 />
-              ))}
-            </div>
+              ));
+              // #856: fields that share a group heading sit in their own row (a card under the heading).
+              return run.group
+                ? (
+                  <div className="club-form-field-group" key={`${run.group}-${runIndex}`} role="group" aria-label={run.group}>
+                    <h4 className="club-form-field-group-heading">{run.group}</h4>
+                    <div className="form-grid club-form-group-row">{inputs}</div>
+                  </div>
+                )
+                : <div className="form-grid two-column" key={`plain-${runIndex}`}>{inputs}</div>;
+            })}
           </fieldset>
         );
       })}
@@ -384,7 +394,7 @@ function FieldInput({
       const inputType = field.type === "EMAIL" ? "email" : field.type === "PHONE" ? "tel" : "text";
       return (
         <label className={className}>{label}
-          <input maxLength={field.type === "EMAIL" ? 160 : 500} required={required} type={inputType} value={textOf(value)} onChange={(event) => onChange(event.target.value)} />
+          <input inputMode={field.type === "PHONE" ? "tel" : field.type === "EMAIL" ? "email" : undefined} maxLength={field.type === "EMAIL" ? 160 : 500} required={required} type={inputType} value={textOf(value)} onChange={(event) => onChange(event.target.value)} />
           {help}
         </label>
       );

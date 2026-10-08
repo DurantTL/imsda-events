@@ -8248,6 +8248,12 @@ th[aria-sort="descending"] .table-sort-button { color: var(--imsda-navy); font-w
 }
 .club-form-fill .form-grid.two-column > :not(.club-form-field-wide) { max-width: 40rem; }
 .club-form-fill > fieldset.public-manage-card { grid-template-columns: minmax(0, 1fr); }
+/* #856: a group of fields (one reference) is its own card under a small heading; name, address and phone sit in
+   one row on a wide card and stack on a phone. */
+.club-form-field-group { display: grid; gap: 8px; min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.club-form-field-group-heading { margin: 0; font-size: 0.95rem; }
+.club-form-group-row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); min-width: 0; }
+.club-form-group-row > * { min-width: 0; }
 .club-form-fill .form-grid.two-column { min-width: 0; }
 .club-form-fill .form-grid.two-column > * { min-width: 0; }
 /* #733: iOS Safari ignores a float on a legend and draws it on the card's border, so the legend is only the
