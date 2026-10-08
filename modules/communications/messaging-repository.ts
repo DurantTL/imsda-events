@@ -18,6 +18,7 @@ import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import {
   ExternalEmailDeliveryError,
+  nextAttemptRowNumber,
   processExternalEmailQueue,
   type ExternalEmailDeliveryDependencies,
 } from "@/modules/communications/email-delivery";
@@ -55,6 +56,7 @@ import {
   type ClubAssignmentSendSelection,
 } from "@/modules/communications/club-assignment-audience";
 import { emptyClubAssignmentFields } from "@/modules/club-registrations/assignments";
+import { messageBatchKey } from "@/modules/communications/retry-failed-domain";
 import {
   messageRetryIdempotencyKey,
   messageRetryRequestFingerprint,
@@ -1104,13 +1106,15 @@ async function captureOneMessageLocally(messageId: string, eventId?: string) {
 
     const completedAt = new Date();
     const attemptNumber = message.attemptCount + 1;
+    // Numbered from the highest recorded row: a quota deferral (#860) records a row without counting an attempt.
+    const rowNumber = await nextAttemptRowNumber(tx, message.id, message.attemptCount);
     await tx.messageDeliveryAttempt.create({
       data: {
         messageOutboxId: message.id,
-        attemptNumber,
+        attemptNumber: rowNumber,
         provider: "LOCAL_CAPTURE",
         status: "CAPTURED",
-        providerMessageId: `local:${message.id}:${attemptNumber}`,
+        providerMessageId: `local:${message.id}:${rowNumber}`,
         providerMetadata: { realDelivery: false },
         completedAt,
       },
@@ -2908,6 +2912,79 @@ export async function resendRegistrationConfirmation(
   return result;
 }
 
+type RetryCopySource = Prisma.MessageOutboxGetPayload<Record<string, never>>;
+
+/**
+ * The one place a failed message becomes a new delivery copy (`retryOfMessageId`): the single retry and "Retry
+ * failed" (#860) both use it, so a copy always carries the same snapshot, formatted body, attachment, files and
+ * marker. The caller checks that the source may be retried and writes its own audit row.
+ */
+export async function createMessageRetryCopy(
+  tx: Prisma.TransactionClient,
+  input: {
+    eventId: string;
+    source: RetryCopySource;
+    settings: { deliveryMode: string; senderName: string; senderEmail: string | null; replyToEmail: string | null };
+    repairMissingSenderSnapshot: boolean;
+    idempotencyKey: string;
+    correlationId: string;
+    requestFingerprint: string;
+    trigger?: string;
+    extraMetadata?: Record<string, Prisma.InputJsonValue>;
+  },
+) {
+  const { source, settings, repairMissingSenderSnapshot } = input;
+  const created = await tx.messageOutbox.create({
+    data: {
+      eventId: input.eventId,
+      registrationId: source.registrationId,
+      templateVersionId: source.templateVersionId,
+      templateKey: source.templateKey,
+      recipientKind: source.recipientKind,
+      recipientEmail: source.recipientEmail,
+      recipientName: source.recipientName,
+      senderNameSnapshot: repairMissingSenderSnapshot
+        ? settings.senderName
+        : source.senderNameSnapshot,
+      senderEmailSnapshot: repairMissingSenderSnapshot
+        ? settings.senderEmail
+        : source.senderEmailSnapshot,
+      replyToEmailSnapshot: repairMissingSenderSnapshot
+        ? settings.replyToEmail
+        : source.replyToEmailSnapshot,
+      subjectSnapshot: source.subjectSnapshot,
+      bodyTextSnapshot: source.bodyTextSnapshot,
+      // The formatted part is carried over too, or a retry of a message with pictures and buttons would go out as plain text (#824).
+      bodyHtmlSnapshot: source.bodyHtmlSnapshot,
+      // A retry carries the same stored file as its source (an invoice PDF, #168), never a copy without it.
+      attachmentId: source.attachmentId,
+      metadata: {
+        trigger: input.trigger ?? "STAFF_MESSAGE_RETRY",
+        sourceMessageId: source.id,
+        requestFingerprint: input.requestFingerprint,
+        deliveryMode: settings.deliveryMode,
+        immutableSourceSnapshot: !repairMissingSenderSnapshot,
+        immutableContentSnapshot: true,
+        senderSnapshotRepaired: repairMissingSenderSnapshot,
+        realDelivery: settings.deliveryMode === "EXTERNAL_EMAIL",
+        // Every copy stays in its source's send batch, so "Retry failed" can still find it there (#860).
+        ...(messageBatchKey(source) ? { sourceBatchId: messageBatchKey(source)! } : {}),
+        ...(input.extraMetadata ?? {}),
+      },
+      idempotencyKey: input.idempotencyKey,
+      correlationId: input.correlationId,
+      retryOfMessageId: source.id,
+    },
+    select: {
+      id: true,
+      status: true,
+    },
+  });
+  // The copy sends the same files as the message it replaces (#824).
+  await copyOutboxFiles(tx, source.id, created.id);
+  return created;
+}
+
 export async function retryMessage(
   eventId: string,
   messageId: string,
@@ -3042,51 +3119,15 @@ export async function retryMessage(
         );
       }
 
-      const created = await tx.messageOutbox.create({
-        data: {
-          eventId,
-          registrationId: source.registrationId,
-          templateVersionId: source.templateVersionId,
-          templateKey: source.templateKey,
-          recipientKind: source.recipientKind,
-          recipientEmail: source.recipientEmail,
-          recipientName: source.recipientName,
-          senderNameSnapshot: repairMissingSenderSnapshot
-            ? settings.senderName
-            : source.senderNameSnapshot,
-          senderEmailSnapshot: repairMissingSenderSnapshot
-            ? settings.senderEmail
-            : source.senderEmailSnapshot,
-          replyToEmailSnapshot: repairMissingSenderSnapshot
-            ? settings.replyToEmail
-            : source.replyToEmailSnapshot,
-          subjectSnapshot: source.subjectSnapshot,
-          bodyTextSnapshot: source.bodyTextSnapshot,
-          // The formatted part is carried over too, or a retry of a message with pictures and buttons would go out as plain text (#824).
-          bodyHtmlSnapshot: source.bodyHtmlSnapshot,
-          // A retry carries the same stored file as its source (an invoice PDF, #168), never a copy without it.
-          attachmentId: source.attachmentId,
-          metadata: {
-            trigger: "STAFF_MESSAGE_RETRY",
-            sourceMessageId: source.id,
-            requestFingerprint: input.requestFingerprint,
-            deliveryMode: settings.deliveryMode,
-            immutableSourceSnapshot: !repairMissingSenderSnapshot,
-            immutableContentSnapshot: true,
-            senderSnapshotRepaired: repairMissingSenderSnapshot,
-            realDelivery: settings.deliveryMode === "EXTERNAL_EMAIL",
-          },
-          idempotencyKey,
-          correlationId: input.clientRequestId,
-          retryOfMessageId: source.id,
-        },
-        select: {
-          id: true,
-          status: true,
-        },
+      const created = await createMessageRetryCopy(tx, {
+        eventId,
+        source,
+        settings,
+        repairMissingSenderSnapshot,
+        idempotencyKey,
+        correlationId: input.clientRequestId,
+        requestFingerprint: input.requestFingerprint,
       });
-      // The copy sends the same files as the message it replaces (#824).
-      await copyOutboxFiles(tx, source.id, created.id);
       await tx.auditLog.create({
         data: {
           eventId,

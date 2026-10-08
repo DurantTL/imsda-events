@@ -59,6 +59,13 @@ import type {
   MessagingWorkspaceData,
   ShirtSizeRequestPreview,
 } from "@/modules/communications/types";
+import type {
+  FailedMessagesRetryPreview,
+  FailedMessagesRetryResult,
+} from "@/modules/communications/retry-failed-domain";
+
+/** The delivery log is re-read this often while messages are queued or sending and the tab is visible (#860). */
+export const DELIVERY_REFRESH_INTERVAL_MS = 20_000;
 
 type CommunicationsWorkspaceProps = {
   eventId: string;
@@ -432,6 +439,15 @@ export function CommunicationsWorkspace({
     [deliveryFilter, messaging?.messages],
   );
   const [deliveryPage, setDeliveryPage] = useState(1);
+  const [refreshingDeliveries, setRefreshingDeliveries] = useState(false);
+  // "Retry failed" (#860): preview, then confirm. The request id stays with one preview so a repeated click replays.
+  const [retryFailedOpen, setRetryFailedOpen] = useState(false);
+  const [retryFailedScope, setRetryFailedScope] = useState("EVENT");
+  const [retryFailedPreview, setRetryFailedPreview] = useState<FailedMessagesRetryPreview | null>(null);
+  const [retryFailedLoading, setRetryFailedLoading] = useState(false);
+  const [retryFailedError, setRetryFailedError] = useState("");
+  const retryFailedRequestRef = useRef<{ key: string; id: string } | null>(null);
+  const retryFailedLoadRef = useRef(0);
   const deliverySlice = useMemo(
     () => paginate(filteredMessages, deliveryPage, DELIVERY_PAGE_SIZE),
     [filteredMessages, deliveryPage],
@@ -479,6 +495,32 @@ export function CommunicationsWorkspace({
     setView(nextView);
     setQuery(nextView);
   }
+
+  const queuedOrSending = messaging
+    ? messaging.counts.PENDING + messaging.counts.PROCESSING
+    : 0;
+  useEffect(() => {
+    if (view !== "deliveries" || !canManage || queuedOrSending === 0) return;
+    let stopped = false;
+    const refresh = async () => {
+      if (stopped || document.visibilityState !== "visible") return;
+      try {
+        const response = await fetch(`/api/events/${eventId}/messages`, { cache: "no-store" });
+        const result = await response.json().catch(() => ({})) as ApiResult;
+        if (!stopped && response.ok && result.messaging) setMessaging(result.messaging);
+      } catch {
+        // A missed refresh is harmless: the next tick or the Refresh button tries again.
+      }
+    };
+    const timer = window.setInterval(refresh, DELIVERY_REFRESH_INTERVAL_MS);
+    const onVisible = () => { if (document.visibilityState === "visible") void refresh(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [view, canManage, queuedOrSending, eventId]);
 
   async function messagingRequest(url: string, init: RequestInit, successMessage: string) {
     setSaving(true);
@@ -833,6 +875,116 @@ export function CommunicationsWorkspace({
         ? "The available email queue was processed. Delivery status will continue updating from Resend."
         : "All available queued messages were processed into local previews.",
     );
+  }
+
+  async function readDeliveries() {
+    const response = await fetch(`/api/events/${eventId}/messages`, { cache: "no-store" });
+    const result = await response.json().catch(() => ({})) as ApiResult;
+    if (!response.ok || !result.messaging) {
+      throw new Error(result.message ?? "The delivery log could not be refreshed.");
+    }
+    setMessaging(result.messaging);
+  }
+
+  async function refreshDeliveries() {
+    setRefreshingDeliveries(true);
+    setError("");
+    try {
+      await readDeliveries();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The delivery log could not be refreshed.");
+    } finally {
+      setRefreshingDeliveries(false);
+    }
+  }
+
+  async function loadRetryFailedPreview(scopeValue: string) {
+    const requestNumber = retryFailedLoadRef.current + 1;
+    retryFailedLoadRef.current = requestNumber;
+    // "LATEST" opens on the newest failed batch; the server answers with the batch it chose.
+    if (scopeValue !== "LATEST") setRetryFailedScope(scopeValue);
+    setRetryFailedLoading(true);
+    setRetryFailedError("");
+    try {
+      const query = scopeValue === "EVENT"
+        ? ""
+        : scopeValue === "LATEST"
+          ? "?scope=latest"
+          : `?batchId=${encodeURIComponent(scopeValue)}`;
+      const response = await fetch(`/api/events/${eventId}/messages/retry-failed${query}`, { cache: "no-store" });
+      const result = await response.json().catch(() => ({})) as { preview?: FailedMessagesRetryPreview; message?: string };
+      if (requestNumber !== retryFailedLoadRef.current) return;
+      if (!response.ok || !result.preview) {
+        throw new Error(result.message ?? "The failed messages could not be previewed.");
+      }
+      setRetryFailedPreview(result.preview);
+      setRetryFailedScope(result.preview.scope.type === "BATCH" ? result.preview.scope.batchId : "EVENT");
+    } catch (caught) {
+      if (requestNumber !== retryFailedLoadRef.current) return;
+      setRetryFailedPreview(null);
+      setRetryFailedError(caught instanceof Error ? caught.message : "The failed messages could not be previewed.");
+    } finally {
+      if (requestNumber === retryFailedLoadRef.current) setRetryFailedLoading(false);
+    }
+  }
+
+  function openRetryFailed() {
+    setRetryFailedOpen(true);
+    setNotice("");
+    setError("");
+    void loadRetryFailedPreview("LATEST");
+  }
+
+  function closeRetryFailed() {
+    retryFailedLoadRef.current += 1;
+    setRetryFailedOpen(false);
+    setRetryFailedPreview(null);
+    setRetryFailedError("");
+    setRetryFailedLoading(false);
+  }
+
+  async function confirmRetryFailed() {
+    if (!retryFailedPreview || retryFailedPreview.queueCount === 0 || retryFailedPreview.blocker) return;
+    const scope = retryFailedPreview.scope;
+    const key = `${scope.type === "BATCH" ? scope.batchId : "EVENT"}:${retryFailedPreview.fingerprint}`;
+    // The same preview keeps the same request id, so a second click or a retry after a dropped connection replays.
+    if (retryFailedRequestRef.current?.key !== key) {
+      retryFailedRequestRef.current = { key, id: crypto.randomUUID() };
+    }
+    setSaving(true);
+    setRetryFailedError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/events/${eventId}/messages/retry-failed`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientRequestId: retryFailedRequestRef.current.id,
+          scope,
+          previewFingerprint: retryFailedPreview.fingerprint,
+        }),
+      });
+      const result = await response.json().catch(() => ({})) as ApiResult & { operation?: FailedMessagesRetryResult };
+      if (!response.ok || !result.messaging || !result.operation) {
+        throw new Error(result.message ?? result.issues?.[0]?.message ?? "The failed messages could not be retried.");
+      }
+      const operation = result.operation;
+      setMessaging(result.messaging);
+      retryFailedRequestRef.current = null;
+      closeRetryFailed();
+      setNotice(
+        operation.replayed
+          ? "This retry was already queued, so nothing was duplicated."
+          : `Queued ${operation.queuedCount} retr${operation.queuedCount === 1 ? "y" : "ies"}`
+            + (operation.skippedCount > 0 ? `; ${operation.skippedCount} skipped` : "")
+            + (operation.remainingCount > 0 ? `; ${operation.remainingCount} more can be retried in another request` : "")
+            + ". They are sent by the email queue in batches, not now. The counts refresh while they send.",
+      );
+    } catch (caught) {
+      setRetryFailedError(caught instanceof Error ? caught.message : "The failed messages could not be retried.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function retryMessage() {
@@ -1712,10 +1864,79 @@ export function CommunicationsWorkspace({
           <section className="panel message-delivery-panel">
             <div className="message-delivery-toolbar">
               <div><p className="eyebrow">Transactional outbox</p><h2>Delivery log</h2><p>Local preview, provider acceptance, and final delivery events are kept as separate facts.</p></div>
-              <button className="secondary-button" type="button" onClick={processQueue} disabled={saving || messaging.settings.deliveryMode === "DISABLED"}>
-                <RefreshCw className={saving ? "spin" : ""} size={16} aria-hidden="true" /> {messaging.settings.deliveryMode === "EXTERNAL_EMAIL" ? "Process email queue" : "Process local previews"}
-              </button>
+              <div className="message-delivery-actions">
+                <button className="secondary-button" type="button" onClick={refreshDeliveries} disabled={refreshingDeliveries}>
+                  <RefreshCw className={refreshingDeliveries ? "spin" : ""} size={16} aria-hidden="true" /> Refresh
+                </button>
+                <button className="secondary-button" type="button" onClick={processQueue} disabled={saving || messaging.settings.deliveryMode === "DISABLED"}>
+                  <RefreshCw className={saving ? "spin" : ""} size={16} aria-hidden="true" /> {messaging.settings.deliveryMode === "EXTERNAL_EMAIL" ? "Process email queue" : "Process local previews"}
+                </button>
+              </div>
             </div>
+            {queuedOrSending > 0 && (
+              <p className="inline-notice" role="status">{queuedOrSending} message{queuedOrSending === 1 ? " is" : "s are"} queued or sending. This log refreshes on its own every {DELIVERY_REFRESH_INTERVAL_MS / 1000} seconds while this tab is open.</p>
+            )}
+            {messaging.counts.FAILED > 0 && (
+              <section className="retry-failed-panel" aria-label="Retry failed messages">
+                <div className="retry-failed-head">
+                  <div>
+                    <strong>{messaging.counts.FAILED} failed message{messaging.counts.FAILED === 1 ? "" : "s"}</strong>
+                    <p>A failed message is retried only if nothing in its retry chain (the original, its copies and any resend) was sent, queued or cancelled, and the same person was not sent the same email since. You review the list first, and nothing is retried until you confirm.</p>
+                  </div>
+                  {!retryFailedOpen && (
+                    <button className="secondary-button" type="button" onClick={openRetryFailed} disabled={saving}>
+                      <RefreshCw size={16} aria-hidden="true" /> Retry failed
+                    </button>
+                  )}
+                </div>
+                {retryFailedOpen && (
+                  <div className="retry-failed-review">
+                    <label>Which failed messages
+                      <select value={retryFailedScope} onChange={(changeEvent) => void loadRetryFailedPreview(changeEvent.target.value)} disabled={saving || retryFailedLoading}>
+                        <option value="EVENT">Recent failures in this event, last {retryFailedPreview?.eventScopeDays ?? 7} days{retryFailedPreview ? ` (${retryFailedPreview.eventFailedCount} failed in all)` : ""}</option>
+                        {(retryFailedPreview?.batches ?? []).map((batch) => (
+                          <option value={batch.batchId} key={batch.batchId}>
+                            {(templateLabels[batch.templateKey] ?? batch.templateKey.toLowerCase().replaceAll("_", " "))} · {new Date(batch.sentAt).toLocaleDateString()} · {batch.failedCount} failed
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    {retryFailedLoading && <p className="quiet-copy" role="status">Checking the failed messages…</p>}
+                    {retryFailedError && <p className="inline-notice error" role="alert">{retryFailedError}</p>}
+                    {retryFailedPreview && !retryFailedLoading && (
+                      <>
+                        <dl className="retry-failed-counts">
+                          <div><dt>Failed in this scope</dt><dd>{retryFailedPreview.failedCount}</dd></div>
+                          <div><dt>Will be retried now</dt><dd>{retryFailedPreview.queueCount}</dd></div>
+                          <div><dt>Skipped</dt><dd>{retryFailedPreview.failedCount - retryFailedPreview.eligibleCount}</dd></div>
+                        </dl>
+                        {retryFailedPreview.skipped.length > 0 && (
+                          <ul className="retry-failed-skips">
+                            {retryFailedPreview.skipped.map((item) => (
+                              <li key={item.reason}><span>{item.label}</span><strong>{item.count}</strong></li>
+                            ))}
+                          </ul>
+                        )}
+                        {retryFailedPreview.eventScopeDays !== null && (
+                          <p className="inline-notice" role="status">The whole-event choice retries only failures from the last {retryFailedPreview.eventScopeDays} days. Choose a batch to retry an older send.</p>
+                        )}
+                        {retryFailedPreview.remainingCount > 0 && (
+                          <p className="inline-notice" role="status">One request retries up to {retryFailedPreview.cap} messages. {retryFailedPreview.remainingCount} more can be retried afterwards.</p>
+                        )}
+                        {retryFailedPreview.blocker && <p className="inline-notice error" role="alert">{retryFailedPreview.blocker.message}</p>}
+                        <p className="field-help">If these failed because the email provider&apos;s sending limit was reached, wait until the limit has reset before you confirm. The copies are queued now and sent by the email queue in batches.</p>
+                      </>
+                    )}
+                    <div className="retry-failed-actions">
+                      <button className="primary-button" type="button" onClick={confirmRetryFailed} disabled={saving || retryFailedLoading || !retryFailedPreview || retryFailedPreview.queueCount === 0 || Boolean(retryFailedPreview.blocker)}>
+                        <Send size={16} aria-hidden="true" /> {retryFailedPreview && retryFailedPreview.queueCount > 0 ? `Queue ${retryFailedPreview.queueCount} retr${retryFailedPreview.queueCount === 1 ? "y" : "ies"}` : "Nothing to retry"}
+                      </button>
+                      <button className="secondary-button" type="button" onClick={closeRetryFailed} disabled={saving}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
             <div className="message-delivery-filters" role="group" aria-label="Filter messages">
               {deliveryFilters.map((filter) => (
                 <button aria-pressed={deliveryFilter === filter} className={deliveryFilter === filter ? "active" : ""} type="button" onClick={() => chooseDeliveryFilter(filter)} key={filter}>

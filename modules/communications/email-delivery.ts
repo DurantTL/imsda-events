@@ -68,6 +68,16 @@ export const EMAIL_DELIVERY_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
 export const EMAIL_DELIVERY_BATCH_SIZE = 50;
 const EMAIL_RETRY_BASE_MS = 60 * 1000;
 const EMAIL_RETRY_MAX_MS = 60 * 60 * 1000;
+// A provider quota does not clear in minutes (Resend's free plan resets daily), so it backs off in hours (#860).
+const EMAIL_QUOTA_RETRY_BASE_MS = 2 * 60 * 60 * 1000;
+const EMAIL_QUOTA_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
+export const PROVIDER_QUOTA_ERROR_CODE = "PROVIDER_QUOTA";
+export const PROVIDER_RATE_LIMITED_ERROR_CODE = "PROVIDER_RATE_LIMITED";
+export const PROVIDER_RATE_LIMITED_MESSAGE = "The email provider is limiting how fast messages can be sent. The message will be tried again shortly.";
+/** A message deferred by the provider's quota for longer than this (from its first deferral) ends FAILED. */
+export const PROVIDER_QUOTA_GIVE_UP_MS = 72 * 60 * 60 * 1000;
+export const PROVIDER_QUOTA_GAVE_UP_MESSAGE = "Gave up waiting for the email provider's sending limit";
+export const PROVIDER_QUOTA_MESSAGE = "The email provider's sending limit was reached. The message will be tried again later; staff can also retry it from the delivery log once the limit resets.";
 
 type DeliveryPrisma = Pick<
   PrismaClient,
@@ -209,9 +219,22 @@ export class ExternalEmailDeliveryError extends Error {
   }
 }
 
-export function emailRetryDelayMs(attemptNumber: number) {
+export function emailRetryDelayMs(attemptNumber: number, errorCode?: string | null) {
   const exponent = Math.max(0, Math.min(10, attemptNumber - 1));
+  if (errorCode === PROVIDER_QUOTA_ERROR_CODE) {
+    return Math.min(EMAIL_QUOTA_RETRY_MAX_MS, EMAIL_QUOTA_RETRY_BASE_MS * (2 ** exponent));
+  }
   return Math.min(EMAIL_RETRY_MAX_MS, EMAIL_RETRY_BASE_MS * (2 ** exponent));
+}
+
+/** A 429 whose provider error name is a daily or monthly quota (Resend: daily_quota_exceeded, monthly_quota_exceeded). */
+export function isProviderQuotaError(error: EmailProviderRequestError) {
+  return error.status === 429 && /quota/i.test(error.code);
+}
+
+/** A 429 for the short per-second limit (Resend: rate_limit_exceeded). It clears in moments, so it keeps the minute backoff. */
+export function isProviderRateLimitError(error: EmailProviderRequestError) {
+  return error.status === 429 && /rate[_ -]?limit/i.test(error.code) && !/quota/i.test(error.code);
 }
 
 export function normalizeEmailDeliveryError(error: unknown): NormalizedEmailDeliveryError {
@@ -220,6 +243,21 @@ export function normalizeEmailDeliveryError(error: unknown): NormalizedEmailDeli
     return { code: error.code, message: error.message, retryable: error.retryable };
   }
   if (error instanceof EmailProviderRequestError) {
+    if (isProviderRateLimitError(error)) {
+      return {
+        code: PROVIDER_RATE_LIMITED_ERROR_CODE,
+        message: PROVIDER_RATE_LIMITED_MESSAGE,
+        retryable: true,
+      };
+    }
+    // SES reports its daily quota with its own status (454) and already uses the code.
+    if (isProviderQuotaError(error) || error.code === PROVIDER_QUOTA_ERROR_CODE) {
+      return {
+        code: PROVIDER_QUOTA_ERROR_CODE,
+        message: PROVIDER_QUOTA_MESSAGE,
+        retryable: true,
+      };
+    }
     return {
       code: error.code,
       message: error.message,
@@ -413,7 +451,7 @@ async function recoverStaleClaims(
       await tx.messageDeliveryAttempt.create({
         data: {
           messageOutboxId: candidate.id,
-          attemptNumber,
+          attemptNumber: await nextAttemptRowNumber(tx, candidate.id, candidate.attemptCount),
           provider,
           status: "FAILED",
           errorCode: "STALE_DELIVERY_LOCK",
@@ -530,6 +568,22 @@ async function claimNextMessage(
   return null;
 }
 
+/**
+ * The row number of the next attempt. A quota deferral (#860) is recorded but not counted in `attemptCount`, so the
+ * two can differ: numbering from the highest row keeps (message, attemptNumber) unique.
+ */
+export async function nextAttemptRowNumber(
+  tx: Pick<PrismaClient, "messageDeliveryAttempt">,
+  messageId: string,
+  attemptCount: number,
+) {
+  const highest = await tx.messageDeliveryAttempt.aggregate({
+    where: { messageOutboxId: messageId },
+    _max: { attemptNumber: true },
+  });
+  return Math.max(attemptCount, highest._max.attemptNumber ?? 0) + 1;
+}
+
 async function finalizeSuccessfulAttempt(
   prisma: DeliveryPrisma,
   message: ClaimedMessage,
@@ -563,8 +617,8 @@ async function finalizeSuccessfulAttempt(
     await tx.messageDeliveryAttempt.create({
       data: {
         messageOutboxId: message.id,
-        attemptNumber,
-        provider: provider,
+        attemptNumber: await nextAttemptRowNumber(tx, message.id, message.attemptCount),
+        provider,
         status: "SENT",
         providerMessageId,
         providerMetadata: {
@@ -619,9 +673,38 @@ async function finalizeFailedAttempt(
   provider: EmailProviderName = getActiveEmailProviderName(),
 ) {
   const attemptNumber = message.attemptCount + 1;
-  const reschedule = error.retryable && attemptNumber < MAX_EMAIL_DELIVERY_ATTEMPTS;
-  const availableAt = new Date(completedAt.getTime() + emailRetryDelayMs(attemptNumber));
+  // A provider quota is the provider's limit, not this message's fault: it never uses up an attempt, so it can never
+  // be what ends the message as FAILED (#860). It is recorded and rescheduled with the hours backoff.
+  let quota = error.code === PROVIDER_QUOTA_ERROR_CODE && !internal;
+  let gaveUp = false;
+  let recordedError = error;
+  let reschedule = quota || (error.retryable && attemptNumber < MAX_EMAIL_DELIVERY_ATTEMPTS);
+  let availableAt = new Date(completedAt.getTime() + emailRetryDelayMs(attemptNumber, error.code));
   const finalized = await prisma.$transaction(async (tx) => {
+    const rowNumber = await nextAttemptRowNumber(tx, message.id, message.attemptCount);
+    if (quota) {
+      // A quota that has not cleared for 72 hours since the first deferral stops waiting: the message ends FAILED
+      // through the normal final-failure path (link withdrawal included), and staff can use Retry failed.
+      const first = await tx.messageDeliveryAttempt.findFirst({
+        where: { messageOutboxId: message.id, errorCode: PROVIDER_QUOTA_ERROR_CODE },
+        orderBy: { completedAt: "asc" },
+        select: { completedAt: true },
+      });
+      if (first?.completedAt && completedAt.getTime() - first.completedAt.getTime() >= PROVIDER_QUOTA_GIVE_UP_MS) {
+        gaveUp = true;
+        quota = false;
+        reschedule = false;
+        recordedError = { code: PROVIDER_QUOTA_ERROR_CODE, message: PROVIDER_QUOTA_GAVE_UP_MESSAGE, retryable: false };
+      }
+    }
+    if (quota) {
+      // Each quota rejection backs off longer than the last: the exponent counts the attempts recorded so far.
+      const recorded = await tx.messageDeliveryAttempt.aggregate({
+        where: { messageOutboxId: message.id },
+        _max: { attemptNumber: true },
+      });
+      availableAt = new Date(completedAt.getTime() + emailRetryDelayMs((recorded._max.attemptNumber ?? 0) + 1, error.code));
+    }
     const updated = await tx.messageOutbox.updateMany({
       where: {
         id: message.id,
@@ -630,7 +713,7 @@ async function finalizeFailedAttempt(
       },
       data: {
         status: reschedule ? "PENDING" : "FAILED",
-        attemptCount: attemptNumber,
+        attemptCount: quota ? message.attemptCount : attemptNumber,
         availableAt: reschedule ? availableAt : completedAt,
         lockedAt: null,
         lockToken: null,
@@ -638,21 +721,23 @@ async function finalizeFailedAttempt(
         provider: internal ? undefined : provider,
         providerDeliveryStatus: reschedule || internal ? undefined : "FAILED",
         providerStatusAt: reschedule || internal ? undefined : completedAt,
-        lastError: error.message,
+        lastError: recordedError.message,
       },
     });
     if (updated.count !== 1) return false;
     await tx.messageDeliveryAttempt.create({
       data: {
         messageOutboxId: message.id,
-        attemptNumber,
+        attemptNumber: rowNumber,
         provider: internal ? "INTERNAL" : provider,
         status: "FAILED",
-        errorCode: error.code,
-        errorMessage: error.message,
+        errorCode: recordedError.code,
+        errorMessage: recordedError.message,
         providerMetadata: {
-          retryable: error.retryable,
+          retryable: recordedError.retryable,
+          ...(gaveUp ? { quotaGaveUp: true } : {}),
           rescheduled: reschedule,
+          ...(quota ? { quotaDeferred: true } : {}),
           ...(reschedule ? { nextAvailableAt: availableAt.toISOString() } : {}),
           idempotencyKey: `outbox:${message.id}`,
           // A failed pre-send check (no provider was called) is not a real delivery attempt.
@@ -664,7 +749,7 @@ async function finalizeFailedAttempt(
     });
     return true;
   });
-  return { finalized, rescheduled: finalized && reschedule };
+  return { finalized, rescheduled: finalized && reschedule, quota: finalized && quota, gaveUp: finalized && gaveUp };
 }
 
 async function runDeliveryLoop(
@@ -843,7 +928,12 @@ async function runDeliveryLoop(
         configuredProvider,
       );
       if (failure.rescheduled) result.rescheduledIds.push(message.id);
-      else if (failure.finalized) {
+      // The provider's quota is spent: stop this run so the rest of the queue waits instead of each message
+      // making a doomed call (#860). They stay queued and untouched.
+      if (failure.quota) break;
+      // A message that gave up on the quota is a final failure (below); the quota is still spent, so the run stops after it.
+      const stopAfterThis = failure.gaveUp;
+      if (!failure.rescheduled && failure.finalized) {
         result.failedIds.push(message.id);
         // Out of retries or non-retryable: a club form link that never arrived must not stay live (#610).
         if (message.templateKey === CLUB_FORM_LINK_TEMPLATE_KEY) {
@@ -868,6 +958,7 @@ async function runDeliveryLoop(
           }
         }
       }
+      if (stopAfterThis) break;
     }
   }
   return result;

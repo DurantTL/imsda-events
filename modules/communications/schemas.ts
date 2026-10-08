@@ -122,6 +122,24 @@ export const messageRetryInputSchema = z.object({
   ),
 }).strict();
 
+export const failedMessagesRetryScopeSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("EVENT") }).strict(),
+  z.object({
+    type: z.literal("BATCH"),
+    batchId: z.string().trim().min(1).max(120),
+  }).strict(),
+]);
+
+export const failedMessagesRetryInputSchema = z.object({
+  clientRequestId: z.uuid(),
+  scope: failedMessagesRetryScopeSchema,
+  previewFingerprint: z.string().regex(
+    /^[a-f0-9]{64}$/,
+    "The retry preview is invalid. Preview the failed messages again.",
+  ),
+}).strict();
+
+export type FailedMessagesRetryInput = z.infer<typeof failedMessagesRetryInputSchema>;
 export type MessagingSettingsInput = z.infer<typeof messagingSettingsInputSchema>;
 export type MessageTemplateInput = z.infer<typeof messageTemplateInputSchema>;
 export type MessageTestInput = z.infer<typeof messageTestInputSchema>;

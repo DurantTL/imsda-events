@@ -221,6 +221,8 @@ const pages: PageSpec[] = [
   // The template editor with attachments, a picture and a button (#824), and a draft announcement with attachments.
   staff("communications-editor", `/communications?event=${blocksEventId}&view=templates`, "system-admin"),
   staff("communications-announcement-attachments", `/communications?event=${blocksEventId}`, "system-admin"),
+  // The delivery log with a failed send and a queued message (#860): the Retry failed review and the refresh notice.
+  staff("communications-deliveries", `/communications?event=${blocksEventId}&view=deliveries`, "system-admin"),
   staff("registration-builder", "/registration-builder"),
   // Staff, as a system administrator.
   staff("system-home", "/admin", "system-admin"),
@@ -413,6 +415,39 @@ async function seedMessageFiles(prisma: PrismaClient) {
     body: "A draft announcement that carries two files.",
     priority: "NORMAL",
     attachmentFileIds: [agenda.id, terms.id],
+  });
+}
+
+/**
+ * The delivery log with a failed send (#860): five failed messages from one Email selected batch, one still queued,
+ * so the Retry failed panel, its review and the queued notice are on the page. Plain rows with no registration, the
+ * same shape the log shows for a detached message.
+ */
+async function seedFailedDeliveries(prisma: PrismaClient) {
+  const { ensureEventMessagingDefaults } = await import("../modules/communications/messaging-repository");
+  await ensureEventMessagingDefaults(blocksEventId);
+  if (await prisma.messageOutbox.count({ where: { eventId: blocksEventId, correlationId: `${P}-failed-batch` } }) > 0) return;
+  const batchId = `${P}-failed-batch`;
+  const row = (index: number, status: "FAILED" | "SENT" | "PENDING") => ({
+    eventId: blocksEventId,
+    templateKey: "EVENT_ANNOUNCEMENT" as const,
+    recipientKind: "REGISTRANT" as const,
+    recipientEmail: `${P}.guest${index}@example.test`,
+    recipientName: `Mobilecheck Guest ${index}`,
+    senderNameSnapshot: "Mobilecheck Events",
+    senderEmailSnapshot: `${P}.sender@example.test`,
+    subjectSnapshot: "Welcome to the retreat",
+    bodyTextSnapshot: "Welcome.",
+    status,
+    attemptCount: status === "FAILED" ? 5 : 0,
+    lastError: status === "FAILED" ? "The email provider's sending limit was reached." : null,
+    failedAt: status === "FAILED" ? new Date() : null,
+    metadata: { batchId, trigger: "STAFF_SELECTED_AUDIENCE_BATCH" },
+    idempotencyKey: `${P}-failed-delivery-${index}`,
+    correlationId: batchId,
+  });
+  await prisma.messageOutbox.createMany({
+    data: [row(1, "SENT"), row(2, "SENT"), row(3, "FAILED"), row(4, "FAILED"), row(5, "FAILED"), row(6, "FAILED"), row(7, "FAILED"), row(8, "PENDING")],
   });
 }
 
@@ -695,6 +730,7 @@ async function seedSynthetic(prisma: PrismaClient) {
   await seedHonorsAndRegistrations(prisma);
   await seedBlocksEvent(prisma);
   await seedMessageFiles(prisma);
+  await seedFailedDeliveries(prisma);
   await seedMultiHonorClass(prisma);
   await seedLauncherModule(prisma);
 }
@@ -1549,6 +1585,25 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
     await page.keyboard.press("Escape").catch(() => undefined);
     await page.waitForTimeout(100);
     if (page.url() !== peopleBefore) await page.goto(peopleBefore, { waitUntil: "load" });
+  }
+
+  // Retry failed (#860): the review is open (scope picker, counts, skip reasons, confirm) and fits the screen.
+  if (spec.name === "staff-communications-deliveries") {
+    const deliveriesBefore = page.url();
+    try {
+      const open = page.locator('button:has-text("Retry failed"):visible').first();
+      await open.scrollIntoViewIfNeeded({ timeout: 5000 });
+      await open.click({ timeout: 5000 });
+      await page.locator(".retry-failed-counts").first().waitFor({ state: "visible", timeout: 10000 });
+      const audit = await page.evaluate(auditInPage, { touch, cards: width <= cardsMaxWidth, minTarget: touchTarget, tolerance: touchTolerance });
+      const stateName = `${spec.name} (retry failed review)`;
+      if (audit.scrollWidth > audit.innerWidth) record("horizontal-scroll", stateName, width, `page is ${audit.scrollWidth}px wide in a ${audit.innerWidth}px window; sticking out: ${audit.overflowers.join("; ") || "(nothing identified)"}`);
+      for (const target of audit.smallTargets) record("small-tap-target", stateName, width, target);
+      if (takeShots) await page.screenshot({ path: `${prefix}-retry-failed-review.jpg`, type: "jpeg", quality: 60 });
+    } catch (error) {
+      record("dialog-open-failed", `${spec.name} (retry failed review)`, width, (error as Error).message.split("\n")[0] ?? "failed");
+    }
+    if (page.url() !== deliveriesBefore) await page.goto(deliveriesBefore, { waitUntil: "load" });
   }
 
   // A draft announcement with attachments (#824): the edit dialog lists them and fits the screen.

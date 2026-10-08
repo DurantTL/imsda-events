@@ -6,7 +6,8 @@
  *   outbox worker as one MIME message: the attachment, the inline picture and each attendee's QR (with Content-IDs the
  *   HTML refers to as cid:), the reply-to, and a stable X-IMSDA-Message-Id;
  * - the first attempt meets SES throttling (454) and is rescheduled as PROVIDER_RATE_LIMITED, the second the daily quota
- *   (454) and is rescheduled as PROVIDER_QUOTA, and the third is accepted, with the provider recorded as SES;
+ *   (454) and is rescheduled as PROVIDER_QUOTA without using an attempt (#860), and the third is accepted, with the
+ *   provider recorded as SES;
  * - a 554 "Email address is not verified" fails the message for good with a staff-readable error and no retry;
  * - an authentication failure (535) is a configuration error, and a server that offers no STARTTLS is refused
  *   (retryable) with nothing sent.
@@ -301,16 +302,17 @@ async function runChecks(stub: Awaited<ReturnType<typeof startSmtpStub>>) {
   await makeAvailable(message.id);
   await processPendingMessages(ids.event, ids.staff);
   current = await state(message.id);
-  assert(current.status === "PENDING" && current.attemptCount === 2, `a send over the daily quota is rescheduled: ${JSON.stringify(current)}`);
+  assert(current.status === "PENDING" && current.attemptCount === 1, `a send over the daily quota is rescheduled without using an attempt: ${JSON.stringify(current)}`);
   await makeAvailable(message.id);
   await processPendingMessages(ids.event, ids.staff);
   current = await state(message.id);
-  assert(current.status === "SENT" && current.attemptCount === 3, `the third attempt is accepted: ${JSON.stringify(current)}`);
+  assert(current.status === "SENT" && current.attemptCount === 2, `the third try is accepted: ${JSON.stringify(current)}`);
   assert(current.provider === "SES", `the outbox row records SES: ${current.provider}`);
   assert(current.providerMessageId === "0100synthetic0001-000000", `the SES message id is recorded: ${current.providerMessageId}`);
   const history = await attempts(message.id);
   assert(history.map((row) => `${row.provider}:${row.status}:${row.errorCode ?? ""}`).join() === "SES:FAILED:PROVIDER_RATE_LIMITED,SES:FAILED:PROVIDER_QUOTA,SES:SENT:", `attempt history: ${JSON.stringify(history)}`);
   assert(history.slice(0, 2).every((row) => (row.providerMetadata as { retryable?: boolean }).retryable === true), "both failures were retryable");
+  assert((history[1].providerMetadata as { quotaDeferred?: boolean }).quotaDeferred === true, "the quota rejection is marked as deferred");
   assert(Number(stub.received.length) === 1, `only the accepted attempt reached the stub: ${stub.received.length}`);
 
   // 2. The accepted message is one MIME message with the attachment, the inline picture and a QR per attendee.
