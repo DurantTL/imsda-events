@@ -357,6 +357,8 @@ async function runChecks(state: StubState) {
   await prisma.messageOutbox.create({ data: treeRow("queued-processing", { status: "PROCESSING", lockedAt: new Date(), lockToken: "synthetic-lock", registrationId: registrationIds[3], recipientEmail: EMAIL("guest4"), metadata: { batchId: `${P}-another-queued-send` }, createdAt: new Date(Date.now() - 3600_000) }) });
   const processingLater = await previewFailedMessagesRetry(ids.event, { type: "BATCH", batchId: queuedBatch });
   assert(processingLater.eligibleCount === 0 && processingLater.skipped.some((item) => item.reason === "LATER_QUEUED"), "a PROCESSING later send blocks the retry");
+  // A queued send blocks that registration whenever it was created, so clear it before the next check reuses the guest.
+  await prisma.messageOutbox.deleteMany({ where: { idempotencyKey: `${P}-tree-queued-processing` } });
 
   // 9c. Two simultaneous confirmations of one fresh preview, two ways: the same request id twice (a double click) and
   //     two different ids (two tabs). Either way every source message ends with exactly one copy.
