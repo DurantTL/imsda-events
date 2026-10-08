@@ -123,6 +123,8 @@ export function CalendarAdminWorkspace({
   const [removeTarget, setRemoveTarget] = useState<CalendarAdminEntry | null>(null);
   // Where focus returns when the edit dialog closes (#869).
   const openerRef = useRef<HTMLElement | null>(null);
+  // Focus lands here when the edited row is no longer in the list (#869).
+  const summaryRef = useRef<HTMLParagraphElement>(null);
   // Entries list (#796): search, filters, sort, and the rows ticked for a bulk action.
   const [filters, setFilters] = useState<EntryFilters>(defaultEntryFilters);
   const [sort, setSort] = useState<EntrySort>("date");
@@ -220,7 +222,11 @@ export function CalendarAdminWorkspace({
     setError("");
     // Focus goes back to the row's Edit button even where a click doesn't focus buttons (Safari).
     const opener = openerRef.current;
-    window.requestAnimationFrame(() => opener?.focus({ preventScroll: true }));
+    window.requestAnimationFrame(() => {
+      // The saved row may have moved or dropped out of the filter; never leave focus on <body>.
+      const target = opener?.isConnected ? opener : summaryRef.current;
+      target?.focus({ preventScroll: true });
+    });
   }
 
   async function saveEdit(body: EntryBody) {
@@ -325,7 +331,7 @@ export function CalendarAdminWorkspace({
                 onSort={(next) => { setSort(next); startNewView(); }}
                 sort={sort}
               />
-              <p aria-live="polite" className="calendar-list-summary" role="status">
+              <p aria-live="polite" className="calendar-list-summary" ref={summaryRef} role="status" tabIndex={-1}>
                 {describeEntryCount(matching.length)} match. {describeEntrySort(sort)}.
                 {entries.length >= calendarEntryListLimit && ` Showing the newest ${calendarEntryListLimit} entries by start date; older ones are not listed.`}
               </p>

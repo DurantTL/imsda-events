@@ -59,6 +59,13 @@ describe("calendar admin entries list and edit dialog (#869)", () => {
     expect(source).toMatch(/useAccessibleDialog<HTMLElement>\(true, \(\) => cancelUnlessBusy\(saving, onCancel\)\)/);
   });
 
+  it("restores focus without scrolling, falling back to the list summary when the row is gone", () => {
+    const hook = readFileSync(path.join(process.cwd(), "components/use-accessible-dialog.ts"), "utf8");
+    expect(hook).toContain("previouslyFocused?.focus({ preventScroll: true })");
+    expect(source).toMatch(/opener\?\.isConnected \? opener : summaryRef\.current/);
+    expect(source).toMatch(/ref=\{summaryRef\}[^>]*tabIndex=\{-1\}/);
+  });
+
   it("keeps the imported-item notice and errors inside the edit form", () => {
     expect(source).toContain("Imported from {entry.sourceFeedName}. Fields you change here are kept when the calendar refreshes");
     expect(source).toMatch(/!removeTarget && !bulkTarget && !editing/);
