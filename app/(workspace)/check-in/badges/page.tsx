@@ -275,8 +275,8 @@ export default async function PrintableNameBadgesPage({
                     <div className="badge-label-inner">
                       {showTitle && <header>{event.name}</header>}
                       <div className="badge-label-name">
-                        <strong>{label.firstName}</strong>
-                        <strong>{label.lastName}</strong>
+                        <strong style={{ "--name-chars": Math.max(1, Array.from(label.firstName).length) } as CSSProperties}>{label.firstName}</strong>
+                        <strong style={{ "--name-chars": Math.max(1, Array.from(label.lastName).length) } as CSSProperties}>{label.lastName}</strong>
                       </div>
                       <p>{label.groupLabel}</p>
                       {(showAttendeeType || collectsShirtSizes) && (
