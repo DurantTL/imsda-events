@@ -741,15 +741,24 @@ export function PeopleWorkspace({
       </div>
       <p className="result-summary">Showing {visible.length} of {registrations.length} {matchingPersonFilter ? "registrations with a matching person" : "registrations"}</p>
       <SortOrderNote>{registrationListOrderText}</SortOrderNote>
-      {canEmail && selectedIds.size > 0 && (
+      {/* Always shown, so "Select all" is findable before anything is ticked. */}
+      {canEmail && (selectedIds.size > 0 || visible.length > 0) && (
         <div className="panel selection-bar">
-          <span><strong>{selectedIds.size}</strong> selected{visibleSelectedCount !== selectedIds.size ? ` · ${visibleSelectedCount} in this view` : ""}</span>
+          <span role="status">
+            {selectedIds.size > 0
+              ? <><strong>{selectedIds.size}</strong> selected{visibleSelectedCount !== selectedIds.size ? ` · ${visibleSelectedCount} in this view` : ""}</>
+              : "Tick registrations to email them, or use Select all."}
+          </span>
           <div className="selection-bar-actions">
             {visibleSelectedCount < visible.length && (
               <button className="text-button" type="button" onClick={selectAllVisible}>Select all {visible.length} shown</button>
             )}
-            <button className="text-button" type="button" onClick={() => setSelectedIds(new Set())}>Clear selection</button>
-            <button className="secondary-button outline-action" type="button" onClick={() => setEmailingSelection(true)}><MailPlus aria-hidden="true" size={16} /> Email selected</button>
+            {selectedIds.size > 0 && (
+              <>
+                <button className="text-button" type="button" onClick={() => setSelectedIds(new Set())}>Clear selection</button>
+                <button className="secondary-button outline-action" type="button" onClick={() => setEmailingSelection(true)}><MailPlus aria-hidden="true" size={16} /> Email selected</button>
+              </>
+            )}
           </div>
         </div>
       )}
