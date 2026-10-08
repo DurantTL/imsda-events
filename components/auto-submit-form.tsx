@@ -14,7 +14,7 @@ const subscribeNever = () => () => {};
  * closed select wait for Enter or the button, as DeskLocationSelect does (#413),
  * so arrowing past a choice does not reload the page.
  */
-export function AutoSubmitForm({ className, onChange, onKeyDown, onPointerDown, ...props }: ComponentProps<"form">) {
+export function AutoSubmitForm({ className, onBlur, onChange, onFocus, onKeyDown, onPointerDown, ...props }: ComponentProps<"form">) {
   // False on the server and during hydration, true once scripts run.
   const enhanced = useSyncExternalStore(subscribeNever, () => true, () => false);
   const steppedByKeyboard = useRef(false);
@@ -45,7 +45,15 @@ export function AutoSubmitForm({ className, onChange, onKeyDown, onPointerDown, 
           // No preventDefault: with the list open the browser still commits the pick.
           steppedByKeyboard.current = false;
           if (enhanced) setTimeout(submitOnce, 0);
-        } else steppedByKeyboard.current = isSelectStepKey(event.key);
+        } else steppedByKeyboard.current = isSelectStepKey(event.key, event);
+      }}
+      onBlur={(event) => {
+        onBlur?.(event);
+        steppedByKeyboard.current = false;
+      }}
+      onFocus={(event) => {
+        onFocus?.(event);
+        steppedByKeyboard.current = false;
       }}
       onPointerDown={(event) => {
         onPointerDown?.(event);
