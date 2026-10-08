@@ -1,7 +1,7 @@
 import "server-only";
 
 import { Prisma } from "@prisma/client";
-import { getResendEmailAvailability } from "@/integrations/email/resend";
+import { getEmailAvailability } from "@/integrations/email/provider";
 import { getPrisma } from "@/lib/prisma";
 import { BATCH_TRANSACTION_MAX_WAIT_MS, BATCH_TRANSACTION_TIMEOUT_MS } from "@/modules/communications/batch-transaction";
 import { MessagingError } from "@/modules/communications/messaging-error";
@@ -62,7 +62,7 @@ function deliveryBlocker(deliveryMode: DeliveryMode): Plan["blocker"] {
       message: "Turn on message delivery before retrying failed messages.",
     };
   }
-  if (deliveryMode === "EXTERNAL_EMAIL" && !getResendEmailAvailability().deliveryConfigured) {
+  if (deliveryMode === "EXTERNAL_EMAIL" && !getEmailAvailability().deliveryConfigured) {
     return {
       code: "EXTERNAL_EMAIL_NOT_CONFIGURED",
       message: "Add the Resend API key before retrying real email.",

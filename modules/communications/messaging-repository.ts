@@ -12,8 +12,8 @@ import {
   Prisma,
 } from "@prisma/client";
 import {
-  getResendEmailAvailability,
-} from "@/integrations/email/resend";
+  getEmailAvailability,
+} from "@/integrations/email/provider";
 import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import {
@@ -268,7 +268,7 @@ function settingsRecord(settings: {
   replyToEmail: string | null;
   internalNotificationEmails: Prisma.JsonValue;
 }) {
-  const availability = getResendEmailAvailability();
+  const availability = getEmailAvailability();
   return {
     deliveryMode: settings.deliveryMode,
     senderName: settings.senderName,
@@ -912,7 +912,7 @@ export async function updateMessagingSettings(
 ) {
   if (
     input.deliveryMode === "EXTERNAL_EMAIL"
-    && !getResendEmailAvailability().deliveryConfigured
+    && !getEmailAvailability().deliveryConfigured
   ) {
     throw new MessagingError(
       "EXTERNAL_EMAIL_NOT_CONFIGURED",
@@ -952,7 +952,7 @@ export async function updateMessagingSettings(
           internalRecipientCount: input.internalNotificationEmails.length,
           senderEmailConfigured: Boolean(input.senderEmail),
           replyToConfigured: Boolean(input.replyToEmail),
-          providerConfigured: getResendEmailAvailability().deliveryConfigured,
+          providerConfigured: getEmailAvailability().deliveryConfigured,
           realDelivery: input.deliveryMode === "EXTERNAL_EMAIL",
         },
       },
@@ -1220,8 +1220,22 @@ export async function processPendingMessages(
   try {
     result = await processExternalEmailQueue(eventId, { dependencies });
   } catch (error) {
+    // A run that stopped part-way still did real work; record it before the error goes up.
+    if (error instanceof ExternalEmailDeliveryError && error.partial) {
+      await recordExternalQueueProcessing(prisma, eventId, actorUserId, error.partial);
+    }
     asMessagingDeliveryError(error);
   }
+  await recordExternalQueueProcessing(prisma, eventId, actorUserId, result);
+  return getMessagingWorkspace(eventId);
+}
+
+async function recordExternalQueueProcessing(
+  prisma: ReturnType<typeof getPrisma>,
+  eventId: string,
+  actorUserId: string | undefined,
+  result: Awaited<ReturnType<typeof processExternalEmailQueue>>,
+) {
   const processedCount = result.sentIds.length
     + result.failedIds.length
     + result.rescheduledIds.length;
@@ -1233,7 +1247,7 @@ export async function processPendingMessages(
         action: "MESSAGE_QUEUE_PROCESSED_EXTERNALLY",
         entityType: "MessageOutbox",
         correlationId: randomUUID(),
-        summary: `Processed ${processedCount} queued email${processedCount === 1 ? "" : "s"} through Resend.`,
+        summary: `Processed ${processedCount} queued email${processedCount === 1 ? "" : "s"} through the email provider.`,
         metadata: {
           sentMessageIds: result.sentIds,
           failedMessageIds: result.failedIds,
@@ -1244,7 +1258,6 @@ export async function processPendingMessages(
       },
     });
   }
-  return getMessagingWorkspace(eventId);
 }
 
 /**
@@ -3074,7 +3087,7 @@ export async function retryMessage(
       }
       if (
         settings.deliveryMode === "EXTERNAL_EMAIL"
-        && !getResendEmailAvailability().deliveryConfigured
+        && !getEmailAvailability().deliveryConfigured
         && !dependencies?.configuration
       ) {
         throw new MessagingError(
@@ -3355,7 +3368,13 @@ export async function processQueuedMessageIdsAfterCommit(
       result.rescheduledIds.push(...external.rescheduledIds);
     } catch (error) {
       if (error instanceof ExternalEmailDeliveryError) {
-        result.skippedIds.push(...ids);
+        // A run that stopped part-way has already sent, failed or rescheduled some of these; only the rest are skipped.
+        const partial = error.partial;
+        const done = new Set([...(partial?.sentIds ?? []), ...(partial?.failedIds ?? []), ...(partial?.rescheduledIds ?? [])]);
+        result.sentIds.push(...(partial?.sentIds ?? []));
+        result.failedIds.push(...(partial?.failedIds ?? []));
+        result.rescheduledIds.push(...(partial?.rescheduledIds ?? []));
+        result.skippedIds.push(...ids.filter((id) => !done.has(id)));
         continue;
       }
       throw error;

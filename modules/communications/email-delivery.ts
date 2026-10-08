@@ -3,12 +3,19 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import {
+  getActiveEmailProviderName,
+  getEmailConfiguration,
+  preflightEmailProvider,
+  providerNameForConfiguration,
+  sendEmail as sendEmailWithProvider,
+  type EmailProviderConfiguration,
+} from "@/integrations/email/provider";
+import { isSesEmailConfiguration } from "@/integrations/email/ses";
+import {
   EmailProviderConfigurationError,
   EmailProviderRequestError,
-  getResendEmailConfiguration,
-  sendEmailWithResend,
-  type ResendEmailConfiguration,
-} from "@/integrations/email/resend";
+  type EmailProviderName,
+} from "@/integrations/email/types";
 import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import {
@@ -80,8 +87,8 @@ type DeliveryPrisma = Pick<
 export type ExternalEmailDeliveryDependencies = {
   prisma?: DeliveryPrisma;
   now?: () => Date;
-  configuration?: ResendEmailConfiguration;
-  sendEmail?: typeof sendEmailWithResend;
+  configuration?: EmailProviderConfiguration;
+  sendEmail?: typeof sendEmailWithProvider;
   prepareBodyText?: (input: EmailBodyPreparationInput) => Promise<PreparedEmailBody>;
   /** How stored files and pass images are read for embedding (#824); the defaults read private storage and render in-process. */
   emailParts?: Partial<EmailPartDependencies>;
@@ -204,6 +211,8 @@ export class ExternalEmailDeliveryError extends Error {
       | "EXTERNAL_EMAIL_NOT_CONFIGURED"
       | "ACCOUNT_EMAIL_NOT_CONFIGURED",
     message: string,
+    /** What this run had already done when it stopped, so callers don't report finished messages as skipped. */
+    public partial?: ExternalEmailQueueResult,
   ) {
     super(message);
     this.name = "ExternalEmailDeliveryError";
@@ -311,7 +320,7 @@ function resolveEmailPartDependencies(
 
 function resolveConfiguration(dependencies: ExternalEmailDeliveryDependencies) {
   try {
-    return dependencies.configuration ?? getResendEmailConfiguration();
+    return dependencies.configuration ?? getEmailConfiguration();
   } catch (error) {
     if (error instanceof EmailProviderConfigurationError) {
       throw new ExternalEmailDeliveryError(
@@ -400,6 +409,7 @@ async function recoverStaleClaims(
   scope: OutboxScope,
   messageIds: string[] | undefined,
   now: Date,
+  provider: EmailProviderName = getActiveEmailProviderName(),
 ) {
   const staleBefore = new Date(now.getTime() - EMAIL_DELIVERY_LOCK_TIMEOUT_MS);
   const candidates = await prisma.messageOutbox.findMany({
@@ -441,7 +451,7 @@ async function recoverStaleClaims(
         data: {
           messageOutboxId: candidate.id,
           attemptNumber: await nextAttemptRowNumber(tx, candidate.id, candidate.attemptCount),
-          provider: "RESEND",
+          provider,
           status: "FAILED",
           errorCode: "STALE_DELIVERY_LOCK",
           errorMessage: terminal
@@ -578,6 +588,7 @@ async function finalizeSuccessfulAttempt(
   message: ClaimedMessage,
   providerMessageId: string,
   completedAt: Date,
+  provider: EmailProviderName = getActiveEmailProviderName(),
 ) {
   const attemptNumber = message.attemptCount + 1;
   const providerIdempotencyKey = `outbox:${message.id}`;
@@ -592,7 +603,7 @@ async function finalizeSuccessfulAttempt(
         status: "SENT",
         attemptCount: attemptNumber,
         sentAt: completedAt,
-        provider: "RESEND",
+        provider: provider,
         providerMessageId,
         providerDeliveryStatus: "ACCEPTED",
         providerStatusAt: completedAt,
@@ -606,7 +617,7 @@ async function finalizeSuccessfulAttempt(
       data: {
         messageOutboxId: message.id,
         attemptNumber: await nextAttemptRowNumber(tx, message.id, message.attemptCount),
-        provider: "RESEND",
+        provider,
         status: "SENT",
         providerMessageId,
         providerMetadata: {
@@ -621,7 +632,7 @@ async function finalizeSuccessfulAttempt(
 
     await tx.messageProviderEvent.updateMany({
       where: {
-        provider: "RESEND",
+        provider: provider,
         providerMessageId,
         messageOutboxId: null,
       },
@@ -629,7 +640,7 @@ async function finalizeSuccessfulAttempt(
     });
     const latestEvent = await tx.messageProviderEvent.findFirst({
       where: {
-        provider: "RESEND",
+        provider: provider,
         providerMessageId,
         mappedDeliveryStatus: { not: null },
       },
@@ -658,6 +669,7 @@ async function finalizeFailedAttempt(
   error: NormalizedEmailDeliveryError,
   completedAt: Date,
   internal = false,
+  provider: EmailProviderName = getActiveEmailProviderName(),
 ) {
   const attemptNumber = message.attemptCount + 1;
   // A provider quota is the provider's limit, not this message's fault: it never uses up an attempt, so it can never
@@ -705,7 +717,7 @@ async function finalizeFailedAttempt(
         lockedAt: null,
         lockToken: null,
         failedAt: reschedule ? null : completedAt,
-        provider: internal ? undefined : "RESEND",
+        provider: internal ? undefined : provider,
         providerDeliveryStatus: reschedule || internal ? undefined : "FAILED",
         providerStatusAt: reschedule || internal ? undefined : completedAt,
         lastError: recordedError.message,
@@ -716,7 +728,7 @@ async function finalizeFailedAttempt(
       data: {
         messageOutboxId: message.id,
         attemptNumber: rowNumber,
-        provider: internal ? "INTERNAL" : "RESEND",
+        provider: internal ? "INTERNAL" : provider,
         status: "FAILED",
         errorCode: recordedError.code,
         errorMessage: recordedError.message,
@@ -750,7 +762,9 @@ async function runDeliveryLoop(
   const dependencies = options.dependencies ?? {};
   const prisma = resolvePrisma(dependencies);
   const configuration = resolveConfiguration(dependencies);
-  const sendEmail = dependencies.sendEmail ?? sendEmailWithResend;
+  // What this run actually uses, not what the environment says later.
+  const configuredProvider = providerNameForConfiguration(configuration);
+  const sendEmail = dependencies.sendEmail ?? sendEmailWithProvider;
   const now = dependencies.now ?? (() => new Date());
   const fileCache = new BoundedFileCache();
   const uniqueMessageIds = options.messageIds
@@ -765,7 +779,8 @@ async function runDeliveryLoop(
     prisma,
     scope,
     uniqueMessageIds,
-    now()
+    now(),
+    configuredProvider,
   );
   const result: ExternalEmailQueueResult = {
     recoveredIds,
@@ -773,6 +788,35 @@ async function runDeliveryLoop(
     failedIds: [],
     rescheduledIds: [],
   };
+  // Only when something is due, so an empty sweep or an inline send with nothing to do never opens an SMTP login.
+  // Bad credentials stop here, before any message is claimed or any attempt is spent; an unreachable provider
+  // ends the run quietly (nothing claimed, the next run tries again) instead of waiting through two timeouts.
+  if (!dependencies.sendEmail && isSesEmailConfiguration(configuration)) {
+    const due = await prisma.messageOutbox.findFirst({
+      where: {
+        ...scope,
+        status: "PENDING",
+        availableAt: { lte: now() },
+        attemptCount: { lt: MAX_EMAIL_DELIVERY_ATTEMPTS },
+        ...(uniqueMessageIds ? { id: { in: uniqueMessageIds } } : {}),
+      },
+      select: { id: true },
+    });
+    if (due) {
+      try {
+        await preflightEmailProvider(configuration);
+      } catch (error) {
+        if (error instanceof EmailProviderConfigurationError) {
+          throw new ExternalEmailDeliveryError("EXTERNAL_EMAIL_NOT_CONFIGURED", error.message, result);
+        }
+        if (error instanceof EmailProviderRequestError) {
+          logWarn("The email provider could not be reached before a delivery run; nothing was claimed.", { code: error.code });
+          return result;
+        }
+        throw error;
+      }
+    }
+  }
   for (let processed = 0; processed < limit; processed += 1) {
     const message = await claimNextMessage(
       prisma,
@@ -852,10 +896,20 @@ async function runDeliveryLoop(
         message,
         delivery.providerMessageId,
         now(),
+        delivery.provider ?? configuredProvider,
       )) {
         result.sentIds.push(message.id);
       }
     } catch (caught) {
+      if (caught instanceof EmailProviderConfigurationError && caught.batchWide) {
+        // The provider setup is wrong, so every message would fail the same way. Hand this one back untouched (no
+        // attempt counted, its private link kept) and stop the run with one error.
+        await prisma.messageOutbox.updateMany({
+          where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
+          data: { status: "PENDING", lockedAt: null, lockToken: null },
+        });
+        throw new ExternalEmailDeliveryError("EXTERNAL_EMAIL_NOT_CONFIGURED", caught.message, result);
+      }
       const normalized = normalizeEmailDeliveryError(caught);
       if (!normalized.retryable && preparedBody?.revokeOnDefinitiveFailure) {
         try {
@@ -868,7 +922,9 @@ async function runDeliveryLoop(
         prisma,
         message,
         normalized,
-        now()
+        now(),
+        false,
+        configuredProvider,
       );
       if (failure.rescheduled) result.rescheduledIds.push(message.id);
       // The provider's quota is spent: stop this run so the rest of the queue waits instead of each message

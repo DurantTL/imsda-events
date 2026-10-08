@@ -1,63 +1,26 @@
 import "server-only";
 
+import {
+  EmailProviderConfigurationError,
+  EmailProviderRequestError,
+  cleanHeaderText,
+  type EmailDeliveryInput,
+  type EmailDeliveryResult,
+} from "./types";
+
+// Re-exported so existing importers (and their tests) keep working unchanged.
+export {
+  EmailProviderConfigurationError,
+  EmailProviderRequestError,
+  type EmailDeliveryInput,
+  type EmailDeliveryResult,
+} from "./types";
+
 export type ResendEmailConfiguration = {
   apiKey: string;
   apiUrl: string;
 };
 
-export type EmailDeliveryInput = {
-  fromName: string;
-  fromEmail: string;
-  toEmail: string;
-  replyToEmail?: string | null;
-  subject: string;
-  bodyText: string;
-  /**
-   * The formatted body. Sent alongside `bodyText`, never instead of it: the
-   * plain-text part stays the fallback for a client that will not render HTML.
-   */
-  bodyHtml?: string | null;
-  /**
-   * Files sent with the message (#168: an invoice PDF). Sent inline, base64 encoded, to Resend's `attachments`.
-   * Small by design: the caller stores each file once and passes the same bytes on every send.
-   */
-  attachments?: Array<{
-    filename: string;
-    contentType: string;
-    content: Uint8Array;
-    /**
-     * Makes the part an inline image: the HTML refers to it as `cid:<contentId>`, so the client shows it without
-     * "download pictures". Sent to Resend as `content_id`.
-     */
-    contentId?: string;
-  }>;
-  idempotencyKey: string;
-  messageId: string;
-};
-
-export type EmailDeliveryResult = {
-  provider: "RESEND";
-  providerMessageId: string;
-};
-
-export class EmailProviderConfigurationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "EmailProviderConfigurationError";
-  }
-}
-
-export class EmailProviderRequestError extends Error {
-  constructor(
-    message: string,
-    public readonly code: string,
-    public readonly retryable: boolean,
-    public readonly status: number,
-  ) {
-    super(message);
-    this.name = "EmailProviderRequestError";
-  }
-}
 
 export function getResendEmailAvailability() {
   return {
@@ -66,9 +29,6 @@ export function getResendEmailAvailability() {
   };
 }
 
-function cleanHeaderText(value: string) {
-  return value.replace(/[\r\n]+/g, " ").trim();
-}
 
 export function getResendEmailConfiguration(): ResendEmailConfiguration {
   const apiKey = process.env.RESEND_API_KEY?.trim();
@@ -91,6 +51,7 @@ export async function sendEmailWithResend(
   if (!input.fromEmail.trim()) {
     throw new EmailProviderConfigurationError(
       "A verified sender email is required before external delivery can be enabled.",
+      false,
     );
   }
   if (!input.idempotencyKey.trim() || input.idempotencyKey.length > 256) {

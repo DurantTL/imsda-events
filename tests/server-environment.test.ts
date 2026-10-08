@@ -79,6 +79,26 @@ describe("server environment contract", () => {
     expect(issues.join(" ")).not.toContain("short-secret");
   });
 
+  it("accepts SES as the email provider in production without a Resend key (#861)", () => {
+    const ses = {
+      ...productionEnv,
+      RESEND_API_KEY: undefined,
+      EMAIL_PROVIDER: "ses",
+      SES_REGION: "us-east-2",
+      SES_SMTP_USERNAME: "synthetic-user",
+      SES_SMTP_PASSWORD: "synthetic-password",
+    };
+    expect(validateServerEnv(ses).ok).toBe(true);
+    const missing = issuesFor({ ...ses, SES_SMTP_PASSWORD: undefined });
+    expect(missing).toHaveLength(1);
+    expect(missing[0]).toContain("SES_SMTP_PASSWORD:");
+    expect(missing.join(" ")).not.toContain("synthetic");
+    const upper = validateServerEnv({ ...ses, EMAIL_PROVIDER: "  SES " });
+    expect(upper.ok && upper.env.EMAIL_PROVIDER).toBe("ses");
+    expect(issuesFor({ ...ses, EMAIL_PROVIDER: "mailgun" }).some((issue) => issue.startsWith("EMAIL_PROVIDER:"))).toBe(true);
+    expect(issuesFor({ ...ses, SES_REGION: "us-east-2.evil.example" }).some((issue) => issue.startsWith("SES_REGION:"))).toBe(true);
+  });
+
   it("requires somewhere to send account email from in production", () => {
     // An invited colleague who never receives a link cannot obtain a credential
     // at all, and no operator action substitutes for it at scale. So this is a
