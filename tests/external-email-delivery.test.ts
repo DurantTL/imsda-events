@@ -16,6 +16,8 @@ import {
   normalizeEmailDeliveryError,
   PROVIDER_QUOTA_ERROR_CODE,
   PROVIDER_QUOTA_MESSAGE,
+  PROVIDER_RATE_LIMITED_ERROR_CODE,
+  PROVIDER_RATE_LIMITED_MESSAGE,
   processAccountEmailQueue,
   processExternalEmailQueue,
 } from "@/modules/communications/email-delivery";
@@ -467,7 +469,7 @@ describe("external email queue", () => {
   });
 
   it("records a provider quota as PROVIDER_QUOTA with a staff-readable reason and backs off in hours (#860)", async () => {
-    for (const name of ["daily_quota_exceeded", "monthly_quota_exceeded", "rate_limit_exceeded"]) {
+    for (const name of ["daily_quota_exceeded", "monthly_quota_exceeded"]) {
       const store = fakeDeliveryStore();
       const sendEmail = vi.fn(async () => {
         throw new EmailProviderRequestError("You have reached your daily email sending quota.", name, true, 429);
@@ -486,6 +488,23 @@ describe("external email queue", () => {
       expect(store.message.availableAt.getTime()).toBe(dependencies.now().getTime() + 2 * 60 * 60 * 1000);
       expect(store.attempts[0]).toMatchObject({ status: "FAILED", errorCode: "PROVIDER_QUOTA" });
     }
+  });
+
+  it("treats rate_limit_exceeded as PROVIDER_RATE_LIMITED with the normal minute backoff, and keys the hours backoff off the PROVIDER_QUOTA code alone", async () => {
+    const store = fakeDeliveryStore();
+    const sendEmail = vi.fn(async () => {
+      throw new EmailProviderRequestError("Too many requests.", "rate_limit_exceeded", true, 429);
+    });
+    const result = await processExternalEmailQueue("event-1", {
+      dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail },
+    });
+    expect(result.rescheduledIds).toEqual(["message-1"]);
+    expect(store.message).toMatchObject({ status: "PENDING", attemptCount: 1, lastError: PROVIDER_RATE_LIMITED_MESSAGE });
+    expect(store.message.availableAt.getTime()).toBe(dependencies.now().getTime() + 60_000);
+    expect(store.attempts[0]).toMatchObject({ status: "FAILED", errorCode: "PROVIDER_RATE_LIMITED" });
+    expect(emailRetryDelayMs(1, PROVIDER_RATE_LIMITED_ERROR_CODE)).toBe(60_000);
+    // Any adapter that emits PROVIDER_QUOTA (for example SES, #861) gets the hours backoff.
+    expect(emailRetryDelayMs(1, "PROVIDER_QUOTA")).toBe(2 * 60 * 60 * 1000);
   });
 
   it("keeps a quota from using all five attempts in minutes: the delays grow in hours and the last attempt still ends FAILED", async () => {
@@ -508,6 +527,7 @@ describe("external email queue", () => {
 
   it("recognises only a 429 with a quota or rate-limit name as a provider quota", () => {
     expect(normalizeEmailDeliveryError(new EmailProviderRequestError("x", "daily_quota_exceeded", true, 429))).toMatchObject({ code: "PROVIDER_QUOTA", retryable: true });
+    expect(normalizeEmailDeliveryError(new EmailProviderRequestError("x", "rate_limit_exceeded", true, 429))).toMatchObject({ code: "PROVIDER_RATE_LIMITED", retryable: true });
     expect(normalizeEmailDeliveryError(new EmailProviderRequestError("x", "HTTP_429", true, 429))).toMatchObject({ code: "HTTP_429", message: "x" });
     expect(normalizeEmailDeliveryError(new EmailProviderRequestError("x", "quota_not_a_429", true, 503))).toMatchObject({ code: "quota_not_a_429" });
     expect(normalizeEmailDeliveryError(new EmailProviderRequestError("x", "invalid_from_address", false, 422))).toMatchObject({ code: "invalid_from_address", retryable: false });

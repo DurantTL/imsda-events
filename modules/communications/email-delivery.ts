@@ -65,6 +65,8 @@ const EMAIL_RETRY_MAX_MS = 60 * 60 * 1000;
 const EMAIL_QUOTA_RETRY_BASE_MS = 2 * 60 * 60 * 1000;
 const EMAIL_QUOTA_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
 export const PROVIDER_QUOTA_ERROR_CODE = "PROVIDER_QUOTA";
+export const PROVIDER_RATE_LIMITED_ERROR_CODE = "PROVIDER_RATE_LIMITED";
+export const PROVIDER_RATE_LIMITED_MESSAGE = "The email provider is limiting how fast messages can be sent. The message will be tried again shortly.";
 export const PROVIDER_QUOTA_MESSAGE = "The email provider's sending limit was reached. The message will be tried again later; staff can also retry it from the delivery log once the limit resets.";
 
 type DeliveryPrisma = Pick<
@@ -213,9 +215,14 @@ export function emailRetryDelayMs(attemptNumber: number, errorCode?: string | nu
   return Math.min(EMAIL_RETRY_MAX_MS, EMAIL_RETRY_BASE_MS * (2 ** exponent));
 }
 
-/** A 429 whose provider error name is a quota or rate limit (Resend: daily_quota_exceeded, rate_limit_exceeded). */
+/** A 429 whose provider error name is a daily or monthly quota (Resend: daily_quota_exceeded, monthly_quota_exceeded). */
 export function isProviderQuotaError(error: EmailProviderRequestError) {
-  return error.status === 429 && /quota|rate[_ -]?limit/i.test(error.code);
+  return error.status === 429 && /quota/i.test(error.code);
+}
+
+/** A 429 for the short per-second limit (Resend: rate_limit_exceeded). It clears in moments, so it keeps the minute backoff. */
+export function isProviderRateLimitError(error: EmailProviderRequestError) {
+  return error.status === 429 && /rate[_ -]?limit/i.test(error.code) && !/quota/i.test(error.code);
 }
 
 export function normalizeEmailDeliveryError(error: unknown): NormalizedEmailDeliveryError {
@@ -224,6 +231,13 @@ export function normalizeEmailDeliveryError(error: unknown): NormalizedEmailDeli
     return { code: error.code, message: error.message, retryable: error.retryable };
   }
   if (error instanceof EmailProviderRequestError) {
+    if (isProviderRateLimitError(error)) {
+      return {
+        code: PROVIDER_RATE_LIMITED_ERROR_CODE,
+        message: PROVIDER_RATE_LIMITED_MESSAGE,
+        retryable: true,
+      };
+    }
     if (isProviderQuotaError(error)) {
       return {
         code: PROVIDER_QUOTA_ERROR_CODE,
