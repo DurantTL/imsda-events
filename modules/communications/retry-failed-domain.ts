@@ -47,7 +47,7 @@ export const RETRY_FAILED_SKIP_LABELS: Record<RetryFailedSkipReason, string> = {
   ALREADY_RETRIED: "Another message in its retry chain was already sent, captured, suppressed or cancelled",
   NEWER_COPY_FAILED: "A newer copy in its retry chain also failed; that newest copy is retried instead",
   LATER_DELIVERY: "The same email was sent to the same person after this one failed (a later email of the same kind counts)",
-  LATER_QUEUED: "A later send of this email to the same person is already queued",
+  LATER_QUEUED: "Another send of this email to the same registration is already queued",
   REGISTRATION_NOT_ACTIVE: "The registration is no longer active",
   MISSING_SENDER: "No sender is saved for this message or this event",
 };

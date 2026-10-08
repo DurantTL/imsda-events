@@ -47,7 +47,7 @@ describe("classifyFailedMessage", () => {
     expect(classifyFailedMessage({ ...base, laterDelivery: true })).toBe("LATER_DELIVERY");
     expect(classifyFailedMessage({ ...base, laterQueued: true })).toBe("LATER_QUEUED");
     expect(RETRY_FAILED_SKIP_LABELS.LATER_DELIVERY).toContain("same email was sent to the same person");
-    expect(RETRY_FAILED_SKIP_LABELS.LATER_QUEUED).toBe("A later send of this email to the same person is already queued");
+    expect(RETRY_FAILED_SKIP_LABELS.LATER_QUEUED).toBe("Another send of this email to the same registration is already queued");
   });
 
   it("names the other reasons in priority order", () => {

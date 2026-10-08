@@ -420,7 +420,7 @@ describe("retry failed messages", () => {
       row("failed-1", { createdAt: new Date(Date.now() - 3 * 3600_000) }),
       row("later-send", { status: "SENT", registrationId: "registration-failed-1", registrationStatus: "CONFIRMED", recipientEmail: "FAILED-1@example.test", metadata: { batchId: "another-batch" }, correlationId: "another-batch", createdAt: new Date(Date.now() - 3600_000) }),
       row("failed-2", { createdAt: new Date(Date.now() - 3 * 3600_000) }),
-      // Sent earlier than failed-2 failed, or to a different address, so it does not count.
+      // Sent before failed-2 failed, so it does not count.
       row("earlier-send", { status: "SENT", registrationId: "registration-failed-2", recipientEmail: "failed-2@example.test", metadata: { batchId: "older" }, correlationId: "older", createdAt: new Date(Date.now() - 6 * 3600_000) }),
     ]);
     const preview = await previewFailedMessagesRetry("event-1", batchScope);
@@ -441,6 +441,20 @@ describe("retry failed messages", () => {
     expect(preview.failedCount).toBe(3);
     expect(preview.eligibleCount).toBe(1);
     expect(preview.skipped).toEqual([expect.objectContaining({ reason: "LATER_QUEUED", count: 2 })]);
+  });
+
+  it("counts a later send to a corrected address, and a queued send from any time, for the same registration", async () => {
+    fixture([
+      row("failed-1", { createdAt: new Date(Date.now() - 3 * 3600_000) }),
+      row("corrected", { status: "SENT", registrationId: "registration-failed-1", recipientEmail: "new-address@example.test", metadata: { batchId: "another-batch" }, correlationId: "another-batch", createdAt: new Date(Date.now() - 3600_000) }),
+      row("failed-2", { createdAt: new Date(Date.now() - 3 * 3600_000) }),
+      row("queued-earlier", { status: "PENDING", registrationId: "registration-failed-2", recipientEmail: "failed-2@example.test", metadata: { batchId: "older" }, correlationId: "older", createdAt: new Date(Date.now() - 6 * 3600_000) }),
+    ]);
+    const preview = await previewFailedMessagesRetry("event-1", batchScope);
+    expect(preview.eligibleCount).toBe(0);
+    expect(Object.fromEntries(preview.skipped.map((item) => [item.reason, item.count]))).toEqual({
+      LATER_DELIVERY: 1, LATER_QUEUED: 1,
+    });
   });
 
   it("skips link emails and balance reminders, each with its own reason", async () => {

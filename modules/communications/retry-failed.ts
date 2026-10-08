@@ -165,7 +165,8 @@ async function buildPlan(
     tree.set(root, members);
   }
 
-  // The recipient-level guard: a later send of the same template to the same registration and address.
+  // The recipient-level guard: another send of the same template to the same registration, to any address
+  // (a corrected address still reached the person). A queued one counts whenever it was created.
   const registrationIds = [...new Set(failed.flatMap((message) => message.registrationId ? [message.registrationId] : []))];
   const templateKeys = [...new Set(failed.map((message) => message.templateKey))];
   const laterSends = registrationIds.length === 0
@@ -177,11 +178,11 @@ async function buildPlan(
           registrationId: { in: registrationIds },
           templateKey: { in: templateKeys },
         },
-        select: { registrationId: true, templateKey: true, recipientEmail: true, createdAt: true, status: true },
+        select: { registrationId: true, templateKey: true, createdAt: true, status: true },
       });
   const laterByRecipient = new Map<string, Array<{ createdAt: Date; queued: boolean }>>();
   for (const send of laterSends) {
-    const key = `${send.registrationId}|${send.templateKey}|${send.recipientEmail.trim().toLowerCase()}`;
+    const key = `${send.registrationId}|${send.templateKey}`;
     laterByRecipient.set(key, [
       ...(laterByRecipient.get(key) ?? []),
       { createdAt: send.createdAt, queued: send.status === "PENDING" || send.status === "PROCESSING" },
@@ -227,7 +228,7 @@ async function buildPlan(
         : best,
       null,
     );
-    const recipientKey = `${message.registrationId}|${message.templateKey}|${message.recipientEmail.trim().toLowerCase()}`;
+    const recipientKey = `${message.registrationId}|${message.templateKey}`;
     const reason = classifyFailedMessage({
       templateKey: message.templateKey,
       treeStatuses: members.filter((member) => member.id !== message.id).map((member) => member.status),
@@ -235,7 +236,7 @@ async function buildPlan(
       laterDelivery: Boolean(message.registrationId)
         && (laterByRecipient.get(recipientKey) ?? []).some((send) => !send.queued && send.createdAt.getTime() > message.createdAt.getTime()),
       laterQueued: Boolean(message.registrationId)
-        && (laterByRecipient.get(recipientKey) ?? []).some((send) => send.queued && send.createdAt.getTime() > message.createdAt.getTime()),
+        && (laterByRecipient.get(recipientKey) ?? []).some((send) => send.queued),
       tooOld: scope.type === "EVENT" && (message.failedAt ?? message.createdAt).getTime() < oldestAllowed,
       registrationId: message.registrationId,
       registrationStatus: message.registration?.status ?? null,
