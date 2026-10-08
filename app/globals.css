@@ -9352,6 +9352,10 @@ button.accent-button:hover:not(:disabled) { border-color: var(--imsda-purple); b
 .honors-report-controls > label { display: grid; gap: 4px; flex: 0 1 160px; min-width: 0; font-weight: 700; }
 .honors-report-controls > label.honors-report-member { flex: 1 1 240px; }
 .honors-report-controls select { min-height: 44px; }
+/* With scripts, choosing a year or member shows the report; Show report is visually hidden but still reachable by keyboard. */
+.auto-submit-enhanced .auto-submit-go:not(:focus) {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
 .honors-report-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 @media print { .honors-report-modes { display: none !important; } }
 @media (max-width: 640px) {
