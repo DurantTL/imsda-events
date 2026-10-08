@@ -7845,6 +7845,19 @@ th[aria-sort="descending"] .table-sort-button { color: var(--imsda-navy); font-w
 .calendar-bulk-bar { display: grid; gap: 8px; margin-bottom: 10px; }
 .calendar-row-select { display: flex; align-items: center; min-height: 40px; min-width: 28px; }
 .calendar-admin-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* #869: the checkbox sits next to its entry; the text takes the free space and the actions wrap below on a phone. */
+.calendar-admin-list > li.calendar-entry-row { justify-content: flex-start; }
+.calendar-admin-list > li.calendar-entry-row > .calendar-entry-text { flex: 1 1 14rem; }
+.calendar-admin-list > li.calendar-entry-row > .calendar-admin-actions { margin-left: auto; }
+/* Search is the first, full-width control; the filters sit in one wrapping row under it. */
+.calendar-filters { display: grid; gap: 12px; margin-bottom: 8px; }
+.calendar-search { display: grid; gap: 6px; font-weight: 700; }
+.calendar-search-label { color: var(--ink); font-size: max(var(--type-body-floor, 0px), 0.85rem); }
+.calendar-search input { width: 100%; min-height: 46px; font-size: max(var(--type-body-floor, 0px), 1rem); }
+.calendar-filter-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; gap: 10px; }
+.calendar-filter-row > label { min-width: 0; }
+.calendar-filter-row select { width: 100%; }
+.calendar-edit-dialog .form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .calendar-admin-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .calendar-admin-actions input { width: 150px; border: 1px solid #cbdbe2; border-radius: 10px; padding: 8px 10px; font-size: max(var(--type-body-floor, 0px), 0.76rem); }
 .calendar-admin-actions .secondary-button { min-height: 40px; }
