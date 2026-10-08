@@ -429,7 +429,7 @@ export function ClubEarnedAwardsWorkspace({
                       <tr role="row">
                         <SortableHeader active className="class-col-name" direction={nameDirection} label="Name" onSort={() => setNameDirection(flipDirection(nameDirection))} />
                         <th className="class-col-class" role="columnheader" scope="col">Current class</th>
-                        <th className="class-col-status" role="columnheader" scope="col">{clubClassLevelLabels[classLevel]}</th>
+                        <th className="class-col-status" role="columnheader" scope="col">{`${clubClassLevelLabels[classLevel]} status`}</th>
                         <th className="class-col-history" role="columnheader" scope="col"><span className="sr-only">Class history</span></th>
                       </tr>
                     </thead>
