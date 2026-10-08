@@ -72,10 +72,10 @@ describe("Mark a class completed", () => {
     // Select all in the members table, then search for "ann".
     await (buttons(tree, "Select all")[0].props.onClick as () => void)();
     tree = render();
-    expect(text(buttons(tree, "Mark completed")[0])).toContain("(12)");
+    expect(text(buttons(tree, "Mark Friend completed")[0])).toContain("(12)");
     (searchBoxes(tree)[0].props.onChange as (e: unknown) => void)({ target: { value: "ann" } });
     tree = render();
-    const mark = buttons(tree, "Mark completed")[0];
+    const mark = buttons(tree, "Mark Friend completed")[0];
     expect(text(mark)).toContain("(4)");
     expect(text(mark)).not.toContain("(12)");
     expect(text(tree)).toContain("8 selected members are hidden by the filters and won't be included.");
@@ -90,7 +90,7 @@ describe("Mark a class completed", () => {
     tree = render();
     (searchBoxes(tree)[0].props.onChange as (e: unknown) => void)({ target: { value: "nobody" } });
     tree = render();
-    expect(buttons(tree, "Mark completed")[0].props.disabled).toBe(true);
+    expect(buttons(tree, "Mark Friend completed")[0].props.disabled).toBe(true);
   });
 });
 

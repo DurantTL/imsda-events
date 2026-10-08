@@ -22,7 +22,7 @@ describe("class tracking class picker (#827)", () => {
     expect(html).toContain('value="Friend"');
     expect(html).toContain("Class matches");
     expect(html).not.toContain('id="earned-class-level"');
-    expect(html).toContain("Mark completed");
+    expect(html).toContain("Mark Friend completed");
   });
 
   it("is not offered to a view-only visitor", () => {

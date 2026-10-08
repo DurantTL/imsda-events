@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { ClubEarnedAwardsWorkspace, emptyEarnedAwardsData, filterMembers } from "@/components/club-earned-awards-workspace";
+import { ClubEarnedAwardsWorkspace, completionPayload, emptyEarnedAwardsData, filterMembers, visibleSelectedIds } from "@/components/club-earned-awards-workspace";
 
 /** The Class tracking page rebuilt to match the Honors page (#852). Synthetic data only. */
 const members = [
@@ -43,9 +43,9 @@ describe("class tracking members table (#852)", () => {
     expect(html).not.toContain("Add by hand</h3><p class=\"field-help\"><strong>Members");
   });
 
-  it("keeps Mark completed and Add by hand, working on the table's selection", () => {
+  it("keeps Mark Friend completed and Add by hand, working on the table's selection", () => {
     const html = render({ initial: { ...emptyEarnedAwardsData, members, catalog: [{ itemId: "gc", section: "MISCELLANEOUS", sectionLabel: "Miscellaneous", name: "Good Conduct Bar", catalogNumber: "002304" }] } });
-    expect(html).toContain("Mark completed");
+    expect(html).toContain("Mark Friend completed");
     expect(html).toContain("Add by hand");
     expect(html).toContain("selected in the table above");
     expect(html.match(/type="checkbox"/g)?.length).toBe(members.length + 1); // one per member, plus "They already have it"
@@ -54,7 +54,7 @@ describe("class tracking members table (#852)", () => {
   it("shows no member table and no actions to a view-only visitor", () => {
     const html = render({ readOnly: true, initial: { ...emptyEarnedAwardsData } });
     expect(html).not.toContain("class-tracking-table");
-    expect(html).not.toContain("Mark completed");
+    expect(html).not.toContain("Mark Friend completed");
     expect(html).toContain("View only");
   });
 
@@ -64,6 +64,19 @@ describe("class tracking members table (#852)", () => {
     expect(filterMembers(members, "", "NOT_COMPLETED", "FRIEND").map((m) => m.personId)).toEqual(["p2", "p3"]);
     expect(filterMembers(members, "", "COMPLETED", "GUIDE")).toEqual([]);
     expect(filterMembers(members, "friend", "NOT_COMPLETED", "FRIEND").map((m) => m.personId)).toEqual(["p3"]);
+  });
+
+  it("a selection hidden by the status filter is left out of the posted ids, and the picked class is posted", () => {
+    const selected = new Set(["p1", "p2", "p3"]);
+    const shown = filterMembers(members, "", "NOT_COMPLETED", "FRIEND");
+    expect(visibleSelectedIds(shown, selected, "")).toEqual(["p2", "p3"]);
+    expect(completionPayload(shown, selected, "", "GUIDE", "2027-02-02")).toEqual({ personIds: ["p2", "p3"], classLevel: "GUIDE", completedOn: "2027-02-02" });
+  });
+
+  it("names the class on the Mark button and on the phone status label", () => {
+    const html = render();
+    expect(html).toContain("Mark Friend completed");
+    expect(html).toContain('data-label="Friend status"');
   });
 
   it("styles the table to fit 601-1024px like the Honors table", () => {

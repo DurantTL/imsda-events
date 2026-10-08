@@ -324,7 +324,8 @@ export function ClubEarnedAwardsWorkspace({
   // send only members that are selected and shown (a filter can hide ticked ones).
   const tableMembers = sortByName(filterMembers(data.members, memberQuery, statusFilter, classLevel), nameDirection);
   const selectedCount = visibleSelectedIds(tableMembers, selected, "").length;
-  const hiddenSelected = selected.size - selectedCount;
+  const knownSelected = data.members.filter((member) => selected.has(member.personId)).length;
+  const hiddenSelected = knownSelected - selectedCount;
   const classCount = selectedCount;
   const handCount = selectedCount;
   const entryCount = chosen.length * handCount;
@@ -383,7 +384,14 @@ export function ClubEarnedAwardsWorkspace({
                   label="Class"
                   noun="class"
                   nounPlural="classes"
-                  onChange={(id) => setClassLevel(id as ClubClassLevel)}
+                  onChange={(id) => {
+                    // With a status filter on, the shown members depend on the class: a changed class starts a fresh selection.
+                    if (statusFilter && id !== classLevel && selected.size > 0) {
+                      setSelected(new Set());
+                      setNotice("The selection was cleared because the class changed while a status filter is on. Select the members again.");
+                    }
+                    setClassLevel(id as ClubClassLevel);
+                  }}
                   options={classLevelOptions}
                   value={classLevel}
                 />
@@ -437,7 +445,7 @@ export function ClubEarnedAwardsWorkspace({
                               </label>
                             </th>
                             <td {...cardCell("Current class")}>{member.classLabel || "—"}</td>
-                            <td {...cardCell("Class status")}>{completedOnDate ? `Completed ${dateLabel(completedOnDate)}` : "Not recorded"}</td>
+                            <td {...cardCell(`${clubClassLevelLabels[classLevel]} status`)}>{completedOnDate ? `Completed ${dateLabel(completedOnDate)}` : "Not recorded"}</td>
                             <td {...cardCell(null)}>
                               {classHistoryBase && (
                                 <Link className="secondary-button class-history-button" href={`${classHistoryBase}/${encodeURIComponent(member.personId)}`}>
@@ -467,7 +475,7 @@ export function ClubEarnedAwardsWorkspace({
               <input className={styles.date} id="earned-class-date" onChange={(event) => setCompletedOn(event.target.value)} type="date" value={completedOn} />
             </span>
             <button className="primary-button" disabled={busy || classCount === 0 || !completedOn} onClick={markClass} type="button">
-              <GraduationCap aria-hidden="true" size={16} /> Mark completed{classCount > 0 ? ` (${classCount})` : ""}
+              <GraduationCap aria-hidden="true" size={16} /> {`Mark ${clubClassLevelLabels[classLevel]} completed${classCount > 0 ? ` (${classCount})` : ""}`}
             </button>
           </div>
         </section>
@@ -515,7 +523,7 @@ export function ClubEarnedAwardsWorkspace({
                   ))}
                 </ul>
               )}
-              <p className={`field-help ${styles.helpText}`} role="status">
+              <p className={`field-help ${styles.helpText}`}>
                 Applies to the {handCount} {handCount === 1 ? "member" : "members"} selected in the table above.
               </p>
               <label className={styles.check}>
@@ -543,7 +551,7 @@ export function ClubEarnedAwardsWorkspace({
           <h3 id="earned-suggestions"><Sparkles aria-hidden="true" size={14} /> Suggested ({suggestionCount})</h3>
           <p className={`field-help ${styles.helpText}`}>Nothing here is added until you confirm it. Untick anything a member already has.</p>
           {suggestionCount === 0 && (
-            <p className="quiet-copy">No suggestions right now. Mark a class completed below to suggest its insignia. Event patches appear after a club event that staff linked a patch to.</p>
+            <p className="quiet-copy">No suggestions right now. Mark a class completed above to suggest its insignia. Event patches appear after a club event that staff linked a patch to.</p>
           )}
           {data.insignia.map((entry) => {
             const ticked = entry.items.filter((item) => !unticked.has(insigniaKey(entry.completionId, item.itemId)));
