@@ -10508,6 +10508,17 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
   .report-table.honors-table td:last-child { width: 6.5rem; }
 }
 
+/* Class tracking members table: same fixed-width treatment as the Honors table, so it fits 601-1024px without a sideways scroll. */
+.class-tracking-table { min-width: 30rem; }
+.class-history-button { display: inline-flex; align-items: center; white-space: nowrap; min-height: 44px; }
+@media screen and (min-width: 601px) {
+  .class-tracking-table { table-layout: fixed; width: 100%; }
+  .class-tracking-table .class-col-name { width: 34%; }
+  .class-tracking-table .class-col-class { width: 18%; }
+  .class-tracking-table .class-col-history { width: 9.5rem; }
+  .class-tracking-table th, .class-tracking-table td { overflow-wrap: anywhere; word-break: normal; }
+}
+
 /* Attendee listing: 12 columns, so it scrolls inside its box with a readable minimum width (it had no
    cell padding at all, which ran "CONFIRMED" into the name beside it). */
 @media screen and (min-width: 601px) {

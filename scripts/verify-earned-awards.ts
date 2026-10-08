@@ -548,7 +548,10 @@ async function main() {
   for (const row of viewOnly.needs) assert(Object.keys(row).sort().join() === "firstName,itemName,lastName,missingCatalogNumber,needId,origin,personId,status", `open item row carries names, item, origin and status only, got ${Object.keys(row).join()}`);
   const editing = await awards.loadEarnedAwardsWorkspace(clubs.view, { forEditing: true });
   assert(editing.members.length === 2 && editing.insignia.length === 2 && !editing.catalog.some((row) => [items.honorPatch, items.scarf, items.inactive].includes(row.itemId)), "an editor gets the roster, suggestions, and only active award-section items");
-  for (const member of editing.members) assert(Object.keys(member).sort().join() === "classLabel,firstName,lastName,personId", `member row is names and current class only, got ${Object.keys(member).join()}`);
+  for (const member of editing.members) {
+    assert(Object.keys(member).sort().join() === "classLabel,completed,firstName,lastName,personId", `member row is names, current class and recorded class dates only, got ${Object.keys(member).join()}`);
+    assert(JSON.stringify(member.completed) === JSON.stringify({ FRIEND: "2026-06-06" }), `the member's recorded Friend completion rides along for the class status column, got ${JSON.stringify(member.completed)}`);
+  }
   assert(!JSON.stringify(editing).match(/birth|medical|allerg|insurance/i), "no birth date or medical field appears in the awards data");
   const otherView = await awards.loadEarnedAwardsWorkspace(clubs.other, { forEditing: true });
   // The only need under this club is the transferred member's Master Award recorded above; nothing from the other clubs leaks in.
