@@ -179,6 +179,28 @@ export function attendeeCardLayout({ canCollapse, isPhone, embedded, attendeeCou
   };
 }
 
+/**
+ * The labels of the required, visible attendee questions this person has not
+ * answered yet (#853), in form order. Empty exactly when
+ * `isAttendeeCardComplete` is true.
+ */
+export function attendeeMissingFieldLabels(
+  definition: RegistrationFormDefinition,
+  registrationResponses: Record<string, unknown>,
+  attendeeResponses: Record<string, unknown>,
+): string[] {
+  const merged = { ...registrationResponses, ...attendeeResponses };
+  return definition.sections
+    .flatMap((section) => section.fields)
+    .filter((field) => (
+      field.scope === "ATTENDEE"
+      && isFieldVisible(field, merged)
+      && isFieldRequired(field, merged)
+      && !hasAnswer(merged[field.key])
+    ))
+    .map((field) => field.label);
+}
+
 /** A card reads "Complete" only with every required answer and no unresolved carried-over prompt. */
 export function cardStatusComplete(complete: boolean, unresolvedCarryovers: number): boolean {
   return complete && unresolvedCarryovers === 0;

@@ -18,6 +18,8 @@ import { ClubRosterAgeField } from "@/components/club-roster-age-field";
 import { sortHonorSessions } from "@/modules/honors/session-order";
 import { ClassStatus } from "@/components/class-status";
 import { classChoiceReadiness } from "@/modules/honors/class-readiness";
+import { backgroundCheckAttention, classAttention, type AttentionItem } from "@/modules/club-registrations/attention";
+import type { ClubComplianceState } from "@/modules/background-checks/display";
 import { MissingAgeSummary } from "@/components/missing-age-summary";
 import { ageFieldId, ageInputProblem, ageInputValue, effectiveRosterAges, parseTypedAge, peopleMissingAges, withRosterAge } from "@/modules/club-registrations/roster-ages";
 import { continueButtonLabel, focusFirstMissingAge, leaveAfterSave } from "@/modules/club-registrations/roster-age-flow";
@@ -70,9 +72,12 @@ export function ClubRegistrationWorkspace({
   contactPrefill,
   draftKey = "",
   honorsCatalog = null,
+  backgroundStates,
   organizationId,
   workspace,
 }: {
+  /** Each staff or adult roster member's Sterling Volunteers state, by roster member id (#853). Only for someone allowed to see it. */
+  backgroundStates?: Record<string, ClubComplianceState>;
   contactPrefill: Record<string, string>;
   /** The id of the team's draft (#809), picked by the page; empty on an event without teams. */
   draftKey?: string;
@@ -444,6 +449,13 @@ export function ClubRegistrationWorkspace({
     draftKey: multipleTeams ? draft.draftKey : null,
     honorSelections: hasHonors ? honorPicks : {},
     renderAttendeeExtras,
+    attendeeAttention: (attendee: RosterAttendee): AttentionItem[] => {
+      const memberId = rosterMemberIdFromClientId(attendee.clientId);
+      return [
+        ...classAttention(classReadiness?.people.find((person) => person.attendeeId === attendee.clientId)),
+        ...backgroundCheckAttention(memberId ? backgroundStates?.[memberId] : undefined),
+      ];
+    },
     blockedReason: draftBlockedReason({ conflict, honorsProblem }),
     submitUrl: `${base}/registration`,
     onDraftChange,
@@ -457,7 +469,7 @@ export function ClubRegistrationWorkspace({
       router.refresh();
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, multipleTeams, draft.teamName, draft.draftKey, hasHonors, honorPicks, honorsProblem, conflict, honorAttendees, honorOfferings, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, multipleTeams, draft.teamName, draft.draftKey, hasHonors, honorPicks, honorsProblem, conflict, honorAttendees, honorOfferings, classReadiness, backgroundStates, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
 
   const saveLabel = conflict
     ? DRAFT_CONFLICT_MESSAGE

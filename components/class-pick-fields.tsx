@@ -91,7 +91,7 @@ export function ClassPickFields({
               onChange={(event) => setSession(session.id, event.target.value)}
               value={value}
             >
-              <option value="">No class</option>
+              <option value="">{chosenAll ? "Covered by the all-sessions class" : "No class"}</option>
               {inSession.map(option)}
             </select>
           </label>

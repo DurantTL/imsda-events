@@ -3361,6 +3361,19 @@ select:focus-visible {
   text-transform: none;
   letter-spacing: normal;
 }
+.public-registration-attendee-attention {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: var(--text-helper-min);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.public-registration-attendee-attention li + li { margin-top: 3px; }
+.public-registration-attendee-attention strong { color: var(--ink); }
+.public-registration-attendee-roster-note { margin: 0 0 10px; color: var(--muted); font-size: var(--text-helper-min); }
 .public-registration-attendee.is-collapsed .public-registration-attendee-heading { border-bottom: none; }
 .public-registration-attendee-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .public-registration-attendee-actions button {

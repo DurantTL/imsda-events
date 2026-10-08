@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowRight, CalendarDays, CheckCircle2, MapPin, Plus, Printer, QrCode, UsersRound } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
+import { clubYearFor } from "@/modules/club-rosters/domain";
 import { BackLink } from "@/components/back-link";
 import { NeedsAttention, StatusComplete } from "@/components/needs-attention";
 import { classChoiceReadiness, readinessSummaryText } from "@/modules/honors/class-readiness";
@@ -20,6 +21,7 @@ import { loadDirectorClubAssignment } from "@/modules/club-registrations/directo
 import { PerPersonPriceNotice } from "@/components/per-person-price-notice";
 import { noCostPrice } from "@/modules/club-registrations/per-person-price";
 import { isChurchBilledStatus, notBilledLabel } from "@/modules/club-registrations/church-owed";
+import { clubPortalComplianceStatuses } from "@/modules/background-checks/repository";
 import { ClubRegistrationError, getClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { activeRegistrationStatuses, registrationClosedMessage } from "@/modules/events/lifecycle";
 import { getClassSelectionWorkspaceIfRegistered, getRegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
@@ -112,6 +114,16 @@ export default async function ClubEventRegistrationPage({
   // record, whether an attendee director or staff acting as director is
   // registering — never a personal preference, so it applies either way.
   contactPrefill = { ...contactPrefill, ...workspace.directory.prefillResponses };
+
+  // Staff and adults without a current background check say so on their card (#853): only for a director or deputy,
+  // the same people who see these statuses on the roster, and only status, never a note.
+  const showingNewForm = showingTeam && !workspace.registration && !workspace.problem && workspace.event.phase === "OPEN" && Boolean(workspace.experience);
+  const complianceStatuses = showingNewForm
+    ? await clubPortalComplianceStatuses(organizationId, clubYearFor(new Date(workspace.event.startsAt)), access.capabilities)
+    : undefined;
+  const backgroundStates = complianceStatuses
+    ? Object.fromEntries(Object.entries(complianceStatuses).map(([memberId, status]) => [memberId, status.state]))
+    : undefined;
 
   return (
     <>
@@ -359,6 +371,7 @@ export default async function ClubEventRegistrationPage({
         <ClubRegistrationWorkspace
           contactPrefill={contactPrefill}
           draftKey={multipleTeams ? requestedDraftKey ?? "" : ""}
+          backgroundStates={backgroundStates}
           honorsCatalog={honorsCatalog && honorsCatalog.offerings.length > 0 ? honorsCatalog : null}
           organizationId={organizationId}
           workspace={{ ...workspace, experience: workspace.experience }}

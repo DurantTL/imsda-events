@@ -15,6 +15,8 @@ import {
   UsersRound,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { accountPromptVisible } from "@/modules/forms/account-prompt";
 import { RegistrationAccountPrompt } from "@/components/registration-account-prompt";
 import { PublicAttendeePasses } from "@/components/public-attendee-passes";
 import { PublicRegistrationContactForm } from "@/components/public-registration-contact-form";
@@ -92,6 +94,8 @@ export default async function PublicManagePage({
   const { token } = await params;
   const view = await resolveRegistrationAccessToken(token);
   if (!view) notFound();
+  // Someone already signed in has an account; the optional-account offer is for signed-out visitors (#854).
+  const { account: signedInAccount } = await getCurrentAttendee();
   // A "Group" registration (#650) can be reopened by its contact from this page.
   const group = view.isGroup ? await getGroupRegistrationWorkspace(token) : null;
   // Minors on this registration and who is responsible for them (#131): the registrant can change it here.
@@ -402,11 +406,13 @@ export default async function PublicManagePage({
             </a>
           </section>
 
-          <RegistrationAccountPrompt
-            email={view.contact.email}
-            embedded={false}
-            returnTo={`/manage/${token}`}
-          />
+          {accountPromptVisible({ signedIn: Boolean(signedInAccount), clubEvent: view.isGroup }) && (
+            <RegistrationAccountPrompt
+              email={view.contact.email}
+              embedded={false}
+              returnTo={`/manage/${token}`}
+            />
+          )}
 
           <section className="public-manage-security-note">
             <CircleDollarSign size={20} aria-hidden="true" />

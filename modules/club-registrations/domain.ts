@@ -225,6 +225,50 @@ export function lockedAttendeeFieldKeys(definition: RegistrationFormDefinition) 
 }
 
 /**
+ * The attendee questions a club registration does not ask again because the
+ * club roster already answered them (#853): the name and age (always the
+ * roster's), and for someone carried over from the roster, the gender and role
+ * the form took from it. A question with no answer yet (a roster with no age,
+ * a role that didn't match) is never listed, so it is still asked.
+ */
+export function rosterAnsweredFieldKeys(
+  definition: RegistrationFormDefinition,
+  responses: Readonly<Record<string, unknown>>,
+  options: { carriedFromRoster: boolean; unresolvedKeys?: readonly string[] },
+): string[] {
+  const answered = (key: string) => {
+    const value = responses[key];
+    return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
+  };
+  const owned = new Set(lockedAttendeeFieldKeys(definition));
+  if (options.carriedFromRoster) {
+    for (const field of attendeeFields(definition)) {
+      const isGender = field.key === "gender" && field.type !== "LONG_TEXT";
+      const isRole = field.key === "attendee_type" && ["RADIO", "SELECT"].includes(field.type);
+      if (isGender || isRole) owned.add(field.key);
+    }
+  }
+  const unresolved = new Set(options.unresolvedKeys ?? []);
+  return attendeeFields(definition)
+    .map((field) => field.key)
+    .filter((key) => owned.has(key) && !unresolved.has(key) && answered(key));
+}
+
+/** "name, age 11, Female, Pathfinder": the roster answers a card does not ask again, in words. */
+export function rosterAnsweredSummary(
+  fields: readonly RegistrationFormField[],
+  responses: Readonly<Record<string, unknown>>,
+): string {
+  return fields.flatMap((field) => {
+    const value = responses[field.key];
+    if (typeof value !== "string" || !value.trim()) return [];
+    const shown = field.optionLabels?.[value] ?? value;
+    if (field.type === "NUMBER" && isAgeFieldKey(field.key)) return [`age ${shown}`];
+    return [shown];
+  }).join(", ");
+}
+
+/**
  * The club and its sponsoring church, read from the `Organization` record a
  * signed-in director actually directs — never from anything the client sent
  * (#482). `churchName` is null when the club has no sponsoring church on
