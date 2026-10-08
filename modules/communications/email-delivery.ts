@@ -437,7 +437,7 @@ async function recoverStaleClaims(
       await tx.messageDeliveryAttempt.create({
         data: {
           messageOutboxId: candidate.id,
-          attemptNumber,
+          attemptNumber: await nextAttemptRowNumber(tx, candidate.id, candidate.attemptCount),
           provider: "RESEND",
           status: "FAILED",
           errorCode: "STALE_DELIVERY_LOCK",
@@ -554,6 +554,22 @@ async function claimNextMessage(
   return null;
 }
 
+/**
+ * The row number of the next attempt. A quota deferral (#860) is recorded but not counted in `attemptCount`, so the
+ * two can differ: numbering from the highest row keeps (message, attemptNumber) unique.
+ */
+async function nextAttemptRowNumber(
+  tx: Pick<PrismaClient, "messageDeliveryAttempt">,
+  messageId: string,
+  attemptCount: number,
+) {
+  const highest = await tx.messageDeliveryAttempt.aggregate({
+    where: { messageOutboxId: messageId },
+    _max: { attemptNumber: true },
+  });
+  return Math.max(attemptCount, highest._max.attemptNumber ?? 0) + 1;
+}
+
 async function finalizeSuccessfulAttempt(
   prisma: DeliveryPrisma,
   message: ClaimedMessage,
@@ -586,7 +602,7 @@ async function finalizeSuccessfulAttempt(
     await tx.messageDeliveryAttempt.create({
       data: {
         messageOutboxId: message.id,
-        attemptNumber,
+        attemptNumber: await nextAttemptRowNumber(tx, message.id, message.attemptCount),
         provider: "RESEND",
         status: "SENT",
         providerMessageId,
@@ -641,9 +657,21 @@ async function finalizeFailedAttempt(
   internal = false,
 ) {
   const attemptNumber = message.attemptCount + 1;
-  const reschedule = error.retryable && attemptNumber < MAX_EMAIL_DELIVERY_ATTEMPTS;
-  const availableAt = new Date(completedAt.getTime() + emailRetryDelayMs(attemptNumber, error.code));
+  // A provider quota is the provider's limit, not this message's fault: it never uses up an attempt, so it can never
+  // be what ends the message as FAILED (#860). It is recorded and rescheduled with the hours backoff.
+  const quota = error.code === PROVIDER_QUOTA_ERROR_CODE && !internal;
+  const reschedule = quota || (error.retryable && attemptNumber < MAX_EMAIL_DELIVERY_ATTEMPTS);
+  let availableAt = new Date(completedAt.getTime() + emailRetryDelayMs(attemptNumber, error.code));
   const finalized = await prisma.$transaction(async (tx) => {
+    const rowNumber = await nextAttemptRowNumber(tx, message.id, message.attemptCount);
+    if (quota) {
+      // Each quota rejection backs off longer than the last: the exponent counts the attempts recorded so far.
+      const recorded = await tx.messageDeliveryAttempt.aggregate({
+        where: { messageOutboxId: message.id },
+        _max: { attemptNumber: true },
+      });
+      availableAt = new Date(completedAt.getTime() + emailRetryDelayMs((recorded._max.attemptNumber ?? 0) + 1, error.code));
+    }
     const updated = await tx.messageOutbox.updateMany({
       where: {
         id: message.id,
@@ -652,7 +680,7 @@ async function finalizeFailedAttempt(
       },
       data: {
         status: reschedule ? "PENDING" : "FAILED",
-        attemptCount: attemptNumber,
+        attemptCount: quota ? message.attemptCount : attemptNumber,
         availableAt: reschedule ? availableAt : completedAt,
         lockedAt: null,
         lockToken: null,
@@ -667,7 +695,7 @@ async function finalizeFailedAttempt(
     await tx.messageDeliveryAttempt.create({
       data: {
         messageOutboxId: message.id,
-        attemptNumber,
+        attemptNumber: rowNumber,
         provider: internal ? "INTERNAL" : "RESEND",
         status: "FAILED",
         errorCode: error.code,
@@ -675,6 +703,7 @@ async function finalizeFailedAttempt(
         providerMetadata: {
           retryable: error.retryable,
           rescheduled: reschedule,
+          ...(quota ? { quotaDeferred: true } : {}),
           ...(reschedule ? { nextAvailableAt: availableAt.toISOString() } : {}),
           idempotencyKey: `outbox:${message.id}`,
           // A failed pre-send check (no provider was called) is not a real delivery attempt.
@@ -686,7 +715,7 @@ async function finalizeFailedAttempt(
     });
     return true;
   });
-  return { finalized, rescheduled: finalized && reschedule };
+  return { finalized, rescheduled: finalized && reschedule, quota: finalized && quota };
 }
 
 async function runDeliveryLoop(
@@ -821,7 +850,10 @@ async function runDeliveryLoop(
         now()
       );
       if (failure.rescheduled) result.rescheduledIds.push(message.id);
-      else if (failure.finalized) {
+      // The provider's quota is spent: stop this run so the rest of the queue waits instead of each message
+      // making a doomed call (#860). They stay queued and untouched.
+      if (failure.quota) break;
+      if (!failure.rescheduled && failure.finalized) {
         result.failedIds.push(message.id);
         // Out of retries or non-retryable: a club form link that never arrived must not stay live (#610).
         if (message.templateKey === CLUB_FORM_LINK_TEMPLATE_KEY) {

@@ -901,11 +901,16 @@ export function CommunicationsWorkspace({
   async function loadRetryFailedPreview(scopeValue: string) {
     const requestNumber = retryFailedLoadRef.current + 1;
     retryFailedLoadRef.current = requestNumber;
-    setRetryFailedScope(scopeValue);
+    // "LATEST" opens on the newest failed batch; the server answers with the batch it chose.
+    if (scopeValue !== "LATEST") setRetryFailedScope(scopeValue);
     setRetryFailedLoading(true);
     setRetryFailedError("");
     try {
-      const query = scopeValue === "EVENT" ? "" : `?batchId=${encodeURIComponent(scopeValue)}`;
+      const query = scopeValue === "EVENT"
+        ? ""
+        : scopeValue === "LATEST"
+          ? "?scope=latest"
+          : `?batchId=${encodeURIComponent(scopeValue)}`;
       const response = await fetch(`/api/events/${eventId}/messages/retry-failed${query}`, { cache: "no-store" });
       const result = await response.json().catch(() => ({})) as { preview?: FailedMessagesRetryPreview; message?: string };
       if (requestNumber !== retryFailedLoadRef.current) return;
@@ -913,6 +918,7 @@ export function CommunicationsWorkspace({
         throw new Error(result.message ?? "The failed messages could not be previewed.");
       }
       setRetryFailedPreview(result.preview);
+      setRetryFailedScope(result.preview.scope.type === "BATCH" ? result.preview.scope.batchId : "EVENT");
     } catch (caught) {
       if (requestNumber !== retryFailedLoadRef.current) return;
       setRetryFailedPreview(null);
@@ -926,7 +932,7 @@ export function CommunicationsWorkspace({
     setRetryFailedOpen(true);
     setNotice("");
     setError("");
-    void loadRetryFailedPreview("EVENT");
+    void loadRetryFailedPreview("LATEST");
   }
 
   function closeRetryFailed() {
@@ -1875,7 +1881,7 @@ export function CommunicationsWorkspace({
                 <div className="retry-failed-head">
                   <div>
                     <strong>{messaging.counts.FAILED} failed message{messaging.counts.FAILED === 1 ? "" : "s"}</strong>
-                    <p>Queue a new copy of each failed message. Messages that were sent are never copied, so nobody gets a second email. You review the list first, and nothing is retried until you confirm.</p>
+                    <p>A failed message is retried only if nothing in its retry chain (the original, its copies and any resend) was sent, queued or cancelled, and the same person was not sent the same email since. You review the list first, and nothing is retried until you confirm.</p>
                   </div>
                   {!retryFailedOpen && (
                     <button className="secondary-button" type="button" onClick={openRetryFailed} disabled={saving}>
@@ -1887,7 +1893,7 @@ export function CommunicationsWorkspace({
                   <div className="retry-failed-review">
                     <label>Which failed messages
                       <select value={retryFailedScope} onChange={(changeEvent) => void loadRetryFailedPreview(changeEvent.target.value)} disabled={saving || retryFailedLoading}>
-                        <option value="EVENT">Every failed message in this event{retryFailedPreview ? ` (${retryFailedPreview.eventFailedCount})` : ""}</option>
+                        <option value="EVENT">Recent failures in this event, last {retryFailedPreview?.eventScopeDays ?? 7} days{retryFailedPreview ? ` (${retryFailedPreview.eventFailedCount} failed in all)` : ""}</option>
                         {(retryFailedPreview?.batches ?? []).map((batch) => (
                           <option value={batch.batchId} key={batch.batchId}>
                             {(templateLabels[batch.templateKey] ?? batch.templateKey.toLowerCase().replaceAll("_", " "))} · {new Date(batch.sentAt).toLocaleDateString()} · {batch.failedCount} failed
@@ -1910,6 +1916,9 @@ export function CommunicationsWorkspace({
                               <li key={item.reason}><span>{item.label}</span><strong>{item.count}</strong></li>
                             ))}
                           </ul>
+                        )}
+                        {retryFailedPreview.eventScopeDays !== null && (
+                          <p className="inline-notice" role="status">The whole-event choice retries only failures from the last {retryFailedPreview.eventScopeDays} days. Choose a batch to retry an older send.</p>
                         )}
                         {retryFailedPreview.remainingCount > 0 && (
                           <p className="inline-notice" role="status">One request retries up to {retryFailedPreview.cap} messages. {retryFailedPreview.remainingCount} more can be retried afterwards.</p>

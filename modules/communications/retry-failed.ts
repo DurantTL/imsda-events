@@ -18,6 +18,9 @@ import {
   retryFailedIdempotencyPrefix,
   retryFailedPreviewFingerprint,
   retryFailedScopeKey,
+  retryTreeRoots,
+  RETRY_FAILED_EVENT_SCOPE_DAYS,
+  type RetryFailedPreviewScope,
   type FailedBatchSummary,
   type FailedMessagesRetryPreview,
   type FailedMessagesRetryResult,
@@ -71,20 +74,30 @@ function deliveryBlocker(deliveryMode: DeliveryMode): Plan["blocker"] {
 /**
  * Reads the FAILED messages in the scope and decides, for each, whether a retry copy is allowed. Reads only what the
  * decision needs (never a body), so a long delivery log stays cheap.
+ *
+ * Duplicate protection: every failed message is placed in its retry tree (the root original plus every copy and
+ * resend reached through `retryOfMessageId`), and it is retried only when nothing in that tree was delivered, handled
+ * or queued and it is the newest failure in the tree. A recipient-level check also skips a message whose
+ * registration and address was sent the same template after it failed (a separate, later send).
  */
-async function buildPlan(db: Db, eventId: string, scope: RetryFailedScope): Promise<Plan> {
+async function buildPlan(
+  db: Db,
+  eventId: string,
+  requested: RetryFailedPreviewScope,
+  now = new Date(),
+): Promise<Plan> {
   const settings = await db.eventMessageSettings.findUniqueOrThrow({ where: { eventId } });
   const deliveryMode = settings.deliveryMode as DeliveryMode;
 
-  if (scope.type === "BATCH") {
+  if (requested.type === "BATCH") {
     // A batch id from another event (or a made-up one) is a 404, never an empty preview that hints it exists.
     const known = await db.messageOutbox.findFirst({
       where: {
         eventId,
         OR: [
-          { correlationId: scope.batchId },
-          { metadata: { path: ["batchId"], equals: scope.batchId } },
-          { metadata: { path: ["sourceBatchId"], equals: scope.batchId } },
+          { correlationId: requested.batchId },
+          { metadata: { path: ["batchId"], equals: requested.batchId } },
+          { metadata: { path: ["sourceBatchId"], equals: requested.batchId } },
         ],
       },
       select: { id: true },
@@ -102,41 +115,123 @@ async function buildPlan(db: Db, eventId: string, scope: RetryFailedScope): Prom
       templateKey: true,
       subjectSnapshot: true,
       createdAt: true,
+      failedAt: true,
       registrationId: true,
+      recipientEmail: true,
       senderEmailSnapshot: true,
       correlationId: true,
       metadata: true,
+      retryOfMessageId: true,
       registration: { select: { status: true } },
-      retries: { select: { status: true } },
     },
   });
 
-  const batchMap = new Map<string, FailedBatchSummary>();
-  const inScope = failed.filter((message) => {
-    const batchId = messageBatchKey(message);
-    if (batchId) {
-      const existing = batchMap.get(batchId);
-      if (existing) existing.failedCount += 1;
-      else {
-        batchMap.set(batchId, {
-          batchId,
-          templateKey: message.templateKey,
-          subject: message.subjectSnapshot,
-          sentAt: message.createdAt.toISOString(),
-          failedCount: 1,
-        });
-      }
-    }
-    if (scope.type === "EVENT") return true;
-    return batchId === scope.batchId || message.correlationId === scope.batchId;
+  // Retry trees. Every message that is a copy (or resend) of another is read, then the roots they lead to.
+  const copies = await db.messageOutbox.findMany({
+    where: { eventId, retryOfMessageId: { not: null } },
+    select: { id: true, retryOfMessageId: true, status: true, createdAt: true },
   });
+  const parentOf = new Map<string, string | null>();
+  const nodes = new Map<string, { id: string; status: string; createdAt: Date }>();
+  for (const copy of copies) {
+    parentOf.set(copy.id, copy.retryOfMessageId);
+    nodes.set(copy.id, { id: copy.id, status: copy.status, createdAt: copy.createdAt });
+  }
+  for (const message of failed) {
+    parentOf.set(message.id, message.retryOfMessageId);
+    nodes.set(message.id, { id: message.id, status: "FAILED", createdAt: message.createdAt });
+  }
+  const rootOf = retryTreeRoots(nodes.keys(), parentOf);
+  const missingRoots = [...new Set(rootOf.values())].filter((id) => !nodes.has(id));
+  if (missingRoots.length > 0) {
+    const roots = await db.messageOutbox.findMany({
+      where: { id: { in: missingRoots } },
+      select: { id: true, status: true, createdAt: true },
+    });
+    for (const root of roots) nodes.set(root.id, { id: root.id, status: root.status, createdAt: root.createdAt });
+  }
+  const tree = new Map<string, Array<{ id: string; status: string; createdAt: Date }>>();
+  for (const [id, node] of nodes) {
+    const root = rootOf.get(id) ?? id;
+    const members = tree.get(root) ?? [];
+    members.push(node);
+    tree.set(root, members);
+  }
+  // A root with copies is itself a node of its tree even when no copy was read (it was loaded above).
+  for (const root of new Set(rootOf.values())) {
+    const rootNode = nodes.get(root);
+    const members = tree.get(root) ?? [];
+    if (rootNode && !members.some((member) => member.id === root)) members.push(rootNode);
+    tree.set(root, members);
+  }
+
+  // The recipient-level guard: a later send of the same template to the same registration and address.
+  const registrationIds = [...new Set(failed.flatMap((message) => message.registrationId ? [message.registrationId] : []))];
+  const templateKeys = [...new Set(failed.map((message) => message.templateKey))];
+  const laterSends = registrationIds.length === 0
+    ? []
+    : await db.messageOutbox.findMany({
+        where: {
+          eventId,
+          status: { in: ["SENT", "CAPTURED"] },
+          registrationId: { in: registrationIds },
+          templateKey: { in: templateKeys },
+        },
+        select: { registrationId: true, templateKey: true, recipientEmail: true, createdAt: true },
+      });
+  const laterByRecipient = new Map<string, Date[]>();
+  for (const send of laterSends) {
+    const key = `${send.registrationId}|${send.templateKey}|${send.recipientEmail.trim().toLowerCase()}`;
+    laterByRecipient.set(key, [...(laterByRecipient.get(key) ?? []), send.createdAt]);
+  }
+
+  const batchMap = new Map<string, FailedBatchSummary>();
+  for (const message of failed) {
+    const batchId = messageBatchKey(message);
+    if (!batchId) continue;
+    const existing = batchMap.get(batchId);
+    if (existing) existing.failedCount += 1;
+    else {
+      batchMap.set(batchId, {
+        batchId,
+        templateKey: message.templateKey,
+        subject: message.subjectSnapshot,
+        sentAt: message.createdAt.toISOString(),
+        failedCount: 1,
+      });
+    }
+  }
+  const batches = [...batchMap.values()].sort((left, right) => right.sentAt.localeCompare(left.sentAt));
+
+  const scope: RetryFailedScope = requested.type === "LATEST_BATCH"
+    ? (batches[0] ? { type: "BATCH", batchId: batches[0].batchId } : { type: "EVENT" })
+    : requested;
+  const inScope = failed.filter((message) => scope.type === "EVENT"
+    || messageBatchKey(message) === scope.batchId
+    || message.correlationId === scope.batchId);
+  const oldestAllowed = now.getTime() - RETRY_FAILED_EVENT_SCOPE_DAYS * 24 * 60 * 60 * 1000;
 
   const skipCounts = new Map<RetryFailedSkipReason, number>();
   const eligibleIds: string[] = [];
   for (const message of inScope) {
+    const members = tree.get(rootOf.get(message.id) ?? message.id) ?? [];
+    const failedMembers = members.filter((member) => member.status === "FAILED");
+    const newestFailed = failedMembers.reduce<{ id: string; createdAt: Date } | null>(
+      (best, member) => !best
+        || member.createdAt.getTime() > best.createdAt.getTime()
+        || (member.createdAt.getTime() === best.createdAt.getTime() && member.id > best.id)
+        ? member
+        : best,
+      null,
+    );
+    const recipientKey = `${message.registrationId}|${message.templateKey}|${message.recipientEmail.trim().toLowerCase()}`;
     const reason = classifyFailedMessage({
       templateKey: message.templateKey,
-      retryStatuses: message.retries.map((retry) => retry.status),
+      treeStatuses: members.filter((member) => member.id !== message.id).map((member) => member.status),
+      isNewestFailedInTree: newestFailed?.id === message.id,
+      laterDelivery: Boolean(message.registrationId)
+        && (laterByRecipient.get(recipientKey) ?? []).some((sentAt) => sentAt.getTime() > message.createdAt.getTime()),
+      tooOld: scope.type === "EVENT" && (message.failedAt ?? message.createdAt).getTime() < oldestAllowed,
       registrationId: message.registrationId,
       registrationStatus: message.registration?.status ?? null,
       deliveryMode,
@@ -156,7 +251,7 @@ async function buildPlan(db: Db, eventId: string, scope: RetryFailedScope): Prom
     eligibleIds,
     queueIds,
     skipped: summarizeSkips(skipCounts),
-    batches: [...batchMap.values()].sort((left, right) => right.sentAt.localeCompare(left.sentAt)),
+    batches,
     fingerprint: retryFailedPreviewFingerprint({
       eventId,
       scope,
@@ -172,12 +267,12 @@ async function buildPlan(db: Db, eventId: string, scope: RetryFailedScope): Prom
 /** The review staff see before confirming: counts and skip reasons, never a message body. Read only. */
 export async function previewFailedMessagesRetry(
   eventId: string,
-  scope: RetryFailedScope,
+  requested: RetryFailedPreviewScope,
 ): Promise<FailedMessagesRetryPreview> {
   await ensureEventMessagingDefaults(eventId);
-  const plan = await buildPlan(getPrisma() as unknown as Db, eventId, scope);
+  const plan = await buildPlan(getPrisma() as unknown as Db, eventId, requested);
   return {
-    scope,
+    scope: plan.scope,
     deliveryMode: plan.deliveryMode,
     failedCount: plan.failedCount,
     eligibleCount: plan.eligibleIds.length,
@@ -189,6 +284,7 @@ export async function previewFailedMessagesRetry(
     fingerprint: plan.fingerprint,
     batches: plan.batches,
     eventFailedCount: plan.eventFailedCount,
+    eventScopeDays: plan.scope.type === "EVENT" ? RETRY_FAILED_EVENT_SCOPE_DAYS : null,
   };
 }
 
@@ -283,7 +379,6 @@ export async function retryFailedMessages(
           plan.deliveryMode === "EXTERNAL_EMAIL"
           && !source.senderEmailSnapshot?.trim()
         );
-        const sourceBatchId = messageBatchKey(source);
         const created = await createMessageRetryCopy(tx, {
           eventId,
           source,
@@ -293,10 +388,7 @@ export async function retryFailedMessages(
           correlationId: input.clientRequestId,
           requestFingerprint: input.previewFingerprint,
           trigger: "STAFF_MESSAGE_RETRY_FAILED",
-          extraMetadata: {
-            retryFailedRequestId: input.clientRequestId,
-            ...(sourceBatchId ? { sourceBatchId } : {}),
-          },
+          extraMetadata: { retryFailedRequestId: input.clientRequestId },
         });
         queuedIds.push(created.id);
       }

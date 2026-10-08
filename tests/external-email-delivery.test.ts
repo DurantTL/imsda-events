@@ -124,6 +124,9 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
         attempts.push(data);
         return data;
       }),
+      aggregate: vi.fn(async () => ({
+        _max: { attemptNumber: attempts.length > 0 ? Math.max(...attempts.map((attempt) => Number(attempt.attemptNumber))) : null },
+      })),
     },
     messageProviderEvent: {
       updateMany: vi.fn(async () => ({ count: 0 })),
@@ -480,7 +483,7 @@ describe("external email queue", () => {
       expect(result.rescheduledIds).toEqual(["message-1"]);
       expect(store.message).toMatchObject({
         status: "PENDING",
-        attemptCount: 1,
+        attemptCount: 0,
         lastError: PROVIDER_QUOTA_MESSAGE,
       });
       expect(store.message.lastError).toBe("The email provider's sending limit was reached. The message will be tried again later; staff can also retry it from the delivery log once the limit resets.");
@@ -507,12 +510,14 @@ describe("external email queue", () => {
     expect(emailRetryDelayMs(1, "PROVIDER_QUOTA")).toBe(2 * 60 * 60 * 1000);
   });
 
-  it("keeps a quota from using all five attempts in minutes: the delays grow in hours and the last attempt still ends FAILED", async () => {
+  it("backs off in hours and never lets a quota use up an attempt or end the message (#860)", async () => {
     expect([1, 2, 3, 4].map((attempt) => emailRetryDelayMs(attempt, PROVIDER_QUOTA_ERROR_CODE) / 3_600_000)).toEqual([2, 4, 8, 16]);
     expect(emailRetryDelayMs(10, PROVIDER_QUOTA_ERROR_CODE)).toBe(24 * 60 * 60 * 1000);
     // Other errors keep the minute-scale backoff.
     expect([1, 2, 3, 4].map((attempt) => emailRetryDelayMs(attempt) / 60_000)).toEqual([1, 2, 4, 8]);
     expect(emailRetryDelayMs(3, "HTTP_503")).toBe(emailRetryDelayMs(3));
+
+    // Even on what would be the last attempt, a quota reschedules instead of failing.
     const last = fakeDeliveryStore({ attemptCount: 4 });
     const sendEmail = vi.fn(async () => {
       throw new EmailProviderRequestError("quota", "daily_quota_exceeded", true, 429);
@@ -520,9 +525,55 @@ describe("external email queue", () => {
     const result = await processExternalEmailQueue("event-1", {
       dependencies: { ...dependencies, prisma: last.prisma as never, sendEmail },
     });
-    expect(result.failedIds).toEqual(["message-1"]);
-    expect(last.message).toMatchObject({ status: "FAILED", lastError: PROVIDER_QUOTA_MESSAGE });
-    expect(last.attempts[0]).toMatchObject({ errorCode: "PROVIDER_QUOTA" });
+    expect(result.failedIds).toEqual([]);
+    expect(result.rescheduledIds).toEqual(["message-1"]);
+    expect(last.message).toMatchObject({ status: "PENDING", attemptCount: 4, lastError: PROVIDER_QUOTA_MESSAGE });
+    expect(last.attempts[0]).toMatchObject({ errorCode: "PROVIDER_QUOTA", status: "FAILED", providerMetadata: expect.objectContaining({ quotaDeferred: true }) });
+  });
+
+  it("survives more than five quota rejections without becoming FAILED, then sends once the quota resets", async () => {
+    const store = fakeDeliveryStore();
+    let exhausted = true;
+    const sendEmail = vi.fn(async () => {
+      if (exhausted) throw new EmailProviderRequestError("quota", "daily_quota_exceeded", true, 429);
+      return { provider: "RESEND" as const, providerMessageId: "email-after-reset" };
+    });
+    const baseAvailableAt = new Date(store.message.availableAt);
+    const delays: number[] = [];
+    for (let rejection = 1; rejection <= 7; rejection += 1) {
+      store.message.availableAt = baseAvailableAt;
+      await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail } });
+      expect(store.message.status).toBe("PENDING");
+      expect(store.message.attemptCount).toBe(0);
+      delays.push((store.message.availableAt.getTime() - baseAvailableAt.getTime()) / 3_600_000);
+    }
+    expect(sendEmail).toHaveBeenCalledTimes(7);
+    expect(delays).toEqual([2, 4, 8, 16, 24, 24, 24]);
+    expect(store.attempts.map((attempt) => attempt.attemptNumber)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    exhausted = false;
+    store.message.availableAt = baseAvailableAt;
+    const result = await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail } });
+    expect(result.sentIds).toEqual(["message-1"]);
+    expect(store.message).toMatchObject({ status: "SENT", attemptCount: 1 });
+    expect(store.attempts[7]).toMatchObject({ attemptNumber: 8, status: "SENT" });
+  });
+
+  it("stops the run at the first quota error so the rest of the queue is not tried", async () => {
+    const store = fakeDeliveryStore();
+    const sendEmail = vi.fn(async () => {
+      throw new EmailProviderRequestError("quota", "daily_quota_exceeded", true, 429);
+    });
+    await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail } });
+    // One claim, then the run ended: it did not go back for the next message.
+    expect(claimQueries(store)).toHaveLength(1);
+    // A rate limit is different: the run carries on to the next message.
+    const limited = fakeDeliveryStore();
+    const limitedSend = vi.fn(async () => {
+      throw new EmailProviderRequestError("slow down", "rate_limit_exceeded", true, 429);
+    });
+    await processExternalEmailQueue("event-1", { dependencies: { ...dependencies, prisma: limited.prisma as never, sendEmail: limitedSend } });
+    expect(claimQueries(limited)).toHaveLength(2);
+    expect(limited.message).toMatchObject({ status: "PENDING", attemptCount: 1 });
   });
 
   it("recognises only a 429 with a quota or rate-limit name as a provider quota", () => {

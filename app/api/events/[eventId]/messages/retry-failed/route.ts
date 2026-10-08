@@ -31,10 +31,14 @@ async function getHandler(
   try {
     const { eventId } = await context.params;
     await authorize(eventId);
-    const batchId = new URL(request.url).searchParams.get("batchId");
-    const scope = failedMessagesRetryScopeSchema.parse(
-      batchId ? { type: "BATCH", batchId } : { type: "EVENT" },
-    );
+    const params = new URL(request.url).searchParams;
+    const batchId = params.get("batchId");
+    // `?scope=latest` opens on the newest failed batch (the safest default); with no batch it falls back to the event.
+    const scope = params.get("scope") === "latest" && !batchId
+      ? { type: "LATEST_BATCH" as const }
+      : failedMessagesRetryScopeSchema.parse(
+        batchId ? { type: "BATCH", batchId } : { type: "EVENT" },
+      );
     const preview = await previewFailedMessagesRetry(eventId, scope);
     return Response.json({ preview });
   } catch (error) {

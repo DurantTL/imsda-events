@@ -48,7 +48,7 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`FAILED: ${message}`);
 }
 
-type StubState = { quotaExhausted: boolean; accepted: string[]; rejected: number };
+type StubState = { quotaExhausted: boolean; acceptLimit?: number; accepted: string[]; rejected: number };
 
 /** Accepts every request while the quota is open and answers 429 daily_quota_exceeded once it is exhausted. */
 function startProviderStub(state: StubState) {
@@ -61,7 +61,7 @@ function startProviderStub(state: StubState) {
         return;
       }
       const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { to: string[] };
-      if (state.quotaExhausted) {
+      if (state.quotaExhausted || (state.acceptLimit !== undefined && state.accepted.length >= state.acceptLimit)) {
         state.rejected += 1;
         response.writeHead(429, { "content-type": "application/json" });
         response.end(JSON.stringify({ name: "daily_quota_exceeded", message: "You have reached your daily email sending quota." }));
@@ -157,36 +157,51 @@ async function runChecks(state: StubState) {
   }, ids.staff);
   assert(queued.messageIds.length === GUEST_COUNT, `the welcome letter was queued for every guest (${queued.messageIds.length})`);
 
-  // 2. The provider's daily quota runs out after four emails. Every message is on its last attempt, as after the
-  //    incident's five tries, so the rest end FAILED.
-  await prisma.messageOutbox.updateMany({ where: { eventId: ids.event, correlationId: batchId }, data: { attemptCount: 4 } });
-  // The provider accepts four emails, then reports the quota. One message at a time, so exactly four are accepted.
+  // 2. The provider's daily quota runs out after four emails. One run of the worker: the fifth call is refused, the
+  //    run stops there, and the three messages behind it are never tried (no attempt burned).
   const { processExternalEmailQueue } = await import("@/modules/communications/email-delivery");
-  for (const id of queued.messageIds) {
-    state.quotaExhausted = state.accepted.length >= 4;
-    await processExternalEmailQueue(ids.event, { messageIds: [id], limit: 1 });
-  }
+  state.acceptLimit = 4;
+  await processExternalEmailQueue(ids.event, {});
+  state.acceptLimit = undefined;
+  const afterRun = await prisma.messageOutbox.findMany({
+    where: { eventId: ids.event, correlationId: batchId },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, status: true, attemptCount: true, availableAt: true, lastError: true, attempts: { select: { errorCode: true } } },
+  });
+  assert(state.accepted.length === 4 && state.rejected === 1, `four accepted and exactly one refused call, got ${state.accepted.length}/${state.rejected}`);
+  const deferred = afterRun.filter((message) => message.attempts.length > 0 && message.status === "PENDING");
+  const untouched = afterRun.filter((message) => message.attempts.length === 0 && message.status === "PENDING");
+  assert(deferred.length === 1 && untouched.length === GUEST_COUNT - 5, `one message deferred and ${GUEST_COUNT - 5} untouched after the quota, got ${deferred.length}/${untouched.length}`);
+  assert(untouched.every((message) => message.attemptCount === 0), "the queue behind the quota burned no attempt");
+  assert(
+    deferred[0]!.attempts[0]!.errorCode === PROVIDER_QUOTA_ERROR_CODE && deferred[0]!.attemptCount === 0
+      && deferred[0]!.lastError === "The email provider's sending limit was reached. The message will be tried again later; staff can also retry it from the delivery log once the limit resets.",
+    "the deferred message says, in words staff can read, that the provider's limit was reached, and the quota used no attempt",
+  );
+  const deferral = deferred[0]!.availableAt.getTime() - Date.now();
+  assert(deferral > 2 * 60 * 60 * 1000 - 120_000 && deferral < 2 * 60 * 60 * 1000 + 120_000, `the quota backs off about two hours, got ${Math.round(deferral / 60_000)} minutes`);
+  // The four messages the quota left unsent are marked FAILED, as the earlier worker version left them after its
+  // five quick attempts (the state the incident left in production).
+  await prisma.messageOutbox.updateMany({
+    where: { id: { in: [deferred[0]!.id, ...untouched.map((message) => message.id)] } },
+    data: { status: "FAILED", failedAt: new Date(), attemptCount: 5, lastError: "The email provider's sending limit was reached." },
+  });
   const afterSend = await prisma.messageOutbox.findMany({
     where: { eventId: ids.event, correlationId: batchId },
     orderBy: { createdAt: "asc" },
-    select: { id: true, status: true, recipientEmail: true, lastError: true, registrationId: true, attempts: { select: { errorCode: true } } },
+    select: { id: true, status: true, recipientEmail: true, lastError: true, registrationId: true },
   });
   const sent = afterSend.filter((message) => message.status === "SENT");
   const failed = afterSend.filter((message) => message.status === "FAILED");
-  assert(sent.length === 4 && failed.length === GUEST_COUNT - 4, `four sent and four failed after the quota, got ${sent.length}/${failed.length}`);
-  assert(state.accepted.length === 4, `the provider accepted four emails, got ${state.accepted.length}`);
-  assert(
-    failed.every((message) => message.attempts.some((attempt) => attempt.errorCode === PROVIDER_QUOTA_ERROR_CODE)
-      && message.lastError === "The email provider's sending limit was reached. The message will be tried again later; staff can also retry it from the delivery log once the limit resets."),
-    "each failed message says, in words staff can read, that the provider's sending limit was reached (PROVIDER_QUOTA)",
-  );
+  assert(sent.length === 4 && failed.length === GUEST_COUNT - 4, `four sent and four failed, got ${sent.length}/${failed.length}`);
 
-  // 2b. A quota with attempts left is rescheduled hours out, not minutes.
+  // 2b. A message on what used to be its last attempt survives a quota: it is rescheduled hours out, not failed.
   const retryLater = await prisma.messageOutbox.create({
     data: {
       eventId: ids.event, registrationId: registrationIds[0], templateKey: "CUSTOM_MESSAGE", recipientKind: "REGISTRANT",
       recipientEmail: EMAIL("guest1"), senderNameSnapshot: "IMSDA Events", senderEmailSnapshot: EMAIL("sender"),
       subjectSnapshot: "Backoff check", bodyTextSnapshot: "Backoff check", idempotencyKey: `${P}-backoff`, correlationId: `${P}-backoff`,
+      attemptCount: 4,
     },
     select: { id: true },
   });
@@ -195,7 +210,7 @@ async function runChecks(state: StubState) {
   await processExternalEmailQueue(ids.event, { messageIds: [retryLater.id], limit: 1 });
   const backedOff = await prisma.messageOutbox.findUniqueOrThrow({ where: { id: retryLater.id }, select: { status: true, availableAt: true, attemptCount: true } });
   const delay = backedOff.availableAt.getTime() - before;
-  assert(backedOff.status === "PENDING" && backedOff.attemptCount === 1, "a message with attempts left is rescheduled, not failed");
+  assert(backedOff.status === "PENDING" && backedOff.attemptCount === 4, "a quota never ends a message, even on its last attempt");
   assert(delay >= 2 * 60 * 60 * 1000 - 60_000 && delay <= 2 * 60 * 60 * 1000 + 60_000, `a quota backs off about two hours, got ${Math.round(delay / 60_000)} minutes`);
   assert(emailRetryDelayMs(1) === 60_000, "another error still backs off one minute");
   await prisma.messageOutbox.delete({ where: { id: retryLater.id } });
@@ -310,6 +325,56 @@ async function runChecks(state: StubState) {
   const audits = await prisma.auditLog.findMany({ where: { eventId: ids.event, action: "MESSAGE_RETRY_FAILED_ENQUEUED" } });
   assert(audits.length === 1, `one audit row for the confirmed retry, got ${audits.length}`);
   assert(!JSON.stringify(audits).includes("@example.test"), "the audit row holds no address");
+
+  // 9b. Retry trees and the recipient guard, against the real tables. A fails; B is a bulk copy of A that also failed;
+  //     C is a single retry of A that was sent: nothing in the tree may be retried. A separate later send to the same
+  //     person also blocks a failed message of that template.
+  const treeBatch = `${P}-tree-batch`;
+  const treeRow = (key: string, extra: Record<string, unknown>) => ({
+    eventId: ids.event, registrationId: registrationIds[0], templateKey: "CUSTOM_MESSAGE" as const, recipientKind: "REGISTRANT" as const,
+    recipientEmail: EMAIL("guest1"), senderNameSnapshot: "IMSDA Events", senderEmailSnapshot: EMAIL("sender"),
+    subjectSnapshot: "Tree check", bodyTextSnapshot: "Tree check", idempotencyKey: `${P}-tree-${key}`, correlationId: `${P}-tree-${key}`,
+    metadata: { batchId: treeBatch }, ...extra,
+  });
+  const treeA = await prisma.messageOutbox.create({ data: treeRow("a", { status: "FAILED", failedAt: new Date(), createdAt: new Date(Date.now() - 3 * 3600_000) }), select: { id: true } });
+  await prisma.messageOutbox.create({ data: treeRow("b", { status: "FAILED", failedAt: new Date(), retryOfMessageId: treeA.id, createdAt: new Date(Date.now() - 2 * 3600_000) }) });
+  await prisma.messageOutbox.create({ data: treeRow("c", { status: "SENT", sentAt: new Date(), retryOfMessageId: treeA.id, createdAt: new Date(Date.now() - 3600_000) }) });
+  const sibling = await previewFailedMessagesRetry(ids.event, { type: "BATCH", batchId: treeBatch });
+  assert(sibling.failedCount === 2 && sibling.eligibleCount === 0, `a failed sibling of a sent single retry is not retried: ${JSON.stringify(sibling.skipped)}`);
+  const laterBatch = `${P}-later-batch`;
+  await prisma.messageOutbox.create({ data: treeRow("later-failed", { status: "FAILED", failedAt: new Date(), registrationId: registrationIds[1], recipientEmail: EMAIL("guest2"), metadata: { batchId: laterBatch }, createdAt: new Date(Date.now() - 4 * 3600_000) }) });
+  await prisma.messageOutbox.create({ data: treeRow("later-sent", { status: "SENT", sentAt: new Date(), registrationId: registrationIds[1], recipientEmail: EMAIL("guest2").toUpperCase(), metadata: { batchId: `${P}-another-send` }, createdAt: new Date(Date.now() - 3600_000) }) });
+  const later = await previewFailedMessagesRetry(ids.event, { type: "BATCH", batchId: laterBatch });
+  assert(later.eligibleCount === 0 && later.skipped.some((item) => item.reason === "LATER_DELIVERY"), `a later separate send blocks the retry: ${JSON.stringify(later.skipped)}`);
+
+  // 9c. Two simultaneous confirmations of one fresh preview, two ways: the same request id twice (a double click) and
+  //     two different ids (two tabs). Either way every source message ends with exactly one copy.
+  for (const [label, sameId] of [["double click", true], ["two tabs", false]] as const) {
+    const group = `${P}-concurrent-${sameId ? "same" : "different"}`;
+    const sources: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const created = await prisma.messageOutbox.create({
+        data: treeRow(`${group}-${index}`, { status: "FAILED", failedAt: new Date(), registrationId: registrationIds[2 + index], recipientEmail: EMAIL(`guest${3 + index}`), metadata: { batchId: group } }),
+        select: { id: true },
+      });
+      sources.push(created.id);
+    }
+    const fresh = await previewFailedMessagesRetry(ids.event, { type: "BATCH", batchId: group });
+    assert(fresh.eligibleCount === 4, `the ${label} preview offers four, got ${fresh.eligibleCount}`);
+    const sharedId = randomUUID();
+    const outcomes = await Promise.allSettled([0, 1].map(() => retryFailedMessages(
+      ids.event,
+      { clientRequestId: sameId ? sharedId : randomUUID(), scope: { type: "BATCH", batchId: group }, previewFingerprint: fresh.fingerprint },
+      ids.staff,
+    )));
+    const refusals = outcomes.flatMap((outcome) => outcome.status === "rejected" ? [(outcome.reason as { code?: string }).code ?? "ERROR"] : []);
+    assert(refusals.every((code) => ["PREVIEW_CHANGED", "EMPTY_AUDIENCE", "MESSAGE_NOT_RETRYABLE"].includes(code)), `the ${label} refusal is clean: ${JSON.stringify(refusals)}`);
+    assert(outcomes.some((outcome) => outcome.status === "fulfilled"), `one of the two ${label} requests succeeded: ${JSON.stringify(refusals)}`);
+    for (const sourceId of sources) {
+      const count = await prisma.messageOutbox.count({ where: { retryOfMessageId: sourceId } });
+      assert(count === 1, `exactly one copy of each source after the ${label}, got ${count}`);
+    }
+  }
 
   // 10. Delivery turned off: the preview says so and a confirmation is refused.
   await prisma.eventMessageSettings.update({ where: { eventId: ids.event }, data: { deliveryMode: "DISABLED" } });

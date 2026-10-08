@@ -145,6 +145,11 @@ describe("GET /messages/retry-failed", () => {
     expect(mocks.previewFailedMessagesRetry).toHaveBeenLastCalledWith("event-1", { type: "BATCH", batchId: "batch-1" });
   });
 
+  it("opens on the newest failed batch with ?scope=latest", async () => {
+    await GET(new Request(`${url}?scope=latest`), context);
+    expect(mocks.previewFailedMessagesRetry).toHaveBeenLastCalledWith("event-1", { type: "LATEST_BATCH" });
+  });
+
   it("returns 403 without permission and never previews", async () => {
     mocks.requirePermission.mockRejectedValue(new mocks.AccessDeniedError("No."));
     expect((await GET(new Request(url), context)).status).toBe(403);

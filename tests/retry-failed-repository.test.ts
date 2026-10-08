@@ -77,7 +77,7 @@ function row(id: string, overrides: Partial<Row> = {}): Row {
     correlationId: batchId,
     status: "FAILED",
     retryOfMessageId: null,
-    createdAt: new Date("2026-10-08T01:00:00.000Z"),
+    createdAt: new Date(Date.now() - 60 * 60 * 1000),
     ...overrides,
   };
 }
@@ -97,7 +97,6 @@ function fixture(
   };
   const audits: Array<{ correlationId: string; metadata: Record<string, unknown>; action: string }> = [];
   let nextId = 0;
-  const childrenOf = (id: string) => [...messages.values()].filter((message) => message.retryOfMessageId === id);
   const tx = {
     platformSettings: { findUnique: vi.fn().mockResolvedValue(null) },
     eventMessageSettings: {
@@ -125,19 +124,41 @@ function fixture(
           && batch.includes(JSON.stringify(message.correlationId))
           ) ?? null;
       }),
-      findMany: vi.fn(async (args: { where: { eventId: string; status?: string; id?: { in: string[] } } }) => {
-        if (args.where.id) {
-          return args.where.id.in
+      findMany: vi.fn(async (args: {
+        where: {
+          eventId?: string;
+          status?: string | { in: string[] };
+          id?: { in: string[] };
+          retryOfMessageId?: unknown;
+          registrationId?: { in: string[] };
+          templateKey?: { in: string[] };
+        };
+      }) => {
+        const where = args.where;
+        const all = [...messages.values()];
+        if (where.id) {
+          // The sources about to be copied (still FAILED) and the roots of the retry trees (any status).
+          return where.id.in
             .map((id) => messages.get(id))
-            .filter((message): message is Row => Boolean(message) && message!.status === "FAILED" && message!.eventId === args.where.eventId);
+            .filter((message): message is Row => Boolean(message)
+              && (where.status === undefined || message!.status === where.status));
         }
-        return [...messages.values()]
-          .filter((message) => message.eventId === args.where.eventId && message.status === args.where.status)
+        if (where.retryOfMessageId) {
+          return all.filter((message) => message.eventId === where.eventId && message.retryOfMessageId !== null);
+        }
+        if (where.registrationId) {
+          const statuses = (where.status as { in: string[] }).in;
+          return all.filter((message) => message.eventId === where.eventId
+            && statuses.includes(message.status)
+            && where.registrationId!.in.includes(message.registrationId ?? "")
+            && where.templateKey!.in.includes(message.templateKey));
+        }
+        return all
+          .filter((message) => message.eventId === where.eventId && message.status === where.status)
           .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id))
           .map((message) => ({
             ...message,
             registration: message.registrationStatus ? { status: message.registrationStatus } : null,
-            retries: childrenOf(message.id).map((child) => ({ status: child.status })),
           }));
       }),
       create: vi.fn(async (args: { data: Row }) => {
@@ -147,7 +168,7 @@ function fixture(
           }
         }
         nextId += 1;
-        const created = { ...args.data, id: `copy-${nextId}`, status: "PENDING", createdAt: new Date("2026-10-08T05:00:00.000Z"), registrationStatus: null } as unknown as Row;
+        const created = { ...args.data, id: `copy-${nextId}`, status: "PENDING", createdAt: new Date(), registrationStatus: null } as unknown as Row;
         messages.set(created.id, created);
         return { id: created.id, status: "PENDING" };
       }),
@@ -288,7 +309,7 @@ describe("retry failed messages", () => {
 
   it("retries the newest failed copy, not the original it replaced", async () => {
     fixture([
-      row("original"),
+      row("original", { createdAt: new Date(Date.now() - 2 * 3600_000) }),
       row("copy-that-failed", { retryOfMessageId: "original", registrationId: "registration-original", metadata: { sourceBatchId: batchId } }),
     ]);
     const preview = await previewFailedMessagesRetry("event-1", batchScope);
@@ -345,5 +366,124 @@ describe("retry failed messages", () => {
     const preview = await previewFailedMessagesRetry("event-1", { type: "EVENT" });
     expect(preview.eventFailedCount).toBe(4);
     expect(preview.batches.map((batch) => [batch.batchId, batch.failedCount]).sort()).toEqual([["batch-b", 1], [batchId, 2]]);
+  });
+
+  it("never retries a sibling copy after a single retry of the original was sent (A fails, copy B fails, a single retry of A is SENT)", async () => {
+    const db = fixture([
+      row("A"),
+      row("B", { retryOfMessageId: "A", status: "FAILED", registrationId: null, registrationStatus: null, metadata: { sourceBatchId: batchId }, correlationId: "req-bulk" }),
+      row("C", { retryOfMessageId: "A", status: "SENT", registrationId: null, registrationStatus: null, correlationId: "req-single" }),
+    ]);
+    const preview = await previewFailedMessagesRetry("event-1", batchScope);
+    expect(preview.failedCount).toBe(2);
+    expect(preview.eligibleCount).toBe(0);
+    expect(Object.fromEntries(preview.skipped.map((item) => [item.reason, item.count]))).toEqual({ ALREADY_RETRIED: 2 });
+    await expect(retryFailedMessages(
+      "event-1",
+      { clientRequestId: requestId, scope: batchScope, previewFingerprint: preview.fingerprint },
+      "staff-1",
+    )).rejects.toMatchObject({ code: "EMPTY_AUDIENCE" });
+    expect([...db.messages.values()].filter((message) => message.id.startsWith("copy-"))).toEqual([]);
+  });
+
+  it("walks a deep chain and retries only the newest failure when nothing in the tree was sent", async () => {
+    fixture([
+      row("A", { createdAt: new Date(Date.now() - 5 * 3600_000) }),
+      row("B", { retryOfMessageId: "A", createdAt: new Date(Date.now() - 4 * 3600_000), metadata: { sourceBatchId: batchId } }),
+      row("C", { retryOfMessageId: "B", createdAt: new Date(Date.now() - 3 * 3600_000), metadata: { sourceBatchId: batchId } }),
+    ]);
+    const preview = await previewFailedMessagesRetry("event-1", batchScope);
+    expect(preview.eligibleCount).toBe(1);
+    expect(preview.skipped).toEqual([expect.objectContaining({ reason: "NEWER_COPY_FAILED", count: 2 })]);
+  });
+
+  it("counts a resend of a confirmation (also linked by retryOfMessageId, possibly to another address) as delivered", async () => {
+    fixture([
+      row("confirmation", { templateKey: "REGISTRATION_CONFIRMATION_PAID" }),
+      row("resend", {
+        templateKey: "REGISTRATION_CONFIRMATION_PAID",
+        retryOfMessageId: "confirmation",
+        status: "SENT",
+        recipientEmail: "other-address@example.test",
+        metadata: { trigger: "STAFF_CONFIRMATION_RESEND", sourceMessageId: "confirmation" },
+        registrationId: null,
+        registrationStatus: null,
+      }),
+    ]);
+    const preview = await previewFailedMessagesRetry("event-1", { type: "EVENT" });
+    expect(preview.eligibleCount).toBe(0);
+    expect(preview.skipped).toEqual([expect.objectContaining({ reason: "ALREADY_RETRIED", count: 1 })]);
+  });
+
+  it("skips a failed message when the same person was sent the same email in a separate, later send", async () => {
+    fixture([
+      row("failed-1", { createdAt: new Date(Date.now() - 3 * 3600_000) }),
+      row("later-send", { status: "SENT", registrationId: "registration-failed-1", registrationStatus: "CONFIRMED", recipientEmail: "FAILED-1@example.test", metadata: { batchId: "another-batch" }, correlationId: "another-batch", createdAt: new Date(Date.now() - 3600_000) }),
+      row("failed-2", { createdAt: new Date(Date.now() - 3 * 3600_000) }),
+      // Sent earlier than failed-2 failed, or to a different address, so it does not count.
+      row("earlier-send", { status: "SENT", registrationId: "registration-failed-2", recipientEmail: "failed-2@example.test", metadata: { batchId: "older" }, correlationId: "older", createdAt: new Date(Date.now() - 6 * 3600_000) }),
+    ]);
+    const preview = await previewFailedMessagesRetry("event-1", batchScope);
+    expect(preview.failedCount).toBe(2);
+    expect(preview.eligibleCount).toBe(1);
+    expect(preview.skipped).toEqual([expect.objectContaining({ reason: "LATER_DELIVERY", count: 1 })]);
+  });
+
+  it("skips link emails and balance reminders, each with its own reason", async () => {
+    fixture([
+      row("ok"),
+      row("form", { templateKey: "CLUB_FORM_LINK" }),
+      row("health", { templateKey: "HEALTH_RECORD_LINK" }),
+      row("invite", { templateKey: "NEW_CLUB_APPLICATION_INVITE" }),
+      row("balance", { templateKey: "BALANCE_REMINDER" }),
+    ]);
+    const preview = await previewFailedMessagesRetry("event-1", batchScope);
+    expect(Object.fromEntries(preview.skipped.map((item) => [item.reason, item.count]))).toEqual({
+      LINK_CLUB_FORM: 1, LINK_HEALTH_RECORD: 1, LINK_CLUB_INVITE: 1, BALANCE_REMINDER: 1,
+    });
+    expect(preview.eligibleCount).toBe(1);
+  });
+
+  it("limits the event-wide scope to recent failures, shows the limit, and leaves a batch uncapped", async () => {
+    fixture([
+      row("recent"),
+      row("old", { createdAt: new Date(Date.now() - 10 * 24 * 3600_000), metadata: { batchId: "old-batch" }, correlationId: "old-batch" }),
+    ]);
+    const wide = await previewFailedMessagesRetry("event-1", { type: "EVENT" });
+    expect(wide.eventScopeDays).toBe(7);
+    expect(wide.eligibleCount).toBe(1);
+    expect(wide.skipped).toEqual([expect.objectContaining({ reason: "TOO_OLD", count: 1 })]);
+    const oldBatch = await previewFailedMessagesRetry("event-1", { type: "BATCH", batchId: "old-batch" });
+    expect(oldBatch.eventScopeDays).toBeNull();
+    expect(oldBatch.eligibleCount).toBe(1);
+  });
+
+  it("opens on the newest failed batch, and on the whole event when none has a batch", async () => {
+    fixture([
+      row("a1", { metadata: { batchId: "batch-old" }, correlationId: "batch-old", createdAt: new Date(Date.now() - 5 * 3600_000) }),
+      row("b1", { metadata: { batchId: "batch-new" }, correlationId: "batch-new", createdAt: new Date(Date.now() - 3600_000) }),
+    ]);
+    const latest = await previewFailedMessagesRetry("event-1", { type: "LATEST_BATCH" });
+    expect(latest.scope).toEqual({ type: "BATCH", batchId: "batch-new" });
+    expect(latest.failedCount).toBe(1);
+    fixture([row("single", { metadata: null, correlationId: "single-x" })]);
+    expect((await previewFailedMessagesRetry("event-1", { type: "LATEST_BATCH" })).scope).toEqual({ type: "EVENT" });
+  });
+
+  it("keeps a single-retry copy in its source's batch", async () => {
+    const { createMessageRetryCopy } = await import("@/modules/communications/messaging-repository");
+    const db = fixture([row("failed-1")]);
+    const source = db.messages.get("failed-1")!;
+    await createMessageRetryCopy(db.tx as never, {
+      eventId: "event-1",
+      source: source as never,
+      settings: { deliveryMode: "EXTERNAL_EMAIL", senderName: "x", senderEmail: "a@example.test", replyToEmail: null },
+      repairMissingSenderSnapshot: false,
+      idempotencyKey: "single-copy-key",
+      correlationId: "single-request",
+      requestFingerprint: "f".repeat(64),
+    });
+    const copy = [...db.messages.values()].find((message) => message.idempotencyKey === "single-copy-key")!;
+    expect(copy.metadata).toMatchObject({ trigger: "STAFF_MESSAGE_RETRY", sourceBatchId: batchId });
   });
 });

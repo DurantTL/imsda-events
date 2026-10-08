@@ -55,6 +55,7 @@ import {
   type ClubAssignmentSendSelection,
 } from "@/modules/communications/club-assignment-audience";
 import { emptyClubAssignmentFields } from "@/modules/club-registrations/assignments";
+import { messageBatchKey } from "@/modules/communications/retry-failed-domain";
 import {
   messageRetryIdempotencyKey,
   messageRetryRequestFingerprint,
@@ -2950,6 +2951,8 @@ export async function createMessageRetryCopy(
         immutableContentSnapshot: true,
         senderSnapshotRepaired: repairMissingSenderSnapshot,
         realDelivery: settings.deliveryMode === "EXTERNAL_EMAIL",
+        // Every copy stays in its source's send batch, so "Retry failed" can still find it there (#860).
+        ...(messageBatchKey(source) ? { sourceBatchId: messageBatchKey(source)! } : {}),
         ...(input.extraMetadata ?? {}),
       },
       idempotencyKey: input.idempotencyKey,

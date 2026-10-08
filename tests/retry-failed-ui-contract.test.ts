@@ -15,6 +15,14 @@ describe("Retry failed UI contract (#860)", () => {
     expect(source).not.toMatch(/setInterval\([^)]*confirmRetryFailed/);
   });
 
+  it("says what the code guarantees, opens on the newest batch and shows the event-wide age limit", () => {
+    expect(source).toContain("only if nothing in its retry chain");
+    expect(source).toContain("the same person was not sent the same email since");
+    expect(source).not.toContain("Messages that were sent are never copied");
+    expect(source).toContain('loadRetryFailedPreview("LATEST")');
+    expect(source).toContain("retries only failures from the last {retryFailedPreview.eventScopeDays} days");
+  });
+
   it("refreshes the delivery log every 15 to 30 seconds only while messages are queued, and offers a Refresh button", () => {
     const interval = Number(source.match(/DELIVERY_REFRESH_INTERVAL_MS = ([\d_]+)/)?.[1]?.replaceAll("_", ""));
     expect(interval).toBeGreaterThanOrEqual(15_000);
