@@ -31,7 +31,12 @@ if [ ! -e "$IMSDA_GUARD_ENV_FILE" ]; then
     echo 'IMSDA_XCLOUD_RUNTIME_DIR=/home/u_events/.xcloud'
     echo 'IMSDA_XCLOUD_SERVICE=app'
     echo 'IMSDA_XCLOUD_EXPECTED_NETWORK=postgresql_9kgaw_239292_xcloud-network'
+    echo 'IMSDA_XCLOUD_CONTAINER_PATTERN=xcloud-site-239298-app-1'
   } > "$IMSDA_GUARD_ENV_FILE"
+else
+  [ -n "$(tail -c1 "$IMSDA_GUARD_ENV_FILE")" ] && echo >> "$IMSDA_GUARD_ENV_FILE"
+  grep -q '^IMSDA_XCLOUD_CONTAINER_PATTERN=' "$IMSDA_GUARD_ENV_FILE" \
+    || echo 'IMSDA_XCLOUD_CONTAINER_PATTERN=xcloud-site-239298-app-1' >> "$IMSDA_GUARD_ENV_FILE"
 fi
 
 {
