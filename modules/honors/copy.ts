@@ -6,7 +6,7 @@ import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { classSlotConflict, normalizeHonorText } from "@/modules/honors/domain";
 import { offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
-import { offeringSiteId } from "@/modules/honors/locations";
+import { eventHasActiveLocations, offeringSiteId } from "@/modules/honors/locations";
 import { requireNoTeams, HonorConfigurationError, getEventHonorSetup, serializable, writeHonorRows } from "@/modules/honors/repository";
 
 /**
@@ -305,10 +305,12 @@ export async function applyHonorCopy(
       await writeHonorRows(tx, created.id, targetEventId, honorIds);
       // A class that was in a room goes into the same-named room at its site here (made if missing), unless the room
       // is too small for it or already holds a class then; the class is then copied without a room (#834).
-      if (offering.room) {
-        const siteId = offering.span === "ALL_SESSIONS"
-          ? locationId
-          : sessionId ? (await tx.honorSession.findUnique({ where: { id: sessionId }, select: { locationId: true } }))?.locationId ?? null : null;
+      // A class with no site at an event that has sites gets no room either: a room at no site would be off the board.
+      const roomSiteId = !offering.room ? null : offering.span === "ALL_SESSIONS"
+        ? locationId
+        : sessionId ? (await tx.honorSession.findUnique({ where: { id: sessionId }, select: { locationId: true } }))?.locationId ?? null : null;
+      if (offering.room && (roomSiteId !== null || !(await eventHasActiveLocations(tx, targetEventId)))) {
+        const siteId = roomSiteId;
         const room = await tx.honorRoom.findFirst({ where: { eventId: targetEventId, locationId: siteId, normalizedName: offering.room.normalizedName } })
           ?? await tx.honorRoom.create({ data: { eventId: targetEventId, locationId: siteId, name: offering.room.name, normalizedName: offering.room.normalizedName, capacity: offering.room.capacity } });
         const taken = await tx.honorOffering.findFirst({

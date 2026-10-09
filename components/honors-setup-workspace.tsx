@@ -232,7 +232,8 @@ export function HonorsSetupWorkspace({
       prerequisiteHonorIds: editing ? editPrerequisiteIds : newPrerequisiteIds,
       perClubLimit: optionalNumber(form.get("perClubLimit")),
       teacherName: String(form.get("teacherName") ?? ""),
-      location: String(form.get("location") ?? ""),
+      // A class in a room has its location text kept in step with the room: the form doesn't send it (#834).
+      ...(editing?.roomId ? {} : { location: String(form.get("location") ?? "") }),
       additionalCostCents: dollarsToCents(form.get("additionalCost")),
       requirementNote: String(form.get("requirementNote") ?? ""),
       // Only an all-sessions class has its own site; a single-session class is at its session's.

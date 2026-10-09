@@ -178,7 +178,12 @@ const mocks = vi.hoisted(() => ({
   createHonorRoom: vi.fn(),
   updateHonorRoom: vi.fn(),
   deleteHonorRoom: vi.fn(),
+  updateHonorSession: vi.fn(),
 }));
+vi.mock("@/modules/honors/repository", async () => {
+  const actual = await vi.importActual<typeof import("@/modules/honors/repository")>("@/modules/honors/repository");
+  return { ...actual, updateHonorSession: mocks.updateHonorSession };
+});
 vi.mock("server-only", () => ({}));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 vi.mock("@/modules/honors/access", () => ({ requireHonorPermission: mocks.requireHonorPermission }));
@@ -249,6 +254,15 @@ describe("schedule board routes", () => {
     expect((await DELETE(post({}), ctx)).status).toBe(404);
   });
 
+  it("answers 409 with the stranded-classes message when a session's site change would strand roomed classes", async () => {
+    const { PATCH } = await import("@/app/api/events/[eventId]/honors/sessions/[sessionId]/route");
+    const { HonorConfigurationError } = await import("@/modules/honors/repository");
+    mocks.updateHonorSession.mockRejectedValueOnce(new HonorConfigurationError("SESSION_HAS_ROOMS", "2 classes in this session are placed in a room.", 2));
+    const response = await PATCH(post({ locationId: "site-b" }), { params: Promise.resolve({ eventId: "e1", sessionId: "s1" }) });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "SESSION_HAS_ROOMS", picks: 2 });
+  });
+
   it("rejects an unknown field", async () => {
     const { POST: move } = await import("@/app/api/events/[eventId]/honors/offerings/[offeringId]/move/route");
     expect((await move(post({ roomId: null, capacity: 500 }), ctx)).status).toBe(400);
@@ -264,8 +278,11 @@ describe("database refusal mapping", () => {
     expect(isRoomCapacityRefusal(unknown)).toBe(true);
     expect(isRoomCapacityRefusal(new Prisma.PrismaClientUnknownRequestError("HonorRoom capacity 3 is below a class placed in it", { clientVersion: "x" }))).toBe(true);
     expect(isRoomCapacityRefusal(new Error("23514"))).toBe(false);
+    // Another CHECK failing (23514) is not a room problem.
+    expect(isRoomCapacityRefusal(new Prisma.PrismaClientUnknownRequestError("Code: `23514`. violates check constraint \"HonorRoom_capacity_check\"", { clientVersion: "x" }))).toBe(false);
     const p2002 = new Prisma.PrismaClientKnownRequestError("Unique constraint failed on the constraint: `HonorOffering_roomId_sessionId_active_key`", { code: "P2002", clientVersion: "x" });
     expect(isRoomBookedIndex(p2002)).toBe(true);
+    expect(isRoomBookedIndex(new Prisma.PrismaClientKnownRequestError("Unique constraint failed", { code: "P2002", clientVersion: "x", meta: { target: ["roomId", "sessionId"] } }))).toBe(true);
     expect(isRoomBookedIndex(new Prisma.PrismaClientKnownRequestError("Unique constraint failed on the fields: (`sessionId`,`honorId`)", { code: "P2002", clientVersion: "x" }))).toBe(false);
   });
 });

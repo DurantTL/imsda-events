@@ -794,12 +794,15 @@ export async function updateHonorOffering(
       unmetCount = null;
       const existing = await tx.honorOffering.findFirst({
         where: { id: offeringId, eventId },
-        select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, minimumClassLevel: true, roomId: true, capacity: true, isActive: true, honors: offeringHonorsSelect, prerequisites: { select: { honorId: true } } },
+        select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, minimumClassLevel: true, roomId: true, capacity: true, isActive: true, location: true, honors: offeringHonorsSelect, prerequisites: { select: { honorId: true } } },
       });
       if (!existing) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
       const current = summarizeOfferingHonors(existing.honors);
 
-      const { honorIds: nextHonorIds, span: nextSpan, sessionId: nextSessionId, locationId: nextSiteInput, confirmEnrolled, prerequisiteHonorIds: nextPrerequisiteIds, ...details } = input;
+      const { honorIds: nextHonorIds, span: nextSpan, sessionId: nextSessionId, locationId: nextSiteInput, confirmEnrolled, prerequisiteHonorIds: nextPrerequisiteIds, ...incomingDetails } = input;
+      // While the class is in a room its location text mirrors the room's name (#834): an incoming different text is ignored.
+      const details = { ...incomingDetails };
+      if (existing.roomId && details.location !== undefined && details.location !== existing.location) delete details.location;
       const honorIds = nextHonorIds ?? current.honorIds;
       const span = nextSpan ?? existing.span;
       const honorChange = honorSetChange(current.honorIds, honorIds);

@@ -31,6 +31,7 @@ const P = "schedboard";
 const adminId = `${P}_admin`;
 const eventId = `${P}_event`;
 const otherEventId = `${P}_other_event`;
+const sitesEventId = `${P}_sites_event`;
 const clubId = `${P}_club`;
 const honorIds = ["a", "b", "c", "d", "e", "f"].map((key) => `${P}_honor_${key}`);
 const [hA, hB, hC, hD, hE, hF] = honorIds as [string, string, string, string, string, string];
@@ -50,6 +51,11 @@ async function refusal(work: Promise<unknown>, code: string, pattern: RegExp, wh
 }
 
 async function cleanup() {
+  await prisma.honorOffering.deleteMany({ where: { eventId: sitesEventId } });
+  await prisma.honorSession.deleteMany({ where: { eventId: sitesEventId } });
+  await prisma.honorRoom.deleteMany({ where: { eventId: sitesEventId } });
+  await prisma.eventLocation.deleteMany({ where: { eventId: sitesEventId } });
+  await prisma.event.deleteMany({ where: { id: sitesEventId } });
   await prisma.honorOffering.deleteMany({ where: { eventId: otherEventId } });
   await prisma.honorSession.deleteMany({ where: { eventId: otherEventId } });
   await prisma.honorRoom.deleteMany({ where: { eventId: otherEventId } });
@@ -181,6 +187,9 @@ async function main() {
   await updateHonorRoom(eventId, big.id, { name: "Main hall 2" }, adminId);
   assert((await fresh(c1.id)).location === "Main hall 2" && (await fresh(c3.id)).location === "Back door", "renaming a room renames only text that mirrored it");
   await updateHonorRoom(eventId, big.id, { name: "Main hall" }, adminId);
+  // While roomed, an incoming different location text is ignored (it mirrors the room).
+  await updateHonorOffering(eventId, c3.id, { location: "Somewhere else", capacity: 10 }, adminId);
+  assert((await fresh(c3.id)).location === "Back door", "an edit can't change the location text of a class in a room");
   await move(c3.id, null);
   assert((await fresh(c3.id)).location === "Back door", "taking a class out of a room keeps a note staff wrote");
   const noteAudit = await prisma.auditLog.findFirst({ where: { eventId, action: "HONOR_OFFERING_MOVED", entityId: c3.id }, orderBy: { createdAt: "desc" } });
@@ -322,6 +331,19 @@ async function main() {
     slotsUsed.add(slot);
   }
   console.log("ok  copy: classes carry their rooms to the target within the room's seats");
+  // Into an event that has sites, a copied session with no matching site has no site, so its classes get no room.
+  await prisma.event.create({
+    data: {
+      id: sitesEventId, slug: `${P}-sites`, name: "Sites event", startsAt: new Date("2026-12-05T15:00:00Z"), endsAt: new Date("2026-12-06T20:00:00Z"),
+      isPublished: true, registrationOpensOn: "2026-10-01", registrationClosesOn: "2026-11-30", billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB",
+    },
+  });
+  await prisma.eventLocation.create({ data: { eventId: sitesEventId, name: "Unrelated site", normalizedName: "unrelated site" } });
+  const sitesPlan = await previewHonorCopy(sitesEventId, otherEventId);
+  await applyHonorCopy(sitesEventId, otherEventId, sitesPlan.fingerprint, adminId);
+  assert((await prisma.honorOffering.count({ where: { eventId: sitesEventId } })) > 0, "classes were copied into the event with sites");
+  assert((await prisma.honorRoom.count({ where: { eventId: sitesEventId } })) === 0 && (await prisma.honorOffering.count({ where: { eventId: sitesEventId, roomId: { not: null } } })) === 0, "a class copied with no site into an event that has sites gets no room");
+  console.log("ok  copy: no room off the board for a class with no site at an event that has sites");
 
   const board = await getScheduleBoard(eventId);
   assert(board.rooms.length > 0 && board.cards.every((card) => card.instructors.length === 0), "without instructor data (#833) cards carry no instructors");
