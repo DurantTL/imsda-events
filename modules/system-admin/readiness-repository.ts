@@ -1,5 +1,6 @@
 import "server-only";
 
+import { Prisma } from "@prisma/client";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { getServerEnv } from "@/lib/env";
@@ -15,6 +16,8 @@ import { getAutomaticBackupEvidence } from "./readiness-backup";
 import {
   automaticBackupKeys,
   evaluateAutomaticChecks,
+  pendingMigrationNames,
+  type MigrationRow,
   type AutomaticReadinessRow,
   type ReadinessFacts,
 } from "./readiness-checks";
@@ -50,6 +53,8 @@ export type SystemReadiness = {
   generatedAt: string;
   automatic: AutomaticReadinessRow[];
   groups: Array<{ id: ManualReadinessGroup; title: string; items: ManualReadinessRow[] }>;
+  /** False when the tick table could not be read (for example, its migration is not applied yet). */
+  ticksAvailable: boolean;
   summary: { manualDone: number; manualTotal: number; automaticAttention: number };
 };
 
@@ -79,11 +84,9 @@ async function readPendingMigrations(): Promise<string[] | null> {
   try {
     const entries = await readdir(path.join(process.cwd(), "prisma", "migrations"), { withFileTypes: true });
     const shipped = entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-    const applied = await getPrisma().$queryRaw<Array<{ migration_name: string }>>`
-      SELECT migration_name FROM "_prisma_migrations"
-      WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`;
-    const done = new Set(applied.map((row) => row.migration_name));
-    return shipped.filter((name) => !done.has(name)).sort();
+    const rows = await getPrisma().$queryRaw<MigrationRow[]>`
+      SELECT migration_name, finished_at, rolled_back_at FROM "_prisma_migrations"`;
+    return pendingMigrationNames(shipped, rows);
   } catch (error) {
     logError("System readiness could not read migration status", error);
     return null;
@@ -99,7 +102,10 @@ async function gatherFacts(now: Date): Promise<ReadinessFacts> {
       logError("System readiness could not read the sweep heartbeat", error);
       return null;
     }),
-    getPlatformSettings().catch(() => null),
+    getPlatformSettings().catch((error) => {
+      logError("System readiness could not read platform settings", error);
+      return null;
+    }),
     getAutomaticBackupEvidence().catch((error) => {
       logError("System readiness could not read backup status", error);
       return null;
@@ -116,6 +122,7 @@ async function gatherFacts(now: Date): Promise<ReadinessFacts> {
     email: {
       deliveryConfigured: getEmailAvailability().deliveryConfigured,
       senderConfigured: senders.length > 0,
+      senderReadable: settings !== null,
       senderDeliverable: senders.length > 0 && senders.every((sender) => !isUndeliverableSenderAddress(sender)),
     },
     square: {
@@ -129,9 +136,12 @@ async function gatherFacts(now: Date): Promise<ReadinessFacts> {
 export async function getSystemReadiness(now = new Date()): Promise<SystemReadiness> {
   const [facts, ticks] = await Promise.all([
     gatherFacts(now),
-    getPrisma().systemReadinessTick.findMany(),
+    getPrisma().systemReadinessTick.findMany().catch((error) => {
+      logError("System readiness could not read ticks", error);
+      return null;
+    }),
   ]);
-  const tickByKey = new Map(ticks.map((tick) => [tick.itemKey, tick]));
+  const tickByKey = new Map((ticks ?? []).map((tick) => [tick.itemKey, tick]));
   const automatic = evaluateAutomaticChecks(facts, now);
   const hidden = automaticBackupKeys(facts.backup);
 
@@ -160,8 +170,9 @@ export async function getSystemReadiness(now = new Date()): Promise<SystemReadin
     generatedAt: now.toISOString(),
     automatic,
     groups,
+    ticksAvailable: ticks !== null,
     summary: {
-      manualDone: manual.filter((item) => item.tick).length,
+      manualDone: ticks === null ? 0 : manual.filter((item) => item.tick).length,
       manualTotal: manual.length,
       automaticAttention: automatic.filter((row) => row.status === "attention").length,
     },
@@ -187,6 +198,7 @@ export async function tickReadinessItem(key: string, actor: Actor, note?: string
   if (!item) throw new ReadinessError("UNKNOWN_ITEM", "That checklist item does not exist.");
   const cleanNote = cleanText(note);
   const prisma = getPrisma();
+  try {
   await prisma.$transaction(async (tx) => {
     const existing = await tx.systemReadinessTick.findUnique({ where: { itemKey: key } });
     if (existing) throw new ReadinessError("ALREADY_TICKED", "That item is already ticked.");
@@ -202,6 +214,13 @@ export async function tickReadinessItem(key: string, actor: Actor, note?: string
       metadata: { itemKey: key, note: cleanNote || null },
     }, tx);
   });
+  } catch (error) {
+    // Two administrators ticking at once: the loser hits the primary key.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      throw new ReadinessError("ALREADY_TICKED", "That item is already ticked.");
+    }
+    throw error;
+  }
 }
 
 /** Removing a tick needs a reason, which is kept only in the audit log. */
@@ -210,10 +229,12 @@ export async function untickReadinessItem(key: string, actor: Actor, reason: str
   if (!item) throw new ReadinessError("UNKNOWN_ITEM", "That checklist item does not exist.");
   const cleanReason = cleanText(reason);
   if (!cleanReason) throw new ReadinessError("REASON_REQUIRED", "Say why this item is being unticked.");
+  try {
   await getPrisma().$transaction(async (tx) => {
     const existing = await tx.systemReadinessTick.findUnique({ where: { itemKey: key } });
     if (!existing) throw new ReadinessError("NOT_TICKED", "That item is not ticked.");
-    await tx.systemReadinessTick.delete({ where: { itemKey: key } });
+    const removed = await tx.systemReadinessTick.deleteMany({ where: { itemKey: key } });
+    if (removed.count === 0) throw new ReadinessError("NOT_TICKED", "That item is not ticked.");
     await writeAuditLog({
       actorUserId: actor.id,
       action: "SYSTEM_READINESS_UNTICKED",
@@ -228,4 +249,10 @@ export async function untickReadinessItem(key: string, actor: Actor, reason: str
       },
     }, tx);
   });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
+      throw new ReadinessError("NOT_TICKED", "That item is not ticked.");
+    }
+    throw error;
+  }
 }

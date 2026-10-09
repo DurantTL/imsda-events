@@ -70,7 +70,9 @@ export function SystemReadinessWorkspace({ initialReadiness }: { initialReadines
             {summary.automaticAttention === 0
               ? "No automatic check needs attention."
               : `${summary.automaticAttention} automatic ${summary.automaticAttention === 1 ? "check needs" : "checks need"} attention.`}{" "}
-            {summary.manualDone} of {summary.manualTotal} manual items ticked.
+            {readiness.ticksAvailable
+              ? `${summary.manualDone} of ${summary.manualTotal} manual items ticked.`
+              : "Manual ticks could not be read."}
           </p>
         </div>
       </div>
@@ -120,7 +122,7 @@ export function SystemReadinessWorkspace({ initialReadiness }: { initialReadines
                   <div className={styles.head}>
                     <p className={styles.title}>{item.title}</p>
                     <span className={`${styles.badge} ${item.tick ? styles.ok : styles.unknown}`}>
-                      {item.tick ? "Ticked" : "Not ticked"}
+                      {!readiness.ticksAvailable ? "Could not read ticks" : item.tick ? "Ticked" : "Not ticked"}
                     </span>
                   </div>
                   <p className={styles.detail}>{item.detail}</p>
@@ -163,7 +165,7 @@ export function SystemReadinessWorkspace({ initialReadiness }: { initialReadines
                         </button>
                       </div>
                     </form>
-                  ) : (
+                  ) : readiness.ticksAvailable ? (
                     <div className={styles.actions}>
                       <button
                         className="secondary-button"
@@ -178,7 +180,7 @@ export function SystemReadinessWorkspace({ initialReadiness }: { initialReadines
                         {item.tick ? "Untick" : "Tick"}
                       </button>
                     </div>
-                  )}
+                  ) : null}
                 </li>
               );
             })}

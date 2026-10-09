@@ -28,6 +28,8 @@ export type ReadinessFacts = {
   email: {
     deliveryConfigured: boolean;
     senderConfigured: boolean;
+    /** False when the platform settings could not be read, so the sender is unknown rather than missing. */
+    senderReadable: boolean;
     /** False for a placeholder such as example.org, which cannot send or receive real mail. */
     senderDeliverable: boolean;
   };
@@ -50,6 +52,18 @@ function sweepRow(sweep: SweepHeartbeat | null): AutomaticReadinessRow {
   if (sweep.status === "never") return { ...base, status: "attention", summary: "The sweeper has never reported. Check that the scheduled job is calling it." };
   if (sweep.status === "failing") return { ...base, status: "attention", summary: "The latest sweeper run failed." };
   return { ...base, status: "attention", summary: "The sweeper has not succeeded in over 15 minutes." };
+}
+
+export type MigrationRow = { migration_name: string; finished_at: Date | null; rolled_back_at: Date | null };
+
+/**
+ * A shipped migration is applied only if some row for it finished and was not rolled back. A failed row
+ * (`finished_at` null) or a rolled-back one leaves it pending; a rolled-back row followed by a fresh finished row
+ * (re-applied) counts as applied.
+ */
+export function pendingMigrationNames(shipped: readonly string[], rows: readonly MigrationRow[]): string[] {
+  const done = new Set(rows.filter((row) => row.finished_at !== null && row.rolled_back_at === null).map((row) => row.migration_name));
+  return shipped.filter((name) => !done.has(name)).sort();
 }
 
 /**
@@ -133,24 +147,29 @@ export function evaluateAutomaticChecks(facts: ReadinessFacts, now: Date): Autom
   rows.push({
     key: "email-sender",
     title: "Sender address is a real, deliverable address",
-    status: email.senderConfigured && email.senderDeliverable ? "ok" : "attention",
-    summary: !email.senderConfigured
-      ? "No sender address is set."
-      : email.senderDeliverable
-        ? "A sender address is set and is not a placeholder. The app cannot check the provider's domain verification itself, so confirm that with the provider."
-        : "The sender address is a placeholder domain that cannot send real mail.",
+    status: !email.senderReadable && !email.senderConfigured
+      ? "unknown"
+      : email.senderConfigured && email.senderDeliverable ? "ok" : "attention",
+    summary: !email.senderReadable && !email.senderConfigured
+      ? "The sender settings could not be read."
+      : !email.senderConfigured
+        ? "No sender address is set."
+        : email.senderDeliverable
+          ? "A sender address is set and is not a placeholder. The app cannot check the provider's domain verification itself, so confirm that with the provider."
+          : "The sender address is a placeholder domain that cannot send real mail.",
     people: [],
   });
 
+  const unlock = `Production unlock: ${facts.square.productionUnlocked ? "on" : "off"}.`;
   rows.push({
     key: "square-environment",
     title: "Square environment",
     status: "info",
     summary: facts.square.environment === "production"
       ? facts.square.productionUnlocked
-        ? "Production, and production is unlocked."
-        : "Production is selected but not unlocked, so card payments stay blocked."
-      : "Sandbox. Production is not selected.",
+        ? `Production. ${unlock}`
+        : `Production is selected but not unlocked, so card payments stay blocked. ${unlock}`
+      : `Sandbox. ${unlock}`,
     people: [],
   });
 
