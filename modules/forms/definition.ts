@@ -149,6 +149,15 @@ export const formFieldSchema = z.object({
    */
   filterable: z.boolean().optional(),
   /**
+   * A small heading shared by consecutive fields (#856), e.g. "1. Pastor" over
+   * a reference's name, address and phone. The fill-in form lays each run of
+   * fields with the same group out as its own row under that heading, so the
+   * labels inside can be short ("Name"); read-only views, CSV headings and the
+   * builder prefix the group ("1. Pastor — Name") so a label is never
+   * ambiguous. Display only: the field key and stored answer are unchanged.
+   */
+  group: z.string().trim().min(2).max(80).optional(),
+  /**
    * "Sensitive" (#743): only staff with VIEW_SENSITIVE_DATA see the answer or
    * filter on it. Absent means the read-time default (health-type fields are
    * sensitive) in `modules/forms/field-flags.ts`.
@@ -223,6 +232,22 @@ export const formFieldSchema = z.object({
     context.addIssue({ code: "custom", path: ["capUnitsAtAttendeeCount"], message: "Capping at the headcount requires a per-unit credit." });
   }
 });
+
+/** A field's label with its group heading in front ("1. Pastor — Name"), for views where the heading is not shown beside it. */
+export function fieldDisplayLabel(field: { label: string; group?: string }) {
+  return field.group ? `${field.group} \u2014 ${field.label}` : field.label;
+}
+
+/** Splits a section's fields into runs of consecutive fields with the same group (or none), keeping their order. */
+export function fieldRuns<T extends { group?: string }>(fields: readonly T[]) {
+  const runs: { group: string | undefined; fields: T[] }[] = [];
+  for (const field of fields) {
+    const last = runs[runs.length - 1];
+    if (last && last.group === field.group) last.fields.push(field);
+    else runs.push({ group: field.group, fields: [field] });
+  }
+  return runs;
+}
 
 export const formSectionSchema = z.object({
   id: z.string().trim().min(3).max(80),
@@ -1894,8 +1919,8 @@ export function dateFieldProblem(
   date: string,
   now: Date = new Date(),
 ) {
-  if (date < EARLIEST_DATE_VALUE) return `${field.label} can't be before ${EARLIEST_DATE_YEAR}.`;
-  if (isBirthDateField(field) && date > todayDateValue(now)) return `${field.label} can't be in the future.`;
+  if (date < EARLIEST_DATE_VALUE) return `${fieldDisplayLabel(field)} can't be before ${EARLIEST_DATE_YEAR}.`;
+  if (isBirthDateField(field) && date > todayDateValue(now)) return `${fieldDisplayLabel(field)} can't be in the future.`;
   return null;
 }
 
@@ -1922,22 +1947,22 @@ export function validateTestResponses(
       const value = responses[field.key];
       const requiredHere = isFieldRequired(field, responses);
       if (requiredHere && !optionalFieldKeys.has(field.key) && !hasValue(value)) {
-        issues.push({ fieldId: field.id, key: field.key, message: `${field.label} is required.` });
+        issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} is required.` });
         continue;
       }
       if (!hasValue(value)) continue;
       if ((field.type === "TEXT" || field.type === "LONG_TEXT" || field.type === "EMAIL" || field.type === "PHONE" || field.type === "DATE") && typeof value !== "string") {
-        issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be text.` });
+        issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be text.` });
         continue;
       }
-      if (field.type === "TEXT" && String(value).length > 500) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be 500 characters or fewer.` });
-      if (field.type === "LONG_TEXT" && String(value).length > 5000) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be 5,000 characters or fewer.` });
-      if (field.type === "EMAIL" && (String(value).length > 160 || !z.email().safeParse(value).success)) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be a valid email address.` });
-      if (field.type === "PHONE" && String(value).length > 80) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be 80 characters or fewer.` });
+      if (field.type === "TEXT" && String(value).length > 500) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be 500 characters or fewer.` });
+      if (field.type === "LONG_TEXT" && String(value).length > 5000) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be 5,000 characters or fewer.` });
+      if (field.type === "EMAIL" && (String(value).length > 160 || !z.email().safeParse(value).success)) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be a valid email address.` });
+      if (field.type === "PHONE" && String(value).length > 80) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be 80 characters or fewer.` });
       if (field.type === "DATE") {
         const date = String(value);
         const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
-        if (!parsed || Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== date) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be a valid date.` });
+        if (!parsed || Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== date) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be a valid date.` });
         else {
           const problem = dateFieldProblem(field, date);
           if (problem) issues.push({ fieldId: field.id, key: field.key, message: problem });
@@ -1948,19 +1973,19 @@ export function validateTestResponses(
         const bounds = numberFieldBounds(field);
         if (bounds) {
           if (!Number.isInteger(numeric) || numeric < bounds.minimumAge || numeric > bounds.maximumAge) {
-            issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be a whole number from ${bounds.minimumAge} to ${bounds.maximumAge}.` });
+            issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be a whole number from ${bounds.minimumAge} to ${bounds.maximumAge}.` });
           }
         } else if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100000) {
-          issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be a number from 0 to 100,000.` });
+          issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be a number from 0 to 100,000.` });
         }
       }
-      if (field.type === "CHECKBOX" && typeof value !== "boolean") issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must be checked or unchecked.` });
+      if (field.type === "CHECKBOX" && typeof value !== "boolean") issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be checked or unchecked.` });
       if (field.type === "ADDRESS") {
-        for (const message of validateAddressValue(field.label, value)) {
+        for (const message of validateAddressValue(fieldDisplayLabel(field), value)) {
           issues.push({ fieldId: field.id, key: field.key, message });
         }
       }
-      if ((field.type === "SELECT" || field.type === "RADIO") && !field.options.includes(String(value))) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} must use one of its configured choices.` });
+      if ((field.type === "SELECT" || field.type === "RADIO") && !field.options.includes(String(value))) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must use one of its configured choices.` });
       if (field.type === "MULTISELECT" || field.type === "RANKED_CHOICE") {
         const selections = Array.isArray(value) ? value.map(String) : [];
         const maximum = field.maxSelections ?? (field.type === "RANKED_CHOICE" ? 2 : field.options.length);
@@ -1968,10 +1993,10 @@ export function validateTestResponses(
         const minimum = !requiredHere && field.required
           ? 1
           : field.minSelections ?? (field.required ? (field.type === "RANKED_CHOICE" ? Math.min(2, maximum) : 1) : 0);
-        if (!Array.isArray(value) || selections.some((selection) => !field.options.includes(selection))) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} contains an invalid choice.` });
-        else if (new Set(selections).size !== selections.length) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} cannot contain duplicate choices.` });
-        else if (selections.length < minimum) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} requires ${minimum} choices.` });
-        else if (selections.length > maximum) issues.push({ fieldId: field.id, key: field.key, message: `${field.label} allows up to ${maximum} choices.` });
+        if (!Array.isArray(value) || selections.some((selection) => !field.options.includes(selection))) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} contains an invalid choice.` });
+        else if (new Set(selections).size !== selections.length) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} cannot contain duplicate choices.` });
+        else if (selections.length < minimum) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} requires ${minimum} choices.` });
+        else if (selections.length > maximum) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} allows up to ${maximum} choices.` });
       }
       if (
         !options.ignoreAvailability

@@ -417,12 +417,21 @@ export function $importEmailMarkdown(source: string) {
 }
 
 /**
+ * The Markdown exporter escapes `_` in plain text, which turns a hand-typed
+ * `{{announcement_body}}` into `{{announcement\_body}}`. Leave `{{ ... }}`
+ * spans unescaped so a typed token matches an inserted one (#859).
+ */
+function unescapeTokenUnderscores(markdown: string) {
+  return markdown.replace(/\{\{[^{}\n]*\}\}/g, (span) => span.replace(/\\_/g, "_"));
+}
+
+/**
  * Export the current editor as Markdown with a blank line between blocks, so
  * each block renders as its own paragraph. A line break inside a paragraph is
  * written as two trailing spaces and a newline. Call inside read().
  */
 export function $exportEmailMarkdown() {
-  return $convertToMarkdownString(EMAIL_MARKDOWN_TRANSFORMERS, undefined, false)
+  return unescapeTokenUnderscores($convertToMarkdownString(EMAIL_MARKDOWN_TRANSFORMERS, undefined, false))
     .split("\n\n")
     .map((block) => (
       LIST_ITEM_LINE.test(block) ? block : block.replace(/[ \t]*\n/g, "  \n")

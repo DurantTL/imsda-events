@@ -26,7 +26,9 @@ export function deskLocationHref(basePath: string, params: Record<string, string
  * End, paging, type-ahead letters). Each fires `change`, so they must not
  * navigate; Enter or Apply does.
  */
-export function isSelectStepKey(key: string) {
+export function isSelectStepKey(key: string, modifiers: { altKey?: boolean; metaKey?: boolean; ctrlKey?: boolean } = {}) {
+  // Alt/Meta/Ctrl combinations (Alt+ArrowDown, F4 open the list) do not step the value: a pick made in the open list must submit.
+  if (modifiers.altKey || modifiers.metaKey || modifiers.ctrlKey || key === "F4") return false;
   return ["ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(key) || (key.length === 1 && key !== " ");
 }
 
@@ -109,8 +111,10 @@ export function DeskLocationSelect({
             // Submit after that change has landed; submitOnce drops a second request.
             steppedByKeyboard.current = false;
             setTimeout(submitOnce, 0);
-          } else steppedByKeyboard.current = isSelectStepKey(event.key);
+          } else steppedByKeyboard.current = isSelectStepKey(event.key, event);
         }}
+        onBlur={() => { steppedByKeyboard.current = false; }}
+        onFocus={() => { steppedByKeyboard.current = false; }}
         onPointerDown={() => { steppedByKeyboard.current = false; }}
         ref={selectRef}
         value={value}

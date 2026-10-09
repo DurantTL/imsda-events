@@ -392,6 +392,33 @@ describe("transactional lifecycle messages", () => {
     expect(message.create.bodyTextSnapshot).not.toContain("do-not-render");
   });
 
+  it("does not repeat the seminar summary when an already-saved body holds {{seminar\\_preferences}}", async () => {
+    const { tx, upsert } = transactionFixture();
+    (tx.eventMessageTemplate.findUnique as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      isEnabled: true,
+      versions: [{
+        id: "escaped-token-version",
+        subjectTemplate: "Registration updated: {{event_name}}",
+        bodyTemplate: "# Updated\n\nYour seminars:\n\n{{seminar\\_preferences}}",
+      }],
+    });
+    await enqueueRegistrationUpdatedMessage(tx as never, {
+      eventId: "event-1",
+      registrationId: "registration-1",
+      correlationId: "escaped-seminar",
+      transitionKey: "seminar-preferences:escaped",
+      changeCategory: "SEMINAR_PREFERENCES",
+      seminarPreferences: [{
+        attendeeName: "Retreat Guest",
+        fields: [{ label: "Seminar", choices: ["Prayer", "Service"] }],
+      }],
+    });
+    const body = queuedMessage(upsert).create.bodyTextSnapshot;
+    expect(body).not.toContain("### Seminar preferences");
+    expect(body.match(/Retreat Guest/g)).toHaveLength(1);
+    expect(body).not.toContain("{{");
+  });
+
   it("creates one immutable, idempotent payment-receipt snapshot for a Square success transition", async () => {
     const { tx, upsert } = transactionFixture();
     const input = {
@@ -712,6 +739,7 @@ describe("waitlist messages for a club at an event location (#599)", () => {
       ["# Custom heading\n\nHello {{recipient_name}}, you wait.", ["# Custom heading\n\n**Location:** Des Moines\n"]],
       ["No heading. {{recipient_name}}", ["**Location:** Des Moines\n\nNo heading."]],
       ["# Mine\n\nWe meet at {{event_location}}.", ["We meet at Des Moines."]],
+      ["# Mine\n\nWe meet at {{event\\_location}}.", ["We meet at Des Moines."]],
     ] as const) {
       const { tx, upsert } = atLocation({ name: "Des Moines", address: null });
       tx.eventMessageTemplate.findUnique.mockResolvedValue({

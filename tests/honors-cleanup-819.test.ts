@@ -267,6 +267,15 @@ describe("the club print report holds honor names and counts only (#819)", () =>
       expect(asking.match(/primary-button/g)).toHaveLength(1);
     });
 
+    it("choosing a member or year shows the report at once, with Show report kept for no-JavaScript use (#851)", async () => {
+      const person = await render({ view: "person", member: "m1" });
+      expect(person).toMatch(/<form[^>]*aria-label="Report options"[^>]*method="get"/);
+      expect(person).toContain('name="member"');
+      expect(person).toMatch(/class="primary-button auto-submit-go"/);
+      expect(person).toContain("Show report");
+      expect(person).toContain('report-print-button');
+    });
+
     it("one person: a member id that isn't on the club's list never reaches the export and asks for a member", async () => {
       const html = await render({ view: "person", member: "member-of-another-club" });
       expect(mocks.loadHonorsExport).not.toHaveBeenCalled();

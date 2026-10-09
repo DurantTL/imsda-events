@@ -9,7 +9,7 @@ import {
   validateClubFormAnswers,
   withAutoDates,
 } from "@/modules/club-forms/domain";
-import { formTemplates, registrationFormDefinitionSchema, todayDateValue } from "@/modules/forms/definition";
+import { fieldDisplayLabel, fieldRuns, formTemplates, registrationFormDefinitionSchema, todayDateValue } from "@/modules/forms/definition";
 
 /**
  * The four seeded templates (#610, field specs from #608): they validate on
@@ -95,6 +95,19 @@ describe("seeded club form templates", () => {
     expect(keys.filter((key) => /^honor_\d_name$/.test(key))).toHaveLength(8);
     expect(keys.filter((key) => /^reference_\d_name$/.test(key))).toHaveLength(3);
     expect(staff().staffOnlyFieldKeys).toEqual(["office_date_received", "office_date_approved", "office_recommendation", "office_signature"]);
+  });
+
+  it("lays each staff reference out as its own group with plain labels, keys unchanged (#856)", () => {
+    expect(staff().version).toBe(4);
+    const section = staff().definition.sections.find((candidate) => candidate.id === "sec_references")!;
+    expect(section.fields.map((field) => field.key)).toEqual([1, 2, 3].flatMap((n) => ["name", "address", "phone"].map((part) => `reference_${n}_${part}`)));
+    const runs = fieldRuns(section.fields);
+    expect(runs.map((run) => run.group)).toEqual(["1. Pastor", "2. Local reference", "3. Other reference"]);
+    for (const run of runs) expect(run.fields.map((field) => field.label)).toEqual(["Name", "Address", "Phone"]);
+    expect(fieldDisplayLabel(section.fields[0])).toBe("1. Pastor \u2014 Name");
+    expect(fieldDisplayLabel({ label: "Plain" })).toBe("Plain");
+    expect(section.fields.filter((field) => field.type === "PHONE")).toHaveLength(3);
+    expect(registrationFormDefinitionSchema.parse(staff().definition).sections.find((candidate) => candidate.id === "sec_references")!.fields[0].group).toBe("1. Pastor");
   });
 
   it("keeps the club-entered fee fields off a private link but on the director's form (#719)", () => {

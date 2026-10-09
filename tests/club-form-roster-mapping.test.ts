@@ -56,7 +56,7 @@ describe("the seeded mappings (#721)", () => {
 
   it("bump the version so the sync brings stored templates up to date", () => {
     expect(membership.version).toBe(3);
-    expect(staffForm.version).toBe(3);
+    expect(staffForm.version).toBe(4);
   });
 
   it("map the birth date only from a field the template marks as a birth date, and never a health field", () => {
