@@ -23,7 +23,10 @@ describe("the one class-change deadline (#831)", () => {
   it("uses the site's own close when it has one, earlier or later than the event's", () => {
     expect(classChangesOpen(event, site("2026-10-20"), new Date("2026-10-19T20:00:00Z"))).toBe(true);
     expect(classChangesOpen(event, site("2026-10-20"), new Date("2026-10-21T20:00:00Z"))).toBe(false);
-    expect(classChangesEnded(event, site("2026-10-20"), new Date("2026-10-21T20:00:00Z"))).toBe(true);
+    // The close date passing is a deadline, not an end: staff can extend it, so the line is kept.
+    expect(classChangesEnded(event, site("2026-10-20"), new Date("2026-10-21T20:00:00Z"))).toBe(false);
+    expect(classChangesEnded(event, { firstDay: null, lastDay: "2026-10-25", registrationClosesOn: null }, new Date("2026-10-26T20:00:00Z"))).toBe(true);
+    expect(classChangesEnded(event, null, new Date("2026-12-07T20:00:00Z"))).toBe(true);
   });
 
   it("is not 'over for good' before registration opens", () => {

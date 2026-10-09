@@ -23,7 +23,7 @@ import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
 import { ClassSelectionError, getClassSelectionWorkspace, setClassSelections } from "../modules/honors/enrollment-repository";
 import { createHonorOffering, updateHonorOffering } from "../modules/honors/repository";
-import { locationChangeBlock } from "../modules/honors/locations";
+import { crossSitePickCount, locationChangeBlock } from "../modules/honors/locations";
 import {
   acceptClassWaitlistOffer,
   joinClassWaitlist,
@@ -342,14 +342,19 @@ async function main() {
   // The registration closes after 2026-11-30: no seat is offered, a live offer can't be accepted, and it lapses without passing on.
   const closedSweep = await sweepClassWaitlists(late);
   assert((await statusOf("d5", classD2)) === "EXPIRED" && (await entryOf("d5", classD2))!.resolution === "Class changes closed", "an offer live at the deadline lapses when class changes close");
-  assert((await statusOf("d6", classD2)) === "REMOVED" && (await entryOf("d6", classD2))!.resolution === "Class changes closed" && closedSweep.offered === 0, "and its seat is not passed on after the deadline; waiting places are closed, not left waiting");
+  assert((await statusOf("d6", classD2)) === "WAITING" && closedSweep.offered === 0, "and its seat is not passed on after the deadline; waiting places stay waiting, so an extension revives the line in order");
   await expectCode(join("d3", classD, {}, late), "DEADLINE_PASSED", null, "no one can join a waitlist after the deadline");
   await prisma.registration.update({ where: { id: regOf("c1") }, data: { status: "CANCELLED", cancelledAt: late } });
   await promoteAfterRegistrationCancelled(regOf("c1"), late);
-  assert((await statusOf("d2", classD)) === "REMOVED", "a seat freed after the deadline (a cancellation) is not offered");
+  assert((await statusOf("d2", classD)) === "WAITING", "a seat freed after the deadline (a cancellation) is not offered");
   assert((await sweepClassWaitlists(late)).offered === 0, "the sweep offers nothing after the deadline either");
   await prisma.registration.update({ where: { id: regOf("c1") }, data: { status: "SUBMITTED", cancelledAt: null } });
   await setHonorWaitlistOfferHours(eventId, 24, adminId);
+  // Staff extend the deadline: the line is still there and picks up in its original order.
+  await prisma.event.update({ where: { id: eventId }, data: { registrationClosesOn: "2026-12-03" } });
+  await sweepClassWaitlists(late);
+  assert((await statusOf("d6", classD2)) === "OFFERED", "extending the deadline revives the waiting line, offering the free seat to the first in line");
+  await prisma.event.update({ where: { id: eventId }, data: { registrationClosesOn: "2026-11-30" } });
   console.log("ok  the deadline: no offers, joins or acceptances after class changes close, a live offer lapses without passing on, and the window is a per-event setting");
 
   // ---- 6. A cancellation passes seats on (before the deadline)
@@ -450,6 +455,7 @@ async function main() {
   await expectCode(join("s2", classS, {}, afterSite), "DEADLINE_PASSED", null, "so does joining a waitlist");
   const blocked = await locationChangeBlock(prisma, regOf("c4"), site.id);
   assert(blocked !== null && /waitlist places/.test(blocked), "a registration with a waitlist place at the site can't change site");
+  assert((await crossSitePickCount(prisma, attendeeOf("s1"), regOf("c4"), null)) === 1 && (await crossSitePickCount(prisma, attendeeOf("s1"), regOf("c4"), site.id)) === 0, "a waitlist place at another site blocks a member transfer like a pick does");
   await leave("s1", classS);
   assert((await locationChangeBlock(prisma, regOf("c4"), site.id)) === null, "and can once the place is removed");
   await prisma.registration.update({ where: { id: regOf("c4") }, data: { locationId: null } });
@@ -457,8 +463,14 @@ async function main() {
   console.log("ok  one deadline: the site's close governs direct picks, the screen and the waitlist; a waitlist place blocks a site change");
 
   // ---- 7e. The sweep pages through every class, not just the first page, and leaves nothing finished behind
-  const paged = await sweepClassWaitlists(late, 1);
-  assert(paged.failed === 0, "a sweep with a page size of one finishes without failures");
+  // Waiting places are closed only once the event has ended, not when the deadline passes.
+  assert((await statusOf("d2", classD)) === "WAITING", "still waiting after the deadline while the event is to come");
+  const ended = new Date("2026-12-07T15:00:00Z");
+  const paged = await sweepClassWaitlists(ended, 1);
+  assert(paged.failed === 0 && paged.budgetExhausted === false, "a sweep with a page size of one finishes without failures, inside its time budget");
+  assert((await entryOf("d2", classD))!.resolution === "Class changes closed" && (await statusOf("d2", classD)) === "REMOVED", "a waiting place is closed, audited, once the event has ended");
+  const tiny = await sweepClassWaitlists(ended, 1, 5000, -1);
+  assert(tiny.classes === 0 && tiny.budgetExhausted === true, "a sweep past its time budget starts no new class");
   assert((await prisma.honorClassWaitlistEntry.count({ where: { eventId, status: { in: ["WAITING", "OFFERED"] } } })) === 0, "once class changes have closed for good, no place is left waiting or holding an offer");
   console.log("ok  the sweep pages through everything and closes what can no longer be offered");
 

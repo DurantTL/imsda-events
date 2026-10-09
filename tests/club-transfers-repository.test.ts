@@ -311,6 +311,9 @@ describe("registration moves (staff approve each one)", () => {
     db.registrationAttendee.findUnique.mockResolvedValue(null);
     db.registrationAttendee.findFirst.mockResolvedValue({ position: 3 });
     countPicks({ perClub: 1 });
+    // No class waitlist places on the move (#831).
+    db.honorClassWaitlistEntry.findMany.mockResolvedValue([]);
+    db.honorClassWaitlistEntry.count.mockResolvedValue(0);
     for (const name of ["registrationAdjustment", "honorEnrollment", "registrationCapacityReservation"]) {
       db[name]!.updateMany!.mockResolvedValue({ count: 1 });
     }

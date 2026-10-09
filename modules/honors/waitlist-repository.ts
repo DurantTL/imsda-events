@@ -513,7 +513,7 @@ export async function closeClassWaitlist(tx: Tx, input: { eventId: string; offer
   return open.length;
 }
 
-export type WaitlistSweepResult = { classes: number; offered: number; lapsed: number; failed: number };
+export type WaitlistSweepResult = { classes: number; offered: number; lapsed: number; failed: number; budgetExhausted: boolean };
 
 /**
  * The time-based trigger (#831). The outbox sweep calls this every few minutes. It works class by class, each in its
@@ -523,9 +523,16 @@ export type WaitlistSweepResult = { classes: number; offered: number; lapsed: nu
  * leave the sweep's work. It pages through everything rather than stopping at a cap; `maxClasses` only bounds one run.
  * One class failing (a busy lock, say) is counted and left for the next sweep.
  */
-export async function sweepClassWaitlists(now = new Date(), pageSize = 100, maxClasses = 5000): Promise<WaitlistSweepResult> {
+export async function sweepClassWaitlists(now = new Date(), pageSize = 100, maxClasses = 5000, budgetMs = 20_000): Promise<WaitlistSweepResult> {
   const prisma = getPrisma();
-  const result: WaitlistSweepResult = { classes: 0, offered: 0, lapsed: 0, failed: 0 };
+  const result: WaitlistSweepResult = { classes: 0, offered: 0, lapsed: 0, failed: 0, budgetExhausted: false };
+  const startedAt = Date.now();
+  // One sweep request is bounded: past the budget no new class is started, and the next sweep carries on.
+  const outOfTime = () => {
+    if (Date.now() - startedAt <= budgetMs) return false;
+    result.budgetExhausted = true;
+    return true;
+  };
   const done = new Set<string>();
   const advance = async (row: { eventId: string; offeringId: string }) => {
     if (done.has(row.offeringId)) return;
@@ -542,7 +549,7 @@ export async function sweepClassWaitlists(now = new Date(), pageSize = 100, maxC
     }
   };
   // Phase A: classes with an offer that has run out, earliest expiry first.
-  while (result.classes < maxClasses) {
+  while (result.classes < maxClasses && !outOfTime()) {
     const rows = await prisma.honorClassWaitlistEntry.findMany({
       where: { status: "OFFERED", offerExpiresAt: { lte: now }, offeringId: { notIn: [...done] } },
       orderBy: [{ offerExpiresAt: "asc" }, { id: "asc" }],
@@ -550,11 +557,14 @@ export async function sweepClassWaitlists(now = new Date(), pageSize = 100, maxC
       take: pageSize,
     });
     if (rows.length === 0) break;
-    for (const row of rows) await advance(row);
+    for (const row of rows) {
+      if (outOfTime()) break;
+      await advance(row);
+    }
   }
   // Phase B: every other class that still has a line, by id.
   let after: string | undefined;
-  while (result.classes < maxClasses) {
+  while (result.classes < maxClasses && !outOfTime()) {
     const rows = await prisma.honorClassWaitlistEntry.findMany({
       where: { status: { in: ["WAITING", "OFFERED"] }, ...(after ? { offeringId: { gt: after } } : {}) },
       orderBy: [{ offeringId: "asc" }],
@@ -563,7 +573,10 @@ export async function sweepClassWaitlists(now = new Date(), pageSize = 100, maxC
       take: pageSize,
     });
     if (rows.length === 0) break;
-    for (const row of rows) await advance(row);
+    for (const row of rows) {
+      if (outOfTime()) break;
+      await advance(row);
+    }
     after = rows[rows.length - 1]!.offeringId;
   }
   return result;
@@ -767,22 +780,27 @@ export async function acceptClassWaitlistOffer(organizationId: string, eventId: 
     // The offer can't be taken: it goes back to waiting (keeping its place) and the seat passes to the next youth, in a
     // step of its own that commits even though the acceptance is refused (#831).
     const refused: ClassSelectionError = refusal;
-    const released = await runSerializable(async (tx) => {
-      await lockOfferings(tx, [offeringOfEntry]);
-      const changed = await tx.honorClassWaitlistEntry.updateMany({
-        where: { id: entryId, status: "OFFERED" },
-        data: { status: "WAITING", offeredAt: null, offerExpiresAt: null, resolution: "Offer released: it could not be accepted" },
+    try {
+      const released = await runSerializable(async (tx) => {
+        await lockOfferings(tx, [offeringOfEntry]);
+        const changed = await tx.honorClassWaitlistEntry.updateMany({
+          where: { id: entryId, status: "OFFERED" },
+          data: { status: "WAITING", offeredAt: null, offerExpiresAt: null, resolution: "Offer released: it could not be accepted" },
+        });
+        if (changed.count === 1) {
+          await writeAuditLog({
+            eventId, ...actorFields(actor), action: "HONOR_CLASS_WAITLIST_OFFER_RELEASED", entityType: "HonorClassWaitlistEntry", entityId: entryId,
+            summary: "A class waitlist offer was released because it could not be accepted; the youth keeps their place.",
+            metadata: { organizationId, offeringId: offeringOfEntry, code: refused.code, ...actorMetadata(actor) },
+          }, tx);
+        }
+        return promoteClassWaitlists(tx, eventId, [offeringOfEntry], now);
       });
-      if (changed.count === 1) {
-        await writeAuditLog({
-          eventId, ...actorFields(actor), action: "HONOR_CLASS_WAITLIST_OFFER_RELEASED", entityType: "HonorClassWaitlistEntry", entityId: entryId,
-          summary: "A class waitlist offer was released because it could not be accepted; the youth keeps their place.",
-          metadata: { organizationId, offeringId: offeringOfEntry, code: refused.code, ...actorMetadata(actor) },
-        }, tx);
-      }
-      return promoteClassWaitlists(tx, eventId, [offeringOfEntry], now);
-    });
-    await deliverWaitlistOfferMessages(released.messageIds);
+      await deliverWaitlistOfferMessages(released.messageIds);
+    } catch (error) {
+      // The director's answer is the refusal, whatever happens here; the sweep releases and passes on the offer when it lapses.
+      logError("A refused class waitlist acceptance could not release its offer; the sweep will.", error, { entryId, offeringId: offeringOfEntry });
+    }
     throw refused;
   }
   return getClassSelectionWorkspace(organizationId, eventId, now);
