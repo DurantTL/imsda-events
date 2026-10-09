@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { ArrowRight, GraduationCap } from "lucide-react";
 import { InstructorInviteAccept } from "@/components/instructor-invite-accept";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import { STERLING_REQUIRED_MESSAGE } from "@/modules/honors/instructor-domain";
 import { listInstructorClasses, listInstructorInvitesForAccount } from "@/modules/honors/instructor-repository";
 
@@ -17,6 +18,7 @@ export const dynamic = "force-dynamic";
  * account.
  */
 export default async function InstructorClassesPage() {
+  await requireAttendeeSecondStep();
   const { account, via } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
   if (via !== "attendee") redirect("/account");

@@ -18,6 +18,11 @@ export function instructorEditDeadline(eventEndsAt: Date) {
   return new Date(eventEndsAt.getTime() + INSTRUCTOR_EDIT_GRACE_DAYS * DAY_MS);
 }
 
+/** Marks open on the event's start. The roster can be read before. */
+export function instructorMarksStarted(eventStartsAt: Date, now: Date) {
+  return now.getTime() >= eventStartsAt.getTime();
+}
+
 export function instructorMarksOpen(eventEndsAt: Date, now: Date) {
   return now.getTime() <= instructorEditDeadline(eventEndsAt).getTime();
 }

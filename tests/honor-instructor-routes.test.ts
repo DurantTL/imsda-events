@@ -14,11 +14,13 @@ const mocks = vi.hoisted(() => ({
   setHonorInstructorClasses: vi.fn(),
   removeHonorInstructor: vi.fn(),
   resendHonorInstructorInvite: vi.fn(),
+  attendeeSecondStepPending: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/modules/access/request-security", () => ({ rejectCrossOriginRequest: mocks.rejectCrossOriginRequest }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));
+vi.mock("@/modules/attendee-accounts/portal-second-step", () => ({ attendeeSecondStepPending: mocks.attendeeSecondStepPending }));
 vi.mock("@/modules/honors/access", () => ({ requireHonorPermission: mocks.requireHonorPermission }));
 vi.mock("@/modules/honors/instructor-repository", async () => {
   const actual = await vi.importActual<typeof import("@/modules/honors/instructor-repository")>("@/modules/honors/instructor-repository");
@@ -67,6 +69,7 @@ beforeEach(() => {
   mocks.rejectCrossOriginRequest.mockReturnValue(null);
   mocks.getCurrentAttendee.mockResolvedValue({ account: { id: "acct-1", verifiedEmail: "ins@example.test", displayName: "Ins" }, via: "attendee", sessionId: "s" });
   mocks.requireHonorPermission.mockResolvedValue({ user: { id: "staff-1" } });
+  mocks.attendeeSecondStepPending.mockResolvedValue(false);
   mocks.getInstructorRoster.mockResolvedValue({ status: "OK", header, rows });
   mocks.markInstructorClass.mockResolvedValue({ view: { status: "OK", header, rows }, changed: 1, locked: 0, writeBack: null });
 });
@@ -88,6 +91,23 @@ describe("instructor roster routes (#833)", () => {
     expect((await marks(post({ action: "CLEAR" }), classContext)).status).toBe(401);
     expect(mocks.getInstructorRoster).not.toHaveBeenCalled();
     expect(mocks.markInstructorClass).not.toHaveBeenCalled();
+  });
+
+  it("requires the club second step like club roles do: roster, marks and accepting are refused until it is passed", async () => {
+    mocks.attendeeSecondStepPending.mockResolvedValue(true);
+    expect((await roster(get(), classContext)).status).toBe(403);
+    expect((await marks(post({ action: "CLEAR" }), classContext)).status).toBe(403);
+    expect((await accept(post({}), inviteContext)).status).toBe(403);
+    expect(mocks.getInstructorRoster).not.toHaveBeenCalled();
+    expect(mocks.markInstructorClass).not.toHaveBeenCalled();
+    expect(mocks.acceptInstructorInvite).not.toHaveBeenCalled();
+  });
+
+  it("maps marks not open yet to 409", async () => {
+    mocks.markInstructorClass.mockRejectedValue(new HonorInstructorError("MARKS_NOT_OPEN", "Marks open when the event starts."));
+    const response = await marks(post({ action: "CLEAR" }), classContext);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: "MARKS_NOT_OPEN" });
   });
 
   it("answers a class that isn't theirs with 404", async () => {

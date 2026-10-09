@@ -35,6 +35,7 @@ const client = {
     ),
   },
   areaCoordinatorGrant: { findUnique: async () => null },
+  honorInstructor: { count: async () => 0 },
   attendeeSession: { findUnique: mocks.attendeeSessionFindUnique },
   attendeeMfaEnrollment: { findUnique: async () => ({ status: "ACTIVE" }) },
   attendeePasskey: { count: async () => 0 },

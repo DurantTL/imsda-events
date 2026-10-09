@@ -60,8 +60,12 @@ Instructors page who has no current check.
 - Per person: **Attended** and **Completed**. Completed also marks attended;
   taking attended away takes completed away.
 - One click: **All attended**, **All completed**, **Clear**.
-- Marks can change until **14 days after the event ends**. After that the roster
-  is read only.
+- Marks open when the event starts (the roster is readable before; marking
+  before then is 409 `MARKS_NOT_OPEN`) and can change until **14 days after the
+  event ends**. After that the roster is read only.
+- Instructors pass the same **second step** as club roles (an accepted
+  instructor is part of `accountHasSecondStepAccess`): roster pages and the
+  roster and marks APIs require it.
 
 ## Completion and the honor record
 

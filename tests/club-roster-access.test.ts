@@ -34,6 +34,7 @@ vi.mock("@/lib/prisma", () => ({
     attendeePasskey: { count: mocks.countPasskeys },
     platformSettings: { findUnique: mocks.findSettings },
     areaCoordinatorGrant: { findUnique: mocks.findAreaGrant },
+    honorInstructor: { count: async () => 0 },
   }),
 }));
 vi.mock("@/modules/attendee-accounts/current-attendee", () => ({ getCurrentAttendee: mocks.getCurrentAttendee }));

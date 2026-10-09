@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { ShieldAlert } from "lucide-react";
 import { InstructorRoster } from "@/components/instructor-roster";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import { HonorInstructorError, getInstructorRoster } from "@/modules/honors/instructor-repository";
 
 export const metadata: Metadata = { title: "Class roster", robots: { index: false, follow: false, nocache: true } };
@@ -16,6 +17,7 @@ export const dynamic = "force-dynamic";
  * names.
  */
 export default async function InstructorRosterPage({ params }: { params: Promise<{ offeringId: string }> }) {
+  await requireAttendeeSecondStep();
   const { account, via } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
   if (via !== "attendee") redirect("/account");
@@ -47,6 +49,7 @@ export default async function InstructorRosterPage({ params }: { params: Promise
           <InstructorRoster
             editable={view.header.editable}
             editDeadline={view.header.editDeadline}
+            notOpenYet={view.header.notOpenYet}
             initialRows={view.rows}
             offeringId={view.header.offeringId}
           />

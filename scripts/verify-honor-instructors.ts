@@ -310,6 +310,15 @@ async function main() {
   assert(await prisma.memberHonorEntry.count({ where: { personId: b1.personId, honorId: honorIds.b } }) === 1, "and a completed mark is written by the staff run too");
   console.log("ok  the staff write-back honors an instructor's decision and still completes checked-in people with no mark");
 
+  // ---------------------------------------------------------------- marks open on the event's start
+  await prisma.event.update({ where: { id: eventId }, data: { startsAt: new Date(now.getTime() + DAY) } });
+  const early = await repo.getInstructorRoster(accountA.id, o1.id, now);
+  assert(early.status === "OK" && early.rows.length === 3 && early.header.editable === false && early.header.notOpenYet === true, "before the event the roster is readable but not editable");
+  await expectCode(repo.markInstructorClass(accountA.id, o1.id, { action: "ALL_ATTENDED" }, now), "MARKS_NOT_OPEN", "marking before the event starts");
+  await expectCode(repo.markInstructorClass(accountA.id, o1.id, { action: "SET", enrollmentId: a1.enrollmentId, attended: true }, now), "MARKS_NOT_OPEN", "a per-person mark before the event starts");
+  await prisma.event.update({ where: { id: eventId }, data: { startsAt } });
+  console.log("ok  marks open on the event's start; the roster is readable before");
+
   // ---------------------------------------------------------------- the 14-day window
   const lastDay = new Date(endsAt.getTime() + 14 * DAY);
   const open = await repo.markInstructorClass(accountA.id, o1.id, { action: "ALL_ATTENDED" }, new Date(lastDay.getTime() - 1000));

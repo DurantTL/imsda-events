@@ -4,6 +4,7 @@ import { ZodError, z } from "zod";
 import { logError } from "@/lib/logger";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
+import { attendeeSecondStepPending } from "@/modules/attendee-accounts/portal-second-step";
 import { HonorInstructorError } from "@/modules/honors/instructor-repository";
 import { BULK_MARK_ACTIONS } from "@/modules/honors/instructor-domain";
 
@@ -18,6 +19,10 @@ export async function requireInstructorAccount() {
   const { account, via } = await getCurrentAttendee();
   if (!account || via !== "attendee") {
     throw new AccessDeniedError("Sign in with your own account to see your classes.", 401, "AUTHENTICATION_REQUIRED");
+  }
+  // Rosters hold young people's names: the same second step club roles pass applies here (#833).
+  if (await attendeeSecondStepPending()) {
+    throw new AccessDeniedError("Finish two-step sign-in to see your classes.", 403, "PERMISSION_DENIED");
   }
   return account;
 }

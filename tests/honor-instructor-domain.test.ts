@@ -9,6 +9,7 @@ import {
   instructorEditDeadline,
   instructorInviteEmail,
   instructorMarksOpen,
+  instructorMarksStarted,
   instructorStatus,
   markChangeIsLocked,
   normalizeMark,
@@ -26,6 +27,14 @@ describe("instructor edit window (#833)", () => {
     expect(instructorMarksOpen(endsAt, new Date("2026-10-11T12:00:00Z"))).toBe(true);
     expect(instructorMarksOpen(endsAt, new Date("2026-10-25T23:00:00Z"))).toBe(true);
     expect(instructorMarksOpen(endsAt, new Date("2026-10-25T23:00:01Z"))).toBe(false);
+  });
+});
+
+describe("marks open on the event's start (#833)", () => {
+  it("opens exactly at the start", () => {
+    const startsAt = new Date("2026-10-09T15:00:00Z");
+    expect(instructorMarksStarted(startsAt, new Date("2026-10-09T14:59:59Z"))).toBe(false);
+    expect(instructorMarksStarted(startsAt, startsAt)).toBe(true);
   });
 });
 

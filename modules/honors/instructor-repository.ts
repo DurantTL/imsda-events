@@ -17,6 +17,7 @@ import {
   instructorEditDeadline,
   instructorInviteEmail,
   instructorMarksOpen,
+  instructorMarksStarted,
   instructorStatus,
   markChangeIsLocked,
   sortInstructorRoster,
@@ -44,6 +45,7 @@ export type HonorInstructorErrorCode =
   | "NOT_ASSIGNED"
   | "STERLING_REQUIRED"
   | "MARKS_CLOSED"
+  | "MARKS_NOT_OPEN"
   | "MARK_LOCKED"
   | "ENROLLMENT_NOT_FOUND"
   | "INVITE_NOT_FOUND"
@@ -57,6 +59,7 @@ const errorStatus: Record<HonorInstructorErrorCode, number> = {
   NOT_ASSIGNED: 404,
   STERLING_REQUIRED: 403,
   MARKS_CLOSED: 409,
+  MARKS_NOT_OPEN: 409,
   MARK_LOCKED: 409,
   ENROLLMENT_NOT_FOUND: 404,
   INVITE_NOT_FOUND: 404,
@@ -411,7 +414,8 @@ function classHeader(assignment: Assignment, now: Date) {
     session: offering.span === "ALL_SESSIONS" ? "All sessions" : offering.session?.name ?? "Session",
     room: offering.location,
     eventName: offering.event.name,
-    editable: instructorMarksOpen(offering.event.endsAt, now),
+    editable: instructorMarksStarted(offering.event.startsAt, now) && instructorMarksOpen(offering.event.endsAt, now),
+    notOpenYet: !instructorMarksStarted(offering.event.startsAt, now),
     editDeadline: instructorEditDeadline(offering.event.endsAt).toISOString(),
     editGraceDays: INSTRUCTOR_EDIT_GRACE_DAYS,
   };
@@ -486,6 +490,9 @@ export type InstructorMarkResult = {
 export async function markInstructorClass(accountId: string, offeringId: string, input: InstructorMarkInput, now = new Date()): Promise<InstructorMarkResult> {
   const assignment = await loadAssignment(accountId, offeringId);
   await requireSterling(assignment, now);
+  if (!instructorMarksStarted(assignment.offering.event.startsAt, now)) {
+    throw new HonorInstructorError("MARKS_NOT_OPEN", "Marks open when the event starts. You can already see your roster.");
+  }
   if (!instructorMarksOpen(assignment.offering.event.endsAt, now)) {
     throw new HonorInstructorError("MARKS_CLOSED", `Marks closed ${INSTRUCTOR_EDIT_GRACE_DAYS} days after the event ended. Ask the conference office if something needs to change.`);
   }

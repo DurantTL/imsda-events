@@ -17,11 +17,14 @@ export function InstructorRoster({
   initialRows,
   editable,
   editDeadline,
+  notOpenYet = false,
 }: {
   offeringId: string;
   initialRows: InstructorRosterRow[];
   editable: boolean;
   editDeadline: string;
+  /** The event hasn't started: the roster is readable, marks open on its start. */
+  notOpenYet?: boolean;
 }) {
   const [rows, setRows] = useState(initialRows);
   const [busy, setBusy] = useState(false);
@@ -56,7 +59,9 @@ export function InstructorRoster({
 
   return (
     <section className="public-manage-card">
-      {editable
+      {notOpenYet
+        ? <div className="inline-notice error" role="status">Marks open when the event starts. You can already see your roster.</div>
+        : editable
         ? <p className="field-help">You can change marks until {deadline}.</p>
         : <div className="inline-notice error" role="status">Marks closed on {deadline}. This roster is read only; ask the conference office if something needs to change.</div>}
       {notice && <div className="inline-notice success" role="status">{notice}</div>}

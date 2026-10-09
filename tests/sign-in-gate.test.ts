@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   passkeyCount: vi.fn(),
   passkeysConfigured: vi.fn(),
   areaGrant: vi.fn(),
+  instructorCount: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -16,6 +17,7 @@ vi.mock("@/lib/prisma", () => ({
     attendeeMfaEnrollment: { findUnique: mocks.enrollment },
     attendeePasskey: { count: mocks.passkeyCount },
     areaCoordinatorGrant: { findUnique: mocks.areaGrant },
+    honorInstructor: { count: mocks.instructorCount },
   }),
 }));
 vi.mock("@/modules/organizations/director-access", () => ({ listDirectedClubs: mocks.listDirectedClubs }));
@@ -32,6 +34,7 @@ beforeEach(() => {
   mocks.passkeyCount.mockResolvedValue(0);
   mocks.passkeysConfigured.mockResolvedValue(true);
   mocks.areaGrant.mockResolvedValue(null);
+  mocks.instructorCount.mockResolvedValue(0);
 });
 
 describe("second step after the password (decision 2026-09-23)", () => {
@@ -42,6 +45,15 @@ describe("second step after the password (decision 2026-09-23)", () => {
     mocks.areaGrant.mockResolvedValue({ revokedAt: new Date() });
     await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("OK");
     mocks.areaGrant.mockResolvedValue({ revokedAt: null, expiresAt: new Date(Date.now() - 1000) });
+    await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("OK");
+  });
+
+  it("asks an accepted Honors Weekend instructor for a second step (#833), and not once they are removed", async () => {
+    mocks.listDirectedClubs.mockResolvedValue([]);
+    mocks.instructorCount.mockResolvedValue(1);
+    await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("VERIFY");
+    expect(mocks.instructorCount).toHaveBeenCalledWith({ where: { attendeeAccountId: "account-1", acceptedAt: { not: null }, revokedAt: null, classes: { some: {} } } });
+    mocks.instructorCount.mockResolvedValue(0);
     await expect(accountNeedsSecondStep("account-1", "session-1")).resolves.toBe("OK");
   });
 
