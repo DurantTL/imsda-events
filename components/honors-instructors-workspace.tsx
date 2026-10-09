@@ -145,7 +145,7 @@ export function HonorsInstructorsWorkspace({
                   {instructor.sterlingCurrent
                     ? "Sterling Volunteers check current"
                     : instructor.sterlingState === "FLAGGED"
-                      ? "Sterling Volunteers check expiring soon (not current for rosters)"
+                      ? "Sterling Volunteers check flagged \"!\" (expiring soon; not current for rosters)"
                       : "No current Sterling Volunteers check"}
                 </span>
                 <fieldset>

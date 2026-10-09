@@ -64,10 +64,12 @@ through the existing list (#405, #527) by `currentCheckStateForPerson`. Without
 one, the roster page and API show a clear message and no names; staff see on the
 Instructors page each instructor's state.
 
-A roster import's "!" mark (expiring soon, FLAGGED) counts as **not current** for
-this gate, although it is current everywhere else: this is the one blocking
-context, so the safer reading wins (pending the owner's confirmation). A Sterling
-check is current through its expiration date.
+A roster import's "!" mark (FLAGGED) counts as **not current** for this gate,
+although it is current everywhere else: this is the one blocking context, so the
+safer reading wins. A Sterling check that is valid but expires within 60 days is
+still a current check and does not block. Both are pending the owner's
+confirmation and live in one function (`sterlingAllowsRoster`). The staff page
+labels a flagged "!" check as such.
 
 ## Marks
 
@@ -95,7 +97,9 @@ Once a completion is in the honor record it is **locked for the instructor**
 honor entry void (#591); a voided completion is never re-created, and the row
 shows "Recorded, later voided by staff".
 
-A marks call takes the write-back's own per-event lock first, so what is
+A marks call takes the write-back's own per-event lock first (with the
+write-back's transaction limits; if it still times out the caller gets a 409
+"Try again in a moment"), re-checks the instructor's assignment under it, so what is
 recorded is read under the lock the write-back writes under.
 
 An instructor's mark governs the staff write-back run: someone marked attended

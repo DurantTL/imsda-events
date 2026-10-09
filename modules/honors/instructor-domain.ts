@@ -39,8 +39,9 @@ export const STERLING_REQUIRED_MESSAGE =
 
 /** The Sterling Volunteers states (`backgroundCheckState`) that let an instructor see a roster. */
 /**
- * Only a plainly current check. A roster import's "!" (FLAGGED, expiring soon) is NOT current here: this is the one
- * place a check blocks access, so the safer reading wins (to be confirmed by the owner).
+ * The one rule for what lets an instructor see a roster (#833), kept in this single function so it is a one-line
+ * change. For now: a roster import's "!" (FLAGGED) blocks; a Sterling check that is valid but expires within 60 days
+ * is still a current check and does not (both pending the owner's confirmation).
  */
 export function sterlingAllowsRoster(state: "CURRENT" | "EXPIRED" | "MISSING" | "NOT_COMPLIANT" | "FLAGGED") {
   return state === "CURRENT";

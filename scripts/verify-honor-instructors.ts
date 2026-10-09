@@ -23,6 +23,9 @@ import { matchableName } from "../modules/background-checks/domain";
 import { clubYearFor } from "../modules/club-rosters/domain";
 
 loadEnvConfig(process.cwd());
+// Fictitious values so account email counts as set up (nothing is ever delivered: messages stay queued locally).
+process.env.ACCOUNT_EMAIL_SENDER_ADDRESS ||= "events@ci.example.test";
+process.env.RESEND_API_KEY ||= "ci-placeholder-never-sent";
 
 const prisma = new PrismaClient();
 const P = "hins";
@@ -68,6 +71,7 @@ async function cleanup() {
   await prisma.honorSession.deleteMany({ where: { eventId: startsWithP } });
   await prisma.event.deleteMany({ where: { id: startsWithP } });
   await prisma.backgroundCheckUpload.deleteMany({ where: { id: uploadId } });
+  await prisma.messageOutbox.deleteMany({ where: { recipientEmail: { startsWith: `${P}-` } } });
   await prisma.memberHonorEntry.deleteMany({ where: { organizationId: startsWithP } });
   await prisma.honor.deleteMany({ where: { id: startsWithP } });
   await prisma.clubRosterMember.deleteMany({ where: { organizationId: startsWithP } });
@@ -353,6 +357,61 @@ async function main() {
   await waiting;
   assert(settled, "and goes ahead once it is released");
   console.log("ok  marks take the write-back's event lock");
+
+  // Access is checked again under that lock: an instructor removed while a marks call waits is refused, and nothing is written.
+  const marksAudits = await prisma.auditLog.count({ where: { action: "HONOR_CLASS_MARKS_UPDATED" } });
+  let release2!: () => void;
+  let lockTaken2!: () => void;
+  const held2 = new Promise<void>((resolve) => { release2 = resolve; });
+  const taken2 = new Promise<void>((resolve) => { lockTaken2 = resolve; });
+  const lockHolder2 = prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`honors-weekend-write-back:${eventId}`}))`;
+    lockTaken2();
+    await held2;
+  }, { timeout: 30_000 });
+  await taken2;
+  const racing = repo.markInstructorClass(accountA.id, o1.id, { action: "ALL_COMPLETED" }, now).then(() => null, (caught: unknown) => caught);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await repo.removeHonorInstructor(eventId, invitedA.instructorId, staffUserId);
+  release2();
+  await lockHolder2;
+  const racedError = await racing as { code?: string } | null;
+  assert(racedError?.code === "NOT_ASSIGNED", `a marks call that waited while the instructor was removed is refused, got ${String(racedError)}`);
+  assert(await prisma.auditLog.count({ where: { action: "HONOR_CLASS_MARKS_UPDATED" } }) === marksAudits, "and wrote nothing");
+  // Put Ina back for the rest of the checks: a removed instructor starts over, so she accepts again.
+  await repo.inviteHonorInstructor(eventId, { firstName: "Ina", lastName: "Instructora", email: accountA.email, offeringIds: [o1.id] }, staffUserId);
+  await repo.acceptInstructorInvite(invitedA.instructorId, { id: accountA.id, verifiedEmail: accountA.email }, now);
+  console.log("ok  access is re-checked under the lock");
+
+  // An existing instructor row is never re-pointed at a different person who now has that email.
+  const oldPerson = await prisma.person.create({ data: { id: `${P}_old_person`, firstName: "Old", lastName: "Holder" } });
+  await prisma.honorInstructor.create({ data: { eventId, personId: oldPerson.id, email: `${P}-zed@example.test`, name: "Old Holder" } });
+  await prisma.person.create({ data: { id: `${P}_zed_person`, firstName: "Zed", lastName: "Zeta", normalizedEmail: `${P}-zed@example.test` } });
+  await expectCode(repo.inviteHonorInstructor(eventId, { firstName: "Zed", lastName: "Zeta", email: `${P}-zed@example.test`, offeringIds: [o1.id] }, staffUserId), "INSTRUCTOR_EMAIL_CONFLICT", "an instructor row made for another person");
+  assert(await prisma.honorInstructor.count({ where: { eventId, email: `${P}-zed@example.test`, personId: oldPerson.id } }) === 1, "the row still belongs to its own person");
+  console.log("ok  a re-invite never re-points an instructor row at a different person");
+
+  // Invite email cooldown and claim (needs account email set up, which the fictitious values above do).
+  const { isAccountEmailConfigured } = await import("../modules/communications/account-email");
+  if (isAccountEmailConfigured()) {
+    const eli = await repo.inviteHonorInstructor(eventId, { firstName: "Eli", lastName: "Emailtest", email: `${P}-eli@example.test`, offeringIds: [o1.id] }, staffUserId);
+    assert(eli.emailQueued, "a new invite is emailed");
+    const sent = () => prisma.messageOutbox.count({ where: { recipientEmail: `${P}-eli@example.test` } });
+    assert(await sent() === 1, "one message queued");
+    await expectCode(repo.resendHonorInstructorInvite(eventId, eli.instructorId, staffUserId), "INVITE_RESEND_TOO_SOON", "a resend a moment after the send");
+    const again = await repo.inviteHonorInstructor(eventId, { firstName: "Eli", lastName: "Emailtest", email: `${P}-eli@example.test`, offeringIds: [o1.id] }, staffUserId);
+    assert(!again.emailQueued && await sent() === 1, "a re-invite of an open invite inside the cooldown is not emailed again");
+    await prisma.honorInstructor.update({ where: { id: eli.instructorId }, data: { sentAt: new Date(Date.now() - 10 * 60 * 1000) } });
+    const raced = await Promise.allSettled([
+      repo.resendHonorInstructorInvite(eventId, eli.instructorId, staffUserId),
+      repo.resendHonorInstructorInvite(eventId, eli.instructorId, staffUserId),
+    ]);
+    assert(raced.filter((result) => result.status === "fulfilled").length === 1, "of two concurrent resends exactly one sends");
+    assert(await sent() === 2, "and exactly one more message was queued");
+    console.log("ok  invite emails share the resend cooldown, and concurrent resends can't both send");
+  } else {
+    console.log("skip  invite email cooldown (account email isn't set up here)");
+  }
 
   // ---------------------------------------------------------------- the 14-day window
   const lastDay = new Date(endsAt.getTime() + 14 * DAY);

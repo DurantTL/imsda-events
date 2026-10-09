@@ -31,7 +31,7 @@ import {
   type InstructorRosterRow,
 } from "@/modules/honors/instructor-domain";
 import { offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
-import { writeBackInstructorCompletions, type HonorsWeekendWriteBackResult } from "@/modules/honors/weekend-completion-repository";
+import { WRITE_BACK_TRANSACTION, writeBackInstructorCompletions, type HonorsWeekendWriteBackResult } from "@/modules/honors/weekend-completion-repository";
 
 /**
  * Honors Weekend class instructors (#833). Staff invite and assign; the
@@ -53,6 +53,7 @@ export type HonorInstructorErrorCode =
   | "ROSTER_CLOSED"
   | "INSTRUCTOR_EMAIL_CONFLICT"
   | "INVITE_RESEND_TOO_SOON"
+  | "TRY_AGAIN"
   | "MARK_LOCKED"
   | "ENROLLMENT_NOT_FOUND"
   | "INVITE_NOT_FOUND"
@@ -70,6 +71,7 @@ const errorStatus: Record<HonorInstructorErrorCode, number> = {
   ROSTER_CLOSED: 404,
   INSTRUCTOR_EMAIL_CONFLICT: 409,
   INVITE_RESEND_TOO_SOON: 409,
+  TRY_AGAIN: 409,
   MARK_LOCKED: 409,
   ENROLLMENT_NOT_FOUND: 404,
   INVITE_NOT_FOUND: 404,
@@ -106,7 +108,20 @@ function eventInviteLinks(email: string) {
   return { signUpUrl: clubInviteSignUpUrl(email), signInUrl: new URL("/account/sign-in", getServerEnv().APP_BASE_URL).toString() };
 }
 
-async function queueInviteEmail(tx: Prisma.TransactionClient, instructor: { id: string; email: string; name: string; eventId: string }, now: Date) {
+/**
+ * Claims the right to send this instructor's invite email now: true for exactly one of any concurrent callers, and
+ * only when none was sent within the club invite cooldown (#425). Stamps `sentAt` in the same statement.
+ */
+async function claimInviteSend(tx: Prisma.TransactionClient, instructorId: string, now: Date) {
+  const cutoff = new Date(now.getTime() - CLUB_INVITE_RESEND_COOLDOWN_MINUTES * 60 * 1000);
+  const claimed = await tx.honorInstructor.updateMany({
+    where: { id: instructorId, OR: [{ sentAt: null }, { sentAt: { lte: cutoff } }] },
+    data: { sentAt: now, sentCount: { increment: 1 } },
+  });
+  return claimed.count === 1;
+}
+
+async function queueInviteEmail(tx: Prisma.TransactionClient, instructor: { id: string; email: string; name: string; eventId: string }) {
   const [event, classes] = await Promise.all([
     tx.event.findUnique({ where: { id: instructor.eventId }, select: { name: true } }),
     tx.honorInstructorClass.findMany({
@@ -142,7 +157,6 @@ async function queueInviteEmail(tx: Prisma.TransactionClient, instructor: { id: 
     },
     select: { id: true },
   });
-  await tx.honorInstructor.update({ where: { id: instructor.id }, data: { sentAt: now, sentCount: { increment: 1 } } });
   return message.id;
 }
 
@@ -172,12 +186,14 @@ export async function inviteHonorInstructor(eventId: string, input: InstructorIn
       select: { id: true, firstName: true, lastName: true },
     });
     const name = `${person.firstName} ${person.lastName}`.trim();
-    const existing = await tx.honorInstructor.findUnique({ where: { eventId_email: { eventId, email } }, select: { id: true, revokedAt: true } });
+    const existing = await tx.honorInstructor.findUnique({ where: { eventId_email: { eventId, email } }, select: { id: true, personId: true, revokedAt: true } });
+    // An existing row for this email belongs to the person it was made for; never re-point it.
+    if (existing && existing.personId !== person.id) throw new HonorInstructorError("INSTRUCTOR_EMAIL_CONFLICT", EMAIL_BELONGS_TO_OTHER_MESSAGE);
     const instructor = existing
       ? await tx.honorInstructor.update({
         where: { id: existing.id },
         // A removed instructor invited again starts over: exactly the new classes, and they must accept again.
-        data: { revokedAt: null, revokedByUserId: null, name, ...(existing.revokedAt ? { acceptedAt: null, attendeeAccountId: null } : {}) },
+        data: { revokedAt: null, revokedByUserId: null, name, ...(existing.revokedAt ? { acceptedAt: null, attendeeAccountId: null, sentAt: null } : {}) },
         select: { id: true, email: true, name: true, eventId: true },
       })
       : await tx.honorInstructor.create({
@@ -186,7 +202,8 @@ export async function inviteHonorInstructor(eventId: string, input: InstructorIn
       });
     if (existing?.revokedAt) await tx.honorInstructorClass.deleteMany({ where: { instructorId: instructor.id } });
     await tx.honorInstructorClass.createMany({ data: offeringIds.map((offeringId) => ({ instructorId: instructor.id, offeringId })), skipDuplicates: true });
-    const messageId = canSend ? await queueInviteEmail(tx, instructor, now) : null;
+    // The same cooldown as Resend: an open invite emailed a moment ago is not emailed again.
+    const messageId = canSend && await claimInviteSend(tx, instructor.id, now) ? await queueInviteEmail(tx, instructor) : null;
     await writeAuditLog({
       eventId,
       actorUserId,
@@ -233,10 +250,11 @@ export async function resendHonorInstructorInvite(eventId: string, instructorId:
     });
     if (!instructor) throw new HonorInstructorError("INSTRUCTOR_NOT_FOUND", "There's no open invite to resend for that instructor.");
     const next = resendAvailableAt(instructor.sentAt, CLUB_INVITE_RESEND_COOLDOWN_MINUTES);
-    if (next && next > now) {
+    // Claimed in one conditional update, so two concurrent resends can't both send.
+    if ((next && next > now) || !(await claimInviteSend(tx, instructor.id, now))) {
       throw new HonorInstructorError("INVITE_RESEND_TOO_SOON", `That invite was sent a moment ago. Try again in ${CLUB_INVITE_RESEND_COOLDOWN_MINUTES} minutes.`);
     }
-    await queueInviteEmail(tx, instructor, now);
+    await queueInviteEmail(tx, instructor);
     await writeAuditLog({
       eventId, actorUserId, action: "HONOR_INSTRUCTOR_INVITE_RESENT", entityType: "HonorInstructor", entityId: instructor.id,
       summary: "Resent an Honors Weekend instructor invite.", metadata: { eventId },
@@ -528,9 +546,14 @@ export async function markInstructorClass(accountId: string, offeringId: string,
   const prisma = getPrisma();
   const instructorId = assignment.instructor.id;
   const outcome = await prisma.$transaction(async (tx) => {
-    // The write-back's own per-event lock first, so "recorded" is read under the lock the write-back writes under.
+    // The write-back's own per-event lock, so "recorded" is read under the lock the write-back writes under. It also
+    // serializes marks calls on a class. A staff write-back can hold it for a while: hence the write-back's timeouts.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`honors-weekend-write-back:${assignment.offering.eventId}`}))`;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`honor-instructor-marks:${offeringId}`}))`;
+    // Access can change while waiting for the lock: check the assignment again under it.
+    const stillAssigned = await tx.honorInstructorClass.count({
+      where: { offeringId, instructorId, instructor: { attendeeAccountId: accountId, acceptedAt: { not: null }, revokedAt: null } },
+    });
+    if (stillAssigned === 0) throw new HonorInstructorError("NOT_ASSIGNED", NOT_ASSIGNED_MESSAGE);
     const enrollments = await tx.honorEnrollment.findMany({ where: { offeringId, registration: ACTIVE_REGISTRATION }, select: rosterEnrollmentSelect });
     const rows = rosterRows(enrollments);
     const targets = input.action === "SET" ? rows.filter((row) => row.enrollmentId === input.enrollmentId) : rows;
@@ -579,6 +602,12 @@ export async function markInstructorClass(accountId: string, offeringId: string,
       },
     }, tx);
     return { changed, locked };
+  }, WRITE_BACK_TRANSACTION).catch((error: unknown) => {
+    // Waiting on a long write-back can outlast the transaction's own limits: a clean "try again", not a 500.
+    if (typeof error === "object" && error !== null && "code" in error && ((error as { code: unknown }).code === "P2028" || (error as { code: unknown }).code === "P2034")) {
+      throw new HonorInstructorError("TRY_AGAIN", "The honor records are being updated right now. Try again in a moment.");
+    }
+    throw error;
   });
 
   // Completed feeds the honor record: everyone in this class who is marked completed and not yet written.

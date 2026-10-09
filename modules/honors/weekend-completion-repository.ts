@@ -31,7 +31,7 @@ export class HonorsWeekendWriteBackError extends Error {
   }
 }
 
-const WRITE_BACK_TRANSACTION = { timeout: 60_000, maxWait: 10_000 };
+export const WRITE_BACK_TRANSACTION = { timeout: 60_000, maxWait: 10_000 };
 
 export type HonorsWeekendWriteBackResult = {
   /** New COMPLETED entries appended to members' honor records (one per honor a class teaches). */
