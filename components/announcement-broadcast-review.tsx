@@ -47,7 +47,9 @@ export function announcementBroadcastConfirmState(
       canConfirm: false,
       reason: review.preview.activeRegistrationCount === 0
         ? "There are no active registrations to send this to."
-        : "None of the active registrations has a contact email, so there is no one to send this to.",
+        : review.preview.skippedOptedOutCount > 0
+          ? "Everyone with a contact email has opted out of announcements, so there is no one to send this to."
+          : "None of the active registrations has a contact email, so there is no one to send this to.",
     };
   }
   return { canConfirm: true, reason: "" };
@@ -76,6 +78,27 @@ export function AnnouncementBroadcastReviewFacts({
             <dt>Skipped</dt>
             <dd>
               {preview.skippedNoEmailCount} registration{preview.skippedNoEmailCount === 1 ? " has" : "s have"} no contact email
+            </dd>
+          </div>
+        )}
+        {preview.skippedOptedOutCount > 0 && (
+          <div>
+            <dt>Skipped (opted out)</dt>
+            <dd>
+              {preview.skippedOptedOutCount} contact{preview.skippedOptedOutCount === 1 ? " has" : "s have"} opted out of announcements:
+              {" "}{preview.skippedOptedOutEventCount} for this event, {preview.skippedOptedOutAllCount} for all IMSDA Events announcements.
+              Mark the announcement essential (event managers) to reach them.
+            </dd>
+          </div>
+        )}
+        {preview.essential && (
+          <div>
+            <dt>Essential</dt>
+            <dd>
+              Marked essential, so it is sent to people who opted out
+              {preview.essentialOptedOutReachedCount > 0
+                ? ` (${preview.essentialOptedOutReachedCount} opted-out contact${preview.essentialOptedOutReachedCount === 1 ? "" : "s"} included).`
+                : "."}
             </dd>
           </div>
         )}

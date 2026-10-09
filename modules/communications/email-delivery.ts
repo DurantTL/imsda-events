@@ -58,6 +58,15 @@ import {
 } from "@/modules/communications/email-attachments";
 import { readMessageFileBytes } from "@/modules/communications/message-files";
 import {
+  announcementOptOutSkipMessage,
+  isOptOutEligibleTemplate,
+  unsubscribeApiPath,
+  unsubscribeHeadersAllowed,
+  unsubscribePagePath,
+  type AnnouncementOptOutScope,
+} from "@/modules/communications/email-preferences";
+import { findAnnouncementOptOut, issueUnsubscribeToken } from "@/modules/communications/email-preferences-repository";
+import {
   createStableRegistrationAccessToken,
   revokeRegistrationAccessToken,
 } from "@/modules/public-access/repository";
@@ -82,13 +91,22 @@ export const PROVIDER_QUOTA_MESSAGE = "The email provider's sending limit was re
 type DeliveryPrisma = Pick<
   PrismaClient,
   "$transaction" | "eventMessageSettings" | "messageOutbox" | "auditLog" | "invoiceDeliveryRecipient"
->;
+> & Partial<Pick<PrismaClient, "emailAnnouncementOptOut" | "emailUnsubscribeToken" | "announcement">>;
 
 export type ExternalEmailDeliveryDependencies = {
   prisma?: DeliveryPrisma;
   now?: () => Date;
   configuration?: EmailProviderConfiguration;
   sendEmail?: typeof sendEmailWithProvider;
+  /**
+   * The opt-out that applies to an announcement's recipient right now (#838). The default reads the database, and a
+   * run whose `prisma` has no opt-out table (a test double for another path) checks nothing.
+   */
+  findAnnouncementOptOut?: (email: string, eventId: string) => Promise<AnnouncementOptOutScope | null>;
+  /** Whether the announcement a message came from is marked essential right now (#838); the default reads the database. */
+  isAnnouncementEssential?: (announcementId: string, eventId: string) => Promise<boolean>;
+  /** The opaque unsubscribe token for an announcement's recipient (#838); the default records it in the database. */
+  issueUnsubscribeToken?: (email: string, eventId: string) => Promise<string>;
   prepareBodyText?: (input: EmailBodyPreparationInput) => Promise<PreparedEmailBody>;
   /** How stored files and pass images are read for embedding (#824); the defaults read private storage and render in-process. */
   emailParts?: Partial<EmailPartDependencies>;
@@ -123,6 +141,8 @@ type ClaimedMessage = {
   subjectSnapshot: string;
   bodyTextSnapshot: string;
   bodyHtmlSnapshot: string | null;
+  /** The row's metadata; an announcement carries `essential` here (#838). */
+  metadata?: unknown;
   /** The one file sent with the message, when it has one (#168: an invoice PDF), read from the shared attachment row. */
   attachment?: { filename: string; contentType: string; sha256: string; content: Uint8Array } | null;
   /** The files staff attached and the images embedded in the body (#824), from the outbox row's own references. */
@@ -372,7 +392,117 @@ async function cancelIfLodgingStale(
   return true;
 }
 
-const INVOICE_REPLACED_REASON = "Invoice version superseded";
+function announcementIdOf(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
+  const value = (metadata as Record<string, unknown>).announcementId;
+  return typeof value === "string" && value ? value : null;
+}
+
+type AnnouncementPolicy = {
+  lookupOptOut: ((email: string, eventId: string) => Promise<AnnouncementOptOutScope | null>) | null;
+  isEssential: ((announcementId: string, eventId: string) => Promise<boolean>) | null;
+  issueToken: ((email: string, eventId: string) => Promise<string>) | null;
+};
+
+/**
+ * An event announcement is not sent to an address that opted out of it (#838), whenever the opt-out was recorded:
+ * this checks right before the provider call, so a person who unsubscribed after the broadcast was queued, or while
+ * a retry waited, is still honoured. The row ends SUPPRESSED with the reason, and the skip is audited (ids and scope
+ * only, never the address). Whether the announcement is essential is decided here, from the announcement as it is now
+ * (found through the message's `announcementId`, which a retry copy keeps), so marking or clearing it affects every
+ * message still queued. A message with no announcement behind it (a staff-chosen batch) is never essential. Every other
+ * kind of message is untouched: only announcements can be opted out of.
+ *
+ * It fails closed: if the opt-out cannot be looked up, the message is retried later, never sent.
+ *
+ * The result says what happened, because the caller must treat the cases differently: `false` (go on and send),
+ * `"suppressed"` (this call ended the message as SUPPRESSED), `"retry"` (the check failed and the message was put back
+ * for a later attempt, so anything prepared for it, such as its private link, must be kept), and `"lost"` (the lock was
+ * no longer ours, so someone else owns the message and nothing here was recorded). Only `"suppressed"` means the
+ * prepared body is unused for good.
+ */
+type OptOutCheckResult = false | "suppressed" | "retry" | "lost";
+
+async function suppressIfAnnouncementOptedOut(
+  prisma: DeliveryPrisma,
+  message: ClaimedMessage,
+  policy: AnnouncementPolicy,
+  at: Date,
+): Promise<OptOutCheckResult> {
+  if (!isOptOutEligibleTemplate(message.templateKey) || !message.eventId) return false;
+  const failClosed = async (code: string, text: string, error?: unknown): Promise<OptOutCheckResult> => {
+    if (error) logError("Unable to check an announcement opt-out; the message will be retried.", error);
+    const outcome = await finalizeFailedAttempt(prisma, message, { code, message: text, retryable: true }, at, true);
+    return outcome.finalized ? "retry" : "lost";
+  };
+  if (!policy.lookupOptOut) {
+    return failClosed("OPT_OUT_CHECK_UNAVAILABLE", "Announcement opt-outs could not be checked, so the message was not sent.");
+  }
+  let scope: AnnouncementOptOutScope | null;
+  try {
+    scope = await policy.lookupOptOut(message.recipientEmail, message.eventId);
+    if (scope) {
+      const announcementId = announcementIdOf(message.metadata);
+      if (announcementId && policy.isEssential && await policy.isEssential(announcementId, message.eventId)) return false;
+    }
+  } catch (error) {
+    return failClosed("OPT_OUT_CHECK_FAILED", "Could not confirm the recipient had not opted out, so the message was not sent.", error);
+  }
+  if (!scope) return false;
+  const updated = await prisma.messageOutbox.updateMany({
+    where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
+    data: { status: "SUPPRESSED", lockedAt: null, lockToken: null, lastError: announcementOptOutSkipMessage(scope) },
+  });
+  if (updated.count !== 1) return "lost";
+  await prisma.auditLog.create({
+    data: {
+      eventId: message.eventId,
+      action: "EVENT_ANNOUNCEMENT_SKIPPED_OPTED_OUT",
+      entityType: "MessageOutbox",
+      entityId: message.id,
+      correlationId: randomUUID(),
+      summary: "Skipped an event announcement because the recipient opted out of announcements.",
+      metadata: { messageId: message.id, scope },
+    },
+  });
+  return "suppressed";
+}
+
+/**
+ * The unsubscribe links for an announcement: the page for the message body and the one-click endpoint for the header.
+ * The token is opaque and recorded when it is issued. Gmail and Yahoo only honour an https one-click URL, so in
+ * production a base URL that is not https omits the headers (and warns) rather than sending a link that cannot work.
+ */
+async function announcementUnsubscribeLinks(message: ClaimedMessage, policy: AnnouncementPolicy) {
+  if (!isOptOutEligibleTemplate(message.templateKey) || !message.eventId || !message.recipientEmail.trim()) return null;
+  // Any failure here is transient and says nothing a person could act on: a typed, retryable error with a generic
+  // message, so no raw error text is stored on the message.
+  let token: string;
+  let base: string;
+  try {
+    if (!policy.issueToken) throw new Error("no token issuer");
+    token = await policy.issueToken(message.recipientEmail, message.eventId);
+    base = getServerEnv().APP_BASE_URL;
+  } catch (error) {
+    logError("Unable to prepare an unsubscribe link; the message will be retried.", error);
+    throw new EmailProviderRequestError(
+      "The unsubscribe link could not be prepared, so the message was not sent. It will be tried again.",
+      "UNSUBSCRIBE_LINK_UNAVAILABLE",
+      true,
+      0,
+    );
+  }
+  const headersAllowed = unsubscribeHeadersAllowed(base, process.env.NODE_ENV);
+  if (!headersAllowed) {
+    logWarn("APP_BASE_URL is not https, so announcements go out without List-Unsubscribe headers.", { messageId: message.id });
+  }
+  return {
+    pageUrl: new URL(unsubscribePagePath(token), base).toString(),
+    oneClickUrl: headersAllowed ? new URL(unsubscribeApiPath(token), base).toString() : null,
+  };
+}
+
+const INVOICE_REPLACED_REASON ="Invoice version superseded";
 
 /** Cancels (and audits, ids only) an invoice message whose version is no longer FINALIZED. Returns true when it did. */
 async function cancelIfInvoiceReplaced(
@@ -527,6 +657,7 @@ async function claimNextMessage(
           subjectSnapshot: true,
           bodyTextSnapshot: true,
           bodyHtmlSnapshot: true,
+          metadata: true,
           attachment: { select: { filename: true, contentType: true, sha256: true, content: true } },
           files: {
             orderBy: [{ disposition: "asc" }, { position: "asc" }],
@@ -767,6 +898,24 @@ async function runDeliveryLoop(
   const configuredProvider = providerNameForConfiguration(configuration);
   const sendEmail = dependencies.sendEmail ?? sendEmailWithProvider;
   const now = dependencies.now ?? (() => new Date());
+  const optOutTable = prisma.emailAnnouncementOptOut;
+  const tokenTable = prisma.emailUnsubscribeToken;
+  const announcementTable = prisma.announcement;
+  const announcementPolicy: AnnouncementPolicy = {
+    lookupOptOut: dependencies.findAnnouncementOptOut
+      ?? (optOutTable
+        ? (email: string, eventId: string) => findAnnouncementOptOut({ emailAnnouncementOptOut: optOutTable }, email, eventId)
+        : null),
+    isEssential: dependencies.isAnnouncementEssential
+      ?? (announcementTable
+        // Scoped to the message's own event: an id from another event is not found, so it is never essential.
+        ? async (announcementId: string, eventId: string) => (await announcementTable.findFirst({ where: { id: announcementId, eventId }, select: { isEssential: true } }))?.isEssential === true
+        : null),
+    issueToken: dependencies.issueUnsubscribeToken
+      ?? (tokenTable
+        ? (email: string, eventId: string) => issueUnsubscribeToken({ emailUnsubscribeToken: tokenTable }, { email, eventId })
+        : null),
+  };
   const fileCache = new BoundedFileCache();
   const uniqueMessageIds = options.messageIds
     ? [...new Set(options.messageIds)]
@@ -829,6 +978,7 @@ async function runDeliveryLoop(
     // An invoice email is sent only while its version is still FINALIZED (#168): one a revision replaced is cancelled, never sent.
     if (await cancelIfInvoiceReplaced(prisma, message)) continue;
     if (await cancelIfLodgingStale(prisma, message, now())) continue;
+    if (await suppressIfAnnouncementOptedOut(prisma, message, announcementPolicy, now())) continue;
     let preparedBody: PreparedEmailBody | null = null;
     try {
       const prepareBodyText = dependencies.prepareBodyText
@@ -862,13 +1012,31 @@ async function runDeliveryLoop(
       // Checked again immediately before the provider call, so a revision that committed while the body was prepared cannot slip one out.
       if (await cancelIfInvoiceReplaced(prisma, message)) continue;
       if (await cancelIfLodgingStale(prisma, message, now())) continue;
+      // And the opt-out again (#838): someone may have unsubscribed while the message was being prepared. An essential
+      // announcement still goes. The private link minted for the body is unused, so it is withdrawn.
+      const recheck = await suppressIfAnnouncementOptedOut(prisma, message, announcementPolicy, now());
+      if (recheck) {
+        // Withdraw the private link only when this call really ended the message. A retry keeps it (the same link is
+        // reused on the next attempt, and a revoked one would end the message as failed), and a lost lock is not ours.
+        if (recheck === "suppressed") {
+          await preparedBody.revokeOnDefinitiveFailure?.().catch((revokeError: unknown) => {
+            logError("Unable to revoke an unused private registration link after an announcement was skipped.", revokeError);
+          });
+        }
+        continue;
+      }
+      // Announcements carry an unsubscribe link in the body and the one-click headers (#838).
+      const unsubscribe = await announcementUnsubscribeLinks(message, announcementPolicy);
       const delivery = await sendEmail({
         fromName: message.senderNameSnapshot,
         fromEmail: message.senderEmailSnapshot ?? "",
         toEmail: message.recipientEmail,
         replyToEmail: message.replyToEmailSnapshot,
         subject: message.subjectSnapshot,
-        bodyText: preparedBody.bodyText,
+        bodyText: unsubscribe
+          ? `${preparedBody.bodyText}\n\n--\nTo stop getting event announcements, or change what you get: ${unsubscribe.pageUrl}`
+          : preparedBody.bodyText,
+        listUnsubscribe: unsubscribe?.oneClickUrl ? { url: unsubscribe.oneClickUrl } : null,
         // Wrapped, not rendered: the body fragment was rendered at enqueue from
         // the same template and context as the text snapshot, where trusted and
         // untrusted token spans were still distinguishable. A row queued before
@@ -878,7 +1046,9 @@ async function runDeliveryLoop(
           ? renderEmailHtmlDocument({
             title: message.subjectSnapshot,
             bodyHtml: parts.bodyHtml,
-            footer: message.senderNameSnapshot,
+            footer: unsubscribe
+              ? `${message.senderNameSnapshot}\n\n[Unsubscribe or change your email preferences](${unsubscribe.pageUrl})`
+              : message.senderNameSnapshot,
           })
           : null,
         attachments: message.attachment || parts.attachments.length > 0
@@ -924,7 +1094,8 @@ async function runDeliveryLoop(
         message,
         normalized,
         now(),
-        false,
+        // Preparing the unsubscribe link fails before any provider is called, so it is not a provider attempt.
+        normalized.code === "UNSUBSCRIBE_LINK_UNAVAILABLE",
         configuredProvider,
       );
       if (failure.rescheduled) result.rescheduledIds.push(message.id);

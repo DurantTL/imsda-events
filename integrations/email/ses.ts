@@ -7,6 +7,7 @@ import {
   EmailProviderConfigurationError,
   EmailProviderRequestError,
   cleanHeaderText,
+  listUnsubscribeHeaders,
   type EmailDeliveryInput,
   type EmailDeliveryResult,
 } from "./types";
@@ -137,6 +138,8 @@ export function buildSesMailOptions(
   if (configuration.configurationSet) {
     headers["X-SES-CONFIGURATION-SET"] = cleanHeaderText(configuration.configurationSet);
   }
+  // One-click unsubscribe for announcements (#838), as headers on the MIME message.
+  Object.assign(headers, listUnsubscribeHeaders(input.listUnsubscribe));
   return {
     from: { name: cleanHeaderText(input.fromName), address: fromEmail },
     to: cleanAddress(input.toEmail),

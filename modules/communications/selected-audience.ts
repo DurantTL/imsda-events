@@ -11,6 +11,12 @@ import {
   type MessageTemplateKey,
 } from "@/modules/communications/templates";
 import { attachmentSetIssue } from "@/modules/communications/message-file-rules";
+import {
+  ANNOUNCEMENT_OPT_OUT_REASON,
+  announcementOptOutFor,
+  isOptOutEligibleTemplate,
+  type AnnouncementOptOutRow,
+} from "@/modules/communications/email-preferences";
 import type { MessagingSettingsRecord } from "@/modules/communications/types";
 
 export { selectedAudienceTemplateKeys, selectedAudienceTemplateLabels, type SelectedAudienceTemplateKey };
@@ -81,7 +87,10 @@ export type SelectedAudienceSkipReasonCode =
   | "INACTIVE_REGISTRATION"
   | "NO_BALANCE_DUE"
   | "INVALID_CONTACT_EMAIL"
-  | "ORGANIZATION_BILLED";
+  | "ORGANIZATION_BILLED"
+  /** The address opted out of announcements (#838). Only an announcement can be opted out of. */
+  | "ANNOUNCEMENT_OPTED_OUT_EVENT"
+  | "ANNOUNCEMENT_OPTED_OUT_ALL";
 
 const skipReasonLabels: Record<SelectedAudienceSkipReasonCode, string> = {
   NOT_FOUND: "Not a registration on this event",
@@ -89,6 +98,8 @@ const skipReasonLabels: Record<SelectedAudienceSkipReasonCode, string> = {
   NO_BALANCE_DUE: "No balance is due",
   INVALID_CONTACT_EMAIL: "Missing or invalid contact email",
   ORGANIZATION_BILLED: "Event bills the responsible organization, not the attendee",
+  ANNOUNCEMENT_OPTED_OUT_EVENT: ANNOUNCEMENT_OPT_OUT_REASON.EVENT,
+  ANNOUNCEMENT_OPTED_OUT_ALL: ANNOUNCEMENT_OPT_OUT_REASON.ALL,
 };
 
 export type SelectedAudienceCandidate = {
@@ -170,6 +181,12 @@ export type SelectedAudiencePreviewContext = {
   attachments?: ReadonlyArray<{ id: string; filename: string; sizeBytes: number }>;
   pictureIds?: readonly string[];
   pictureProblem?: string | null;
+  /**
+   * Opt-outs that apply to these addresses for this event (#838). Only an announcement honours them. A staff-chosen
+   * announcement is written in the dialog, not an Announcement row, so there is nothing to mark essential: an opted-out
+   * contact is always skipped here.
+   */
+  optOuts?: readonly AnnouncementOptOutRow[];
   /** Published sources for the four current-state confirmation variants. */
   confirmationTemplates?: Partial<Record<
     SelectedAudienceConfirmationTemplateKey,
@@ -269,6 +286,13 @@ export function computeSelectedAudiencePreview(
     const recipientEmail = normalizedEmail(candidate.recipientEmail);
     if (!emailSchema.safeParse(recipientEmail).success) {
       skip(registrationId, candidate, "INVALID_CONTACT_EMAIL");
+      continue;
+    }
+    const optedOut = isOptOutEligibleTemplate(context.templateKey)
+      ? announcementOptOutFor(context.optOuts ?? [], recipientEmail, context.eventId)
+      : null;
+    if (optedOut) {
+      skip(registrationId, candidate, optedOut === "ALL" ? "ANNOUNCEMENT_OPTED_OUT_ALL" : "ANNOUNCEMENT_OPTED_OUT_EVENT");
       continue;
     }
     recipients.push({

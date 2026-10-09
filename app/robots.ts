@@ -27,6 +27,7 @@ export default function robots(): MetadataRoute.Robots {
         "/reset-password",
         "/select-event",
         "/staff",
+        "/unsubscribe/",
       ],
     },
     sitemap: `${baseUrl.replace(/\/$/, "")}/sitemap.xml`,

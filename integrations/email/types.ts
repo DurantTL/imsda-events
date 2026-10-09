@@ -27,6 +27,11 @@ export type EmailDeliveryInput = {
      */
     contentId?: string;
   }>;
+  /**
+   * Set on event announcements (#838): sent as `List-Unsubscribe` and `List-Unsubscribe-Post` (RFC 8058 one-click)
+   * so Gmail and Yahoo offer their own Unsubscribe button. The URL is a signed link for this recipient.
+   */
+  listUnsubscribe?: { url: string } | null;
   idempotencyKey: string;
   messageId: string;
 };
@@ -62,4 +67,22 @@ export class EmailProviderRequestError extends Error {
 /** A header value may never carry a line break: that is how a header gets injected. */
 export function cleanHeaderText(value: string) {
   return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+/**
+ * RFC 2369 and RFC 8058 unsubscribe headers (#838), the same for both providers. `List-Unsubscribe-Post` is what
+ * makes the mail client's own Unsubscribe button a one-click POST to the URL, with no page and no login. The URL
+ * must be a plain http(s) address: anything with whitespace, angle brackets or a line break could not sit safely
+ * inside the header, so it is refused rather than cleaned.
+ */
+export function listUnsubscribeHeaders(listUnsubscribe: { url: string } | null | undefined): Record<string, string> {
+  if (!listUnsubscribe) return {};
+  const url = listUnsubscribe.url.trim();
+  if (!/^https?:\/\/[^\s<>"]+$/i.test(url)) {
+    throw new EmailProviderConfigurationError("The unsubscribe link for this message is not a valid web address.", false);
+  }
+  return {
+    "List-Unsubscribe": `<${url}>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+  };
 }

@@ -46,6 +46,8 @@ function prismaFor(overrides: {
   deliveryMode?: string | null;
   template?: { isEnabled: boolean; versions: Array<{ id: string }> } | null;
   existingAudit?: { metadata: Record<string, unknown> } | null;
+  optOuts?: Array<{ normalizedEmail: string; scope: "EVENT" | "ALL"; eventId: string | null }>;
+  essential?: boolean;
 } = {}) {
   const client = {
     announcement: {
@@ -57,6 +59,7 @@ function prismaFor(overrides: {
             body: "Doors open at 5 p.m.",
             status: "PUBLISHED",
             publishedAt: new Date("2026-09-20T00:00:00.000Z"),
+            isEssential: overrides.essential ?? false,
           }
           : overrides.announcement,
       ),
@@ -84,6 +87,8 @@ function prismaFor(overrides: {
     },
     messageOutbox: { findMany: vi.fn().mockResolvedValue([]) },
     announcementFile: { findMany: vi.fn().mockResolvedValue([]) },
+    // Announcement opt-outs (#838).
+    emailAnnouncementOptOut: { findMany: vi.fn().mockResolvedValue(overrides.optOuts ?? []) },
     // Message files (#824): a fake database with no files linked to any message.
     messageOutboxFile: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -324,6 +329,111 @@ describe("broadcastPublishedAnnouncement review enforcement (#472)", () => {
       ["reg-3", "three@example.test"],
     ]);
     expect(result.skippedCount).toBe(1);
+  });
+});
+
+describe("announcement opt-outs in the review and the send (#838)", () => {
+  const batchId = "2d037129-32a3-4935-a4ce-b08a1d92cb6a";
+  const optOuts = [
+    { normalizedEmail: "one@example.test", scope: "EVENT" as const, eventId: "event-1" },
+    { normalizedEmail: "two@example.test", scope: "ALL" as const, eventId: null },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("counts opted-out contacts as skipped, by kind, and leaves them out of the recipients", async () => {
+    mocks.getPrisma.mockReturnValue(prismaFor({ optOuts }));
+    const preview = await previewAnnouncementBroadcast({ eventId: "event-1", announcementId: "announcement-1" });
+    expect(preview).toMatchObject({
+      activeRegistrationCount: 3,
+      recipientCount: 1,
+      skippedOptedOutCount: 2,
+      skippedOptedOutEventCount: 1,
+      skippedOptedOutAllCount: 1,
+      essential: false,
+      essentialOptedOutReachedCount: 0,
+    });
+  });
+
+  it("does not skip an opt-out recorded for another event", async () => {
+    mocks.getPrisma.mockReturnValue(prismaFor({
+      optOuts: [{ normalizedEmail: "one@example.test", scope: "EVENT", eventId: "event-2" }],
+    }));
+    const preview = await previewAnnouncementBroadcast({ eventId: "event-1", announcementId: "announcement-1" });
+    expect(preview.skippedOptedOutCount).toBe(0);
+    expect(preview.recipientCount).toBe(3);
+  });
+
+  it("sends an essential announcement to opted-out contacts and says how many it reaches", async () => {
+    mocks.getPrisma.mockReturnValue(prismaFor({ optOuts, essential: true }));
+    const preview = await previewAnnouncementBroadcast({ eventId: "event-1", announcementId: "announcement-1" });
+    expect(preview).toMatchObject({ recipientCount: 3, skippedOptedOutCount: 0, essential: true, essentialOptedOutReachedCount: 2 });
+  });
+
+  it("changes the fingerprint when an opt-out or the essential mark moves, so a stale review is refused", async () => {
+    const fingerprintFor = async (overrides: Parameters<typeof prismaFor>[0]) => {
+      mocks.getPrisma.mockReturnValue(prismaFor(overrides));
+      return (await previewAnnouncementBroadcast({ eventId: "event-1", announcementId: "announcement-1" })).fingerprint;
+    };
+    const none = await fingerprintFor({});
+    const optedOut = await fingerprintFor({ optOuts });
+    const essential = await fingerprintFor({ optOuts, essential: true });
+    expect(new Set([none, optedOut, essential]).size).toBe(3);
+  });
+
+  it("enqueues only the reviewed recipients and records the skipped opt-outs", async () => {
+    const prisma = prismaFor({ optOuts });
+    mocks.getPrisma.mockReturnValue(prisma);
+    const preview = await previewAnnouncementBroadcast({ eventId: "event-1", announcementId: "announcement-1" });
+    const result = await broadcastPublishedAnnouncement({
+      eventId: "event-1",
+      announcementId: "announcement-1",
+      batchId,
+      previewFingerprint: preview.fingerprint,
+      actorUserId: "staff-1",
+    });
+    expect(mocks.enqueueEventAnnouncementMessage.mock.calls.map(([, call]) => call.registrationId)).toEqual(["reg-3"]);
+    expect(mocks.enqueueEventAnnouncementMessage.mock.calls[0][1].metadata).toMatchObject({ announcementId: "announcement-1" });
+    expect(result).toMatchObject({ messageCount: 1, skippedCount: 2, optedOutCount: 2 });
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        metadata: expect.objectContaining({ skippedOptedOutCount: 2, skippedOptedOutEventCount: 1, skippedOptedOutAllCount: 1 }),
+      }),
+    }));
+  });
+
+  it("refuses a send reviewed before someone opted out", async () => {
+    mocks.getPrisma.mockReturnValue(prismaFor());
+    const preview = await previewAnnouncementBroadcast({ eventId: "event-1", announcementId: "announcement-1" });
+    mocks.getPrisma.mockReturnValue(prismaFor({ optOuts }));
+    await expect(broadcastPublishedAnnouncement({
+      eventId: "event-1",
+      announcementId: "announcement-1",
+      batchId,
+      previewFingerprint: preview.fingerprint,
+      actorUserId: "staff-1",
+    })).rejects.toMatchObject({ code: "PREVIEW_CHANGED" });
+  });
+
+  it("ties every message to its announcement, so delivery reads the current essential mark", async () => {
+    const prisma = prismaFor({ optOuts, essential: true });
+    mocks.getPrisma.mockReturnValue(prisma);
+    const preview = await previewAnnouncementBroadcast({ eventId: "event-1", announcementId: "announcement-1" });
+    await broadcastPublishedAnnouncement({
+      eventId: "event-1",
+      announcementId: "announcement-1",
+      batchId,
+      previewFingerprint: preview.fingerprint,
+      actorUserId: "staff-1",
+    });
+    expect(mocks.enqueueEventAnnouncementMessage).toHaveBeenCalledTimes(3);
+    for (const [, call] of mocks.enqueueEventAnnouncementMessage.mock.calls) {
+      expect(call.metadata).toMatchObject({ announcementId: "announcement-1" });
+      // The decision is not frozen into the message: clearing the mark later must affect it.
+      expect(call.metadata).not.toHaveProperty("essential");
+    }
   });
 });
 

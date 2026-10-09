@@ -15,6 +15,7 @@ import {
   resolveChoiceFilter,
 } from "@/modules/registrations/choice-answer-filter";
 import { ChoiceAnswerFilter, type ChoiceFilterView } from "@/components/choice-answer-filter";
+import { listEventAnnouncementOptOuts } from "@/modules/communications/email-preferences-repository";
 import { backgroundFlaggedAttendeeIds } from "@/modules/background-checks/repository";
 import { getResponsibleAdultsByAttendee } from "@/modules/guardian-authority/repository";
 import { staffPageTitles } from "@/components/staff-navigation";
@@ -29,7 +30,9 @@ export default async function PeoplePage({ searchParams }: { searchParams: Promi
   }
   // Each location on its own, or all combined (#413).
   const { locations, locationId } = await resolveLocationFilter(event.id, requestedLocation);
-  const [allRegistrations, flagged, responsibleByAttendee] = await Promise.all([listRegistrations(event.id, { locationId }), backgroundFlaggedAttendeeIds(event.id), getResponsibleAdultsByAttendee(event.id)]);
+  const [allRegistrations, flagged, responsibleByAttendee, optOutRows] = await Promise.all([listRegistrations(event.id, { locationId }), backgroundFlaggedAttendeeIds(event.id), getResponsibleAdultsByAttendee(event.id), listEventAnnouncementOptOuts(event.id)]);
+  // Who opted out of announcements (#838), marked on the registration: the kind only, never a reason.
+  const announcementOptOuts = Object.fromEntries(optOutRows.map((row) => [row.registrationId, row.scope]));
   // Who is responsible for each minor (#131): names only, shown beside the minor.
   const responsibleAdults = Object.fromEntries([...responsibleByAttendee].map(([attendeeId, minor]) => [attendeeId, {
     adultName: minor.responsibleAdult?.name ?? null,
@@ -55,6 +58,6 @@ export default async function PeoplePage({ searchParams }: { searchParams: Promi
   return <>
     <LocationFilter basePath="/people" locations={locations} params={{ event: event.id, filter, [CHOICE_FILTER_QUESTION_PARAM]: choice?.question.id, [CHOICE_FILTER_VALUE_PARAM]: choice?.value ?? undefined }} selectedId={locationId} />
     <ChoiceAnswerFilter eventId={event.id} view={choiceView} carry={{ filter, location: locationId ?? undefined }} canEmail={permissions.includes("MANAGE_COMMUNICATIONS")} canExport={permissions.includes("VIEW_REPORTS") && permissions.includes("VIEW_SENSITIVE_DATA")} />
-    <PeopleWorkspace key={`${event.id}:${choice?.question.id ?? ""}:${choice?.value ?? ""}`} eventId={event.id} eventSlug={event.slug} eventTimezone={event.timezone} waitlistEnabled={event.waitlistEnabled} initialRegistrations={registrations} canEdit={permissions.includes("MANAGE_REGISTRATION")} canEmail={permissions.includes("MANAGE_COMMUNICATIONS")} initialFilter={filter} initialRegistrationId={registration} backgroundFlaggedAttendeeIds={[...flagged]} responsibleAdults={responsibleAdults} matchingPersonFilter={Boolean(choice?.value)} locationId={locationId} />
+    <PeopleWorkspace key={`${event.id}:${choice?.question.id ?? ""}:${choice?.value ?? ""}`} eventId={event.id} eventSlug={event.slug} eventTimezone={event.timezone} waitlistEnabled={event.waitlistEnabled} initialRegistrations={registrations} canEdit={permissions.includes("MANAGE_REGISTRATION")} canEmail={permissions.includes("MANAGE_COMMUNICATIONS")} initialFilter={filter} initialRegistrationId={registration} backgroundFlaggedAttendeeIds={[...flagged]} announcementOptOuts={announcementOptOuts} responsibleAdults={responsibleAdults} matchingPersonFilter={Boolean(choice?.value)} locationId={locationId} />
   </>;
 }

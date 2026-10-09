@@ -302,6 +302,12 @@ export function SelectedAudienceDialog({
                         </li>
                       ))}
                     </ul>
+                    {preview.skipped.some((entry) => entry.code.startsWith("ANNOUNCEMENT_OPTED_OUT")) && (
+                      <p className="quiet-copy">
+                        {preview.skipped.filter((entry) => entry.code.startsWith("ANNOUNCEMENT_OPTED_OUT")).length} opted out of announcements, so this one is not sent to them.
+                        Only a published announcement can be marked essential (by an event manager) to reach them.
+                      </p>
+                    )}
                   </div>
                 )}
               </>

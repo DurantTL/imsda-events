@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import {
+  announcementRecipientEmail,
   computeAnnouncementBroadcastPreview,
   resolveAnnouncementBroadcastAudience,
 } from "@/modules/communications/announcement-broadcast-preview";
@@ -15,6 +16,7 @@ import {
 } from "@/modules/communications/transactional-messages";
 import { buildSeminarPreferencesBlocks } from "@/modules/communications/seminar-preferences";
 import { BATCH_TRANSACTION_MAX_WAIT_MS, BATCH_TRANSACTION_TIMEOUT_MS } from "@/modules/communications/batch-transaction";
+import { loadAnnouncementOptOuts } from "@/modules/communications/email-preferences-repository";
 import { linkQueuedMessageFiles } from "@/modules/communications/message-files";
 import { inlineImageSetIssue, messageFileIdsInMarkdown } from "@/modules/communications/message-file-rules";
 import type { AnnouncementBroadcastPreview } from "@/modules/communications/types";
@@ -48,7 +50,7 @@ async function loadAnnouncementBroadcastState(
 ) {
   const announcement = await client.announcement.findFirst({
     where: { id: input.announcementId, eventId: input.eventId },
-    select: { id: true, title: true, body: true, status: true, publishedAt: true },
+    select: { id: true, title: true, body: true, status: true, publishedAt: true, isEssential: true },
   });
   if (!announcement) {
     throw new AnnouncementBroadcastError(
@@ -124,7 +126,17 @@ async function loadAnnouncementBroadcastState(
     contactSnapshot: registration.contactSnapshot,
     accountHolderNormalizedEmail: registration.accountHolderPerson?.normalizedEmail ?? null,
   }));
-  const { recipients } = resolveAnnouncementBroadcastAudience(candidates);
+  // Opt-outs (#838), read through the same client as the send, so the review's counts are what the send applies.
+  const optOuts = await loadAnnouncementOptOuts(
+    client,
+    candidates.map((candidate) => announcementRecipientEmail(candidate.contactSnapshot, candidate.accountHolderNormalizedEmail)),
+    input.eventId,
+  );
+  const { recipients } = resolveAnnouncementBroadcastAudience(candidates, {
+    eventId: input.eventId,
+    optOuts,
+    essential: announcement.isEssential,
+  });
   const preview = computeAnnouncementBroadcastPreview(
     candidates,
     {
@@ -137,7 +149,10 @@ async function loadAnnouncementBroadcastState(
       attachments,
       pictureIds,
       pictureProblem,
+      essential: announcement.isEssential,
     },
+    undefined,
+    optOuts,
   );
   return { announcement, registrations, recipients, preview, attachments };
 }
@@ -206,6 +221,7 @@ export async function broadcastPublishedAnnouncement(input: {
         messageCount: typeof metadata.messageCount === "number" ? metadata.messageCount : 0,
         pendingMessageIds: pending.map((message) => message.id),
         skippedCount: typeof metadata.skippedCount === "number" ? metadata.skippedCount : 0,
+        optedOutCount: typeof metadata.skippedOptedOutCount === "number" ? metadata.skippedOptedOutCount : 0,
         deliveryMode: storedMode === "DISABLED" || storedMode === "EXTERNAL_EMAIL"
           ? storedMode
           : "LOCAL_CAPTURE" as const,
@@ -256,8 +272,8 @@ export async function broadcastPublishedAnnouncement(input: {
 
     const messageIds: string[] = [];
     const pendingMessageIds: string[] = [];
-    // Registrations with no contact email were reviewed as skipped.
-    let skippedCount = preview.skippedNoEmailCount;
+    // Registrations with no contact email, and those opted out of announcements (#838), were reviewed as skipped.
+    let skippedCount = preview.skippedNoEmailCount + preview.skippedOptedOutCount;
     let deliveryMode: "DISABLED" | "LOCAL_CAPTURE" | "EXTERNAL_EMAIL" = preview.deliveryMode;
     for (const recipient of recipients) {
       const queued = await enqueueEventAnnouncementMessage(tx, {
@@ -277,6 +293,7 @@ export async function broadcastPublishedAnnouncement(input: {
           trigger: "STAFF_EVENT_ANNOUNCEMENT_BROADCAST",
           announcementId: announcement.id,
           batchId: input.batchId,
+          // Delivery re-checks opt-outs right before sending and reads the announcement's essential mark then (#838).
         },
       });
       deliveryMode = queued.deliveryMode;
@@ -310,6 +327,12 @@ export async function broadcastPublishedAnnouncement(input: {
           activeRegistrationCount: registrations.length,
           messageCount: messageIds.length,
           skippedCount,
+          skippedNoEmailCount: preview.skippedNoEmailCount,
+          skippedOptedOutCount: preview.skippedOptedOutCount,
+          skippedOptedOutEventCount: preview.skippedOptedOutEventCount,
+          skippedOptedOutAllCount: preview.skippedOptedOutAllCount,
+          essential: announcement.isEssential,
+          essentialOptedOutReachedCount: preview.essentialOptedOutReachedCount,
           deliveryMode,
           // File names and sizes only (#824).
           attachments: attachments.map((file) => ({ filename: file.filename, sizeBytes: file.sizeBytes })),
@@ -321,6 +344,7 @@ export async function broadcastPublishedAnnouncement(input: {
       messageCount: messageIds.length,
       pendingMessageIds,
       skippedCount,
+      optedOutCount: preview.skippedOptedOutCount,
       deliveryMode,
       replayed: false,
     };
@@ -332,6 +356,7 @@ export async function broadcastPublishedAnnouncement(input: {
     announcementId: input.announcementId,
     messageCount: result.messageCount,
     skippedCount: result.skippedCount,
+    optedOutCount: result.optedOutCount,
     deliveryMode: result.deliveryMode,
     replayed: result.replayed,
   };
