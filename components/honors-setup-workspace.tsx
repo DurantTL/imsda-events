@@ -360,6 +360,9 @@ export function HonorsSetupWorkspace({
         </div>
         <div className="intro-actions">
           <span className="count-badge">{totalSeats} youth seats</span>
+          <Link className="secondary-button" href={`/more/honors/schedule?event=${encodeURIComponent(eventId)}`}>
+            <CalendarRange aria-hidden="true" size={15} /> Schedule board
+          </Link>
           <Link className="secondary-button" href={`/more/honors/rosters?event=${encodeURIComponent(eventId)}`}>
             <ClipboardList aria-hidden="true" size={15} /> Rosters
           </Link>

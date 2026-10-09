@@ -49,7 +49,16 @@ export type HonorErrorCode =
   | "HONORS_NEED_CONFIRMATION"
   | "COPY_SAME_EVENT"
   | "COPY_SOURCE_CHANGED"
-  | "EVENT_HAS_TEAMS";
+  | "EVENT_HAS_TEAMS"
+  | "ROOM_NOT_FOUND"
+  | "ROOM_NAME_CONFLICT"
+  | "ROOM_TOO_SMALL"
+  | "ROOM_IN_USE"
+  | "ROOM_BOOKED"
+  | "ROOM_WRONG_SITE"
+  | "MOVE_HAS_CONFLICTS"
+  | "MOVE_INVALID"
+  | "SCHEDULE_BUSY";
 
 export class HonorConfigurationError extends Error {
   constructor(
@@ -57,6 +66,8 @@ export class HonorConfigurationError extends Error {
     message: string,
     /** For a delete refusal: how many class picks the delete would remove. */
     public readonly picks?: number,
+    /** More facts the screen can show with the refusal (#834), e.g. how many enrolled people a move would double-book. */
+    public readonly details?: Record<string, number | string>,
   ) {
     super(message);
     this.name = "HonorConfigurationError";
@@ -636,6 +647,40 @@ export async function writeHonorRows(tx: Prisma.TransactionClient, offeringId: s
 }
 
 /** A new class as the screens send it; a caller that sets no minimum level or prerequisites (an older script) gets none (#832). */
+/**
+ * The rules for a class standing in a room (#834), checked inside the caller's transaction: the room is this event's
+ * and at the class's site, the class has no more seats than the room, and (for an active class) no other active class
+ * holds the room at the same time. An all-sessions class holds the room for every session.
+ */
+export async function assertRoomPlacement(
+  tx: Prisma.TransactionClient,
+  placement: { eventId: string; roomId: string; offeringId: string; span: "SINGLE_SESSION" | "ALL_SESSIONS"; sessionId: string | null; siteId: string | null; capacity: number; isActive: boolean },
+) {
+  const room = await tx.honorRoom.findFirst({ where: { id: placement.roomId, eventId: placement.eventId }, select: { id: true, name: true, capacity: true, locationId: true } });
+  if (!room) throw new HonorConfigurationError("ROOM_NOT_FOUND", "That room could not be found.");
+  if (room.locationId !== placement.siteId) {
+    throw new HonorConfigurationError("ROOM_WRONG_SITE", `${room.name} is at a different site. Move the class to a room at its own site, or take it out of its room first.`);
+  }
+  if (placement.capacity > room.capacity) {
+    throw new HonorConfigurationError("ROOM_TOO_SMALL", `${room.name} seats ${room.capacity}, and this class has ${placement.capacity} seats. Lower the class seats or choose a bigger room.`, undefined, { roomCapacity: room.capacity });
+  }
+  if (placement.isActive) {
+    const booked = await tx.honorOffering.findFirst({
+      where: {
+        roomId: room.id,
+        id: { not: placement.offeringId },
+        isActive: true,
+        ...(placement.span === "ALL_SESSIONS" ? {} : { OR: [{ span: "ALL_SESSIONS" as const }, { sessionId: placement.sessionId }] }),
+      },
+      select: { honors: offeringHonorsSelect },
+    });
+    if (booked) {
+      throw new HonorConfigurationError("ROOM_BOOKED", `${room.name} already has ${summarizeOfferingHonors(booked.honors).honorName} then. Choose another room or session.`);
+    }
+  }
+  return room;
+}
+
 export type NewHonorOffering = Omit<HonorOfferingInput, "minimumClassLevel" | "prerequisiteHonorIds"> & Partial<Pick<HonorOfferingInput, "minimumClassLevel" | "prerequisiteHonorIds">>;
 
 export async function createHonorOffering(eventId: string, rawInput: NewHonorOffering, actorUserId: string) {
@@ -733,7 +778,7 @@ export async function updateHonorOffering(
     await serializable(async (tx) => {
       const existing = await tx.honorOffering.findFirst({
         where: { id: offeringId, eventId },
-        select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, minimumClassLevel: true, honors: offeringHonorsSelect, prerequisites: { select: { honorId: true } } },
+        select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, minimumClassLevel: true, roomId: true, capacity: true, isActive: true, honors: offeringHonorsSelect, prerequisites: { select: { honorId: true } } },
       });
       if (!existing) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
       const current = summarizeOfferingHonors(existing.honors);
@@ -814,6 +859,14 @@ export async function updateHonorOffering(
           (honorId) => honorNames.get(honorId) ?? "",
         );
         if (conflict) throw new HonorConfigurationError("OFFERING_CONFLICT", conflict);
+        // A class placed in a room stays within it (#834).
+        if (existing.roomId && (spanChanged || sessionChanged || siteChanged)) {
+          await assertRoomPlacement(tx, {
+            eventId, roomId: existing.roomId, offeringId, span, sessionId,
+            siteId: span === "ALL_SESSIONS" ? locationId : sessionSite,
+            capacity: details.capacity ?? existing.capacity, isActive: details.isActive ?? existing.isActive,
+          });
+        }
         // Changing which honors enrolled students take needs the count staff were shown, like a delete does with picks.
         if (honorChange.changed) {
           const enrolled = await tx.honorEnrollment.count({ where: { offeringId } });
@@ -825,6 +878,15 @@ export async function updateHonorOffering(
             );
           }
         }
+      }
+
+      // Seats and active state on a class in a room (#834): never more seats than the room, one active class per room and session.
+      if (existing.roomId && !(spanChanged || sessionChanged || siteChanged) && (details.capacity !== undefined || details.isActive !== undefined)) {
+        const site = span === "ALL_SESSIONS" ? existing.locationId : (await tx.honorSession.findUnique({ where: { id: existing.sessionId ?? "" }, select: { locationId: true } }))?.locationId ?? null;
+        await assertRoomPlacement(tx, {
+          eventId, roomId: existing.roomId, offeringId, span, sessionId: existing.sessionId, siteId: site,
+          capacity: details.capacity ?? existing.capacity, isActive: details.isActive ?? existing.isActive,
+        });
       }
 
       // The prerequisite honors (#832): checked against the honors the class will teach, and replaced as a set.
@@ -872,6 +934,10 @@ export async function updateHonorOffering(
     // Two classes can't teach the same honor in the same session (the (sessionId, honorId) unique index on HonorOfferingHonor).
     if (isUniqueConstraint(error)) {
       throw new HonorConfigurationError("OFFERING_CONFLICT", "One of these honors is already offered in that session.");
+    }
+    // The database's backstop (#834): a room was made smaller at the same moment, so the class no longer fits it.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && /room capacity/.test(error.message)) {
+      throw new HonorConfigurationError("ROOM_TOO_SMALL", "The room has fewer seats than that. Lower the seats, or raise the room first.");
     }
     throw error;
   }

@@ -294,10 +294,11 @@ export async function removeEventOwnedRows(tx: Db, eventId: string) {
   await tx.merchandiseCatalog.deleteMany({ where: inEvent });
 
   // 5. Honors: enrollments (RESTRICT their offering), offerings (RESTRICT
-  //    session and location), sessions.
+  //    session and location), sessions, rooms (#834).
   await tx.honorEnrollment.deleteMany({ where: inEvent });
   await tx.honorOffering.deleteMany({ where: inEvent });
   await tx.honorSession.deleteMany({ where: inEvent });
+  await tx.honorRoom.deleteMany({ where: inEvent });
 
   // 6. Append-only registration ledgers (RESTRICT registration and attendee).
   await tx.registrationOperation.deleteMany({ where: inEvent });
