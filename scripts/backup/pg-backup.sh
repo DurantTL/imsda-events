@@ -31,6 +31,15 @@ STATE_DIR="${BACKUP_STATE_DIR:-${BACKUP_DIR}/.status}"
 mkdir -p "${BACKUP_DIR}" "${STATE_DIR}"
 rm -f "${STATE_DIR}/pg.state"
 
+# Prune first so a full disk is not what stops tonight's dump, and clear any
+# half-written file a killed run left behind.
+echo "[backup] pruning dumps older than ${RETENTION_DAYS} days (and stale partials)"
+find "${BACKUP_DIR}" -name 'imsda-events-*.dump.partial' -type f -print -delete
+find "${BACKUP_DIR}" -name 'imsda-events-*.dump' -type f -mtime "+${RETENTION_DAYS}" -print -delete
+
+# A crash or a failed pg_dump must not leave a truncated file behind.
+trap 'rm -f "${TARGET}.partial"' EXIT
+
 echo "[backup] $(date -u +%FT%TZ) dumping ${PGDATABASE:-imsda_events} to ${TARGET}"
 
 # Write to a temporary name first so a crash never leaves a truncated file that

@@ -10,6 +10,12 @@
 export const BACKUP_KIND = "BACKUP";
 export const REHEARSAL_KIND = "REHEARSAL";
 
+/** The migration that creates the status table; its age anchors "never". */
+export const BACKUP_MIGRATION_NAME = "20261014100000_backup_run";
+
+/** Weekly rehearsal plus a day of slack. */
+export const REHEARSAL_STALE_AFTER_MS = 8 * 24 * 60 * 60 * 1000;
+
 /** A nightly job plus twelve hours of slack for a slow or late run. */
 export const BACKUP_STALE_AFTER_MS = 36 * 60 * 60 * 1000;
 
@@ -31,13 +37,20 @@ export type BackupRunSummary = {
   latestOffsiteSuccess: Pick<BackupRunRecord, "finishedAt"> | null;
   /** Newest restore rehearsal of any outcome. */
   latestRehearsal: Pick<BackupRunRecord, "finishedAt" | "ok"> | null;
+  /** Newest restore rehearsal that succeeded. */
+  latestRehearsalSuccess: Pick<BackupRunRecord, "finishedAt"> | null;
+  /**
+   * When the status-table migration finished. Anchors "never": a deployment
+   * that has had the table for 36 hours and still has no backup is stale.
+   */
+  migrationFinishedAt: Date | null;
 };
 
 export type BackupStatus = {
   /**
-   * `never`: nothing has reported yet, so the backup container may not be
-   * running. Not treated as degraded, so a fresh deployment is not unhealthy
-   * before its first night; the runbook's verification step checks for it.
+   * `never`: nothing has reported yet, within 36 hours of the status table
+   * being created (a fresh deployment gets its first night). After that, with
+   * still nothing recorded, it is `stale`.
    * `stale`: no successful backup for 36 hours. `failing`: the latest run
    * failed (but a success is still recent).
    */
@@ -57,29 +70,64 @@ export type BackupStatus = {
   needsAttention: boolean;
 };
 
+/** What the public, unauthenticated health endpoint may show. */
+export type PublicBackupStatus = Pick<
+  BackupStatus,
+  "status" | "stale" | "needsAttention" | "lastSuccessAt" | "lastRehearsalAt"
+>;
+
+export function toPublicBackupStatus(status: BackupStatus): PublicBackupStatus {
+  return {
+    status: status.status,
+    stale: status.stale,
+    needsAttention: status.needsAttention,
+    lastSuccessAt: status.lastSuccessAt,
+    lastRehearsalAt: status.lastRehearsalAt,
+  };
+}
+
 export function assessBackupStatus(
   summary: BackupRunSummary,
   now: Date,
   staleAfterMs = BACKUP_STALE_AFTER_MS,
 ): BackupStatus {
-  const { latest, latestSuccess, latestOffsiteSuccess, latestRehearsal } = summary;
-  const successAge = latestSuccess
-    ? Math.max(0, now.getTime() - latestSuccess.finishedAt.getTime())
-    : null;
-  // Runs that all failed have no success to age; the latest failure shows as
-  // `failing`, and the 36 hours start counting from the first success.
-  const stale = successAge !== null && successAge > staleAfterMs;
+  const {
+    latest,
+    latestSuccess,
+    latestOffsiteSuccess,
+    latestRehearsal,
+    latestRehearsalSuccess,
+    migrationFinishedAt,
+  } = summary;
+  const age = (date: Date | null | undefined) =>
+    date ? Math.max(0, now.getTime() - date.getTime()) : null;
+
+  const successAge = age(latestSuccess?.finishedAt);
+  // With no success ever, the clock starts when the table was created, so a
+  // backup container that was never started cannot stay green forever.
+  const neverRan = latest === null;
+  const stale = successAge !== null
+    ? successAge > staleAfterMs
+    : (age(migrationFinishedAt) ?? 0) > staleAfterMs;
   const failing = latest !== null && !latest.ok;
   const status: BackupStatus["status"] = stale
     ? "stale"
     : failing
       ? "failing"
-      : latest === null
+      : neverRan
         ? "never"
         : "ok";
 
+  // Off-site: the scheduler records false when an off-site copy is required
+  // (BACKUP_REQUIRE_OFFSITE) and was skipped or failed. It also needs attention
+  // when copies worked once but have stopped for 36 hours.
   const offsiteOk = latest?.offsiteOk ?? null;
+  const offsiteAge = age(latestOffsiteSuccess?.finishedAt);
+  const offsiteStopped = offsiteAge !== null && offsiteAge > staleAfterMs;
+
   const rehearsalFailed = latestRehearsal !== null && !latestRehearsal.ok;
+  const rehearsalReference = latestRehearsalSuccess?.finishedAt ?? migrationFinishedAt;
+  const rehearsalOverdue = (age(rehearsalReference) ?? 0) > REHEARSAL_STALE_AFTER_MS;
 
   return {
     status,
@@ -93,7 +141,9 @@ export function assessBackupStatus(
     lastOffsiteSuccessAt: latestOffsiteSuccess?.finishedAt.toISOString() ?? null,
     lastRehearsalAt: latestRehearsal?.finishedAt.toISOString() ?? null,
     lastRehearsalOk: latestRehearsal?.ok ?? null,
-    needsAttention: stale || failing || offsiteOk === false || rehearsalFailed,
+    needsAttention:
+      stale || failing || offsiteOk === false || offsiteStopped
+      || rehearsalFailed || rehearsalOverdue,
   };
 }
 

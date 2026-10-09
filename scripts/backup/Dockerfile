@@ -15,6 +15,9 @@ RUN chmod 0755 /usr/local/bin/*.sh
 
 ENV BACKUP_DIR=/backups \
     ASSET_DIR=/assets \
+    BACKUP_REQUIRE_ASSETS=true \
+    BACKUP_REQUIRE_OFFSITE=true \
+    BACKUP_AT_HOUR=8 \
     BACKUP_OFFSITE_COMMAND='/usr/local/bin/offsite-r2.sh "$1"'
 
 # The base image's entrypoint starts a database server; this one runs backups.

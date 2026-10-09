@@ -6,7 +6,7 @@ import { withRequestContext } from "@/lib/request-context";
 import { getReleaseIdentity } from "@/lib/release";
 import { getSweepHeartbeat } from "@/modules/operations/sweep-heartbeat-repository";
 import { getBackupStatus } from "@/modules/operations/backup-status-repository";
-import { backupStatusDegradesHealth } from "@/modules/operations/backup-status";
+import { backupStatusDegradesHealth, toPublicBackupStatus } from "@/modules/operations/backup-status";
 
 /**
  * Liveness and readiness in one response.
@@ -65,8 +65,9 @@ async function getHandler() {
   const sweepDegraded = outboxSweep?.status === "stale" || outboxSweep?.status === "failing";
 
   // Backups: a stale, failing or unrehearsed backup is `degraded`, never 503,
-  // so the app stays in rotation. A backup that has never reported is shown as
-  // `never` without degrading, like the sweep. Times, sizes and flags only.
+  // so the app stays in rotation. This endpoint is public, so only the status,
+  // staleness and two times are shown; sizes and off-site detail stay behind
+  // getBackupStatus() for the admin readiness page.
   let backups: Awaited<ReturnType<typeof getBackupStatus>> | null = null;
   try {
     backups = await getBackupStatus();
@@ -90,7 +91,7 @@ async function getHandler() {
       backups: backups?.status ?? "unknown",
     },
     outboxSweep,
-    backups,
+    backups: backups ? toPublicBackupStatus(backups) : null,
     messageOutbox: outbox
       ? {
           status: outbox.status,

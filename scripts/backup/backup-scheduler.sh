@@ -8,21 +8,43 @@
 # reads: times, sizes, off-site ok/failed and the rehearsal result. Recording
 # is best effort; a failure to record is logged and never stops backups.
 #
+# A run happens once a day at BACKUP_AT_HOUR:00 UTC, not on container start, so
+# restarting the container does not take an extra dump in the middle of the day.
+#
 # Environment (besides what the other scripts read):
-#   BACKUP_INTERVAL_SECONDS  seconds between runs (default 86400)
+#   BACKUP_AT_HOUR           UTC hour 0-23 to run each day (default 8, which is
+#                            3 a.m. US Central during daylight saving time)
+#   BACKUP_REQUIRE_OFFSITE   true: a run with no successful off-site copy
+#                            (none configured, or it failed) is recorded as
+#                            off-site failed, so health shows it (default false;
+#                            true in the image)
 #   BACKUP_VERIFY_EVERY      rehearse a restore every Nth run (default 7)
 #   BACKUP_RUN_ONCE          set to 1 to run a single cycle and exit (tests,
 #                            and a manual "back up now")
 #   BACKUP_SCRIPT_DIR        where the sibling scripts live (default: this dir)
 set -eu
 
-INTERVAL_SECONDS="${BACKUP_INTERVAL_SECONDS:-86400}"
+AT_HOUR="${BACKUP_AT_HOUR:-8}"
 VERIFY_EVERY="${BACKUP_VERIFY_EVERY:-7}"
 SCRIPT_DIR="${BACKUP_SCRIPT_DIR:-$(cd "$(dirname "$0")" && pwd)}"
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 STATE_DIR="${BACKUP_STATE_DIR:-${BACKUP_DIR}/.status}"
 export BACKUP_DIR BACKUP_STATE_DIR="${STATE_DIR}"
 RUN=0
+
+case "${AT_HOUR}" in
+  [0-9] | [0-9][0-9]) [ "${AT_HOUR}" -le 23 ] || { echo "[backup-scheduler] BACKUP_AT_HOUR must be 0-23" >&2; exit 2; } ;;
+  *) echo "[backup-scheduler] BACKUP_AT_HOUR must be 0-23" >&2; exit 2 ;;
+esac
+
+# Seconds from now until the next AT_HOUR:00:00 UTC (0 when it is exactly then).
+seconds_until_run() {
+  H="$(expr "$(date -u +%H)" + 0)"
+  M="$(expr "$(date -u +%M)" + 0)"
+  S="$(expr "$(date -u +%S)" + 0)"
+  SINCE=$((H * 3600 + M * 60 + S))
+  echo $(((AT_HOUR * 3600 - SINCE + 86400) % 86400))
+}
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
@@ -69,6 +91,11 @@ run_cycle() {
   esac
   # A missing archive means the off-site set is incomplete.
   if [ -z "${ASSETS_BYTES}" ] && [ "${OFFSITE}" = "true" ]; then OFFSITE=false; fi
+  # When off-site is required, "not configured" is as bad as "failed".
+  if [ "${BACKUP_REQUIRE_OFFSITE:-false}" = "true" ] && [ "${OFFSITE}" != "true" ]; then
+    OFFSITE=false
+    echo "[backup-scheduler] BACKUP_REQUIRE_OFFSITE is set and no off-site copy succeeded." >&2
+  fi
 
   record BACKUP "${OK}" "${STARTED}" "$(now)" "${DUMP_BYTES}" "${ASSETS_BYTES}" "${OFFSITE}"
   if [ "${OK}" != "true" ]; then
@@ -88,13 +115,19 @@ run_cycle() {
   fi
 }
 
-echo "[backup-scheduler] backing up every ${INTERVAL_SECONDS}s, rehearsing a restore every ${VERIFY_EVERY} runs"
+echo "[backup-scheduler] backing up daily at ${AT_HOUR}:00 UTC, rehearsing a restore every ${VERIFY_EVERY} runs"
 
 while true; do
+  if [ "${BACKUP_RUN_ONCE:-0}" != "1" ]; then
+    WAIT="$(seconds_until_run)"
+    echo "[backup-scheduler] next run in ${WAIT}s"
+    sleep "${WAIT}"
+  fi
   RUN=$((RUN + 1))
   run_cycle
   if [ "${BACKUP_RUN_ONCE:-0}" = "1" ]; then
     exit 0
   fi
-  sleep "${INTERVAL_SECONDS}"
+  # Step past the scheduled second so a fast run is not repeated.
+  sleep 61
 done

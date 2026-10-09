@@ -8,18 +8,35 @@ in its own container). The Compose `backup` service described in
 ## What runs
 
 A small second container, **`imsda-backup`**, started next to the app and the
-`imsda-outbox-sweeper`. Every 24 hours it:
+`imsda-outbox-sweeper`. Once a day at `BACKUP_AT_HOUR` (UTC, default `8`, which
+is 3 a.m. US Central during daylight saving time and 2 a.m. in winter; it waits
+for that hour rather than running when the container starts) it:
 
-1. `pg-backup.sh`: `pg_dump` (custom format) to the local `imsda_events_backups`
-   volume, then copies the dump to R2.
-2. `assets-backup.sh`: archives the `imsda_events_assets` volume (mounted
-   **read-only**), checks the archive reads back, then copies it to R2.
-3. Deletes local files older than `BACKUP_RETENTION_DAYS` (14).
-4. `record-status.sh`: writes one status row (see below).
-5. Every 7th run (`BACKUP_VERIFY_EVERY`, starting with the first), runs
-   `pg-restore-verify.sh`: restores the newest local dump into a scratch
-   database, checks row counts, drops the scratch database, and records the
-   result.
+1. `pg-backup.sh`: prunes local dumps older than `BACKUP_RETENTION_DAYS` (14)
+   and any stale `*.partial` files, then `pg_dump` (custom format) to the local
+   `imsda_events_backups` volume, then copies the dump to R2. A half-written
+   file is removed if the run dies.
+2. `assets-backup.sh`: prunes the same way, archives the `imsda_events_assets`
+   volume (mounted **read-only**), checks the archive reads back, then copies it
+   to R2. It fails if the volume is not mounted, or is empty
+   (`BACKUP_REQUIRE_ASSETS=true`, the image default), instead of "backing up
+   nothing".
+3. `record-status.sh`: writes one status row (see below). With
+   `BACKUP_REQUIRE_OFFSITE=true` (the image default) a run whose off-site copy
+   was skipped or failed is recorded as off-site failed.
+4. Every 7th run (`BACKUP_VERIFY_EVERY`, starting with the first), runs
+   `pg-restore-verify.sh` and records the result. The rehearsal starts a
+   **private, temporary PostgreSQL inside the backup container** (unix socket
+   only, no network, in a temp directory), restores the newest local dump into
+   it, checks row counts on `Registration`, `RegistrationAttendee`, `Payment`
+   and `Person`, then stops it and deletes the directory. The production
+   database server is not touched: no `CREATEDB` privilege is needed and no
+   load or disk is added there. While it runs, the backup container uses
+   temporary disk of about the restored (uncompressed) database size under
+   `/tmp`, and roughly 100-200 MB of RAM; both are released afterwards. If
+   `/tmp` is small, mount a roomier path and set `RESTORE_TMP_DIR` to it.
+   (`RESTORE_MODE=server` keeps the old create-a-scratch-database-on-the-server
+   behavior for the Compose development stack only.)
 
 A failed off-site copy never stops the local backup, and a failed backup or
 rehearsal never stops the next night's run; both are recorded and logged.
@@ -49,23 +66,34 @@ Each row: `kind` (`BACKUP` or `REHEARSAL`), `startedAt`, `finishedAt`, `ok`,
 `dumpBytes`, `assetsBytes`, `offsiteOk` (null when no off-site copy is
 configured). No file names, paths, row contents or credentials.
 
-`/api/health` shows it as a `backups` block (and `services.backups`):
+`/api/health` is public, so it shows only a small `backups` block (and
+`services.backups`):
 
 | Field | Meaning |
 | --- | --- |
-| `status` | `ok`, `failing` (latest run failed, a success is still recent), `stale`, `never` (nothing recorded yet) |
+| `status` | `ok`, `failing` (latest run failed, a success is still recent), `stale`, `never` (nothing recorded yet, within 36 hours of the table being created) |
 | `stale` | `true` after 36 hours without a successful backup |
-| `lastSuccessAt`, `lastRunAt`, `lastRunOk` | newest successful / newest run |
-| `dumpBytes`, `assetsBytes` | sizes from the last successful run |
-| `offsiteOk`, `lastOffsiteSuccessAt` | latest run's off-site result / last time it worked |
-| `lastRehearsalAt`, `lastRehearsalOk` | latest restore rehearsal |
+| `needsAttention` | `true` for anything below |
+| `lastSuccessAt` | newest successful backup |
+| `lastRehearsalAt` | newest restore rehearsal |
 
-Health status rules: a stale or failing backup, a failed off-site copy, or a
-failed rehearsal makes `status` **`degraded`**, still HTTP 200. Only a database
-failure returns 503, so a missing backup never takes the app out of rotation.
-`never` does not degrade (a fresh deployment is not unhealthy before its first
-night), so the verification step below must be done by a person. The System
-readiness page (#870) will show the same block once it exists.
+Health `status` becomes **`degraded`**, still HTTP 200, when any of these hold:
+no successful backup for 36 hours; the latest run failed; the latest off-site
+copy failed (or was skipped while `BACKUP_REQUIRE_OFFSITE=true`), or copies that
+once worked have stopped for 36 hours; the latest rehearsal failed; or no
+rehearsal has succeeded for 8 days. Only a database failure returns 503, so a
+missing backup never takes the app out of rotation.
+
+`never` is not degraded for the first 36 hours after the table is created (the
+`_prisma_migrations` finish time of `20261014100000_backup_run` is the anchor),
+so a fresh deployment is not unhealthy before its first night. After that, with
+nothing recorded, it is `stale` and degraded: a backup container that was never
+started cannot stay green.
+
+Sizes, the off-site result and the rehearsal result are kept out of the public
+endpoint. They are read by the server function `getBackupStatus()`
+(`modules/operations/backup-status-repository.ts`) for the System readiness page
+(#870) once it exists.
 
 ## One-time human steps
 
@@ -92,11 +120,13 @@ bucket or under this token (see below).
 This is the only place the secrets live; never commit it or paste it in chat.
 
 ```
-# Database connection for pg_dump / psql (use a role that can read every table,
-# insert into "BackupRun", and CREATE DATABASE for the rehearsal; the app's own
-# role works if it owns the database).
-PGHOST=postgresql-postgresql_9kgaw_239292
-PGPORT=5432
+# Database connection for pg_dump / psql. Copy host, port, database, user and
+# password from DATABASE_URL in /home/u_events/.xcloud/.env.dburl; do not guess
+# the host. Use a role that can read every table and insert into "BackupRun"
+# (the app's own role works). No CREATEDB is needed: the rehearsal uses a
+# private temporary server inside the backup container.
+PGHOST=<host from DATABASE_URL>
+PGPORT=<port from DATABASE_URL>
 PGUSER=<database user>
 PGPASSWORD=<database password>
 PGDATABASE=<database name>
@@ -110,11 +140,16 @@ R2_BUCKET=<bucket name>
 
 BACKUP_RETENTION_DAYS=14        # human approves
 BACKUP_VERIFY_EVERY=7
+# BACKUP_AT_HOUR=8              # UTC hour; 8 = 3 a.m. Central (CDT)
+# The image already sets BACKUP_REQUIRE_OFFSITE=true and BACKUP_REQUIRE_ASSETS=true.
 ```
 
+If `DATABASE_URL` ends with `?schema=<name>` and the name is not `public`, also
+add `PGOPTIONS=-c search_path=<name>` so `pg_dump` and the status insert find
+the right schema (psql cannot take the `?schema=` query itself).
+
 Use separate plain `KEY=value` lines (no quotes, no `export`), as for `docker
---env-file`. `PGDATABASE`/`PGUSER`/`PGPASSWORD` are the pieces of the app's
-`DATABASE_URL` (a URL with `?schema=` cannot be given to `psql` directly). The
+--env-file`. The
 default off-site command (`offsite-r2.sh`) is baked into the image and reads the
 `R2_*` names above; do not set `BACKUP_OFFSITE_COMMAND` unless you are
 replacing it.
@@ -169,8 +204,20 @@ to `/root/manual-deploy.sh` beside the sweeper so a redeploy keeps it running.
 Upgrading the backup image is the same two lines with a new `$SHA`; the
 volume (and its history) is untouched.
 
-To run a backup right now instead of waiting a day, start a one-off container
-with the same options plus `-e BACKUP_RUN_ONCE=1` and `--rm` (omit `-d`).
+To back up right now instead of waiting for the scheduled hour, run a one-off
+container (no `--name`, no `--restart`; it exits when done). **It also runs a
+restore rehearsal**, so allow a few minutes and the temporary disk described
+above:
+
+```bash
+docker run --rm \
+  --network postgresql_9kgaw_239292_xcloud-network \
+  --env-file /home/u_events/.xcloud/.env.backup \
+  -e BACKUP_RUN_ONCE=1 \
+  -v imsda_events_assets:/assets:ro \
+  -v imsda_events_backups:/backups \
+  ghcr.io/duranttl/imsda-events-backup:$SHA
+```
 
 ### 4. Verify
 
@@ -181,24 +228,31 @@ docker logs imsda-backup 2>&1 | tail -30
 Expect `[backup] wrote ...`, `[offsite-r2] uploaded imsda-events/imsda-events-<stamp>.dump`,
 `[asset-backup] ...`, then `restore rehearsal succeeded`. Then:
 
-1. `curl -s https://<app host>/api/health` and check
-   `backups.lastSuccessAt`, `backups.offsiteOk: true`, and
-   `backups.lastRehearsalOk: true`. (`backups.status` of `never` means the
-   container is not running, cannot reach the database, or the migration has not
-   been applied: look at `docker logs imsda-backup` for `could not record
-   status`.)
-2. In the Cloudflare dashboard, confirm both the `.dump` and `.tar.gz` objects
+1. The container waits for `BACKUP_AT_HOUR`, so right after starting it nothing
+   is recorded yet. Run the one-off "back up right now" command above to get
+   a first run immediately.
+2. `curl -s https://<app host>/api/health` and check that `backups.status` is
+   `ok`, `backups.needsAttention` is `false`, and `backups.lastSuccessAt` and
+   `backups.lastRehearsalAt` are set. (`backups.status` of `never` means no run
+   has been recorded: the container is not running, cannot reach the database,
+   or the migration has not been applied; look in `docker logs` for `could not
+   record status`. A `needsAttention` of `true` with otherwise-fresh times
+   usually means the off-site copy failed: look for `OFF-SITE COPY FAILED`.
+   The detail, including sizes and the off-site result, is on the System
+   readiness page (#870) once it exists.)
+3. In the Cloudflare dashboard, confirm both the `.dump` and `.tar.gz` objects
    are in the bucket under `imsda-events/`.
-3. Confirm the lifecycle rule is saved.
+4. Confirm the lifecycle rule is saved.
 
 ## Weekly rehearsal
 
-The scheduler restores the newest local dump into a scratch database
-(`imsda_events_restore_check`, dropped afterwards, never the live database) every
-7th run and records the result. Weekly, a human:
+The scheduler restores the newest local dump into a private temporary
+PostgreSQL inside the backup container (see "What runs"; the production server
+is never used) every 7th run and records the result. Weekly, a human:
 
-1. Reads `/api/health`: `backups.lastRehearsalOk` is `true` and
-   `lastRehearsalAt` is within about 8 days.
+1. Reads `/api/health`: `backups.needsAttention` is `false` and
+   `backups.lastRehearsalAt` is within about 8 days (health turns `degraded` after 8
+   days without a successful rehearsal).
 2. `docker logs imsda-backup 2>&1 | grep restore-verify` shows row counts for
    `Registration`, `RegistrationAttendee`, `Payment` and `Person` that look
    plausible.

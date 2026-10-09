@@ -186,7 +186,16 @@ describe("health endpoint", () => {
     expect(response.status).toBe(200);
     expect(body.status).toBe("ok");
     expect(body.services.backups).toBe("ok");
-    expect(body.backups).toEqual(healthyBackups);
+    // Public endpoint: no sizes or off-site detail.
+    expect(body.backups).toEqual({
+      status: "ok",
+      stale: false,
+      needsAttention: false,
+      lastSuccessAt: healthyBackups.lastSuccessAt,
+      lastRehearsalAt: healthyBackups.lastRehearsalAt,
+    });
+    expect(JSON.stringify(body)).not.toContain("dumpBytes");
+    expect(JSON.stringify(body)).not.toContain("offsite");
   });
 
   it("reports degraded, not 503, when the last backup is stale", async () => {
@@ -216,10 +225,10 @@ describe("health endpoint", () => {
 
     const response = await GET(healthRequest());
 
-    await expect(response.json()).resolves.toMatchObject({
-      status: "degraded",
-      backups: { offsiteOk: false },
-    });
+    const body = await response.json();
+    expect(body.status).toBe("degraded");
+    expect(body.backups.needsAttention).toBe(true);
+    expect(body.backups).not.toHaveProperty("offsiteOk");
   });
 
   it("does not degrade before the first backup has reported", async () => {

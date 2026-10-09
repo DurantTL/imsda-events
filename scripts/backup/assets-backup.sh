@@ -14,10 +14,26 @@ TARGET="${BACKUP_DIR}/imsda-assets-${STAMP}.tar.gz"
 
 STATE_DIR="${BACKUP_STATE_DIR:-${BACKUP_DIR}/.status}"
 
-# The assets volume is mounted read-only in production; mkdir -p is a no-op
-# there and only matters for a fresh local directory.
-mkdir -p "${ASSET_DIR}" "${BACKUP_DIR}" "${STATE_DIR}"
+mkdir -p "${BACKUP_DIR}" "${STATE_DIR}"
 rm -f "${STATE_DIR}/assets.state"
+
+# Never create the assets directory: a missing mount must fail loudly rather
+# than produce a "successful" backup of nothing. With BACKUP_REQUIRE_ASSETS=true
+# (the default in the image) an empty directory fails too.
+if [ ! -d "${ASSET_DIR}" ]; then
+  echo "[asset-backup] ${ASSET_DIR} does not exist; is the assets volume mounted?" >&2
+  exit 1
+fi
+if [ "${BACKUP_REQUIRE_ASSETS:-false}" = "true" ] && [ -z "$(ls -A "${ASSET_DIR}")" ]; then
+  echo "[asset-backup] ${ASSET_DIR} is empty and BACKUP_REQUIRE_ASSETS=true; refusing." >&2
+  exit 1
+fi
+
+echo "[asset-backup] pruning archives older than ${RETENTION_DAYS} days (and stale partials)"
+find "${BACKUP_DIR}" -name 'imsda-assets-*.tar.gz.partial' -type f -print -delete
+find "${BACKUP_DIR}" -name 'imsda-assets-*.tar.gz' -type f -mtime "+${RETENTION_DAYS}" -print -delete
+
+trap 'rm -f "${TARGET}.partial"' EXIT
 
 echo "[asset-backup] $(date -u +%FT%TZ) archiving ${ASSET_DIR} to ${TARGET}"
 tar -czf "${TARGET}.partial" -C "${ASSET_DIR}" .
