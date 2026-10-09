@@ -78,7 +78,7 @@ async function sealedAddress(rawUrl: string, exceptFeedId?: string) {
     throw error;
   }
   if (!isSecretEncryptionConfigured()) {
-    throw new CalendarError("FEED_SECRET_MISSING", "Saving calendar addresses needs the encryption key (SECRET_ENCRYPTION_KEY) to be set on the server.");
+    throw new CalendarError("FEED_SECRET_MISSING", "Saving calendar addresses needs the encryption key (SECRET_ENCRYPTION_KEY, or SECRET_ENCRYPTION_KEY_FILE) to be set on the server.");
   }
   const urlFingerprint = fingerprintSecret(url.toString(), feedSecretPurpose);
   await assertNotConnected(urlFingerprint, exceptFeedId);

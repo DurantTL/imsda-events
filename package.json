@@ -77,6 +77,7 @@
     "lodging:sync": "tsx --require ./scripts/support/allow-server-only.cjs scripts/sync-lodging-templates.ts",
     "admin:create": "tsx scripts/create-admin.ts",
     "admin:reset-mfa": "tsx scripts/reset-mfa.ts",
+    "key:restore-check": "tsx --require ./scripts/support/allow-server-only.cjs scripts/backup/verify-key-restore.ts",
     "registrations:cleanup": "tsx scripts/cleanup-imported-duplicates.ts",
     "event:readiness": "tsx scripts/event-readiness.ts",
     "payments:reconcile": "tsx scripts/payments-reconcile.ts",

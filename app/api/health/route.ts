@@ -1,3 +1,4 @@
+import { getEncryptionKeyStatus } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { getOutboxQueueHealth } from "@/modules/communications/outbox-sweep";
 import { logError } from "@/lib/logger";
@@ -17,6 +18,8 @@ import { getSweepHeartbeat } from "@/modules/operations/sweep-heartbeat-reposito
 async function getHandler() {
   const checkedAt = new Date().toISOString();
   const release = getReleaseIdentity();
+  // Whether a key is configured and how it was loaded. Never the key itself.
+  const encryptionKey = getEncryptionKeyStatus();
 
   try {
     await getPrisma().$queryRaw`SELECT 1`;
@@ -38,6 +41,7 @@ async function getHandler() {
         checkedAt,
         release,
         services: { application: "ok", database: "unavailable" },
+        encryptionKey,
       },
       { status: 503 }
     );
@@ -73,6 +77,7 @@ async function getHandler() {
       outboxSweep: outboxSweep?.status ?? "unknown",
     },
     outboxSweep,
+    encryptionKey,
     messageOutbox: outbox
       ? {
           status: outbox.status,

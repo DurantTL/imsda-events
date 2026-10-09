@@ -78,8 +78,12 @@ services:
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
       # Seals the TOTP secrets behind two-factor authentication. Changing it
-      # makes every enrolled authenticator unreadable.
-      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY?set this to at least 32 random characters (openssl rand -base64 48)}
+      # makes every enrolled authenticator unreadable. Set it here, or instead
+      # load it from a file: leave SECRET_ENCRYPTION_KEY unset, uncomment the
+      # _FILE line below and the matching bind volume further down this service (setting both
+      # stops startup). See docs/DEPLOY-DOCKER.md.
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-}
+      # SECRET_ENCRYPTION_KEY_FILE: /run/secrets/encryption-key
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       ALERT_REPEAT_MINUTES: ${ALERT_REPEAT_MINUTES:-60}
       PASSWORD_BREACH_CHECK: ${PASSWORD_BREACH_CHECK:-}
@@ -100,6 +104,12 @@ services:
       OUTBOX_SWEEP_TOKEN: ${OUTBOX_SWEEP_TOKEN?set this to at least 32 random characters (openssl rand -base64 48); it authorises the scheduled outbox sweep}
     volumes:
       - imsda_events_assets:/app/storage/event-assets
+      # Key file (with SECRET_ENCRYPTION_KEY_FILE above). A long-syntax bind
+      # fails if the file is missing instead of creating a directory.
+      # - type: bind
+      #   source: /etc/imsda/secret-encryption-key
+      #   target: /run/secrets/encryption-key
+      #   read_only: true
     ports:
       - "${APP_PORT:-3100}:3000"
     healthcheck:

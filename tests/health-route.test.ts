@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const dependencies = vi.hoisted(() => ({
   getPrisma: vi.fn(),
@@ -19,6 +19,7 @@ vi.mock("@/modules/operations/sweep-heartbeat-repository", () => ({
   getSweepHeartbeat: dependencies.getSweepHeartbeat,
 }));
 
+import { resetServerEnvCache } from "@/lib/env";
 import { GET } from "@/app/api/health/route";
 
 const healthyQueue = {
@@ -55,7 +56,37 @@ function healthRequest() {
   return new Request("https://events.imsda.test/api/health");
 }
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+  resetServerEnvCache();
+});
+
 describe("health endpoint", () => {
+  it("shows how the encryption key is loaded and never its value", async () => {
+    const syntheticKey = "synthetic-health-key-0123456789-abcdefghijklmno";
+    resetServerEnvCache();
+    vi.stubEnv("SECRET_ENCRYPTION_KEY_FILE", "");
+    vi.stubEnv("SECRET_ENCRYPTION_KEY", syntheticKey);
+    const response = await GET(healthRequest());
+    const text = await response.text();
+    expect(JSON.parse(text).encryptionKey).toEqual({ configured: true, source: "env" });
+    expect(text).not.toContain(syntheticKey);
+
+    // Resolved once at startup: a later change is not re-read per request.
+    vi.stubEnv("SECRET_ENCRYPTION_KEY", "");
+    expect((await (await GET(healthRequest())).json()).encryptionKey).toEqual({ configured: true, source: "env" });
+
+    resetServerEnvCache();
+    vi.stubEnv("SECRET_ENCRYPTION_KEY_FILE", "/nonexistent/imsda-test-key");
+    const missing = await (await GET(healthRequest())).json();
+    expect(missing.encryptionKey).toEqual({ configured: false, source: "file" });
+
+    resetServerEnvCache();
+    vi.stubEnv("SECRET_ENCRYPTION_KEY_FILE", "");
+    const none = await (await GET(healthRequest())).json();
+    expect(none.encryptionKey).toEqual({ configured: false, source: null });
+  });
+
   it("reports ok when the database and the outbox are both healthy", async () => {
     const response = await GET(healthRequest());
 
