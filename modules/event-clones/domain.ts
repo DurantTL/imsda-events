@@ -251,8 +251,19 @@ export type SourceConfiguration = {
     locationName: string | null;
     locationNormalizedName: string | null;
   }>;
+  /** Rooms inside the sites (#834), copied with the classes placed in them; the site is matched by name. */
+  honorRooms?: Array<{
+    id: string;
+    name: string;
+    normalizedName: string;
+    capacity: number;
+    sortOrder: number;
+    locationNormalizedName: string | null;
+  }>;
   honorOfferings: Array<{
     id: string;
+    /** The room the class is placed in (#834). */
+    roomId?: string | null;
     /** The class's primary honor. */
     honorId: string;
     /** Every honor the class teaches, in order (#812); absent means just `honorId`. */

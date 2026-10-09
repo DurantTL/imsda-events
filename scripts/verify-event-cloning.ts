@@ -59,7 +59,7 @@ async function cleanup() {
 const allIncluded = Object.fromEntries(cloneDomainKeys.map((key) => [key, true])) as Record<CloneDomainKey, boolean>;
 const noneIncluded = Object.fromEntries(cloneDomainKeys.map((key) => [key, false])) as Record<CloneDomainKey, boolean>;
 
-type Fixture = { eventId: string; lateFormId: string; capFormId: string; promoIds: string[]; offeringIds: string[]; sectionId: string; templateKey: string };
+type Fixture = { eventId: string; lateFormId: string; capFormId: string; promoIds: string[]; offeringIds: string[]; roomId: string; sectionId: string; templateKey: string };
 
 /** The app's own origin, as the clone reads it: `/manage/` links there are private. */
 function appOrigin() {
@@ -151,6 +151,9 @@ async function buildPopulatedSource(): Promise<Fixture> {
   await prisma.honorSession.create({ data: { eventId, name: "Afternoon", normalizedName: "afternoon", createdAt: new Date(Date.now() + 60_000) } });
   const offeringA = await prisma.honorOffering.create({ data: { eventId, honorId: honor.id, sessionId: session.id, span: "SINGLE_SESSION", capacity: 30, perClubLimit: 4, minimumAge: 10, minimumClassLevel: "GUIDE", teacherName: "Synthetic Teacher" } });
   await prisma.honorOfferingPrerequisite.create({ data: { offeringId: offeringA.id, honorId: honor2.id } });
+  // A room (#834) with a class in it: the clone copies both, and the copied class stands in the copied room.
+  const sourceRoom = await prisma.honorRoom.create({ data: { eventId, name: "Fellowship hall", normalizedName: "fellowship hall", capacity: 40 } });
+  await prisma.honorOffering.update({ where: { id: offeringA.id }, data: { roomId: sourceRoom.id, location: "Fellowship hall" } });
   const offeringB = await prisma.honorOffering.create({ data: { eventId, honorId: honor2.id, span: "ALL_SESSIONS", capacity: 20, isActive: false } });
 
   // Forms: one with late pricing, one with capacity limits, one never published.
@@ -201,7 +204,7 @@ async function buildPopulatedSource(): Promise<Fixture> {
   await prisma.eventMembership.create({ data: { eventId, userId: adminId, role: "EVENT_ADMIN", status: "ACTIVE" } });
   await prisma.auditLog.create({ data: { eventId, actorUserId: staffId, action: "SYNTHETIC_HISTORY", entityType: "Event", entityId: eventId, correlationId: `${P}-audit`, summary: "Synthetic history." } });
 
-  return { eventId, lateFormId: forms.late.id, capFormId: forms.cap.id, promoIds: [promoA.id, promoB.id], offeringIds: [offeringA.id, offeringB.id], sectionId: section.id, templateKey: "EVENT_ANNOUNCEMENT" };
+  return { eventId, lateFormId: forms.late.id, capFormId: forms.cap.id, promoIds: [promoA.id, promoB.id], offeringIds: [offeringA.id, offeringB.id], roomId: sourceRoom.id, sectionId: section.id, templateKey: "EVENT_ANNOUNCEMENT" };
 }
 
 /** Every row the clone must not share with or copy from the source, counted for one event. */
@@ -404,6 +407,10 @@ async function run() {
   const clonedLevelClass = offerings.find((offering) => offering.minimumClassLevel === "GUIDE");
   assert(clonedLevelClass && (await prisma.honorOfferingPrerequisite.findMany({ where: { offeringId: clonedLevelClass.id } })).map((row) => row.honorId).join() === sourcePrerequisite?.honorId, "the minimum class level and prerequisite honors carry over (#832)");
   assert((await prisma.honorOfferingPrerequisite.count({ where: { offering: { eventId: cloneId } } })) === 1, "only the class that had prerequisites has them in the clone");
+  const clonedRooms = await prisma.honorRoom.findMany({ where: { eventId: cloneId } });
+  assert(clonedRooms.length === 1 && clonedRooms[0]!.name === "Fellowship hall" && clonedRooms[0]!.capacity === 40 && clonedRooms[0]!.id !== source.roomId, "rooms are copied as new rows (#834)");
+  assert(clonedLevelClass.roomId === clonedRooms[0]!.id && offerings.filter((offering) => offering.roomId !== null).length === 1, "the class that was in a room is in the copied room, and the others stay unplaced (#834)");
+  assert((await prisma.honorOffering.count({ where: { roomId: source.roomId } })) === 1, "the source's class keeps the source's room");
 
   const dump = await cloneDump(cloneId);
   assert(!dump.includes(marker) && !dump.includes(`/api/events/${sourceId}/`) && !dump.includes(`/api/public/events/${P}-source-2027/assets/`) && !dump.includes(`${appOrigin()}/manage/`), "no private-link marker reached the clone's event, sections, links, forms, or messages");

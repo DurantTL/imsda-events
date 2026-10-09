@@ -1506,6 +1506,7 @@ model Event {
   churchSponsorFinanceReviews           ChurchSponsorFinanceReview[]
   programAssignmentRuns               ProgramAssignmentRun[]
   honorSessions                       HonorSession[]
+  honorRooms                          HonorRoom[]
   honorOfferings                      HonorOffering[]
   clubRegistrations                   ClubEventRegistration[]
   teamSettings                        EventTeamSettings?
@@ -1656,6 +1657,7 @@ model EventLocation {
   waitlistChanges LocationWaitlistChange[]
   honorSessions   HonorSession[]
   honorOfferings  HonorOffering[]
+  honorRooms      HonorRoom[]
 
   @@unique([eventId, normalizedName])
   @@index([eventId, isActive, sortOrder])
@@ -4289,6 +4291,32 @@ model HonorSession {
   @@index([locationId])
 }
 
+/// A room inside a site (#834), with a seat capacity. A class placed in the
+/// room (`HonorOffering.roomId`) can't have more seats than the room. Name
+/// uniqueness is two partial unique indexes the migration adds, like sessions:
+/// (eventId, normalizedName) WHERE locationId IS NULL and (eventId, locationId,
+/// normalizedName) WHERE locationId IS NOT NULL. The migration also adds the
+/// triggers that keep a class within its room's capacity.
+model HonorRoom {
+  id             String   @id @default(cuid())
+  eventId        String
+  /// The site the room is in; null when the event has no sites.
+  locationId     String?
+  name           String
+  normalizedName String
+  capacity       Int
+  sortOrder      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  event     Event           @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  site      EventLocation?  @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  offerings HonorOffering[]
+
+  @@index([eventId, locationId, sortOrder])
+  @@index([locationId])
+}
+
 /// A class taught at a site: in one session, or across all sessions. A class
 /// teaches one or more catalog honors (#812), listed in `honors`
 /// (`HonorOfferingHonor`); a person enrolled in the class is enrolled in each.
@@ -4316,6 +4344,11 @@ model HonorOffering {
   perClubLimit Int?
   teacherName  String            @default("")
   location     String            @default("")
+  /// The room the class is placed in on the schedule board (#834); null: not placed.
+  /// While set, `location` (the free-text room shown on grids) mirrors the room's name.
+  /// A partial unique index (roomId, sessionId) WHERE both set AND active keeps one class
+  /// per room per session; an all-sessions class is checked in the repository.
+  roomId       String?
   /// Extra cost of this class in cents (#651); null means none. Shown on the public class grid.
   additionalCostCents Int?
   /// A special requirement shown as a badge on the public class grid (#651), e.g. "Bring a flashlight".
@@ -4328,6 +4361,7 @@ model HonorOffering {
   honor       Honor             @relation(fields: [honorId], references: [id], onDelete: Restrict)
   session     HonorSession?     @relation(fields: [sessionId], references: [id], onDelete: Restrict)
   site        EventLocation?    @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  room        HonorRoom?        @relation(fields: [roomId], references: [id], onDelete: SetNull)
   enrollments HonorEnrollment[]
   honors      HonorOfferingHonor[]
   /// Honors a youth must have completed first (#832); every one is required.
@@ -4338,6 +4372,7 @@ model HonorOffering {
   @@index([eventId, isActive])
   @@index([locationId])
   @@index([honorId])
+  @@index([roomId])
 }
 
 /// An honor a youth must have completed before taking a class (#832), checked

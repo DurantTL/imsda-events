@@ -207,6 +207,11 @@ jobs:
       # honor edits and write-backs.
       - run: npm run test:multi-honor-classes
       - run: npm run test:honor-class-requirements
+      # Real-database check of the Honors Weekend schedule board (#834): a class never has more seats than its
+      # room (app and database), one class per room and session, moving a class that has enrollments keeps them
+      # and never overfills, is blocked (with a count) when enrolled people would hold two classes in one session,
+      # and races (two moves into one room, a move against a pick, a room shrink against a class) end valid.
+      - run: npm run test:honor-schedule-board
 
       # Real-database check of deleting an event at any stage: a rich event
       # (registrations, payments, honors, forms, messages, locations, club forms,

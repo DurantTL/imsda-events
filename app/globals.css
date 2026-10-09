@@ -10613,3 +10613,49 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
   .message-template-editor .builder-actions .primary-button { min-height: 44px; }
   .modal-head .modal-close-button { min-width: 44px; min-height: 44px; }
 }
+
+/* Honors Weekend schedule board (#834). The grid scrolls inside .schedule-scroll, never the page. */
+.schedule-board { min-width: 0; }
+.schedule-board .panel { min-width: 0; }
+.schedule-legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: max(var(--type-floor, 0px), 0.7rem); }
+.schedule-legend li { display: flex; align-items: center; gap: 6px; }
+.schedule-picking { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.schedule-scroll { max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+.schedule-scroll:focus-visible { outline: 2px solid var(--imsda-purple); outline-offset: 2px; }
+.schedule-grid { display: grid; }
+.schedule-corner,
+.schedule-colhead,
+.schedule-rowhead { background: var(--panel-tint, #f7faf9); border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); padding: 9px 10px; }
+.schedule-colhead { color: var(--ink); font-size: max(var(--type-body-floor, 0px), 0.72rem); font-weight: 800; }
+.schedule-rowhead { display: grid; align-content: start; gap: 2px; position: sticky; left: 0; z-index: 1; color: var(--ink); font-size: max(var(--type-body-floor, 0px), 0.72rem); overflow-wrap: anywhere; }
+.schedule-rowhead small { color: var(--muted); }
+.schedule-cell { display: grid; align-content: start; gap: 8px; min-width: 0; min-height: 76px; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line); padding: 8px; }
+.schedule-cell.is-target { background: #f2f8f5; }
+.schedule-cell.is-over { background: #e3f1ea; outline: 2px dashed var(--imsda-purple); outline-offset: -3px; }
+.schedule-card { display: grid; gap: 5px; min-width: 0; border: 1px solid var(--line); border-left: 5px solid #9bb5a8; border-radius: 10px; background: #fff; padding: 8px 10px; overflow-wrap: anywhere; cursor: grab; }
+.schedule-card.is-nearly-full { border-left-color: #d9a21b; background: #fffaf0; }
+.schedule-card.is-full { border-left-color: #c2402d; background: #fff3f1; }
+.schedule-card.is-selected { outline: 2px solid var(--imsda-purple); }
+.schedule-card.is-inactive { opacity: 0.7; border-style: dashed; }
+.schedule-card h3 { display: flex; align-items: flex-start; gap: 4px; margin: 0; color: var(--ink); font-size: max(var(--type-body-floor, 0px), 0.78rem); line-height: 1.3; }
+.schedule-grip { flex: 0 0 auto; margin-top: 2px; color: var(--muted); }
+.schedule-seats,
+.schedule-teacher,
+.schedule-clash { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 0; color: var(--ink); font-size: max(var(--type-floor, 0px), 0.7rem); }
+.schedule-teacher { color: var(--muted); }
+.schedule-clash { align-items: flex-start; color: #8a2d1f; font-weight: 700; }
+.schedule-chip { display: inline-flex; align-items: center; gap: 3px; border: 1px solid var(--line); border-radius: 999px; background: #fff; padding: 1px 8px; color: var(--ink); font-size: max(var(--type-floor, 0px), 0.66rem); font-weight: 800; }
+.schedule-chip.is-nearly { border-color: #d9a21b; background: #fff1cc; color: #5c4200; }
+.schedule-chip.is-full { border-color: #c2402d; background: #fde3df; color: #7a1d10; }
+.schedule-chip.is-clash { border-color: #c2402d; background: #fde3df; color: #7a1d10; }
+.schedule-move,
+.schedule-here { min-height: 44px; justify-content: center; }
+.schedule-here { width: 100%; }
+.schedule-blocked { margin: 0; color: var(--muted); font-size: max(var(--type-floor, 0px), 0.68rem); line-height: 1.4; overflow-wrap: anywhere; }
+.schedule-rooms { margin-top: 14px; }
+.schedule-rooms summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--imsda-purple); font-weight: 800; }
+.schedule-room-form { margin: 8px 0 0; flex: 1 0 100%; }
+.schedule-rooms input { min-height: 44px; border: 1px solid #cbdbe2; border-radius: 10px; background: #fbfcfd; padding: 8px 10px; font-size: max(var(--type-body-floor, 0px), 0.78rem); }
+@media (max-width: 600px) {
+  .schedule-board .text-button { min-height: 44px; min-width: 44px; }
+}

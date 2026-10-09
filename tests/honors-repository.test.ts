@@ -170,6 +170,8 @@ function fakeDatabase() {
       },
     },
     honorOffering: {
+      // Classes placed in a room (#834): none of these fixtures has one.
+      count: async ({ where }: { where: Record<string, unknown> }) => (where.roomId ? 0 : db.offerings.filter((offering) => matches(offering, where)).length),
       findMany: async ({ where }: { where: Record<string, unknown> }) =>
         db.offerings.filter((offering) => matches(offering, where)).map(withOfferingRelations),
       findFirst: async ({ where }: { where: Record<string, unknown> }) => {

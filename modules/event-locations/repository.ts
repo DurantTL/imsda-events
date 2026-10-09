@@ -326,16 +326,18 @@ export async function deleteEventLocation(eventId: string, locationId: string, a
         );
       }
       // Honors Weekend sessions and all-sessions classes at this site block the delete too (#589).
-      const [sessions, classes] = await Promise.all([
+      const [sessions, classes, rooms] = await Promise.all([
         tx.honorSession.count({ where: { locationId } }),
         tx.honorOffering.count({ where: { locationId } }),
+        tx.honorRoom.count({ where: { locationId } }),
       ]);
-      if (sessions + classes > 0) {
+      if (sessions + classes + rooms > 0) {
         const parts = [
           ...(sessions > 0 ? [`${sessions} honors session${sessions === 1 ? "" : "s"}`] : []),
           ...(classes > 0 ? [`${classes} all-sessions class${classes === 1 ? "" : "es"}`] : []),
+          ...(rooms > 0 ? [`${rooms} honors room${rooms === 1 ? "" : "s"}`] : []),
         ];
-        const single = parts.length === 1 && sessions + classes === 1;
+        const single = parts.length === 1 && sessions + classes + rooms === 1;
         throw new EventLocationError(
           "LOCATION_IN_USE",
           `${parts.join(" and ")} ${single ? "is" : "are"} at this site. Move or remove ${single ? "it" : "them"} first.`,

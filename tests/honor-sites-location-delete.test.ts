@@ -12,11 +12,12 @@ vi.mock("@/modules/event-locations/admission", async () => {
 import { deleteEventLocation } from "@/modules/event-locations/repository";
 
 // Synthetic data only.
-function database(counts: { registrations?: number; sessions?: number; classes?: number }) {
+function database(counts: { registrations?: number; sessions?: number; classes?: number; rooms?: number }) {
   const tx = {
     registration: { count: vi.fn().mockResolvedValue(counts.registrations ?? 0), findMany: vi.fn().mockResolvedValue([]) },
     honorSession: { count: vi.fn().mockResolvedValue(counts.sessions ?? 0) },
     honorOffering: { count: vi.fn().mockResolvedValue(counts.classes ?? 0) },
+    honorRoom: { count: vi.fn().mockResolvedValue(counts.rooms ?? 0) },
     eventLocation: { delete: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
     auditLog: { create: vi.fn() },
   };
@@ -47,6 +48,10 @@ describe("deleting a location with honors sessions (#589)", () => {
     database({ classes: 1 });
     await expect(deleteEventLocation("event-1", "loc-1", "usr_admin")).rejects.toMatchObject({
       message: "1 all-sessions class is at this site. Move or remove it first.",
+    });
+    database({ rooms: 2 });
+    await expect(deleteEventLocation("event-1", "loc-1", "usr_admin")).rejects.toMatchObject({
+      message: "2 honors rooms are at this site. Move or remove them first.",
     });
     database({ sessions: 2, classes: 1 });
     await expect(deleteEventLocation("event-1", "loc-1", "usr_admin")).rejects.toMatchObject({

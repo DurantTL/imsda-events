@@ -232,7 +232,8 @@ export function HonorsSetupWorkspace({
       prerequisiteHonorIds: editing ? editPrerequisiteIds : newPrerequisiteIds,
       perClubLimit: optionalNumber(form.get("perClubLimit")),
       teacherName: String(form.get("teacherName") ?? ""),
-      location: String(form.get("location") ?? ""),
+      // A class in a room has its location text kept in step with the room: the form doesn't send it (#834).
+      ...(editing?.roomId ? {} : { location: String(form.get("location") ?? "") }),
       additionalCostCents: dollarsToCents(form.get("additionalCost")),
       requirementNote: String(form.get("requirementNote") ?? ""),
       // Only an all-sessions class has its own site; a single-session class is at its session's.
@@ -360,6 +361,9 @@ export function HonorsSetupWorkspace({
         </div>
         <div className="intro-actions">
           <span className="count-badge">{totalSeats} youth seats</span>
+          <Link className="secondary-button" href={`/more/honors/schedule?event=${encodeURIComponent(eventId)}`}>
+            <CalendarRange aria-hidden="true" size={15} /> Schedule board
+          </Link>
           <Link className="secondary-button" href={`/more/honors/rosters?event=${encodeURIComponent(eventId)}`}>
             <ClipboardList aria-hidden="true" size={15} /> Rosters
           </Link>
@@ -607,7 +611,8 @@ export function HonorsSetupWorkspace({
           </label>
           <label>
             Location (optional)
-            <input defaultValue={editing?.location ?? ""} maxLength={120} name="location" />
+            <input defaultValue={editing?.location ?? ""} maxLength={120} name="location" readOnly={Boolean(editing?.roomId)} />
+            {editing?.roomId && <span className="field-help">This class is placed in a room on the schedule board. Change its room there.</span>}
           </label>
           <label>
             Additional cost in dollars (optional)
