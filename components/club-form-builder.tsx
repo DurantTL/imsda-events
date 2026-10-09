@@ -22,7 +22,7 @@ import {
 import { ClubFormRosterMapping } from "@/components/club-form-roster-mapping";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import type { BuilderIssue, ClubFormDraftSpec } from "@/modules/club-forms/builder-domain";
-import { conditionOperators, formFieldTypes, isChoiceFieldType, type RegistrationFormField } from "@/modules/forms/definition";
+import { conditionOperators, fieldDisplayLabel, formFieldTypes, isChoiceFieldType, type RegistrationFormField } from "@/modules/forms/definition";
 
 /**
  * The club form builder (#712): a desktop editor for one club form template,
@@ -361,7 +361,7 @@ function FieldEditor({
     <li className={`panel form-stack${issues.length > 0 ? " has-error" : ""}`}>
       <div className="intro-actions">
         <button aria-expanded={expanded} className="text-button" onClick={onToggle} type="button">
-          <strong>{field.label || "(no label)"}</strong>
+          <strong>{field.label ? fieldDisplayLabel(field) : "(no label)"}</strong>
           <small className="quiet-copy"> · {typeLabels[field.type] ?? field.type}{field.required ? " · required" : ""}</small>
         </button>
         {sensitive && <small className="quiet-copy"><LockKeyhole aria-hidden="true" size={12} /> {birth ? "Birth date, sealed" : "Sensitive, sealed"}</small>}

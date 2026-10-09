@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { CalendarDays, Eye, EyeOff, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { CalendarFeedsPanel } from "@/components/calendar-feeds-panel";
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ConfirmDialog, cancelUnlessBusy } from "@/components/confirm-dialog";
+import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import type { CalendarAdminFeed } from "@/modules/calendar/feeds";
 import {
   bulkConfirmMessage,
@@ -120,11 +121,10 @@ export function CalendarAdminWorkspace({
   // Review before removing a calendar entry (#471): the shared in-page
   // confirm dialog replaces `window.confirm()`.
   const [removeTarget, setRemoveTarget] = useState<CalendarAdminEntry | null>(null);
-  const formRef = useRef<HTMLFormElement>(null);
-  // The repeat control and its start date are controlled so the skip list can preview occurrences.
-  const [startsOn, setStartsOn] = useState("");
-  const [repeat, setRepeat] = useState<RepeatDraft>(noRepeat);
-  const [skipped, setSkipped] = useState<string[]>([]);
+  // Where focus returns when the edit dialog closes (#869).
+  const openerRef = useRef<HTMLElement | null>(null);
+  // Focus lands here when the edited row is no longer in the list (#869).
+  const summaryRef = useRef<HTMLParagraphElement>(null);
   // Entries list (#796): search, filters, sort, and the rows ticked for a bulk action.
   const [filters, setFilters] = useState<EntryFilters>(defaultEntryFilters);
   const [sort, setSort] = useState<EntrySort>("date");
@@ -209,49 +209,31 @@ export function CalendarAdminWorkspace({
     }
   }
 
-  function beginEdit(entry: CalendarAdminEntry) {
+  function beginEdit(entry: CalendarAdminEntry, opener: HTMLElement) {
+    // The dialog opens over the list, so the page keeps its scroll position (#869).
+    openerRef.current = opener;
     setEditing(entry);
-    setStartsOn(entry.startsOn);
-    setRepeat(repeatToDraft(entry.repeat));
-    setSkipped(entry.repeatExceptions);
     setNotice("");
     setError("");
+  }
+
+  function closeEdit() {
+    setEditing(null);
+    setError("");
+    // Focus goes back to the row's Edit button even where a click doesn't focus buttons (Safari).
+    const opener = openerRef.current;
     window.requestAnimationFrame(() => {
-      formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      formRef.current?.querySelector<HTMLInputElement>("input[name=title]")?.focus({ preventScroll: true });
+      // The saved row may have moved or dropped out of the filter; never leave focus on <body>.
+      const target = opener?.isConnected ? opener : summaryRef.current;
+      target?.focus({ preventScroll: true });
     });
   }
 
-  async function save(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const startsOn = String(form.get("startsOn") ?? "");
-    const body = {
-      title: String(form.get("title") ?? ""),
-      description: String(form.get("description") ?? ""),
-      startsOn,
-      endsOn: String(form.get("endsOn") ?? "") || startsOn,
-      timeLabel: String(form.get("timeLabel") ?? ""),
-      location: String(form.get("location") ?? ""),
-      category: String(form.get("category") ?? ""),
-      linkUrl: String(form.get("linkUrl") ?? ""),
-      status: String(form.get("status") ?? "SCHEDULED"),
-      isPublished: form.get("isPublished") === "on",
-      entryType: form.get("entryType") === "CLOSURE" ? "CLOSURE" : "STANDARD",
-      repeat: draftToRepeat(repeat, startsOn),
-      repeatExceptions: repeat.frequency === "NEVER" ? [] : skipped,
-    };
-    const ok = editing
-      ? await call(`/api/admin/calendar/entries/${encodeURIComponent(editing.id)}`, "PATCH", body, "Saved.")
-      : await call("/api/admin/calendar/entries", "POST", body, body.isPublished ? "Added to the public calendar." : "Saved as a draft.");
-    if (ok) {
-      setEditing(null);
-      setStartsOn("");
-      setRepeat(noRepeat);
-      setSkipped([]);
-      formElement.reset();
-    }
+  async function saveEdit(body: EntryBody) {
+    if (!editing) return false;
+    const ok = await call(`/api/admin/calendar/entries/${encodeURIComponent(editing.id)}`, "PATCH", body, "Saved.");
+    if (ok) closeEdit();
+    return ok;
   }
 
   function remove(entry: CalendarAdminEntry) {
@@ -264,7 +246,7 @@ export function CalendarAdminWorkspace({
     if (!removeTarget) return;
     const ok = await call(`/api/admin/calendar/entries/${encodeURIComponent(removeTarget.id)}`, "DELETE", undefined, "Removed.");
     if (ok) {
-      if (editing?.id === removeTarget.id) setEditing(null);
+      if (editing?.id === removeTarget.id) closeEdit();
       setRemoveTarget(null);
     }
   }
@@ -312,92 +294,24 @@ export function CalendarAdminWorkspace({
       </div>
 
       {notice && <div className="inline-notice success" role="status">{notice}</div>}
-      {/* While the remove dialog is open, its own alert shows the error; one announcement, not two. */}
-      {error && !removeTarget && !bulkTarget && <div className="inline-notice error" role="alert">{error}</div>}
+      {/* While a dialog is open, its own alert shows the error; one announcement, not two. */}
+      {error && !removeTarget && !bulkTarget && !editing && <div className="inline-notice error" role="alert">{error}</div>}
 
       {tab === "entries" && (
         <>
-          <form className="panel form-stack" key={editing?.id ?? "new"} onSubmit={save} ref={formRef}>
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">{editing ? "Edit entry" : "New entry"}</p>
-                <h2>{editing ? editing.title : "Add a date to the calendar"}</h2>
-              </div>
-              {editing && (
-                <button className="secondary-button" onClick={() => { setEditing(null); setStartsOn(""); setRepeat(noRepeat); setSkipped([]); }} type="button">
-                  <X aria-hidden="true" size={14} /> Cancel
-                </button>
-              )}
-            </div>
-            {editing?.sourceFeedName && (
-              <p className="calendar-repeat-hint" role="note">
-                Imported from {editing.sourceFeedName}. Fields you change here are kept when the calendar refreshes, and Google is never changed.
-              </p>
-            )}
-            <label>
-              Title
-              <input defaultValue={editing?.title ?? ""} maxLength={140} name="title" placeholder="e.g. Pathfinder Bible Experience" required />
-            </label>
-            <div className="form-grid two-column">
-              <label>
-                Starts
-                <input name="startsOn" onChange={(event) => setStartsOn(event.target.value)} required type="date" value={startsOn} />
-              </label>
-              <label>
-                Ends (blank for one day)
-                <input defaultValue={editing && editing.endsOn !== editing.startsOn ? editing.endsOn : ""} name="endsOn" type="date" />
-              </label>
-              <label>
-                Time (optional)
-                <input defaultValue={editing?.timeLabel ?? ""} maxLength={80} name="timeLabel" placeholder="e.g. 7:00–9:00 PM" />
-              </label>
-              <label>
-                Location (optional)
-                <input defaultValue={editing?.location ?? ""} maxLength={160} name="location" />
-              </label>
-              <label>
-                Category (optional)
-                <input defaultValue={editing?.category ?? ""} list="calendar-categories" maxLength={40} name="category" placeholder="e.g. Youth" />
-              </label>
-              <label>
-                Type
-                <select defaultValue={editing?.entryType ?? "STANDARD"} name="entryType">
-                  <option value="STANDARD">Conference date</option>
-                  <option value="CLOSURE">{closureLabel} (e.g. conference office closed)</option>
-                </select>
-              </label>
-              <label>
-                Status
-                <select defaultValue={editing?.status ?? "SCHEDULED"} name="status">
-                  {Object.entries(calendarStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                </select>
-              </label>
-            </div>
-            <RepeatEditor draft={repeat} onChange={setRepeat} onSkippedChange={setSkipped} skipped={skipped} startsOn={startsOn} />
-            <label>
-              Link for more information (optional)
-              <input defaultValue={editing?.linkUrl ?? ""} maxLength={500} name="linkUrl" placeholder="https://" type="url" />
-            </label>
-            <label>
-              Description (optional)
-              <textarea defaultValue={editing?.description ?? ""} maxLength={2000} name="description" rows={3} />
-            </label>
-            <label className="checkbox-label">
-              <input defaultChecked={editing?.isPublished ?? true} name="isPublished" type="checkbox" /> Show on the public calendar
-            </label>
-            <div>
-              <button className="primary-button" disabled={saving} type="submit">
-                {editing ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
-                {editing ? " Save entry" : " Add to calendar"}
-              </button>
-            </div>
-          </form>
+          <EntryForm
+            eyebrow="New entry"
+            heading="Add a date to the calendar"
+            onSubmit={(body) => call("/api/admin/calendar/entries", "POST", body, body.isPublished ? "Added to the public calendar." : "Saved as a draft.")}
+            saving={saving}
+            submitLabel="Add to calendar"
+          />
 
           <section className="panel">
             <div className="section-heading">
               <div>
                 <p className="eyebrow">Entries</p>
-                <h2>Dates added by staff</h2>
+                <h2>Calendar entries</h2>
               </div>
             </div>
             {entries.length === 0 ? (
@@ -417,7 +331,7 @@ export function CalendarAdminWorkspace({
                 onSort={(next) => { setSort(next); startNewView(); }}
                 sort={sort}
               />
-              <p aria-live="polite" className="calendar-list-summary" role="status">
+              <p aria-live="polite" className="calendar-list-summary" ref={summaryRef} role="status" tabIndex={-1}>
                 {describeEntryCount(matching.length)} match. {describeEntrySort(sort)}.
                 {entries.length >= calendarEntryListLimit && ` Showing the newest ${calendarEntryListLimit} entries by start date; older ones are not listed.`}
               </p>
@@ -460,7 +374,7 @@ export function CalendarAdminWorkspace({
               ) : (
               <ul className="calendar-admin-list">
                 {matching.slice(0, visibleCount).map((entry) => (
-                  <li key={entry.id}>
+                  <li className="calendar-entry-row" key={entry.id}>
                     <label className="calendar-row-select">
                       <input checked={selected.has(entry.id)} onChange={() => toggleSelected(entry.id)} type="checkbox" />
                       <span className="sr-only">Select {entry.title}</span>
@@ -524,7 +438,7 @@ export function CalendarAdminWorkspace({
                           Reset to Google&apos;s version
                         </button>
                       )}
-                      <button aria-label={`Edit ${entry.title}`} className="secondary-button" disabled={saving} onClick={() => beginEdit(entry)} type="button">
+                      <button aria-haspopup="dialog" aria-label={`Edit ${entry.title}`} className="secondary-button" disabled={saving} onClick={(event) => beginEdit(entry, event.currentTarget)} type="button">
                         <Pencil aria-hidden="true" size={14} />
                       </button>
                       {/* A refresh would bring a deleted import back, so imports are hidden, not removed. */}
@@ -613,6 +527,16 @@ export function CalendarAdminWorkspace({
         </section>
       )}
 
+      {editing && (
+        <EditEntryDialog
+          entry={editing}
+          error={error}
+          onCancel={closeEdit}
+          onSubmit={saveEdit}
+          saving={saving}
+        />
+      )}
+
       <ConfirmDialog
         busy={saving}
         confirmLabel="Confirm"
@@ -638,6 +562,202 @@ export function CalendarAdminWorkspace({
         <p>The entry disappears from the calendar for everyone right away. This can&apos;t be undone.</p>
       </ConfirmDialog>
     </section>
+  );
+}
+
+type EntryBody = {
+  title: string;
+  description: string;
+  startsOn: string;
+  endsOn: string;
+  timeLabel: string;
+  location: string;
+  category: string;
+  linkUrl: string;
+  status: string;
+  isPublished: boolean;
+  entryType: "STANDARD" | "CLOSURE";
+  repeat: RepeatRule | null;
+  repeatExceptions: string[];
+};
+
+/**
+ * The entry fields, shared by the "Add a date" form at the top and the edit
+ * dialog (#869). It owns the repeat control's state; `onSubmit` returns whether
+ * the save worked, and a new entry's form clears itself when it did.
+ */
+function EntryForm({
+  entry = null,
+  error = "",
+  eyebrow,
+  heading,
+  onCancel,
+  onSubmit,
+  saving,
+  submitLabel,
+}: {
+  entry?: CalendarAdminEntry | null;
+  /** Shown above the actions; the new-entry form leaves it to the page-level notice. */
+  error?: string;
+  eyebrow?: string;
+  heading?: string;
+  onCancel?: () => void;
+  onSubmit: (body: EntryBody) => Promise<boolean>;
+  saving: boolean;
+  submitLabel: string;
+}) {
+  // The repeat control and its start date are controlled so the skip list can preview occurrences.
+  const [startsOn, setStartsOn] = useState(entry?.startsOn ?? "");
+  const [repeat, setRepeat] = useState<RepeatDraft>(entry ? repeatToDraft(entry.repeat) : noRepeat);
+  const [skipped, setSkipped] = useState<string[]>(entry?.repeatExceptions ?? []);
+  const editing = entry !== null;
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const start = String(form.get("startsOn") ?? "");
+    const ok = await onSubmit({
+      title: String(form.get("title") ?? ""),
+      description: String(form.get("description") ?? ""),
+      startsOn: start,
+      endsOn: String(form.get("endsOn") ?? "") || start,
+      timeLabel: String(form.get("timeLabel") ?? ""),
+      location: String(form.get("location") ?? ""),
+      category: String(form.get("category") ?? ""),
+      linkUrl: String(form.get("linkUrl") ?? ""),
+      status: String(form.get("status") ?? "SCHEDULED"),
+      isPublished: form.get("isPublished") === "on",
+      entryType: form.get("entryType") === "CLOSURE" ? "CLOSURE" : "STANDARD",
+      repeat: draftToRepeat(repeat, start),
+      repeatExceptions: repeat.frequency === "NEVER" ? [] : skipped,
+    });
+    if (ok && !editing) {
+      setStartsOn("");
+      setRepeat(noRepeat);
+      setSkipped([]);
+      formElement.reset();
+    }
+  }
+
+  return (
+    <form className={editing ? "form-stack calendar-entry-form" : "panel form-stack"} onSubmit={submit}>
+      {heading && (
+        <div className="section-heading">
+          <div>
+            {eyebrow && <p className="eyebrow">{eyebrow}</p>}
+            <h2>{heading}</h2>
+          </div>
+        </div>
+      )}
+      {entry?.sourceFeedName && (
+        <p className="calendar-repeat-hint" role="note">
+          Imported from {entry.sourceFeedName}. Fields you change here are kept when the calendar refreshes, and Google is never changed.
+        </p>
+      )}
+      <label>
+        Title
+        <input defaultValue={entry?.title ?? ""} maxLength={140} name="title" placeholder="e.g. Pathfinder Bible Experience" required />
+      </label>
+      <div className="form-grid two-column">
+        <label>
+          Starts
+          <input name="startsOn" onChange={(event) => setStartsOn(event.target.value)} required type="date" value={startsOn} />
+        </label>
+        <label>
+          Ends (blank for one day)
+          <input defaultValue={entry && entry.endsOn !== entry.startsOn ? entry.endsOn : ""} name="endsOn" type="date" />
+        </label>
+        <label>
+          Time (optional)
+          <input defaultValue={entry?.timeLabel ?? ""} maxLength={80} name="timeLabel" placeholder="e.g. 7:00–9:00 PM" />
+        </label>
+        <label>
+          Location (optional)
+          <input defaultValue={entry?.location ?? ""} maxLength={160} name="location" />
+        </label>
+        <label>
+          Category (optional)
+          <input defaultValue={entry?.category ?? ""} list="calendar-categories" maxLength={40} name="category" placeholder="e.g. Youth" />
+        </label>
+        <label>
+          Type
+          <select defaultValue={entry?.entryType ?? "STANDARD"} name="entryType">
+            <option value="STANDARD">Conference date</option>
+            <option value="CLOSURE">{closureLabel} (e.g. conference office closed)</option>
+          </select>
+        </label>
+        <label>
+          Status
+          <select defaultValue={entry?.status ?? "SCHEDULED"} name="status">
+            {Object.entries(calendarStatusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+      </div>
+      <RepeatEditor draft={repeat} onChange={setRepeat} onSkippedChange={setSkipped} skipped={skipped} startsOn={startsOn} />
+      <label>
+        Link for more information (optional)
+        <input defaultValue={entry?.linkUrl ?? ""} maxLength={500} name="linkUrl" placeholder="https://" type="url" />
+      </label>
+      <label>
+        Description (optional)
+        <textarea defaultValue={entry?.description ?? ""} maxLength={2000} name="description" rows={3} />
+      </label>
+      <label className="checkbox-label">
+        <input defaultChecked={entry?.isPublished ?? true} name="isPublished" type="checkbox" /> Show on the public calendar
+      </label>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div className="form-actions">
+        <button className="primary-button" disabled={saving} type="submit">
+          {editing ? <Save aria-hidden="true" size={16} /> : <Plus aria-hidden="true" size={16} />}
+          {` ${submitLabel}`}
+        </button>
+        {onCancel && (
+          <button className="secondary-button" disabled={saving} onClick={onCancel} type="button">
+            <X aria-hidden="true" size={14} /> Cancel
+          </button>
+        )}
+      </div>
+    </form>
+  );
+}
+
+/** Edit an entry in a dialog over the list, so the page doesn't jump to the top (#869). */
+function EditEntryDialog({
+  entry,
+  error,
+  onCancel,
+  onSubmit,
+  saving,
+}: {
+  entry: CalendarAdminEntry;
+  error: string;
+  onCancel: () => void;
+  onSubmit: (body: EntryBody) => Promise<boolean>;
+  saving: boolean;
+}) {
+  const titleId = useId();
+  // Escape never dismisses mid-request, so a failure that arrives afterwards is still shown here.
+  const dialogRef = useAccessibleDialog<HTMLElement>(true, () => cancelUnlessBusy(saving, onCancel));
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onCancel(); }}
+      role="presentation"
+    >
+      <section aria-labelledby={titleId} aria-modal="true" className="modal-card modal-card-wide calendar-edit-dialog" ref={dialogRef} role="dialog" tabIndex={-1}>
+        <div className="modal-head">
+          <div>
+            <p className="eyebrow">Edit entry</p>
+            <h2 id={titleId}>{entry.title}</h2>
+          </div>
+          <button aria-label="Close" className="icon-button modal-close-button" disabled={saving} onClick={onCancel} type="button">
+            <X aria-hidden="true" size={18} />
+          </button>
+        </div>
+        <EntryForm entry={entry} error={error} onCancel={onCancel} onSubmit={onSubmit} saving={saving} submitLabel="Save entry" />
+      </section>
+    </div>
   );
 }
 
@@ -792,9 +912,9 @@ function EntryFiltersBar({
   sort: EntrySort;
 }) {
   return (
-    <div className="form-grid two-column calendar-filters">
-      <label>
-        Search
+    <div className="calendar-filters">
+      <label className="calendar-search">
+        <span className="calendar-search-label">Search entries</span>
         <input
           maxLength={100}
           onChange={(event) => onChange({ search: event.target.value })}
@@ -803,6 +923,7 @@ function EntryFiltersBar({
           value={filters.search}
         />
       </label>
+      <div className="calendar-filter-row">
       <label>
         Category
         <select onChange={(event) => onChange({ category: event.target.value })} value={filters.category}>
@@ -853,8 +974,7 @@ function EntryFiltersBar({
           <option value="category">Category</option>
         </select>
       </label>
-      <div>
-        <button className="secondary-button" onClick={onReset} type="button">Reset filters</button>
+      <button className="secondary-button" onClick={onReset} type="button">Reset filters</button>
       </div>
     </div>
   );

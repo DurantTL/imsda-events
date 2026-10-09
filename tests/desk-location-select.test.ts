@@ -53,4 +53,12 @@ describe("desk location select", () => {
     for (const key of ["ArrowDown", "ArrowUp", "Home", "End", "PageUp", "PageDown", "s"]) expect(isSelectStepKey(key)).toBe(true);
     for (const key of ["Enter", "Tab", "Escape"]) expect(isSelectStepKey(key)).toBe(false);
   });
+
+  it("does not treat Alt/Meta/Ctrl combinations or F4 as steps, so opening the list leaves the pick free to submit", () => {
+    expect(isSelectStepKey("ArrowDown", { altKey: true })).toBe(false);
+    expect(isSelectStepKey("ArrowUp", { metaKey: true })).toBe(false);
+    expect(isSelectStepKey("s", { ctrlKey: true })).toBe(false);
+    expect(isSelectStepKey("F4")).toBe(false);
+    expect(isSelectStepKey("ArrowDown", { altKey: false })).toBe(true);
+  });
 });

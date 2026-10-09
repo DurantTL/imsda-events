@@ -14,6 +14,7 @@ import {
   withChurchBilledLinkWording,
   withChurchBilledPriceWording,
   withGroupBilledWording,
+  unescapeTokenUnderscores,
 } from "@/modules/communications/templates";
 import { currentPricingSnapshot, perPersonPriceFromSnapshot, perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
 import {
@@ -129,7 +130,7 @@ const fallbackSettings = {
   replyToEmail: null,
 };
 
-const SEMINAR_TOKEN_PATTERN = /\{\{\s*seminar_preferences\s*\}\}/;
+const SEMINAR_TOKEN_PATTERN = /\{\{\s*seminar\\?_preferences\s*\}\}/;
 
 const waitlistTemplateKeys: ReadonlySet<TransactionalTemplateKey> = new Set([
   "WAITLIST_JOINED",
@@ -467,7 +468,7 @@ async function enqueueTransactionalMessage(
   const churchWordedBody = withGroupBilledWording(
     withChurchBilledPriceWording(
       withChurchBilledLinkWording(
-        source?.bodyTemplate ?? fallback.body,
+        unescapeTokenUnderscores(source?.bodyTemplate ?? fallback.body),
         isDeferredOrganizationBilling,
       ),
       churchBilled,
@@ -503,7 +504,7 @@ async function enqueueTransactionalMessage(
   // reads the registration's own answers and any seminar assignment.
   // Loaded only when the message actually uses the token.
   const usesSeminarPreferences = SEMINAR_TOKEN_PATTERN.test(bodyTemplate)
-    || SEMINAR_TOKEN_PATTERN.test(source?.subjectTemplate ?? fallback.subject);
+    || SEMINAR_TOKEN_PATTERN.test(unescapeTokenUnderscores(source?.subjectTemplate ?? fallback.subject));
   const seminarPreferences = input.seminarPreferences
     ? buildSeminarPreferencesBlock(input.seminarPreferences.map((attendee) => ({
         name: attendee.attendeeName,
@@ -592,7 +593,7 @@ async function enqueueTransactionalMessage(
   };
   const rendered = renderMessageTemplate(
     {
-      subject: source?.subjectTemplate ?? fallback.subject,
+      subject: unescapeTokenUnderscores(source?.subjectTemplate ?? fallback.subject),
       body: bodyTemplate,
     },
     context,

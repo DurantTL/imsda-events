@@ -443,3 +443,25 @@ describe("church-billed portal link wording", () => {
     expect(withChurchBilledLinkWording(custom, true)).toBe(custom);
   });
 });
+
+describe("escaped underscores inside tokens (#859)", () => {
+  it("validates and renders {{announcement\\_body}} like {{announcement_body}}", () => {
+    const body = "Hi {{recipient_name}}\n\n{{announcement\\_body}}";
+    expect(validateMessageTemplate({ subject: "S", body }).isValid).toBe(true);
+    expect(extractMessageTemplateTokens(body)).toEqual(["recipient_name", "announcement_body"]);
+  });
+
+  it("renders an escaped token with its value", () => {
+    const rendered = renderTemplateText("{{announcement\\_title}}!", {
+      ...SAMPLE_MESSAGE_TEMPLATE_CONTEXT,
+      announcement_title: "Camp news",
+    });
+    expect(rendered.text).toBe("Camp news!");
+    expect(rendered.unresolvedTokens).toEqual([]);
+  });
+
+  it("still rejects an unknown escaped token", () => {
+    const result = validateMessageTemplate({ subject: "S", body: "{{not\\_a\\_token}}" });
+    expect(result.unknownTokens).toEqual(["not_a_token"]);
+  });
+});

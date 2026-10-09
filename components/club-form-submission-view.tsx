@@ -1,7 +1,7 @@
 import { LockKeyhole } from "lucide-react";
 import { formatClubFormAnswer, RESTRICTED_LABEL } from "@/modules/club-forms/domain";
 import type { ClubFormSubmissionView as SubmissionView } from "@/modules/club-forms/submissions";
-import { isFieldVisible } from "@/modules/forms/definition";
+import { fieldDisplayLabel, isFieldVisible } from "@/modules/forms/definition";
 
 const statusLabel = { DRAFT: "Draft", SUBMITTED: "Submitted" } as const;
 
@@ -55,7 +55,7 @@ export function ClubFormSubmissionView({ submission }: { submission: SubmissionV
               <dl className="club-form-answers">
                 {fields.map((field) => (
                   <div key={field.id}>
-                    <dt>{field.label}</dt>
+                    <dt>{fieldDisplayLabel(field)}</dt>
                     <dd translate="no">
                       {restricted.has(field.key)
                         ? <span className="club-form-restricted">{RESTRICTED_LABEL}</span>
@@ -91,7 +91,7 @@ function PassengerList({ submission, restricted }: { submission: SubmissionView;
         <dl className="club-form-answers">
           {contacts.fields.map((field) => (
             <div key={field.id}>
-              <dt>{field.label}</dt>
+              <dt>{fieldDisplayLabel(field)}</dt>
               <dd translate="no">{formatClubFormAnswer(field, submission.answers[field.key]) || <span className="club-form-blank">—</span>}</dd>
             </div>
           ))}

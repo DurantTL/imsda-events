@@ -79,7 +79,7 @@ describe("attendee sheet accessibility (#743)", () => {
     const hook = read("components/use-attendee-sheet.ts");
     expect(hook).toContain("sibling.inert = true");
     expect(hook).toContain("element.inert = false");
-    expect(read("components/use-accessible-dialog.ts")).toMatch(/Escape[\s\S]*previouslyFocused\?\.focus\(\)/);
+    expect(read("components/use-accessible-dialog.ts")).toMatch(/Escape[\s\S]*previouslyFocused\?\.focus\(\{ preventScroll: true \}\)/);
   });
 
   it("never opens by itself on page load", () => {

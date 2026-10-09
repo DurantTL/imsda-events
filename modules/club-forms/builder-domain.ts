@@ -7,7 +7,7 @@ import {
   type ClubFormTemplateRecord,
 } from "@/modules/club-forms/domain";
 import { rosterMappingProblems, rosterMappingSchema } from "@/modules/club-forms/roster-mapping";
-import { formFieldScopes, formFieldTypes, registrationFormDefinitionSchema, type RegistrationFormDefinition } from "@/modules/forms/definition";
+import { fieldDisplayLabel, formFieldScopes, formFieldTypes, registrationFormDefinitionSchema, type RegistrationFormDefinition } from "@/modules/forms/definition";
 
 /**
  * Pure rules for the club form builder (#712): the draft shape, the checks a
@@ -130,8 +130,9 @@ function keyForPath(raw: unknown, path: ReadonlyArray<PropertyKey>): string {
   return "template";
 }
 
-function describeField(field: { label: string; key: string }) {
-  return field.label.trim() || field.key;
+function describeField(field: { label: string; key: string; group?: string }) {
+  const label = field.label.trim();
+  return label ? fieldDisplayLabel({ label, group: field.group }) : field.key;
 }
 
 /** Checks that apply only to club forms: no pricing, no attendee roster, no payment. */

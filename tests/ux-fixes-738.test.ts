@@ -57,8 +57,8 @@ describe("named multi-attendee errors (#738)", () => {
     const source = read("components/public-registration-form.tsx");
     expect(source).toContain("issueSummaryMessage(issue)");
     expect(source).toMatch(/function followIssueLink[\s\S]*?clickEvent\.preventDefault\(\);[\s\S]*?expandAttendeeCardsFor\(\[issue\]\)[\s\S]*?target\?\.focus\(\)/);
-    // Validation itself is untouched: the field message stays "<label> is required."
-    expect(read("modules/forms/definition.ts")).toContain("message: `${field.label} is required.`");
+    // Validation itself is untouched: the field message stays "<label> is required." (grouped fields prefix their group, #856)
+    expect(read("modules/forms/definition.ts")).toContain("message: `${fieldDisplayLabel(field)} is required.`");
   });
 });
 

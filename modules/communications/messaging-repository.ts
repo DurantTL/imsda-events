@@ -80,6 +80,7 @@ import {
   withChurchBilledLinkWording,
   withChurchBilledPriceWording,
   withGroupBilledWording,
+  unescapeTokenUnderscores,
 } from "@/modules/communications/templates";
 import { perPersonPrice, perPersonPriceInline } from "@/modules/club-registrations/per-person-price";
 import {
@@ -1002,8 +1003,8 @@ export async function publishMessageTemplateVersion(
         createdByUserId: actorUserId,
         versionNumber: nextVersion,
         status: "PUBLISHED",
-        subjectTemplate: input.subjectTemplate,
-        bodyTemplate: input.bodyTemplate,
+        subjectTemplate: unescapeTokenUnderscores(input.subjectTemplate),
+        bodyTemplate: unescapeTokenUnderscores(input.bodyTemplate),
         publishedAt: new Date(),
       },
     });
@@ -3971,7 +3972,7 @@ export async function enqueueSelectedAudienceBatch(
               },
             })
           : [];
-        const usesSeminarToken = sentTemplates.some((template) => /\{\{\s*seminar_preferences\s*\}\}/.test(
+        const usesSeminarToken = sentTemplates.some((template) => /\{\{\s*seminar\\?_preferences\s*\}\}/.test(
           `${template.versions[0]?.subjectTemplate ?? ""}\n${template.versions[0]?.bodyTemplate ?? ""}`,
         ));
         const seminarBlocks = usesSeminarToken

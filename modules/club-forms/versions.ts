@@ -8,7 +8,7 @@ import {
   type ClubFormTemplateRecord,
 } from "@/modules/club-forms/domain";
 import type { ClubFormProtectionHistory } from "@/modules/club-forms/builder-domain";
-import { registrationFormDefinitionSchema, type RegistrationFormField } from "@/modules/forms/definition";
+import { fieldDisplayLabel, registrationFormDefinitionSchema, type RegistrationFormField } from "@/modules/forms/definition";
 
 /**
  * Published versions of a club form template (#712). Each publish (and each
@@ -143,9 +143,9 @@ export function exportColumnsAcrossVersions(versions: readonly ClubFormTemplateR
   for (const record of versions) {
     for (const field of allFields(record.definition)) {
       if (sensitiveKeys.has(field.key)) continue;
-      const column = columns.get(field.key) ?? { key: field.key, heading: field.label, latest: field, byVersion: new Map() };
+      const column = columns.get(field.key) ?? { key: field.key, heading: fieldDisplayLabel(field), latest: field, byVersion: new Map() };
       column.latest = field;
-      column.heading = field.label;
+      column.heading = fieldDisplayLabel(field);
       column.byVersion.set(record.version, field);
       columns.set(field.key, column);
     }

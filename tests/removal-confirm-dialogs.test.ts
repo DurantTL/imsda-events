@@ -35,7 +35,7 @@ describe("high-consequence actions use the shared ConfirmDialog, not window.conf
 
   it.each(files)("%s imports and renders the shared ConfirmDialog", (file) => {
     const code = source(file);
-    expect(code).toContain('import { ConfirmDialog } from "@/components/confirm-dialog"');
+    expect(code).toMatch(/import \{ ConfirmDialog(, [A-Za-z]+)* \} from "@\/components\/confirm-dialog"/);
     expect(code).toContain("<ConfirmDialog");
   });
 

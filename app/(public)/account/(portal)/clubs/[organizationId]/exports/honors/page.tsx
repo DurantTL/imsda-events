@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AutoSubmitForm } from "@/components/auto-submit-form";
 import { BackLink } from "@/components/back-link";
 import { HonorsPrintReport } from "@/components/honors-print-report";
 import { PrintReportButton } from "@/components/print-report-button";
@@ -45,7 +46,7 @@ export default async function ClubHonorsReportPage({
           <Link aria-current={person ? undefined : "page"} className="honors-report-mode" href={`${base}?year=${encodeURIComponent(clubYear)}`}>Whole club</Link>
           <Link aria-current={person ? "page" : undefined} className="honors-report-mode" href={`${base}?year=${encodeURIComponent(clubYear)}&view=person`}>One person</Link>
         </nav>
-        <form aria-label="Report options" className="honors-report-controls report-actions" method="get">
+        <AutoSubmitForm aria-label="Report options" className="honors-report-controls report-actions" method="get">
           <input name="view" type="hidden" value={person ? "person" : "club"} />
           <label>
             Club year
@@ -63,10 +64,10 @@ export default async function ClubHonorsReportPage({
             </label>
           )}
           <div className="honors-report-buttons">
-            <button className="primary-button" type="submit">Show report</button>
+            <button className="primary-button auto-submit-go" type="submit">Show report</button>
             {(!person || chosen) && <PrintReportButton label="Print" />}
           </div>
-        </form>
+        </AutoSubmitForm>
         {person && !chosen ? (
           <p className="muted">Choose a member to print their completed honors.</p>
         ) : (
