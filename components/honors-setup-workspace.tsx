@@ -620,8 +620,8 @@ export function HonorsSetupWorkspace({
         </div>
         <div className="form-grid two-column">
           {editing
-            ? <HonorMultiSelect label="Prerequisite honors (optional)" onChange={setEditPrerequisiteIds} options={[...catalog, ...editing.prerequisiteHonors.filter((honor) => !catalog.some((entry) => entry.id === honor.id))]} value={editPrerequisiteIds} />
-            : <HonorMultiSelect label="Prerequisite honors (optional)" onChange={setNewPrerequisiteIds} options={catalog} value={newPrerequisiteIds} />}
+            ? <HonorMultiSelect kind="prerequisite" label="Prerequisite honors (optional)" onChange={setEditPrerequisiteIds} options={[...catalog, ...editing.prerequisiteHonors.filter((honor) => !catalog.some((entry) => entry.id === honor.id))]} value={editPrerequisiteIds} />
+            : <HonorMultiSelect kind="prerequisite" label="Prerequisite honors (optional)" onChange={setNewPrerequisiteIds} options={catalog} value={newPrerequisiteIds} />}
           <p className="field-help">Youth must have these honors completed on their honor record to take the class. If no record is found, the director confirms.</p>
         </div>
         {catalog.length === 0 && !editing && (
