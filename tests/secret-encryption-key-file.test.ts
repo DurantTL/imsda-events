@@ -33,8 +33,12 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+let keyFileCount = 0;
+// A fresh name per call: the file is written read-only (0400), so a second
+// write to the same path fails for a non-root user (as on CI).
 function keyFile(contents: string) {
-  const file = path.join(directory, "secret-encryption-key");
+  keyFileCount += 1;
+  const file = path.join(directory, `secret-encryption-key-${keyFileCount}`);
   writeFileSync(file, contents, { mode: 0o400 });
   return file;
 }
