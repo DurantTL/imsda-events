@@ -128,7 +128,7 @@ export function HonorsSetupWorkspace({
       if (next) setSetup({ locations: next.locations, sessions: next.sessions, offerings: next.offerings });
       const unmet = result.requirementImpact?.unmet ?? 0;
       if (success) {
-        setNotice(unmet > 0 ? `${success} ${unmet} enrolled youth don't meet this; they keep their seats.` : success);
+        setNotice(unmet > 0 ? `${success} ${unmet === 1 ? "1 enrolled youth doesn't" : `${unmet} enrolled youth don't`} meet this; they keep ${unmet === 1 ? "their seat" : "their seats"}.` : success);
       }
       return result;
     } catch (caught) {
