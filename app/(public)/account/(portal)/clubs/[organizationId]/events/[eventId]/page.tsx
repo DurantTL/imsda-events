@@ -336,7 +336,7 @@ export default async function ClubEventRegistrationPage({
             )}
         </section>
       )}
-      {classes && <ClubClassPicker eventId={eventId} initialWorkspace={classes} organizationId={organizationId} />}
+      {classes && <ClubClassPicker canOverrideRequirements={access.actor.kind === "STAFF_ACTING"} eventId={eventId} initialWorkspace={classes} organizationId={organizationId} />}
       {classes && classes.offerings.length > 0 && (
         <section className="public-manage-card club-schedule-link">
           <p>

@@ -4014,6 +4014,7 @@ model Honor {
   offerings       HonorOffering[]
   /// Every class (offering) that teaches this honor (#812), primary or not.
   offeringHonors  HonorOfferingHonor[]
+  offeringPrerequisites HonorOfferingPrerequisite[]
   weekendCompletionLinks HonorWeekendCompletionLink[]
   memberEntries   MemberHonorEntry[]
   clubSupplyItems ClubSupplyItem[]
@@ -4308,6 +4309,9 @@ model HonorOffering {
   span         HonorOfferingSpan
   capacity     Int
   minimumAge   Int?
+  /// The lowest Investiture class level a youth may take this class at (#832),
+  /// compared with the member's current class level on the club roster. Null: no minimum.
+  minimumClassLevel ClubClassLevel?
   perClubLimit Int?
   teacherName  String            @default("")
   location     String            @default("")
@@ -4325,11 +4329,29 @@ model HonorOffering {
   site        EventLocation?    @relation(fields: [locationId], references: [id], onDelete: Restrict)
   enrollments HonorEnrollment[]
   honors      HonorOfferingHonor[]
+  /// Honors a youth must have completed first (#832); every one is required.
+  prerequisites HonorOfferingPrerequisite[]
 
   // "No honor twice in a session" and the all-sessions rules now live on
   // `HonorOfferingHonor`, one row per honor taught (#812).
   @@index([eventId, isActive])
   @@index([locationId])
+  @@index([honorId])
+}
+
+/// An honor a youth must have completed before taking a class (#832), checked
+/// against the member's honor record (`MemberHonorEntry`). A class can have
+/// several; the youth needs all of them. Per class, not per honor taught.
+model HonorOfferingPrerequisite {
+  id         String   @id @default(cuid())
+  offeringId String
+  honorId    String
+  createdAt  DateTime @default(now())
+
+  offering HonorOffering @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+  honor    Honor         @relation(fields: [honorId], references: [id], onDelete: Restrict)
+
+  @@unique([offeringId, honorId])
   @@index([honorId])
 }
 
@@ -4840,6 +4862,13 @@ model HonorEnrollment {
   /// registration instead.
   organizationId         String?
   consumesSeat           Boolean
+  /// The director confirmed the youth meets the class's minimum level when the roster had no level (#832).
+  levelConfirmedByDirector Boolean @default(false)
+  /// The director confirmed the youth completed the class's prerequisite honors when the honor record showed none (#832).
+  prerequisitesConfirmedByDirector Boolean @default(false)
+  /// Why staff placed the youth although a level or prerequisite rule was not met (#832). Null when no override was used.
+  requirementOverrideReason String?
+  requirementOverriddenByUserId String?
   createdAt              DateTime @default(now())
 
   event                Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)

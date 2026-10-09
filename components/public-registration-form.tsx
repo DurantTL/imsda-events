@@ -285,6 +285,8 @@ export type PublicRegistrationFormProps = {
     draftKey?: string | null;
     /** Classes picked under each person's details (#618, #650), by attendee client id; saved by the server after the registration. */
     honorSelections?: Record<string, string[]>;
+    /** Classes the director confirmed each person meets, by client id (#832): a class level missing from the roster or a prerequisite honor with no record. */
+    honorConfirmations?: Record<string, string[]>;
     submitUrl: string;
     onDraftChange?: (draft: { responses: FormResponses; attendees: RosterAttendee[] }) => void;
     onSubmitted?: (result?: { honors?: { error?: string } | null }) => void;
@@ -2960,6 +2962,7 @@ export function PublicRegistrationForm({
           ...(club?.teamName ? { teamName: club.teamName } : {}),
           ...(club?.draftKey ? { draftKey: club.draftKey } : {}),
           ...(club?.honorSelections && Object.keys(club.honorSelections).length > 0 ? { honorSelections: club.honorSelections } : {}),
+          ...(club?.honorConfirmations && Object.keys(club.honorConfirmations).length > 0 ? { honorConfirmations: club.honorConfirmations } : {}),
           ...(group?.locationId ? { locationId: group.locationId } : {}),
           ...(Object.keys(groupPicks).length > 0 ? { honorSelections: groupPicks } : {}),
           website,

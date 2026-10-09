@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { clubClassLevelLabels, type ClubClassLevel } from "@/modules/club-rosters/domain";
 
 const text = (max: number) => z.string().trim().max(max);
 const wholeNumber = (label: string, min: number, max: number) =>
@@ -44,9 +45,20 @@ export const honorSessionUpdateSchema = z.object({
   locationId: z.string().min(1).max(64).nullable(),
 }).partial().strict();
 
+/** The lowest Investiture class level a class takes (#832); null means no minimum. */
+const classLevelField = z.enum(Object.keys(clubClassLevelLabels) as [ClubClassLevel, ...ClubClassLevel[]], "Choose a class level.");
+
+/** Honors a youth must have completed before taking a class (#832): each once, none of them honors the class teaches. */
+const prerequisiteHonorIdsField = z
+  .array(z.string().min(1, "Choose an honor.").max(64))
+  .max(12, "A class can require at most 12 honors.")
+  .refine((ids) => new Set(ids).size === ids.length, "Each prerequisite honor can be chosen once.");
+
 const offeringDetails = {
   capacity: wholeNumber("Capacity", 0, 10_000),
   minimumAge: wholeNumber("Minimum age", 0, 99).nullable().default(null),
+  minimumClassLevel: classLevelField.nullable().default(null),
+  prerequisiteHonorIds: prerequisiteHonorIdsField.default([]),
   perClubLimit: wholeNumber("Per-club limit", 1, 1_000).nullable().default(null),
   teacherName: text(120).default(""),
   location: text(120).default(""),
@@ -109,6 +121,8 @@ export const honorOfferingUpdateSchema = z.preprocess(acceptSingleHonorId, z.obj
   sessionId: z.string().min(1).nullable(),
   capacity: offeringDetails.capacity,
   minimumAge: wholeNumber("Minimum age", 0, 99).nullable(),
+  minimumClassLevel: classLevelField.nullable(),
+  prerequisiteHonorIds: prerequisiteHonorIdsField,
   perClubLimit: wholeNumber("Per-club limit", 1, 1_000).nullable(),
   teacherName: text(120),
   location: text(120),

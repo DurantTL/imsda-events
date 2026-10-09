@@ -21,7 +21,7 @@ function offering(id: string, honorName: string, sessionId: string | null, locat
     id, span: sessionId ? "SINGLE_SESSION" : "ALL_SESSIONS", sessionId,
     // An all-sessions class has its own site (#589); a single-session class takes its session's.
     locationId: sessionId ? null : locationId, site: !sessionId && locationName ? { name: locationName } : null,
-    capacity: 10, minimumAge: null, perClubLimit: null,
+    capacity: 10, minimumAge: null, minimumClassLevel: null, prerequisites: [], perClubLimit: null,
     teacherName: "", location: "", isActive: true, honors: [{ honor: { id: `honor-${id}`, name: honorName, code: id.toUpperCase(), isActive: true } }],
     session: sessionId ? { name: `Session ${sessionId}`, sortOrder: 0, locationId, location: locationName ? { name: locationName } : null } : null,
   };
@@ -56,6 +56,7 @@ function database(options: { registrationLocation: { id: string; name: string } 
     clubRosterMember: { findMany: vi.fn().mockResolvedValue([]) },
     eventLocation: { count: vi.fn().mockResolvedValue(options.eventHasLocations ? 2 : 0) },
     honorOffering: { findMany: vi.fn().mockResolvedValue(offerings) },
+    honorOfferingPrerequisite: { findMany: vi.fn().mockResolvedValue([]) },
     honorSession: { findMany: vi.fn().mockResolvedValue(sessions) },
     honorEnrollment: {
       groupBy: vi.fn().mockResolvedValue([]),

@@ -32,7 +32,7 @@ function offering(id: string, honorName: string, sessionId: string | null, locat
   return {
     id, span: sessionId ? "SINGLE_SESSION" : "ALL_SESSIONS", sessionId,
     locationId: sessionId ? null : locationId, site: !sessionId && locationId ? { name: `Site ${locationId}` } : null,
-    capacity: 10, minimumAge: null, perClubLimit: null,
+    capacity: 10, minimumAge: null, minimumClassLevel: null, prerequisites: [], perClubLimit: null,
     teacherName: "", location: "", isActive: true, honors: [{ honor: { id: `honor-${id}`, name: honorName, code: id.toUpperCase(), isActive: true } }],
     session: sessionId ? { name: `Session ${sessionId}`, sortOrder: 0, locationId, location: locationId ? { name: `Site ${locationId}` } : null } : null,
     ...extra,
@@ -73,6 +73,7 @@ function database(options: { taken?: Array<[string, number]>; clubTaken?: Array<
     clubRosterMember: { findMany: vi.fn().mockResolvedValue([{ id: "member-1", attendeeType: "YOUTH" }]) },
     eventLocation: { count: vi.fn().mockResolvedValue(2) },
     honorOffering: { findMany: vi.fn().mockResolvedValue(options.offerings ?? offerings) },
+    honorOfferingPrerequisite: { findMany: vi.fn().mockResolvedValue([]) },
     honorSession: { findMany: vi.fn().mockResolvedValue(sessions) },
     honorEnrollment: {
       groupBy: vi.fn()

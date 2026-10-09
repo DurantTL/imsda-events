@@ -207,6 +207,8 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
         span: true,
         capacity: true,
         minimumAge: true,
+        minimumClassLevel: true,
+        prerequisites: { select: { honor: { select: { id: true, code: true, name: true, isActive: true } } } },
         perClubLimit: true,
         teacherName: true,
         location: true,
@@ -265,6 +267,10 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
       span: offering.span,
       capacity: offering.capacity,
       minimumAge: offering.minimumAge,
+      /** The lowest class level (#832) and the honors a youth must have completed first; every one is required. */
+      minimumClassLevel: offering.minimumClassLevel,
+      prerequisiteHonors: offering.prerequisites.map((row) => row.honor).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)),
+      prerequisiteHonorIds: offering.prerequisites.map((row) => row.honor.id).sort(),
       perClubLimit: offering.perClubLimit,
       teacherName: offering.teacherName,
       location: offering.location,
@@ -549,6 +555,41 @@ async function requireTeachableHonors(
   });
 }
 
+/**
+ * The prerequisite honors of a class (#832): real catalog honors, none of which the class teaches itself (that
+ * would require what it gives). A prerequisite the catalog has since turned off stays allowed on a class that
+ * already requires it.
+ */
+async function requirePrerequisiteHonors(
+  tx: Prisma.TransactionClient,
+  honorIds: readonly string[],
+  teachesHonorIds: readonly string[],
+  alreadyRequired: ReadonlySet<string> = new Set(),
+) {
+  if (honorIds.length === 0) return [];
+  const honors = await tx.honor.findMany({ where: { id: { in: [...honorIds] } }, select: { id: true, name: true, isActive: true } });
+  const byId = new Map(honors.map((honor) => [honor.id, honor]));
+  return honorIds.map((id) => {
+    const honor = byId.get(id);
+    if (!honor) throw new HonorConfigurationError("HONOR_NOT_FOUND", "That prerequisite honor could not be found.");
+    if (teachesHonorIds.includes(id)) {
+      throw new HonorConfigurationError("OFFERING_CONFLICT", `${honor.name} is taught by this class, so it can't also be a prerequisite.`);
+    }
+    if (!honor.isActive && !alreadyRequired.has(id)) {
+      throw new HonorConfigurationError("HONOR_INACTIVE", `${honor.name} is inactive in the catalog.`);
+    }
+    return honor;
+  });
+}
+
+/** Makes the class's prerequisite rows exactly `honorIds` (#832). */
+async function writePrerequisiteRows(tx: Prisma.TransactionClient, offeringId: string, honorIds: readonly string[]) {
+  await tx.honorOfferingPrerequisite.deleteMany({ where: { offeringId, honorId: { notIn: [...honorIds] } } });
+  const existing = new Set((await tx.honorOfferingPrerequisite.findMany({ where: { offeringId }, select: { honorId: true } })).map((row) => row.honorId));
+  const missing = honorIds.filter((id) => !existing.has(id));
+  if (missing.length > 0) await tx.honorOfferingPrerequisite.createMany({ data: missing.map((honorId) => ({ offeringId, honorId })) });
+}
+
 /** Every other class of the event that teaches any of these honors, for the slot rules. */
 async function otherClassesTeaching(tx: Prisma.TransactionClient, eventId: string, honorIds: readonly string[], exceptOfferingId?: string) {
   const others = await tx.honorOffering.findMany({
@@ -592,7 +633,11 @@ export async function writeHonorRows(tx: Prisma.TransactionClient, offeringId: s
   }
 }
 
-export async function createHonorOffering(eventId: string, input: HonorOfferingInput, actorUserId: string) {
+/** A new class as the screens send it; a caller that sets no minimum level or prerequisites (an older script) gets none (#832). */
+export type NewHonorOffering = Omit<HonorOfferingInput, "minimumClassLevel" | "prerequisiteHonorIds"> & Partial<Pick<HonorOfferingInput, "minimumClassLevel" | "prerequisiteHonorIds">>;
+
+export async function createHonorOffering(eventId: string, rawInput: NewHonorOffering, actorUserId: string) {
+  const input: HonorOfferingInput = { ...rawInput, minimumClassLevel: rawInput.minimumClassLevel ?? null, prerequisiteHonorIds: rawInput.prerequisiteHonorIds ?? [] };
   try {
     await serializable(async (tx) => {
       await requireEvent(tx, eventId);
@@ -622,7 +667,8 @@ export async function createHonorOffering(eventId: string, input: HonorOfferingI
       );
       if (conflict) throw new HonorConfigurationError("OFFERING_CONFLICT", conflict);
 
-      const { honorIds, ...details } = input;
+      const { honorIds, prerequisiteHonorIds, ...details } = input;
+      await requirePrerequisiteHonors(tx, prerequisiteHonorIds, honorIds);
       const offering = await tx.honorOffering.create({
         data: {
           eventId,
@@ -633,6 +679,7 @@ export async function createHonorOffering(eventId: string, input: HonorOfferingI
           span: details.span,
           capacity: details.capacity,
           minimumAge: details.minimumAge,
+          minimumClassLevel: details.minimumClassLevel,
           perClubLimit: details.perClubLimit,
           teacherName: details.teacherName,
           location: details.location,
@@ -642,6 +689,7 @@ export async function createHonorOffering(eventId: string, input: HonorOfferingI
         },
       });
       await writeHonorRows(tx, offering.id, eventId, honorIds);
+      await writePrerequisiteRows(tx, offering.id, prerequisiteHonorIds);
       await writeAuditLog({
         eventId,
         actorUserId,
@@ -656,6 +704,8 @@ export async function createHonorOffering(eventId: string, input: HonorOfferingI
           sessionId: offering.sessionId,
           capacity: offering.capacity,
           minimumAge: offering.minimumAge,
+          minimumClassLevel: offering.minimumClassLevel,
+          prerequisiteHonorIds,
           perClubLimit: offering.perClubLimit,
         },
       }, tx);
@@ -680,12 +730,12 @@ export async function updateHonorOffering(
     await serializable(async (tx) => {
       const existing = await tx.honorOffering.findFirst({
         where: { id: offeringId, eventId },
-        select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, honors: offeringHonorsSelect },
+        select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, honors: offeringHonorsSelect, prerequisites: { select: { honorId: true } } },
       });
       if (!existing) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
       const current = summarizeOfferingHonors(existing.honors);
 
-      const { honorIds: nextHonorIds, span: nextSpan, sessionId: nextSessionId, locationId: nextSiteInput, confirmEnrolled, ...details } = input;
+      const { honorIds: nextHonorIds, span: nextSpan, sessionId: nextSessionId, locationId: nextSiteInput, confirmEnrolled, prerequisiteHonorIds: nextPrerequisiteIds, ...details } = input;
       const honorIds = nextHonorIds ?? current.honorIds;
       const span = nextSpan ?? existing.span;
       const honorChange = honorSetChange(current.honorIds, honorIds);
@@ -774,6 +824,13 @@ export async function updateHonorOffering(
         }
       }
 
+      // The prerequisite honors (#832): checked against the honors the class will teach, and replaced as a set.
+      const currentPrerequisiteIds = existing.prerequisites.map((row) => row.honorId);
+      const prerequisiteIds = nextPrerequisiteIds ?? currentPrerequisiteIds;
+      if (nextPrerequisiteIds !== undefined || honorsChanged) {
+        await requirePrerequisiteHonors(tx, prerequisiteIds, honorIds, new Set(currentPrerequisiteIds));
+      }
+
       // Rows the class drops go first, so moving the class can't collide with them; then the class, which carries its
       // remaining rows to its new session or site; then the new and reordered rows.
       if (honorsChanged) await dropHonorRows(tx, offeringId, honorIds);
@@ -788,6 +845,7 @@ export async function updateHonorOffering(
         },
       });
       if (honorsChanged) await writeHonorRows(tx, offeringId, eventId, honorIds);
+      if (nextPrerequisiteIds !== undefined) await writePrerequisiteRows(tx, offeringId, prerequisiteIds);
       await writeAuditLog({
         eventId,
         actorUserId,

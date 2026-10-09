@@ -84,7 +84,7 @@ describe("honors picked during club registration (#618)", () => {
     await expect(response.json()).resolves.toMatchObject({ confirmation: { confirmationCode: "REG-1" }, honors: { saved: 1 } });
     // The picks never reach the form answers.
     expect(mocks.submitClubRegistration.mock.calls[0]![3]).not.toHaveProperty("honorSelections");
-    expect(mocks.saveRegistrationHonorPicks).toHaveBeenCalledWith("club-a", "event-1", { accountId: "director-1" }, { "member:m1": ["knots"] });
+    expect(mocks.saveRegistrationHonorPicks).toHaveBeenCalledWith("club-a", "event-1", { accountId: "director-1" }, { "member:m1": ["knots"] }, expect.any(Date), {});
   });
 
   it("does not look at honors when none were picked", async () => {

@@ -39,7 +39,7 @@ describe("class selection route", () => {
   it("saves for the director's own club", async () => {
     const response = await PUT(request({ selections: { "attendee-1": ["knots"] } }), ctx);
     expect(response.status).toBe(200);
-    expect(mocks.setClassSelections).toHaveBeenCalledWith("club-a", "event-1", { accountId: "director-1" }, { "attendee-1": ["knots"] });
+    expect(mocks.setClassSelections).toHaveBeenCalledWith("club-a", "event-1", { accountId: "director-1" }, { "attendee-1": ["knots"] }, expect.any(Date), { confirmations: undefined, overrides: undefined });
   });
 
   it("maps full classes, club limits, bad picks, and the deadline to clear statuses", async () => {

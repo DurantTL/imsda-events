@@ -144,10 +144,11 @@ function fixture() {
     auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) },
     honorOffering: { findMany: vi.fn().mockResolvedValue([{
       // One seat: the youth takes it, and staff still join without one.
-      id: "knots", span: "SINGLE_SESSION", sessionId: "sabbath", capacity: 1, minimumAge: null, perClubLimit: null,
+      id: "knots", span: "SINGLE_SESSION", sessionId: "sabbath", capacity: 1, minimumAge: null, minimumClassLevel: null, prerequisites: [], perClubLimit: null,
       teacherName: "Fictional Teacher", location: "Pavilion", isActive: true,
       honors: [{ honor: { id: "honor-hw-demo-1", name: "Knot Tying", code: "HW-DEMO-1", isActive: true } }], session: { name: "Sabbath afternoon", sortOrder: 1 },
     }]) },
+    honorOfferingPrerequisite: { findMany: vi.fn().mockResolvedValue([]) },
     honorSession: { findMany: vi.fn().mockResolvedValue([{ id: "sabbath", name: "Sabbath afternoon", locationId: null }]) },
     honorEnrollment: {
       findMany: vi.fn(async () => enrollments.map(({ id, registrationAttendeeId, offeringId }) => ({ id, registrationAttendeeId, offeringId }))),

@@ -206,6 +206,7 @@ jobs:
       # honors, adding and removing honors after clubs enroll (and the refusal after write-back), each honor completed once, and races on seats,
       # honor edits and write-backs.
       - run: npm run test:multi-honor-classes
+      - run: npm run test:honor-class-requirements
 
       # Real-database check of deleting an event at any stage: a rich event
       # (registrations, payments, honors, forms, messages, locations, club forms,

@@ -108,6 +108,15 @@ describe("event info card builders", () => {
     expect(bare.meta).toBe("Nov 6 – 8, 2026");
   });
 
+  it("badges a class's minimum class level and prerequisite honors on the public grid (#832)", () => {
+    const card = buildClassGridsCard({
+      ...input,
+      offerings: [offering({ id: "o9", honorName: "Advanced Knots", sessionId: "s-a1", minimumClassLevelLabel: "Guide", prerequisiteNames: ["Knots", "Rope"] })],
+    })!;
+    const entry = card.grids[0].sessions[0].classes[0];
+    expect(entry.badges.map((badge) => badge.text)).toEqual(["Class level Guide and up", "Needs first: Knots, Rope"]);
+  });
+
   it("groups classes per location then session with the session time as the header", () => {
     const card = buildClassGridsCard(input)!;
     expect(card.grids.map((grid) => grid.locationName)).toEqual(["Site A", "Site B"]);

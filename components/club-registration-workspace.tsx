@@ -42,7 +42,7 @@ import { teamRoleFor } from "@/modules/club-teams/rules";
 import type { ClubEventWorkspace } from "@/modules/club-registrations/repository";
 import { ClassPickFields } from "@/components/class-pick-fields";
 import { attendeeTypeLabel } from "@/modules/honors/class-picker-view";
-import { firstPickProblem, honorsNoteKey, offeringsAtLocation, pickingAttendees, prunePicks } from "@/modules/honors/registration-picks";
+import { firstPickProblem, honorsNoteKey, offeringsAtLocation, pickingAttendees, prunePicks, pruneConfirmations } from "@/modules/honors/registration-picks";
 import type { RegistrationHonorsCatalog } from "@/modules/honors/enrollment-repository";
 import type { PublicRegistrationExperience } from "@/modules/forms/public-repository";
 
@@ -107,6 +107,9 @@ export function ClubRegistrationWorkspace({
     draftKey,
     teamName: workspace.draft?.teamName ?? "",
   }));
+  // What the director confirmed about a missing class level or honor record (#832), by client id. Kept on screen, not in
+  // the draft: after a reload the director ticks again, and the registration can't be sent until they do.
+  const [honorConfirmations, setHonorConfirmations] = useState<Record<string, string[]>>({});
   const multipleTeams = workspace.teams.multiple;
   const teamNameMissing = multipleTeams && draft.teamName.trim().length === 0;
   const [step, setStep] = useState<"who" | "form">("who");
@@ -274,8 +277,8 @@ export function ClubRegistrationWorkspace({
   // Classes (#618, #650): chosen under each person's details, only when the event has classes at the
   // chosen site (or at no site), so an event without honors shows nothing extra.
   const honorAttendees = useMemo(
-    () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests, rosterAges: effectiveRosterAges(workspace.roster, draft.selectedMemberIds, ageText, draft.rosterAges) }),
-    [workspace.roster, draft.selectedMemberIds, draft.guests, ageText, draft.rosterAges],
+    () => pickingAttendees({ roster: workspace.roster, selectedMemberIds: draft.selectedMemberIds, guests: draft.guests, rosterAges: effectiveRosterAges(workspace.roster, draft.selectedMemberIds, ageText, draft.rosterAges), memberRequirements: honorsCatalog?.memberRequirements }),
+    [workspace.roster, draft.selectedMemberIds, draft.guests, ageText, draft.rosterAges, honorsCatalog?.memberRequirements],
   );
   const honorOfferings = useMemo(
     () => (honorsCatalog ? offeringsAtLocation(honorsCatalog.offerings, locationId) : []),
@@ -287,6 +290,7 @@ export function ClubRegistrationWorkspace({
     () => prunePicks(draft.honorSelections, honorAttendees, honorOfferings),
     [draft.honorSelections, honorAttendees, honorOfferings],
   );
+  const confirmedHonors = useMemo(() => pruneConfirmations(honorConfirmations, honorPicks), [honorConfirmations, honorPicks]);
   // Who's going, each person's details (with their location and classes), then review.
   const totalSteps = 3;
 
@@ -324,7 +328,7 @@ export function ClubRegistrationWorkspace({
   );
 
   // The same age, session and all-sessions rules the server applies on save, checked before anything is sent.
-  const honorsProblem = hasHonors ? firstPickProblem(honorPicks, honorAttendees, honorOfferings) : null;
+  const honorsProblem = hasHonors ? firstPickProblem(honorPicks, honorAttendees, honorOfferings, confirmedHonors) : null;
 
   /** A person's location and classes, shown under their name in the event form (C7, #650). */
   const renderAttendeeExtras = (attendee: RosterAttendee) => {
@@ -348,7 +352,9 @@ export function ClubRegistrationWorkspace({
             <ClassPickFields
               attendee={person}
               offerings={honorOfferings}
+              confirmed={confirmedHonors[attendee.clientId] ?? []}
               onChange={(ids) => changeHonors(attendee.clientId, ids)}
+              onConfirmedChange={(ids) => setHonorConfirmations((current) => ({ ...current, [attendee.clientId]: ids }))}
               picks={honorPicks[attendee.clientId] ?? []}
               sessions={honorsCatalog.sessions}
             />
@@ -449,6 +455,7 @@ export function ClubRegistrationWorkspace({
     noCost: workspace.event.noCost,
     draftKey: multipleTeams ? draft.draftKey : null,
     honorSelections: hasHonors ? honorPicks : {},
+    honorConfirmations: hasHonors ? confirmedHonors : {},
     renderAttendeeExtras,
     attendeeAttention: (attendee: RosterAttendee): AttentionItem[] => {
       const memberId = rosterMemberIdFromClientId(attendee.clientId);
@@ -470,7 +477,7 @@ export function ClubRegistrationWorkspace({
       router.refresh();
     },
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, multipleTeams, draft.teamName, draft.draftKey, hasHonors, honorPicks, honorsProblem, conflict, honorAttendees, honorOfferings, classReadiness, backgroundStates, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
+  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, workspace.directory.lockedFieldKeys, locationId, multipleTeams, draft.teamName, draft.draftKey, hasHonors, honorPicks, confirmedHonors, honorsProblem, conflict, honorAttendees, honorOfferings, classReadiness, backgroundStates, base, onDraftChange, router, organizationId, workspace.event.id, queue]);
 
   const saveLabel = conflict
     ? DRAFT_CONFLICT_MESSAGE

@@ -5,8 +5,14 @@ import { clubRegistrationApiError } from "@/modules/club-registrations/api-error
 import { setClassSelections } from "@/modules/honors/enrollment-repository";
 import { withRequestContext } from "@/lib/request-context";
 
+const idList = z.array(z.string().min(1).max(64)).max(6);
+
 const selectionsSchema = z.object({
-  selections: z.record(z.string().min(1).max(64), z.array(z.string().min(1).max(64)).max(6)),
+  selections: z.record(z.string().min(1).max(64), idList),
+  /** The classes the director confirmed each person meets (#832), by attendee id. */
+  confirmations: z.record(z.string().min(1).max(64), idList).optional(),
+  /** Staff acting as the director only (#832): attendee id to class id to the reason they were placed anyway. */
+  overrides: z.record(z.string().min(1).max(64), z.record(z.string().min(1).max(64), z.string().trim().min(3, "Give a reason for placing someone who doesn't meet a class requirement.").max(300))).optional(),
 }).strict().refine((input) => Object.keys(input.selections).length <= 60, "Too many people in one save.");
 
 /** Saves class choices for the club's people. Seats are taken on the server; see enrollment-repository. */
@@ -16,8 +22,8 @@ async function putHandler(request: Request, context: { params: Promise<{ organiz
   try {
     const { organizationId, eventId } = await context.params;
     const access = await requireRosterAccess(organizationId, new Date(), "registerForEvents");
-    const { selections } = selectionsSchema.parse(await request.json());
-    const workspace = await setClassSelections(organizationId, eventId, actorAttribution(access.actor), selections);
+    const { selections, confirmations, overrides } = selectionsSchema.parse(await request.json());
+    const workspace = await setClassSelections(organizationId, eventId, actorAttribution(access.actor), selections, new Date(), { confirmations, overrides });
     return Response.json({ workspace }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return clubRegistrationApiError(error, "Saving class choices");

@@ -85,6 +85,8 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
         span: true,
         capacity: true,
         minimumAge: true,
+        minimumClassLevel: true,
+        prerequisites: { select: { honorId: true } },
         perClubLimit: true,
         teacherName: true,
         location: true,
@@ -290,6 +292,7 @@ export async function applyHonorCopy(
           span: offering.span,
           capacity: offering.capacity,
           minimumAge: offering.minimumAge,
+          minimumClassLevel: offering.minimumClassLevel,
           perClubLimit: offering.perClubLimit,
           teacherName: offering.teacherName,
           location: offering.location,
@@ -299,6 +302,10 @@ export async function applyHonorCopy(
         select: { id: true },
       });
       await writeHonorRows(tx, created.id, targetEventId, honorIds);
+      // Prerequisite honors (#832) come along; the catalog is shared by every event.
+      if (offering.prerequisites.length > 0) {
+        await tx.honorOfferingPrerequisite.createMany({ data: offering.prerequisites.map((row) => ({ offeringId: created.id, honorId: row.honorId })) });
+      }
     }
 
     await writeAuditLog({

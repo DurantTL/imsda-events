@@ -4,9 +4,15 @@
  * Guidance only; the server enforces every rule when picks are saved.
  */
 
+import { requirementGaps, type RequirementGap } from "@/modules/honors/enrollment-domain";
+import type { ClubClassLevel } from "@/modules/club-rosters/domain";
+
 type ViewOffering = {
+  honorName?: string;
   perClubLimit: number | null;
   minimumAge: number | null;
+  minimumClassLevel?: ClubClassLevel | null;
+  prerequisiteHonors?: ReadonlyArray<{ id: string; name: string }>;
   isActive: boolean;
 } & (
   | { capacity: number; seatsTaken: number; clubSeatsTaken: number }
@@ -50,6 +56,9 @@ type ViewAttendee = {
   attendeeType: string | null;
   consumesSeat: boolean;
   ageOnEventDate: number | null;
+  /** The roster's class level and the prerequisite honors the member has completed (#832). */
+  classLevel?: ClubClassLevel | null;
+  completedHonorIds?: readonly string[];
 };
 
 /** What the roster calls this person; underage children are youth but take no seat (#462). */
@@ -75,12 +84,36 @@ export function seatsNote(offering: ViewOffering, heldHere: boolean, attendee: V
   return parts.join(", ");
 }
 
-export function unavailableReason(offering: ViewOffering, heldHere: boolean, attendee: ViewAttendee) {
+/**
+ * What a class asks of this person beyond age (#832): the level and prerequisite
+ * honors they don't clearly meet. A level known to be too low is not
+ * `confirmable`; the rest a director can confirm in the picker.
+ */
+export function classRequirementGaps(offering: ViewOffering, attendee: ViewAttendee): RequirementGap[] {
+  return requirementGaps(attendee, { honorName: offering.honorName ?? "This class", minimumClassLevel: offering.minimumClassLevel, prerequisiteHonors: offering.prerequisiteHonors });
+}
+
+/**
+ * Why the class can't be picked for this person, or null. `canOverride` is true
+ * for staff acting as the director (#832): a level known to be too low is then
+ * pickable, with a reason, and the audit log records it. `canConfirm` is false for
+ * a "Group" registration, which has no director to confirm a missing level or
+ * honor record, so those block too.
+ */
+export function unavailableReason(
+  offering: ViewOffering,
+  heldHere: boolean,
+  attendee: ViewAttendee,
+  options: { canOverride?: boolean; canConfirm?: boolean } = {},
+) {
   if (heldHere) return null;
   if (!offering.isActive) return "no longer offered";
   if (offering.minimumAge !== null && (attendee.ageOnEventDate === null || attendee.ageOnEventDate < offering.minimumAge)) {
     return `ages ${offering.minimumAge}+`;
   }
+  // Missing level or honor records are confirmable by the director, so the class stays pickable; only a known-too-low level is greyed out.
+  const blocking = classRequirementGaps(offering, attendee).find((gap) => !gap.confirmable || options.canConfirm === false);
+  if (blocking && !options.canOverride) return blocking.shortReason;
   if (!attendee.consumesSeat) return null;
   if (seatsLeftOf(offering) <= 0) return "full";
   if (offering.perClubLimit !== null && clubSeatsTakenOf(offering) >= offering.perClubLimit) return "club limit reached";
