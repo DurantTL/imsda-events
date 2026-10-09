@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { z } from "zod";
 
 /**
@@ -108,7 +109,12 @@ export const serverEnvSchema = z
 
     // Encrypts the values that must be recoverable rather than hashed — today,
     // TOTP secrets. Required in production, where MFA is enforced for admins.
+    // Set directly for development. Production loads it from a protected file
+    // instead: SECRET_ENCRYPTION_KEY_FILE names a file (for example a read-only
+    // mounted secret) whose trimmed contents are the key. Setting both is an
+    // error. `resolveEncryptionKey` does the loading before this schema runs.
     SECRET_ENCRYPTION_KEY: optionalTrimmed,
+    SECRET_ENCRYPTION_KEY_FILE: optionalTrimmed,
 
     // Pathfinder Health Record (#611). Off unless exactly "true": with it off
     // there are no health routes, no Health tab, and nothing is stored. Do not
@@ -376,6 +382,7 @@ export const SERVER_ENV_KEYS = [
     "SQUARE_ENABLE_PRODUCTION",
     "OUTBOX_SWEEP_TOKEN",
     "SECRET_ENCRYPTION_KEY",
+    "SECRET_ENCRYPTION_KEY_FILE",
     "HEALTH_RECORDS_ENABLED",
     "GEOCODING_ENABLED",
     "GEOCODING_PROVIDER",
@@ -385,10 +392,77 @@ export const SERVER_ENV_KEYS = [
     "PASSWORD_BREACH_CHECK_URL",
 ] as const;
 
-function readSource(source: Record<string, string | undefined>) {
+export type EncryptionKeyResolution =
+  | { ok: true; key: string | undefined; source: "file" | "env" | "none" }
+  | { ok: false; issue: string };
+
+/**
+ * Finds the encryption key: from the file named by SECRET_ENCRYPTION_KEY_FILE,
+ * or from SECRET_ENCRYPTION_KEY itself. The file keeps the key out of the env
+ * file and out of `docker inspect`. Messages name the variable and the path,
+ * never the key or any part of the file's contents.
+ */
+export function resolveEncryptionKey(
+  source: Record<string, string | undefined> = process.env,
+): EncryptionKeyResolution {
+  const filePath = source.SECRET_ENCRYPTION_KEY_FILE?.trim();
+  const plain = source.SECRET_ENCRYPTION_KEY?.trim();
+
+  if (!filePath) {
+    return plain ? { ok: true, key: plain, source: "env" } : { ok: true, key: undefined, source: "none" };
+  }
+  if (plain) {
+    return {
+      ok: false,
+      issue:
+        "SECRET_ENCRYPTION_KEY_FILE: SECRET_ENCRYPTION_KEY and SECRET_ENCRYPTION_KEY_FILE are both set; set only one (remove SECRET_ENCRYPTION_KEY from the environment)",
+    };
+  }
+
+  let contents: string;
+  try {
+    contents = readFileSync(filePath, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    const reason =
+      code === "ENOENT" ? "the file does not exist"
+      : code === "EACCES" || code === "EPERM" ? "the file is not readable by this process (check its owner and mode)"
+      : `the file could not be read (${code ?? "unknown error"})`;
+    return { ok: false, issue: `SECRET_ENCRYPTION_KEY_FILE: ${filePath}: ${reason}` };
+  }
+
+  const key = contents.trim();
+  if (!key) {
+    return { ok: false, issue: `SECRET_ENCRYPTION_KEY_FILE: ${filePath}: the file is empty` };
+  }
+  return { ok: true, key, source: "file" };
+}
+
+/** Non-secret summary for health and readiness: whether a key is configured and how it was loaded. */
+export function getEncryptionKeyStatus(
+  source: Record<string, string | undefined> = process.env,
+): { configured: boolean; source: "file" | "env" | null } {
+  const resolved = resolveEncryptionKey(source);
+  if (resolved.ok && resolved.key && resolved.source !== "none") {
+    return { configured: true, source: resolved.source };
+  }
+  // A configured-but-unusable file is still a file deployment; say so.
+  const fileConfigured = Boolean(source.SECRET_ENCRYPTION_KEY_FILE?.trim());
+  return { configured: false, source: fileConfigured ? "file" : null };
+}
+
+function readSource(
+  source: Record<string, string | undefined>,
+  encryptionKey: string | undefined,
+) {
   return Object.fromEntries(
     SERVER_ENV_KEYS
-      .map((key) => [key, source[key]?.trim() ? source[key] : undefined])
+      .map((key) => [
+        key,
+        key === "SECRET_ENCRYPTION_KEY"
+          ? encryptionKey
+          : source[key]?.trim() ? source[key] : undefined,
+      ])
       .filter(([, value]) => value !== undefined),
   );
 }
@@ -400,15 +474,22 @@ function readSource(source: Record<string, string | undefined>) {
 export function validateServerEnv(
   source: Record<string, string | undefined> = process.env,
 ): ServerEnvValidation {
-  const result = serverEnvSchema.safeParse(readSource(source));
-  if (result.success) return { ok: true, env: result.data };
-  return {
-    ok: false,
-    issues: result.error.issues.map((issue) => {
-      const variable = issue.path.join(".") || "environment";
-      return `${variable}: ${issue.message}`;
-    }),
-  };
+  const encryption = resolveEncryptionKey(source);
+  const result = serverEnvSchema.safeParse(
+    readSource(source, encryption.ok ? encryption.key : undefined),
+  );
+  if (result.success && encryption.ok) return { ok: true, env: result.data };
+
+  const issues = result.success
+    ? []
+    : result.error.issues
+        .filter((issue) => encryption.ok || issue.path[0] !== "SECRET_ENCRYPTION_KEY")
+        .map((issue) => {
+          const variable = issue.path.join(".") || "environment";
+          return `${variable}: ${issue.message}`;
+        });
+  if (!encryption.ok) issues.push(encryption.issue);
+  return { ok: false, issues };
 }
 
 let cachedEnv: ServerEnv | undefined;

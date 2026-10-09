@@ -69,6 +69,12 @@ the step reports an error and changes nothing. Leave `GEOCODING_PROVIDER`
 unset in production (`fake` is an offline stand-in for local work only). See
 [ADR 0014](decisions/0014-church-geocoding.md).
 
+On the production server `SECRET_ENCRYPTION_KEY` does **not** go in this env
+file: it is loaded from a root-only file with `SECRET_ENCRYPTION_KEY_FILE`
+instead (see "Loading the encryption key from a protected file" below). The plain
+variable stays supported for development and for a server that has not moved yet,
+but setting both is a startup error.
+
 Each secret needs at least 32 characters. If one is missing or malformed the
 container exits at startup with the offending variable named in its log, rather
 than serving pages and failing later on a QR pass or a private link. A variable
@@ -419,6 +425,8 @@ there is no database URL to give the new container.
      --env-file /home/u_events/.xcloud/.env \
      --env-file /home/u_events/.xcloud/.env.dburl \
      -v imsda_events_assets:/app/storage/event-assets \
+     -v /etc/imsda/secret-encryption-key:/run/secrets/encryption-key:ro \
+     -e SECRET_ENCRYPTION_KEY_FILE=/run/secrets/encryption-key \
      -e NODE_ENV=production \
      -e PORT=3100 \
      -e APP_RELEASE_SHA=<full-sha> \
@@ -435,8 +443,9 @@ there is no database URL to give the new container.
    curl -s http://127.0.0.1:8100/api/health
 ```
 
-   Confirm `status: ok`, the expected `release.sha`, and `database`/
-   `messageOutbox` both `ok`. Then check `https://events.imsda.org` through
+   Confirm `status: ok`, the expected `release.sha`, `database`/
+   `messageOutbox` both `ok`, and `"encryptionKey":{"configured":true,"source":"file"}`
+   (see "Loading the encryption key from a protected file"). Then check `https://events.imsda.org` through
    the real domain (Cloudflare/Nginx), not just the internal `curl`, to
    confirm routing actually reached the new container — and spot-check
    whatever feature the deploy was for.
@@ -745,6 +754,183 @@ the cause.
 `docker compose` refused to build at all because a required variable is absent
 from the environment. This is the same fault as above, caught earlier and stated
 plainly. Add the named variable and deploy again.
+
+## Loading the encryption key from a protected file (#876)
+
+`SECRET_ENCRYPTION_KEY` protects birth dates, health records, Sterling Volunteers
+data and calendar feed addresses. In an env file passed with `--env-file` it is
+readable by anyone who can read that file and it appears in `docker inspect`.
+Instead, keep it in a root-only file on the server and mount that file into the
+container. The app reads it once at startup and trims it.
+
+How the app behaves (`lib/env.ts`):
+
+- `SECRET_ENCRYPTION_KEY_FILE=<path>` makes the app read the key from that file.
+- Setting **both** `SECRET_ENCRYPTION_KEY_FILE` and `SECRET_ENCRYPTION_KEY` stops
+  startup. Remove the plain variable from the env file.
+- A file that is missing, unreadable or empty stops startup, with the variable
+  and path named in the log. The key and the file's contents are never logged.
+- With only `SECRET_ENCRYPTION_KEY` set, nothing changes (development).
+- Everything run inside the app container reads the same variable through the
+  same loader: the app, `npm run club-forms:sync` and `lodging:sync` (run by the
+  entrypoint), `admin:create`, `admin:reset-mfa` and `key:restore-check`. A shell
+  opened with `docker exec` inherits the container's variables, so those commands
+  work unchanged. A one-off `docker run` of the image (not `exec`) must be given
+  the same `-v` and `-e` pair.
+- The **outbox sweeper does not use the key.** It is a `curl` loop that needs only
+  `OUTBOX_SWEEP_TOKEN` (`scripts/outbox-sweep.sh`), so it gets no key file. Giving
+  it one only widens who can read the key. (The `docker-compose.yml` development
+  stack still passes `SECRET_ENCRYPTION_KEY` as a plain variable.)
+- `/api/health` reports `"encryptionKey": {"configured": true, "source": "file"}`
+  (or `"env"`). `configured: false` with `source: "file"` means the file variable
+  is set but the file could not be used. The value is never shown.
+
+**File ownership and mode.** The `Dockerfile` has no `USER` line, so the app
+container runs as root (uid 0) and can read a root-owned `0400` file. Keep the
+file `root:root` and `0400` on the host. If a `USER` line is ever added to the
+`Dockerfile`, a root-owned `0400` file will not be readable inside and startup
+will fail with "not readable by this process"; change the host file to that
+user's uid (`chown <uid>:<uid> /etc/imsda/secret-encryption-key`, mode stays
+`0400`), because a bind mount keeps the host's numeric owner. Check with
+`docker exec <app> id`.
+
+### One-time steps on the production server (a system administrator does these)
+
+Run as root over SSH. Do not paste the key into chat, a ticket or a shell
+history that is shared.
+
+1. Create the file from the current key, without the key appearing on screen:
+
+```bash
+install -d -m 0700 -o root -g root /etc/imsda
+umask 077
+grep '^SECRET_ENCRYPTION_KEY=' /home/u_events/.xcloud/.env | cut -d= -f2- | tr -d '\r\n' > /etc/imsda/secret-encryption-key
+chown root:root /etc/imsda/secret-encryption-key
+chmod 0400 /etc/imsda/secret-encryption-key
+wc -c /etc/imsda/secret-encryption-key      # a byte count, not the key; expect 64 for openssl rand -base64 48
+ls -l /etc/imsda/secret-encryption-key      # expect: -r-------- 1 root root
+```
+
+   If the env file quotes the value (`SECRET_ENCRYPTION_KEY="..."`), remove the
+   quotes in the new file: the file must hold the bare key. The key must be
+   byte-for-byte what the app uses today, or every sealed value becomes
+   unreadable. Never generate a new key here.
+
+2. Make the two backup copies of the key now (next section), **before** changing
+   the running container.
+
+3. Add the mount and variable to `/root/manual-deploy.sh`, on the app container's
+   `docker run`, next to the other `-v` and `-e` lines:
+
+```bash
+     -v /etc/imsda/secret-encryption-key:/run/secrets/encryption-key:ro \
+     -e SECRET_ENCRYPTION_KEY_FILE=/run/secrets/encryption-key \
+```
+
+   The `imsda-outbox-sweeper` container needs no change (see above).
+
+4. Remove the key line from the env file, keeping a private copy of the old file
+   until the deploy is confirmed:
+
+```bash
+cp -p /home/u_events/.xcloud/.env /root/env.before-876.bak     # contains the key; delete after step 6
+sed -i '/^SECRET_ENCRYPTION_KEY=/d' /home/u_events/.xcloud/.env
+grep -c '^SECRET_ENCRYPTION_KEY' /home/u_events/.xcloud/.env   # expect 0
+```
+
+   Also remove the variable from the hosting panel if it is stored there, or the
+   container will have both and refuse to start.
+
+5. Deploy with `/root/manual-deploy.sh` as usual (the rollback steps above still
+   apply; the `-old` container still has the key in its own environment, so
+   remove it once the new one is confirmed).
+
+6. Confirm:
+
+```bash
+curl -s http://127.0.0.1:8100/api/health | grep -o '"encryptionKey":{[^}]*}'
+# expect: "encryptionKey":{"configured":true,"source":"file"}
+docker inspect xcloud-site-<id>-app-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -c '^SECRET_ENCRYPTION_KEY='
+# expect 0 (only SECRET_ENCRYPTION_KEY_FILE, a path, is listed)
+```
+
+   Then sign in as an administrator with MFA: that opens a sealed value, which is
+   the real proof the file holds the right key. Once confirmed, delete
+   `/root/env.before-876.bak` and the `-old` container.
+
+7. Rollback: restore the old env line and the old `docker run` (the `-old`
+   container still works unchanged).
+
+### Keeping and testing the key backup
+
+The file on the server is not a backup. Losing it loses every sealed value for
+good.
+
+- Keep **two offline copies**: one entry in the conference password manager, and
+  one sealed, printed copy held by the key custodian (not kept at the server).
+- **Never** store the key with the database backups (`imsda_events_backups`, the
+  off-host copy, #875) or in the same place as anything that can read them. The
+  key and the dumps together open everything; apart, neither does.
+- When the key is rotated, replace both copies and test again.
+
+**Restore test (once before health records go live, then after any change to the
+key or the backup process).** It restores a dump into a scratch database and opens
+one sealed value using the *backup copy* of the key, not the server's file. Never
+run it against the live database.
+
+1. Fetch the key from the password manager onto the server into a temporary file
+   readable only by root, outside the backup volume:
+
+```bash
+install -d -m 0700 /root/keytest
+umask 077
+vi /root/keytest/backup-key      # paste the key from the password manager; save
+chmod 0400 /root/keytest/backup-key
+```
+
+2. Restore last night's dump into a scratch database and keep it. In the backup
+   container (compose) or anywhere with `pg_restore` and the dump:
+
+```bash
+docker compose exec -e RESTORE_KEEP_SCRATCH=true -e RESTORE_SCRATCH_DB=imsda_events_restore_check \
+  backup sh /usr/local/bin/pg-restore-verify.sh
+```
+
+   Check it ends with `restore rehearsal succeeded` and non-zero row counts. If
+   this server's backups are not made by the compose `backup` service, create the
+   scratch database by hand (`createdb imsda_events_restore_check`) and restore
+   the dump into it with `pg_restore --no-owner --no-privileges --exit-on-error
+   --dbname=imsda_events_restore_check <dump>`; the next step is the same.
+
+3. Run the key check from a one-off container of the app image, using the backup
+   key and the scratch database (use the same host, user and password as the
+   `DATABASE_URL` in `.env.dburl`, with the database name changed to
+   `imsda_events_restore_check`):
+
+```bash
+docker run --rm \
+  --network postgresql_9kgaw_239292_xcloud-network \
+  -v /root/keytest/backup-key:/run/secrets/encryption-key:ro \
+  -e SECRET_ENCRYPTION_KEY_FILE=/run/secrets/encryption-key \
+  -e DATABASE_URL='postgresql://<user>:<password>@<host>:5432/imsda_events_restore_check?schema=public' \
+  --entrypoint npm imsda-events:manual-<short-sha> run key:restore-check
+```
+
+   Expected: `canary seal and open: ok`, then `opened one sealed value from the
+   restored database: ok`, then `PASSED`. The output never contains the key or any
+   value. `FAILED: ... could NOT open` means the backup key is not the key that
+   sealed that data: stop and find the right key before anything else. To test
+   the key alone, add `-- --canary-only` (no database needed).
+
+4. Clean up, then record the date:
+
+```bash
+docker compose exec backup psql --dbname=postgres -c 'DROP DATABASE IF EXISTS imsda_events_restore_check;'
+shred -u /root/keytest/backup-key && rmdir /root/keytest
+```
+
+   Record the date and result in the log in `docs/SERVER-SECURITY-CHECKLIST.md`
+   (item 3) and on the System readiness page (#870).
 
 ## Backups and restore rehearsals
 

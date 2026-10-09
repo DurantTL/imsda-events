@@ -14,6 +14,9 @@
 #   BACKUP_DIR            where dumps are read from (default /backups)
 #   RESTORE_SCRATCH_DB    scratch database name (default imsda_events_restore_check)
 #   BACKUP_FILE           restore this dump instead of the newest one
+#   RESTORE_KEEP_SCRATCH  "true" leaves the scratch database in place so the
+#                         encryption key backup can be tested against it
+#                         (npm run key:restore-check). Drop it yourself after.
 set -eu
 
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
@@ -34,6 +37,10 @@ fi
 echo "[restore-verify] $(date -u +%FT%TZ) restoring ${DUMP} into ${SCRATCH_DB}"
 
 cleanup() {
+  if [ "${RESTORE_KEEP_SCRATCH:-}" = "true" ]; then
+    echo "[restore-verify] keeping scratch database ${SCRATCH_DB}; drop it when the key test is done." >&2
+    return
+  fi
   psql --dbname=postgres --quiet --command "DROP DATABASE IF EXISTS \"${SCRATCH_DB}\";" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT

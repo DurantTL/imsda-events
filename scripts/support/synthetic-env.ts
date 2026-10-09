@@ -14,6 +14,9 @@ type Env = Record<string, string | undefined>;
 
 export function fillBlankSyntheticEnv(name: string, value: string, env: Env = process.env) {
   if (!value.trim()) throw new Error(`The synthetic value for ${name} must not be blank.`);
+  // A secret loaded from a file (SECRET_ENCRYPTION_KEY_FILE) must not also get
+  // a synthetic plain value: the app treats having both as a configuration error.
+  if (env[`${name}_FILE`]?.trim()) return;
   if (!env[name]?.trim()) env[name] = value;
   if (!env[name]?.trim()) throw new Error(`${name} is empty after filling the synthetic test value.`);
 }

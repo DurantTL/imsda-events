@@ -10,7 +10,7 @@ import { getServerEnv } from "@/lib/env";
  * can be is useless to anyone holding only a database dump.
  *
  * AES-256-GCM with a random 96-bit nonce per value. The key is derived from
- * `SECRET_ENCRYPTION_KEY` through HKDF with a per-purpose info string, so two
+ * `SECRET_ENCRYPTION_KEY` (or the file named by `SECRET_ENCRYPTION_KEY_FILE`, see `lib/env.ts`) through HKDF with a per-purpose info string, so two
  * kinds of ciphertext are never encrypted under the same key and a value cannot
  * be moved from one column to another.
  */
@@ -30,7 +30,7 @@ function derivedKey(purpose: string) {
   const configured = getServerEnv().SECRET_ENCRYPTION_KEY;
   if (!configured) {
     throw new SecretBoxError(
-      "SECRET_ENCRYPTION_KEY must be set before encrypted values can be read or written.",
+      "SECRET_ENCRYPTION_KEY (or SECRET_ENCRYPTION_KEY_FILE) must be set before encrypted values can be read or written.",
     );
   }
   return Buffer.from(hkdfSync(

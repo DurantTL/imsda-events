@@ -48,19 +48,24 @@ so doing them once covers both.
 - **Why:** birth dates are encrypted with `SECRET_ENCRYPTION_KEY`. If the key is
   lost, every birth date is lost for good. If the key sits next to the database
   dumps, anyone who takes both can read everything.
-- **How:** copy the production value of `SECRET_ENCRYPTION_KEY` from the deploy
-  environment onto the backup server (item 1), in a separate, access-restricted
-  place from the database dumps: a different folder with different permissions
-  at the very least, or offline media. Record *where* it is, never the value.
+- **How:** make two offline copies of the production key: one entry in the
+  conference password manager, and one sealed printout held by the key
+  custodian. Neither may sit with the database dumps (item 4, #875) or on any
+  machine that can read them. If a copy is also kept on the backup server
+  (item 1), it goes in a separate, access-restricted place from the dumps. The
+  steps are in "Keeping and testing the key backup" in `docs/DEPLOY-DOCKER.md`.
+  Record *where* each copy is, never the value.
 - **Proof:** the custodian confirms the copy exists and matches (compare a
   checksum, never the key itself on screen or in chat).
 
 ### 3. Test-restore the key copy
 - **Why:** a backup that has never been restored is not a backup.
-- **How:** on a test copy of the app (never production), start it with the key
-  from the backup and confirm it can read something sealed with the production
-  key, such as signing in with an existing MFA login on a restored copy of the
-  database.
+- **How:** restore the latest database dump into a scratch database and run
+  `npm run key:restore-check` with the key from the backup copy (never the
+  server's file) to open one sealed value. Exact commands: "Keeping and testing
+  the key backup" in `docs/DEPLOY-DOCKER.md`. It prints pass or fail only, never
+  the key or a value. Record the date here and on the System readiness page
+  (#870). Test once before health records go live.
 - **Proof:** date of the test and its result, in the log below.
 
 ### 4. Send nightly database backups off the host
@@ -128,7 +133,14 @@ so doing them once covers both.
   separate account owns the key. Today the key sits in
   `/home/u_events/.xcloud/.env` (mode 600) together with every other
   production secret (`docs/DEPLOY-DOCKER.md`). So anyone who can log in as the
-  site user, or reveal environment variables in the hosting panel, can read it.
+  site user, or reveal environment variables in the hosting panel, can read it,
+  and it shows in `docker inspect`. #876 moves it to a root-only file,
+  `/etc/imsda/secret-encryption-key` (root, mode 0400), mounted read-only into the
+  app container and named by `SECRET_ENCRYPTION_KEY_FILE`. The exact steps are in
+  "Loading the encryption key from a protected file" in `docs/DEPLOY-DOCKER.md`;
+  once done, the env file and the panel no longer hold the key. The app container
+  runs as root (the `Dockerfile` has no `USER`), so root-owned 0400 is readable;
+  recheck this if a `USER` is ever added.
 - **Recommended setup** (the custodian adapts it to the host):
   1. **Only SSH, with keys.** Log in to the server by SSH key only. Turn off
      password login. Give access only to the named people on item 1's list.
@@ -161,7 +173,10 @@ so doing them once covers both.
     server;
   - password login is off;
   - the panel either doesn't hold the key or requires MFA;
-  - the master copy's account is separate from the backup account.
+  - the master copy's account is separate from the backup account;
+  - `/etc/imsda/secret-encryption-key` is `root:root` mode 0400, the env file and
+    panel have no `SECRET_ENCRYPTION_KEY`, and `/api/health` shows
+    `"encryptionKey":{"configured":true,"source":"file"}`.
 
 ## Log
 
