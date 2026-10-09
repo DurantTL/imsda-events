@@ -32,6 +32,7 @@
     "test:group-registration": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-group-registration.ts",
     "test:honor-sites": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-sites.ts",
     "test:honor-class-requirements": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-class-requirements.ts",
+    "test:honor-class-waitlist": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-honor-class-waitlist.ts",
     "test:multi-honor-classes": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-multi-honor-classes.ts",
     "test:event-locations": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-event-locations.ts",
     "test:calendar-bulk": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-calendar-bulk.ts",

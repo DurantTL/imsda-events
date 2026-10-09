@@ -149,6 +149,7 @@ function fixture() {
       honors: [{ honor: { id: "honor-hw-demo-1", name: "Knot Tying", code: "HW-DEMO-1", isActive: true } }], session: { name: "Sabbath afternoon", sortOrder: 1 },
     }]) },
     honorOfferingPrerequisite: { findMany: vi.fn().mockResolvedValue([]) },
+    honorClassWaitlistEntry: { groupBy: vi.fn().mockResolvedValue([]), findMany: vi.fn().mockResolvedValue([]) },
     honorSession: { findMany: vi.fn().mockResolvedValue([{ id: "sabbath", name: "Sabbath afternoon", locationId: null }]) },
     honorEnrollment: {
       findMany: vi.fn(async () => enrollments.map(({ id, registrationAttendeeId, offeringId }) => ({ id, registrationAttendeeId, offeringId }))),

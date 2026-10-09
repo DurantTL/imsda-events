@@ -65,7 +65,7 @@ export function clubRegistrationApiError(error: unknown, action: string) {
     );
   }
   if (error instanceof ClassSelectionError) {
-    const status = error.code === "NOT_REGISTERED" || error.code === "ATTENDEE_NOT_FOUND"
+    const status = error.code === "NOT_REGISTERED" || error.code === "ATTENDEE_NOT_FOUND" || error.code === "OFFER_NOT_FOUND"
       ? 404
       : error.code === "DEADLINE_PASSED" ? 410 : error.code === "SELECTION_INVALID" ? 422 : 409;
     return Response.json({ error: error.code, message: error.message }, { status, headers: noStore });

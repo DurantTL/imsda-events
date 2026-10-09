@@ -57,6 +57,7 @@ function database(options: { registrationLocation: { id: string; name: string } 
     eventLocation: { count: vi.fn().mockResolvedValue(options.eventHasLocations ? 2 : 0) },
     honorOffering: { findMany: vi.fn().mockResolvedValue(offerings) },
     honorOfferingPrerequisite: { findMany: vi.fn().mockResolvedValue([]) },
+    honorClassWaitlistEntry: { groupBy: vi.fn().mockResolvedValue([]), findMany: vi.fn().mockResolvedValue([]) },
     honorSession: { findMany: vi.fn().mockResolvedValue(sessions) },
     honorEnrollment: {
       groupBy: vi.fn().mockResolvedValue([]),

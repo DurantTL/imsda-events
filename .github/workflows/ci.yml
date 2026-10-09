@@ -208,6 +208,14 @@ jobs:
       - run: npm run test:multi-honor-classes
       - run: npm run test:honor-class-requirements
 
+      # Real-database check of the Honors Weekend class waitlist (#831): join order, offers to the
+      # next in line (one director emailed per offer), accept once, an unaccepted offer passing on
+      # (sweep or late accept), skipping a youth who already holds a class in the session (they keep
+      # their place), per-club limits counting seats only, eligibility re-checked on accept, nothing
+      # offered after the class-change deadline, a cancellation passing seats on, and two seats opening
+      # at once with sweeps and direct picks racing: never overfilled, never offered out of order.
+      - run: npm run test:honor-class-waitlist
+
       # Real-database check of deleting an event at any stage: a rich event
       # (registrations, payments, honors, forms, messages, locations, club forms,
       # amendment ledgers) is removed in one transaction with no leftover rows
