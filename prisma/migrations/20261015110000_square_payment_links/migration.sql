@@ -25,6 +25,8 @@ CREATE TABLE "SquareHostedCheckout" (
     "providerPaymentLinkId" TEXT,
     "providerOrderId" TEXT,
     "checkoutUrl" TEXT,
+    "returnTokenHash" TEXT,
+    "returnExpiresAt" TIMESTAMP(3),
     "expiresAt" TIMESTAMP(3) NOT NULL,
     "invalidationReason" TEXT,
     "invalidatedAt" TIMESTAMP(3),
@@ -67,13 +69,16 @@ CREATE UNIQUE INDEX "SquareHostedCheckout_providerPaymentLinkId_key" ON "SquareH
 CREATE UNIQUE INDEX "SquareHostedCheckout_providerOrderId_key" ON "SquareHostedCheckout"("providerOrderId");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "SquareHostedCheckout_returnTokenHash_key" ON "SquareHostedCheckout"("returnTokenHash");
+
+-- CreateIndex
 CREATE INDEX "SquareHostedCheckout_registrationId_status_idx" ON "SquareHostedCheckout"("registrationId", "status");
 
 -- CreateIndex
 CREATE INDEX "SquareHostedCheckout_status_expiresAt_idx" ON "SquareHostedCheckout"("status", "expiresAt");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "SquareDuplicateCharge_paymentAttemptId_key" ON "SquareDuplicateCharge"("paymentAttemptId");
+CREATE INDEX "SquareDuplicateCharge_paymentAttemptId_idx" ON "SquareDuplicateCharge"("paymentAttemptId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "SquareDuplicateCharge_providerPaymentId_key" ON "SquareDuplicateCharge"("providerPaymentId");

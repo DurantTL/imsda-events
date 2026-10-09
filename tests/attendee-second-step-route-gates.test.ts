@@ -133,7 +133,7 @@ describe("attendee routes behind the second-step gate (#744)", () => {
     const pay = await (PAYMENT_POST as unknown as Handler)(send("/payment", "POST", paymentBody), context);
     expect(pay.status).toBe(200);
     expect(mocks.createPayment).toHaveBeenCalledTimes(1);
-    const link = await (LINK_POST as unknown as Handler)(send("/payment-link", "POST", { idempotencyKey: paymentBody.idempotencyKey }), context);
+    const link = await (LINK_POST as unknown as Handler)(send("/payment-link", "POST", { idempotencyKey: paymentBody.idempotencyKey, returnId: "R".repeat(43) }), context);
     expect(link.status).toBe(200);
     expect(mocks.createPaymentLink).toHaveBeenCalledTimes(1);
     const choice = await (CHOICE_POST as unknown as Handler)(send("/payment-choice", "POST", choiceBody), context);

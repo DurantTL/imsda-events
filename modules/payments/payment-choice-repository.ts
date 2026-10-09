@@ -331,6 +331,7 @@ export async function choosePublicPromotedWaitlistPayment(
   options: { now?: Date } = {},
 ) {
   const now = options.now ?? new Date();
+  let registrationId: string | null = null;
   const result = await runSerializable(async (tx) => {
     const access = await authorizeRegistrationAccessToken(token, {
       now,
@@ -342,9 +343,11 @@ export async function choosePublicPromotedWaitlistPayment(
         "This private registration link is invalid or no longer active.",
       );
     }
+    registrationId = access.registrationId;
     return choosePromotedWaitlistPaymentInTransaction(tx, access, input, now);
   });
-  await flushHostedProviderDeletions();
+  // Links the change withdrew are deleted at Square without holding the answer up.
+  if (registrationId) void flushHostedProviderDeletions({ registrationId });
   return result;
 }
 
@@ -360,6 +363,6 @@ export async function chooseAttendeePromotedWaitlistPayment(
     input,
     now,
   ));
-  await flushHostedProviderDeletions();
+  void flushHostedProviderDeletions({ registrationId: access.registrationId });
   return result;
 }

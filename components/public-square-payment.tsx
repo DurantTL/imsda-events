@@ -13,6 +13,12 @@ import { CreditCard, ExternalLink, LoaderCircle, ShieldCheck, TriangleAlert } fr
 import {
   paymentChoiceOptionPresentations,
 } from "@/modules/payments/payment-choice-presentation";
+import {
+  hostedReturnMessage,
+  hostedReturnStorageKey,
+  isHostedReturnId,
+  type HostedReturnState,
+} from "@/modules/payments/hosted-return-presentation";
 import { squareTestModeNotice } from "@/modules/payments/square-sandbox-notice";
 
 type SquareCheckout = {
@@ -181,14 +187,44 @@ function unavailableCheckout(error: unknown): SquareCheckout {
 }
 
 /**
- * Square sends the payer back with ?pay=square. That is a courtesy, never proof: the page only
- * reports a payment once the server's own record (written from the verified webhook) shows it.
+ * After Square, the return page sends the payer back here with `?ret=<returnId>`. That is a
+ * courtesy, never proof: the banner reports what the server's own status for that return id says,
+ * which is written only from the verified webhook. The parameter is removed from the address once
+ * read, so a refresh or a shared screenshot does not carry it.
  */
-function cameBackFromSquare() {
+function readReturnId() {
   try {
-    return new URLSearchParams(window.location.search).get("pay") === "square";
+    const url = new URL(window.location.href);
+    const value = url.searchParams.get("ret");
+    if (value === null) return null;
+    url.searchParams.delete("ret");
+    url.searchParams.delete("pay");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    return isHostedReturnId(value) ? value : null;
   } catch {
-    return false;
+    return null;
+  }
+}
+
+/** An opaque id Square will send the payer back to: 32 random bytes, base64url. */
+function newReturnId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+async function fetchReturnState(returnId: string): Promise<HostedReturnState | null> {
+  try {
+    const response = await fetch(`/api/public/square-return/${encodeURIComponent(returnId)}`, {
+      cache: "no-store",
+    });
+    if (!response.ok) return null;
+    const body = await response.json() as { state?: HostedReturnState };
+    return body.state ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -242,7 +278,9 @@ export function PublicSquarePayment({
   >(null);
   const hostedKeyRef = useRef<string | null>(null);
   const [hostedSubmitting, setHostedSubmitting] = useState(false);
-  const [returnedFromSquare, setReturnedFromSquare] = useState(false);
+  const hostedReturnRef = useRef<string | null>(null);
+  const [returnId, setReturnId] = useState<string | null>(null);
+  const [returnState, setReturnState] = useState<HostedReturnState | null>(null);
   const [notice, setNotice] = useState<{
     tone: "success" | "error" | "pending";
     message: string;
@@ -263,13 +301,13 @@ export function PublicSquarePayment({
     void fetchCheckout(paymentEndpoint).then(
       (nextCheckout) => {
         if (!active) return;
-        setReturnedFromSquare(cameBackFromSquare());
+        setReturnId(readReturnId());
         setCheckout(nextCheckout);
         setLoading(false);
       },
       (error: unknown) => {
         if (!active) return;
-        setReturnedFromSquare(cameBackFromSquare());
+        setReturnId(readReturnId());
         setCheckout(unavailableCheckout(error));
         setLoading(false);
       },
@@ -279,25 +317,34 @@ export function PublicSquarePayment({
     };
   }, [paymentEndpoint]);
 
-  const awaitingConfirmation = returnedFromSquare
-    && checkout?.state !== "NO_BALANCE";
   useEffect(() => {
-    if (!returnedFromSquare) return;
-    if (checkout?.state === "NO_BALANCE") {
-      router.refresh();
-      return;
-    }
+    if (!returnId) return;
+    let active = true;
     let polls = 0;
+    const check = async () => {
+      const state = await fetchReturnState(returnId);
+      if (!active || !state) return;
+      setReturnState(state);
+      if (state !== "CONFIRMING") {
+        window.clearInterval(timer);
+        await loadCheckout();
+        router.refresh();
+      }
+    };
     const timer = window.setInterval(() => {
       polls += 1;
       if (polls > returnPollLimit) {
         window.clearInterval(timer);
         return;
       }
-      void loadCheckout();
+      void check();
     }, returnPollIntervalMs);
-    return () => window.clearInterval(timer);
-  }, [checkout?.state, loadCheckout, returnedFromSquare, router]);
+    void check();
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [loadCheckout, returnId, router]);
 
   useEffect(() => {
     if (
@@ -513,10 +560,14 @@ export function PublicSquarePayment({
     setNotice(null);
     try {
       hostedKeyRef.current ??= crypto.randomUUID();
+      hostedReturnRef.current ??= newReturnId();
       const response = await fetch(`${manageEndpoint}/payment-link`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ idempotencyKey: hostedKeyRef.current }),
+        body: JSON.stringify({
+          idempotencyKey: hostedKeyRef.current,
+          returnId: hostedReturnRef.current,
+        }),
       });
       const body = await response.json() as {
         link?: { url: string };
@@ -524,13 +575,29 @@ export function PublicSquarePayment({
         retryable?: boolean;
       };
       if (!response.ok || !body.link?.url) {
-        if (!body.retryable) hostedKeyRef.current = null;
+        if (!body.retryable) {
+          hostedKeyRef.current = null;
+          hostedReturnRef.current = null;
+        }
         setNotice({
           tone: body.retryable ? "pending" : "error",
           message: body.message ?? "The Pay on Square link could not be created. Try again.",
         });
         if (response.status === 409 || response.status === 422) await loadCheckout();
         return;
+      }
+      // Square returns the payer to an opaque status page, so remember where they started: their
+      // private page, when they came from one. An account page has no secret in its address and
+      // is reached from the return page's own link.
+      if (!explicitManageEndpoint) {
+        try {
+          window.sessionStorage.setItem(
+            hostedReturnStorageKey(hostedReturnRef.current),
+            window.location.pathname,
+          );
+        } catch {
+          // Storage is blocked; the return page then points to the confirmation email.
+        }
       }
       window.location.assign(body.link.url);
     } catch {
@@ -679,19 +746,17 @@ export function PublicSquarePayment({
       <span>{notice.message}</span>
     </div>
   );
-  const returnElement = returnedFromSquare && (
+  const returnElement = returnId && (
     <div
-      className={`public-square-notice is-${awaitingConfirmation ? "pending" : "success"}`}
-      role="status"
+      className={`public-square-notice is-${returnState === "CONFIRMED" ? "success" : returnState === "HELD" ? "error" : "pending"}`}
+      role={returnState === "HELD" ? "alert" : "status"}
     >
-      {awaitingConfirmation
-        ? <LoaderCircle size={18} className="is-spinning" aria-hidden="true" />
-        : <ShieldCheck size={18} aria-hidden="true" />}
-      <span>
-        {awaitingConfirmation
-          ? "Welcome back from Square. We count a payment only after Square confirms it to us, which usually takes under a minute. This page checks automatically; there is no need to pay again."
-          : "Square has confirmed your payment. Thank you."}
-      </span>
+      {returnState === "CONFIRMED"
+        ? <ShieldCheck size={18} aria-hidden="true" />
+        : returnState === "HELD"
+          ? <TriangleAlert size={18} aria-hidden="true" />
+          : <LoaderCircle size={18} className="is-spinning" aria-hidden="true" />}
+      <span>{hostedReturnMessage(returnState ?? "CONFIRMING")}</span>
     </div>
   );
   const paymentChoicePanel = paymentChoice && (

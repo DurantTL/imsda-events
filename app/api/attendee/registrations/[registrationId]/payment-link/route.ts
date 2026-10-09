@@ -30,6 +30,9 @@ function failure(error: unknown) {
       { status: 400 },
     );
   }
+  if (error instanceof SyntaxError) {
+    return json({ message: "The payment link request is not valid JSON." }, { status: 400 });
+  }
   if (error instanceof SquarePaymentOperationError) {
     return json(
       { error: error.code, message: error.message, retryable: error.retryable },

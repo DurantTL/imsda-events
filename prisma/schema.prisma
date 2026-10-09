@@ -3015,7 +3015,7 @@ model PaymentAttempt {
   payment                 Payment?                 @relation(fields: [paymentId], references: [id], onDelete: SetNull)
   webhookEvents           SquareWebhookEvent[]
   hostedCheckout          SquareHostedCheckout?
-  duplicateCharge         SquareDuplicateCharge?
+  duplicateCharges        SquareDuplicateCharge[]
 
   @@index([eventId, status, createdAt])
   @@index([registrationId, createdAt])
@@ -3037,6 +3037,11 @@ model SquareHostedCheckout {
   /// Square's hosted page address. Anyone holding it can pay the quoted amount and nothing else,
   /// so it is not a credential; it is still only ever returned to the registrant who asked.
   checkoutUrl           String?
+  /// SHA-256 of the opaque return id Square sends the payer back to (`/pay/square/return/<id>`).
+  /// The id is a status-only capability, never the registrant's private manage token, so Square
+  /// never holds a link that opens their registration.
+  returnTokenHash       String?                    @unique
+  returnExpiresAt       DateTime?
   expiresAt             DateTime
   invalidationReason    String?
   invalidatedAt         DateTime?
@@ -3054,15 +3059,17 @@ model SquareHostedCheckout {
   @@index([status, expiresAt])
 }
 
-/// A processor-level duplicate charge (#327): a second Square payment for a balance another payment
-/// had already settled. Evidence only; refunds stay a human action through the normal audited flow.
+/// A processor-level exception (#327): a Square payment that must not count toward the balance and
+/// needs a human refund. A duplicate of a balance another payment had settled, a second payment on an
+/// order that already has one, or an amount other than the quote (a split payment). Several may share
+/// one attempt. Evidence only; refunds stay a human action through the normal audited flow.
 /// `evidence` holds a whitelisted copy of Square's payment (ids, status, amount, order, timestamps),
 /// never card or payer details.
 model SquareDuplicateCharge {
   id                String                      @id @default(cuid())
   eventId           String
   registrationId    String
-  paymentAttemptId  String                      @unique
+  paymentAttemptId  String
   paymentId         String?
   providerPaymentId String                      @unique
   providerOrderId   String?
@@ -3079,6 +3086,7 @@ model SquareDuplicateCharge {
   registration   Registration   @relation(fields: [registrationId], references: [id], onDelete: Cascade)
   paymentAttempt PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Cascade)
 
+  @@index([paymentAttemptId])
   @@index([eventId, status])
   @@index([registrationId])
 }

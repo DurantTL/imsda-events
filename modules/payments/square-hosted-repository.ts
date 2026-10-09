@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
+import { hashOpaqueToken } from "@/modules/access/tokens";
 import { authorizeRegistrationAccessToken } from "@/modules/public-access/repository";
 import {
   getSquareConfiguration,
@@ -28,6 +29,7 @@ import {
 } from "@/modules/payments/square-repository";
 import {
   hostedLinkLifetimeMs,
+  hostedLinkReturnGraceMs,
   providerHostedLinkIdempotencyKey,
   type SquareHostedLinkView,
   type SquarePaymentLinkInput,
@@ -62,7 +64,13 @@ const linkAttemptInclude = {
 type PreparedLink =
   | { operation: "RETURN_EXISTING"; attempt: LinkAttempt }
   | { operation: "CALL_PROVIDER"; attempt: LinkAttempt }
-  | { operation: "UNAVAILABLE"; code: "PAYMENT_ATTEMPT_FAILED"; message: string };
+  | {
+      operation: "UNAVAILABLE";
+      code: "PAYMENT_ATTEMPT_FAILED" | "PAYMENT_RESULT_UNCERTAIN";
+      message: string;
+      registrationId: string;
+      retryable?: boolean;
+    };
 
 type LinkOptions = {
   now?: Date;
@@ -140,6 +148,7 @@ async function prepareHostedLink(
     if (hosted.status === "PAID") {
       return {
         operation: "UNAVAILABLE",
+        registrationId: registration.id,
         code: "PAYMENT_ATTEMPT_FAILED",
         message: "A payment was already made through that link. Reload the page to see its status.",
       };
@@ -147,26 +156,47 @@ async function prepareHostedLink(
     if (hosted.status === "INVALIDATED" || hosted.status === "FAILED") {
       return {
         operation: "UNAVAILABLE",
+        registrationId: registration.id,
         code: "PAYMENT_ATTEMPT_FAILED",
         message: "That Pay on Square link is no longer valid. Request a new one.",
       };
     }
-    // Still open: replay it only while it is unexpired and still the amount owed.
+    // Still open: replay it only while it is unexpired, the event still offers it, and it is
+    // still the amount owed.
     if (
       hosted.expiresAt <= now
       || checkout.state !== "READY"
+      || !checkout.hostedLink
       || !quoteMatches(existing, checkout)
     ) {
       await invalidateHostedCheckoutsInTransaction(tx, {
         registrationId: registration.id,
         hostedCheckoutId: hosted.id,
-        reason: hosted.expiresAt <= now ? "EXPIRED" : "BALANCE_CHANGED",
+        reason: hosted.expiresAt <= now
+          ? "EXPIRED"
+          : checkout.state === "READY" && !checkout.hostedLink
+            ? "SETTING_OFF"
+            : "BALANCE_CHANGED",
         now,
       });
       return {
         operation: "UNAVAILABLE",
+        registrationId: registration.id,
         code: "PAYMENT_ATTEMPT_FAILED",
         message: "The amount due changed, so that link was withdrawn. Request a new one.",
+      };
+    }
+    // A link still being made keeps the return id it was made with; a request that no longer
+    // carries it cannot finish the creation.
+    if (
+      hosted.status !== "ACTIVE"
+      && hosted.returnTokenHash !== hashOpaqueToken(input.returnId)
+    ) {
+      return {
+        operation: "UNAVAILABLE",
+        registrationId: registration.id,
+        code: "PAYMENT_ATTEMPT_FAILED",
+        message: "That Pay on Square request cannot be resumed. Request a new link.",
       };
     }
     return {
@@ -228,12 +258,17 @@ async function prepareHostedLink(
   if (reusable) {
     // Reuse is bounded to the same registrant: a link made for another access path stays theirs.
     if (reusable.registrationAccessTokenId === access.accessTokenId) {
+      const openLink = reusable.hostedCheckout!;
+      if (openLink.status === "ACTIVE" && openLink.checkoutUrl) {
+        return { operation: "RETURN_EXISTING", attempt: reusable };
+      }
+      // Another request is still creating it with its own return id; wait for it.
       return {
-        operation: reusable.hostedCheckout!.status === "ACTIVE"
-          && reusable.hostedCheckout!.checkoutUrl
-          ? "RETURN_EXISTING"
-          : "CALL_PROVIDER",
-        attempt: reusable,
+        operation: "UNAVAILABLE",
+        registrationId: registration.id,
+        code: "PAYMENT_RESULT_UNCERTAIN",
+        message: "That payment link is still being made. Try again in a moment.",
+        retryable: true,
       };
     }
   }
@@ -270,6 +305,10 @@ async function prepareHostedLink(
           registrationId: registration.id,
           environment: configuration.environment,
           status: "CREATING",
+          returnTokenHash: hashOpaqueToken(input.returnId),
+          returnExpiresAt: new Date(
+            now.getTime() + hostedLinkLifetimeMs + hostedLinkReturnGraceMs,
+          ),
           expiresAt: new Date(now.getTime() + hostedLinkLifetimeMs),
         },
       },
@@ -298,18 +337,10 @@ async function prepareHostedLink(
   return { operation: "CALL_PROVIDER", attempt };
 }
 
-function redirectUrlFor(
-  authorization: PaymentAuthorization,
-  appBaseUrl: string,
-) {
-  // The registrant lands back on the page they started from. This carries their private token to
-  // Square, a processor they are already paying; the page never treats arriving here as payment.
-  const path = authorization.kind === "private-link"
-    ? `/manage/${encodeURIComponent(authorization.token)}`
-    : "/account/registrations";
-  const url = new URL(path, appBaseUrl);
-  url.searchParams.set("pay", "square");
-  return url.toString();
+function redirectUrlFor(returnId: string, appBaseUrl: string) {
+  // Square gets an opaque id that opens a status page and nothing else, never the registrant's
+  // private manage token. The page they started from is remembered in their own browser.
+  return new URL(`/pay/square/return/${returnId}`, appBaseUrl).toString();
 }
 
 async function storeCreatedLink(
@@ -428,9 +459,17 @@ async function createHostedLinkWithAuthorization(
     prepareHostedLink(tx, authorization, input, configuration, now)
   ));
   if (prepared.operation === "UNAVAILABLE") {
-    // Anything withdrawn while deciding this is deleted at Square now, not left for the sweep.
-    await flushHostedProviderDeletions({ configuration });
-    throw new SquarePaymentOperationError(prepared.code, prepared.message);
+    // Anything withdrawn while deciding this is deleted at Square without holding the answer up;
+    // what is missed is left to the sweep.
+    void flushHostedProviderDeletions({
+      registrationId: prepared.registrationId,
+      configuration,
+    });
+    throw new SquarePaymentOperationError(
+      prepared.code,
+      prepared.message,
+      prepared.retryable ?? false,
+    );
   }
   // Withdrawn-by-this-request links are deleted without making the registrant wait.
   void flushHostedProviderDeletions({
@@ -452,7 +491,7 @@ async function createHostedLinkWithAuthorization(
       referenceId: prepared.attempt.id,
       itemName: `IMSDA registration ${prepared.attempt.registration.confirmationCode}`,
       paymentNote: `IMSDA registration ${prepared.attempt.registration.confirmationCode}`,
-      redirectUrl: redirectUrlFor(authorization, appBaseUrl),
+      redirectUrl: redirectUrlFor(input.returnId, appBaseUrl),
     });
   } catch (error) {
     if (!(error instanceof SquareAdapterError)) throw error;
@@ -468,7 +507,7 @@ async function createHostedLinkWithAuthorization(
 
   const stored = await storeCreatedLink(prepared.attempt.id, link);
   if (stored.hostedCheckout?.status !== "ACTIVE") {
-    await flushHostedProviderDeletions({
+    void flushHostedProviderDeletions({
       registrationId: stored.registrationId,
       configuration,
     });

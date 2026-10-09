@@ -40,7 +40,7 @@ const input = {
   referenceId: "attempt-1",
   itemName: "IMSDA registration WR26-0001",
   paymentNote: "IMSDA registration WR26-0001",
-  redirectUrl: "https://events.imsda.test/manage/token?pay=square",
+  redirectUrl: "https://events.imsda.test/pay/square/return/opaque-id",
 };
 
 function respond(status: number, body: unknown) {
@@ -77,7 +77,7 @@ describe("Square payment link adapter (#327)", () => {
           base_price_money: { amount: 10_290, currency: "USD" },
         }],
       },
-      checkout_options: { redirect_url: "https://events.imsda.test/manage/token?pay=square" },
+      checkout_options: { redirect_url: "https://events.imsda.test/pay/square/return/opaque-id", allow_tipping: false },
       payment_note: "IMSDA registration WR26-0001",
     });
     expect(JSON.stringify(body)).not.toMatch(/pre_populated|buyer|email|phone/i);
@@ -156,9 +156,13 @@ describe("hosted link domain rules (#327)", () => {
 
   it("asks only for a request key, never an amount", () => {
     const key = "00000000-0000-4000-8000-000000000001";
-    expect(squarePaymentLinkInputSchema.parse({ idempotencyKey: key })).toEqual({ idempotencyKey: key });
-    expect(() => squarePaymentLinkInputSchema.parse({ idempotencyKey: key, amountCents: 1 })).toThrow();
-    expect(() => squarePaymentLinkInputSchema.parse({ idempotencyKey: "not-a-uuid" })).toThrow();
+    const returnId = "A".repeat(43);
+    expect(squarePaymentLinkInputSchema.parse({ idempotencyKey: key, returnId })).toEqual({ idempotencyKey: key, returnId });
+    expect(() => squarePaymentLinkInputSchema.parse({ idempotencyKey: key, returnId, amountCents: 1 })).toThrow();
+    expect(() => squarePaymentLinkInputSchema.parse({ idempotencyKey: "not-a-uuid", returnId })).toThrow();
+    expect(() => squarePaymentLinkInputSchema.parse({ idempotencyKey: key })).toThrow();
+    expect(() => squarePaymentLinkInputSchema.parse({ idempotencyKey: key, returnId: "short" })).toThrow();
+    expect(() => squarePaymentLinkInputSchema.parse({ idempotencyKey: key, returnId: `${"A".repeat(42)}/` })).toThrow();
   });
 
   it("keeps only identifiers, status, amount and timestamps as duplicate-charge evidence", () => {

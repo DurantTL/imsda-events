@@ -80,7 +80,8 @@ export async function recordManualPayment(
       now: new Date(),
     });
   });
-  await flushHostedProviderDeletions({ registrationId });
+  // Deleted at Square without holding the answer up; the sweep catches what this misses.
+  void flushHostedProviderDeletions({ registrationId });
 
   return getRegistrationById(eventId, registrationId);
 }

@@ -30,8 +30,9 @@
  *   npm run test:square-hosted-link
  */
 import { loadEnvConfig } from "@next/env";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
+import { createOpaqueToken, hashOpaqueToken } from "../modules/access/tokens";
 import { assertLocalDatabase } from "./support/local-only-guard";
 import { fillBlankSyntheticEnv } from "./support/synthetic-env";
 import {
@@ -46,7 +47,8 @@ import {
   processSquareWebhook,
   SquarePaymentOperationError,
 } from "../modules/payments/square-repository";
-import { createAttendeeSquarePaymentLink } from "../modules/payments/square-hosted-repository";
+import { createAttendeeSquarePaymentLink, createPublicSquarePaymentLink } from "../modules/payments/square-hosted-repository";
+import { getHostedReturnStatus } from "../modules/payments/square-hosted-return";
 import { sweepHostedCheckouts } from "../modules/payments/square-hosted-invalidation";
 import { recordManualPayment, recordRefund } from "../modules/payments/repository";
 
@@ -381,9 +383,11 @@ function paymentEvent(input: {
   paymentId: string;
   status: "APPROVED" | "COMPLETED" | "FAILED";
   amountCents: number;
+  /** When Square says it happened; later events carry later times. */
+  at?: string;
 }) {
   webhookCounter += 1;
-  const at = new Date(Date.UTC(2028, 9, 13, 16, 0, webhookCounter % 60, 0)).toISOString();
+  const at = input.at ?? new Date(Date.UTC(2028, 9, 13, 16, 0, webhookCounter % 60, 0)).toISOString();
   return {
     event_id: input.eventId ?? `${P}_evt_${webhookCounter}_${randomUUID()}`,
     type: "payment.updated",
@@ -455,8 +459,25 @@ async function waitFor(condition: () => Promise<boolean>, message: string) {
   throw new Error(`FAILED: ${message}`);
 }
 
-async function createLink(fixture: Fixture, key = newKey(), now?: Date) {
-  return createAttendeeSquarePaymentLink(access(fixture), { idempotencyKey: key }, { configuration, appBaseUrl, now });
+const newReturnId = () => randomBytes(32).toString("base64url");
+let lastReturnId = "";
+
+async function createLink(fixture: Fixture, key = newKey(), now?: Date, returnId = newReturnId()) {
+  lastReturnId = returnId;
+  return createAttendeeSquarePaymentLink(access(fixture), { idempotencyKey: key, returnId }, { configuration, appBaseUrl, now });
+}
+
+async function tokenFor(fixture: Fixture, options: { expired?: boolean; revoked?: boolean } = {}) {
+  const token = createOpaqueToken();
+  await prisma.registrationAccessToken.create({
+    data: {
+      registrationId: fixture.registrationId,
+      tokenHash: hashOpaqueToken(token),
+      expiresAt: new Date(Date.now() + (options.expired ? -60_000 : 86_400_000)),
+      revokedAt: options.revoked ? new Date() : null,
+    },
+  });
+  return token;
 }
 
 async function payEmbedded(fixture: Fixture) {
@@ -467,7 +488,7 @@ async function openLinkFor(fixture: Fixture) {
   const link = await createLink(fixture);
   const [hosted] = (await hostedFor(fixture.registrationId)).filter((row) => row.status === "ACTIVE");
   assert(hosted?.providerOrderId, "the link has Square's order id stored");
-  return { link, hosted, orderId: hosted.providerOrderId };
+  return { link, hosted, orderId: hosted.providerOrderId, returnId: lastReturnId };
 }
 
 async function main() {
@@ -505,7 +526,8 @@ async function main() {
     };
     assert(sent.order.line_items.length === 1 && sent.order.line_items[0]!.base_price_money.amount === 10_330 && sent.order.line_items[0]!.quantity === "1", "Square gets one line for the exact amount");
     assert(sent.order.reference_id === hosted.paymentAttemptId && sent.order.location_id === configuration.locationId, "the order carries our attempt id and the location");
-    assert(sent.checkout_options.redirect_url === `${appBaseUrl}/account/registrations?pay=square`, "Square returns the registrant to their own page");
+    assert(sent.checkout_options.redirect_url === `${appBaseUrl}/pay/square/return/${lastReturnId}`, "Square returns the payer to an opaque status page");
+    assert((sent.checkout_options as { allow_tipping?: boolean }).allow_tipping === false, "tipping is off, so the amount paid is exactly the quote");
     assert(!/@example\.test|Hosted|Check\d/.test(JSON.stringify(sent)), "nothing identifying the payer is sent to Square");
 
     const cardPriced = await createRegistration(events.on, { totalCents: 10_330, method: "Credit / debit card" });
@@ -542,12 +564,14 @@ async function main() {
 
     const unconfirmed = await createRegistration(events.on, { totalCents: 10_000, method: "Pay later" });
     const retryKey = newKey();
+    const retryReturn = newReturnId();
     square.createMode = "UNAVAILABLE";
-    await expectOperationError(createLink(unconfirmed, retryKey), "PAYMENT_RESULT_UNCERTAIN", "an unconfirmed Square creation is retryable");
+    await expectOperationError(createLink(unconfirmed, retryKey, undefined, retryReturn), "PAYMENT_RESULT_UNCERTAIN", "an unconfirmed Square creation is retryable");
     square.createMode = "OK";
     const [pending] = await hostedFor(unconfirmed.registrationId);
     assert(pending?.status === "CREATING", "the unconfirmed link waits as CREATING");
-    const retried = await createLink(unconfirmed, retryKey);
+    await expectOperationError(createLink(unconfirmed, retryKey), "PAYMENT_ATTEMPT_FAILED", "a retry that lost its return id cannot finish the creation");
+    const retried = await createLink(unconfirmed, retryKey, undefined, retryReturn);
     assert(retried.url.startsWith("https://sandbox.square.link/"), "the retry gets the link");
     const keysSeen = [...square.links.keys()].filter((candidate) => candidate === pending.paymentAttempt.providerIdempotencyKey);
     assert(keysSeen.length === 1, "the retry reuses the same Square idempotency key");
@@ -556,8 +580,9 @@ async function main() {
   // ---- 3. Only the verified webhook confirms payment; replays change nothing. ----
   {
     const fixture = await createRegistration(events.on, { totalCents: 10_000, method: "Pay later" });
-    const { orderId } = await openLinkFor(fixture);
+    const { orderId, returnId } = await openLinkFor(fixture);
     const paymentId = `${P}-PAY-HOSTED-1`;
+    assert((await getHostedReturnStatus(returnId))?.state === "CONFIRMING", "arriving from Square proves nothing: the status is still confirming");
     assert(await balanceCents(fixture.registrationId) === 10_000 && (await cardPayments(fixture.registrationId)).length === 0, "a link, and a registrant sent back from Square, prove nothing");
 
     await sendWebhook(paymentEvent({ orderId, paymentId, status: "APPROVED", amountCents: 10_330 }));
@@ -576,6 +601,7 @@ async function main() {
     const payments = await cardPayments(fixture.registrationId);
     assert(payments.length === 1 && payments[0]!.status === "SUCCEEDED" && Number(payments[0]!.amount) === 103.3 && payments[0]!.externalReference === paymentId, "one successful card payment");
     assert(await receiptCount(fixture.registrationId) === 1, "one receipt");
+    assert((await getHostedReturnStatus(returnId))?.state === "CONFIRMED", "only the recorded payment makes the status confirmed");
 
     const sameEvent = await sendWebhook(completed);
     assert(sameEvent.duplicate === true, "the same event id is a recognised duplicate");
@@ -602,7 +628,7 @@ async function main() {
   // ---- 5. First payment wins: embedded, then a hosted payment from the withdrawn link. ----
   {
     const fixture = await createRegistration(events.on, { totalCents: 10_000, method: "Pay later" });
-    const { orderId, hosted } = await openLinkFor(fixture);
+    const { orderId, hosted, returnId } = await openLinkFor(fixture);
     const embedded = await payEmbedded(fixture);
     assert(embedded.status === "SUCCEEDED", "the embedded payment succeeds");
     const [afterEmbedded] = await hostedFor(fixture.registrationId);
@@ -622,6 +648,7 @@ async function main() {
     assert(await balanceCents(fixture.registrationId) === 0 && await totalCents(fixture.registrationId) === 10_330, "the duplicate neither counts toward the balance nor adds a fee");
     assert(await receiptCount(fixture.registrationId) === 1, "the duplicate sends no receipt");
     const record = await prisma.squareDuplicateCharge.findUniqueOrThrow({ where: { providerPaymentId: duplicatePaymentId } });
+    assert((await getHostedReturnStatus(returnId))?.state === "HELD", "the payer's status page says the payment was held, not confirmed");
     assert(record.status === "OPEN" && record.reason === "BALANCE_ALREADY_PAID" && record.amountCents === 10_330 && record.providerOrderId === orderId && record.winningPaymentId === valid[0]!.id, "the duplicate charge record names the reason, order and winning payment");
     assert(JSON.stringify(record.evidence).includes(duplicatePaymentId) && !/@example\.test|last_4|card_details/.test(JSON.stringify(record.evidence)), "the evidence keeps Square's identifiers and no payer or card details");
     const alert = await prisma.alertNotification.findUnique({ where: { key: `payments.duplicate-charge.${duplicatePaymentId}` } });
@@ -790,14 +817,149 @@ async function main() {
     await expectOperationError(createLink(church), "PAYMENT_NOT_ELIGIBLE", "no link on a church-billed event");
   }
 
-  // ---- 12. A webhook amount that is not the quote is ignored. ----
+  // ---- 12. An unsettled payment of the wrong amount is ignored. ----
   {
     const fixture = await createRegistration(events.on, { totalCents: 10_000, method: "Pay later" });
     const { orderId } = await openLinkFor(fixture);
-    const result = await sendWebhook(paymentEvent({ orderId, paymentId: `${P}-PAY-WRONG`, status: "COMPLETED", amountCents: 9_000 }));
-    assert(result.status === "IGNORED", "a different amount is ignored");
+    const result = await sendWebhook(paymentEvent({ orderId, paymentId: `${P}-PAY-WRONG`, status: "APPROVED", amountCents: 9_000 }));
+    assert(result.status === "IGNORED", "a different amount that is not settled is ignored");
     assert(await balanceCents(fixture.registrationId) === 10_000 && (await cardPayments(fixture.registrationId)).length === 0, "and applies nothing");
     assert((await prisma.auditLog.count({ where: { eventId: fixture.eventId, action: "SQUARE_WEBHOOK_AMOUNT_MISMATCH" } })) === 1, "with an audit entry");
+  }
+
+  // ---- 13. Split tender: two partial payments on one order are held, never applied. ----
+  {
+    const fixture = await createRegistration(events.on, { totalCents: 10_000, method: "Pay later" });
+    const { orderId, returnId } = await openLinkFor(fixture);
+    const first = `${P}-PAY-SPLIT-1`;
+    const second = `${P}-PAY-SPLIT-2`;
+    await sendWebhook(paymentEvent({ orderId, paymentId: first, status: "COMPLETED", amountCents: 6_000 }));
+    await sendWebhook(paymentEvent({ orderId, paymentId: second, status: "COMPLETED", amountCents: 4_330 }));
+    const held = await prisma.squareDuplicateCharge.findMany({ where: { registrationId: fixture.registrationId }, orderBy: { amountCents: "desc" } });
+    assert(held.length === 2 && held.every((record) => record.reason === "AMOUNT_MISMATCH" && record.status === "OPEN" && record.providerOrderId === orderId), "each partial payment is its own exception record");
+    assert(held[0]!.amountCents === 6_000 && held[1]!.amountCents === 4_330, "recording the amount Square actually took, not the quote");
+    const payments = await cardPayments(fixture.registrationId);
+    assert(payments.length === 2 && payments.every((payment) => payment.status === "PENDING"), "both payments are held PENDING");
+    assert(await balanceCents(fixture.registrationId) === 10_000 && await totalCents(fixture.registrationId) === 10_000, "the balance is untouched and no fee is added");
+    assert(await receiptCount(fixture.registrationId) === 0, "no receipt");
+    const [row] = await hostedFor(fixture.registrationId);
+    assert(row!.paymentAttempt.status === "PROCESSING" && row!.paymentAttempt.providerPaymentId === null, "the attempt is not settled by a partial payment");
+    assert((await getHostedReturnStatus(returnId))?.state === "HELD", "the payer is told it was held");
+    for (const id of [first, second]) {
+      const alert = await prisma.alertNotification.findUnique({ where: { key: `payments.duplicate-charge.${id}` } });
+      assert(alert?.severity === "URGENT", `an urgent alert for ${id}`);
+    }
+    const audits = await prisma.auditLog.findMany({ where: { eventId: fixture.eventId, action: "SQUARE_DUPLICATE_CHARGE_DETECTED" } });
+    assert(audits.filter((audit) => (audit.metadata as { reason?: string }).reason === "AMOUNT_MISMATCH").length >= 2, "high-priority audit entries");
+    // A replay of either leaves one record each.
+    await sendWebhook(paymentEvent({ orderId, paymentId: first, status: "COMPLETED", amountCents: 6_000 }));
+    assert((await prisma.squareDuplicateCharge.count({ where: { registrationId: fixture.registrationId } })) === 2 && (await cardPayments(fixture.registrationId)).length === 2, "replays record nothing new");
+    // Refunding one in Square resolves that one only.
+    await sendWebhook(refundEvent({ paymentId: first, refundId: `${P}-REFUND-SPLIT-1`, amountCents: 6_000 }));
+    const afterRefund = await prisma.squareDuplicateCharge.findMany({ where: { registrationId: fixture.registrationId } });
+    assert(afterRefund.find((record) => record.providerPaymentId === first)?.status === "RESOLVED" && afterRefund.find((record) => record.providerPaymentId === second)?.status === "OPEN", "a refund resolves its own record");
+    assert(await totalCents(fixture.registrationId) === 10_000 && await balanceCents(fixture.registrationId) === 10_000, "the registration is unchanged by the refund");
+  }
+
+  // ---- 14. A second successful payment on an already-settled link is held beside the winner. ----
+  {
+    const fixture = await createRegistration(events.on, { totalCents: 10_000, method: "Pay later" });
+    const { orderId } = await openLinkFor(fixture);
+    const winner = `${P}-PAY-WINNER`;
+    const extra = `${P}-PAY-EXTRA`;
+    await sendWebhook(paymentEvent({ orderId, paymentId: winner, status: "COMPLETED", amountCents: 10_330 }));
+    await sendWebhook(paymentEvent({ orderId, paymentId: extra, status: "COMPLETED", amountCents: 10_330 }));
+    const [row] = await hostedFor(fixture.registrationId);
+    assert(row!.paymentAttempt.providerPaymentId === winner && row!.paymentAttempt.status === "SUCCEEDED" && row!.paymentAttempt.duplicateReason === null, "the winner's attempt keeps its payment id and stays valid");
+    const payments = await cardPayments(fixture.registrationId);
+    const winnerPayment = payments.find((payment) => payment.externalReference === winner);
+    const extraPayment = payments.find((payment) => payment.externalReference === extra);
+    assert(winnerPayment?.status === "SUCCEEDED" && extraPayment?.status === "PENDING" && payments.length === 2, "the second payment is a separate held row");
+    assert(row!.paymentAttempt.paymentId === winnerPayment.id, "the attempt still points at the winner's payment");
+    const record = await prisma.squareDuplicateCharge.findUniqueOrThrow({ where: { providerPaymentId: extra } });
+    assert(record.reason === "SECOND_PAYMENT_ON_ORDER" && record.winningPaymentId === winnerPayment.id && record.paymentId === extraPayment.id, "the exception names the payment it duplicates");
+    assert(await balanceCents(fixture.registrationId) === 0 && await totalCents(fixture.registrationId) === 10_330 && await receiptCount(fixture.registrationId) === 1, "paid once, fee once, one receipt");
+    await sendWebhook(paymentEvent({ orderId, paymentId: extra, status: "COMPLETED", amountCents: 10_330 }));
+    await sendWebhook(paymentEvent({ orderId, paymentId: winner, status: "COMPLETED", amountCents: 10_330 }));
+    assert((await cardPayments(fixture.registrationId)).length === 2 && (await prisma.squareDuplicateCharge.count({ where: { registrationId: fixture.registrationId } })) === 1, "replays of either payment change nothing");
+    await sendWebhook(refundEvent({ paymentId: extra, refundId: `${P}-REFUND-EXTRA`, amountCents: 10_330 }));
+    assert((await prisma.squareDuplicateCharge.findUniqueOrThrow({ where: { providerPaymentId: extra } })).status === "RESOLVED", "refunding the extra payment resolves it");
+    assert(await totalCents(fixture.registrationId) === 10_330 && await balanceCents(fixture.registrationId) === 0, "and leaves the winner and its fee alone");
+  }
+
+  // ---- 15. When staff turn the setting off, open links stop being offered. ----
+  {
+    const replay = await createRegistration(events.on, { totalCents: 10_000, method: "Pay later" });
+    const key = newKey();
+    await createLink(replay, key);
+    const swept = await createRegistration(events.on, { totalCents: 10_000, method: "Pay later" });
+    await createLink(swept);
+    await prisma.event.update({ where: { id: events.on }, data: { hostedPaymentLinkEnabled: false } });
+    try {
+      await expectOperationError(createLink(replay, key), "PAYMENT_ATTEMPT_FAILED", "a replay does not outlive the setting");
+      const [replayed] = await hostedFor(replay.registrationId);
+      assert(replayed!.status === "INVALIDATED" && replayed!.invalidationReason === "SETTING_OFF", "the replayed link is withdrawn with its reason");
+      const sweepResult = await sweepHostedCheckouts();
+      assert(sweepResult.withdrawn >= 1, "the sweep withdraws the event's other open links");
+      const [other] = await hostedFor(swept.registrationId);
+      assert(other!.status === "INVALIDATED" && other!.invalidationReason === "SETTING_OFF" && other!.providerDeletedAt !== null, "and deletes them at Square");
+    } finally {
+      await prisma.event.update({ where: { id: events.on }, data: { hostedPaymentLinkEnabled: true } });
+    }
+  }
+
+  // ---- 16. Out-of-order delivery: an approval older than a decline never revives the attempt. ----
+  {
+    const fixture = await createRegistration(events.on, { totalCents: 10_000, method: "Pay later" });
+    const { orderId } = await openLinkFor(fixture);
+    const declined = `${P}-PAY-ORDER-1`;
+    await sendWebhook(paymentEvent({ orderId, paymentId: declined, status: "FAILED", amountCents: 10_330, at: "2028-10-13T16:10:30.000Z" }));
+    const late = await sendWebhook(paymentEvent({ orderId, paymentId: declined, status: "APPROVED", amountCents: 10_330, at: "2028-10-13T16:10:10.000Z" }));
+    assert(late.status === "IGNORED", "the older approval is ignored");
+    let [row] = await hostedFor(fixture.registrationId);
+    assert(row!.paymentAttempt.status === "PROCESSING" && row!.paymentAttempt.activeRegistrationKey === null && row!.paymentAttempt.providerPaymentId === null, "the attempt is not put back in flight");
+    assert((await cardPayments(fixture.registrationId)).length === 0, "and no payment row appears");
+    // A tracked payment: approved, declined, then an approval older than the decline.
+    const tracked = `${P}-PAY-ORDER-2`;
+    await sendWebhook(paymentEvent({ orderId, paymentId: tracked, status: "APPROVED", amountCents: 10_330, at: "2028-10-13T16:20:10.000Z" }));
+    await sendWebhook(paymentEvent({ orderId, paymentId: tracked, status: "FAILED", amountCents: 10_330, at: "2028-10-13T16:20:40.000Z" }));
+    [row] = await hostedFor(fixture.registrationId);
+    assert(row!.paymentAttempt.status === "PROCESSING" && row!.paymentAttempt.activeRegistrationKey === null, "a decline after an approval steps the attempt back");
+    const stale = await sendWebhook(paymentEvent({ orderId, paymentId: tracked, status: "APPROVED", amountCents: 10_330, at: "2028-10-13T16:20:20.000Z" }));
+    assert(stale.status === "IGNORED", "an approval older than that decline is ignored too");
+    await sendWebhook(paymentEvent({ orderId, paymentId: `${P}-PAY-ORDER-3`, status: "COMPLETED", amountCents: 10_330, at: "2028-10-13T16:30:00.000Z" }));
+    assert(await balanceCents(fixture.registrationId) === 0, "a later, genuine payment still settles it");
+  }
+
+  // ---- 17. The private link's return id opens a status view and nothing else. ----
+  {
+    const fixture = await createRegistration(events.on, { totalCents: 10_000, method: "Pay later" });
+    const token = await tokenFor(fixture);
+    const returnId = newReturnId();
+    const key = newKey();
+    const link = await createPublicSquarePaymentLink(token, { idempotencyKey: key, returnId }, { configuration, appBaseUrl });
+    const [row] = await hostedFor(fixture.registrationId);
+    const sent = [...square.links.values()].find((candidate) => candidate.id === row!.providerPaymentLinkId)!.body as { checkout_options: { redirect_url: string } };
+    assert(sent.checkout_options.redirect_url === `${appBaseUrl}/pay/square/return/${returnId}`, "Square is sent the opaque return address");
+    assert(!JSON.stringify(sent).includes(token) && !/\/manage\//.test(JSON.stringify(sent)), "Square never receives the private manage token");
+    assert(row!.returnTokenHash === hashOpaqueToken(returnId) && JSON.stringify(row).includes(returnId) === false, "only the hash of the return id is stored");
+    assert(row!.returnExpiresAt !== null && row!.returnExpiresAt > row!.expiresAt, "the return id outlives the link by a grace period");
+    const status = await getHostedReturnStatus(returnId);
+    assert(status !== null && Object.keys(status).sort().join() === "maskedConfirmationCode,state", "the return view has a state and a masked code only");
+    assert(status.state === "CONFIRMING" && status.maskedConfirmationCode === `••••${fixture.code.slice(-4)}`, "confirming, with the code masked");
+    assert(!JSON.stringify(status).includes(fixture.code) && !JSON.stringify(status).includes(link.url), "no full code and no checkout address");
+    assert((await getHostedReturnStatus(newReturnId())) === null, "an unknown id is nothing");
+    assert((await getHostedReturnStatus(token)) === null, "a manage token is not a return id");
+    assert((await getHostedReturnStatus(returnId, { now: new Date(row!.returnExpiresAt!.getTime() + 1_000) })) === null, "an expired id is nothing");
+
+    const other = await createRegistration(events.noFee, { totalCents: 10_000, method: "Pay later" });
+    const otherToken = await tokenFor(other);
+    await createPublicSquarePaymentLink(otherToken, { idempotencyKey: newKey(), returnId: newReturnId() }, { configuration, appBaseUrl });
+    assert((await hostedFor(fixture.registrationId)).length === 1 && (await hostedFor(other.registrationId)).length === 1, "each token makes links for its own registration only");
+    await expectOperationError(createPublicSquarePaymentLink(createOpaqueToken(), { idempotencyKey: newKey(), returnId: newReturnId() }, { configuration, appBaseUrl }), "REGISTRATION_ACCESS_UNAVAILABLE", "an unknown token opens nothing");
+    await expectOperationError(createPublicSquarePaymentLink(await tokenFor(other, { revoked: true }), { idempotencyKey: newKey(), returnId: newReturnId() }, { configuration, appBaseUrl }), "REGISTRATION_ACCESS_UNAVAILABLE", "a revoked token opens nothing");
+    await expectOperationError(createPublicSquarePaymentLink(await tokenFor(other, { expired: true }), { idempotencyKey: newKey(), returnId: newReturnId() }, { configuration, appBaseUrl }), "REGISTRATION_ACCESS_UNAVAILABLE", "an expired token opens nothing");
+    await expectOperationError(createPublicSquarePaymentLink(token, { idempotencyKey: key, returnId }, { configuration, appBaseUrl }).then(() => createAttendeeSquarePaymentLink(access(other), { idempotencyKey: key, returnId }, { configuration, appBaseUrl })), "PAYMENT_IDEMPOTENCY_CONFLICT", "a request key belongs to its own registration");
   }
 
   console.log("Square hosted link verification passed.");

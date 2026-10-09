@@ -66,16 +66,22 @@ rendering a wallet or a card field.
   key is stable per attempt, so an unconfirmed creation is retried without a second
   order. An unpaid link is an offer, not a payment in flight: it holds no
   `activeRegistrationKey` and does not lock the promoted-waitlist payment choice.
-- **Only the verified webhook is proof.** Square returns the registrant to their own
-  private page (`/manage/<token>?pay=square`, or `/account/registrations?pay=square`
-  from the account portal). That page says the payment is being confirmed and checks
-  again for two minutes; it reports success only when the server's own record shows
-  the balance paid. A payment through the link is a normal Square payment that carries
-  `order_id` and no `reference_id`, so `payment.created` / `payment.updated` find the
-  attempt through the stored order id and go through the same `applyProviderPayment`
-  (payment row, surcharge, receipt) as every other payment. The redirect URL carries
-  the registrant's private token to Square, the processor they are already paying; it
-  is not stored here.
+- **Only the verified webhook is proof, and Square never holds the private link.** The
+  browser makes up an opaque return id (32 random bytes) and sends it with the request key;
+  only its SHA-256 is stored (`returnTokenHash`, expiring with the link plus a 7-day grace).
+  Square's `redirect_url` is `<APP_BASE_URL>/pay/square/return/<returnId>`, never the
+  registrant's `/manage/<token>`. That page, and the poll behind it
+  (`/api/public/square-return/<returnId>`), show a state (confirming, confirmed, held) and a
+  masked confirmation code and nothing else; an unknown or expired id is a plain 404. Before
+  leaving for Square the browser stores `sessionStorage["imsda-square-return:<returnId>"]`
+  with the page it started from, when that was a private manage page; the return page sends it
+  back there with `?ret=<returnId>` (removed from the address once read), where the banner
+  follows the same status and refreshes the balance. With no stored page (another browser, storage
+  blocked, the account portal) the return page says to use the link in the confirmation email or
+  sign in. A payment through the link is a normal Square payment that carries `order_id` and no
+  `reference_id`, so `payment.created` / `payment.updated` find the attempt through the stored
+  order id and go through the same `applyProviderPayment` (payment row, surcharge, receipt) as
+  every other payment.
 - **First recorded payment wins.** Starting an embedded payment, recording any
   payment, or changing the payment choice withdraws open links (marked `INVALIDATED`
   in the same transaction, deleted at Square after commit). A payment whose webhook
@@ -91,8 +97,21 @@ rendering a wallet or a card field.
   records the refund, voids the held payment and resolves the record, and never
   reverses a fee the duplicate never added. An event with an unresolved production
   duplicate counts it as a real payment, so it cannot be deleted.
+- **Other money through the same order is held, never applied.** A second successful payment
+  on an order that already has one, or a successful payment of any amount other than the quote
+  (a split payment), becomes its own `PENDING` payment row and `SquareDuplicateCharge`
+  (reasons `SECOND_PAYMENT_ON_ORDER`, `AMOUNT_MISMATCH`), with the same audit entry and urgent
+  alert; the winner's attempt, payment id and receipt are left alone. Several records may share
+  one attempt. The link asks Square for no tips (`allow_tipping: false`).
 - **A declined card on the hosted page does not end the link.** `FAILED` payments are
-  recorded on the webhook row only; the payer can try again on the same page.
+  recorded on the webhook row only; the payer can try again on the same page. Square does not
+  promise ordered delivery, so an approval older than a decline already recorded for the same
+  payment is ignored.
+- **The setting is checked every time.** A replayed request on an event that has since turned
+  the setting off withdraws the link, and the sweep withdraws every open link of such an event.
+- **Deletions at Square never hold a request up.** After a request or webhook commits, the
+  registration's withdrawn links are deleted fire-and-forget (failures logged and stored); the
+  sweep owns the backlog.
 
 **Square Checkout API semantics this uses** (no Square SDK is vendored here, so these
 are from Square's published Checkout API and must be confirmed in Sandbox under #306
@@ -100,7 +119,7 @@ before Production is enabled):
 
 - `POST /v2/online-checkout/payment-links` with `idempotency_key`, an `order`
   (`location_id`, `reference_id` = our attempt id, one line item for the exact amount),
-  `checkout_options.redirect_url` and `payment_note`; the response gives
+  `checkout_options` (`redirect_url`, `allow_tipping: false`) and `payment_note`; the response gives
   `payment_link.id`, `order_id` and `url`. Nothing about the payer is sent.
 - A payment link has **no expiry setting**. Expiry is this app's: a link lives 24 hours
   (`hostedLinkLifetimeMs`); an older one is refused on replay and withdrawn by the sweep.

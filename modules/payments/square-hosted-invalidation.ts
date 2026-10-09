@@ -3,7 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
-import { logError } from "@/lib/logger";
+import { logError, logWarn } from "@/lib/logger";
 import {
   getSquareConfiguration,
   type SquareRuntimeConfiguration,
@@ -33,6 +33,7 @@ export type HostedInvalidationReason =
   | "BALANCE_CHANGED"
   | "REGISTRATION_NOT_PAYABLE"
   | "SUPERSEDED_BY_NEW_LINK"
+  | "SETTING_OFF"
   | "EXPIRED";
 
 /**
@@ -161,6 +162,10 @@ export async function flushHostedProviderDeletions(
         deleted += 1;
       } catch (error) {
         failed += 1;
+        logWarn("A withdrawn Pay on Square link could not be deleted at Square; the sweep will retry.", {
+          hostedCheckoutId: checkout.id,
+          code: error instanceof SquareAdapterError ? error.code : "UNKNOWN",
+        });
         const message = error instanceof SquareAdapterError
           ? error.message
           : "The payment link could not be deleted.";
@@ -204,6 +209,7 @@ export async function sweepHostedCheckouts(
         select: {
           status: true,
           totalAmount: true,
+          event: { select: { hostedPaymentLinkEnabled: true, billingMode: true } },
           payments: {
             where: { status: "SUCCEEDED" },
             select: {
@@ -221,9 +227,13 @@ export async function sweepHostedCheckouts(
   });
   let withdrawn = 0;
   for (const checkout of open) {
+    const offered = checkout.registration.event.hostedPaymentLinkEnabled
+      && checkout.registration.event.billingMode !== "DEFERRED_ORGANIZATION_INVOICE";
     const reason: HostedInvalidationReason | null = checkout.expiresAt <= now
       ? "EXPIRED"
-      : (() => {
+      : !offered
+        ? "SETTING_OFF"
+        : (() => {
           const stale = hostedPaymentStaleReason({
             registrationStatus: checkout.registration.status,
             balanceCents: registrationBalanceCents(checkout.registration),

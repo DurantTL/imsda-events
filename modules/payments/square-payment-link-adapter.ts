@@ -90,7 +90,8 @@ export async function createSquarePaymentLink(
               },
             }],
           },
-          checkout_options: { redirect_url: input.redirectUrl },
+          // No tip line: the amount paid must be exactly the quote.
+          checkout_options: { redirect_url: input.redirectUrl, allow_tipping: false },
           payment_note: input.paymentNote,
         }),
         cache: "no-store",

@@ -21,6 +21,12 @@ export type SquarePaymentInput = z.infer<typeof squarePaymentInputSchema>;
 /** Asking for a "Pay on Square" link (#327): only a request key, never an amount. */
 export const squarePaymentLinkInputSchema = z.strictObject({
   idempotencyKey: z.uuid(),
+  /**
+   * An opaque id the browser makes up (32 random bytes, base64url) and keeps. Square sends the payer
+   * back to `/pay/square/return/<returnId>`, so Square never holds the private manage token. Only its
+   * hash is stored. It grants a status view and nothing else.
+   */
+  returnId: z.string().regex(/^[A-Za-z0-9_-]{43}$/, "The return id is invalid."),
 });
 
 export type SquarePaymentLinkInput = z.infer<typeof squarePaymentLinkInputSchema>;
@@ -30,6 +36,8 @@ export type SquarePaymentLinkInput = z.infer<typeof squarePaymentLinkInputSchema
  * enforces it: a link older than this is refused on replay and deleted at Square by the sweep.
  */
 export const hostedLinkLifetimeMs = 24 * 60 * 60 * 1000;
+/** The return id outlives the link by this long, so a payer who pays at the last minute still lands on a status page. */
+export const hostedLinkReturnGraceMs = 7 * 24 * 60 * 60 * 1000;
 
 export type SquareHostedLinkView = {
   url: string;
