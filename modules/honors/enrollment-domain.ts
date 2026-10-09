@@ -114,6 +114,19 @@ export function requirementGaps(
 }
 
 /**
+ * How many people don't meet what an edit to a class *introduced* (#832): the level only when it was raised, and only the
+ * prerequisite honors that were added. Someone accepted earlier (confirmed by the director or placed by staff) for a
+ * requirement that did not change is not counted. A person with no roster level or record counts as not meeting it.
+ */
+export function countUnmetByChange(
+  people: ReadonlyArray<Pick<SelectingAttendee, "classLevel" | "completedHonorIds">>,
+  change: { raisedLevel: ClubClassLevel | null; addedPrerequisites: ReadonlyArray<{ id: string; name: string }> },
+) {
+  const checked = { honorName: "", minimumClassLevel: change.raisedLevel, prerequisiteHonors: change.addedPrerequisites };
+  return people.filter((person) => requirementGaps({ consumesSeat: true, ...person }, checked).length > 0).length;
+}
+
+/**
  * The outcome of the requirement rules for one person in one class (#832):
  * `problem` is the first rule not met and not waived; the other fields say how
  * the rest were waived, which is what gets recorded on the enrollment.

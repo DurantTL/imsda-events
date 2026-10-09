@@ -14,6 +14,7 @@ import {
 import {
   consumesClassSeat,
   hasClassRequirements,
+  countUnmetByChange,
   requirementGaps,
   requirementResolution,
   selectionProblem,
@@ -80,33 +81,30 @@ async function loadMemberRequirements(client: Prisma.TransactionClient, memberId
 }
 
 /**
- * How many youth currently holding a seat in the class don't meet the given rule (#832), for staff who add or raise a
- * requirement: they keep their seats. A count only, never names. A guest or group person has no level or record, so
- * counts as not meeting it.
+ * How many youth currently holding a seat in the class don't meet what an edit introduced (#832): the raised level, and
+ * the added prerequisite honors, nothing already in force. They keep their seats. A count only, never names. A guest or
+ * group person has no level or record, so counts as not meeting it.
  */
 export async function countEnrolledYouthNotMeeting(
   client: Prisma.TransactionClient,
   offeringId: string,
   eventId: string,
-  rule: { minimumClassLevel: ClubClassLevel | null; prerequisiteHonorIds: readonly string[] },
+  change: { raisedLevel: ClubClassLevel | null; addedPrerequisiteIds: readonly string[] },
 ) {
   const enrollments = await client.honorEnrollment.findMany({
-    where: { offeringId, consumesSeat: true, registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } },
+    where: { offeringId, offering: { eventId }, consumesSeat: true, registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } },
     select: { registrationAttendee: { select: { profileSnapshot: true } } },
   });
   const memberIds = enrollments
     .map((row) => (row.registrationAttendee.profileSnapshot as Snapshot).clubRosterMemberId)
     .filter((id): id is string => Boolean(id));
-  const byMember = await loadMemberRequirements(client, memberIds, rule.prerequisiteHonorIds);
-  const checked = { honorName: "", minimumClassLevel: rule.minimumClassLevel, prerequisiteHonors: rule.prerequisiteHonorIds.map((id) => ({ id, name: "" })) };
-  let unmet = 0;
-  for (const row of enrollments) {
+  const byMember = await loadMemberRequirements(client, memberIds, change.addedPrerequisiteIds);
+  const people = enrollments.map((row) => {
     const memberId = (row.registrationAttendee.profileSnapshot as Snapshot).clubRosterMemberId;
     const known = memberId ? byMember.get(memberId) : undefined;
-    const person = { consumesSeat: true, classLevel: known?.classLevel ?? null, completedHonorIds: known?.completedHonorIds ?? [] };
-    if (requirementGaps(person, checked).length > 0) unmet += 1;
-  }
-  return unmet;
+    return { classLevel: known?.classLevel ?? null, completedHonorIds: known?.completedHonorIds ?? [] };
+  });
+  return countUnmetByChange(people, { raisedLevel: change.raisedLevel, addedPrerequisites: change.addedPrerequisiteIds.map((id) => ({ id, name: "" })) });
 }
 
 /** Honors any class of the event requires first (#832). */
