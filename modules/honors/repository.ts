@@ -731,6 +731,8 @@ export async function updateHonorOffering(
   let unmetCount: number | null = null;
   try {
     await serializable(async (tx) => {
+      // The transaction can be retried: start each attempt with no impact (#832).
+      unmetCount = null;
       const existing = await tx.honorOffering.findFirst({
         where: { id: offeringId, eventId },
         select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, minimumClassLevel: true, honors: offeringHonorsSelect, prerequisites: { select: { honorId: true } } },
@@ -852,9 +854,9 @@ export async function updateHonorOffering(
       // Adding or raising a requirement doesn't remove anyone: they keep their seats. Staff are told how many don't meet it (#832).
       const newLevel = details.minimumClassLevel !== undefined ? details.minimumClassLevel : existing.minimumClassLevel;
       const levelRaised = newLevel !== null && (existing.minimumClassLevel === null || clubClassLevels.indexOf(newLevel) > clubClassLevels.indexOf(existing.minimumClassLevel));
-      const prerequisiteAdded = prerequisiteIds.some((honorId) => !currentPrerequisiteIds.includes(honorId));
-      if (levelRaised || prerequisiteAdded) {
-        unmetCount = await countEnrolledYouthNotMeeting(tx, offeringId, eventId, { minimumClassLevel: newLevel, prerequisiteHonorIds: prerequisiteIds });
+      const addedPrerequisiteIds = prerequisiteIds.filter((honorId) => !currentPrerequisiteIds.includes(honorId));
+      if (levelRaised || addedPrerequisiteIds.length > 0) {
+        unmetCount = await countEnrolledYouthNotMeeting(tx, offeringId, eventId, { raisedLevel: levelRaised ? newLevel : null, addedPrerequisiteIds });
       }
       await writeAuditLog({
         eventId,

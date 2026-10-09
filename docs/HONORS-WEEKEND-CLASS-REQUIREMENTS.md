@@ -13,8 +13,12 @@ transaction of `setClassSelections`).
   roster's own: Friend, Companion, Explorer, Ranger, Voyager, Guide, TLT,
   Master Guide. "Guide and up" accepts Guide, TLT and Master Guide.
 - **Prerequisite honors:** the member's honor record (`MemberHonorEntry`). A
-  prerequisite counts when the person has a COMPLETED entry for it that is not
-  voided (#591). An in-progress or voided entry does not count.
+  prerequisite counts only when the person's **latest non-voided entry** for it
+  (highest `seq`; the record is append-only) is COMPLETED, the same rule as the
+  Honors page and master-award progress (`completedHonorsByPerson` in
+  `modules/honors/completed-honors.ts`). A completion later corrected to in
+  progress, an in-progress entry, and a voided entry do not count; a later
+  re-completion counts again.
 - Staff, adults and underage children take no seat and are never asked
   (`consumesClassSeat`). A guest or "Group" person has no roster member, so
   they have no level and no record.
@@ -65,6 +69,21 @@ director ticks again.
 A group has no director or roster to vouch for anyone, so a group cannot confirm
 a missing level or record. A class with a level or prerequisite is therefore not
 open to group registrations. Staff cannot place a group person past it today (staff act as a club director only); that needs a follow-up decision.
+
+## Adding or raising a requirement on a class people are enrolled in
+
+Nobody is removed: enrolled youth keep their seats. When an edit **raises** the
+minimum level or **adds** prerequisite honors, the save returns
+`requirementImpact: { offeringId, unmet }`, the setup screen says "N enrolled
+youth don't meet this; they keep their seats" (singular for one), and the
+`HONOR_OFFERING_UPDATED` audit metadata gets `enrolledYouthNotMeetingRequirement`.
+It is a count only, never names. The count covers only what the edit introduced:
+the level when it was raised, and only the newly added prerequisite honors
+(`countUnmetByChange` in `enrollment-domain.ts`). Youth already accepted (by
+director confirmation or staff override) for a requirement that did not change
+are not counted. Lowering a level or removing a prerequisite reports nothing. It
+counts seated youth in submitted or confirmed registrations of this event; a
+guest or group person has no level or record and counts as not meeting it.
 
 ## Checks
 

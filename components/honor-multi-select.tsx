@@ -21,12 +21,16 @@ export function HonorMultiSelect({
   value,
   onChange,
   label = "Honors",
+  kind = "taught",
 }: {
   options: readonly HonorMultiSelectOption[];
   value: readonly string[];
   onChange: (ids: string[]) => void;
   label?: string;
+  /** The class's prerequisite honors (#832) read and test separately from the honors it teaches. */
+  kind?: "taught" | "prerequisite";
 }) {
+  const prerequisite = kind === "prerequisite";
   const baseId = useId();
   const [query, setQuery] = useState("");
   const byId = useMemo(() => new Map(options.map((option) => [option.id, option])), [options]);
@@ -39,9 +43,9 @@ export function HonorMultiSelect({
   }
 
   return (
-    <fieldset className="honor-bulk-members honor-multi-select">
+    <fieldset className="honor-bulk-members honor-multi-select" data-testid={prerequisite ? "honor-multi-prerequisite" : "honor-multi-taught"}>
       <legend>{label}</legend>
-      <ul aria-label={`Chosen honors (${value.length})`} className="honor-multi-chosen">
+      <ul aria-label={`${prerequisite ? "Chosen prerequisite honors" : "Chosen honors"} (${value.length})`} className="honor-multi-chosen">
         {value.map((id, index) => {
           const option = byId.get(id);
           return (
@@ -52,11 +56,11 @@ export function HonorMultiSelect({
             </li>
           );
         })}
-        {value.length === 0 && <li className="field-help">No honor chosen yet.</li>}
+        {value.length === 0 && <li className="field-help">{prerequisite ? "No prerequisite honor chosen." : "No honor chosen yet."}</li>}
       </ul>
         <div className="honor-bulk-members-tools">
           <label className="honor-name-search">
-            <span className="sr-only">Search the honor catalog</span>
+            <span className="sr-only">{prerequisite ? "Search the honor catalog for prerequisite honors" : "Search the honor catalog"}</span>
             <span className="honor-name-search-field">
               <Search aria-hidden="true" size={14} />
               <input
@@ -65,14 +69,14 @@ export function HonorMultiSelect({
                 onChange={(event) => setQuery(event.target.value)}
                 // Enter in the search box must not submit the class form.
                 onKeyDown={(event) => { if (event.key === "Enter") event.preventDefault(); }}
-                placeholder="Type to search honors"
+                placeholder={prerequisite ? "Type to search prerequisite honors" : "Type to search honors"}
                 type="search"
                 value={query}
               />
             </span>
           </label>
         </div>
-        <ul className="honor-bulk-member-list" data-testid="honor-multi-options">
+        <ul className="honor-bulk-member-list" data-testid={prerequisite ? "honor-multi-prerequisite-options" : "honor-multi-options"}>
           {listed.map((honor) => (
             <li key={honor.id}>
               <label className="checkbox-hit">

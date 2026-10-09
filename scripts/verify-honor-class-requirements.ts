@@ -244,6 +244,12 @@ async function main() {
   assert(await prisma.honorEnrollment.count({ where: { offeringId: classA.id } }) === seatsBefore, "raising a requirement removes nobody");
   const impactAudit = await prisma.auditLog.findFirst({ where: { eventId, action: "HONOR_OFFERING_UPDATED" }, orderBy: { createdAt: "desc" } });
   assert(impactAudit && JSON.stringify(impactAudit.metadata).includes('"enrolledYouthNotMeetingRequirement":3'), "the audit entry has the count");
+  // Adding a prerequisite counts only that prerequisite (the TLT level is unchanged, so Gina, Fay and Nolan are not counted for it):
+  // Gina has Birds; Fay and Nolan do not.
+  const added = await updateHonorOffering(eventId, classA.id, { prerequisiteHonorIds: [birds] }, adminId) as { requirementImpact?: { unmet: number } };
+  assert(added.requirementImpact?.unmet === 2, `only Fay and Nolan lack the added prerequisite, got ${added.requirementImpact?.unmet}`);
+  const unchanged = await updateHonorOffering(eventId, classA.id, { prerequisiteHonorIds: [birds], capacity: 25 }, adminId) as { requirementImpact?: unknown };
+  assert(unchanged.requirementImpact === undefined, "an edit that adds or raises nothing reports no impact");
   const lowered = await updateHonorOffering(eventId, classA.id, { minimumClassLevel: "FRIEND" }, adminId) as { requirementImpact?: unknown };
   assert(lowered.requirementImpact === undefined, "lowering a requirement reports no impact");
   console.log("ok  raising a requirement keeps seats and reports (and audits) a count of enrolled youth who do not meet it");

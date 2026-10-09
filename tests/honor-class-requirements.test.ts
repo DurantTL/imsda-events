@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { ClassRequirementNotes } from "@/components/class-requirement-notes";
 import { classRequirementGaps, unavailableReason } from "@/modules/honors/class-picker-view";
 import {
+  countUnmetByChange,
   hasClassRequirements,
   requirementGaps,
   requirementResolution,
@@ -206,6 +207,32 @@ describe("the staff catalog form (#832)", () => {
   it("leaves both alone on an edit that names neither", () => {
     expect(honorOfferingUpdateSchema.parse({ capacity: 5 })).toEqual({ capacity: 5 });
     expect(honorOfferingUpdateSchema.parse({ minimumClassLevel: null, prerequisiteHonorIds: [] })).toEqual({ minimumClassLevel: null, prerequisiteHonorIds: [] });
+  });
+});
+
+describe("counting enrolled youth an edit leaves short (#832)", () => {
+  const people = [
+    { classLevel: "GUIDE" as const, completedHonorIds: ["knots"] },
+    { classLevel: "FRIEND" as const, completedHonorIds: ["knots", "birds"] },
+    { classLevel: null, completedHonorIds: [] as string[] },
+  ];
+
+  it("counts only the level when it was raised", () => {
+    expect(countUnmetByChange(people, { raisedLevel: "GUIDE", addedPrerequisites: [] })).toBe(2);
+    expect(countUnmetByChange(people, { raisedLevel: "TLT", addedPrerequisites: [] })).toBe(3);
+  });
+
+  it("counts only the prerequisites that were added, never the level already in force", () => {
+    expect(countUnmetByChange(people, { raisedLevel: null, addedPrerequisites: [{ id: "birds", name: "Birds" }] })).toBe(2);
+    expect(countUnmetByChange(people, { raisedLevel: null, addedPrerequisites: [{ id: "knots", name: "Knots" }] })).toBe(1);
+  });
+
+  it("counts someone short on either change once", () => {
+    expect(countUnmetByChange(people, { raisedLevel: "GUIDE", addedPrerequisites: [{ id: "birds", name: "Birds" }] })).toBe(3);
+  });
+
+  it("counts nobody when the edit introduced nothing", () => {
+    expect(countUnmetByChange(people, { raisedLevel: null, addedPrerequisites: [] })).toBe(0);
   });
 });
 

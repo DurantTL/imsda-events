@@ -128,7 +128,7 @@ export function HonorsSetupWorkspace({
       if (next) setSetup({ locations: next.locations, sessions: next.sessions, offerings: next.offerings });
       const unmet = result.requirementImpact?.unmet ?? 0;
       if (success) {
-        setNotice(unmet > 0 ? `${success} ${unmet} enrolled youth don't meet this; they keep their seats.` : success);
+        setNotice(unmet > 0 ? `${success} ${unmet === 1 ? "1 enrolled youth doesn't" : `${unmet} enrolled youth don't`} meet this; they keep ${unmet === 1 ? "their seat" : "their seats"}.` : success);
       }
       return result;
     } catch (caught) {
@@ -620,8 +620,8 @@ export function HonorsSetupWorkspace({
         </div>
         <div className="form-grid two-column">
           {editing
-            ? <HonorMultiSelect label="Prerequisite honors (optional)" onChange={setEditPrerequisiteIds} options={[...catalog, ...editing.prerequisiteHonors.filter((honor) => !catalog.some((entry) => entry.id === honor.id))]} value={editPrerequisiteIds} />
-            : <HonorMultiSelect label="Prerequisite honors (optional)" onChange={setNewPrerequisiteIds} options={catalog} value={newPrerequisiteIds} />}
+            ? <HonorMultiSelect kind="prerequisite" label="Prerequisite honors (optional)" onChange={setEditPrerequisiteIds} options={[...catalog, ...editing.prerequisiteHonors.filter((honor) => !catalog.some((entry) => entry.id === honor.id))]} value={editPrerequisiteIds} />
+            : <HonorMultiSelect kind="prerequisite" label="Prerequisite honors (optional)" onChange={setNewPrerequisiteIds} options={catalog} value={newPrerequisiteIds} />}
           <p className="field-help">Youth must have these honors completed on their honor record to take the class. If no record is found, the director confirms.</p>
         </div>
         {catalog.length === 0 && !editing && (

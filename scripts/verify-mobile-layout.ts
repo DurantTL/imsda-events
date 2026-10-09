@@ -1465,23 +1465,35 @@ async function auditPage(page: Page, spec: PageSpec, width: number, prefix: stri
       if (takeShots) await page.screenshot({ path: `${prefix}-${shot}.jpg`, type: "jpeg", quality: 60 });
     };
     try {
-      const search = page.locator('input[placeholder="Type to search honors"]:visible').first();
+      // Scoped to the honors-taught widget: the prerequisite honors widget (#832) sits in the same form.
+      const taught = page.locator('[data-testid="honor-multi-taught"]:visible').first();
+      const search = taught.locator('input[placeholder="Type to search honors"]');
       await search.scrollIntoViewIfNeeded({ timeout: 3000 });
       await search.fill("mobilecheck");
       await page.waitForTimeout(150);
-      const boxes = page.locator('[data-testid="honor-multi-options"] input[type="checkbox"]:visible');
+      const boxes = taught.locator('[data-testid="honor-multi-options"] input[type="checkbox"]:visible');
       const listed = await boxes.count();
       if (listed < 4) record("dialog-open-failed", `${spec.name} (several honors)`, width, `the honor search listed ${listed} synthetic honors, expected 4`);
       for (let index = 0; index < Math.min(listed, 3); index += 1) await boxes.nth(index).check({ timeout: 3000 });
       await page.waitForTimeout(150);
-      const chosen = await page.locator('ul[aria-label^="Chosen honors"] li:visible').count();
+      const chosen = await taught.locator('ul[aria-label^="Chosen honors"] li:visible').count();
       if (chosen !== 3) record("dialog-open-failed", `${spec.name} (several honors)`, width, `expected 3 chosen honors, found ${chosen}`);
       await auditBuilder("add form, several honors chosen", "several-honors-add");
+      // The prerequisite honors widget (#832) fits and works too: search, tick one, and it is the only chosen prerequisite.
+      const prerequisite = page.locator('[data-testid="honor-multi-prerequisite"]:visible').first();
+      const prerequisiteSearch = prerequisite.locator('input[placeholder="Type to search prerequisite honors"]');
+      await prerequisiteSearch.scrollIntoViewIfNeeded({ timeout: 3000 });
+      await prerequisiteSearch.fill("mobilecheck");
+      await page.waitForTimeout(150);
+      await prerequisite.locator('[data-testid="honor-multi-prerequisite-options"] input[type="checkbox"]:visible').first().check({ timeout: 3000 });
+      const prerequisiteChosen = await prerequisite.locator('ul[aria-label^="Chosen prerequisite honors"] li:visible').count();
+      if (prerequisiteChosen !== 1) record("dialog-open-failed", `${spec.name} (several honors)`, width, `expected 1 chosen prerequisite honor, found ${prerequisiteChosen}`);
+      await auditBuilder("add form, a prerequisite honor chosen", "prerequisite-add");
       const edit = page.locator('button[aria-label^="Edit Mobilecheck"]:visible').first();
       await edit.scrollIntoViewIfNeeded({ timeout: 3000 });
       await edit.click({ timeout: 3000 });
       await page.waitForTimeout(250);
-      const editChosen = await page.locator('ul[aria-label^="Chosen honors"] li:visible').count();
+      const editChosen = await page.locator('[data-testid="honor-multi-taught"]:visible').first().locator('ul[aria-label^="Chosen honors"] li:visible').count();
       if (editChosen < 4) record("dialog-open-failed", `${spec.name} (several honors)`, width, `the edit form listed ${editChosen} chosen honors, expected the class's 4`);
       await auditBuilder("edit form, class with four honors", "several-honors-edit");
     } catch (error) {
