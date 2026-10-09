@@ -22,7 +22,8 @@
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
 import { ClassSelectionError, getClassSelectionWorkspace, setClassSelections } from "../modules/honors/enrollment-repository";
-import { createHonorOffering } from "../modules/honors/repository";
+import { createHonorOffering, updateHonorOffering } from "../modules/honors/repository";
+import { locationChangeBlock } from "../modules/honors/locations";
 import {
   acceptClassWaitlistOffer,
   joinClassWaitlist,
@@ -316,9 +317,10 @@ async function main() {
   assert((await statusOf("gB", classR)) === "OFFERED", "the first eligible youth is offered the seat");
   await prisma.clubRosterMember.update({ where: { id: who("gB").memberId }, data: { classLevel: "FRIEND" } });
   await expectCode(accept("gB", classR), "SELECTION_INVALID", /this person is Friend/, "acceptance re-checks eligibility");
-  assert((await statusOf("gB", classR)) === "OFFERED" && !(await holds("gB", classR)), "a refused acceptance leaves the offer as it was");
-  await leave("gB", classR);
-  assert((await statusOf("nN", classR)) === "OFFERED", "declining passes it on");
+  assert((await statusOf("gB", classR)) === "WAITING" && !(await holds("gB", classR)), "a refused acceptance releases the offer back to waiting, keeping its place");
+  assert((await statusOf("nN", classR)) === "OFFERED", "and the seat passes to the next youth in a committed step");
+  await expectCode(leaveClassWaitlist(orgOf("c1"), eventId, director("c1"), (await entryOf("gB", classR))!.id, now), "OFFER_NOT_FOUND", null, "another club's director cannot take a youth off a waitlist");
+  assert((await statusOf("gB", classR)) === "WAITING", "and it changed nothing");
   await accept("nN", classR);
   assert((await prisma.honorEnrollment.findFirst({ where: { registrationAttendeeId: attendeeOf("nN"), offeringId: classR } }))?.levelConfirmedByDirector === true, "the confirmation given when joining is recorded on the seat");
   console.log("ok  waitlist eligibility: joining and accepting both follow the class's level rule, with the join-time confirmation carried to the seat");
@@ -340,11 +342,11 @@ async function main() {
   // The registration closes after 2026-11-30: no seat is offered, a live offer can't be accepted, and it lapses without passing on.
   const closedSweep = await sweepClassWaitlists(late);
   assert((await statusOf("d5", classD2)) === "EXPIRED" && (await entryOf("d5", classD2))!.resolution === "Class changes closed", "an offer live at the deadline lapses when class changes close");
-  assert((await statusOf("d6", classD2)) === "WAITING" && closedSweep.offered === 0, "and its seat is not passed on after the deadline");
+  assert((await statusOf("d6", classD2)) === "REMOVED" && (await entryOf("d6", classD2))!.resolution === "Class changes closed" && closedSweep.offered === 0, "and its seat is not passed on after the deadline; waiting places are closed, not left waiting");
   await expectCode(join("d3", classD, {}, late), "DEADLINE_PASSED", null, "no one can join a waitlist after the deadline");
   await prisma.registration.update({ where: { id: regOf("c1") }, data: { status: "CANCELLED", cancelledAt: late } });
   await promoteAfterRegistrationCancelled(regOf("c1"), late);
-  assert((await statusOf("d2", classD)) === "WAITING", "a seat freed after the deadline (a cancellation) is not offered");
+  assert((await statusOf("d2", classD)) === "REMOVED", "a seat freed after the deadline (a cancellation) is not offered");
   assert((await sweepClassWaitlists(late)).offered === 0, "the sweep offers nothing after the deadline either");
   await prisma.registration.update({ where: { id: regOf("c1") }, data: { status: "SUBMITTED", cancelledAt: null } });
   await setHonorWaitlistOfferHours(eventId, 24, adminId);
@@ -400,6 +402,65 @@ async function main() {
   assert((await seats(classK)) === 2 && (await statusOf("k5", classK)) === "WAITING", "both offered seats are taken and the class is exactly full");
   await assertNoOverfill("after the race");
   console.log("ok  concurrency: two seats opening together with sweeps and direct picks racing are offered in order, once each, and never overfill");
+
+  // ---- 7b. Picking the class a youth waits on, when its seat is free: no offer and no email for a seat taken at once
+  const classW = await makeClass(s3.id, 1);
+  for (const [club, key] of [["c1", "w1"], ["c2", "w2"]] as const) await addPerson(club, key);
+  await pick("w1", [classW]);
+  await join("w2", classW);
+  const mailBefore = (await offerMail("c2")).length;
+  await prisma.honorEnrollment.deleteMany({ where: { registrationAttendeeId: attendeeOf("w1"), offeringId: classW } }); // a seat freed with no promotion run yet
+  await pick("w2", [classW]);
+  assert((await holds("w2", classW)) && (await statusOf("w2", classW)) === "ACCEPTED", "the youth takes the free seat they were waiting for");
+  assert((await offerMail("c2")).length === mailBefore, "and no offer email is queued for a seat the same save takes");
+  assert((await prisma.auditLog.count({ where: { eventId, action: "HONOR_CLASS_WAITLIST_OFFERED", entityId: (await entryOf("w2", classW))!.id } })) === 0, "nor an offer recorded");
+  console.log("ok  a direct pick of the class the youth was waiting on settles the place without a separate offer email");
+
+  // ---- 7c. A class turned off closes its waitlist, audited
+  const classOff = await makeClass(s1.id, 1);
+  for (const [club, key] of [["c1", "o1"], ["c2", "o2"], ["c3", "o3"]] as const) await addPerson(club, key);
+  await pick("o1", [classOff]);
+  await join("o2", classOff);
+  await join("o3", classOff);
+  await pick("o1", []);
+  assert((await statusOf("o2", classOff)) === "OFFERED", "the first youth holds an offer");
+  await updateHonorOffering(eventId, classOff, { isActive: false }, adminId);
+  assert((await statusOf("o2", classOff)) === "EXPIRED" && (await statusOf("o3", classOff)) === "REMOVED", "turning the class off closes every open place");
+  assert((await prisma.auditLog.count({ where: { eventId, action: "HONOR_CLASS_WAITLIST_REMOVED", entityId: (await entryOf("o3", classOff))!.id, actorUserId: adminId } })) === 1, "each closure is audited with the staff member who did it");
+  await assertNoOverfill("after a class was turned off");
+  console.log("ok  deactivating a class closes its waitlist places, audited");
+
+  // ---- 7d. One site-aware deadline for picks, the screen and the waitlist; a site move is blocked by waitlist places
+  const site = await prisma.eventLocation.create({ data: { eventId, name: "Verification Site", normalizedName: "verification site", registrationClosesOn: "2026-10-20" } });
+  await prisma.registration.update({ where: { id: regOf("c4") }, data: { locationId: site.id } });
+  const siteSession = await prisma.honorSession.create({ data: { eventId, name: "Site session", normalizedName: "site session", sortOrder: 9, locationId: site.id } });
+  const classS = await makeClass(siteSession.id, 1);
+  const classS2 = await makeClass(s3.id, 5);
+  await addPerson("c4", "s1");
+  await addPerson("c4", "s2");
+  await addPerson("c1", "s3");
+  await prisma.registration.update({ where: { id: regOf("c1") }, data: { locationId: site.id } });
+  await pick("s3", [classS]);
+  await join("s1", classS);
+  assert(((await waitlistView("c4")).open) === true && (await getClassSelectionWorkspace(orgOf("c4"), eventId, now)).open === true, "before the site's close, picks and waitlists are open");
+  const afterSite = new Date("2026-10-21T15:00:00Z");
+  const siteWorkspace = await getClassSelectionWorkspace(orgOf("c4"), eventId, afterSite);
+  assert(siteWorkspace.open === false && siteWorkspace.waitlist!.open === false, "after the site's close (the event closes later) the screen and the waitlist both say closed");
+  await expectCode(pick("s2", [classS2], afterSite), "DEADLINE_PASSED", null, "a direct pick follows the site's deadline");
+  await expectCode(join("s2", classS, {}, afterSite), "DEADLINE_PASSED", null, "so does joining a waitlist");
+  const blocked = await locationChangeBlock(prisma, regOf("c4"), site.id);
+  assert(blocked !== null && /waitlist places/.test(blocked), "a registration with a waitlist place at the site can't change site");
+  await leave("s1", classS);
+  assert((await locationChangeBlock(prisma, regOf("c4"), site.id)) === null, "and can once the place is removed");
+  await prisma.registration.update({ where: { id: regOf("c4") }, data: { locationId: null } });
+  await prisma.registration.update({ where: { id: regOf("c1") }, data: { locationId: null } });
+  console.log("ok  one deadline: the site's close governs direct picks, the screen and the waitlist; a waitlist place blocks a site change");
+
+  // ---- 7e. The sweep pages through every class, not just the first page, and leaves nothing finished behind
+  const paged = await sweepClassWaitlists(late, 1);
+  assert(paged.failed === 0, "a sweep with a page size of one finishes without failures");
+  assert((await prisma.honorClassWaitlistEntry.count({ where: { eventId, status: { in: ["WAITING", "OFFERED"] } } })) === 0, "once class changes have closed for good, no place is left waiting or holding an offer");
+  console.log("ok  the sweep pages through everything and closes what can no longer be offered");
 
   // ---- 8. The audit trail records each step with ids only
   for (const action of ["HONOR_CLASS_WAITLIST_JOINED", "HONOR_CLASS_WAITLIST_OFFERED", "HONOR_CLASS_WAITLIST_ACCEPTED", "HONOR_CLASS_WAITLIST_OFFER_EXPIRED", "HONOR_CLASS_WAITLIST_DECLINED", "HONOR_CLASS_WAITLIST_OFFER_RELEASED", "HONOR_CLASS_WAITLIST_WINDOW_UPDATED"]) {

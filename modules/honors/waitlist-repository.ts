@@ -6,7 +6,7 @@ import { getPrisma } from "@/lib/prisma";
 import { getServerEnv } from "@/lib/env";
 import { logError } from "@/lib/logger";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { evaluateLocationPhase } from "@/modules/event-locations/domain";
+import { HonorConfigurationError } from "@/modules/honors/repository";
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
 import {
   ClassSelectionError,
@@ -28,7 +28,7 @@ import {
   type RequirementWaivers,
   type SelectableOffering,
 } from "@/modules/honors/enrollment-domain";
-import { sessionVisibleAtLocation, chooseLocationFirstMessage } from "@/modules/honors/locations";
+import { chooseLocationFirstMessage, classChangesClosedMessage, classChangesEnded, classChangesOpen, sessionVisibleAtLocation } from "@/modules/honors/locations";
 import {
   holdsConflictingClass,
   offerExpiresAt,
@@ -73,14 +73,8 @@ const lifecycleEvent = {
 type LifecycleEvent = Prisma.EventGetPayload<{ select: typeof lifecycleEvent }>;
 type LocationDates = { firstDay: string | null; lastDay: string | null; registrationClosesOn: string | null } | null;
 
-/** Whether class changes are still open for a registration at this site: the site's own close wins over the event's (#413). */
-function classChangesOpen(event: LifecycleEvent, location: LocationDates, now: Date) {
-  return evaluateLocationPhase(event, location, now) === "OPEN";
-}
-
-function closedMessage(event: LifecycleEvent, location: LocationDates) {
-  const closes = location?.registrationClosesOn ?? event.registrationClosesOn;
-  return `Class changes closed${closes ? ` after ${closes}` : ""}.`;
+function closedMessage(event: LifecycleEvent, location: LocationDates, now: Date) {
+  return classChangesClosedMessage(event, location, now);
 }
 
 async function lockOfferings(tx: Tx, ids: readonly string[]) {
@@ -228,7 +222,7 @@ const waitingEntrySelect = {
  * caller already holds them). Free seats are capacity less seats taken and less live
  * offers, so it can never offer a seat that is taken or already offered.
  */
-export async function promoteClassWaitlists(tx: Tx, eventId: string, offeringIds: readonly string[], now: Date): Promise<PromotionResult> {
+export async function promoteClassWaitlists(tx: Tx, eventId: string, offeringIds: readonly string[], now: Date, silentEntryIds: ReadonlySet<string> = new Set()): Promise<PromotionResult> {
   const ids = [...new Set(offeringIds)].sort();
   const result: PromotionResult = { messageIds: [], offered: 0, lapsed: 0 };
   if (ids.length === 0) return result;
@@ -240,7 +234,7 @@ export async function promoteClassWaitlists(tx: Tx, eventId: string, offeringIds
   for (const offeringId of ids) {
     const offering = offeringsById.get(offeringId);
     if (!offering) continue;
-    const one = await promoteOne(tx, event, offering, offeringsById, prerequisiteHonorIds, now);
+    const one = await promoteOne(tx, event, offering, offeringsById, prerequisiteHonorIds, now, silentEntryIds);
     result.messageIds.push(...one.messageIds);
     result.offered += one.offered;
     result.lapsed += one.lapsed;
@@ -255,6 +249,8 @@ async function promoteOne(
   offeringsById: ReadonlyMap<string, Awaited<ReturnType<typeof loadOfferings>>[number]>,
   prerequisiteHonorIds: readonly string[],
   now: Date,
+  /** Entries the caller is about to settle itself (a direct pick of the class they wait on): they keep their turn but are not offered, so no email goes out for a seat they take at once. */
+  silentEntryIds: ReadonlySet<string>,
 ) {
   const out: PromotionResult = { messageIds: [], offered: 0, lapsed: 0 };
   const eventId = event.id;
@@ -268,8 +264,9 @@ async function promoteOne(
     const cancelled = !activeStatuses.includes(entry.registration.status as ActiveStatus);
     const ranOut = entry.offerExpiresAt === null || entry.offerExpiresAt.getTime() <= now.getTime();
     const closed = !classChangesOpen(event, entry.registration.location, now);
-    if (!cancelled && !ranOut && !closed) continue;
-    const resolution = cancelled ? "Registration cancelled" : ranOut ? "Offer expired" : "Class changes closed";
+    const inactive = !offering.isActive;
+    if (!cancelled && !ranOut && !closed && !inactive) continue;
+    const resolution = cancelled ? "Registration cancelled" : inactive ? "Class no longer offered" : ranOut ? "Offer expired" : "Class changes closed";
     const changed = await tx.honorClassWaitlistEntry.updateMany({
       where: { id: entry.id, status: "OFFERED" },
       data: { status: cancelled ? "REMOVED" : "EXPIRED", resolvedAt: now, resolution },
@@ -289,6 +286,25 @@ async function promoteOne(
     data: { status: "REMOVED", resolvedAt: now, resolution: "Registration cancelled" },
   });
 
+  // Places that can never be offered again are closed and audited rather than left waiting forever: the class was
+  // deactivated, or class changes have closed for good for the youth's site (the event or the site ended or closed).
+  const waitingNow = await tx.honorClassWaitlistEntry.findMany({
+    where: { offeringId: offering.id, status: "WAITING" },
+    select: { id: true, registrationAttendeeId: true, registration: { select: { location: { select: locationDates } } } },
+  });
+  for (const entry of waitingNow) {
+    const reason = !offering.isActive ? "Class no longer offered" : classChangesEnded(event, entry.registration.location, now) ? "Class changes closed" : null;
+    if (!reason) continue;
+    const closedNow = await tx.honorClassWaitlistEntry.updateMany({ where: { id: entry.id, status: "WAITING" }, data: { status: "REMOVED", resolvedAt: now, resolution: reason } });
+    if (closedNow.count === 1) {
+      out.lapsed += 1;
+      await writeAuditLog({
+        eventId, action: "HONOR_CLASS_WAITLIST_REMOVED", entityType: "HonorClassWaitlistEntry", entityId: entry.id,
+        summary: "A class waitlist place was closed because it can no longer be offered.",
+        metadata: { offeringId: offering.id, registrationAttendeeId: entry.registrationAttendeeId, resolution: reason, system: true },
+      }, tx);
+    }
+  }
   if (!offering.isActive) return out;
 
   // 2. Free seats: capacity less seats taken and less seats held by live offers.
@@ -353,6 +369,7 @@ async function promoteOne(
   // 4. Offer the seats, in order, and tell each director once.
   const expiresAt = offerExpiresAt(now, event.honorWaitlistOfferHours);
   for (const entryId of plan.offered) {
+    if (silentEntryIds.has(entryId)) continue;
     const entry = waiting.find((candidate) => candidate.id === entryId)!;
     const updated = await tx.honorClassWaitlistEntry.updateMany({
       where: { id: entryId, status: "WAITING" },
@@ -470,32 +487,84 @@ async function runSerializable<T>(work: (tx: Tx) => Promise<T>) {
   }
 }
 
+/**
+ * Closes every open place (waiting or holding an offer) on a class, audited with the reason. Staff call it in the
+ * transaction that deactivates the class, so no one waits, or holds a seat offer, on a class that is gone (#831).
+ */
+export async function closeClassWaitlist(tx: Tx, input: { eventId: string; offeringId: string; reason: string; actorUserId?: string; now?: Date }) {
+  const now = input.now ?? new Date();
+  const open = await tx.honorClassWaitlistEntry.findMany({
+    where: { offeringId: input.offeringId, status: { in: ["WAITING", "OFFERED"] } },
+    select: { id: true, status: true, registrationAttendeeId: true },
+  });
+  for (const entry of open) {
+    const changed = await tx.honorClassWaitlistEntry.updateMany({
+      where: { id: entry.id, status: { in: ["WAITING", "OFFERED"] } },
+      data: { status: entry.status === "OFFERED" ? "EXPIRED" : "REMOVED", resolvedAt: now, resolution: input.reason },
+    });
+    if (changed.count !== 1) continue;
+    await writeAuditLog({
+      eventId: input.eventId, ...(input.actorUserId ? { actorUserId: input.actorUserId } : {}), action: "HONOR_CLASS_WAITLIST_REMOVED",
+      entityType: "HonorClassWaitlistEntry", entityId: entry.id,
+      summary: "A class waitlist place was closed because it can no longer be offered.",
+      metadata: { offeringId: input.offeringId, registrationAttendeeId: entry.registrationAttendeeId, resolution: input.reason },
+    }, tx);
+  }
+  return open.length;
+}
+
 export type WaitlistSweepResult = { classes: number; offered: number; lapsed: number; failed: number };
 
 /**
- * The time-based trigger (#831). The outbox sweep calls this every few minutes: it lapses offers that have
- * run out and offers the seats to the next youth, class by class, each in its own serializable transaction.
+ * The time-based trigger (#831). The outbox sweep calls this every few minutes. It works class by class, each in its
+ * own serializable transaction: offers that ran out lapse first (earliest expiry first, so the oldest seat is passed on
+ * first), then every other class with a line is advanced. Places that can never be offered again (the class was deactivated,
+ * or the event or site's class changes closed for good) are closed and audited as they are reached, so finished classes
+ * leave the sweep's work. It pages through everything rather than stopping at a cap; `maxClasses` only bounds one run.
  * One class failing (a busy lock, say) is counted and left for the next sweep.
  */
-export async function sweepClassWaitlists(now = new Date(), limit = 200): Promise<WaitlistSweepResult> {
+export async function sweepClassWaitlists(now = new Date(), pageSize = 100, maxClasses = 5000): Promise<WaitlistSweepResult> {
   const prisma = getPrisma();
-  const rows = await prisma.honorClassWaitlistEntry.findMany({
-    where: { status: { in: ["WAITING", "OFFERED"] } },
-    select: { eventId: true, offeringId: true },
-    distinct: ["offeringId"],
-    take: limit,
-  });
-  const result: WaitlistSweepResult = { classes: rows.length, offered: 0, lapsed: 0, failed: 0 };
-  for (const row of rows) {
+  const result: WaitlistSweepResult = { classes: 0, offered: 0, lapsed: 0, failed: 0 };
+  const done = new Set<string>();
+  const advance = async (row: { eventId: string; offeringId: string }) => {
+    if (done.has(row.offeringId)) return;
+    done.add(row.offeringId);
+    result.classes += 1;
     try {
-      const done = await runSerializable((tx) => promoteClassWaitlists(tx, row.eventId, [row.offeringId], now));
-      result.offered += done.offered;
-      result.lapsed += done.lapsed;
-      await deliverWaitlistOfferMessages(done.messageIds);
+      const one = await runSerializable((tx) => promoteClassWaitlists(tx, row.eventId, [row.offeringId], now));
+      result.offered += one.offered;
+      result.lapsed += one.lapsed;
+      await deliverWaitlistOfferMessages(one.messageIds);
     } catch (error) {
       result.failed += 1;
       logError("A class waitlist could not be advanced in this sweep; the next one will try again.", error, { offeringId: row.offeringId });
     }
+  };
+  // Phase A: classes with an offer that has run out, earliest expiry first.
+  while (result.classes < maxClasses) {
+    const rows = await prisma.honorClassWaitlistEntry.findMany({
+      where: { status: "OFFERED", offerExpiresAt: { lte: now }, offeringId: { notIn: [...done] } },
+      orderBy: [{ offerExpiresAt: "asc" }, { id: "asc" }],
+      select: { eventId: true, offeringId: true },
+      take: pageSize,
+    });
+    if (rows.length === 0) break;
+    for (const row of rows) await advance(row);
+  }
+  // Phase B: every other class that still has a line, by id.
+  let after: string | undefined;
+  while (result.classes < maxClasses) {
+    const rows = await prisma.honorClassWaitlistEntry.findMany({
+      where: { status: { in: ["WAITING", "OFFERED"] }, ...(after ? { offeringId: { gt: after } } : {}) },
+      orderBy: [{ offeringId: "asc" }],
+      select: { eventId: true, offeringId: true },
+      distinct: ["offeringId"],
+      take: pageSize,
+    });
+    if (rows.length === 0) break;
+    for (const row of rows) await advance(row);
+    after = rows[rows.length - 1]!.offeringId;
   }
   return result;
 }
@@ -528,7 +597,7 @@ export async function joinClassWaitlist(organizationId: string, eventId: string,
     const registration = await loadRegistration(tx, owner, eventId);
     const event = await tx.event.findUniqueOrThrow({ where: { id: eventId }, select: lifecycleEvent });
     const location = registration.location ? await tx.eventLocation.findUnique({ where: { id: registration.location.id }, select: locationDates }) : null;
-    if (!classChangesOpen(event, location, now)) throw new ClassSelectionError("DEADLINE_PASSED", closedMessage(event, location));
+    if (!classChangesOpen(event, location, now)) throw new ClassSelectionError("DEADLINE_PASSED", closedMessage(event, location, now));
     if (registration.locationRequired) throw new ClassSelectionError("LOCATION_REQUIRED", chooseLocationFirstMessage);
     const attendee = registration.attendees.find((candidate) => candidate.id === input.attendeeId);
     if (!attendee) throw new ClassSelectionError("ATTENDEE_NOT_FOUND", "That person isn't on your club's registration.");
@@ -594,12 +663,16 @@ export async function joinClassWaitlist(organizationId: string, eventId: string,
 export async function acceptClassWaitlistOffer(organizationId: string, eventId: string, actor: ClassSelectionActor, entryId: string, now = new Date()) {
   const owner = { kind: "club" as const, organizationId };
   let expired = false;
+  let refusal: ClassSelectionError | null = null;
+  let offeringOfEntry = "";
   let messageIds: string[] = [];
   await runSerializable(async (tx) => {
     expired = false;
+    refusal = null;
     messageIds = [];
     const found = await tx.honorClassWaitlistEntry.findFirst({ where: { id: entryId, eventId, organizationId }, select: { id: true, offeringId: true } });
     if (!found) throw new ClassSelectionError("OFFER_NOT_FOUND", "That waitlist place wasn't found.");
+    offeringOfEntry = found.offeringId;
     await lockOfferings(tx, [found.offeringId]);
     const entry = await tx.honorClassWaitlistEntry.findFirstOrThrow({
       where: { id: entryId },
@@ -622,7 +695,7 @@ export async function acceptClassWaitlistOffer(organizationId: string, eventId: 
       return;
     }
     if (!classChangesOpen(event, location, now)) {
-      throw new ClassSelectionError("DEADLINE_PASSED", closedMessage(event, location));
+      throw new ClassSelectionError("DEADLINE_PASSED", closedMessage(event, location, now));
     }
     const attendee = registration.attendees.find((candidate) => candidate.id === entry.registrationAttendeeId);
     if (!attendee) throw new ClassSelectionError("ATTENDEE_NOT_FOUND", "That person isn't on your club's registration.");
@@ -630,19 +703,43 @@ export async function acceptClassWaitlistOffer(organizationId: string, eventId: 
     const offerings = await loadOfferings(tx, eventId);
     const byId = new Map<string, SelectableOffering & (typeof offerings)[number]>(offerings.map((candidate) => [candidate.id, candidate]));
     const offering = byId.get(entry.offeringId);
+    // A refusal below releases the offer (see after the transaction), so the seat isn't held for someone who can't take it.
     if (!offering || !sessionVisibleAtLocation(offering.siteId, registration.location?.id ?? null) || !offering.isActive) {
-      throw new ClassSelectionError("SELECTION_INVALID", "That class isn't offered to your club any more.");
+      refusal = new ClassSelectionError("SELECTION_INVALID", "That class isn't offered to your club any more.");
+      return;
     }
-    if (!attendee.consumesSeat) throw new ClassSelectionError("SELECTION_INVALID", `${who} doesn't use a class seat.`);
+    if (!attendee.consumesSeat) {
+      refusal = new ClassSelectionError("SELECTION_INVALID", `${who} doesn't use a class seat.`);
+      return;
+    }
     const heldRows = await tx.honorEnrollment.findMany({ where: { registrationAttendeeId: attendee.id }, select: { offeringId: true } });
     const heldIds = heldRows.map((row) => row.offeringId);
     const heldOfferings = heldIds.map((id) => byId.get(id)).filter((x): x is NonNullable<typeof x> => Boolean(x));
     if (holdsConflictingClass(offering, heldOfferings)) {
-      throw new ClassSelectionError("SELECTION_INVALID", `${who} already has a class in this session. Remove it to accept this seat, or decline the seat so it goes to the next youth.`);
+      refusal = new ClassSelectionError("SELECTION_INVALID", `${who} already has a class in this session, so the seat goes to the next youth in line. They keep their place.`);
+      return;
     }
     // Eligibility is checked again now: the roster level or honor record may have changed since they joined (#832).
     const problem = selectionProblem(attendee, [...heldIds, offering.id], byId, new Set(heldIds), waiversOf(entry, offering.id));
-    if (problem) throw new ClassSelectionError("SELECTION_INVALID", `${who}: ${problem}`);
+    if (problem) {
+      refusal = new ClassSelectionError("SELECTION_INVALID", `${who}: ${problem}`);
+      return;
+    }
+    // Only seats count toward the per-club limit, never waitlist spots (#831); the seat this offer holds is not yet one.
+    const [takenBefore, liveBefore, clubSeatsBefore] = await Promise.all([
+      tx.honorEnrollment.count({ where: { offeringId: offering.id, ...seatHoldingEnrollment } }),
+      tx.honorClassWaitlistEntry.count({ where: { offeringId: offering.id, ...liveWaitlistOffer(now) } }),
+      tx.honorEnrollment.count({ where: { offeringId: offering.id, organizationId, ...seatHoldingEnrollment } }),
+    ]);
+    if (offering.perClubLimit !== null && clubSeatsBefore + 1 > offering.perClubLimit) {
+      refusal = new ClassSelectionError("CLUB_LIMIT_REACHED", `${offering.honorName} allows ${offering.perClubLimit} youth per club, so the seat goes to the next youth in line. They keep their place.`);
+      return;
+    }
+    // This offer is one of the live ones, so seats plus live offers already include it.
+    if (takenBefore + liveBefore > offering.capacity) {
+      refusal = new ClassSelectionError("CLASS_FULL", `${offering.honorName} is full.`);
+      return;
+    }
 
     // The seat is held for them: marking the offer accepted and taking the seat is one step.
     await tx.honorClassWaitlistEntry.update({ where: { id: entry.id }, data: { status: "ACCEPTED", resolvedAt: now, resolution: "Accepted by the director" } });
@@ -656,16 +753,6 @@ export async function acceptClassWaitlistOffer(organizationId: string, eventId: 
         requirementOverriddenByUserId: entry.requirementOverriddenByUserId,
       },
     });
-    const [taken, live, clubSeats] = await Promise.all([
-      tx.honorEnrollment.count({ where: { offeringId: offering.id, ...seatHoldingEnrollment } }),
-      tx.honorClassWaitlistEntry.count({ where: { offeringId: offering.id, ...liveWaitlistOffer(now) } }),
-      tx.honorEnrollment.count({ where: { offeringId: offering.id, organizationId, ...seatHoldingEnrollment } }),
-    ]);
-    // Only seats count toward the per-club limit, never waitlist spots (#831).
-    if (offering.perClubLimit !== null && clubSeats > offering.perClubLimit) {
-      throw new ClassSelectionError("CLUB_LIMIT_REACHED", `${offering.honorName} allows ${offering.perClubLimit} youth per club.`);
-    }
-    if (taken + live > offering.capacity) throw new ClassSelectionError("CLASS_FULL", `${offering.honorName} is full.`);
     await writeAuditLog({
       eventId, ...actorFields(actor), action: "HONOR_CLASS_WAITLIST_ACCEPTED", entityType: "HonorClassWaitlistEntry", entityId: entry.id,
       summary: "A club director accepted a seat offered from a class waitlist.",
@@ -675,6 +762,28 @@ export async function acceptClassWaitlistOffer(organizationId: string, eventId: 
   if (expired) {
     await deliverWaitlistOfferMessages(messageIds);
     throw new ClassSelectionError("OFFER_EXPIRED", "The time to accept this seat ran out, so it has gone to the next youth in line.");
+  }
+  if (refusal) {
+    // The offer can't be taken: it goes back to waiting (keeping its place) and the seat passes to the next youth, in a
+    // step of its own that commits even though the acceptance is refused (#831).
+    const refused: ClassSelectionError = refusal;
+    const released = await runSerializable(async (tx) => {
+      await lockOfferings(tx, [offeringOfEntry]);
+      const changed = await tx.honorClassWaitlistEntry.updateMany({
+        where: { id: entryId, status: "OFFERED" },
+        data: { status: "WAITING", offeredAt: null, offerExpiresAt: null, resolution: "Offer released: it could not be accepted" },
+      });
+      if (changed.count === 1) {
+        await writeAuditLog({
+          eventId, ...actorFields(actor), action: "HONOR_CLASS_WAITLIST_OFFER_RELEASED", entityType: "HonorClassWaitlistEntry", entityId: entryId,
+          summary: "A class waitlist offer was released because it could not be accepted; the youth keeps their place.",
+          metadata: { organizationId, offeringId: offeringOfEntry, code: refused.code, ...actorMetadata(actor) },
+        }, tx);
+      }
+      return promoteClassWaitlists(tx, eventId, [offeringOfEntry], now);
+    });
+    await deliverWaitlistOfferMessages(released.messageIds);
+    throw refused;
   }
   return getClassSelectionWorkspace(organizationId, eventId, now);
 }
@@ -794,7 +903,7 @@ export async function setHonorWaitlistOfferHours(eventId: string, hours: number,
   const prisma = getPrisma();
   return prisma.$transaction(async (tx) => {
     const event = await tx.event.findUnique({ where: { id: eventId }, select: { honorWaitlistOfferHours: true } });
-    if (!event) throw new ClassSelectionError("SELECTION_INVALID", "That event wasn't found.");
+    if (!event) throw new HonorConfigurationError("EVENT_NOT_FOUND", "That event could not be found.");
     await tx.event.update({ where: { id: eventId }, data: { honorWaitlistOfferHours: hours } });
     await writeAuditLog({
       eventId, actorUserId, action: "HONOR_CLASS_WAITLIST_WINDOW_UPDATED", entityType: "Event", entityId: eventId,

@@ -24,6 +24,7 @@ import { POST as join } from "@/app/api/attendee/clubs/[organizationId]/events/[
 import { DELETE as leave } from "@/app/api/attendee/clubs/[organizationId]/events/[eventId]/classes/waitlist/[entryId]/route";
 import { POST as accept } from "@/app/api/attendee/clubs/[organizationId]/events/[eventId]/classes/waitlist/[entryId]/accept/route";
 import { ClassSelectionError } from "@/modules/honors/enrollment-repository";
+import { RosterAccessError } from "@/modules/club-rosters/access";
 
 const ctx = { params: Promise.resolve({ organizationId: "club-a", eventId: "event-1" }) };
 const entryCtx = { params: Promise.resolve({ organizationId: "club-a", eventId: "event-1", entryId: "entry-1" }) };
@@ -73,6 +74,21 @@ describe("class waitlist routes (#831)", () => {
       expect(response.status).toBe(status);
       await expect(response.json()).resolves.toMatchObject({ error: code });
     }
+  });
+
+  it("denies a director of another club on join, accept, and decline or leave, before touching a waitlist", async () => {
+    for (const call of [
+      () => join(request("POST", { attendeeId: "a1", offeringId: "c1" }), ctx),
+      () => accept(request("POST"), entryCtx),
+      () => leave(request("DELETE"), entryCtx),
+    ]) {
+      mocks.requireRosterAccess.mockRejectedValueOnce(new RosterAccessError("NOT_FOUND", 404, "Not found."));
+      expect((await call()).status).toBe(404);
+    }
+    expect(mocks.requireRosterAccess).toHaveBeenCalledWith("club-a", expect.any(Date), "registerForEvents");
+    expect(mocks.joinClassWaitlist).not.toHaveBeenCalled();
+    expect(mocks.acceptClassWaitlistOffer).not.toHaveBeenCalled();
+    expect(mocks.leaveClassWaitlist).not.toHaveBeenCalled();
   });
 
   it("requires a same-origin request", async () => {

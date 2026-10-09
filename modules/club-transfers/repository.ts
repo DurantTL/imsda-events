@@ -1446,6 +1446,12 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
     where: { registrationAttendeeId: attendeeId },
     data: { registrationId: toRegistrationId, organizationId: move.transfer.toOrganizationId },
   });
+  // Their places on class waitlists move with them, keeping their place in line (#831). Waitlist spots are not seats, so the
+  // receiving club's per-club limit doesn't stop the move: at its limit it is skipped when seats are offered, and keeps waiting.
+  await tx.honorClassWaitlistEntry.updateMany({
+    where: { registrationAttendeeId: attendeeId, status: { in: ["WAITING", "OFFERED"] } },
+    data: { registrationId: toRegistrationId, organizationId: move.transfer.toOrganizationId },
+  });
   const reservations = await tx.registrationCapacityReservation.updateMany({
     where: { registrationAttendeeId: attendeeId },
     data: { registrationId: toRegistrationId },

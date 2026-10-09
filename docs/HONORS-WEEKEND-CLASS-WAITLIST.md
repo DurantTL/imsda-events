@@ -34,6 +34,18 @@ seat and no waitlist spot, and nothing here is offered to a "Group" registration
   site (the site's own close wins over the event's, as for every other edit). Nothing is
   offered, joined or accepted after it, and an offer still live at the deadline lapses
   (`Class changes closed`) without passing the seat on.
+  The deadline is one rule (`classChangesOpen`): direct picks, the director's screen and the waitlist
+  all use the site's close when the site has one, else the event's. Once class changes have closed
+  for good, or the class is turned off, every waiting or offered place is closed (`REMOVED` or
+  `EXPIRED`, resolution "Class changes closed" or "Class no longer offered") and audited, by the sweep
+  or in the transaction that deactivates the class.
+- **Transfers and site changes.** A member transfer moves the youth's open waitlist places to the
+  receiving club, keeping their place in line; the receiving club at its seat limit simply keeps
+  them waiting. A registration can't change site while it has a waitlist place at the old site (as
+  with class picks): the director removes the place first.
+- **Refused acceptance.** If acceptance is refused (club limit, class full, a class now held in the
+  session, eligibility), the offer goes back to waiting with its place, and the seat is offered to the
+  next youth in a separate committed step.
 - **Email.** Each offer queues **one transactional email to that club's director** (the
   registration's contact), through the existing outbox, one message per offer, with a
   deterministic idempotency key (`honor-class-waitlist-offer:<entry>:<offer number>`), never

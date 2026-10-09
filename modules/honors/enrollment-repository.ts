@@ -3,9 +3,10 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { evaluateEventRegistrationPhase, hasEventEnded, registrationClosedMessage } from "@/modules/events/lifecycle";
 import {
   chooseLocationFirstMessage,
+  classChangesClosedMessage,
+  classChangesOpen,
   differentLocationMessage,
   eventHasActiveLocations,
   offeringSiteId,
@@ -249,10 +250,13 @@ export function liveWaitlistOffer(now: Date) {
 }
 
 async function seatCounts(client: Prisma.TransactionClient, eventId: string, owner: SeatOwner | null, now: Date) {
-  const [all, club, offers] = await Promise.all([
+  const [all, club, offers, clubOffers] = await Promise.all([
     client.honorEnrollment.groupBy({ by: ["offeringId"], where: { eventId, ...seatHoldingEnrollment }, _count: { _all: true } }),
     client.honorEnrollment.groupBy({ by: ["offeringId"], where: { eventId, ...ownerSeats(owner), ...seatHoldingEnrollment }, _count: { _all: true } }),
     client.honorClassWaitlistEntry.groupBy({ by: ["offeringId"], where: { eventId, ...liveWaitlistOffer(now) }, _count: { _all: true } }),
+    owner?.kind === "club"
+      ? client.honorClassWaitlistEntry.groupBy({ by: ["offeringId"], where: { eventId, organizationId: owner.organizationId, ...liveWaitlistOffer(now) }, _count: { _all: true } })
+      : Promise.resolve([]),
   ]);
   return {
     /** Seats held by enrolled youth. */
@@ -261,6 +265,8 @@ async function seatCounts(client: Prisma.TransactionClient, eventId: string, own
     clubTaken: new Map(club.map((row) => [row.offeringId, row._count._all])),
     /** Seats held back for live waitlist offers (#831); a class is full when seats plus these reach its capacity. */
     reserved: new Map(offers.map((row) => [row.offeringId, row._count._all])),
+    /** This club's live offers: seats it is about to hold, so a direct pick can't use up the club's limit around them (#831). */
+    clubReserved: new Map(clubOffers.map((row) => [row.offeringId, row._count._all])),
   };
 }
 
@@ -299,7 +305,7 @@ async function getOwnerClassSelectionWorkspace(owner: SeatOwner, eventId: string
     (selections[enrollment.registrationAttendeeId] ??= []).push(enrollment.offeringId);
   }
   return {
-    open: evaluateEventRegistrationPhase(registration.event, now) === "OPEN",
+    open: classChangesOpen(registration.event, registration.location, now),
     registrationClosesOn: registration.event.registrationClosesOn,
     location: registration.location,
     locationRequired: registration.locationRequired,
@@ -397,13 +403,9 @@ async function setOwnerClassSelections(
       await prisma.$transaction(async (tx) => {
         waitlistMessageIds = [];
         const registration = await loadRegistration(tx, owner, eventId);
-        if (evaluateEventRegistrationPhase(registration.event, now) !== "OPEN") {
-          throw new ClassSelectionError(
-            "DEADLINE_PASSED",
-            hasEventEnded(registration.event, now)
-              ? registrationClosedMessage
-              : `Class choices closed${registration.event.registrationClosesOn ? ` after ${registration.event.registrationClosesOn}` : ""}.`,
-          );
+        // The site's own close when it has one, else the event's: the same deadline the class waitlist uses (#831).
+        if (!classChangesOpen(registration.event, registration.location, now)) {
+          throw new ClassSelectionError("DEADLINE_PASSED", classChangesClosedMessage(registration.event, registration.location, now));
         }
         if (registration.locationRequired) {
           throw new ClassSelectionError("LOCATION_REQUIRED", chooseLocationFirstMessage);
@@ -491,11 +493,12 @@ async function setOwnerClassSelections(
           : new Set<string>();
         const waitlistModule = lines.size > 0 ? await import("@/modules/honors/waitlist-repository") : null;
         const gainingWithLine = gaining.filter((id) => lines.has(id));
-        if (waitlistModule && gainingWithLine.length > 0) {
-          waitlistMessageIds.push(...(await waitlistModule.promoteClassWaitlists(tx, eventId, gainingWithLine, now)).messageIds);
-        }
-        // Picking a class the person is waiting on, or holds an offer for, settles that place (#831).
+        // Picking a class the person is waiting on, or holds an offer for, settles that place (#831). Such a place keeps its turn
+        // in the line but is not offered and emailed a seat the same save takes for it.
         const takenEntries = openEntries.filter((entry) => toCreate.some((row) => row.attendeeId === entry.registrationAttendeeId && row.offeringId === entry.offeringId));
+        if (waitlistModule && gainingWithLine.length > 0) {
+          waitlistMessageIds.push(...(await waitlistModule.promoteClassWaitlists(tx, eventId, gainingWithLine, now, new Set(takenEntries.map((entry) => entry.id)))).messageIds);
+        }
         if (takenEntries.length > 0) {
           await tx.honorClassWaitlistEntry.updateMany({
             where: { id: { in: takenEntries.map((entry) => entry.id) }, status: { in: ["WAITING", "OFFERED"] } },
@@ -528,7 +531,7 @@ async function setOwnerClassSelections(
           if ((counts.taken.get(offeringId) ?? 0) + (counts.reserved.get(offeringId) ?? 0) > offering.capacity) {
             throw new ClassSelectionError("CLASS_FULL", `${offering.honorName} is full. Choose another class.`);
           }
-          if (offering.perClubLimit !== null && (counts.clubTaken.get(offeringId) ?? 0) > offering.perClubLimit) {
+          if (offering.perClubLimit !== null && (counts.clubTaken.get(offeringId) ?? 0) + (counts.clubReserved.get(offeringId) ?? 0) > offering.perClubLimit) {
             throw new ClassSelectionError(
               "CLUB_LIMIT_REACHED",
               `${offering.honorName} allows ${offering.perClubLimit} youth per ${owner.kind === "club" ? "club" : "group"}.`,

@@ -172,8 +172,9 @@ describe("the server keeps a club to its own site's classes (#589)", () => {
 });
 
 describe("changing a club's location with class picks (#589)", () => {
-  const client = (picks: number, locationName: string | null = "Camp Heritage 1") => ({
+  const client = (picks: number, locationName: string | null = "Camp Heritage 1", waitlistPlaces = 0) => ({
     honorEnrollment: { count: vi.fn().mockResolvedValue(picks) },
+    honorClassWaitlistEntry: { count: vi.fn().mockResolvedValue(waitlistPlaces) },
     eventLocation: { findUnique: vi.fn().mockResolvedValue(locationName ? { name: locationName } : null) },
   });
 
@@ -188,6 +189,18 @@ describe("changing a club's location with class picks (#589)", () => {
       },
     });
     expect(tx).not.toHaveProperty("honorEnrollment.deleteMany");
+  });
+
+  it("also refuses when the club has class waitlist places at the old site (#831)", async () => {
+    const tx = client(0, "Camp Heritage 1", 2);
+    expect(await locationChangeBlock(tx as never, "registration-1", "loc-hr")).toBe("Remove this club's class waitlist places at Camp Heritage 1 before changing location.");
+    expect(tx.honorClassWaitlistEntry.count).toHaveBeenCalledWith({
+      where: {
+        registrationId: "registration-1",
+        status: { in: ["WAITING", "OFFERED"] },
+        offering: { OR: [{ session: { locationId: "loc-hr" } }, { locationId: "loc-hr" }] },
+      },
+    });
   });
 
   it("allows the change when the club has no picks at the old site", async () => {

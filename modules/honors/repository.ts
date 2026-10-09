@@ -850,6 +850,11 @@ export async function updateHonorOffering(
         },
       });
       if (honorsChanged) await writeHonorRows(tx, offeringId, eventId, honorIds);
+      // A class turned off has no waitlist any more: its places are closed and audited, not left waiting (#831).
+      if (details.isActive === false) {
+        const { closeClassWaitlist } = await import("@/modules/honors/waitlist-repository");
+        await closeClassWaitlist(tx, { eventId, offeringId, reason: "Class no longer offered", actorUserId });
+      }
       if (nextPrerequisiteIds !== undefined) await writePrerequisiteRows(tx, offeringId, prerequisiteIds);
       // Adding or raising a requirement doesn't remove anyone: they keep their seats. Staff are told how many don't meet it (#832).
       const newLevel = details.minimumClassLevel !== undefined ? details.minimumClassLevel : existing.minimumClassLevel;
