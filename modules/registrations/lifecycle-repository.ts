@@ -859,6 +859,10 @@ export async function cancelRegistration(
     };
   });
 
+  // Class seats the cancelled registration held go to the next youth on a class waitlist (#831). Best effort, and
+  // the scheduled sweep does the same, so a failure here only delays the offer.
+  await (await import("@/modules/honors/waitlist-repository")).promoteAfterRegistrationCancelled(result.registrationId, now);
+
   return {
     registration: await registrationResult(eventId, result.registrationId),
     autoPromotedRegistration: result.autoPromotedRegistrationId

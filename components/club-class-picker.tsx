@@ -6,6 +6,7 @@ import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { NeedsAttention, StatusComplete } from "@/components/needs-attention";
 import { ClassStatus } from "@/components/class-status";
 import { ClassRequirementNotes } from "@/components/class-requirement-notes";
+import { ClassWaitlistPanel } from "@/components/class-waitlist-panel";
 import { classChoiceReadiness, readinessSummaryText } from "@/modules/honors/class-readiness";
 import { attendeeTypeLabel as typeLabel, seatsNote, unavailableReason } from "@/modules/honors/class-picker-view";
 import { honorsNoteKey } from "@/modules/honors/registration-picks";
@@ -100,6 +101,21 @@ export function ClubClassPicker({
     });
   }
 
+  // The waitlist panel returns the whole workspace after a join, accept or decline (#831). A person whose saved classes changed
+  // (an accepted seat) takes the server's picks; everyone else keeps what is on screen, unsaved changes included.
+  function applyWaitlistWorkspace(next: ClassSelectionWorkspace) {
+    setSelections((current) => {
+      const merged = { ...current };
+      for (const person of next.attendees) {
+        const before = (workspace.selections[person.id] ?? []).join();
+        const after = (next.selections[person.id] ?? []).join();
+        if (before !== after) merged[person.id] = next.selections[person.id] ?? [];
+      }
+      return merged;
+    });
+    setWorkspace(next);
+  }
+
   async function save() {
     setSaving(true);
     setError("");
@@ -166,7 +182,7 @@ export function ClubClassPicker({
       )}
       <p>
         Pick one class per session, or one class that fills every session. Seats go to the first
-        {noun === "club" ? "clubs" : "registrations"} to save. Only youth use a seat; {noun === "club" ? "staff, adults, and underage children join" : "adults join"} without one.
+        {noun === "club" ? "clubs" : "registrations"} to save{noun === "club" ? "; a full class has a waitlist below" : ""}. Only youth use a seat; {noun === "club" ? "staff, adults, and underage children join" : "adults join"} without one.
         {workspace.registrationClosesOn ? ` You can change classes until ${formatCalendarDate(workspace.registrationClosesOn)}.` : ""}
       </p>
       {workspace.open && (
@@ -236,6 +252,9 @@ export function ClubClassPicker({
           );
         })}
       </div>
+      {noun === "club" && (
+        <ClassWaitlistPanel canOverrideRequirements={canOverrideRequirements} endpoint={`${saveUrl}/waitlist`} onWorkspace={applyWaitlistWorkspace} workspace={workspace} />
+      )}
       {workspace.open && (
         <div className="club-sticky-bar">
           <span className="field-help">{Object.values(selections).reduce((total, ids) => total + ids.length, 0)} classes chosen</span>

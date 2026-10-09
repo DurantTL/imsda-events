@@ -574,6 +574,8 @@ enum MessageTemplateKey {
   NEW_CLUB_APPLICATION_DECLINED
   /// A system administrator invited someone to apply for a new club (#817). The body carries a sentinel; the link is minted at delivery.
   NEW_CLUB_APPLICATION_INVITE
+  /// A seat in a full Honors Weekend class was offered to a youth on its waitlist (#831): one email to that club's director. Not an event template.
+  HONOR_CLASS_WAITLIST_OFFER
 }
 
 enum MessageTemplateStatus {
@@ -751,6 +753,7 @@ model User {
 
   recordedMemberHonorEntries         MemberHonorEntry[]           @relation("MemberHonorEntryRecordedByUser")
   honorEnrollmentOverrides           HonorEnrollment[]            @relation("HonorEnrollmentRequirementOverriddenBy")
+  honorClassWaitlistOverrides        HonorClassWaitlistEntry[]    @relation("HonorClassWaitlistOverriddenBy")
   voidedMemberHonorEntries           MemberHonorEntryVoid[]       @relation("MemberHonorEntryVoidedByUser")
   initiatedMemberTransfers           MemberTransfer[]             @relation("MemberTransferInitiatedByUser")
   resolvedMemberTransfers            MemberTransfer[]             @relation("MemberTransferResolvedByUser")
@@ -1424,6 +1427,8 @@ model Event {
   registrationClosesOn String?
   waitlistEnabled      Boolean            @default(false)
   autoPromoteWaitlist  Boolean            @default(true)
+  /// How many hours a club director has to accept a seat offered from an Honors Weekend class waitlist (#831); an offer not accepted in time passes to the next youth in line.
+  honorWaitlistOfferHours Int             @default(24)
   /// Whether this event collects a shirt size per attendee. Replaces a match on
   /// the event's name, which meant only one event could ever collect sizes and
   /// renaming it turned collection off without telling anyone.
@@ -1530,6 +1535,7 @@ model Event {
   clubRegistrationDrafts              ClubRegistrationDraft[]
   clubAssignments                     ClubEventAssignment[]
   honorEnrollments                    HonorEnrollment[]
+  honorClassWaitlist                  HonorClassWaitlistEntry[]
   memberTransferRegistrationMoves     MemberTransferRegistrationMove[]
   registrationOperations              RegistrationOperation[]
   registrationPaymentChoiceOperations RegistrationPaymentChoiceOperation[]
@@ -2140,6 +2146,7 @@ model Organization {
   registrationDrafts ClubRegistrationDraft[]
   eventAssignments   ClubEventAssignment[]
   honorEnrollments   HonorEnrollment[]
+  honorClassWaitlist HonorClassWaitlistEntry[]
   clubProfile        ClubProfile?
   clubInvites        ClubInvite[]
   newClubApplicationsAsChurch NewClubApplication[] @relation("NewClubApplicationChurch")
@@ -2618,6 +2625,7 @@ model Registration {
   lodgingRoommateRequestsFrom EventLodgingRoommateRequest[] @relation("LodgingRoommateFrom")
   lodgingRoommateRequestsTo   EventLodgingRoommateRequest[] @relation("LodgingRoommateTarget")
   honorEnrollments        HonorEnrollment[]
+  honorClassWaitlist      HonorClassWaitlistEntry[]
   adjustments             RegistrationAdjustment[]
   memberTransferMovesFrom MemberTransferRegistrationMove[] @relation("MemberTransferMoveFrom")
   memberTransferMovesTo   MemberTransferRegistrationMove[] @relation("MemberTransferMoveTo")
@@ -2815,6 +2823,7 @@ model RegistrationAttendee {
   notes                  StaffNote[]
   tagAssignments         AttendeeTagAssignment[]
   honorEnrollments       HonorEnrollment[]
+  honorClassWaitlist     HonorClassWaitlistEntry[]
   adjustments            RegistrationAdjustment[]
   memberTransferMoves    MemberTransferRegistrationMove[]
   lodgingAssignments     EventLodgingAssignment[]
@@ -4332,6 +4341,7 @@ model HonorOffering {
   honors      HonorOfferingHonor[]
   /// Honors a youth must have completed first (#832); every one is required.
   prerequisites HonorOfferingPrerequisite[]
+  waitlist     HonorClassWaitlistEntry[]
 
   // "No honor twice in a session" and the all-sessions rules now live on
   // `HonorOfferingHonor`, one row per honor taught (#812).
@@ -4887,6 +4897,64 @@ model HonorEnrollment {
   @@index([offeringId, consumesSeat])
   @@index([offeringId, organizationId, consumesSeat])
   @@index([registrationId])
+}
+
+enum HonorClassWaitlistStatus {
+  /// In line, in the order they joined.
+  WAITING
+  /// A seat is held for them until `offerExpiresAt`; the director accepts or the offer passes on.
+  OFFERED
+  /// The director accepted: the youth holds the seat (an enrollment).
+  ACCEPTED
+  /// The director turned the offer down; it passed to the next youth.
+  DECLINED
+  /// The offer was not accepted in time; it passed to the next youth.
+  EXPIRED
+  /// Taken off the list (the director, staff, or the registration or person left).
+  REMOVED
+}
+
+/// One youth's place on a full Honors Weekend class's waitlist (#831). A spot takes no seat and doesn't count toward a club's per-club limit; only a live offer reserves a seat (counted with the taken seats) and an accepted one becomes an `HonorEnrollment`.
+model HonorClassWaitlistEntry {
+  id                     String                   @id @default(cuid())
+  eventId                String
+  offeringId             String
+  registrationId         String
+  registrationAttendeeId String
+  /// The club that holds the registration; waitlists are for clubs only.
+  organizationId         String?
+  /// The order they joined, assigned by the database so two joins at once still have a strict order.
+  joinOrder              Int                      @default(autoincrement())
+  status                 HonorClassWaitlistStatus @default(WAITING)
+  /// How the youth got past the class's level or prerequisite rules when they joined, kept for acceptance (#832): the same facts an enrollment records.
+  levelConfirmedByDirector         Boolean        @default(false)
+  prerequisitesConfirmedByDirector Boolean        @default(false)
+  requirementOverrideReason        String?
+  requirementOverriddenByUserId    String?
+  joinedAt               DateTime                 @default(now())
+  offeredAt              DateTime?
+  offerExpiresAt         DateTime?
+  /// How many times a seat was offered (an offer released because of a conflict is offered again later).
+  offerCount             Int                      @default(0)
+  resolvedAt             DateTime?
+  /// A short fixed reason for the last change ("Offer expired", "Registration cancelled"); never free text from a person.
+  resolution             String?
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+
+  event                Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  offering             HonorOffering        @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+  registration         Registration         @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  registrationAttendee RegistrationAttendee @relation(fields: [registrationAttendeeId], references: [id], onDelete: Cascade)
+  organization         Organization?        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  requirementOverriddenByUser User?         @relation("HonorClassWaitlistOverriddenBy", fields: [requirementOverriddenByUserId], references: [id], onDelete: SetNull)
+
+  // One open entry (WAITING or OFFERED) per person and class is a partial unique index in the migration.
+  @@index([offeringId, status, joinOrder])
+  @@index([registrationId, status])
+  @@index([registrationAttendeeId])
+  @@index([status, offerExpiresAt])
+  @@index([eventId])
 }
 
 enum MemberHonorStatus {

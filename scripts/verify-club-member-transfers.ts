@@ -59,6 +59,7 @@ async function cleanup() {
     where: { OR: [{ entityId: { in: [...transfers, ...roster, ...attendees].map((row) => row.id) } }, { eventId }, { actorUserId: staffUserId }] },
   });
   await prisma.memberTransfer.deleteMany({ where: { toOrganizationId: { in: clubIds } } });
+  await prisma.honorClassWaitlistEntry.deleteMany({ where: { eventId } });
   await prisma.honorEnrollment.deleteMany({ where: { eventId } });
   await prisma.clubEventRegistration.deleteMany({ where: { eventId } });
   await prisma.registration.deleteMany({ where: { eventId } });
@@ -260,7 +261,17 @@ async function main() {
   await prisma.honorOffering.update({ where: { id: offering.id }, data: { perClubLimit: 5 } });
   console.log("ok  refused: draft destination, clamped total, below paid, below $0, per-club class limit; each left the move pending");
 
+  // A place on a full class's waitlist (#831), in a class where the receiving club is already at its per-club limit.
+  const session2 = await prisma.honorSession.create({ data: { eventId, name: "Second session", normalizedName: "second session" } });
+  const offering2 = await prisma.honorOffering.create({ data: { eventId, honorId: `${P}_honor`, sessionId: session2.id, span: "SINGLE_SESSION", capacity: 2, perClubLimit: 1 } });
+  const beaSeat2 = await prisma.honorEnrollment.create({ data: { eventId, offeringId: offering2.id, registrationId: regB.id, registrationAttendeeId: bea.id, organizationId: clubs.b, consumesSeat: true } });
+  const waiting = await prisma.honorClassWaitlistEntry.create({ data: { eventId, offeringId: offering2.id, registrationId: regA.id, registrationAttendeeId: adaAttendee.id, organizationId: clubs.a, status: "OFFERED", offeredAt: now, offerExpiresAt: new Date(now.getTime() + 86_400_000), offerCount: 1 } });
   const moved = await repo.approveRegistrationMove(pendingMove.id, "Approved in test", staff, now);
+  const waitingAfter = await prisma.honorClassWaitlistEntry.findUniqueOrThrow({ where: { id: waiting.id } });
+  assert(waitingAfter.registrationId === regB.id && waitingAfter.organizationId === clubs.b && waitingAfter.status === "WAITING" && waitingAfter.joinOrder === waiting.joinOrder, "a held class waitlist offer moves with the attendee as a place back in line (released, not left as a silent offer), keeping its place, and keeps waiting although the receiving club is at the seat limit");
+  await prisma.honorClassWaitlistEntry.delete({ where: { id: waiting.id } });
+  await prisma.honorEnrollment.delete({ where: { id: beaSeat2.id } });
+  await prisma.honorOffering.delete({ where: { id: offering2.id } });
   const attendeeAfter = await prisma.registrationAttendee.findUniqueOrThrow({ where: { id: adaAttendee.id } });
   const enrollment = await prisma.honorEnrollment.findFirstOrThrow({ where: { registrationAttendeeId: adaAttendee.id } });
   const adjustment = await prisma.registrationAdjustment.findFirstOrThrow({ where: { registrationAttendeeId: adaAttendee.id } });

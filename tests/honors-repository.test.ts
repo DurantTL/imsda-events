@@ -79,6 +79,8 @@ function fakeDatabase() {
 
   const sessionQueries: Array<{ where: Record<string, unknown>; orderBy?: unknown; select?: unknown }> = [];
   const client = {
+    // No class waitlist places in these tests; turning a class off closes any (#831).
+    honorClassWaitlistEntry: { findMany: async () => [] },
     honorEnrollment: {
       groupBy: async () => [],
       count: async ({ where }: { where: { offeringId?: string | { in: string[] }; offering?: { sessionId: string } } }) => db.pickedOfferingIds

@@ -1442,6 +1442,31 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
     where: { registrationAttendeeId: attendeeId, registrationId: fromRegistrationId },
     data: { registrationId: toRegistrationId },
   });
+  // Their places on class waitlists move with them, keeping their place in line (#831). Waitlist spots are not seats, so the
+  // receiving club's per-club limit doesn't stop the move: at its limit it is skipped when seats are offered, and keeps waiting.
+  // Lock order is the waitlist's own: the classes, then the waitlist places, then the enrollments. An offer held for the
+  // sending club goes back to waiting (keeping its place) so the receiving club isn't left with a silent offer; the seat is
+  // offered again below, and the receiving club's director is emailed if it is.
+  const waitlistPlaces = await tx.honorClassWaitlistEntry.findMany({
+    where: { registrationAttendeeId: attendeeId, status: { in: ["WAITING", "OFFERED"] } },
+    select: { offeringId: true, status: true },
+  });
+  const releasedOfferingIds = [...new Set(waitlistPlaces.filter((place) => place.status === "OFFERED").map((place) => place.offeringId))];
+  if (waitlistPlaces.length > 0) {
+    const classIds = [...new Set(waitlistPlaces.map((place) => place.offeringId))].sort();
+    await tx.$queryRaw`SELECT id FROM "HonorOffering" WHERE id IN (${Prisma.join(classIds)}) ORDER BY id FOR UPDATE`;
+    await tx.honorClassWaitlistEntry.updateMany({
+      where: { registrationAttendeeId: attendeeId, status: "OFFERED" },
+      data: {
+        registrationId: toRegistrationId, organizationId: move.transfer.toOrganizationId,
+        status: "WAITING", offeredAt: null, offerExpiresAt: null, resolution: "Offer released: moved to another club",
+      },
+    });
+    await tx.honorClassWaitlistEntry.updateMany({
+      where: { registrationAttendeeId: attendeeId, status: "WAITING", registrationId: fromRegistrationId },
+      data: { registrationId: toRegistrationId, organizationId: move.transfer.toOrganizationId },
+    });
+  }
   const honorEnrollments = await tx.honorEnrollment.updateMany({
     where: { registrationAttendeeId: attendeeId },
     data: { registrationId: toRegistrationId, organizationId: move.transfer.toOrganizationId },
@@ -1490,6 +1515,10 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
         correlationId: `member-move:${moveId}`,
       })
     : null;
+  // Offers released by the move are made again to whoever is next, the youth included when they are first in line (#831).
+  const waitlistOffers = releasedOfferingIds.length > 0
+    ? await (await import("@/modules/honors/waitlist-repository")).promoteClassWaitlists(tx, move.eventId, releasedOfferingIds, now)
+    : null;
   const detail = {
     moveId,
     fromRegistrationId,
@@ -1513,7 +1542,7 @@ async function approveRegistrationMoveOnce(tx: Prisma.TransactionClient, moveId:
     { transferId: move.transfer.id, fromOrganizationId: move.transfer.fromOrganizationId, toOrganizationId: move.transfer.toOrganizationId, ...detail },
     { eventId: move.eventId, entityType: "RegistrationAttendee" },
   );
-  return { ...detail, pendingMessageIds: [...(freedSeat?.pendingMessageIds ?? []), ...teamMessageIds] };
+  return { ...detail, pendingMessageIds: [...(freedSeat?.pendingMessageIds ?? []), ...teamMessageIds, ...(waitlistOffers?.messageIds ?? [])] };
 }
 
 /** Staff skip one registration move (#489 decision 2): the attendee stays where they are. Audited with the actor (N4). */

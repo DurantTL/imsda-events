@@ -866,6 +866,7 @@ describe("club registration edit at an event location (#413)", () => {
       $executeRawUnsafe: executeRaw,
       eventLocation: { findFirst, findUnique: vi.fn(async () => ({ name: current.name })), count: vi.fn().mockResolvedValue(known.length) },
       honorEnrollment: { count: classPickCount },
+      honorClassWaitlistEntry: { count: vi.fn().mockResolvedValue(0) },
     };
     Object.assign(prisma, extra, { clubEventRegistration: { findUnique: clubRegistrationFindUnique } });
     const client = dependencies.getPrisma() as Record<string, unknown>;

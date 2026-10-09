@@ -1,4 +1,6 @@
 import type { Prisma } from "@prisma/client";
+import { evaluateLocationPhase, hasLocationEnded, locationLifecycleSource, type LocationDateSource } from "@/modules/event-locations/domain";
+import { hasEventEnded, registrationClosedMessage, type EventLifecycleSource } from "@/modules/events/lifecycle";
 
 /**
  * Honors Weekend sites (#589), read-only. A session belongs to at most one
@@ -38,6 +40,31 @@ export function siteChangePatch(currentLocationId: string | null, formValue: For
   return next === currentLocationId ? {} : { locationId: next };
 }
 
+/**
+ * The one class-change deadline (#831): the registration's site close when the site has one, else the event's.
+ * Direct picks, the director's screen and the class waitlist all ask this, so the line can't be jumped after
+ * the site closes and the screen and the waitlist agree.
+ */
+export function classChangesOpen(event: EventLifecycleSource, location: LocationDateSource | null | undefined, now: Date) {
+  return evaluateLocationPhase(event, location ?? null, now) === "OPEN";
+}
+
+/**
+ * Whether the event or site has actually ended (its last day has passed), so a waitlist place can never be offered again.
+ * Not the same as the registration close date passing: while the event is still to come, staff may extend the deadline,
+ * and the line then picks up again in its original order (#831).
+ */
+export function classChangesEnded(event: Pick<EventLifecycleSource, "timezone" | "endsAt">, location: LocationDateSource | null | undefined, now: Date) {
+  return hasLocationEnded(event, location ?? null, now);
+}
+
+/** Why class changes are closed, in words, for the refusal a director sees. */
+export function classChangesClosedMessage(event: EventLifecycleSource, location: LocationDateSource | null | undefined, now: Date) {
+  const source = locationLifecycleSource(event, location ?? null);
+  if (hasEventEnded(source, now)) return registrationClosedMessage;
+  return `Class choices closed${source.registrationClosesOn ? ` after ${source.registrationClosesOn}` : ""}.`;
+}
+
 export const chooseLocationFirstMessage = "Choose your location first.";
 
 export function differentLocationMessage(className: string, siteName: string | null) {
@@ -69,9 +96,20 @@ export async function locationChangeBlock(client: Client, registrationId: string
       offering: { OR: [{ session: { locationId: currentLocationId } }, { locationId: currentLocationId }] },
     },
   });
-  if (picks === 0) return null;
+  const places = picks === 0
+    ? await client.honorClassWaitlistEntry.count({
+      where: {
+        registrationId,
+        status: { in: ["WAITING", "OFFERED"] },
+        offering: { OR: [{ session: { locationId: currentLocationId } }, { locationId: currentLocationId }] },
+      },
+    })
+    : 0;
+  if (picks === 0 && places === 0) return null;
   const location = await client.eventLocation.findUnique({ where: { id: currentLocationId }, select: { name: true } });
-  return locationChangeBlockedMessage(location?.name ?? "the current site");
+  const site = location?.name ?? "the current site";
+  // Class waitlist places (#831) block a move too: they would be stranded at the old site, so they are left for the director to remove.
+  return picks === 0 ? `Remove this club's class waitlist places at ${site} before changing location.` : locationChangeBlockedMessage(site);
 }
 
 /**
@@ -82,11 +120,11 @@ export async function locationChangeBlock(client: Client, registrationId: string
 export async function crossSitePickCount(client: Client, attendeeId: string, registrationId: string, receivingLocationId: string | null) {
   // SQL's "<>" leaves out NULL, so a class with no site never counts as another site.
   const otherSite = { not: receivingLocationId ?? null };
-  return client.honorEnrollment.count({
-    where: {
-      registrationAttendeeId: attendeeId,
-      registrationId,
-      OR: [{ offering: { session: { locationId: otherSite } } }, { offering: { locationId: otherSite } }],
-    },
+  const atOtherSite = [{ offering: { session: { locationId: otherSite } } }, { offering: { locationId: otherSite } }];
+  const picks = await client.honorEnrollment.count({ where: { registrationAttendeeId: attendeeId, registrationId, OR: atOtherSite } });
+  // Open class waitlist places (#831) would be stranded at another site the same way a pick would.
+  const places = await client.honorClassWaitlistEntry.count({
+    where: { registrationAttendeeId: attendeeId, registrationId, status: { in: ["WAITING", "OFFERED"] }, OR: atOtherSite },
   });
+  return picks + places;
 }
