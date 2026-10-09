@@ -63,7 +63,14 @@ const OPEN_STATUSES = ["NEEDED", "ORDERED", "RECEIVED"] as const;
 const byName = (a: { lastName: string; firstName: string }, b: { lastName: string; firstName: string }) =>
   a.lastName.localeCompare(b.lastName) || a.firstName.localeCompare(b.firstName);
 
-export type AwardMember = { personId: string; firstName: string; lastName: string; classLabel: string };
+export type AwardMember = {
+  personId: string;
+  firstName: string;
+  lastName: string;
+  classLabel: string;
+  /** Recorded class completions, by class level to the calendar date (`YYYY-MM-DD`). Class levels and dates only. */
+  completed?: Partial<Record<ClubClassLevel, string>>;
+};
 
 /** The date of an event in the conference's time zone, as the calendar date its patches were earned. */
 function eventDate(startsAt: Date) {
@@ -871,7 +878,7 @@ export async function loadEarnedAwardsWorkspace(
 ): Promise<EarnedAwardsWorkspaceData> {
   if (forEditing) await removeDepartedMemberNeeds(organizationId, now);
   const prisma = getPrisma();
-  const [needs, awardedCount, catalogRows, roster, insignia, patches, masterAwards] = await Promise.all([
+  const [needs, awardedCount, catalogRows, roster, completionRows, insignia, patches, masterAwards] = await Promise.all([
     prisma.clubOrderNeed.findMany({
       where: { organizationId, sourceType: "AWARD", status: { in: [...OPEN_STATUSES] }, itemId: { not: null } },
       select: {
@@ -894,6 +901,9 @@ export async function loadEarnedAwardsWorkspace(
         select: { classLevel: true, person: { select: { id: true, firstName: true, lastName: true } } },
       })
       : Promise.resolve([]),
+    forEditing
+      ? prisma.memberClassCompletion.findMany({ where: { organizationId }, select: { personId: true, classLevel: true, completedOn: true } })
+      : Promise.resolve([]),
     forEditing ? listInsigniaSuggestions(organizationId, now) : Promise.resolve([]),
     forEditing ? listPatchSuggestions(organizationId, now) : Promise.resolve([]),
     loadMasterAwardProgress(organizationId, now),
@@ -912,11 +922,14 @@ export async function loadEarnedAwardsWorkspace(
       status: need.status as AwardNeedRow["status"],
     }))
     .sort((a, b) => byName(a, b) || a.itemName.localeCompare(b.itemName));
+  const completedBy = new Map<string, Partial<Record<ClubClassLevel, string>>>();
+  for (const row of completionRows) completedBy.set(row.personId, { ...completedBy.get(row.personId), [row.classLevel]: row.completedOn });
   const members = [...new Map(roster.flatMap((row) => (row.person ? [[row.person.id, {
     personId: row.person.id,
     firstName: row.person.firstName,
     lastName: row.person.lastName,
     classLabel: row.classLevel ? clubClassLevelLabels[row.classLevel] : "",
+    completed: completedBy.get(row.person.id) ?? {},
   }] as const] : []))).values()].sort(byName);
   return {
     catalog: catalogRows.map((row) => ({

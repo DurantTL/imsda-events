@@ -38,17 +38,19 @@ describe("class tracking with stocked data", () => {
     expect(memberMatchesSearch({ firstName: "A", lastName: "B" }, "a")).toBe(true);
   });
 
-  it("offers a search above each long member list, with a scrollable list, and none for a small club", () => {
-    const big = render(members);
-    expect(big.match(/Find a member by name or class/g)).toHaveLength(2);
-    expect(big).toContain("earned-scroll-list");
-    expect(big).toContain("earned-member-search");
-    expect(render(members.slice(0, 5))).not.toContain("Find a member by name or class");
+  it("offers one search and one members table, the same for a long or short club", () => {
+    for (const list of [members, members.slice(0, 5)]) {
+      const html = render(list);
+      expect(html.match(/Find a member/g)).toHaveLength(1);
+      expect(html.match(/<table/g)).toHaveLength(1);
+      expect(html.match(/Sample, Pat0</g)).toHaveLength(1);
+    }
   });
 
   it("keeps the spacing rules and the inline Orders link in the stylesheet", () => {
     const css = read("app/globals.css");
     expect(css).toContain(".earned-scroll-list { max-height: 20rem; overflow-y: auto;");
+    expect(css).toContain(".class-tracking-table { table-layout: fixed; width: 100%; }");
     expect(css).toContain("p.field-help.earned-help > a");
   });
 });

@@ -17,9 +17,11 @@ import {
 } from "@/modules/forms/address";
 import {
   isFieldVisible,
+  numberFieldBounds,
   registrationFormDefinitionSchema,
   type RegistrationFormField,
 } from "@/modules/forms/definition";
+import { inlineFieldProblem, inputAttributesFor, valueTypeForFieldType } from "@/lib/field-validation";
 import { withAttendeeTypeOptionsForAttendee } from "@/modules/attendee-types/form-options";
 import type { AttendeeTypeOption } from "@/modules/attendee-types/domain";
 import { groupFormDefinition } from "@/modules/group-registrations/domain";
@@ -102,18 +104,38 @@ function labelWithRequired(field: RegistrationFormField) {
   return <>{field.label}{field.required && <span aria-hidden="true"> *</span>}</>;
 }
 
+/** The inline check for a typed answer (#855): an old stored value that fails is flagged but never blocks. */
+function typedFieldProblem(field: RegistrationFormField, value: unknown, stored: unknown, shown: boolean) {
+  const type = valueTypeForFieldType(field.type);
+  if (!type) return { message: "", blocking: false };
+  const bounds = field.type === "NUMBER" ? numberFieldBounds(field) : null;
+  const rules = field.type === "NUMBER"
+    ? (bounds ? { min: bounds.minimumAge, max: bounds.maximumAge, integer: true } : { min: 0, max: 100000 })
+    : {};
+  return inlineFieldProblem(field.label, type, value, stored, shown, rules);
+}
+
 function AmendmentField({
   field,
   values,
+  stored,
+  attempted,
   locked,
   onChange,
 }: {
   field: RegistrationFormField;
   values: Responses;
+  /** The answer as saved before this edit, to tell an old bad value from one just typed. */
+  stored?: unknown;
+  attempted?: boolean;
   locked: boolean;
   onChange: (value: unknown) => void;
 }) {
+  const [touched, setTouched] = useState(false);
   const value = values[field.key];
+  const problem = typedFieldProblem(field, value, stored, Boolean(attempted) || touched);
+  const valueType = valueTypeForFieldType(field.type);
+  const attributes = valueType ? inputAttributesFor(valueType) : null;
   const id = `amendment_${field.id}_${locked ? "locked" : "editable"}`;
 
   if (locked) {
@@ -254,9 +276,14 @@ function AmendmentField({
         required={field.required}
         value={valueString(value)}
         placeholder={field.placeholder}
+        aria-invalid={problem.message ? true : undefined}
+        autoComplete={attributes?.autoComplete}
+        inputMode={attributes?.inputMode}
+        onBlur={() => setTouched(true)}
         onChange={(event) => onChange(event.target.value)}
       />
       {field.helpText && <small>{field.helpText}</small>}
+      {problem.message && <small className="field-error" role="alert">{problem.message}</small>}
     </label>
   );
 }
@@ -319,6 +346,7 @@ export function RegistrationAmendmentEditor({
   // Staff only (#809): attendees confirmed as a different person from someone with the same name on another team of the club.
   const [differentPeople, setDifferentPeople] = useState<ReadonlySet<string>>(new Set());
   const [saving, setSaving] = useState(false);
+  const [attempted, setAttempted] = useState(false);
   const [addedNotice, setAddedNotice] = useState("");
   // Review before removing an attendee from this draft amendment (#471):
   // the shared in-page confirm dialog replaces `window.confirm()`. Removing
@@ -429,6 +457,28 @@ export function RegistrationAmendmentEditor({
 
   async function reviewAmendment(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setAttempted(true);
+    const storedRegistration = registration.publicSubmission?.responses ?? {};
+    const blockedRegistration = allFields.some((field) => (
+      field.scope === "REGISTRATION"
+      && !lockedRegistrationKeys.has(field.key)
+      && isFieldVisible(field, responses)
+      && typedFieldProblem(field, responses[field.key], storedRegistration[field.key], false).blocking
+    ));
+    const blockedAttendee = attendees.some((attendee) => {
+      const stored = registration.attendees.find((candidate) => candidate.id === attendee.attendeeId)?.responses ?? {};
+      const merged = { ...responses, ...attendee.responses };
+      return allFields.some((field) => (
+        field.scope === "ATTENDEE"
+        && !(attendee.attendeeId && attendeeIdentityKeys.has(field.key))
+        && isFieldVisible(field, merged)
+        && typedFieldProblem(field, attendee.responses[field.key], stored[field.key], false).blocking
+      ));
+    });
+    if (blockedRegistration || blockedAttendee) {
+      setError("Check the highlighted answers and try again.");
+      return;
+    }
     setSaving(true);
     setError("");
     setIssues([]);
@@ -544,6 +594,8 @@ export function RegistrationAmendmentEditor({
             <AmendmentField
               field={field}
               values={responses}
+              stored={registration.publicSubmission?.responses?.[field.key]}
+              attempted={attempted}
               locked={lockedRegistrationKeys.has(field.key)}
               key={field.id}
               onChange={(value) => setRegistrationValue(field.key, value)}
@@ -600,6 +652,8 @@ export function RegistrationAmendmentEditor({
                   <AmendmentField
                     field={field}
                     values={attendee.responses}
+                    stored={registration.attendees.find((candidate) => candidate.id === attendee.attendeeId)?.responses?.[field.key]}
+                    attempted={attempted}
                     locked={Boolean(attendee.attendeeId && attendeeIdentityKeys.has(field.key))}
                     key={field.id}
                     onChange={(value) => setAttendeeValue(attendeeIndex, field.key, value)}

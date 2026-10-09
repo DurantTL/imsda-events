@@ -3361,6 +3361,19 @@ select:focus-visible {
   text-transform: none;
   letter-spacing: normal;
 }
+.public-registration-attendee-attention {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: var(--text-helper-min);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.public-registration-attendee-attention li + li { margin-top: 3px; }
+.public-registration-attendee-attention strong { color: var(--ink); }
+.public-registration-attendee-roster-note { margin: 0 0 10px; color: var(--muted); font-size: var(--text-helper-min); }
 .public-registration-attendee.is-collapsed .public-registration-attendee-heading { border-bottom: none; }
 .public-registration-attendee-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .public-registration-attendee-actions button {
@@ -10516,6 +10529,17 @@ p.field-help.earned-help > a { display: inline !important; min-height: 0 !import
   .honors-table th, .honors-table td { overflow-wrap: anywhere; word-break: normal; }
   .honors-table td.honors-col-honors { width: auto; }
   .report-table.honors-table td:last-child { width: 6.5rem; }
+}
+
+/* Class tracking members table: same fixed-width treatment as the Honors table, so it fits 601-1024px without a sideways scroll. */
+.class-tracking-table { min-width: 30rem; }
+.class-history-button { display: inline-flex; align-items: center; white-space: nowrap; min-height: 44px; }
+@media screen and (min-width: 601px) {
+  .class-tracking-table { table-layout: fixed; width: 100%; }
+  .class-tracking-table .class-col-name { width: 34%; }
+  .class-tracking-table .class-col-class { width: 18%; }
+  .class-tracking-table .class-col-history { width: 9.5rem; }
+  .class-tracking-table th, .class-tracking-table td { overflow-wrap: anywhere; word-break: normal; }
 }
 
 /* Attendee listing: 12 columns, so it scrolls inside its box with a readable minimum width (it had no

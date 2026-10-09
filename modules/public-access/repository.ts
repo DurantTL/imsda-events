@@ -65,6 +65,7 @@ const registrationAccessInclude = {
       submittedAt: true,
       updatedAt: true,
       groupRegistration: { select: { id: true } },
+      clubRegistration: { select: { id: true } },
       event: {
         select: {
           name: true,
@@ -335,6 +336,7 @@ function serializeRegistrationAccess(
   });
   // A "Group" (#650) is billed to its contact and is shown its price and estimated total.
   const isGroup = Boolean(registration.groupRegistration);
+  const isClub = Boolean(registration.clubRegistration);
   // A church-billed event never shows the registrant a total, amount paid, amount
   // due or balance (#621): the totals are removed here, server-side, and the
   // per-person price is returned instead.
@@ -536,6 +538,8 @@ function serializeRegistrationAccess(
     perPerson,
     /** True for a "Group" registration (#650): its contact manages it on the group page. */
     isGroup,
+    /** True for a club's registration (#854): the director manages it from the club portal, so no optional-account offer. */
+    isClub,
     form: submission ? {
       name: submission.formVersion.form.name,
       slug: submission.formVersion.form.slug,

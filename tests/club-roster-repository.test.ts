@@ -87,6 +87,7 @@ function fakeDatabase() {
       updateMany: async (args: unknown) => { db.transferBlanks.push(args); return { count: 0 }; },
     },
     clubRosterGuardian: {
+      findMany: async ({ where }: { where: { rosterMemberId: string } }) => db.guardians.filter((row) => row.rosterMemberId === where.rosterMemberId),
       upsert: async ({ where, create, update }: { where: { rosterMemberId_position: { rosterMemberId: string; position: number } }; create: Row; update: Row }) => {
         const key = where.rosterMemberId_position;
         const found = db.guardians.find((row) => row.rosterMemberId === key.rosterMemberId && row.position === key.position);
@@ -206,6 +207,19 @@ describe("club roster storage", () => {
       expect(onFile(memberId)).toEqual([]);
     });
 
+    it("lets a saved guardian phone through unchanged, but not a new bad one, per slot (#855)", async () => {
+      const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [first, second] }, actor, { now });
+      // Both slots resent as stored (invalid by today's rules): the edit goes through.
+      await expect(updateRosterMember("club-1", memberId, { guardians: [{ ...first, name: "Renamed" }, second] }, actor, now)).resolves.toBeDefined();
+      // The same text typed into the other slot is a change there.
+      await expect(updateRosterMember("club-1", memberId, { guardians: [first, { ...second, phone: first.phone }] }, actor, now))
+        .rejects.toMatchObject({ code: "GUARDIAN_PHONE_INVALID" });
+      // A corrected phone is accepted and a new bad one is not.
+      await expect(updateRosterMember("club-1", memberId, { guardians: [{ ...first, phone: "515-555-0134" }, second] }, actor, now)).resolves.toBeDefined();
+      await expect(updateRosterMember("club-1", memberId, { guardians: [{ ...first, phone: "call me" }, second] }, actor, now))
+        .rejects.toMatchObject({ code: "GUARDIAN_PHONE_INVALID" });
+    });
+
     it("deletes every guardian when the member is removed, and only that member's", async () => {
       const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [first, second] }, actor, { now });
       const { memberId: other } = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Other", guardians: [first] }, actor, { now });
@@ -230,7 +244,7 @@ describe("club roster storage", () => {
 
     it("keeps guardian values out of every audit entry: field names and counts only", async () => {
       const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [first, second] }, actor, { now });
-      await updateRosterMember("club-1", memberId, { guardians: [second, blank] }, actor, now);
+      await updateRosterMember("club-1", memberId, { guardians: [{ ...second, phone: "515-555-0202" }, blank] }, actor, now);
       await removeRosterMember("club-1", memberId, actor, now);
       const entries = mocks.writeAuditLog.mock.calls.map(([entry]) => entry);
       const text = JSON.stringify(entries);

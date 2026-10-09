@@ -62,7 +62,7 @@ describe("Fall Camporee form template", () => {
     const registration = validateTestResponses(form.definition, {
       director_name: "Alex Sample",
       email: "director@example.test",
-      phone: "555-0100",
+      phone: "515-555-0100",
       tents: "Two 10x10",
       kitchen_canopy: "10x10 canopy",
       photo_video_release: true,

@@ -1,5 +1,6 @@
 "use client";
 
+import { inlineFieldProblem } from "@/lib/field-validation";
 import { ageInputAttributes } from "@/modules/attendee-types/age-limits";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -65,6 +66,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<"who" | "form">("who");
   const [addingGuest, setAddingGuest] = useState(false);
+  const [guestEmailProblem, setGuestEmailProblem] = useState("");
   const [error, setError] = useState("");
   const [highlightRoster, setHighlightRoster] = useState(false);
   // The confirmation shows only right after a reopen, not on every return to Step 1.
@@ -156,9 +158,15 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     const email = String(data.get("email") ?? "").trim().toLowerCase();
     if (!firstName || !lastName) return setError("Enter a first and last name.");
     if (!Number.isInteger(age) || age < 0 || age > 120) return setError("Enter their age as a whole number.");
+    const emailCheck = inlineFieldProblem("Email", "email", email, undefined, true);
+    if (emailCheck.blocking) {
+      setGuestEmailProblem(emailCheck.message);
+      return;
+    }
     if (keptGuestIds.length + newGuests.length >= MAX_CLUB_GUESTS) return setError(`Add up to ${MAX_CLUB_GUESTS} extra people.`);
     const id = Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => (byte % 36).toString(36)).join("") + Date.now().toString(36);
     setError("");
+    setGuestEmailProblem("");
     setAddingGuest(false);
     setNewGuests((current) => [...current, { id: id.slice(0, 24), firstName, lastName, age, email: email || null }]);
   }
@@ -188,6 +196,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
           // option is prompted for rather than left silently blank.
           carriedFromRoster: true,
           carryoverMismatches: person.carryoverMismatches,
+          rosterValues: person.prefillResponses as Record<string, string>,
         };
       }),
       ...offRoster.filter((attendee) => keptOffRosterIds.includes(attendee.attendeeId))
@@ -273,8 +282,19 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
     return { ok: false as const, message: result.message ?? "That change couldn't be saved. Refresh and try again.", issues };
   }, [organizationId, workspace.event.id, workspace.registration.updatedAt, workspace.registration.teamKey, selectedMemberIds, keptOffRosterIds, keptGuestIds, newGuests, typedAges, startingAges, saveAgeOff, locationId, currentLocationId]);
 
+  // Answers as registered, by client id, so an old answer left alone never blocks the edit (#855).
+  const previousResponses = useMemo(() => Object.fromEntries([
+    ...workspace.roster.flatMap((person) => {
+      const current = registeredByMemberId.get(person.memberId);
+      return current ? [[clubAttendeeClientId(person.memberId), current.responses as FormResponses] as const] : [];
+    }),
+    ...offRoster.map((attendee) => [clubExistingAttendeeClientId(attendee.attendeeId), attendee.responses as FormResponses] as const),
+    ...existingGuests.map((guest) => [clubGuestClientId(guest.guestId!), guest.responses as FormResponses] as const),
+  ]), [workspace.roster, registeredByMemberId, offRoster, existingGuests]);
+
   const club = useMemo(() => ({
     initialAttendees,
+    previousResponses,
     lockedAttendeeFieldKeys: workspace.lockedAttendeeFieldKeys,
     submitUrl: "",
     onDraftChange,
@@ -287,7 +307,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
       setStep("who");
       router.refresh();
     },
-  }), [initialAttendees, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router, allowNextNavigation]);
+  }), [initialAttendees, previousResponses, workspace.lockedAttendeeFieldKeys, onDraftChange, submitEdit, router, allowNextNavigation]);
 
   // Reopening confirms itself: scroll to and highlight the roster section (#571 F-23).
   useEffect(() => {
@@ -455,7 +475,7 @@ export function ClubRegistrationEditor({ organizationId, workspace }: { organiza
               <label>First name<input autoComplete="off" maxLength={80} name="firstName" required /></label>
               <label>Last name<input autoComplete="off" maxLength={80} name="lastName" required /></label>
               <label>{workspace.event.ageAsOf ? `Age on ${formatCalendarDate(workspace.event.ageDate)}` : "Age at the event"}<input {...ageInputAttributes} name="age" required type="number" /></label>
-              <label>Email (optional)<input autoComplete="off" maxLength={254} name="email" type="email" /></label>
+              <label>Email (optional)<input aria-invalid={guestEmailProblem ? true : undefined} autoComplete="off" inputMode="email" maxLength={254} name="email" onBlur={(event) => setGuestEmailProblem(inlineFieldProblem("Email", "email", event.currentTarget.value.trim(), undefined, true).message)} type="email" />{guestEmailProblem && <small className="field-error" role="alert">{guestEmailProblem}</small>}</label>
             </div>
             <div className="club-registration-toolbar">
               <button className="secondary-button" onClick={() => { setError(""); setAddingGuest(false); }} type="button">Cancel</button>

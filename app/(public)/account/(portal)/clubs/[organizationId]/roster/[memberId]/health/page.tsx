@@ -58,6 +58,7 @@ export default async function ClubMemberHealthPage({ params }: { params: Promise
               consentText={health.consentText}
               doneHref={`${rosterHref}/${encodeURIComponent(memberId)}/health`}
               initialValues={health.values}
+              needsCorrection={health.needsCorrection}
               memberName={memberName}
               mode={{ kind: "director", organizationId, memberId }}
               sponsoringChurch={health.club.sponsoringChurch}

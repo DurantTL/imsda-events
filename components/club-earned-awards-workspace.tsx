@@ -2,12 +2,15 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { AlertTriangle, Award, CheckCircle2, Download, Eye, GraduationCap, Plus, Search, Sparkles, Trash2, Trophy, X } from "lucide-react";
+import { AlertTriangle, Award, CheckCircle2, Download, Eye, GraduationCap, Plus, Search, Sparkles, Trash2, Trophy, UsersRound, X } from "lucide-react";
 import { HonorCombobox } from "@/components/honor-combobox";
 import styles from "@/components/club-orders.module.css";
 import { clubClassLevelLabels, clubClassLevels, type ClubClassLevel } from "@/modules/club-rosters/domain";
 import { awardEntryTooLarge, awardStatusLabels, MAX_AWARD_NEEDS_PER_ENTRY } from "@/modules/earned-awards/domain";
 import type { EarnedAwardsWorkspaceData } from "@/modules/earned-awards/order-source";
+import { cardCell } from "@/components/table-card-labels";
+import { SortOrderNote, SortableHeader } from "@/components/list-sort";
+import { flipDirection, nameSortLabel, sortByName, sortOrderText, type SortDirection } from "@/lib/list-sort";
 import { effectiveChoice, makeSearchMatcher, matchesSearch } from "@/lib/search-match";
 
 export type ClubEarnedAwardsData = EarnedAwardsWorkspaceData;
@@ -39,7 +42,30 @@ export function memberMatchesSearch(member: { firstName: string; lastName: strin
   return matchesSearch([member.firstName, member.lastName, member.classLabel], query);
 }
 
-type SearchableMember = { personId: string; firstName: string; lastName: string; classLabel?: string | null };
+type SearchableMember = {
+  personId: string;
+  firstName: string;
+  lastName: string;
+  classLabel?: string | null;
+  /** Recorded completions by class level, to the calendar date. */
+  completed?: Partial<Record<ClubClassLevel, string>>;
+};
+
+/** The members table's status filter: everyone, or who has / has not completed the chosen class. */
+export type ClassStatusFilter = "" | "COMPLETED" | "NOT_COMPLETED";
+
+export const classStatusFilterLabels = { COMPLETED: "Completed", NOT_COMPLETED: "Not completed" } as const;
+
+/** The members the table shows: the search, then the status of the chosen class. */
+export function filterMembers<T extends SearchableMember>(members: readonly T[], query: string, status: ClassStatusFilter, classLevel: ClubClassLevel): T[] {
+  return shownMembers(members, query).filter((member) => {
+    if (!status) return true;
+    const done = Boolean(member.completed?.[classLevel]);
+    return status === "COMPLETED" ? done : !done;
+  });
+}
+
+const dateLabel = (value: string) => new Date(`${value}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 
 /** Members the search currently shows. */
 export function shownMembers<T extends SearchableMember>(members: readonly T[], query: string): T[] {
@@ -117,22 +143,22 @@ export function ClubEarnedAwardsWorkspace({
 
   // Suggestions: every item and member is ticked to start with; unticking leaves it out.
   const [unticked, setUnticked] = useState<Set<string>>(new Set());
-  // Mark a class completed.
-  const [classMembers, setClassMembers] = useState<Set<string>>(new Set());
+  // One member selection, shared by Mark completed and Add by hand: the members table is listed once.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [memberQuery, setMemberQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<ClassStatusFilter>("");
+  const [nameDirection, setNameDirection] = useState<SortDirection>("asc");
   const [classLevel, setClassLevel] = useState<ClubClassLevel>("FRIEND");
   const [completedOn, setCompletedOn] = useState(today);
   // Add by hand.
   const [itemId, setItemId] = useState("");
   const [itemQuery, setItemQuery] = useState("");
   const [chosen, setChosen] = useState<Array<{ itemId: string; label: string }>>([]);
-  const [handMembers, setHandMembers] = useState<Set<string>>(new Set());
   const [alreadyHasIt, setAlreadyHasIt] = useState(false);
   // Open items.
   const [picked, setPicked] = useState<Set<string>>(new Set());
   // Master Awards: members ticked per rule.
   const [masterPicked, setMasterPicked] = useState<Record<string, Set<string>>>({});
-  // Member search per list (Mark a class completed, Add by hand), so one list's search never filters the other.
-  const [memberQueries, setMemberQueries] = useState<Record<string, string>>({});
 
   async function refresh() {
     const response = await fetch(base, { cache: "no-store" });
@@ -204,11 +230,11 @@ export function ClubEarnedAwardsWorkspace({
   // ---- classes
   async function markClass() {
     const ok = await act(async () => {
-      const result = await post(`${base}/completions`, completionPayload(data.members, classMembers, classQuery, classLevel, completedOn));
+      const result = await post(`${base}/completions`, completionPayload(tableMembers, selected, "", classLevel, completedOn));
       const created = result.created ?? 0;
-      return `Marked ${plural(created, "member", "members")} as having completed ${clubClassLevelLabels[classLevel]}.${skippedNote(result.skipped)} Their insignia is suggested above; nothing is added until you confirm.`;
+      return `Marked ${plural(created, "member", "members")} as having completed ${clubClassLevelLabels[classLevel]}.${skippedNote(result.skipped)} Their insignia is suggested below; nothing is added until you confirm.`;
     });
-    if (ok) setClassMembers(new Set());
+    if (ok) setSelected(new Set());
   }
 
   // ---- add by hand
@@ -239,7 +265,7 @@ export function ClubEarnedAwardsWorkspace({
 
   async function record() {
     const ok = await act(async () => {
-      const result = await post(base, recordPayload(data.members, handMembers, handQuery, chosen.map((entry) => entry.itemId), alreadyHasIt));
+      const result = await post(base, recordPayload(tableMembers, selected, "", chosen.map((entry) => entry.itemId), alreadyHasIt));
       const created = result.created ?? 0;
       const marked = result.marked ?? 0;
       const what = alreadyHasIt
@@ -249,7 +275,7 @@ export function ClubEarnedAwardsWorkspace({
     });
     if (ok) {
       setChosen([]);
-      setHandMembers(new Set());
+      setSelected(new Set());
       setAlreadyHasIt(false);
     }
   }
@@ -294,92 +320,36 @@ export function ClubEarnedAwardsWorkspace({
     if (ok) setMasterPicked((current) => ({ ...current, [ruleId]: new Set() }));
   }
 
-  // Bulk actions count and send only members that are selected and shown (search can hide ticked ones).
-  const classQuery = memberQueries.class ?? "";
-  const handQuery = memberQueries.hand ?? "";
-  const classCount = visibleSelectedIds(data.members, classMembers, classQuery).length;
-  const handCount = visibleSelectedIds(data.members, handMembers, handQuery).length;
+  // The one members table: search, then the chosen class's status, sorted by name. Bulk actions count and
+  // send only members that are selected and shown (a filter can hide ticked ones).
+  const tableMembers = sortByName(filterMembers(data.members, memberQuery, statusFilter, classLevel), nameDirection);
+  const selectedCount = visibleSelectedIds(tableMembers, selected, "").length;
+  const knownSelected = data.members.filter((member) => selected.has(member.personId)).length;
+  const hiddenSelected = knownSelected - selectedCount;
+  const classCount = selectedCount;
+  const handCount = selectedCount;
   const entryCount = chosen.length * handCount;
   const tooMany = awardEntryTooLarge(handCount, chosen.length);
   const canRecord = !busy && chosen.length > 0 && handCount > 0 && !tooMany;
   const suggestionCount = data.insignia.length + data.patches.length;
 
-  const memberList = (selected: ReadonlySet<string>, setSelected: (next: Set<string>) => void, label: string, listKey: string) => {
-    const query = memberQueries[listKey] ?? "";
-    const shown = shownMembers(data.members, query);
-    const hiddenSelected = selected.size - visibleSelectedIds(data.members, selected, query).length;
-    return (
-    <>
-      <div className={styles.groupHead}>
-        <strong>{label}</strong>
-        <span className={styles.actions}>
-          <button className="text-button" onClick={() => setSelected(selectShown(data.members, selected, query))} type="button">{query.trim() ? `Select ${shown.length} shown` : "Select all"}</button>
-          <button className="text-button" onClick={() => setSelected(new Set())} type="button">Clear</button>
-        </span>
-      </div>
-      {data.members.length > 8 && (
-        <div className="earned-member-search">
-          <label className="search-field" htmlFor={`earned-search-${listKey}`}>
-            <Search aria-hidden="true" size={15} />
-            <span className="sr-only">Find a member</span>
-            <input
-              autoComplete="off"
-              id={`earned-search-${listKey}`}
-              onChange={(event) => setMemberQueries((current) => ({ ...current, [listKey]: event.target.value }))}
-              placeholder="Find a member by name or class"
-              type="search"
-              value={query}
-            />
-          </label>
-          <small aria-live="polite" className={styles.muted} role="status">{query.trim() ? `${shown.length} of ${data.members.length} members` : ""}</small>
-        </div>
-      )}
-      {hiddenSelected > 0 && (
-        <p className={styles.flag} role="status">
-          {hiddenSelected} selected {hiddenSelected === 1 ? "member is" : "members are"} hidden by the search and won&apos;t be included.
-        </p>
-      )}
-      {data.members.length === 0 ? (
-        <p className="quiet-copy">No active members are on this year&apos;s roster yet.</p>
-      ) : shown.length === 0 ? (
-        <p className="quiet-copy">No member matches &ldquo;{query.trim()}&rdquo;.</p>
-      ) : (
-        <ul className={`${styles.people} earned-scroll-list`}>
-          {shown.map((member) => (
-            <li key={member.personId}>
-              <label className={styles.check}>
-                <input checked={selected.has(member.personId)} onChange={(event) => setSelected(toggled(selected, member.personId, event.target.checked))} type="checkbox" />
-                <span>
-                  <span translate="no">{member.firstName} {member.lastName}</span>
-                  {member.classLabel && <small className={styles.muted}> · {member.classLabel}</small>}
-                </span>
-              </label>
-              {classHistoryBase && <Link className="text-button" href={`${classHistoryBase}/${encodeURIComponent(member.personId)}`}>
-                Class history<span className="sr-only"> for {member.firstName} {member.lastName}</span>
-              </Link>}
-            </li>
-          ))}
-        </ul>
-      )}
-    </>
-    );
-  };
-
   return (
-    <section className="panel">
-      <div className="section-heading">
+    <section aria-labelledby="class-tracking-heading" className="public-manage-card">
+      <div className="public-manage-card-heading club-roster-heading">
         <div>
           <p className="public-registration-eyebrow">Club supplies</p>
-          <h2>Class tracking</h2>
+          <h2 id="class-tracking-heading">Class tracking</h2>
         </div>
-        <span className="count-badge">{data.needs.length} open</span>
+        <div className="club-roster-heading-actions">
+          <span className="count-badge">{data.needs.length} open</span>
+          {(exportCsvHref || exportPrintHref) && (
+            <div className="report-actions" role="group" aria-label="Export class tracking">
+              {exportCsvHref && <a className="secondary-button" href={exportCsvHref}><Download aria-hidden="true" size={14} /> Export CSV</a>}
+              {exportPrintHref && <Link className="secondary-button" href={exportPrintHref}>Print report</Link>}
+            </div>
+          )}
+        </div>
       </div>
-      {(exportCsvHref || exportPrintHref) && (
-        <div className="report-actions" role="group" aria-label="Export class tracking">
-          {exportCsvHref && <a className="secondary-button" href={exportCsvHref}><Download aria-hidden="true" size={14} /> Export CSV</a>}
-          {exportPrintHref && <Link className="secondary-button" href={exportPrintHref}>Print report</Link>}
-        </div>
-      )}
       {readOnly ? (
         <p className="inline-notice" role="status"><Eye aria-hidden="true" size={14} /> View only. Shows what&apos;s on file. The club director or deputy records and confirms awards.</p>
       ) : (
@@ -389,11 +359,199 @@ export function ClubEarnedAwardsWorkspace({
       {error && <p className="inline-notice error" role="alert">{error}</p>}
 
       {!readOnly && (
+        <section aria-labelledby="earned-members" className={styles.block}>
+          <h3 id="earned-members"><UsersRound aria-hidden="true" size={14} /> Members ({data.members.length})</h3>
+          {data.members.length === 0 ? (
+            <p className="public-manage-empty" role="status"><UsersRound aria-hidden="true" size={17} /> No active members are on this year&apos;s roster yet.</p>
+          ) : (
+            <>
+              <div className="club-roster-tools">
+                <label className="honor-name-search" htmlFor="earned-search">
+                  Find a member
+                  <span className="honor-name-search-field">
+                    <Search aria-hidden="true" size={14} />
+                    <input
+                      autoComplete="off"
+                      id="earned-search"
+                      onChange={(event) => setMemberQuery(event.target.value)}
+                      placeholder="Search by name or class"
+                      type="search"
+                      value={memberQuery}
+                    />
+                  </span>
+                </label>
+                <HonorCombobox
+                  label="Class"
+                  noun="class"
+                  nounPlural="classes"
+                  onChange={(id) => {
+                    // With a status filter on, the shown members depend on the class: a changed class starts a fresh selection.
+                    if (statusFilter && id !== classLevel && selected.size > 0) {
+                      setSelected(new Set());
+                      setNotice("The selection was cleared because the class changed while a status filter is on. Select the members again.");
+                    }
+                    setClassLevel(id as ClubClassLevel);
+                  }}
+                  options={classLevelOptions}
+                  value={classLevel}
+                />
+                <label>
+                  Status for {clubClassLevelLabels[classLevel]}
+                  <select onChange={(event) => setStatusFilter(event.target.value as ClassStatusFilter)} value={statusFilter}>
+                    <option value="">All members</option>
+                    {Object.entries(classStatusFilterLabels).map(([value, label]) => (
+                      <option key={value} value={value}>{label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className={styles.groupHead}>
+                <small aria-live="polite" className={styles.muted} role="status">
+                  {selectedCount} selected{memberQuery.trim() || statusFilter ? ` · ${tableMembers.length} of ${data.members.length} members shown` : ` · ${data.members.length} members`}
+                </small>
+                <span className={styles.actions}>
+                  <button className="text-button" disabled={tableMembers.length === 0} onClick={() => setSelected(selectShown(tableMembers, selected, ""))} type="button">{memberQuery.trim() || statusFilter ? `Select ${tableMembers.length} shown` : "Select all"}</button>
+                  <button className="text-button" disabled={selected.size === 0} onClick={() => setSelected(new Set())} type="button">Clear</button>
+                </span>
+              </div>
+              {hiddenSelected > 0 && (
+                <p className={styles.flag} role="status">
+                  {hiddenSelected} selected {hiddenSelected === 1 ? "member is" : "members are"} hidden by the filters and won&apos;t be included.
+                </p>
+              )}
+              {tableMembers.length === 0 ? (
+                <p className="public-manage-empty" role="status"><UsersRound aria-hidden="true" size={17} /> No member matches these filters.</p>
+              ) : (
+                <div className="report-table-wrap">
+                  <SortOrderNote>{sortOrderText(nameSortLabel, nameDirection)}</SortOrderNote>
+                  <table aria-labelledby="earned-members" className="report-table table-cards class-tracking-table" data-fit-width role="table">
+                    <thead role="rowgroup">
+                      <tr role="row">
+                        <SortableHeader active className="class-col-name" direction={nameDirection} label="Name" onSort={() => setNameDirection(flipDirection(nameDirection))} />
+                        <th className="class-col-class" role="columnheader" scope="col">Current class</th>
+                        <th className="class-col-status" role="columnheader" scope="col">{`${clubClassLevelLabels[classLevel]} status`}</th>
+                        <th className="class-col-history" role="columnheader" scope="col"><span className="sr-only">Class history</span></th>
+                      </tr>
+                    </thead>
+                    <tbody role="rowgroup">
+                      {tableMembers.map((member) => {
+                        const completedOnDate = member.completed?.[classLevel];
+                        return (
+                          <tr key={member.personId} role="row">
+                            <th role="rowheader" scope="row">
+                              <label className={styles.check}>
+                                <input checked={selected.has(member.personId)} onChange={(event) => setSelected(toggled(selected, member.personId, event.target.checked))} type="checkbox" />
+                                <strong translate="no">{member.lastName}, {member.firstName}</strong>
+                              </label>
+                            </th>
+                            <td {...cardCell("Current class")}>{member.classLabel || "—"}</td>
+                            <td {...cardCell(`${clubClassLevelLabels[classLevel]} status`)}>{completedOnDate ? `Completed ${dateLabel(completedOnDate)}` : "Not recorded"}</td>
+                            <td {...cardCell(null)}>
+                              {classHistoryBase && (
+                                <Link className="secondary-button class-history-button" href={`${classHistoryBase}/${encodeURIComponent(member.personId)}`}>
+                                  Class history<span className="sr-only"> for {member.firstName} {member.lastName}</span>
+                                </Link>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
+          )}
+        </section>
+      )}
+
+      {!readOnly && (
+        <section aria-labelledby="earned-classes" className={styles.block}>
+          <h3 id="earned-classes"><GraduationCap aria-hidden="true" size={14} /> Mark a class completed</h3>
+          <p className={`field-help ${styles.helpText}`}>Records that the selected members finished <strong>{clubClassLevelLabels[classLevel]}</strong> (change the class above), which suggests that class&apos;s insignia below. It orders nothing by itself.</p>
+          <div className={styles.pickerRow}>
+            <span className={styles.pickerField}>
+              <label htmlFor="earned-class-date">Completed on</label>
+              <input className={styles.date} id="earned-class-date" onChange={(event) => setCompletedOn(event.target.value)} type="date" value={completedOn} />
+            </span>
+            <button className="primary-button" disabled={busy || classCount === 0 || !completedOn} onClick={markClass} type="button">
+              <GraduationCap aria-hidden="true" size={16} /> {`Mark ${clubClassLevelLabels[classLevel]} completed${classCount > 0 ? ` (${classCount})` : ""}`}
+            </button>
+          </div>
+        </section>
+      )}
+
+      {!readOnly && (
+        <section aria-labelledby="earned-hand" className={styles.block}>
+          <h3 id="earned-hand"><Plus aria-hidden="true" size={14} /> Add by hand</h3>
+          <p className={`field-help ${styles.helpText}`}>For Good Conduct bars and stars, TLT items, and anything else from the supply catalog.</p>
+          {data.catalog.length === 0 ? (
+            <p className="quiet-copy">No earned-award items are in the supply catalog yet. Conference staff add them in the catalog.</p>
+          ) : (
+            <div className={styles.group}>
+              <div className={styles.pickerRow}>
+                {data.catalog.length > 8 && (
+                  <span className={styles.pickerField}>
+                    <label htmlFor="earned-item-search">Find an item</label>
+                    <input autoComplete="off" className={styles.select} id="earned-item-search" onChange={(event) => { setItemQuery(event.target.value); setItemId(""); }} placeholder="Item name" type="search" value={itemQuery} />
+                  </span>
+                )}
+                <span className={styles.pickerField}>
+                  <label htmlFor="earned-item">Item</label>
+                  <select className={styles.select} id="earned-item" onChange={(event) => setItemId(event.target.value)} value={chosenItemId}>
+                    <option value="">Choose an item</option>
+                    {sections.map(([section, { label, items }]) => (
+                      <optgroup key={section} label={label}>
+                        {items.map((row) => <option key={row.itemId} value={row.itemId}>{row.name}</option>)}
+                      </optgroup>
+                    ))}
+                  </select>
+                </span>
+                <button className="secondary-button" disabled={!chosenItemId} onClick={addItem} type="button">
+                  <Plus aria-hidden="true" size={14} /> Add item
+                </button>
+              </div>
+              {chosen.length > 0 && (
+                <ul aria-label="Items to record" className={styles.chips}>
+                  {chosen.map((entry) => (
+                    <li key={entry.itemId}>
+                      <span translate="no">{entry.label}</span>
+                      <button aria-label={`Remove ${entry.label}`} className={styles.chipRemove} onClick={() => setChosen((current) => current.filter((other) => other.itemId !== entry.itemId))} type="button">
+                        <X aria-hidden="true" size={14} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className={`field-help ${styles.helpText}`}>
+                Applies to the {handCount} {handCount === 1 ? "member" : "members"} selected in the table above.
+              </p>
+              <label className={styles.check}>
+                <input checked={alreadyHasIt} onChange={(event) => setAlreadyHasIt(event.target.checked)} type="checkbox" />
+                <span>They already have it <small className={styles.muted}>· recorded as awarded; nothing is ordered and stock isn&apos;t changed</small></span>
+              </label>
+              {tooMany && (
+                <p className={styles.flag} role="status">
+                  That is {entryCount} items, and {MAX_AWARD_NEEDS_PER_ENTRY} is the most to record at once. Choose fewer members or items.
+                </p>
+              )}
+              <div className={styles.actions}>
+                <button className="primary-button" disabled={!canRecord} onClick={record} type="button">
+                  <CheckCircle2 aria-hidden="true" size={16} /> {alreadyHasIt ? "Record as already awarded" : "Record items"}
+                  {chosen.length > 0 && handCount > 0 ? ` (${entryCount})` : ""}
+                </button>
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {!readOnly && (
         <section aria-labelledby="earned-suggestions" className={styles.block}>
           <h3 id="earned-suggestions"><Sparkles aria-hidden="true" size={14} /> Suggested ({suggestionCount})</h3>
           <p className={`field-help ${styles.helpText}`}>Nothing here is added until you confirm it. Untick anything a member already has.</p>
           {suggestionCount === 0 && (
-            <p className="quiet-copy">No suggestions right now. Mark a class completed below to suggest its insignia. Event patches appear after a club event that staff linked a patch to.</p>
+            <p className="quiet-copy">No suggestions right now. Mark a class completed above to suggest its insignia. Event patches appear after a club event that staff linked a patch to.</p>
           )}
           {data.insignia.map((entry) => {
             const ticked = entry.items.filter((item) => !unticked.has(insigniaKey(entry.completionId, item.itemId)));
@@ -469,100 +627,6 @@ export function ClubEarnedAwardsWorkspace({
               </div>
             );
           })}
-        </section>
-      )}
-
-      {!readOnly && (
-        <section aria-labelledby="earned-classes" className={styles.block}>
-          <h3 id="earned-classes"><GraduationCap aria-hidden="true" size={14} /> Mark a class completed</h3>
-          <p className={`field-help ${styles.helpText}`}>Records that members finished a class, which suggests that class&apos;s insignia above. It orders nothing by itself.</p>
-          <div className={styles.pickerRow}>
-            <span className={styles.pickerField}>
-              <HonorCombobox
-                label="Class"
-                noun="class"
-                nounPlural="classes"
-                onChange={(id) => setClassLevel(id as ClubClassLevel)}
-                options={classLevelOptions}
-                value={classLevel}
-              />
-            </span>
-            <span className={styles.pickerField}>
-              <label htmlFor="earned-class-date">Completed on</label>
-              <input className={styles.date} id="earned-class-date" onChange={(event) => setCompletedOn(event.target.value)} type="date" value={completedOn} />
-            </span>
-          </div>
-          <div className={styles.group}>
-            {memberList(classMembers, setClassMembers, "Members", "class")}
-          </div>
-          <div className={styles.actions}>
-            <button className="primary-button" disabled={busy || classCount === 0 || !completedOn} onClick={markClass} type="button">
-              <GraduationCap aria-hidden="true" size={16} /> Mark completed{classCount > 0 ? ` (${classCount})` : ""}
-            </button>
-          </div>
-        </section>
-      )}
-
-      {!readOnly && (
-        <section aria-labelledby="earned-hand" className={styles.block}>
-          <h3 id="earned-hand"><Plus aria-hidden="true" size={14} /> Add by hand</h3>
-          <p className={`field-help ${styles.helpText}`}>For Good Conduct bars and stars, TLT items, and anything else from the supply catalog.</p>
-          {data.catalog.length === 0 ? (
-            <p className="quiet-copy">No earned-award items are in the supply catalog yet. Conference staff add them in the catalog.</p>
-          ) : (
-            <div className={styles.group}>
-              <div className={styles.pickerRow}>
-                {data.catalog.length > 8 && (
-                  <span className={styles.pickerField}>
-                    <label htmlFor="earned-item-search">Find an item</label>
-                    <input autoComplete="off" className={styles.select} id="earned-item-search" onChange={(event) => { setItemQuery(event.target.value); setItemId(""); }} placeholder="Item name" type="search" value={itemQuery} />
-                  </span>
-                )}
-                <span className={styles.pickerField}>
-                  <label htmlFor="earned-item">Item</label>
-                  <select className={styles.select} id="earned-item" onChange={(event) => setItemId(event.target.value)} value={chosenItemId}>
-                    <option value="">Choose an item</option>
-                    {sections.map(([section, { label, items }]) => (
-                      <optgroup key={section} label={label}>
-                        {items.map((row) => <option key={row.itemId} value={row.itemId}>{row.name}</option>)}
-                      </optgroup>
-                    ))}
-                  </select>
-                </span>
-                <button className="secondary-button" disabled={!chosenItemId} onClick={addItem} type="button">
-                  <Plus aria-hidden="true" size={14} /> Add item
-                </button>
-              </div>
-              {chosen.length > 0 && (
-                <ul aria-label="Items to record" className={styles.chips}>
-                  {chosen.map((entry) => (
-                    <li key={entry.itemId}>
-                      <span translate="no">{entry.label}</span>
-                      <button aria-label={`Remove ${entry.label}`} className={styles.chipRemove} onClick={() => setChosen((current) => current.filter((other) => other.itemId !== entry.itemId))} type="button">
-                        <X aria-hidden="true" size={14} />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {memberList(handMembers, setHandMembers, "Members", "hand")}
-              <label className={styles.check}>
-                <input checked={alreadyHasIt} onChange={(event) => setAlreadyHasIt(event.target.checked)} type="checkbox" />
-                <span>They already have it <small className={styles.muted}>· recorded as awarded; nothing is ordered and stock isn&apos;t changed</small></span>
-              </label>
-              {tooMany && (
-                <p className={styles.flag} role="status">
-                  That is {entryCount} items, and {MAX_AWARD_NEEDS_PER_ENTRY} is the most to record at once. Choose fewer members or items.
-                </p>
-              )}
-              <div className={styles.actions}>
-                <button className="primary-button" disabled={!canRecord} onClick={record} type="button">
-                  <CheckCircle2 aria-hidden="true" size={16} /> {alreadyHasIt ? "Record as already awarded" : "Record items"}
-                  {chosen.length > 0 && handCount > 0 ? ` (${entryCount})` : ""}
-                </button>
-              </div>
-            </div>
-          )}
         </section>
       )}
 

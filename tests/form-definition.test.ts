@@ -390,7 +390,7 @@ describe("registration form definitions", () => {
     ];
     const calculation = calculateRosterTotal(
       definition,
-      { club_name: "Test Pathfinders", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100" },
+      { club_name: "Test Pathfinders", director_name: "Jamie Director", email: "director@example.test", phone: "515-555-0100" },
       roster,
       "2026-12-01",
     );
@@ -400,7 +400,7 @@ describe("registration form definitions", () => {
     // against the live directory — the same as `ATTENDEE_TYPES` fields do.
     const hydrated = withDirectoryOptions(definition, { clubs: ["Test Pathfinders"], churches: [], schools: [] });
     const registrationResult = validateTestResponses(hydrated, {
-      club_name: "Test Pathfinders", director_name: "Jamie Director", email: "director@example.test", phone: "555-0100",
+      club_name: "Test Pathfinders", director_name: "Jamie Director", email: "director@example.test", phone: "515-555-0100",
     }, {}, "REGISTRATION");
     expect(registrationResult.isValid).toBe(true);
 

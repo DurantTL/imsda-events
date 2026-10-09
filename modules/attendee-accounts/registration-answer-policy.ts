@@ -1,3 +1,4 @@
+import { normalizePhoneAnswer } from "@/lib/field-validation";
 import { sanitizeAddressInput } from "@/modules/forms/address";
 import {
   getAvailabilityMode,
@@ -174,7 +175,7 @@ export function prepareTieredAttendeeAnswerUpdate(input: {
     ...Object.fromEntries(
       Object.entries(input.changes).map(([key, value]) => [
         key,
-        editableByKey.get(key)?.type === "ADDRESS" ? sanitizeAddressInput(value) : normalizedValue(value),
+        editableByKey.get(key)?.type === "ADDRESS" ? sanitizeAddressInput(value) : editableByKey.get(key)?.type === "PHONE" ? normalizePhoneAnswer(normalizedValue(value)) : normalizedValue(value),
       ]),
     ),
   };
@@ -193,7 +194,7 @@ export function prepareTieredAttendeeAnswerUpdate(input: {
     { ...input.registrationResponses, ...responses },
     {},
     "ATTENDEE",
-    { ignoreAvailability: true, ignoredFieldKeys },
+    { ignoreAvailability: true, ignoredFieldKeys, previousResponses: { ...input.registrationResponses, ...input.currentResponses } },
   );
   if (!validation.isValid) {
     throw new AttendeeAnswerUpdateError(

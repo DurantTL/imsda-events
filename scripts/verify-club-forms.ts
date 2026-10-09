@@ -56,7 +56,8 @@ const templateKeys = [SLIP, STAFF_FORM, PASSENGERS, "pathfinder_membership_appli
 const BUILDER_PREFIX = "cf712_";
 const emailDomain = "clubforms.example.test";
 const SECRET_PHYSICIAN = "Dr. Verify Physician Only";
-const SECRET_PHONE = "515-555-0177";
+// The normalised form: phones are stored as (515) 555-0134 (#855), so the sealed round trip compares that.
+const SECRET_PHONE = "(515) 555-0177";
 const SECRET_HEALTH = "Verify health detail only";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -302,8 +303,8 @@ async function main() {
       full_name: "Birth Verify", birth_date: BIRTH, gender: "Male", child_1_name: "Kid Verify", child_1_birth_date: "2018-02-03", street: "2 Example Road", city: "Exampleville",
       state: "MO", zip: "64000", email: `birth@${emailDomain}`, church: "Verify Forms Church", club: "Verify Forms Club A",
       health_limitation: "Yes", health_limitation_how: SECRET_HEALTH, conduct_accused: "No",
-      reference_1_name: "A", reference_1_address: "B", reference_1_phone: "C", reference_2_name: "A", reference_2_address: "B", reference_2_phone: "C",
-      reference_3_name: "A", reference_3_address: "B", reference_3_phone: "C",
+      reference_1_name: "A", reference_1_address: "B", reference_1_phone: "515-555-0140", reference_2_name: "A", reference_2_address: "B", reference_2_phone: "515-555-0140",
+      reference_3_name: "A", reference_3_address: "B", reference_3_phone: "515-555-0140",
       signature: "Birth Verify", signature_date: "2026-10-02", signature_acknowledgment: true,
     }, submit: true,
   });
@@ -529,8 +530,8 @@ async function main() {
   const staffAnswers = {
     full_name: "Alex Verify", birth_date: "1985-06-15", gender: "Male", street: "2 Example Road", city: "Exampleville", state: "MO", zip: "64000",
     email: `alex@${emailDomain}`, church: "Verify Forms Church", club: "Verify Forms Club A", health_limitation: "Yes", health_limitation_how: SECRET_HEALTH, conduct_accused: "No",
-    reference_1_name: "A", reference_1_address: "B", reference_1_phone: "C", reference_2_name: "A", reference_2_address: "B", reference_2_phone: "C",
-    reference_3_name: "A", reference_3_address: "B", reference_3_phone: "C",
+    reference_1_name: "A", reference_1_address: "B", reference_1_phone: "515-555-0140", reference_2_name: "A", reference_2_address: "B", reference_2_phone: "515-555-0140",
+    reference_3_name: "A", reference_3_address: "B", reference_3_phone: "515-555-0140",
     signature: "Alex Verify", signature_date: "2026-10-02", signature_acknowledgment: true,
     office_signature: "Forged office signature",
   };

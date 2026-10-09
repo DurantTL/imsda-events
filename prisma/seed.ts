@@ -213,17 +213,17 @@ async function main() {
     prisma.person.upsert({
       where: { normalizedEmail: "alicia@example.test" },
       update: {},
-      create: { id: "per_alicia", firstName: "Alicia", lastName: "Smith", normalizedEmail: "alicia@example.test", phone: "+1-555-0101" },
+      create: { id: "per_alicia", firstName: "Alicia", lastName: "Smith", normalizedEmail: "alicia@example.test", phone: "+1 515-555-0101" },
     }),
     prisma.person.upsert({
       where: { normalizedEmail: "jennifer@example.test" },
       update: {},
-      create: { id: "per_jennifer", firstName: "Jennifer", lastName: "Miller", normalizedEmail: "jennifer@example.test", phone: "+1-555-0102" },
+      create: { id: "per_jennifer", firstName: "Jennifer", lastName: "Miller", normalizedEmail: "jennifer@example.test", phone: "+1 515-555-0102" },
     }),
     prisma.person.upsert({
       where: { normalizedEmail: "taylor@example.test" },
       update: {},
-      create: { id: "per_taylor", firstName: "Taylor", lastName: "Worker", normalizedEmail: "taylor@example.test", phone: "+1-555-0103" },
+      create: { id: "per_taylor", firstName: "Taylor", lastName: "Worker", normalizedEmail: "taylor@example.test", phone: "+1 515-555-0103" },
     }),
   ]);
 
@@ -318,7 +318,7 @@ async function main() {
     prisma.person.upsert({
       where: { normalizedEmail: "jordan.miller@example.test" },
       update: {},
-      create: { id: "per_jordan_miller", firstName: "Jordan", lastName: "Miller", normalizedEmail: "jordan.miller@example.test", phone: "+1-555-0104" },
+      create: { id: "per_jordan_miller", firstName: "Jordan", lastName: "Miller", normalizedEmail: "jordan.miller@example.test", phone: "+1 515-555-0104" },
     }),
     prisma.person.upsert({
       where: { normalizedEmail: "avery.miller@example.test" },

@@ -20,8 +20,11 @@ import {
   fieldValuesFromInput,
   hasHealthNoteFor,
   healthAuditActor,
-  healthRecordInputSchema,
+  failsOnlyTypedChecks,
+  healthFieldsNeedingCorrection,
+  healthRecordInputSchemaFor,
   healthRecordStatus,
+  TYPED_HEALTH_KEYS,
   isHealthFieldKey,
   viewerActorId,
   viewerCan,
@@ -58,9 +61,9 @@ function allow(viewer: HealthViewer, organizationId: string, action: HealthActio
 }
 
 /** Turns a validation failure into field messages only, so no submitted value is ever echoed. */
-export function parseHealthRecordInput(raw: unknown): HealthRecordInput {
+export function parseHealthRecordInput(raw: unknown, stored: Record<string, unknown> = {}): HealthRecordInput {
   try {
-    return healthRecordInputSchema.parse(raw);
+    return healthRecordInputSchemaFor(stored).parse(raw);
   } catch (error) {
     if (error instanceof ZodError) {
       const issues = error.issues.map((issue) => ({ field: String(issue.path[0] ?? ""), message: issue.message }));
@@ -156,6 +159,8 @@ export type HealthTabView = {
   hasHealthNote: boolean;
   /** Opened values, keyed by field. Empty when no record exists. */
   values: Record<string, unknown>;
+  /** Stored fields that fail today's checks (#855), by key, so the form can ask for a correction. Never a value. */
+  needsCorrection: string[];
   canEdit: boolean;
   consentText: typeof HEALTH_CONSENT_TEXT;
   consentVersion: string;
@@ -193,12 +198,14 @@ export async function viewHealthRecord(
       eventId: scoped ? options.eventId ?? null : null,
     },
   });
+  const values = record ? openFields(record.id, record.fields) : {};
   return {
     member: { id: member.id, firstName: member.person?.firstName ?? "", lastName: member.person?.lastName ?? "" },
     club: { name: member.organization.name, sponsoringChurch: member.organization.parentOrganization?.name ?? null },
     status: healthRecordStatus(record, now),
     hasHealthNote: record?.hasHealthNote ?? false,
-    values: record ? openFields(record.id, record.fields) : {},
+    values,
+    needsCorrection: healthFieldsNeedingCorrection(values),
     canEdit: viewerCan(viewer, organizationId, "EDIT"),
     consentText: HEALTH_CONSENT_TEXT,
     consentVersion: HEALTH_CONSENT_VERSION,
@@ -274,11 +281,38 @@ async function writeRecord(
   return { recordId, fieldCount: rows.length, hasHealthNote: common.hasHealthNote, created: !existing };
 }
 
+/** The member's stored values, opened for comparison only. Null when there is no record or it cannot be opened. */
+async function storedTypedValuesForMember(organizationId: string, memberId: string, now: Date): Promise<Record<string, unknown> | null> {
+  try {
+    const prisma = getPrisma();
+    const member = await loadMember(prisma, organizationId, memberId, now);
+    const record = await findRecord(prisma, organizationId, member);
+    // Only the typed keys are opened, never the clinical fields.
+    const typed = TYPED_HEALTH_KEYS as readonly string[];
+    return record ? openFields(record.id, record.fields.filter((field) => typed.includes(field.fieldKey))) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** A director or deputy types the record in from the paper form (or corrects it). */
 export async function saveHealthRecord(viewer: HealthViewer, organizationId: string, memberId: string, rawInput: unknown, now = new Date()) {
   requireHealthRecordsEnabled();
   allow(viewer, organizationId, "EDIT");
-  const input = parseHealthRecordInput(rawInput);
+  let input: HealthRecordInput;
+  try {
+    input = parseHealthRecordInput(rawInput);
+  } catch (error) {
+    if (!(error instanceof HealthRecordError) || error.code !== "VALIDATION_FAILED") throw error;
+    // Only when every failure is a typed phone, email or ZIP check: a plain failure opens nothing.
+    const check = healthRecordInputSchemaFor().safeParse(rawInput);
+    if (check.success || !failsOnlyTypedChecks(check.error.issues)) throw error;
+    // Editing (#855): an old answer that fails today's checks and was not changed does not block the save. The
+    // stored values are opened only to compare; no message or log carries one.
+    const stored = await storedTypedValuesForMember(organizationId, memberId, now);
+    if (!stored) throw error;
+    input = parseHealthRecordInput(rawInput, stored);
+  }
   requireEncryption();
   const who = healthAuditActor(viewer);
   return withFirstSaveRetry(() => getPrisma().$transaction(async (tx) => {

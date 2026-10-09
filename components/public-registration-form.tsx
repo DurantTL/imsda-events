@@ -99,6 +99,7 @@ import {
 } from "@/modules/forms/primary-attendee-sync";
 import {
   attendeeRoleLabel,
+  attendeeMissingFieldLabels,
   isAttendeeCardComplete,
   issueAttendeeIndex,
   attendeeCardLayout,
@@ -111,6 +112,9 @@ import { ExpandableOptionDescription, ExpandableText } from "@/components/expand
 import { useAccessibleDialog } from "@/components/use-accessible-dialog";
 import { useInertBackground, usePhoneViewport } from "@/components/use-attendee-sheet";
 import { NeedsAttention, StatusComplete } from "@/components/needs-attention";
+import { rosterAnsweredFieldKeys, rosterAnsweredSummary } from "@/modules/club-registrations/domain";
+import { carryoverAttention, missingAnswersAttention, type AttentionItem } from "@/modules/club-registrations/attention";
+import { accountPromptVisible } from "@/modules/forms/account-prompt";
 import { FieldError } from "@/components/field-error";
 import { errorSummaryHeading } from "@/components/form-error-summary";
 import { summarizeRosterAttendees } from "@/modules/forms/roster-summary";
@@ -149,6 +153,8 @@ export type RosterAttendee = {
    * form can prompt for them instead of leaving the field silently blank. */
   carriedFromRoster?: boolean;
   carryoverMismatches?: Array<{ fieldKey: string; label: string; value: string }>;
+  /** The roster's own gender and role answers (#853): while the card still holds them, they sit behind "Change". */
+  rosterValues?: Record<string, string>;
 };
 type FieldRenderContext = {
   values: FormResponses;
@@ -288,9 +294,20 @@ export type PublicRegistrationFormProps = {
      * Field issues come back with the attendee index they belong to.
      */
     submitEdit?: (attendees: RosterAttendee[]) => Promise<{ ok: true } | { ok: false; message: string; issues: FormIssue[] }>;
+    /**
+     * Each kept person's answers as saved, by client id (#855). A phone, email, number or date they did not change is
+     * not re-checked, so an old answer that fails today's rules never blocks reopening the registration; a changed one
+     * still must pass. The server applies the same rule.
+     */
+    previousResponses?: Record<string, FormResponses>;
     submitLabel?: string;
     /** Rendered under a person's details: their location and classes, chosen here rather than on a separate step (#650). */
     renderAttendeeExtras?: (attendee: RosterAttendee, index: number) => ReactNode;
+    /**
+     * Extra reasons a person's card needs attention (#853): a class still owed, a Sterling Volunteers check. Each says
+     * what is wrong and how to fix it; the card is not "Complete" while any remain.
+     */
+    attendeeAttention?: (attendee: RosterAttendee, index: number) => AttentionItem[];
     /** A reason the form can't be sent yet (a class pick that no longer fits), shown instead of submitting. */
     blockedReason?: string | null;
   };
@@ -650,7 +667,27 @@ export function PublicRegistrationForm({
   const [promoCodeApplying, setPromoCodeApplying] = useState(false);
   const [promoCodeNotice, setPromoCodeNotice] = useState("");
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
+  // Club cards tuck roster-known answers away (#853); once a question has been shown (a server issue, or "Change"),
+  // it stays shown for the rest of the visit. Keyed by `${clientId}:${fieldKey}`, or `${clientId}:*` for "Change".
+  const [revealedFields, setRevealedFields] = useState<Record<string, true>>({});
+  useEffect(() => {
+    if (!club || issues.length === 0) return;
+    const reveal: Record<string, true> = {};
+    for (const issue of issues) {
+      const match = /^attendees\.(\d+)\.responses\.(.+)$/.exec(issue.path ?? "");
+      const target = match ? attendees[Number(match[1])] : undefined;
+      if (match && target) reveal[`${target.clientId}:${match[2]}`] = true;
+    }
+    if (Object.keys(reveal).length === 0) return;
+    const timer = window.setTimeout(() => setRevealedFields((current) => ({ ...current, ...reveal })), 0);
+    return () => window.clearTimeout(timer);
+    // `attendees` is read for ids only; a keystroke should not re-run this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [issues]);
   const [accountChoice, setAccountChoice] = useState<"without" | "create">("without");
+  // The optional-account offer (#854): never for someone already signed in, and
+  // never on a club's own registration.
+  const showAccountPrompt = accountPromptVisible({ signedIn: disableDrafts, clubRegistration: Boolean(club) });
   const lockedAttendeeFieldKeys = useMemo(
     () => new Set(club?.lockedAttendeeFieldKeys ?? []),
     [club?.lockedAttendeeFieldKeys],
@@ -2038,7 +2075,7 @@ export function PublicRegistrationForm({
             type={field.type === "EMAIL" ? "email" : field.type === "PHONE" ? "tel" : field.type === "DATE" ? "date" : field.type === "NUMBER" ? "number" : "text"}
             min={field.type === "NUMBER" ? numberFieldBounds(field)?.minimumAge ?? 0 : field.type === "DATE" ? dateFieldBounds(field).min : undefined}
             max={field.type === "NUMBER" ? numberFieldBounds(field)?.maximumAge : field.type === "DATE" ? (isBirthDateField(field) ? pricingDate : undefined) : undefined}
-            inputMode={field.type === "PHONE" ? "tel" : field.type === "NUMBER" ? "numeric" : undefined}
+            inputMode={field.type === "PHONE" ? "tel" : field.type === "EMAIL" ? "email" : field.type === "NUMBER" ? "numeric" : undefined}
             autoComplete={autoComplete}
             required={field.required && !excused}
             readOnly={context.attendeeIndex !== null && lockedAttendeeFieldKeys.has(field.key)}
@@ -2171,17 +2208,53 @@ export function PublicRegistrationForm({
               sheetOpen: phoneSheetActive,
             });
             const cardId = `public_attendee_${safeId(attendee.clientId)}`;
+            // Roster answers are not asked again (#853): the person's name, age, gender and role are already known.
+            const rosterKnown = club
+              ? rosterAnsweredFieldKeys(definition, attendee.responses, {
+                carriedFromRoster: Boolean(attendee.carriedFromRoster),
+                unresolvedKeys: (attendee.carryoverMismatches ?? []).map((mismatch) => mismatch.fieldKey),
+                rosterValues: attendee.rosterValues,
+                // Reopening a submitted registration asks for them again.
+                askChangeable: Boolean(club.submitEdit),
+              })
+              : { locked: [], changeable: [] };
+            const changeOpen = Boolean(revealedFields[`${attendee.clientId}:*`]);
+            const fieldsByKey = new Map(attendeeSections.flatMap((section) => section.fields).map((field) => [field.key, field]));
+            const rosterAnswered = new Set([...rosterKnown.locked, ...rosterKnown.changeable].filter((key) => {
+              const field = fieldsByKey.get(key);
+              if (!field) return false;
+              const shown = revealedFields[`${attendee.clientId}:${key}`]
+                || issueFor(field, context)
+                || (changeOpen && rosterKnown.changeable.includes(key));
+              return !shown;
+            }));
+            const changeableHidden = rosterKnown.changeable.filter((key) => rosterAnswered.has(key));
             const visibleAttendeeSections = attendeeSections.map((section) => ({
               ...section,
               fields: section.fields.filter((field) => (
                 allowedFieldKeys.has(field.key)
                 && isFieldVisible(field, context.visibilityResponses)
+                // A problem the server found with a roster answer still shows its question.
+                && !rosterAnswered.has(field.key)
               )),
             })).filter((section) => section.fields.length > 0);
+            const rosterSummary = rosterAnsweredSummary(
+              attendeeSections.flatMap((section) => section.fields).filter((field) => rosterAnswered.has(field.key)),
+              attendee.responses,
+            );
             // An unresolved carried-over prompt (a value that did not match, or a blank role) is still "Needs attention".
             const unresolvedCarryovers = attendeeSections.flatMap((section) => section.fields)
               .filter((field) => allowedFieldKeys.has(field.key) && isFieldVisible(field, context.visibilityResponses) && carryoverMismatchNotice(field, context)).length;
-            const statusComplete = cardStatusComplete(complete, unresolvedCarryovers);
+            // Only a club registration says why, and only on the collapsed card; other forms keep the plain badge.
+            const attention: AttentionItem[] = club
+              ? [
+                ...(complete ? [] : missingAnswersAttention(attendeeMissingFieldLabels(definition, registrationResponses, attendee.responses))),
+                ...carryoverAttention(unresolvedCarryovers),
+                ...(club.attendeeAttention?.(attendee, attendeeIndex) ?? []),
+              ]
+              : [];
+            // An advisory note (a check expiring soon) never takes away "Complete".
+            const statusComplete = cardStatusComplete(complete, unresolvedCarryovers) && attention.every((item) => item.advisory);
             return (
               <article
                 className={`public-registration-attendee${collapsed ? " is-collapsed" : " is-active"}${inSheet ? " is-sheet" : ""}`}
@@ -2207,6 +2280,13 @@ export function PublicRegistrationForm({
                       <small className="public-registration-attendee-summary">
                         {statusComplete ? <StatusComplete /> : <NeedsAttention />}
                       </small>
+                    )}
+                    {collapsed && attention.length > 0 && (
+                      <ul className="public-registration-attendee-attention">
+                        {attention.map((item) => (
+                          <li key={item.reason}><strong>{item.reason}.</strong> {item.fix}</li>
+                        ))}
+                      </ul>
                     )}
                   </div>
                   {(canCollapse || manageRoster) && (
@@ -2271,6 +2351,24 @@ export function PublicRegistrationForm({
                       <p className="public-registration-attendee-name-sync">
                         The first attendee starts with the primary contact’s name. You can edit it
                         here when the person completing the form is registering someone else.
+                      </p>
+                    )}
+                    {rosterSummary && (
+                      <p className="public-registration-attendee-roster-note">
+                        From your roster, not asked again: {rosterSummary}.
+                        {changeableHidden.length > 0 && (
+                          <>
+                            {" "}
+                            <button
+                              className="text-button"
+                              type="button"
+                              aria-label={`Change gender or role for ${displayName}`}
+                              onClick={() => setRevealedFields((current) => ({ ...current, [`${attendee.clientId}:*`]: true }))}
+                            >
+                              Change
+                            </button>
+                          </>
+                        )}
                       </p>
                     )}
                     {visibleAttendeeSections.map((section) => (
@@ -2694,48 +2792,50 @@ export function PublicRegistrationForm({
           </section>
         )}
 
-        <section className="public-registration-review-card public-registration-review-account">
-          <p className="public-registration-eyebrow">Optional account</p>
-          <h3>Create an optional account to manage future registrations</h3>
-          <p>
-            An account can show registrations and attendees that use your verified
-            contact email, across events, without requesting another private link.
-          </p>
-          <fieldset>
-            <legend>Choose what happens after submission</legend>
-            <label>
-              <input
-                checked={accountChoice === "without"}
-                name="optionalAccount"
-                onChange={() => setAccountChoice("without")}
-                type="radio"
-                value="without"
-              />
-              <span>
-                <strong>Finish without an account</strong>
-                <small>Use the confirmation code or private email link to manage this registration.</small>
-              </span>
-            </label>
-            <label>
-              <input
-                checked={accountChoice === "create"}
-                name="optionalAccount"
-                onChange={() => setAccountChoice("create")}
-                type="radio"
-                value="create"
-              />
-              <span>
-                <strong>Create an account after submitting</strong>
-                <small>We will offer verified account setup on the confirmation page.</small>
-              </span>
-            </label>
-          </fieldset>
-          <small>
-            The registration holder is the contact person. Attendees are the people
-            registered. The account is a separate, optional sign-in and does not
-            change either role or delay submission.
-          </small>
-        </section>
+        {showAccountPrompt && (
+          <section className="public-registration-review-card public-registration-review-account">
+            <p className="public-registration-eyebrow">Optional account</p>
+            <h3>Create an optional account to manage future registrations</h3>
+            <p>
+              An account can show registrations and attendees that use your verified
+              contact email, across events, without requesting another private link.
+            </p>
+            <fieldset>
+              <legend>Choose what happens after submission</legend>
+              <label>
+                <input
+                  checked={accountChoice === "without"}
+                  name="optionalAccount"
+                  onChange={() => setAccountChoice("without")}
+                  type="radio"
+                  value="without"
+                />
+                <span>
+                  <strong>Finish without an account</strong>
+                  <small>Use the confirmation code or private email link to manage this registration.</small>
+                </span>
+              </label>
+              <label>
+                <input
+                  checked={accountChoice === "create"}
+                  name="optionalAccount"
+                  onChange={() => setAccountChoice("create")}
+                  type="radio"
+                  value="create"
+                />
+                <span>
+                  <strong>Create an account after submitting</strong>
+                  <small>We will offer verified account setup on the confirmation page.</small>
+                </span>
+              </label>
+            </fieldset>
+            <small>
+              The registration holder is the contact person. Attendees are the people
+              registered. The account is a separate, optional sign-in and does not
+              change either role or delay submission.
+            </small>
+          </section>
+        )}
       </div>
     );
   }
@@ -2776,6 +2876,7 @@ export function PublicRegistrationForm({
         projectedUsage,
         "ATTENDEE",
         {
+          previousResponses: club?.previousResponses?.[attendee.clientId],
           ignoredFieldKeys: joiningWaitlist && definition.payment?.enabled
             ? [definition.payment.paymentMethodFieldKey]
             : undefined,
@@ -3039,12 +3140,14 @@ export function PublicRegistrationForm({
                 )}
               </div>
             )}
-            <RegistrationAccountPrompt
-              email={confirmation.email}
-              embedded={embedded}
-              intended={accountChoice === "create"}
-              returnTo={confirmation.managePath ?? undefined}
-            />
+            {showAccountPrompt && (
+              <RegistrationAccountPrompt
+                email={confirmation.email}
+                embedded={embedded}
+                intended={accountChoice === "create"}
+                returnTo={confirmation.managePath ?? undefined}
+              />
+            )}
             <div className="public-registration-confirmation-actions">
               <a {...eventsSiteNavigation} className="public-registration-secondary-button" href={`/events/${event.slug}`}><ArrowLeft size={16} aria-hidden="true" /> Back to event</a>
               <button className="public-registration-secondary-button" type="button" onClick={startAnotherRegistration}>{waitlisted ? "Add another waitlist request" : "Start another registration"}</button>

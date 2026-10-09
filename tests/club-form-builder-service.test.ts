@@ -520,7 +520,7 @@ describe("hidden fields on every new-fill path (#712)", () => {
     await saveClubFormDraft(slipSeed.key, { draft: spec, baseVersion: base }, "admin-1", now);
     await publishClubFormDraft(slipSeed.key, { baseVersion: base }, "admin-1", now);
   }
-  const fillAnswers = { child_name: "Riley Sample", street: "6 Example Road", city: "Exampleville", state: "IA", zip: "50001", phone: "555-0110", activity_date: "2026-11-07", ride_with: "Pat Sample", parent_signature: "Pat Sample", parent_signature_date: "2026-10-30", relationship: "Parent", emergency_contact_phone: "555-0111" };
+  const fillAnswers = { child_name: "Riley Sample", street: "6 Example Road", city: "Exampleville", state: "IA", zip: "50001", phone: "515-555-0110", activity_date: "2026-11-07", ride_with: "Pat Sample", parent_signature: "Pat Sample", parent_signature_date: "2026-10-30", relationship: "Parent", emergency_contact_phone: "515-555-0111" };
   const draftRow = () => ({
     id: "sub-d", templateId: "tpl-slip", organizationId: "club-a", clubYear: "2026-27", rosterMemberId: null, subjectName: "Riley Sample",
     status: "DRAFT", submittedAt: null, enteredVia: "ATTENDEE", answers: { child_name: "Riley Sample", activity: "Canoe trip" },

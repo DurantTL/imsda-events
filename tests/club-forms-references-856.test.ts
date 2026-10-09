@@ -18,9 +18,9 @@ const references: RegistrationFormDefinition = registrationFormDefinitionSchema.
 });
 
 const answers = {
-  reference_1_name: "Pastor Example", reference_1_address: "1 Example Road", reference_1_phone: "555-0101",
-  reference_2_name: "Local Example", reference_2_address: "2 Example Road", reference_2_phone: "555-0102",
-  reference_3_name: "Other Example", reference_3_address: "3 Example Road", reference_3_phone: "555-0103",
+  reference_1_name: "Pastor Example", reference_1_address: "1 Example Road", reference_1_phone: "515-555-0101",
+  reference_2_name: "Local Example", reference_2_address: "2 Example Road", reference_2_phone: "515-555-0102",
+  reference_3_name: "Other Example", reference_3_address: "3 Example Road", reference_3_phone: "515-555-0103",
 };
 
 describe("staff form references laid out per person (#856)", () => {

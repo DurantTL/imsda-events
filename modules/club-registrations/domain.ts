@@ -225,6 +225,72 @@ export function lockedAttendeeFieldKeys(definition: RegistrationFormDefinition) 
 }
 
 /**
+ * The attendee questions a club registration does not ask again because the
+ * club roster already answered them (#853).
+ *
+ * `locked` is the name and age: always the roster's, never editable here.
+ * `changeable` is the gender and role the form took from the roster: tucked
+ * away behind "Change" while they still equal the roster's current value
+ * (`rosterValues`), never in the editor (`askChangeable`), so a director can
+ * always correct them. A question with no answer yet (a roster with no age, a
+ * role that didn't match) is listed in neither, so it is still asked.
+ */
+export function rosterAnsweredFieldKeys(
+  definition: RegistrationFormDefinition,
+  responses: Readonly<Record<string, unknown>>,
+  options: {
+    carriedFromRoster: boolean;
+    unresolvedKeys?: readonly string[];
+    rosterValues?: Readonly<Record<string, string>>;
+    /** The editor path always asks them. */
+    askChangeable?: boolean;
+  },
+): { locked: string[]; changeable: string[] } {
+  const answered = (key: string) => {
+    const value = responses[key];
+    return typeof value === "string" ? value.trim().length > 0 : value !== undefined && value !== null;
+  };
+  const unresolved = new Set(options.unresolvedKeys ?? []);
+  const locked = new Set(lockedAttendeeFieldKeys(definition));
+  let changeable: string[] = [];
+  for (const field of attendeeFields(definition)) {
+    const isGender = field.key === "gender" && field.type !== "LONG_TEXT";
+    const isRole = field.key === "attendee_type" && ["RADIO", "SELECT"].includes(field.type);
+    if (!(isGender || isRole) || !options.carriedFromRoster || options.askChangeable) continue;
+    const value = responses[field.key];
+    if (answered(field.key) && !unresolved.has(field.key) && typeof value === "string" && options.rosterValues?.[field.key] === value) {
+      changeable.push(field.key);
+    } else if (answered(field.key)) {
+      // One differs from the roster (a director's change, or a draft's): ask both rather than hide a changed answer.
+      changeable = [];
+      break;
+    }
+  }
+  return {
+    locked: attendeeFields(definition).map((field) => field.key)
+      .filter((key) => locked.has(key) && !unresolved.has(key) && answered(key)),
+    changeable,
+  };
+}
+
+/** "name, age 11, Female, Pathfinder": the roster answers a card does not ask again, in words. */
+export function rosterAnsweredSummary(
+  fields: readonly RegistrationFormField[],
+  responses: Readonly<Record<string, unknown>>,
+): string {
+  const nameKeys = new Set<string>([...fullNameKeys, ...splitNameKeyPairs.flatMap((pair) => [pair.first, pair.last])]);
+  return fields.flatMap((field) => {
+    // The person's name is already in the card's heading.
+    if (nameKeys.has(field.key)) return [];
+    const value = responses[field.key];
+    if (typeof value !== "string" || !value.trim()) return [];
+    const shown = field.optionLabels?.[value] ?? value;
+    if (field.type === "NUMBER" && isAgeFieldKey(field.key)) return [`age ${shown}`];
+    return [shown];
+  }).join(", ");
+}
+
+/**
  * The club and its sponsoring church, read from the `Organization` record a
  * signed-in director actually directs — never from anything the client sent
  * (#482). `churchName` is null when the club has no sponsoring church on

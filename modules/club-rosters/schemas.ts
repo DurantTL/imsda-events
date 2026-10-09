@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { rosterRoleOrDefault } from "@/modules/club-rosters/domain";
-import { guardiansInputSchema } from "@/modules/club-rosters/guardians-domain";
+import { guardiansInputSchema, guardiansUpdateSchema } from "@/modules/club-rosters/guardians-domain";
 
 const classLevel = z.enum(["FRIEND", "COMPANION", "EXPLORER", "RANGER", "VOYAGER", "GUIDE", "TLT", "MASTER_GUIDE"]).nullable();
 
@@ -63,7 +63,7 @@ export const rosterMemberUpdateSchema = z.object({
   classLevel,
   gender,
   status: z.enum(["ACTIVE", "INACTIVE"]),
-  guardians: guardiansInputSchema,
+  guardians: guardiansUpdateSchema,
   willingToDrive: ignoredWillingToDrive,
 }).partial().strict().refine((data) => !("gender" in data) || data.gender !== null, {
   message: "Choose Male or Female.",

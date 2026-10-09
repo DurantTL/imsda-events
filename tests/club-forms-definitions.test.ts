@@ -306,13 +306,13 @@ describe("staff form answers", () => {
     conduct_accused: "No",
     reference_1_name: "Pastor Example",
     reference_1_address: "3 Example Road",
-    reference_1_phone: "555-0101",
+    reference_1_phone: "515-555-0101",
     reference_2_name: "Local Example",
     reference_2_address: "4 Example Road",
-    reference_2_phone: "555-0102",
+    reference_2_phone: "515-555-0102",
     reference_3_name: "Other Example",
     reference_3_address: "5 Example Road",
-    reference_3_phone: "555-0103",
+    reference_3_phone: "515-555-0103",
     signature: "Alex Volunteer",
     signature_date: "2026-10-02",
     signature_acknowledgment: true,
@@ -368,7 +368,7 @@ describe("permission slip and passenger list answers", () => {
       city: "Exampleville",
       state: "IA",
       zip: "50001",
-      phone: "555-0110",
+      phone: "515-555-0110",
       activity: "Canoe trip",
       activity_date: "2026-11-07",
       ride_with: "Pat Sample",
@@ -376,7 +376,7 @@ describe("permission slip and passenger list answers", () => {
       parent_signature_date: "2026-10-30",
       relationship: "Parent",
       physician_name: "Dr. Example",
-      emergency_contact_phone: "555-0111",
+      emergency_contact_phone: "515-555-0111",
     });
     expect(validateClubFormAnswers(template.definition, answers)).toEqual([]);
     const { plain, sensitive } = splitAnswers(template, answers);
@@ -396,17 +396,17 @@ describe("permission slip and passenger list answers", () => {
     ]);
     const answers = sanitizeClubFormAnswers(template.definition, {
       contact_name: "Dana Director",
-      contact_cell: "555-0120",
+      contact_cell: "515-555-0120",
       driver_name: "Drew Driver",
-      driver_cell: "555-0121",
+      driver_cell: "515-555-0121",
       passenger_1_name: "Riley Sample",
-      passenger_1_phone: "555-0122",
-      passenger_1_emergency_contact: "Pat Sample 555-0123",
+      passenger_1_phone: "515-555-0122",
+      passenger_1_emergency_contact: "Pat Sample 515-555-0123",
       passenger_20_name: "Last Passenger",
     });
     expect(validateClubFormAnswers(template.definition, answers)).toEqual([]);
     const { plain, sensitive } = splitAnswers(template, answers);
-    expect(sensitive).toEqual({ passenger_1_emergency_contact: "Pat Sample 555-0123" });
+    expect(sensitive).toEqual({ passenger_1_emergency_contact: "Pat Sample 515-555-0123" });
     expect(plain).toHaveProperty("passenger_20_name", "Last Passenger");
   });
 });

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { shirtSizeOptions } from "@/modules/registrations/shirt-sizes";
 import { hasAddressValue, isPlainAddressObject, validateAddressValue } from "@/modules/forms/address";
+import { isUnchangedFromStored, normalizePhoneAnswer, problemMessage, validateDate, validateEmail, validateNumber, validatePhone } from "@/lib/field-validation";
 
 export const formFieldTypes = ["TEXT", "LONG_TEXT", "EMAIL", "PHONE", "SELECT", "RADIO", "MULTISELECT", "RANKED_CHOICE", "CHECKBOX", "DATE", "NUMBER", "CALCULATED", "ADDRESS"] as const;
 export const formFieldScopes = ["REGISTRATION", "ATTENDEE"] as const;
@@ -1924,6 +1925,51 @@ export function dateFieldProblem(
   return null;
 }
 
+/**
+ * The message for a phone, email, number or date answer that fails its type's
+ * check (#855), or null. Runs the shared validators on the server and, for the
+ * inline message, in the browser. An answer equal to `stored` is an old one the
+ * person left alone, so it passes. The message never echoes the value.
+ */
+export function typedAnswerProblem(field: RegistrationFormField, value: unknown, stored?: unknown): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (field.type === "EMAIL" || field.type === "PHONE" || field.type === "DATE") {
+    if (typeof value !== "string") return `${fieldDisplayLabel(field)} must be text.`;
+    if (isUnchangedFromStored(value, stored)) return null;
+    const check = field.type === "EMAIL" ? validateEmail(value) : field.type === "PHONE" ? validatePhone(value) : validateDate(value);
+    if (!check.ok) return problemMessage(fieldDisplayLabel(field), check.problem);
+    return field.type === "DATE" ? dateFieldProblem(field, check.value) : null;
+  }
+  if (field.type === "NUMBER") {
+    if (typeof value !== "number" && typeof value !== "string") return `${fieldDisplayLabel(field)} must be a number.`;
+    if (isUnchangedFromStored(value, stored)) return null;
+    const bounds = numberFieldBounds(field);
+    if (bounds) {
+      const check = validateNumber(value, { min: bounds.minimumAge, max: bounds.maximumAge, integer: true });
+      return check.ok ? null : `${fieldDisplayLabel(field)} must be a whole number from ${bounds.minimumAge} to ${bounds.maximumAge}.`;
+    }
+    return validateNumber(value, { min: 0, max: 100000 }).ok ? null : `${fieldDisplayLabel(field)} must be a number from 0 to 100,000.`;
+  }
+  return null;
+}
+
+/**
+ * Stores phone answers in one form, "(515) 555-0134" (#855). A phone that does
+ * not pass is left as it was, for the validator to report or, for an old
+ * answer, to keep. Returns a copy.
+ */
+export function normalizeTypedAnswers(definition: RegistrationFormDefinition, responses: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...responses };
+  for (const section of definition.sections) {
+    for (const field of section.fields) {
+      const value = next[field.key];
+      if (field.type !== "PHONE" || typeof value !== "string") continue;
+      next[field.key] = normalizePhoneAnswer(value);
+    }
+  }
+  return next;
+}
+
 export function validateTestResponses(
   definition: RegistrationFormDefinition,
   responses: Record<string, unknown>,
@@ -1934,6 +1980,12 @@ export function validateTestResponses(
     ignoredFieldKeys?: readonly string[];
     /** Required fields that may be left empty (checked normally when answered). */
     optionalFieldKeys?: readonly string[];
+    /**
+     * The answers already stored (#855). A phone, email, number or date the
+     * person did not change is not re-checked, so an old answer that fails
+     * today's rules never blocks saving the rest of the record.
+     */
+    previousResponses?: Record<string, unknown>;
   } = {},
 ) {
   const ignoredFieldKeys = new Set(options.ignoredFieldKeys ?? []);
@@ -1957,28 +2009,8 @@ export function validateTestResponses(
       }
       if (field.type === "TEXT" && String(value).length > 500) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be 500 characters or fewer.` });
       if (field.type === "LONG_TEXT" && String(value).length > 5000) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be 5,000 characters or fewer.` });
-      if (field.type === "EMAIL" && (String(value).length > 160 || !z.email().safeParse(value).success)) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be a valid email address.` });
-      if (field.type === "PHONE" && String(value).length > 80) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be 80 characters or fewer.` });
-      if (field.type === "DATE") {
-        const date = String(value);
-        const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date) ? new Date(`${date}T00:00:00Z`) : null;
-        if (!parsed || Number.isNaN(parsed.valueOf()) || parsed.toISOString().slice(0, 10) !== date) issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be a valid date.` });
-        else {
-          const problem = dateFieldProblem(field, date);
-          if (problem) issues.push({ fieldId: field.id, key: field.key, message: problem });
-        }
-      }
-      if (field.type === "NUMBER") {
-        const numeric = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;
-        const bounds = numberFieldBounds(field);
-        if (bounds) {
-          if (!Number.isInteger(numeric) || numeric < bounds.minimumAge || numeric > bounds.maximumAge) {
-            issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be a whole number from ${bounds.minimumAge} to ${bounds.maximumAge}.` });
-          }
-        } else if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100000) {
-          issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be a number from 0 to 100,000.` });
-        }
-      }
+      const typedProblem = typedAnswerProblem(field, value, options.previousResponses?.[field.key]);
+      if (typedProblem) issues.push({ fieldId: field.id, key: field.key, message: typedProblem });
       if (field.type === "CHECKBOX" && typeof value !== "boolean") issues.push({ fieldId: field.id, key: field.key, message: `${fieldDisplayLabel(field)} must be checked or unchecked.` });
       if (field.type === "ADDRESS") {
         for (const message of validateAddressValue(fieldDisplayLabel(field), value)) {

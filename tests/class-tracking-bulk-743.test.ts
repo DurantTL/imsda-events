@@ -69,16 +69,16 @@ describe("pure helpers", () => {
 describe("Mark a class completed", () => {
   it("selects all, searches, and posts only the selected members still shown", async () => {
     let tree = render();
-    // Select all (the first "Select all" is the class list's), then search for "ann".
+    // Select all in the members table, then search for "ann".
     await (buttons(tree, "Select all")[0].props.onClick as () => void)();
     tree = render();
-    expect(text(buttons(tree, "Mark completed")[0])).toContain("(12)");
+    expect(text(buttons(tree, "Mark Friend completed")[0])).toContain("(12)");
     (searchBoxes(tree)[0].props.onChange as (e: unknown) => void)({ target: { value: "ann" } });
     tree = render();
-    const mark = buttons(tree, "Mark completed")[0];
+    const mark = buttons(tree, "Mark Friend completed")[0];
     expect(text(mark)).toContain("(4)");
     expect(text(mark)).not.toContain("(12)");
-    expect(text(tree)).toContain("8 selected members are hidden by the search and won't be included.");
+    expect(text(tree)).toContain("8 selected members are hidden by the filters and won't be included.");
     await (mark.props.onClick as () => Promise<void>)();
     const body = posts.find((post) => post.url.endsWith("/completions"))!.body;
     expect(body.personIds).toEqual(["p0", "p1", "p2", "p3"]);
@@ -90,7 +90,7 @@ describe("Mark a class completed", () => {
     tree = render();
     (searchBoxes(tree)[0].props.onChange as (e: unknown) => void)({ target: { value: "nobody" } });
     tree = render();
-    expect(buttons(tree, "Mark completed")[0].props.disabled).toBe(true);
+    expect(buttons(tree, "Mark Friend completed")[0].props.disabled).toBe(true);
   });
 });
 
@@ -103,17 +103,18 @@ describe("Add by hand", () => {
     tree = render();
     (buttons(tree, "Add item")[0].props.onClick as () => void)();
     tree = render();
-    // Select all in the second list (hand), then search "bob" there.
-    (buttons(tree, "Select all")[1].props.onClick as () => void)();
+    // The one members table feeds both actions: select all, then search "bob" there.
+    (buttons(tree, "Select all")[0].props.onClick as () => void)();
     tree = render();
-    (searchBoxes(tree)[1].props.onChange as (e: unknown) => void)({ target: { value: "bob" } });
+    (searchBoxes(tree)[0].props.onChange as (e: unknown) => void)({ target: { value: "bob" } });
     tree = render();
     const record = buttons(tree, "Record items")[0];
     expect(text(record)).toContain("(8)");
-    expect(text(tree)).toContain("4 selected members are hidden by the search and won't be included.");
+    expect(text(tree)).toContain("4 selected members are hidden by the filters and won't be included.");
     await (record.props.onClick as () => Promise<void>)();
     const body = posts.find((post) => post.url.endsWith("/awards"))!.body;
-    expect(body.personIds).toEqual(["p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11"]);
+    // In the table's order: by last name ("Sample10" sorts before "Sample4").
+    expect([...(body.personIds as string[])].sort()).toEqual(["p10", "p11", "p4", "p5", "p6", "p7", "p8", "p9"]);
     expect(body.itemIds).toEqual(["gc"]);
   });
 });

@@ -109,7 +109,7 @@ describe("the Earned awards screen (#532)", () => {
     expect(html).toContain("Open earned items (2)");
     expect(html).toContain("Eligible, not yet awarded (1)");
     expect(html).toContain("5 of 7");
-    for (const control of ["Suggested (", "Mark a class completed", "Add by hand", "Mark completed", "Record items", "Already has it (", "Remove", "Add to order list", "Not now", "<input"]) {
+    for (const control of ["Suggested (", "Mark a class completed", "Add by hand", "Mark Friend completed", "Record items", "Already has it (", "Remove", "Add to order list", "Not now", "<input"]) {
       expect(html, control).not.toContain(control);
     }
   });

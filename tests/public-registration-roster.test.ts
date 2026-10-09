@@ -210,7 +210,7 @@ function adult(overrides: Record<string, unknown> = {}) {
     responses: {
       attendee_name: "Avery Adult",
       attendee_email: "AVERY.ADULT@EXAMPLE.TEST",
-      attendee_phone: " 555-0101 ",
+      attendee_phone: " 515-555-0101 ",
       attendee_type: "Adult",
       lodging: "Shared cabin",
       childcare: "Yes",
@@ -259,7 +259,7 @@ describe("repeatable public attendee rosters", () => {
         {
           contact_name: "  Roster Contact ",
           email: " ROSTER.CONTACT@EXAMPLE.TEST ",
-          contact_phone: " 555-0100 ",
+          contact_phone: " 515-555-0100 ",
           payment_method: "Pay later",
         },
       ),
@@ -273,19 +273,19 @@ describe("repeatable public attendee rosters", () => {
     expect(prepared.responses).toEqual({
       contact_name: "Roster Contact",
       email: "ROSTER.CONTACT@EXAMPLE.TEST",
-      contact_phone: "555-0100",
+      contact_phone: "(515) 555-0100",
       payment_method: "Pay later",
     });
     expect(prepared.identity).toEqual({
       firstName: "Roster",
       lastName: "Contact",
       email: "roster.contact@example.test",
-      phone: "555-0100",
+      phone: "(515) 555-0100",
     });
     expect(prepared.attendees[0].responses).toEqual({
       attendee_name: "Avery Adult",
       attendee_email: "AVERY.ADULT@EXAMPLE.TEST",
-      attendee_phone: "555-0101",
+      attendee_phone: "(515) 555-0101",
       attendee_type: "Adult",
       lodging: "Shared cabin",
     });
@@ -293,7 +293,7 @@ describe("repeatable public attendee rosters", () => {
       firstName: "Avery",
       lastName: "Adult",
       email: "avery.adult@example.test",
-      phone: "555-0101",
+      phone: "(515) 555-0101",
     });
     expect(prepared.attendees[1].identity).toMatchObject({
       firstName: "Casey",
