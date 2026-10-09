@@ -37,7 +37,7 @@ versioned and rolled back exactly like the app. It holds no secrets.
 
 ## Where the status goes
 
-A table, `BackupRun` (additive migration `20261012100000_backup_run`). The
+A table, `BackupRun` (additive migration `20261014100000_backup_run`). The
 scheduler writes it with `psql` using the same database connection settings the
 dumps use; the app reads it with Prisma. A table was chosen over a status file
 because the backup container and the app share no volume (the app only mounts
@@ -126,9 +126,28 @@ Check the server's Postgres major version matches the image's client (16):
 
 The image is published as `ghcr.io/duranttl/imsda-events-backup:<sha>` by the
 Docker image workflow (same sha as the app image you deployed; it is also
-tagged `:main`). The server's existing GitHub Container Registry login is
-reused; if the package is private to the organisation, grant that login read
-access to the `imsda-events-backup` package once.
+tagged `:main`).
+
+**One-time, owner only: make the package pullable.** GitHub creates a new
+container package as **private**. It contains no secrets (only PostgreSQL
+client tools, the AWS CLI and these scripts), so either set it public, as was
+done for the app image, or log in on the server.
+
+*Option A, make it public (matches the app image):*
+
+1. On GitHub, open the `DurantTL` profile (or the owning organisation), then the
+   **Packages** tab, then **imsda-events-backup**. It appears after the first
+   successful run of the "Docker image" workflow on `main`.
+2. Click **Package settings** (right-hand sidebar).
+3. Scroll to **Danger Zone**, click **Change visibility**, choose **Public**,
+   type the package name to confirm, and click **I understand the consequences,
+   change package visibility**.
+
+*Option B, keep it private:* in the same **Package settings**, under **Manage
+Actions access** or **Invite teams or people**, make sure the repository/account
+used on the server has Read access, then on the server run
+`docker login ghcr.io -u <github user>` with a personal access token that has
+`read:packages`.
 
 ```bash
 SHA=<commit sha>
