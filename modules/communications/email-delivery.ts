@@ -414,18 +414,26 @@ type AnnouncementPolicy = {
  * kind of message is untouched: only announcements can be opted out of.
  *
  * It fails closed: if the opt-out cannot be looked up, the message is retried later, never sent.
+ *
+ * The result says what happened, because the caller must treat the cases differently: `false` (go on and send),
+ * `"suppressed"` (this call ended the message as SUPPRESSED), `"retry"` (the check failed and the message was put back
+ * for a later attempt, so anything prepared for it, such as its private link, must be kept), and `"lost"` (the lock was
+ * no longer ours, so someone else owns the message and nothing here was recorded). Only `"suppressed"` means the
+ * prepared body is unused for good.
  */
+type OptOutCheckResult = false | "suppressed" | "retry" | "lost";
+
 async function suppressIfAnnouncementOptedOut(
   prisma: DeliveryPrisma,
   message: ClaimedMessage,
   policy: AnnouncementPolicy,
   at: Date,
-) {
+): Promise<OptOutCheckResult> {
   if (!isOptOutEligibleTemplate(message.templateKey) || !message.eventId) return false;
-  const failClosed = async (code: string, text: string, error?: unknown) => {
+  const failClosed = async (code: string, text: string, error?: unknown): Promise<OptOutCheckResult> => {
     if (error) logError("Unable to check an announcement opt-out; the message will be retried.", error);
-    await finalizeFailedAttempt(prisma, message, { code, message: text, retryable: true }, at, true);
-    return true;
+    const outcome = await finalizeFailedAttempt(prisma, message, { code, message: text, retryable: true }, at, true);
+    return outcome.finalized ? "retry" : "lost";
   };
   if (!policy.lookupOptOut) {
     return failClosed("OPT_OUT_CHECK_UNAVAILABLE", "Announcement opt-outs could not be checked, so the message was not sent.");
@@ -445,20 +453,19 @@ async function suppressIfAnnouncementOptedOut(
     where: { id: message.id, status: "PROCESSING", lockToken: message.lockToken },
     data: { status: "SUPPRESSED", lockedAt: null, lockToken: null, lastError: announcementOptOutSkipMessage(scope) },
   });
-  if (updated.count === 1) {
-    await prisma.auditLog.create({
-      data: {
-        eventId: message.eventId,
-        action: "EVENT_ANNOUNCEMENT_SKIPPED_OPTED_OUT",
-        entityType: "MessageOutbox",
-        entityId: message.id,
-        correlationId: randomUUID(),
-        summary: "Skipped an event announcement because the recipient opted out of announcements.",
-        metadata: { messageId: message.id, scope },
-      },
-    });
-  }
-  return true;
+  if (updated.count !== 1) return "lost";
+  await prisma.auditLog.create({
+    data: {
+      eventId: message.eventId,
+      action: "EVENT_ANNOUNCEMENT_SKIPPED_OPTED_OUT",
+      entityType: "MessageOutbox",
+      entityId: message.id,
+      correlationId: randomUUID(),
+      summary: "Skipped an event announcement because the recipient opted out of announcements.",
+      metadata: { messageId: message.id, scope },
+    },
+  });
+  return "suppressed";
 }
 
 /**
@@ -1007,10 +1014,15 @@ async function runDeliveryLoop(
       if (await cancelIfLodgingStale(prisma, message, now())) continue;
       // And the opt-out again (#838): someone may have unsubscribed while the message was being prepared. An essential
       // announcement still goes. The private link minted for the body is unused, so it is withdrawn.
-      if (await suppressIfAnnouncementOptedOut(prisma, message, announcementPolicy, now())) {
-        await preparedBody.revokeOnDefinitiveFailure?.().catch((revokeError: unknown) => {
-          logError("Unable to revoke an unused private registration link after an announcement was skipped.", revokeError);
-        });
+      const recheck = await suppressIfAnnouncementOptedOut(prisma, message, announcementPolicy, now());
+      if (recheck) {
+        // Withdraw the private link only when this call really ended the message. A retry keeps it (the same link is
+        // reused on the next attempt, and a revoked one would end the message as failed), and a lost lock is not ours.
+        if (recheck === "suppressed") {
+          await preparedBody.revokeOnDefinitiveFailure?.().catch((revokeError: unknown) => {
+            logError("Unable to revoke an unused private registration link after an announcement was skipped.", revokeError);
+          });
+        }
         continue;
       }
       // Announcements carry an unsubscribe link in the body and the one-click headers (#838).
@@ -1082,7 +1094,8 @@ async function runDeliveryLoop(
         message,
         normalized,
         now(),
-        false,
+        // Preparing the unsubscribe link fails before any provider is called, so it is not a provider attempt.
+        normalized.code === "UNSUBSCRIBE_LINK_UNAVAILABLE",
         configuredProvider,
       );
       if (failure.rescheduled) result.rescheduledIds.push(message.id);

@@ -41,6 +41,7 @@ function store(overrides: Partial<Row> = {}) {
     ...overrides,
   };
   const auditRows: Array<Record<string, unknown>> = [];
+  const attempts: Array<Record<string, unknown>> = [];
   const messageOutbox = {
     findMany: vi.fn(async () => []),
     findFirst: vi.fn(async () => (message.status === "PENDING" && (message.availableAt as Date) <= now() ? { ...message, attachment: null, files: [] } : null)),
@@ -55,7 +56,7 @@ function store(overrides: Partial<Row> = {}) {
   const tx = {
     messageOutbox,
     messageDeliveryAttempt: {
-      create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => data),
+      create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { attempts.push(data); return data; }),
       findFirst: vi.fn(async () => null),
       aggregate: vi.fn(async () => ({ _max: { attemptNumber: null } })),
     },
@@ -70,7 +71,7 @@ function store(overrides: Partial<Row> = {}) {
     auditLog: { create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => { auditRows.push(data); }) },
     $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
   };
-  return { prisma, message, auditRows };
+  return { prisma, message, auditRows, attempts };
 }
 
 
@@ -84,6 +85,7 @@ type Options = {
 };
 
 function dependenciesFor(state: ReturnType<typeof store>, options: Options, sendEmail: ReturnType<typeof vi.fn>) {
+  const revoke = vi.fn(async () => undefined);
   return {
     configuration,
     now,
@@ -94,7 +96,13 @@ function dependenciesFor(state: ReturnType<typeof store>, options: Options, send
       : { findAnnouncementOptOut: options.lookup === "throws" ? vi.fn(async () => { throw new Error("database unavailable"); }) : vi.fn(async () => options.optOut ?? null) }),
     isAnnouncementEssential: vi.fn(async () => options.essential === true),
     issueUnsubscribeToken: vi.fn(async (email: string, eventId: string) => deriveUnsubscribeToken({ email, eventId })),
-    prepareBodyText: async (input: { bodyText: string; bodyHtml?: string | null }) => ({ bodyText: input.bodyText, bodyHtml: input.bodyHtml ?? null }),
+    // The prepared body carries a revocation for its private link; the spy shows when delivery withdraws it.
+    revoke,
+    prepareBodyText: async (input: { bodyText: string; bodyHtml?: string | null }) => ({
+      bodyText: input.bodyText,
+      bodyHtml: input.bodyHtml ?? null,
+      revokeOnDefinitiveFailure: revoke,
+    }),
   };
 }
 
@@ -269,6 +277,68 @@ describe("announcement opt-outs at delivery (#838)", () => {
     const deps = dependenciesFor(state, { essential: true }, vi.fn(async (...args: [Record<string, unknown>]) => (void args, { provider: "RESEND" as const, providerMessageId: "p-2" })));
     deps.findAnnouncementOptOut = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("ALL") as never;
     expect((await processExternalEmailQueue("event-1", { dependencies: deps })).sentIds).toEqual(["message-1"]);
+  });
+
+  describe("the private link of a prepared body", () => {
+    const sentOk = () => vi.fn(async (...args: [Record<string, unknown>]) => (void args, { provider: "RESEND" as const, providerMessageId: "p-9" }));
+
+    it("is withdrawn when the second check really suppresses the message", async () => {
+      const state = store();
+      const deps = dependenciesFor(state, {}, sentOk());
+      deps.findAnnouncementOptOut = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("EVENT") as never;
+      await processExternalEmailQueue("event-1", { dependencies: deps });
+      expect(state.message.status).toBe("SUPPRESSED");
+      expect(deps.revoke).toHaveBeenCalledTimes(1);
+    });
+
+    it("is kept when the second opt-out lookup throws and the message goes back to PENDING for a retry", async () => {
+      const state = store();
+      const deps = dependenciesFor(state, {}, sentOk());
+      deps.findAnnouncementOptOut = vi.fn().mockResolvedValueOnce(null).mockRejectedValueOnce(new Error("database unavailable")) as never;
+      await processExternalEmailQueue("event-1", { dependencies: deps });
+      expect(state.message.status).toBe("PENDING");
+      expect(deps.sendEmail).not.toHaveBeenCalled();
+      expect(deps.revoke).not.toHaveBeenCalled();
+    });
+
+    it("is kept when the essential lookup throws at the second check", async () => {
+      const state = store();
+      const deps = dependenciesFor(state, {}, sentOk());
+      deps.findAnnouncementOptOut = vi.fn(async () => "ALL" as const) as never;
+      // Essential at the first check (so it gets as far as preparing the body), then the lookup fails.
+      deps.isAnnouncementEssential = vi.fn().mockResolvedValueOnce(true).mockRejectedValueOnce(new Error("database unavailable")) as never;
+      await processExternalEmailQueue("event-1", { dependencies: deps });
+      expect(state.message.status).toBe("PENDING");
+      expect(deps.sendEmail).not.toHaveBeenCalled();
+      expect(deps.revoke).not.toHaveBeenCalled();
+    });
+
+    it("is kept, and no skip is recorded, when the lock was lost and the suppressing update changes nothing", async () => {
+      const state = store();
+      const deps = dependenciesFor(state, {}, sentOk());
+      deps.findAnnouncementOptOut = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("EVENT") as never;
+      const original = state.prisma.messageOutbox.updateMany;
+      state.prisma.messageOutbox.updateMany = vi.fn(async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => (
+        args.data.status === "SUPPRESSED" ? { count: 0 } : original(args)
+      )) as never;
+      await processExternalEmailQueue("event-1", { dependencies: deps });
+      expect(deps.sendEmail).not.toHaveBeenCalled();
+      expect(deps.revoke).not.toHaveBeenCalled();
+      expect(state.auditRows).toEqual([]);
+    });
+  });
+
+  it("records a failure to prepare the unsubscribe link as an internal failure, not a provider attempt, and still retries it", async () => {
+    const state = store();
+    const deps = dependenciesFor(state, {}, vi.fn());
+    deps.issueUnsubscribeToken = vi.fn(async () => { throw new Error("database unavailable"); });
+    await processExternalEmailQueue("event-1", { dependencies: deps });
+    expect(state.message.status).toBe("PENDING");
+    expect(state.message.attemptCount).toBe(1);
+    expect(state.message.provider).toBeUndefined();
+    expect(state.message.providerDeliveryStatus).toBeUndefined();
+    expect(state.attempts[0]).toMatchObject({ provider: "INTERNAL", errorCode: "UNSUBSCRIBE_LINK_UNAVAILABLE" });
+    expect(state.attempts[0].providerMetadata).toMatchObject({ realDelivery: false, retryable: true, rescheduled: true });
   });
 });
 
