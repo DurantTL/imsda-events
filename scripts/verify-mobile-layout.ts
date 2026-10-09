@@ -240,6 +240,7 @@ const pages: PageSpec[] = [
   staff("team", "/admin/team", "system-admin"),
   staff("accounts", "/admin/accounts", "system-admin"),
   staff("system-settings", "/admin/settings", "system-admin"),
+  staff("system-readiness", "/admin/readiness", "system-admin"),
   staff("club-supplies", "/admin/club-supplies", "system-admin"),
   staff("club-forms", "/admin/club-forms", "system-admin"),
   staff("map-locations", "/admin/organizations/map-locations", "system-admin"),

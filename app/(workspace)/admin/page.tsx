@@ -195,6 +195,7 @@ export default async function SystemAdminPage({
           <Link className="secondary-button" href="/admin/team"><UsersRound aria-hidden="true" size={15} /> Team</Link>
           <Link className="secondary-button" href="/admin/accounts"><UsersRound aria-hidden="true" size={15} /> Accounts</Link>
           <Link className="secondary-button" href="/admin/settings"><CloudCog aria-hidden="true" size={15} /> Platform settings</Link>
+          <Link className="secondary-button" href="/admin/readiness"><CheckCircle2 aria-hidden="true" size={15} /> System readiness</Link>
           <Link className="secondary-button" href="/admin/organizations"><Church aria-hidden="true" size={15} /> Clubs and churches</Link>
           <Link className="secondary-button" href="/admin/honors"><Award aria-hidden="true" size={15} /> Honor catalog</Link>
           <Link className="secondary-button" href="/admin/club-supplies"><Package aria-hidden="true" size={15} /> Club supply catalog</Link>
