@@ -8,6 +8,7 @@ import { eventHasActiveLocations, offeringSiteId } from "@/modules/honors/locati
 import { joinHonorNames, offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
 import { HonorConfigurationError, assertRoomPlacement, getEventHonorSetup, serializable } from "@/modules/honors/repository";
 import { type BoardCard, type BoardInstructor, type ScheduleBoardData, moveConflictMessage } from "@/modules/honors/schedule-board";
+import { isRoomBookedIndex, isRoomCapacityRefusal, isSerializationFailure } from "@/modules/honors/room-errors";
 import type { HonorMoveInput, HonorRoomInput, HonorRoomUpdate } from "@/modules/honors/schedule-schemas";
 
 /**
@@ -40,15 +41,13 @@ export async function getScheduleBoard(eventId: string): Promise<ScheduleBoardDa
     loadOfferingInstructors(prisma, eventId),
   ]);
   const sessionSite = new Map(setup.sessions.map((session) => [session.id, session.locationId]));
-  const roomIds = await prisma.honorOffering.findMany({ where: { eventId }, select: { id: true, roomId: true } });
-  const roomOf = new Map(roomIds.map((row) => [row.id, row.roomId]));
   const cards: BoardCard[] = setup.offerings.map((offering) => ({
     id: offering.id,
     title: offering.honorName,
     span: offering.span,
     sessionId: offering.sessionId,
     siteId: offeringSiteId({ span: offering.span, locationId: offering.locationId, session: offering.sessionId ? { locationId: sessionSite.get(offering.sessionId) ?? null } : null }),
-    roomId: roomOf.get(offering.id) ?? null,
+    roomId: offering.roomId,
     capacity: offering.capacity,
     seatsTaken: offering.seatsTaken,
     enrolled: offering.enrolled,
@@ -68,18 +67,13 @@ const roomNameConflict = () => new HonorConfigurationError("ROOM_NAME_CONFLICT",
 
 /** Retries ran out because someone changed the same rows at the same moment (a pick, another move): ask to try again. */
 function busy(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034"
+  return isSerializationFailure(error)
     ? new HonorConfigurationError("SCHEDULE_BUSY", "Someone changed the schedule or the class picks at the same moment. Nothing was changed; please try again.")
     : error;
 }
 
 function isUniqueConstraint(error: unknown) {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
-}
-
-/** The database's own refusal of a class over its room's seats (the trigger's check_violation), as the same message. */
-function isCapacityCheck(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError && (error.code === "P2010" || error.code === "P2004") && /room capacity|below a class/.test(error.message);
 }
 
 export async function createHonorRoom(eventId: string, input: HonorRoomInput, actorUserId: string) {
@@ -134,7 +128,8 @@ export async function updateHonorRoom(eventId: string, roomId: string, input: Ho
       });
       // The class's free-text room mirrors the room's name while it is placed there.
       if (input.name !== undefined && input.name !== room.name) {
-        await tx.honorOffering.updateMany({ where: { roomId }, data: { location: name } });
+        // Only text that is empty or is the old room name follows the rename; a different note staff wrote stays.
+        await tx.honorOffering.updateMany({ where: { roomId, location: { in: ["", room.name] } }, data: { location: name } });
       }
       await writeAuditLog({
         eventId, actorUserId, action: "HONOR_ROOM_UPDATED", entityType: "HonorRoom", entityId: roomId,
@@ -143,7 +138,7 @@ export async function updateHonorRoom(eventId: string, roomId: string, input: Ho
     });
   } catch (error) {
     if (isUniqueConstraint(error)) throw roomNameConflict();
-    if (isCapacityCheck(error)) throw new HonorConfigurationError("ROOM_TOO_SMALL", "A class placed in this room has more seats than that. Lower the class seats first.");
+    if (isRoomCapacityRefusal(error)) throw new HonorConfigurationError("ROOM_TOO_SMALL", "A class placed in this room has more seats than that. Lower the class seats first.");
     throw busy(error);
   }
   return getScheduleBoard(eventId);
@@ -195,7 +190,8 @@ export async function moveHonorOffering(eventId: string, offeringId: string, inp
       const existing = await tx.honorOffering.findFirst({
         where: { id: offeringId, eventId },
         select: {
-          id: true, span: true, sessionId: true, locationId: true, roomId: true, capacity: true, isActive: true,
+          id: true, span: true, sessionId: true, locationId: true, roomId: true, capacity: true, isActive: true, location: true,
+          room: { select: { name: true } },
           honors: offeringHonorsSelect,
           session: { select: { name: true, locationId: true } },
         },
@@ -267,26 +263,31 @@ export async function moveHonorOffering(eventId: string, offeringId: string, inp
       }
 
       const room = input.roomId ? await tx.honorRoom.findUnique({ where: { id: input.roomId }, select: { name: true } }) : null;
+      // The free-text room mirrors the room's name, but only text that is empty or was the old room's name is rewritten:
+      // a note staff wrote there ("Back door") is never lost.
+      const mirrored = existing.location === "" || existing.location === (existing.room?.name ?? null);
+      const nextLocation = !mirrored ? existing.location : room?.name ?? "";
       await tx.honorOffering.update({
         where: { id: offeringId },
         data: {
           ...(sessionChanged ? { sessionId } : {}),
           ...(roomChanged
-            ? { roomId: input.roomId, location: room?.name ?? "" }
+            ? { roomId: input.roomId, location: nextLocation }
             : {}),
         },
       });
       await writeAuditLog({
         eventId, actorUserId, action: "HONOR_OFFERING_MOVED", entityType: "HonorOffering", entityId: offeringId,
         summary: `Moved ${joinHonorNames(taught.honors.map((honor) => honor.name))}${sessionChanged ? ` to ${sessionName}` : ""}${roomChanged ? (room ? ` into ${room.name}` : " out of its room") : ""}.`,
-        metadata: { fromSessionId: existing.sessionId, toSessionId: sessionId, fromRoomId: existing.roomId, toRoomId: input.roomId, enrolled },
+        metadata: { previousLocation: existing.location, fromSessionId: existing.sessionId, toSessionId: sessionId, fromRoomId: existing.roomId, toRoomId: input.roomId, enrolled },
       }, tx);
     });
   } catch (error) {
+    if (isRoomBookedIndex(error)) throw new HonorConfigurationError("ROOM_BOOKED", "That room already has a class then. Choose another room or session.");
     if (isUniqueConstraint(error)) {
-      throw new HonorConfigurationError("ROOM_BOOKED", "That room already has a class then, or one of this class's honors is already offered in that session.");
+      throw new HonorConfigurationError("OFFERING_CONFLICT", "One of this class's honors is already offered in that session.");
     }
-    if (isCapacityCheck(error)) throw new HonorConfigurationError("ROOM_TOO_SMALL", "That room has fewer seats than this class.");
+    if (isRoomCapacityRefusal(error)) throw new HonorConfigurationError("ROOM_TOO_SMALL", "That room has fewer seats than this class.");
     throw busy(error);
   }
   return getScheduleBoard(eventId);

@@ -90,6 +90,7 @@ async function buildPlan(client: CopyClient, sourceEventId: string, targetEventI
         perClubLimit: true,
         teacherName: true,
         location: true,
+        room: { select: { name: true, normalizedName: true, capacity: true } },
         additionalCostCents: true,
         requirementNote: true,
         updatedAt: true,
@@ -302,6 +303,20 @@ export async function applyHonorCopy(
         select: { id: true },
       });
       await writeHonorRows(tx, created.id, targetEventId, honorIds);
+      // A class that was in a room goes into the same-named room at its site here (made if missing), unless the room
+      // is too small for it or already holds a class then; the class is then copied without a room (#834).
+      if (offering.room) {
+        const siteId = offering.span === "ALL_SESSIONS"
+          ? locationId
+          : sessionId ? (await tx.honorSession.findUnique({ where: { id: sessionId }, select: { locationId: true } }))?.locationId ?? null : null;
+        const room = await tx.honorRoom.findFirst({ where: { eventId: targetEventId, locationId: siteId, normalizedName: offering.room.normalizedName } })
+          ?? await tx.honorRoom.create({ data: { eventId: targetEventId, locationId: siteId, name: offering.room.name, normalizedName: offering.room.normalizedName, capacity: offering.room.capacity } });
+        const taken = await tx.honorOffering.findFirst({
+          where: { roomId: room.id, isActive: true, id: { not: created.id }, ...(offering.span === "ALL_SESSIONS" ? {} : { OR: [{ span: "ALL_SESSIONS" }, { sessionId }] }) },
+          select: { id: true },
+        });
+        if (!taken && room.capacity >= offering.capacity) await tx.honorOffering.update({ where: { id: created.id }, data: { roomId: room.id } });
+      }
       // Prerequisite honors (#832) come along; the catalog is shared by every event.
       if (offering.prerequisites.length > 0) {
         await tx.honorOfferingPrerequisite.createMany({ data: offering.prerequisites.map((row) => ({ offeringId: created.id, honorId: row.honorId })) });

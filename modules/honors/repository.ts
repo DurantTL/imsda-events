@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import type { HonorImportStep } from "@/modules/honors/catalog-csv";
+import { isRoomBookedIndex, isRoomCapacityRefusal } from "@/modules/honors/room-errors";
 import { eventHasActiveLocations, offeringSiteId } from "@/modules/honors/locations";
 import { countEnrolledYouthNotMeeting } from "@/modules/honors/enrollment-repository";
 import { clubClassLevels } from "@/modules/club-rosters/domain";
@@ -58,7 +59,8 @@ export type HonorErrorCode =
   | "ROOM_WRONG_SITE"
   | "MOVE_HAS_CONFLICTS"
   | "MOVE_INVALID"
-  | "SCHEDULE_BUSY";
+  | "SCHEDULE_BUSY"
+  | "SESSION_HAS_ROOMS";
 
 export class HonorConfigurationError extends Error {
   constructor(
@@ -224,6 +226,7 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
         prerequisites: { select: { honor: { select: { id: true, code: true, name: true, isActive: true } } } },
         perClubLimit: true,
         teacherName: true,
+        roomId: true,
         location: true,
         additionalCostCents: true,
         requirementNote: true,
@@ -286,6 +289,8 @@ async function loadEventHonorSetup(client: Prisma.TransactionClient, eventId: st
       prerequisiteHonorIds: offering.prerequisites.map((row) => row.honor.id).sort(),
       perClubLimit: offering.perClubLimit,
       teacherName: offering.teacherName,
+      /** The room it is placed in on the schedule board (#834); its free-text location mirrors the room name. */
+      roomId: offering.roomId,
       location: offering.location,
       additionalCostCents: offering.additionalCostCents,
       requirementNote: offering.requirementNote,
@@ -394,6 +399,15 @@ export async function updateHonorSession(
           throw new HonorConfigurationError(
             "SESSION_HAS_PICKS",
             "Clubs have already picked classes in this session, so it can't move to another site.",
+          );
+        }
+        // A class in a room is at that room's site; moving the session would strand it off the board (#834).
+        const placed = await tx.honorOffering.count({ where: { sessionId, roomId: { not: null } } });
+        if (placed > 0) {
+          throw new HonorConfigurationError(
+            "SESSION_HAS_ROOMS",
+            `${placed === 1 ? "A class in this session is" : `${placed} classes in this session are`} placed in a room at its current site. Take ${placed === 1 ? "it" : "them"} out of the room on the schedule board before moving the session to another site.`,
+            placed,
           );
         }
       }
@@ -933,12 +947,13 @@ export async function updateHonorOffering(
       }, tx);
     });
   } catch (error) {
+    if (isRoomBookedIndex(error)) throw new HonorConfigurationError("ROOM_BOOKED", "That room already has a class then. Choose another room or session.");
     // Two classes can't teach the same honor in the same session (the (sessionId, honorId) unique index on HonorOfferingHonor).
     if (isUniqueConstraint(error)) {
       throw new HonorConfigurationError("OFFERING_CONFLICT", "One of these honors is already offered in that session.");
     }
     // The database's backstop (#834): a room was made smaller at the same moment, so the class no longer fits it.
-    if (error instanceof Prisma.PrismaClientKnownRequestError && /room capacity/.test(error.message)) {
+    if (isRoomCapacityRefusal(error)) {
       throw new HonorConfigurationError("ROOM_TOO_SMALL", "The room has fewer seats than that. Lower the seats, or raise the room first.");
     }
     throw error;

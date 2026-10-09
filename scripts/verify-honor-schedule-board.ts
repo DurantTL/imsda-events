@@ -20,7 +20,8 @@
 import { loadEnvConfig } from "@next/env";
 import { PrismaClient } from "@prisma/client";
 import { setClassSelections } from "../modules/honors/enrollment-repository";
-import { HonorConfigurationError, createHonorOffering, updateHonorOffering } from "../modules/honors/repository";
+import { HonorConfigurationError, createHonorOffering, updateHonorOffering, updateHonorSession } from "../modules/honors/repository";
+import { applyHonorCopy, previewHonorCopy } from "../modules/honors/copy";
 import { createHonorRoom, deleteHonorRoom, getScheduleBoard, moveHonorOffering, updateHonorRoom } from "../modules/honors/schedule-repository";
 
 loadEnvConfig(process.cwd());
@@ -29,6 +30,7 @@ const prisma = new PrismaClient();
 const P = "schedboard";
 const adminId = `${P}_admin`;
 const eventId = `${P}_event`;
+const otherEventId = `${P}_other_event`;
 const clubId = `${P}_club`;
 const honorIds = ["a", "b", "c", "d", "e", "f"].map((key) => `${P}_honor_${key}`);
 const [hA, hB, hC, hD, hE, hF] = honorIds as [string, string, string, string, string, string];
@@ -48,6 +50,10 @@ async function refusal(work: Promise<unknown>, code: string, pattern: RegExp, wh
 }
 
 async function cleanup() {
+  await prisma.honorOffering.deleteMany({ where: { eventId: otherEventId } });
+  await prisma.honorSession.deleteMany({ where: { eventId: otherEventId } });
+  await prisma.honorRoom.deleteMany({ where: { eventId: otherEventId } });
+  await prisma.event.deleteMany({ where: { id: otherEventId } });
   await prisma.honorEnrollment.deleteMany({ where: { eventId } });
   await prisma.auditLog.deleteMany({ where: { OR: [{ eventId }, { actorUserId: adminId }] } });
   await prisma.clubEventRegistration.deleteMany({ where: { eventId } });
@@ -151,6 +157,35 @@ async function main() {
   await move(c3.id, null);
   assert((await fresh(c3.id)).roomId === null && (await fresh(c3.id)).location === "", "taking a class out of its room clears it");
   await move(c3.id, big.id);
+  // A session can't change site while a class in it stands in a room (the class would be stranded off the board).
+  await refusal(updateHonorSession(eventId, s1.id, { locationId: siteB.id }, adminId), "SESSION_HAS_ROOMS", /out of the room on the schedule board/, "moving a session to another site while its classes have rooms");
+  assert((await prisma.honorSession.findUniqueOrThrow({ where: { id: s1.id } })).locationId === siteA.id, "the session stayed at its site");
+  // Another event's ids are never reachable: a room, class or session of event B named through event A is "not found".
+  await prisma.event.create({
+    data: {
+      id: otherEventId, slug: `${P}-other`, name: "Other event", startsAt: new Date("2026-12-05T15:00:00Z"), endsAt: new Date("2026-12-06T20:00:00Z"),
+      isPublished: true, registrationOpensOn: "2026-10-01", registrationClosesOn: "2026-11-30", billingMode: "DEFERRED_ORGANIZATION_INVOICE", audience: "CLUB",
+    },
+  });
+  const foreignSession = await prisma.honorSession.create({ data: { eventId: otherEventId, name: "Foreign", normalizedName: "foreign" } });
+  const foreignRoom = await prisma.honorRoom.create({ data: { eventId: otherEventId, name: "Foreign room", normalizedName: "foreign room", capacity: 50 } });
+  const foreignClass = await prisma.honorOffering.create({ data: { eventId: otherEventId, honorId: hF, sessionId: foreignSession.id, span: "SINGLE_SESSION", capacity: 5 } });
+  await refusal(move(c2.id, foreignRoom.id), "ROOM_NOT_FOUND", /could not be found/, "a room of another event");
+  await refusal(moveHonorOffering(eventId, c2.id, { roomId: null, sessionId: foreignSession.id }, adminId), "SESSION_NOT_FOUND", /could not be found/, "a session of another event");
+  await refusal(move(foreignClass.id, null), "OFFERING_NOT_FOUND", /could not be found/, "a class of another event");
+  await refusal(updateHonorRoom(eventId, foreignRoom.id, { capacity: 60 }, adminId), "ROOM_NOT_FOUND", /could not be found/, "editing a room of another event");
+  await refusal(deleteHonorRoom(eventId, foreignRoom.id, adminId), "ROOM_NOT_FOUND", /could not be found/, "removing a room of another event");
+  assert((await prisma.honorRoom.findUniqueOrThrow({ where: { id: foreignRoom.id } })).capacity === 50, "the other event's room is untouched");
+  // The free-text room is only rewritten when it is empty or was the room's name; a staff note stays.
+  await prisma.honorOffering.update({ where: { id: c3.id }, data: { location: "Back door" } });
+  await updateHonorRoom(eventId, big.id, { name: "Main hall 2" }, adminId);
+  assert((await fresh(c1.id)).location === "Main hall 2" && (await fresh(c3.id)).location === "Back door", "renaming a room renames only text that mirrored it");
+  await updateHonorRoom(eventId, big.id, { name: "Main hall" }, adminId);
+  await move(c3.id, null);
+  assert((await fresh(c3.id)).location === "Back door", "taking a class out of a room keeps a note staff wrote");
+  const noteAudit = await prisma.auditLog.findFirst({ where: { eventId, action: "HONOR_OFFERING_MOVED", entityId: c3.id }, orderBy: { createdAt: "desc" } });
+  assert(noteAudit && JSON.stringify(noteAudit.metadata).includes('"previousLocation":"Back door"'), "the move's audit entry records the previous location");
+  await move(c3.id, big.id);
   console.log("ok  placement: one active class per room and session, an all-sessions class holds the room, the room must be at the site");
 
   // 3. Moves of classes that have enrollments.
@@ -227,6 +262,8 @@ async function main() {
   const y = await cls(hF, s1.id, 5);
   const raced = await Promise.allSettled([move(x.id, r1.id), move(y.id, r1.id)]);
   assert(raced.filter((result) => result.status === "fulfilled").length === 1, "exactly one of two moves into the same room and session wins");
+  const loser = raced.find((result) => result.status === "rejected") as PromiseRejectedResult;
+  assert(loser.reason instanceof HonorConfigurationError && ["ROOM_BOOKED", "SCHEDULE_BUSY"].includes(loser.reason.code), `the loser gets a clean refusal, got ${String(loser.reason)}`);
   assert((await prisma.honorOffering.count({ where: { roomId: r1.id, sessionId: s1.id } })) === 1, "the room holds one class in the session");
   console.log("ok  race: two classes into one room and session, one wins");
 
@@ -245,6 +282,9 @@ async function main() {
     const sessions = rows.map((row) => row.offering.sessionId);
     assert(new Set(sessions).size === sessions.length, `round ${round}: nobody holds two classes in one session after a move races a pick`);
     assert(!(moveResult.status === "fulfilled" && pickResult.status === "fulfilled"), `round ${round}: a move into a session and a pick there can't both succeed`);
+    for (const result of [moveResult, pickResult]) {
+      if (result.status === "rejected") assert(result.reason instanceof Error && /Honor|Class|Selection/.test(result.reason.name), `round ${round}: a refused side gives a clean refusal, got ${String(result.reason)}`);
+    }
     if (moveResult.status === "rejected") blockedByPick += 1;
     if (pickResult.status === "rejected") blockedByMove += 1;
   }
@@ -256,11 +296,32 @@ async function main() {
     const rm = await room(`Shrink room ${round}`, 20, siteA.id);
     const k = await cls(hA, rs.id, 10);
     await move(k.id, rm.id);
-    await Promise.allSettled([updateHonorRoom(eventId, rm.id, { capacity: 12 }, adminId), updateHonorOffering(eventId, k.id, { capacity: 18 }, adminId)]);
+    const results = await Promise.allSettled([updateHonorRoom(eventId, rm.id, { capacity: 12 }, adminId), updateHonorOffering(eventId, k.id, { capacity: 18 }, adminId)]);
+    for (const result of results) {
+      if (result.status === "rejected") {
+        assert(result.reason instanceof HonorConfigurationError && ["ROOM_TOO_SMALL", "SCHEDULE_BUSY"].includes(result.reason.code), `round ${round}: a refused side says so cleanly, got ${String(result.reason)}`);
+      }
+    }
     const [roomRow, classRow] = await Promise.all([prisma.honorRoom.findUniqueOrThrow({ where: { id: rm.id } }), fresh(k.id)]);
     assert(classRow.capacity <= roomRow.capacity, `round ${round}: the class (${classRow.capacity}) fits its room (${roomRow.capacity})`);
   }
   console.log("ok  race: shrinking a room against raising a class's seats always leaves the class within its room");
+
+  // Copying a site's classes carries each class into a same-named room at the target (made if missing), never over
+  // the room's seats or into a room already holding a class then.
+  const copyPlan = await previewHonorCopy(otherEventId, eventId);
+  await applyHonorCopy(otherEventId, eventId, copyPlan.fingerprint, adminId);
+  const copiedRooms = await prisma.honorRoom.findMany({ where: { eventId: otherEventId } });
+  const copiedClasses = await prisma.honorOffering.findMany({ where: { eventId: otherEventId, roomId: { not: null } } });
+  assert(copiedClasses.length > 0 && copiedRooms.some((candidate) => candidate.name === "Main hall"), "copied classes stand in copied rooms");
+  const slotsUsed = new Set<string>();
+  for (const copied of copiedClasses) {
+    assert(copied.capacity <= copiedRooms.find((candidate) => candidate.id === copied.roomId)!.capacity, "a copied class fits its room");
+    const slot = `${copied.roomId}:${copied.sessionId ?? "all"}`;
+    assert(!slotsUsed.has(slot), "no two copied classes share a room and session");
+    slotsUsed.add(slot);
+  }
+  console.log("ok  copy: classes carry their rooms to the target within the room's seats");
 
   const board = await getScheduleBoard(eventId);
   assert(board.rooms.length > 0 && board.cards.every((card) => card.instructors.length === 0), "without instructor data (#833) cards carry no instructors");

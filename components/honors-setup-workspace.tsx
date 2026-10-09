@@ -610,7 +610,8 @@ export function HonorsSetupWorkspace({
           </label>
           <label>
             Location (optional)
-            <input defaultValue={editing?.location ?? ""} maxLength={120} name="location" />
+            <input defaultValue={editing?.location ?? ""} maxLength={120} name="location" readOnly={Boolean(editing?.roomId)} />
+            {editing?.roomId && <span className="field-help">This class is placed in a room on the schedule board. Change its room there.</span>}
           </label>
           <label>
             Additional cost in dollars (optional)

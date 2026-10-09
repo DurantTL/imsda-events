@@ -83,9 +83,13 @@ export function buildBoardSections(data: ScheduleBoardData): BoardSection[] {
     const sessions = data.sessions.filter((s) => s.locationId === siteId).sort(bySort);
     const rooms = data.rooms.filter((r) => r.locationId === siteId).sort(bySort);
     const cards = data.cards.filter((c) => c.siteId === siteId);
+    // A card whose room isn't one of this section's rooms (it should not happen: a room is at the class's site) is
+    // shown in "No room yet" rather than vanishing from the board.
+    const roomIds = new Set(rooms.map((room) => room.id));
+    const inRow = (card: BoardCard, room: BoardRoom | null) => (room ? card.roomId === room.id : card.roomId === null || !roomIds.has(card.roomId));
     const rows: BoardRow[] = [...rooms, null].map((room) => {
       const cells = new Map<string, BoardCard[]>();
-      for (const card of cards.filter((c) => c.roomId === (room?.id ?? null))) {
+      for (const card of cards.filter((c) => inRow(c, room))) {
         const column = card.span === "ALL_SESSIONS" ? ALL_SESSIONS_COLUMN : card.sessionId ?? "";
         cells.set(column, [...(cells.get(column) ?? []), card]);
       }
@@ -95,10 +99,20 @@ export function buildBoardSections(data: ScheduleBoardData): BoardSection[] {
   });
 }
 
+/** The same teacher typed twice ("Ann  Lee", "ann lee") is one person. */
+export const normalizeTeacherName = (name: string) => name.trim().replace(/\s+/g, " ").toLowerCase();
+
+function peopleOf(card: BoardCard): Array<{ key: string; name: string }> {
+  const people = card.instructors.map((instructor) => ({ key: `id:${instructor.id}`, name: instructor.name }));
+  const teacher = normalizeTeacherName(card.teacherName);
+  if (teacher) people.push({ key: `name:${teacher}`, name: card.teacherName.trim() });
+  return people;
+}
+
 /**
- * Instructors in two classes in the same session (#834). Only classes with
- * assigned instructors (#833) take part, so with no instructor data nothing is
- * flagged. An all-sessions class counts as being in every session of its site
+ * Instructors in two classes in the same session (#834). A class counts for each assigned instructor (#833) and
+ * for its free-text teacher name (compared ignoring case and spacing), so until the assignments exist the free-text
+ * name is what is compared, and once they do both are. An all-sessions class counts as being in every session of its site
  * (every session when it has no site). Returns, per class, one sentence per
  * clash, never a person's contact details.
  */
@@ -112,18 +126,19 @@ export function instructorClashes(cards: readonly BoardCard[], sessions: Readonl
   for (const card of cards) {
     if (!card.isActive) continue;
     for (const sessionId of sessionsOf(card)) {
-      for (const instructor of card.instructors) {
-        const key = `${sessionId}\u0000${instructor.id}`;
-        bySessionAndInstructor.set(key, [...(bySessionAndInstructor.get(key) ?? []), card]);
+      for (const person of peopleOf(card)) {
+        const key = `${sessionId}\u0000${person.key}`;
+        const group = bySessionAndInstructor.get(key) ?? [];
+        if (!group.includes(card)) bySessionAndInstructor.set(key, [...group, card]);
       }
     }
   }
   const clashes = new Map<string, string[]>();
   for (const [key, group] of bySessionAndInstructor) {
     if (group.length < 2) continue;
-    const instructorId = key.split("\u0000")[1];
+    const personKey = key.split("\u0000")[1];
     for (const card of group) {
-      const name = card.instructors.find((instructor) => instructor.id === instructorId)?.name ?? "An instructor";
+      const name = peopleOf(card).find((person) => person.key === personKey)?.name ?? "An instructor";
       const others = group.filter((other) => other.id !== card.id).map((other) => other.title);
       const message = `${name} is also teaching ${others.join(", ")} in the same session.`;
       const list = clashes.get(card.id) ?? [];
@@ -150,6 +165,7 @@ export function moveTargetProblem(card: BoardCard, target: MoveTarget, rooms: re
   const toAll = target.column === ALL_SESSIONS_COLUMN;
   if (card.span === "ALL_SESSIONS" && !toAll) return "An all-sessions class stays in the All sessions column.";
   if (card.span === "SINGLE_SESSION" && toAll) return "A single-session class can't move into All sessions.";
+  if (card.span === "ALL_SESSIONS" && target.siteId !== card.siteId) return "An all-sessions class stays at its own site.";
   const sameSession = toAll || target.column === card.sessionId;
   if (target.siteId !== card.siteId && card.enrolled > 0) {
     return "Clubs have already picked this class, so it can't move to another site.";

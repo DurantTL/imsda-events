@@ -57,6 +57,12 @@ describe("buildBoardSections", () => {
     expect(sections[1]!.rows[0]!.cells.get("s3")!.map((c) => c.id)).toEqual(["c4"]);
   });
 
+  it("shows a card whose room isn't in its section under No room yet", () => {
+    const sections = buildBoardSections({ ...data, cards: [card({ id: "lost", sessionId: "s1", roomId: "rb" })] });
+    const a = sections[0]!;
+    expect(a.rows[a.rows.length - 1]!.cells.get("s1")!.map((c) => c.id)).toEqual(["lost"]);
+  });
+
   it("is one section for an event with no sites", () => {
     const sections = buildBoardSections({
       sites: [], sessions: [{ id: "s1", name: "One", locationId: null, sortOrder: 0 }], rooms: [room("r", 5, null)],
@@ -93,8 +99,16 @@ describe("instructorClashes", () => {
     expect(clashes.has("other-site")).toBe(false);
   });
 
-  it("flags nothing without instructor data, and ignores inactive classes", () => {
-    expect(instructorClashes([card({ id: "x", teacherName: "Same Teacher" }), card({ id: "y", teacherName: "Same Teacher" })], sessions).size).toBe(0);
+  it("flags the same free-text teacher (ignoring case and spacing) until instructor data exists", () => {
+    const clashes = instructorClashes([card({ id: "x", title: "Knots", teacherName: "Ann  Lee" }), card({ id: "y", title: "Birds", teacherName: "ann lee" })], sessions);
+    expect(clashes.get("x")).toEqual(["Ann  Lee is also teaching Birds in the same session."]);
+    expect(clashes.has("y")).toBe(true);
+    expect(instructorClashes([card({ id: "x", teacherName: "Ann" }), card({ id: "y", sessionId: "s2", teacherName: "Ann" }), card({ id: "z", teacherName: "" }), card({ id: "w", teacherName: "" })], sessions).size).toBe(0);
+  });
+
+  it("uses both sources, never clashes a class with itself, and ignores inactive classes", () => {
+    expect(instructorClashes([card({ id: "x", instructors: [ann], teacherName: "Ann" })], sessions).size).toBe(0);
+    expect(instructorClashes([card({ id: "x", instructors: [ann] }), card({ id: "y", teacherName: "Zed", instructors: [ann] })], sessions).has("x")).toBe(true);
     expect(instructorClashes([card({ id: "x", instructors: [ann] }), card({ id: "y", isActive: false, instructors: [ann] })], sessions).size).toBe(0);
   });
 });
@@ -123,6 +137,11 @@ describe("moveTargetProblem", () => {
     expect(moveTargetProblem(all, target("big", "s1"), rooms, [all])).toMatch(/stays in the All sessions column/);
     const one = card({ id: "one" });
     expect(moveTargetProblem(one, target("big", ALL_SESSIONS_COLUMN), rooms, [one])).toMatch(/can't move into All sessions/);
+  });
+
+  it("keeps an all-sessions class at its own site", () => {
+    const all = card({ id: "all", span: "ALL_SESSIONS", sessionId: null });
+    expect(moveTargetProblem(all, target(null, ALL_SESSIONS_COLUMN, "b"), rooms, [all])).toMatch(/stays at its own site/);
   });
 
   it("refuses another site once anyone is enrolled", () => {
@@ -214,9 +233,39 @@ describe("schedule board routes", () => {
     expect(await refused.json()).toMatchObject({ error: "MOVE_HAS_CONFLICTS", conflicts: 3 });
   });
 
+  it("answers 404 when the room, class or session belongs to another event", async () => {
+    const { POST: move } = await import("@/app/api/events/[eventId]/honors/offerings/[offeringId]/move/route");
+    const { PATCH, DELETE } = await import("@/app/api/events/[eventId]/honors/rooms/[roomId]/route");
+    const { HonorConfigurationError } = await import("@/modules/honors/repository");
+    for (const code of ["ROOM_NOT_FOUND", "OFFERING_NOT_FOUND", "SESSION_NOT_FOUND"] as const) {
+      mocks.moveHonorOffering.mockRejectedValueOnce(new HonorConfigurationError(code, "Not here."));
+      const response = await move(post({ roomId: "other-event-room", sessionId: "other-event-session" }), ctx);
+      expect(response.status).toBe(404);
+      expect(await response.json()).toMatchObject({ error: code });
+    }
+    mocks.updateHonorRoom.mockRejectedValueOnce(new HonorConfigurationError("ROOM_NOT_FOUND", "Not here."));
+    expect((await PATCH(post({ capacity: 5 }), ctx)).status).toBe(404);
+    mocks.deleteHonorRoom.mockRejectedValueOnce(new HonorConfigurationError("ROOM_NOT_FOUND", "Not here."));
+    expect((await DELETE(post({}), ctx)).status).toBe(404);
+  });
+
   it("rejects an unknown field", async () => {
     const { POST: move } = await import("@/app/api/events/[eventId]/honors/offerings/[offeringId]/move/route");
     expect((await move(post({ roomId: null, capacity: 500 }), ctx)).status).toBe(400);
     expect(mocks.moveHonorOffering).not.toHaveBeenCalled();
+  });
+});
+
+describe("database refusal mapping", () => {
+  it("recognises the trigger's refusal and the room/session index however Prisma words it", async () => {
+    const { Prisma } = await import("@prisma/client");
+    const { isRoomBookedIndex, isRoomCapacityRefusal } = await import("@/modules/honors/room-errors");
+    const unknown = new Prisma.PrismaClientUnknownRequestError("Raw query failed. Code: `23514`. Message: `HonorOffering capacity 25 exceeds its room capacity 20`", { clientVersion: "x" });
+    expect(isRoomCapacityRefusal(unknown)).toBe(true);
+    expect(isRoomCapacityRefusal(new Prisma.PrismaClientUnknownRequestError("HonorRoom capacity 3 is below a class placed in it", { clientVersion: "x" }))).toBe(true);
+    expect(isRoomCapacityRefusal(new Error("23514"))).toBe(false);
+    const p2002 = new Prisma.PrismaClientKnownRequestError("Unique constraint failed on the constraint: `HonorOffering_roomId_sessionId_active_key`", { code: "P2002", clientVersion: "x" });
+    expect(isRoomBookedIndex(p2002)).toBe(true);
+    expect(isRoomBookedIndex(new Prisma.PrismaClientKnownRequestError("Unique constraint failed on the fields: (`sessionId`,`honorId`)", { code: "P2002", clientVersion: "x" }))).toBe(false);
   });
 });

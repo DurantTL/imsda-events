@@ -120,6 +120,10 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     }),
   ];
 
+  const honorRooms = await db.honorRoom.findMany({
+    where: { eventId }, orderBy: [{ sortOrder: "asc" }, { normalizedName: "asc" }],
+    include: { site: { select: { normalizedName: true } } },
+  });
   const teamSettings = await db.eventTeamSettings.findUnique({ where: { eventId } });
   const currentForms = forms.filter((form) => form.status !== "ARCHIVED" && form.versions.length > 0);
   const currentTemplates = messageTemplates.filter((template) => template.versions.length > 0);
@@ -194,7 +198,12 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
       id: session.id, name: session.name, normalizedName: session.normalizedName, sortOrder: session.sortOrder,
       locationName: session.location?.name ?? null, locationNormalizedName: session.location?.normalizedName ?? null,
     })),
+    honorRooms: honorRooms.map((room) => ({
+      id: room.id, name: room.name, normalizedName: room.normalizedName, capacity: room.capacity, sortOrder: room.sortOrder,
+      locationNormalizedName: room.site?.normalizedName ?? null,
+    })),
     honorOfferings: honorOfferings.map((offering) => ({
+      roomId: offering.roomId,
       id: offering.id, honorId: offering.honorId, honorIds: summarizeOfferingHonors(offering.honors).honorIds,
       honorName: summarizeOfferingHonors(offering.honors).honorName, sessionId: offering.sessionId,
       sessionName: offering.session?.name ?? null, span: offering.span, capacity: offering.capacity,
@@ -537,6 +546,18 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
         // One statement, not one round trip per row: an event with a site-by-site honors program has
         // hundreds of rows, and a per-row loop held the transaction open until it timed out (#617).
         if (sessionRows.length > 0) await tx.honorSession.createMany({ data: sessionRows });
+        // Rooms follow their site by name, like sessions. A room whose site has no match is not copied (its classes
+        // are copied without a room), so a room is always at its class's site.
+        const roomIds = new Map<string, { id: string; locationId: string | null; capacity: number }>();
+        const roomRows: Prisma.HonorRoomCreateManyInput[] = [];
+        for (const room of config.honorRooms ?? []) {
+          const locationId = room.locationNormalizedName ? newLocations.get(room.locationNormalizedName) ?? null : null;
+          if (room.locationNormalizedName && !locationId) continue;
+          const newRoomId = randomUUID();
+          roomRows.push({ id: newRoomId, eventId: event.id, locationId, name: room.name, normalizedName: room.normalizedName, capacity: room.capacity, sortOrder: room.sortOrder });
+          roomIds.set(room.id, { id: newRoomId, locationId, capacity: room.capacity });
+        }
+        if (roomRows.length > 0) await tx.honorRoom.createMany({ data: roomRows });
         const reviewedOfferings = new Map(input.honorOfferingCapacities.map((entry) => [entry.offeringId, entry]));
         // The same slot rules as setup and copy, per site; a true duplicate is skipped and counted, never thrown.
         const slots: Array<{ honorIds: string[]; span: "SINGLE_SESSION" | "ALL_SESSIONS"; sessionId: string | null; locationId: string | null }> = [];
@@ -563,14 +584,19 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           if (classSlotConflict(slot, slots)) { offeringsSkipped += 1; continue; }
           slots.push(slot);
           const newOfferingId = randomUUID();
+          // The room carries over only while the class still fits it (the reviewed seats can have been raised) and
+          // is at the room's site; otherwise the class is copied without a room and staff place it on the board.
+          const reviewedCapacity = reviewedOfferings.get(offering.id)!.capacity;
+          const sourceRoom = offering.roomId ? roomIds.get(offering.roomId) ?? null : null;
+          const room = sourceRoom && sourceRoom.capacity >= reviewedCapacity && sourceRoom.locationId === slot.locationId ? sourceRoom : null;
           for (const [position, honorId] of honorIds.entries()) {
             if (position > 0) extraHonorRows.push({ offeringId: newOfferingId, honorId, eventId: event.id, position });
           }
           offeringRows.push({
             id: newOfferingId,
             eventId: event.id, honorId: honorIds[0]!,
-            sessionId, locationId,
-            span: offering.span, capacity: reviewedOfferings.get(offering.id)!.capacity,
+            sessionId, locationId, roomId: room?.id ?? null,
+            span: offering.span, capacity: reviewedCapacity,
             perClubLimit: reviewedOfferings.get(offering.id)!.perClubLimit,
             // Carried over as it is; shown in the preview.
             minimumAge: offering.minimumAge,
