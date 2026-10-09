@@ -211,4 +211,64 @@ describe("announcement opt-outs at delivery (#838)", () => {
     expect(state.message.status).toBe("PENDING");
     expect(state.message.attemptCount).toBe(1);
   });
+
+  it("treats a failure to issue the unsubscribe link as a retryable, generic error and stores no raw error text", async () => {
+    const state = store();
+    const deps = dependenciesFor(state, {}, vi.fn());
+    deps.issueUnsubscribeToken = vi.fn(async () => { throw new Error("connection refused at db.internal:5432 password=hunter2"); });
+    await processExternalEmailQueue("event-1", { dependencies: deps });
+    expect(deps.sendEmail).not.toHaveBeenCalled();
+    expect(state.message.status).toBe("PENDING");
+    expect(state.message.attemptCount).toBe(1);
+    expect(String(state.message.lastError)).toMatch(/unsubscribe link could not be prepared/i);
+    expect(JSON.stringify(state.message)).not.toMatch(/hunter2|db\.internal|connection refused/);
+  });
+
+  it("looks the announcement up within the message's own event, so another event's announcement id is never essential", async () => {
+    const announcement = {
+      findFirst: vi.fn(async ({ where }: { where: { id: string; eventId: string } }) => (
+        where.id === "announcement-1" && where.eventId === "event-1" ? { isEssential: true } : null
+      )),
+    };
+    const own = store();
+    const ownDeps = dependenciesFor(own, { optOut: "ALL" }, vi.fn(async (...args: [Record<string, unknown>]) => (void args, { provider: "RESEND" as const, providerMessageId: "p-1" })));
+    delete (ownDeps as Partial<typeof ownDeps>).isAnnouncementEssential;
+    (own.prisma as unknown as Record<string, unknown>).announcement = announcement;
+    expect((await processExternalEmailQueue("event-1", { dependencies: ownDeps })).sentIds).toEqual(["message-1"]);
+    expect(announcement.findFirst).toHaveBeenCalledWith({ where: { id: "announcement-1", eventId: "event-1" }, select: { isEssential: true } });
+
+    // The same id, but the message belongs to a different event: not found there, so not essential, so skipped.
+    const other = store({ eventId: "event-2" });
+    const otherSend = vi.fn();
+    const otherDeps = dependenciesFor(other, { optOut: "ALL" }, otherSend);
+    delete (otherDeps as Partial<typeof otherDeps>).isAnnouncementEssential;
+    (other.prisma as unknown as Record<string, unknown>).announcement = announcement;
+    await processExternalEmailQueue("event-1", { dependencies: otherDeps });
+    expect(otherSend).not.toHaveBeenCalled();
+    expect(other.message.status).toBe("SUPPRESSED");
+  });
+
+  it("checks the opt-out again just before the provider call, so an opt-out made while the message was queued is honoured", async () => {
+    const state = store();
+    const sendEmail = vi.fn();
+    const deps = dependenciesFor(state, {}, sendEmail);
+    // Not opted out when the message is claimed; opted out by the time its body is prepared.
+    const lookup = vi.fn<(email: string, eventId: string) => Promise<"EVENT" | null>>()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("EVENT");
+    deps.findAnnouncementOptOut = lookup as never;
+    await processExternalEmailQueue("event-1", { dependencies: deps });
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(state.message.status).toBe("SUPPRESSED");
+    expect(String(state.message.lastError)).toMatch(/opted out/i);
+  });
+
+  it("still sends an essential announcement when the second check finds an opt-out", async () => {
+    const state = store();
+    const deps = dependenciesFor(state, { essential: true }, vi.fn(async (...args: [Record<string, unknown>]) => (void args, { provider: "RESEND" as const, providerMessageId: "p-2" })));
+    deps.findAnnouncementOptOut = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce("ALL") as never;
+    expect((await processExternalEmailQueue("event-1", { dependencies: deps })).sentIds).toEqual(["message-1"]);
+  });
 });
+

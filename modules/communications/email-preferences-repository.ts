@@ -92,6 +92,27 @@ export async function recordAnnouncementOptOut(input: {
 }) {
   const normalizedEmail = normalizeEmailAddress(input.email);
   const scopeKey = optOutScopeKey(input.scope, input.eventId);
+  try {
+    return await recordOptOutOnce(input, normalizedEmail, scopeKey);
+  } catch (error) {
+    // Two requests for the same address and scope at once (a double click, a client that retries a one-click POST):
+    // the loser hits the unique index. It is already opted out, which is what was asked.
+    if ((error as { code?: string } | null)?.code === "P2002") {
+      const existing = await getPrisma().emailAnnouncementOptOut.findUnique({
+        where: { normalizedEmail_scopeKey: { normalizedEmail, scopeKey } },
+        select: { id: true },
+      });
+      if (existing) return { recorded: false as const, id: existing.id };
+    }
+    throw error;
+  }
+}
+
+async function recordOptOutOnce(
+  input: { email: string; eventId: string; scope: AnnouncementOptOutScope; source: OptOutSource },
+  normalizedEmail: string,
+  scopeKey: string,
+) {
   return getPrisma().$transaction(async (tx) => {
     const existing = await tx.emailAnnouncementOptOut.findUnique({
       where: { normalizedEmail_scopeKey: { normalizedEmail, scopeKey } },
