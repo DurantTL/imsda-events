@@ -36,9 +36,14 @@ fi
 
 echo "[restore-verify] $(date -u +%FT%TZ) restoring ${DUMP} into ${SCRATCH_DB}"
 
+# Set once the rehearsal has passed; a failed rehearsal always drops its scratch
+# database, even with RESTORE_KEEP_SCRATCH=true.
+RESTORE_SUCCEEDED=false
+
 cleanup() {
-  if [ "${RESTORE_KEEP_SCRATCH:-}" = "true" ]; then
-    echo "[restore-verify] keeping scratch database ${SCRATCH_DB}; drop it when the key test is done." >&2
+  if [ "${RESTORE_KEEP_SCRATCH:-}" = "true" ] && [ "${RESTORE_SUCCEEDED}" = "true" ]; then
+    echo "[restore-verify] KEEPING scratch database ${SCRATCH_DB} for the key test. Drop it afterwards:" >&2
+    echo "[restore-verify]   psql --dbname=postgres --command 'DROP DATABASE \"${SCRATCH_DB}\";'" >&2
     return
   fi
   psql --dbname=postgres --quiet --command "DROP DATABASE IF EXISTS \"${SCRATCH_DB}\";" >/dev/null 2>&1 || true
@@ -68,4 +73,5 @@ for table in Registration RegistrationAttendee Payment Person; do
   echo "[restore-verify]   verified ${table}=${COUNT}"
 done
 
+RESTORE_SUCCEEDED=true
 echo "[restore-verify] $(date -u +%FT%TZ) restore rehearsal succeeded for ${DUMP}"

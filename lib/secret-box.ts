@@ -26,8 +26,8 @@ export class SecretBoxError extends Error {
   }
 }
 
-function derivedKey(purpose: string) {
-  const configured = getServerEnv().SECRET_ENCRYPTION_KEY;
+function derivedKey(purpose: string, explicitKey?: string) {
+  const configured = explicitKey ?? getServerEnv().SECRET_ENCRYPTION_KEY;
   if (!configured) {
     throw new SecretBoxError(
       "SECRET_ENCRYPTION_KEY (or SECRET_ENCRYPTION_KEY_FILE) must be set before encrypted values can be read or written.",
@@ -42,10 +42,16 @@ function derivedKey(purpose: string) {
   ));
 }
 
+/**
+ * `explicitKey` lets an operator tool (`scripts/backup/verify-key-restore.ts`)
+ * use a key it resolved itself, without loading the whole server environment.
+ * Application code never passes it.
+ */
+
 /** Returns `v1.<nonce>.<tag>.<ciphertext>`, all base64url. */
-export function sealSecret(plaintext: string, purpose: string) {
+export function sealSecret(plaintext: string, purpose: string, explicitKey?: string) {
   const nonce = randomBytes(NONCE_BYTES);
-  const cipher = createCipheriv("aes-256-gcm", derivedKey(purpose), nonce);
+  const cipher = createCipheriv("aes-256-gcm", derivedKey(purpose, explicitKey), nonce);
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   return [
     FORMAT,
@@ -55,7 +61,7 @@ export function sealSecret(plaintext: string, purpose: string) {
   ].join(".");
 }
 
-export function openSecret(sealed: string, purpose: string) {
+export function openSecret(sealed: string, purpose: string, explicitKey?: string) {
   const [format, nonce, tag, ciphertext] = sealed.split(".");
   if (format !== FORMAT || !nonce || !tag || !ciphertext) {
     throw new SecretBoxError("The stored value is not in the expected sealed format.");
@@ -63,7 +69,7 @@ export function openSecret(sealed: string, purpose: string) {
   try {
     const decipher = createDecipheriv(
       "aes-256-gcm",
-      derivedKey(purpose),
+      derivedKey(purpose, explicitKey),
       Buffer.from(nonce, "base64url"),
     );
     decipher.setAuthTag(Buffer.from(tag, "base64url"));

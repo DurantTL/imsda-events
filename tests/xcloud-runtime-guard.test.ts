@@ -233,4 +233,50 @@ describe("xCloud runtime guard", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("DATABASE_URL is missing or malformed");
   });
+  describe("encryption key file (#876)", () => {
+    const composeFiles = {
+      ...manualFiles,
+      "docker-compose.yml": "services:\n  app:\n    image: app\n",
+    };
+    const loadsDburl = "services:\n  app:\n    env_file:\n      - .env\n      - .env.dburl\n";
+
+    it("accepts a manual container that has SECRET_ENCRYPTION_KEY_FILE without warning", () => {
+      const run = setup(manualFiles);
+      const result = run({
+        FAKE_CONTAINERS: "xcloud-site-239298-app-1 running\n",
+        FAKE_ENV: `${fakeDatabaseUrl}\nSECRET_ENCRYPTION_KEY_FILE=/run/secrets/encryption-key`,
+        FAKE_NETWORKS: network,
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain("WARNING");
+    });
+
+    it("warns, without failing, when a container has neither key variable", () => {
+      const run = setup(manualFiles);
+      const result = run({
+        FAKE_CONTAINERS: "xcloud-site-239298-app-1 running\n",
+        FAKE_ENV: fakeDatabaseUrl,
+        FAKE_NETWORKS: network,
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("neither SECRET_ENCRYPTION_KEY nor SECRET_ENCRYPTION_KEY_FILE");
+    });
+
+    it("refuses to recreate when the key left .env and the override does not mount the key file", () => {
+      const run = setup({ ...composeFiles, "docker-compose.env.yml": loadsDburl });
+      const result = run({ FAKE_ENV: "NODE_ENV=production", FAKE_NETWORKS: "other" });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("SECRET_ENCRYPTION_KEY_FILE");
+      expect(run.dockerLog()).not.toContain(" up ");
+    });
+
+    it("recreates when the override sets SECRET_ENCRYPTION_KEY_FILE", () => {
+      const run = setup({
+        ...composeFiles,
+        "docker-compose.env.yml": `${loadsDburl}    environment:\n      SECRET_ENCRYPTION_KEY_FILE: /run/secrets/encryption-key\n`,
+      });
+      run({ FAKE_ENV: "NODE_ENV=production", FAKE_NETWORKS: "other" });
+      expect(run.dockerLog()).toContain(" up ");
+    });
+  });
 });

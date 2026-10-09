@@ -42,6 +42,20 @@ container_has_database_url() {
     grep -q '^DATABASE_URL='
 }
 
+# The encryption key reaches the app either as SECRET_ENCRYPTION_KEY (env file)
+# or as SECRET_ENCRYPTION_KEY_FILE (a read-only mounted file, #876). Only the
+# variable NAMES are inspected here, never a value.
+container_has_encryption_key() {
+  docker inspect "$1" --format '{{range .Config.Env}}{{println .}}{{end}}' |
+    grep -Eq '^SECRET_ENCRYPTION_KEY(_FILE)?='
+}
+
+warn_if_no_encryption_key() {
+  if ! container_has_encryption_key "$1"; then
+    echo "[xcloud-post-deploy] WARNING: $1 has neither SECRET_ENCRYPTION_KEY nor SECRET_ENCRYPTION_KEY_FILE; a production app will refuse to start. See docs/DEPLOY-DOCKER.md (encryption key file)." >&2
+  fi
+}
+
 container_has_expected_network() {
   [ -z "${IMSDA_XCLOUD_EXPECTED_NETWORK:-}" ] && return 0
   docker inspect "$1" \
@@ -85,6 +99,7 @@ if [ ! -s "$IMSDA_XCLOUD_BASE_COMPOSE" ]; then
     echo "[xcloud-post-deploy] No base Compose file to repair from, and $IMSDA_XCLOUD_CONTAINER_NAMES is missing network $IMSDA_XCLOUD_EXPECTED_NETWORK." >&2
     exit 1
   fi
+  warn_if_no_encryption_key "$IMSDA_XCLOUD_CONTAINER_NAMES"
   echo "[xcloud-post-deploy] Manual deployment: $IMSDA_XCLOUD_CONTAINER_NAMES has its runtime settings; no change needed."
   exit 0
 fi
@@ -166,6 +181,7 @@ if [ "$IMSDA_XCLOUD_HAS_DATABASE_URL" = true ] \
   && [ "$IMSDA_XCLOUD_HAS_EXPECTED_NETWORK" = true ] \
   && [ "$IMSDA_XCLOUD_HAS_RELEASE_SHA" = true ]
 then
+  warn_if_no_encryption_key "$IMSDA_XCLOUD_CONTAINER_ID"
   echo "[xcloud-post-deploy] Runtime override is already present; no container change needed."
   exit 0
 fi
@@ -176,6 +192,16 @@ if [ "$IMSDA_XCLOUD_DATABASE_URL_IN_ENV" = false ] \
   && ! grep -q '^[[:space:]]*-[[:space:]]*\.env\.dburl' "$IMSDA_XCLOUD_OVERRIDE_COMPOSE"
 then
   echo "[xcloud-post-deploy] DATABASE_URL is only in $IMSDA_XCLOUD_DBURL_FILE, which $IMSDA_XCLOUD_OVERRIDE_COMPOSE does not load; add it under env_file." >&2
+  exit 1
+fi
+
+# Likewise the key: once it has left .env (#876) the override has to supply it
+# through SECRET_ENCRYPTION_KEY_FILE and a read-only mount, or the recreated app
+# cannot start.
+if ! grep -q '^SECRET_ENCRYPTION_KEY=' "$IMSDA_XCLOUD_ENV_FILE" \
+  && ! grep -q 'SECRET_ENCRYPTION_KEY_FILE' "$IMSDA_XCLOUD_OVERRIDE_COMPOSE"
+then
+  echo "[xcloud-post-deploy] SECRET_ENCRYPTION_KEY is not in $IMSDA_XCLOUD_ENV_FILE and $IMSDA_XCLOUD_OVERRIDE_COMPOSE does not set SECRET_ENCRYPTION_KEY_FILE; add the key file mount (docs/DEPLOY-DOCKER.md)." >&2
   exit 1
 fi
 
@@ -202,6 +228,11 @@ if ! docker inspect "$IMSDA_XCLOUD_CONTAINER_ID" \
   grep -q '^DATABASE_URL='
 then
   echo "[xcloud-post-deploy] The recreated container is still missing DATABASE_URL." >&2
+  exit 1
+fi
+
+if ! container_has_encryption_key "$IMSDA_XCLOUD_CONTAINER_ID"; then
+  echo "[xcloud-post-deploy] The recreated container has neither SECRET_ENCRYPTION_KEY nor SECRET_ENCRYPTION_KEY_FILE." >&2
   exit 1
 fi
 

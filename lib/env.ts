@@ -438,10 +438,23 @@ export function resolveEncryptionKey(
   return { ok: true, key, source: "file" };
 }
 
-/** Non-secret summary for health and readiness: whether a key is configured and how it was loaded. */
-export function getEncryptionKeyStatus(
-  source: Record<string, string | undefined> = process.env,
-): { configured: boolean; source: "file" | "env" | null } {
+export type EncryptionKeyStatus = { configured: boolean; source: "file" | "env" | null };
+
+let cachedKeyStatus: EncryptionKeyStatus | undefined;
+
+/**
+ * Non-secret summary for health and readiness: whether a key is configured and
+ * how it was loaded. With no argument it describes the process environment as
+ * resolved at startup (computed once, so a health poll never re-reads the key
+ * file); pass a source to inspect another environment without caching.
+ */
+export function getEncryptionKeyStatus(source?: Record<string, string | undefined>): EncryptionKeyStatus {
+  if (source) return describeEncryptionKey(source);
+  cachedKeyStatus ??= describeEncryptionKey(process.env);
+  return cachedKeyStatus;
+}
+
+function describeEncryptionKey(source: Record<string, string | undefined>): EncryptionKeyStatus {
   const resolved = resolveEncryptionKey(source);
   if (resolved.ok && resolved.key && resolved.source !== "none") {
     return { configured: true, source: resolved.source };
@@ -512,6 +525,7 @@ export function getServerEnv(): ServerEnv {
 /** Test seam. Never called by application code. */
 export function resetServerEnvCache() {
   cachedEnv = undefined;
+  cachedKeyStatus = undefined;
 }
 
 /**
@@ -523,6 +537,8 @@ export function assertServerEnvAtStartup(
   source: Record<string, string | undefined> = process.env,
 ): ServerEnvValidation {
   const result = validateServerEnv(source);
+  // Record how the key was loaded at startup, for /api/health.
+  if (source === process.env) getEncryptionKeyStatus();
   if (result.ok) return result;
 
   const report = result.issues.map((issue) => `  - ${issue}`).join("\n");
