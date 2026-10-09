@@ -1,0 +1,336 @@
+# Backups: nightly dumps to Cloudflare R2, with status in the app
+
+This is the production runbook for the manually started deployment
+(`/root/manual-deploy.sh`, image `ghcr.io/duranttl/imsda-events:<sha>`, Postgres
+in its own container). The Compose `backup` service described in
+`DEPLOY-DOCKER.md` runs the same scripts for the all-in-one stack.
+
+## What runs
+
+A small second container, **`imsda-backup`**, started next to the app and the
+`imsda-outbox-sweeper`. Once a day at `BACKUP_AT_HOUR` (UTC, default `8`, which
+is 3 a.m. US Central during daylight saving time and 2 a.m. in winter; it waits
+for that hour rather than running when the container starts) it:
+
+1. `pg-backup.sh`: prunes local dumps older than `BACKUP_RETENTION_DAYS` (14)
+   and any stale `*.partial` files, then `pg_dump` (custom format) to the local
+   `imsda_events_backups` volume, then copies the dump to R2. A half-written
+   file is removed if the run dies.
+2. `assets-backup.sh`: prunes the same way, archives the `imsda_events_assets`
+   volume (mounted **read-only**), checks the archive reads back, then copies it
+   to R2. It fails if the volume is not mounted, or is empty
+   (`BACKUP_REQUIRE_ASSETS=true`, the image default), instead of "backing up
+   nothing".
+   Retention always keeps the newest 3 dumps and 3 archives (`BACKUP_KEEP_MIN`),
+   however old, so a long outage cannot delete the last good backups.
+3. `record-status.sh`: writes one status row (see below). With
+   `BACKUP_REQUIRE_OFFSITE=true` (the image default) a run whose off-site copy
+   was skipped or failed is recorded as off-site failed.
+4. Every 7th run (`BACKUP_VERIFY_EVERY`, starting with the first), runs
+   `pg-restore-verify.sh` and records the result. The rehearsal starts a
+   **private, temporary PostgreSQL inside the backup container** (unix socket
+   only, no network, in a temp directory), restores the newest local dump into
+   it, checks row counts on `Registration`, `RegistrationAttendee`, `Payment`
+   and `Person`, then stops it and deletes the directory. The production
+   database server is not touched: no `CREATEDB` privilege is needed and no
+   load or disk is added there. While it runs, the backup container uses
+   temporary disk of about the restored (uncompressed) database size under
+   `/tmp`, and roughly 100-200 MB of RAM; both are released afterwards.
+   **Shared-disk risk:** `/tmp` inside the container lives on the same disk as
+   Docker's other data (and the backup volume). Before starting, the script
+   checks free space against about 6 times the dump size plus 512 MB
+   (`RESTORE_HEADROOM_MB`) and refuses with a clear message instead of filling
+   the disk; that failure is recorded as a failed rehearsal. If the disk is
+   tight, mount a roomier path and set `RESTORE_TMP_DIR` to it. Leftover
+   `restore-check.*` directories from an interrupted run are removed at the
+   next start. It also fails the rehearsal if the restored `Registration` or
+   `Person` table has 0 rows (`REHEARSAL_ALLOW_EMPTY=true` only for a fresh
+   development database). Every `PG*` variable (host, hostaddr, port, service,
+   password file and so on) is cleared before the private server starts, so it
+   cannot be pointed at production by accident; a non-public `search_path` from
+   `PGOPTIONS` is kept for the restore checks. The server runs as the
+   `postgres` user via `gosu` or `su-exec`; if the container is root and
+   neither exists, the rehearsal fails with an explicit error.
+   (`RESTORE_MODE=server` keeps the old create-a-scratch-database-on-the-server
+   behavior for the Compose development stack only.)
+
+A failed off-site copy never stops the local backup, and a failed backup or
+rehearsal never stops the next night's run; both are recorded and logged.
+
+### Why a small dedicated image
+
+The scheduler needs `pg_dump` 16 (it refuses to dump a server newer than
+itself), an S3 client for R2, and the scripts. The production server has no
+checkout of this repository (the app image is built by GitHub), so mounting the
+scripts from the repo is not possible without adding a manual copy step that
+drifts. `scripts/backup/Dockerfile` builds `postgres:16-alpine` + `aws-cli` +
+the scripts, and the existing image workflow publishes it as
+`ghcr.io/duranttl/imsda-events-backup:<sha>` on every merge to `main`, so it is
+versioned and rolled back exactly like the app. It holds no secrets.
+
+## Where the status goes
+
+A table, `BackupRun` (additive migration `20261014100000_backup_run`). The
+scheduler writes it with `psql` using the same database connection settings the
+dumps use; the app reads it with Prisma. A table was chosen over a status file
+because the backup container and the app share no volume (the app only mounts
+the assets volume, and giving it a writable shared path is an extra moving part
+and an extra thing to forget), while both already reach the database. It is
+also queryable and keeps history.
+
+Each row: `kind` (`BACKUP` or `REHEARSAL`), `startedAt`, `finishedAt`, `ok`,
+`dumpBytes`, `assetsBytes`, `offsiteOk` (null when no off-site copy is
+configured). No file names, paths, row contents or credentials.
+
+`/api/health` is public, so it shows only a small `backups` block (and
+`services.backups`):
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `ok`, `failing` (latest run failed, a success is still recent), `stale`, `never` (nothing recorded yet, within 36 hours of the table being created) |
+| `stale` | `true` after 36 hours without a successful backup |
+| `needsAttention` | `true` for anything below |
+| `lastSuccessAt` | newest successful backup |
+| `lastRehearsalAt` | newest restore rehearsal |
+
+Health `status` becomes **`degraded`**, still HTTP 200, when any of these hold:
+no successful backup for 36 hours; the latest run failed; the latest off-site
+copy failed (or was skipped while `BACKUP_REQUIRE_OFFSITE=true`), or copies that
+once worked have stopped for 36 hours; the latest rehearsal failed; or no
+rehearsal has succeeded for 8 days. Only a database failure returns 503, so a
+missing backup never takes the app out of rotation.
+
+`never` is not degraded for the first 36 hours after the table is created (the
+`_prisma_migrations` finish time of `20261014100000_backup_run` is the anchor),
+so a fresh deployment is not unhealthy before its first night. After that, with
+nothing recorded, it is `stale` and degraded: a backup container that was never
+started cannot stay green.
+
+Sizes, the off-site result and the rehearsal result are kept out of the public
+endpoint. They are read by the server function `getBackupStatus()`
+(`modules/operations/backup-status-repository.ts`) for the System readiness page
+(#870) once it exists.
+
+## One-time human steps
+
+### 1. Create the R2 bucket and a bucket-scoped token
+
+In the Cloudflare dashboard, under R2:
+
+1. Create a bucket (for example `imsda-events-backups`). Keep it private; do
+   not enable public access or a custom domain.
+2. **R2 > Manage API tokens > Create API token.** Permission **Object Read &
+   Write**, **Specify bucket** and pick only this bucket. (Do not use an
+   account-wide token.) Copy the Access Key ID and Secret Access Key now; the
+   secret is shown once. The account id is on the R2 overview page.
+3. **Lifecycle rule** on the bucket: delete objects after N days. 90 days is
+   suggested; **a human decides the number**. Local copies are separate (14
+   days). Set the rule on prefix `imsda-events/` if the bucket is shared.
+
+Use a token for backups only. The encryption key does **not** go in this
+bucket or under this token (see below).
+
+### 2. Create the server env file
+
+`/home/u_events/.xcloud/.env.backup`, mode `600`, owned by the deploy user.
+This is the only place the secrets live; never commit it or paste it in chat.
+
+```
+# Database connection for pg_dump / psql. Copy host, port, database, user and
+# password from DATABASE_URL in /home/u_events/.xcloud/.env.dburl; do not guess
+# the host. Use a role that can read every table and insert into "BackupRun"
+# (the app's own role works). No CREATEDB is needed: the rehearsal uses a
+# private temporary server inside the backup container.
+PGHOST=<host from DATABASE_URL>
+PGPORT=<port from DATABASE_URL>
+PGUSER=<database user>
+PGPASSWORD=<database password>
+PGDATABASE=<database name>
+
+# Cloudflare R2 (S3 API at https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com)
+R2_ACCOUNT_ID=<cloudflare account id>
+R2_ACCESS_KEY_ID=<bucket-scoped token access key id>
+R2_SECRET_ACCESS_KEY=<bucket-scoped token secret>
+R2_BUCKET=<bucket name>
+# R2_PREFIX=imsda-events        # optional key prefix, this is the default
+
+BACKUP_RETENTION_DAYS=14        # human approves
+BACKUP_VERIFY_EVERY=7
+# BACKUP_AT_HOUR=8              # UTC hour; 8 = 3 a.m. Central (CDT)
+# The image already sets BACKUP_REQUIRE_OFFSITE=true and BACKUP_REQUIRE_ASSETS=true.
+```
+
+If `DATABASE_URL` ends with `?schema=<name>` and the name is not `public`, also
+add `PGOPTIONS=-c search_path=<name>` so `pg_dump` and the status insert find
+the right schema (psql cannot take the `?schema=` query itself).
+
+Use separate plain `KEY=value` lines (no quotes, no `export`), as for `docker
+--env-file`. The
+default off-site command (`offsite-r2.sh`) is baked into the image and reads the
+`R2_*` names above; do not set `BACKUP_OFFSITE_COMMAND` unless you are
+replacing it.
+
+Check the server's Postgres major version matches the image's client (16):
+`docker exec postgresql-postgresql_9kgaw_239292 postgres --version`.
+
+### 3. Start the container
+
+The image is published as `ghcr.io/duranttl/imsda-events-backup:<sha>` by the
+Docker image workflow (same sha as the app image you deployed; it is also
+tagged `:main`).
+
+**One-time, owner only: make the package pullable.** GitHub creates a new
+container package as **private**. It contains no secrets (only PostgreSQL
+client tools, the AWS CLI and these scripts), so either set it public, as was
+done for the app image, or log in on the server.
+
+*Option A, make it public (matches the app image):*
+
+1. On GitHub, open the `DurantTL` profile (or the owning organisation), then the
+   **Packages** tab, then **imsda-events-backup**. It appears after the first
+   successful run of the "Docker image" workflow on `main`.
+2. Click **Package settings** (right-hand sidebar).
+3. Scroll to **Danger Zone**, click **Change visibility**, choose **Public**,
+   type the package name to confirm, and click **I understand the consequences,
+   change package visibility**.
+
+*Option B, keep it private:* in the same **Package settings**, under **Manage
+Actions access** or **Invite teams or people**, make sure the repository/account
+used on the server has Read access, then on the server run
+`docker login ghcr.io -u <github user>` with a personal access token that has
+`read:packages`.
+
+```bash
+SHA=<commit sha>
+docker pull ghcr.io/duranttl/imsda-events-backup:$SHA
+docker volume create imsda_events_backups
+
+docker rm -f -v imsda-backup 2>/dev/null
+docker run -d --name imsda-backup --restart unless-stopped \
+  --network postgresql_9kgaw_239292_xcloud-network \
+  --env-file /home/u_events/.xcloud/.env.backup \
+  -v imsda_events_assets:/assets:ro \
+  -v imsda_events_backups:/backups \
+  ghcr.io/duranttl/imsda-events-backup:$SHA
+```
+
+The migration that creates `BackupRun` must be applied before the first run
+completes (it is part of the normal app deploy). Add the same `docker run`
+to `/root/manual-deploy.sh` beside the sweeper so a redeploy keeps it running.
+Upgrading the backup image is the same two lines with a new `$SHA`; the
+volume (and its history) is untouched.
+
+To back up right now instead of waiting for the scheduled hour, run a one-off
+container (no `--name`, no `--restart`; it exits when done, with a non-zero
+status if the backup, the off-site copy or the rehearsal failed). **It also runs a
+restore rehearsal**, so allow a few minutes and the temporary disk described
+above:
+
+```bash
+docker run --rm \
+  --network postgresql_9kgaw_239292_xcloud-network \
+  --env-file /home/u_events/.xcloud/.env.backup \
+  -e BACKUP_RUN_ONCE=1 \
+  -v imsda_events_assets:/assets:ro \
+  -v imsda_events_backups:/backups \
+  ghcr.io/duranttl/imsda-events-backup:$SHA
+```
+
+### 4. Verify
+
+```bash
+docker logs imsda-backup 2>&1 | tail -30
+```
+
+Expect `[backup] wrote ...`, `[offsite-r2] uploaded imsda-events/imsda-events-<stamp>.dump`,
+`[asset-backup] ...`, then `restore rehearsal succeeded`. Then:
+
+1. The container waits for `BACKUP_AT_HOUR`, so right after starting it nothing
+   is recorded yet. Run the one-off "back up right now" command above to get
+   a first run immediately.
+2. `curl -s https://<app host>/api/health` and check that `backups.status` is
+   `ok`, `backups.needsAttention` is `false`, and `backups.lastSuccessAt` and
+   `backups.lastRehearsalAt` are set. (`backups.status` of `never` means no run
+   has been recorded: the container is not running, cannot reach the database,
+   or the migration has not been applied; look in `docker logs` for `could not
+   record status`. A `needsAttention` of `true` with otherwise-fresh times
+   usually means the off-site copy failed: look for `OFF-SITE COPY FAILED`.
+   The detail, including sizes and the off-site result, is on the System
+   readiness page (#870) once it exists.)
+3. In the Cloudflare dashboard, confirm both the `.dump` and `.tar.gz` objects
+   are in the bucket under `imsda-events/`.
+4. Confirm the lifecycle rule is saved.
+
+## Weekly rehearsal
+
+The scheduler restores the newest local dump into a private temporary
+PostgreSQL inside the backup container (see "What runs"; the production server
+is never used) every 7th run and records the result. Weekly, a human:
+
+1. Reads `/api/health`: `backups.needsAttention` is `false` and
+   `backups.lastRehearsalAt` is within about 8 days (health turns `degraded` after 8
+   days without a successful rehearsal).
+2. `docker logs imsda-backup 2>&1 | grep restore-verify` shows row counts for
+   `Registration`, `RegistrationAttendee`, `Payment` and `Person` that look
+   plausible.
+3. Once a quarter, restore from **R2** (not the local copy) using the steps below
+   on a scratch database, to prove the off-site files themselves are usable.
+
+## Restoring from R2
+
+Do this only for a real recovery or a drill on a scratch database. Restoring
+over production is a human decision.
+
+```bash
+# Fetch the files into a scratch folder on the server (uses the same env file).
+mkdir -p /root/restore && cd /root/restore
+docker run --rm --env-file /home/u_events/.xcloud/.env.backup \
+  -v /root/restore:/restore --entrypoint sh \
+  ghcr.io/duranttl/imsda-events-backup:main -c '
+    export AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$R2_SECRET_ACCESS_KEY" AWS_DEFAULT_REGION=auto
+    EP="https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com"
+    aws s3 ls "s3://$R2_BUCKET/${R2_PREFIX:-imsda-events}/" --endpoint-url "$EP"
+    aws s3 cp "s3://$R2_BUCKET/${R2_PREFIX:-imsda-events}/imsda-events-<stamp>.dump" /restore/ --endpoint-url "$EP"
+    aws s3 cp "s3://$R2_BUCKET/${R2_PREFIX:-imsda-events}/imsda-assets-<stamp>.tar.gz" /restore/ --endpoint-url "$EP"'
+```
+
+Pick a database dump and an assets archive from the same night. Then, with the
+app stopped:
+
+```bash
+docker stop <app container> imsda-outbox-sweeper
+# Database (into the live database; for a drill, create a scratch database and
+# change --dbname instead):
+docker run --rm --env-file /home/u_events/.xcloud/.env.backup \
+  --network postgresql_9kgaw_239292_xcloud-network \
+  -v /root/restore:/restore:ro --entrypoint sh \
+  ghcr.io/duranttl/imsda-events-backup:main -c \
+  'pg_restore --dbname="$PGDATABASE" --clean --if-exists --no-owner --no-privileges /restore/imsda-events-<stamp>.dump'
+# Uploaded files:
+docker run --rm -v imsda_events_assets:/assets -v /root/restore:/restore:ro \
+  --entrypoint sh ghcr.io/duranttl/imsda-events-backup:main -c \
+  'find /assets -mindepth 1 -maxdepth 1 -exec rm -rf {} + && tar -xzf /restore/imsda-assets-<stamp>.tar.gz -C /assets'
+```
+
+Restart the app and sweeper, then check `/api/health` and a few registrations.
+Delete `/root/restore` afterwards; it holds personal data.
+
+Encrypted fields in the restored data can only be read with the original
+`SECRET_ENCRYPTION_KEY` (below).
+
+## The encryption key is backed up separately
+
+`SECRET_ENCRYPTION_KEY` is **not** included in these backups, is **never**
+uploaded to this R2 bucket, and must not share its credentials. The dumps hold
+the encrypted values; without the key they cannot be read, and with the key in
+the same place as the dumps the encryption would protect nothing. Its backup
+and one-time test restore are tracked separately in #876. Until that exists,
+these backups are not a complete recovery.
+
+## Secrets and logs
+
+R2 and database credentials exist only in `/home/u_events/.xcloud/.env.backup`.
+They are not in the repository, the image, or the scripts' output
+(`offsite-r2.sh` prints the file name, bucket and prefix, never the keys; status
+rows hold times, sizes and flags). Rotate the R2 token in Cloudflare and edit the
+env file, then `docker restart imsda-backup`.

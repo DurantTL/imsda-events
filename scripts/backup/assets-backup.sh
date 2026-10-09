@@ -6,13 +6,36 @@
 # restore rows that point to files which no longer exist after a server loss.
 set -eu
 
+. "$(dirname "$0")/prune-lib.sh"
+
 ASSET_DIR="${ASSET_DIR:-/assets}"
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 TARGET="${BACKUP_DIR}/imsda-assets-${STAMP}.tar.gz"
 
-mkdir -p "${ASSET_DIR}" "${BACKUP_DIR}"
+STATE_DIR="${BACKUP_STATE_DIR:-${BACKUP_DIR}/.status}"
+
+mkdir -p "${BACKUP_DIR}" "${STATE_DIR}"
+rm -f "${STATE_DIR}/assets.state"
+
+# Never create the assets directory: a missing mount must fail loudly rather
+# than produce a "successful" backup of nothing. With BACKUP_REQUIRE_ASSETS=true
+# (the default in the image) an empty directory fails too.
+if [ ! -d "${ASSET_DIR}" ]; then
+  echo "[asset-backup] ${ASSET_DIR} does not exist; is the assets volume mounted?" >&2
+  exit 1
+fi
+if [ "${BACKUP_REQUIRE_ASSETS:-false}" = "true" ] && [ -z "$(ls -A "${ASSET_DIR}")" ]; then
+  echo "[asset-backup] ${ASSET_DIR} is empty and BACKUP_REQUIRE_ASSETS=true; refusing." >&2
+  exit 1
+fi
+
+echo "[asset-backup] pruning archives older than ${RETENTION_DAYS} days (keeping the newest ${BACKUP_KEEP_MIN:-3}, and clearing stale partials)"
+find "${BACKUP_DIR}" -name 'imsda-assets-*.tar.gz.partial' -type f -print -delete
+prune_backups "${BACKUP_DIR}" 'imsda-assets-*.tar.gz' "${RETENTION_DAYS}"
+
+trap 'rm -f "${TARGET}.partial"' EXIT
 
 echo "[asset-backup] $(date -u +%FT%TZ) archiving ${ASSET_DIR} to ${TARGET}"
 tar -czf "${TARGET}.partial" -C "${ASSET_DIR}" .
@@ -24,13 +47,27 @@ mv "${TARGET}.partial" "${TARGET}"
 SIZE="$(wc -c < "${TARGET}")"
 echo "[asset-backup] wrote ${SIZE} bytes to ${TARGET}"
 
+printf 'BYTES=%s\n' "${SIZE}" > "${STATE_DIR}/assets.state"
+
+OFFSITE_FAILED=0
 if [ -n "${BACKUP_OFFSITE_COMMAND:-}" ]; then
   echo "[asset-backup] copying off-host"
-  sh -c "${BACKUP_OFFSITE_COMMAND}" _ "${TARGET}"
+  if sh -c "${BACKUP_OFFSITE_COMMAND}" _ "${TARGET}"; then
+    echo "OFFSITE=ok" >> "${STATE_DIR}/assets.state"
+  else
+    echo "[asset-backup] OFF-SITE COPY FAILED; the archive exists only on this host." >&2
+    echo "OFFSITE=failed" >> "${STATE_DIR}/assets.state"
+    OFFSITE_FAILED=1
+  fi
+else
+  echo "OFFSITE=skipped" >> "${STATE_DIR}/assets.state"
 fi
 
 echo "[asset-backup] pruning archives older than ${RETENTION_DAYS} days"
-find "${BACKUP_DIR}" -name 'imsda-assets-*.tar.gz' -type f \
-  -mtime "+${RETENTION_DAYS}" -print -delete
+prune_backups "${BACKUP_DIR}" 'imsda-assets-*.tar.gz' "${RETENTION_DAYS}"
+
+if [ "${OFFSITE_FAILED}" -ne 0 ]; then
+  exit 1
+fi
 
 echo "[asset-backup] $(date -u +%FT%TZ) complete"

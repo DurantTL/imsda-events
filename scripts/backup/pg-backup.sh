@@ -13,14 +13,34 @@
 #   BACKUP_DIR             where dumps are written (default /backups)
 #   BACKUP_RETENTION_DAYS  dumps older than this are deleted (default 14)
 #   BACKUP_OFFSITE_COMMAND optional shell command run with the dump path as $1
+#   BACKUP_STATE_DIR       where the result is left for the scheduler
+#                          (default ${BACKUP_DIR}/.status)
+#
+# A failed off-site copy does not stop local pruning, but it does make this exit
+# non-zero, and the result (size, off-site ok/failed/skipped) is written to
+# pg.state either way so the scheduler can record it.
 set -eu
+
+. "$(dirname "$0")/prune-lib.sh"
 
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 TARGET="${BACKUP_DIR}/imsda-events-${STAMP}.dump"
 
-mkdir -p "${BACKUP_DIR}"
+STATE_DIR="${BACKUP_STATE_DIR:-${BACKUP_DIR}/.status}"
+
+mkdir -p "${BACKUP_DIR}" "${STATE_DIR}"
+rm -f "${STATE_DIR}/pg.state"
+
+# Prune first so a full disk is not what stops tonight's dump, and clear any
+# half-written file a killed run left behind.
+echo "[backup] pruning dumps older than ${RETENTION_DAYS} days (keeping the newest ${BACKUP_KEEP_MIN:-3}, and clearing stale partials)"
+find "${BACKUP_DIR}" -name 'imsda-events-*.dump.partial' -type f -print -delete
+prune_backups "${BACKUP_DIR}" 'imsda-events-*.dump' "${RETENTION_DAYS}"
+
+# A crash or a failed pg_dump must not leave a truncated file behind.
+trap 'rm -f "${TARGET}.partial"' EXIT
 
 echo "[backup] $(date -u +%FT%TZ) dumping ${PGDATABASE:-imsda_events} to ${TARGET}"
 
@@ -38,13 +58,28 @@ fi
 
 echo "[backup] wrote ${SIZE} bytes to ${TARGET}"
 
+printf 'BYTES=%s\n' "${SIZE}" > "${STATE_DIR}/pg.state"
+
+OFFSITE_FAILED=0
 if [ -n "${BACKUP_OFFSITE_COMMAND:-}" ]; then
   # A backup that only exists on the same host as the database is not a backup.
   echo "[backup] copying off-host"
-  sh -c "${BACKUP_OFFSITE_COMMAND}" _ "${TARGET}"
+  if sh -c "${BACKUP_OFFSITE_COMMAND}" _ "${TARGET}"; then
+    echo "OFFSITE=ok" >> "${STATE_DIR}/pg.state"
+  else
+    echo "[backup] OFF-SITE COPY FAILED; the dump exists only on this host." >&2
+    echo "OFFSITE=failed" >> "${STATE_DIR}/pg.state"
+    OFFSITE_FAILED=1
+  fi
+else
+  echo "OFFSITE=skipped" >> "${STATE_DIR}/pg.state"
 fi
 
 echo "[backup] pruning dumps older than ${RETENTION_DAYS} days"
-find "${BACKUP_DIR}" -name 'imsda-events-*.dump' -type f -mtime "+${RETENTION_DAYS}" -print -delete
+prune_backups "${BACKUP_DIR}" 'imsda-events-*.dump' "${RETENTION_DAYS}"
+
+if [ "${OFFSITE_FAILED}" -ne 0 ]; then
+  exit 1
+fi
 
 echo "[backup] $(date -u +%FT%TZ) complete"
