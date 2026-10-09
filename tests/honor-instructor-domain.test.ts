@@ -13,6 +13,9 @@ import {
   instructorStatus,
   markChangeIsLocked,
   normalizeMark,
+  resendAvailableAt,
+  EMAIL_BELONGS_TO_OTHER_MESSAGE,
+  ROSTER_CLOSED_MESSAGE,
   sortInstructorRoster,
   sterlingAllowsRoster,
   toInstructorRosterRow,
@@ -41,12 +44,25 @@ describe("marks open on the event's start (#833)", () => {
 describe("Sterling Volunteers gate (#833)", () => {
   it("lets only a current check see a roster", () => {
     expect(sterlingAllowsRoster("CURRENT")).toBe(true);
-    for (const state of ["EXPIRED", "MISSING", "NOT_COMPLIANT"] as const) expect(sterlingAllowsRoster(state)).toBe(false);
+    for (const state of ["EXPIRED", "MISSING", "NOT_COMPLIANT", "FLAGGED"] as const) expect(sterlingAllowsRoster(state)).toBe(false);
   });
 
   it("says Sterling Volunteers, never the old wording", () => {
     expect(STERLING_REQUIRED_MESSAGE).toContain("Sterling Volunteers check");
     expect(STERLING_REQUIRED_MESSAGE.toLowerCase()).not.toContain("background");
+  });
+});
+
+describe("resend cooldown and messages (#833)", () => {
+  it("allows a resend only after the cooldown from the last send", () => {
+    const sent = new Date("2026-10-09T12:00:00Z");
+    expect(resendAvailableAt(null, 5)).toBeNull();
+    expect(resendAvailableAt(sent, 5)?.toISOString()).toBe("2026-10-09T12:05:00.000Z");
+  });
+
+  it("has clear staff and instructor messages", () => {
+    expect(ROSTER_CLOSED_MESSAGE).toBe("This class roster has closed.");
+    expect(EMAIL_BELONGS_TO_OTHER_MESSAGE).toContain("different person");
   });
 });
 

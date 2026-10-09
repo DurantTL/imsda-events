@@ -2,15 +2,18 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
-import { getServerEnv } from "@/lib/env";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { currentCheckStateForPerson } from "@/modules/background-checks/repository";
+import { currentCheckStateForPerson, namesAgree } from "@/modules/background-checks/repository";
 import { refreshBackgroundCheckMatchesSafely } from "@/modules/background-checks/refresh-after-write";
 import { neutralizePlaceholders } from "@/modules/club-applications/email";
 import { getAccountEmailSender, isAccountEmailConfigured } from "@/modules/communications/account-email";
+import { CLUB_INVITE_RESEND_COOLDOWN_MINUTES, clubInviteSignUpUrl } from "@/modules/club-imports/invites";
+import { getServerEnv } from "@/lib/env";
 import {
+  EMAIL_BELONGS_TO_OTHER_MESSAGE,
   INSTRUCTOR_EDIT_GRACE_DAYS,
+  ROSTER_CLOSED_MESSAGE,
   STERLING_REQUIRED_MESSAGE,
   applyBulkMark,
   applyPersonMark,
@@ -20,6 +23,7 @@ import {
   instructorMarksStarted,
   instructorStatus,
   markChangeIsLocked,
+  resendAvailableAt,
   sortInstructorRoster,
   sterlingAllowsRoster,
   toInstructorRosterRow,
@@ -46,6 +50,9 @@ export type HonorInstructorErrorCode =
   | "STERLING_REQUIRED"
   | "MARKS_CLOSED"
   | "MARKS_NOT_OPEN"
+  | "ROSTER_CLOSED"
+  | "INSTRUCTOR_EMAIL_CONFLICT"
+  | "INVITE_RESEND_TOO_SOON"
   | "MARK_LOCKED"
   | "ENROLLMENT_NOT_FOUND"
   | "INVITE_NOT_FOUND"
@@ -60,6 +67,9 @@ const errorStatus: Record<HonorInstructorErrorCode, number> = {
   STERLING_REQUIRED: 403,
   MARKS_CLOSED: 409,
   MARKS_NOT_OPEN: 409,
+  ROSTER_CLOSED: 404,
+  INSTRUCTOR_EMAIL_CONFLICT: 409,
+  INVITE_RESEND_TOO_SOON: 409,
   MARK_LOCKED: 409,
   ENROLLMENT_NOT_FOUND: 404,
   INVITE_NOT_FOUND: 404,
@@ -91,10 +101,9 @@ async function assertOfferingsInEvent(tx: Prisma.TransactionClient, eventId: str
   return unique;
 }
 
-function eventInviteLinks() {
-  const base = getServerEnv().APP_BASE_URL;
-  const signUp = new URL("/account/sign-up", base);
-  return { signUpUrl: signUp.toString(), signInUrl: new URL("/account/sign-in", base).toString() };
+function eventInviteLinks(email: string) {
+  // The sign-up link prefills the invited address, as a club invite's does.
+  return { signUpUrl: clubInviteSignUpUrl(email), signInUrl: new URL("/account/sign-in", getServerEnv().APP_BASE_URL).toString() };
 }
 
 async function queueInviteEmail(tx: Prisma.TransactionClient, instructor: { id: string; email: string; name: string; eventId: string }, now: Date) {
@@ -112,7 +121,7 @@ async function queueInviteEmail(tx: Prisma.TransactionClient, instructor: { id: 
     email: instructor.email,
     eventName: neutralizePlaceholders(event?.name ?? "the event"),
     classNames: classes.map((row) => neutralizePlaceholders(summarizeOfferingHonors(row.offering.honors).honorName)),
-    ...eventInviteLinks(),
+    ...eventInviteLinks(instructor.email),
   });
   const message = await tx.messageOutbox.create({
     data: {
@@ -152,10 +161,14 @@ export async function inviteHonorInstructor(eventId: string, input: InstructorIn
   const canSend = isAccountEmailConfigured();
   const result = await getPrisma().$transaction(async (tx) => {
     const offeringIds = await assertOfferingsInEvent(tx, eventId, input.offeringIds);
-    const person = await tx.person.upsert({
-      where: { normalizedEmail: email },
-      update: {},
-      create: { firstName, lastName, normalizedEmail: email },
+    // The person is found by email, but only if the typed name agrees: someone sharing an address (a spouse, say)
+    // must not pass on the other's Sterling Volunteers check.
+    const found = await tx.person.findUnique({ where: { normalizedEmail: email }, select: { id: true, firstName: true, lastName: true } });
+    if (found && !namesAgree(`${firstName} ${lastName}`, found)) {
+      throw new HonorInstructorError("INSTRUCTOR_EMAIL_CONFLICT", EMAIL_BELONGS_TO_OTHER_MESSAGE);
+    }
+    const person = found ?? await tx.person.create({
+      data: { firstName, lastName, normalizedEmail: email },
       select: { id: true, firstName: true, lastName: true },
     });
     const name = `${person.firstName} ${person.lastName}`.trim();
@@ -163,13 +176,15 @@ export async function inviteHonorInstructor(eventId: string, input: InstructorIn
     const instructor = existing
       ? await tx.honorInstructor.update({
         where: { id: existing.id },
-        data: { revokedAt: null, revokedByUserId: null, name },
+        // A removed instructor invited again starts over: exactly the new classes, and they must accept again.
+        data: { revokedAt: null, revokedByUserId: null, name, ...(existing.revokedAt ? { acceptedAt: null, attendeeAccountId: null } : {}) },
         select: { id: true, email: true, name: true, eventId: true },
       })
       : await tx.honorInstructor.create({
         data: { eventId, personId: person.id, email, name, createdByUserId: actorUserId },
         select: { id: true, email: true, name: true, eventId: true },
       });
+    if (existing?.revokedAt) await tx.honorInstructorClass.deleteMany({ where: { instructorId: instructor.id } });
     await tx.honorInstructorClass.createMany({ data: offeringIds.map((offeringId) => ({ instructorId: instructor.id, offeringId })), skipDuplicates: true });
     const messageId = canSend ? await queueInviteEmail(tx, instructor, now) : null;
     await writeAuditLog({
@@ -214,9 +229,13 @@ export async function resendHonorInstructorInvite(eventId: string, instructorId:
   await getPrisma().$transaction(async (tx) => {
     const instructor = await tx.honorInstructor.findFirst({
       where: { id: instructorId, eventId, revokedAt: null, acceptedAt: null },
-      select: { id: true, email: true, name: true, eventId: true },
+      select: { id: true, email: true, name: true, eventId: true, sentAt: true },
     });
     if (!instructor) throw new HonorInstructorError("INSTRUCTOR_NOT_FOUND", "There's no open invite to resend for that instructor.");
+    const next = resendAvailableAt(instructor.sentAt, CLUB_INVITE_RESEND_COOLDOWN_MINUTES);
+    if (next && next > now) {
+      throw new HonorInstructorError("INVITE_RESEND_TOO_SOON", `That invite was sent a moment ago. Try again in ${CLUB_INVITE_RESEND_COOLDOWN_MINUTES} minutes.`);
+    }
     await queueInviteEmail(tx, instructor, now);
     await writeAuditLog({
       eventId, actorUserId, action: "HONOR_INSTRUCTOR_INVITE_RESENT", entityType: "HonorInstructor", entityId: instructor.id,
@@ -233,6 +252,8 @@ export async function removeHonorInstructor(eventId: string, instructorId: strin
       data: { revokedAt: now, revokedByUserId: actorUserId },
     });
     if (updated.count === 0) throw new HonorInstructorError("INSTRUCTOR_NOT_FOUND", "That instructor could not be found.");
+    // Their classes go with their access, so a later invite can't bring old ones back.
+    await tx.honorInstructorClass.deleteMany({ where: { instructorId } });
     await writeAuditLog({
       eventId, actorUserId, action: "HONOR_INSTRUCTOR_REMOVED", entityType: "HonorInstructor", entityId: instructorId,
       summary: "Removed an Honors Weekend instructor.", metadata: { eventId },
@@ -247,6 +268,8 @@ export type StaffInstructorRow = {
   status: ReturnType<typeof instructorStatus>;
   sentAt: string | null;
   sterlingCurrent: boolean;
+  /** CURRENT, FLAGGED ("!" counts as not current here), EXPIRED, MISSING or NOT_COMPLIANT. */
+  sterlingState: string;
   offeringIds: string[];
 };
 
@@ -264,15 +287,19 @@ export async function listHonorInstructors(eventId: string): Promise<{ instructo
       select: { id: true, span: true, session: { select: { name: true } }, site: { select: { name: true } }, teacherName: true, honors: offeringHonorsSelect },
     }),
   ]);
-  const instructors = await Promise.all(rows.map(async (row) => ({
+  const instructors = await Promise.all(rows.map(async (row) => {
+    const sterlingState = await currentCheckStateForPerson(row.personId);
+    return {
     id: row.id,
     name: row.name,
     email: row.email,
     status: instructorStatus(row),
     sentAt: row.sentAt?.toISOString() ?? null,
-    sterlingCurrent: sterlingAllowsRoster(await currentCheckStateForPerson(row.personId)),
+    sterlingCurrent: sterlingAllowsRoster(sterlingState),
+    sterlingState,
     offeringIds: row.classes.map((entry) => entry.offeringId),
-  })));
+  };
+  }));
   return {
     instructors,
     classes: offerings.map((offering) => ({
@@ -453,6 +480,8 @@ async function requireSterling(assignment: Assignment, now: Date) {
 /** One class roster for the signed-in instructor: name and club only, or the Sterling Volunteers message. */
 export async function getInstructorRoster(accountId: string, offeringId: string, now = new Date()): Promise<InstructorRosterView> {
   const assignment = await loadAssignment(accountId, offeringId);
+  // Reads close at the same deadline as marks.
+  if (!instructorMarksOpen(assignment.offering.event.endsAt, now)) throw new HonorInstructorError("ROSTER_CLOSED", ROSTER_CLOSED_MESSAGE);
   const header = classHeader(assignment, now);
   try {
     await requireSterling(assignment, now);
@@ -499,6 +528,8 @@ export async function markInstructorClass(accountId: string, offeringId: string,
   const prisma = getPrisma();
   const instructorId = assignment.instructor.id;
   const outcome = await prisma.$transaction(async (tx) => {
+    // The write-back's own per-event lock first, so "recorded" is read under the lock the write-back writes under.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`honors-weekend-write-back:${assignment.offering.eventId}`}))`;
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`honor-instructor-marks:${offeringId}`}))`;
     const enrollments = await tx.honorEnrollment.findMany({ where: { offeringId, registration: ACTIVE_REGISTRATION }, select: rosterEnrollmentSelect });
     const rows = rosterRows(enrollments);

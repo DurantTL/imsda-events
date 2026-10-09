@@ -224,6 +224,20 @@ async function main() {
   await prisma.backgroundCheckEntry.update({ where: { id: `${P}_entry_2` }, data: { expiresOn: past } });
   console.log("ok  a check that isn't current blocks the roster and marks with a clear message; a current one doesn't");
 
+  // A roster import's "!" (expiring soon) is not current for this one blocking gate; staff see the state.
+  await prisma.backgroundCheckEntry.update({ where: { id: `${P}_entry_1` }, data: { complianceStatus: "FLAGGED" } });
+  assert((await repo.getInstructorRoster(accountA.id, o1.id, now)).status === "STERLING_REQUIRED", "a flagged (\"!\") check does not open a roster");
+  const flaggedRow = (await repo.listHonorInstructors(eventId)).instructors.find((row) => row.id === invitedA.instructorId);
+  assert(flaggedRow?.sterlingCurrent === false && flaggedRow.sterlingState === "FLAGGED", "and staff see it as flagged");
+  await prisma.backgroundCheckEntry.update({ where: { id: `${P}_entry_1` }, data: { complianceStatus: null } });
+  assert((await repo.getInstructorRoster(accountA.id, o1.id, now)).status === "OK", "clearing the flag opens it again");
+
+  // An email that belongs to someone else in the system is refused, whatever name is typed for it.
+  await expectCode(repo.inviteHonorInstructor(eventId, { firstName: "Other", lastName: "Person", email: `${P}-kid-a1@example.test`, offeringIds: [o1.id] }, staffUserId), "INSTRUCTOR_EMAIL_CONFLICT", "an email that belongs to a different person");
+  assert(await prisma.honorInstructor.count({ where: { eventId, email: `${P}-kid-a1@example.test` } }) === 0, "and no instructor was made");
+  assert((await prisma.person.findUniqueOrThrow({ where: { id: a1.personId } })).firstName === "Kida1", "the existing person is untouched");
+  console.log("ok  a flagged check is not current; an email belonging to a different person is refused");
+
   // ---------------------------------------------------------------- scoping: own classes, name and club only
   const roster = await repo.getInstructorRoster(accountA.id, o1.id, now);
   assert(roster.status === "OK", "Ina's roster opens");
@@ -319,6 +333,27 @@ async function main() {
   await prisma.event.update({ where: { id: eventId }, data: { startsAt } });
   console.log("ok  marks open on the event's start; the roster is readable before");
 
+  // ---------------------------------------------------------------- recorded state is read under the write-back's lock
+  let release!: () => void;
+  let lockTaken!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const taken = new Promise<void>((resolve) => { lockTaken = resolve; });
+  const lockHolder = prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`honors-weekend-write-back:${eventId}`}))`;
+    lockTaken();
+    await held;
+  }, { timeout: 30_000 });
+  await taken;
+  let settled = false;
+  const waiting = repo.markInstructorClass(accountA.id, o1.id, { action: "ALL_ATTENDED" }, now).then(() => { settled = true; });
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert(!settled, "a marks call waits while a write-back holds the event's lock");
+  release();
+  await lockHolder;
+  await waiting;
+  assert(settled, "and goes ahead once it is released");
+  console.log("ok  marks take the write-back's event lock");
+
   // ---------------------------------------------------------------- the 14-day window
   const lastDay = new Date(endsAt.getTime() + 14 * DAY);
   const open = await repo.markInstructorClass(accountA.id, o1.id, { action: "ALL_ATTENDED" }, new Date(lastDay.getTime() - 1000));
@@ -326,9 +361,10 @@ async function main() {
   const late = new Date(lastDay.getTime() + 1000);
   await expectCode(repo.markInstructorClass(accountA.id, o1.id, { action: "ALL_ATTENDED" }, late), "MARKS_CLOSED", "marking after the window");
   await expectCode(repo.markInstructorClass(accountA.id, o1.id, { action: "SET", enrollmentId: a1.enrollmentId, attended: true }, late), "MARKS_CLOSED", "a per-person mark after the window");
-  const readOnly = await repo.getInstructorRoster(accountA.id, o1.id, late);
-  assert(readOnly.status === "OK" && readOnly.header.editable === false, "after the window the roster is read only");
-  console.log("ok  marks close 14 days after the event ends; the roster stays readable");
+  await expectCode(repo.getInstructorRoster(accountA.id, o1.id, late), "ROSTER_CLOSED", "reading the roster after the window");
+  const closedClasses = await repo.listInstructorClasses(accountA.id, late);
+  assert(closedClasses.classes.every((item) => !item.editable), "the class list marks it closed");
+  console.log("ok  marks and roster reads both close 14 days after the event ends");
 
   // ---------------------------------------------------------------- audit holds ids and counts only
   const audits = await prisma.auditLog.findMany({ where: { action: "HONOR_CLASS_MARKS_UPDATED" } });
@@ -351,10 +387,19 @@ async function main() {
   await expectCode(repo.markInstructorClass(accountA.id, o3.id, { action: "CLEAR" }, now), "NOT_ASSIGNED", "a removed instructor marking");
   assert((await repo.listHonorInstructors(eventId)).instructors.every((row) => row.id !== invitedA.instructorId), "a removed instructor leaves the staff list");
   await expectCode(repo.removeHonorInstructor(eventId, invitedA.instructorId, staffUserId), "INSTRUCTOR_NOT_FOUND", "removing twice");
-  // Re-inviting a removed instructor brings them back, still needing to accept? No: they stay accepted.
+  assert(await prisma.honorInstructorClass.count({ where: { instructorId: invitedA.instructorId } }) === 0, "removing an instructor removes their classes");
+  // Re-inviting a removed instructor starts over: exactly the new classes, and they accept again.
   await repo.inviteHonorInstructor(eventId, { firstName: "Ina", lastName: "Instructora", email: accountA.email, offeringIds: [o1.id] }, staffUserId);
-  assert((await repo.getInstructorRoster(accountA.id, o1.id, now)).status === "OK", "a removed instructor invited again is back on their account");
   assert(await prisma.honorInstructor.count({ where: { eventId, email: accountA.email } }) === 1, "still one row per event and email");
+  const reinvited = await prisma.honorInstructor.findUniqueOrThrow({ where: { id: invitedA.instructorId } });
+  assert(reinvited.acceptedAt === null && reinvited.attendeeAccountId === null && reinvited.revokedAt === null, "the re-invite is open again and unaccepted");
+  assert((await prisma.honorInstructorClass.findMany({ where: { instructorId: invitedA.instructorId } })).map((row) => row.offeringId).join() === o1.id, "with exactly the new class");
+  await expectCode(repo.getInstructorRoster(accountA.id, o1.id, now), "NOT_ASSIGNED", "the new class before accepting again");
+  await expectCode(repo.getInstructorRoster(accountA.id, o3.id, now), "NOT_ASSIGNED", "an old class after the re-invite");
+  assert((await repo.listInstructorInvitesForAccount(accountA.email, now)).length === 1, "Ina is offered the invite again");
+  await repo.acceptInstructorInvite(invitedA.instructorId, { id: accountA.id, verifiedEmail: accountA.email }, now);
+  assert((await repo.getInstructorRoster(accountA.id, o1.id, now)).status === "OK", "after accepting again she sees the new class");
+  await expectCode(repo.getInstructorRoster(accountA.id, o3.id, now), "NOT_ASSIGNED", "and still not the old one");
   console.log("ok  staff change classes and remove an instructor; access follows at once");
 
   console.log("Honors Weekend instructor checks passed.");

@@ -23,7 +23,16 @@ must never inherit.
 3. From then on they see **Your classes**: only the classes they were assigned.
 
 Staff can change an instructor's classes or remove them at any time; access
-follows immediately. Past marks stay.
+follows immediately. Past marks stay. Removing an instructor also removes their
+class assignments. Inviting a removed instructor again starts over: exactly the
+new classes, and they must accept again. Resending an open invite has the same
+5-minute cooldown as club invites, and the sign-up link prefills the invited
+email.
+
+The invite finds the instructor's person by email, but only when the typed name
+agrees with that person (so someone sharing an address cannot pass on another
+person's Sterling Volunteers check); otherwise staff are told "That email belongs
+to a different person in the system; use the instructor's own email."
 
 Data: `HonorInstructor` (one per event and email, tied to a `Person` so the
 Sterling Volunteers check can be matched), `HonorInstructorClass` (the classes
@@ -53,7 +62,12 @@ mark it. This is the one place a check blocks access (everywhere else it only
 flags), because the roster exposes names of young people. The check is matched
 through the existing list (#405, #527) by `currentCheckStateForPerson`. Without
 one, the roster page and API show a clear message and no names; staff see on the
-Instructors page who has no current check.
+Instructors page each instructor's state.
+
+A roster import's "!" mark (expiring soon, FLAGGED) counts as **not current** for
+this gate, although it is current everywhere else: this is the one blocking
+context, so the safer reading wins (pending the owner's confirmation). A Sterling
+check is current through its expiration date.
 
 ## Marks
 
@@ -62,7 +76,8 @@ Instructors page who has no current check.
 - One click: **All attended**, **All completed**, **Clear**.
 - Marks open when the event starts (the roster is readable before; marking
   before then is 409 `MARKS_NOT_OPEN`) and can change until **14 days after the
-  event ends**. After that the roster is read only.
+  event ends**. After that the roster **closes** too: the page says "This class
+  roster has closed." and the API answers 404 `ROSTER_CLOSED`.
 - Instructors pass the same **second step** as club roles (an accepted
   instructor is part of `accountHasSecondStepAccess`): roster pages and the
   roster and marks APIs require it.
@@ -80,8 +95,12 @@ Once a completion is in the honor record it is **locked for the instructor**
 honor entry void (#591); a voided completion is never re-created, and the row
 shows "Recorded, later voided by staff".
 
+A marks call takes the write-back's own per-event lock first, so what is
+recorded is read under the lock the write-back writes under.
+
 An instructor's mark governs the staff write-back run: someone marked attended
-only is not completed by a later check-in-based run. Someone with no instructor
+only is not completed by a later check-in-based run (the staff notice counts
+them as skipped). Someone with no instructor
 mark is still completed by check-in, as before.
 
 ## Audit

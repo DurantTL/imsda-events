@@ -49,7 +49,7 @@ export default async function InstructorClassesPage() {
                     <Link href={`/account/instructor/${encodeURIComponent(item.offeringId)}`}>
                       <span>
                         <strong translate="no">{item.honorName}</strong>
-                        <small>{[item.eventName, item.session, item.room && `Room ${item.room}`].filter(Boolean).join(" · ")}{item.editable ? "" : " · marks closed"}</small>
+                        <small>{[item.eventName, item.session, item.room && `Room ${item.room}`].filter(Boolean).join(" · ")}{item.editable ? "" : " · roster closed"}</small>
                       </span>
                       <ArrowRight size={15} aria-hidden="true" />
                     </Link>

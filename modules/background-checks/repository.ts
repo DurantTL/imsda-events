@@ -2291,10 +2291,11 @@ export { ROSTER_IMPORT_PROVIDER };
  * Whether one person has a Sterling Volunteers check that is current today
  * (#833): the cached match, else the same read-time match the rosters use. The
  * answer is one of the display states only; no dates, notes or list rows leave
- * here. A roster import's mark decides when the list row has one (Clear and "!"
- * are current), otherwise the Sterling expiration date does.
+ * here. A roster import's mark decides when the list row has one (Clear is
+ * current; "!" comes back as FLAGGED, which callers that block on a check treat
+ * as not current), otherwise the Sterling expiration date does.
  */
-export async function currentCheckStateForPerson(personId: string, now = new Date()): Promise<BackgroundCheckState> {
+export async function currentCheckStateForPerson(personId: string, now = new Date()): Promise<BackgroundCheckState | "FLAGGED"> {
   const prisma = getPrisma();
   const person = await prisma.person.findUnique({
     where: { id: personId },
@@ -2318,11 +2319,13 @@ export async function currentCheckStateForPerson(personId: string, now = new Dat
     }], now);
     check = found.get(personId) ?? null;
   }
+  // A roster import's "!" (expiring soon) is current everywhere else, but not for the one place a check blocks (#833).
+  if (check?.complianceStatus === "FLAGGED") return "FLAGGED";
   return backgroundCheckState(check, calendarDateInEventTimeZone(now, "America/Chicago"));
 }
 
 /** The typed name carries the person's first and last name (a middle name or initial doesn't matter). */
-function namesAgree(typed: string, person: { firstName: string; lastName: string }) {
+export function namesAgree(typed: string, person: { firstName: string; lastName: string }) {
   const words = new Set(nameWords(typed));
   const wanted = [...nameWords(person.firstName), ...nameWords(person.lastName)];
   return wanted.length > 0 && wanted.every((word) => words.has(word));

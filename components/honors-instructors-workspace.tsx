@@ -12,6 +12,7 @@ type Instructor = {
   status: "INVITED" | "ACCEPTED" | "REMOVED";
   sentAt: string | null;
   sterlingCurrent: boolean;
+  sterlingState: string;
   offeringIds: string[];
 };
 type ListResponse = { instructors?: Instructor[]; classes?: ClassOption[]; emailQueued?: boolean; message?: string };
@@ -141,7 +142,11 @@ export function HonorsInstructorsWorkspace({
                 </span>
                 <span className={`status-chip ${statusTone[instructor.status]}`}>{statusLabels[instructor.status]}</span>
                 <span className={`status-chip ${instructor.sterlingCurrent ? "green" : "gold"}`}>
-                  {instructor.sterlingCurrent ? "Sterling Volunteers check current" : "No current Sterling Volunteers check"}
+                  {instructor.sterlingCurrent
+                    ? "Sterling Volunteers check current"
+                    : instructor.sterlingState === "FLAGGED"
+                      ? "Sterling Volunteers check expiring soon (not current for rosters)"
+                      : "No current Sterling Volunteers check"}
                 </span>
                 <fieldset>
                   <legend className="sr-only">Classes for {instructor.name}</legend>

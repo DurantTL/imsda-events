@@ -103,6 +103,22 @@ describe("instructor roster routes (#833)", () => {
     expect(mocks.acceptInstructorInvite).not.toHaveBeenCalled();
   });
 
+  it("maps a closed roster to 404 with the closed message", async () => {
+    mocks.getInstructorRoster.mockRejectedValue(new HonorInstructorError("ROSTER_CLOSED", "This class roster has closed."));
+    const response = await roster(get(), classContext);
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "ROSTER_CLOSED", message: "This class roster has closed." });
+  });
+
+  it("tells staff when an email belongs to a different person", async () => {
+    mocks.inviteHonorInstructor.mockRejectedValue(new HonorInstructorError("INSTRUCTOR_EMAIL_CONFLICT", "That email belongs to a different person in the system; use the instructor's own email."));
+    const response = await staffInvite(post({ firstName: "A", lastName: "B", email: "a@example.test", offeringIds: ["x"] }), eventContext);
+    expect(response.status).toBe(409);
+    expect((await response.json()).message).toContain("different person");
+    mocks.resendHonorInstructorInvite.mockRejectedValue(new HonorInstructorError("INVITE_RESEND_TOO_SOON", "wait"));
+    expect((await staffResend(post({}), staffInstructorContext)).status).toBe(409);
+  });
+
   it("maps marks not open yet to 409", async () => {
     mocks.markInstructorClass.mockRejectedValue(new HonorInstructorError("MARKS_NOT_OPEN", "Marks open when the event starts."));
     const response = await marks(post({ action: "CLEAR" }), classContext);
@@ -225,6 +241,11 @@ describe("instructor read path never loads sensitive fields (#833)", () => {
     }
     expect(selectText).toContain("firstName");
     expect(selectText).toContain("lastName");
+  });
+
+  it("prefills the invited email on the sign-up link and applies the club invite resend cooldown", () => {
+    expect(source).toContain("clubInviteSignUpUrl(email)");
+    expect(source).toContain("CLUB_INVITE_RESEND_COOLDOWN_MINUTES");
   });
 
   it("starts every account read from the account's own assignment", () => {

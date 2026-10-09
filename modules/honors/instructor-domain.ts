@@ -23,6 +23,11 @@ export function instructorMarksStarted(eventStartsAt: Date, now: Date) {
   return now.getTime() >= eventStartsAt.getTime();
 }
 
+/** Same cooldown as club invites (#425): one inbox is never spammed. */
+export function resendAvailableAt(sentAt: Date | null, cooldownMinutes: number) {
+  return sentAt ? new Date(sentAt.getTime() + cooldownMinutes * 60 * 1000) : null;
+}
+
 export function instructorMarksOpen(eventEndsAt: Date, now: Date) {
   return now.getTime() <= instructorEditDeadline(eventEndsAt).getTime();
 }
@@ -33,7 +38,11 @@ export const STERLING_REQUIRED_MESSAGE =
   + "If you believe yours is current, contact the conference office so it can be matched to you.";
 
 /** The Sterling Volunteers states (`backgroundCheckState`) that let an instructor see a roster. */
-export function sterlingAllowsRoster(state: "CURRENT" | "EXPIRED" | "MISSING" | "NOT_COMPLIANT") {
+/**
+ * Only a plainly current check. A roster import's "!" (FLAGGED, expiring soon) is NOT current here: this is the one
+ * place a check blocks access, so the safer reading wins (to be confirmed by the owner).
+ */
+export function sterlingAllowsRoster(state: "CURRENT" | "EXPIRED" | "MISSING" | "NOT_COMPLIANT" | "FLAGGED") {
   return state === "CURRENT";
 }
 
@@ -128,6 +137,11 @@ export function applyBulkMark(action: BulkMarkAction, current: MarkState): MarkS
 export function markChangeIsLocked(row: Pick<InstructorRosterRow, "recorded" | "completed">, next: MarkState | null) {
   return row.recorded && row.completed && !(next?.completed ?? false);
 }
+
+export const ROSTER_CLOSED_MESSAGE = "This class roster has closed.";
+
+export const EMAIL_BELONGS_TO_OTHER_MESSAGE =
+  "That email belongs to a different person in the system; use the instructor's own email.";
 
 export type InstructorInviteInput = {
   name: string;

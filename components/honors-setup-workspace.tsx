@@ -330,7 +330,7 @@ export function HonorsSetupWorkspace({
   async function writeBackCompletions() {
     const result = await call(`${base}/completions`, "POST", undefined, "") as (ApiResult & { written?: number; alreadyRecorded?: number; skipped?: number }) | null;
     if (result && typeof result.written === "number") {
-      setNotice(`Wrote ${result.written} completion${result.written === 1 ? "" : "s"} into members' honor records. ${result.alreadyRecorded ?? 0} already recorded. ${result.skipped ?? 0} skipped (not checked in, or not on the enrolling club's roster).`);
+      setNotice(`Wrote ${result.written} completion${result.written === 1 ? "" : "s"} into members' honor records. ${result.alreadyRecorded ?? 0} already recorded. ${result.skipped ?? 0} skipped (not checked in, not on the enrolling club's roster, or an instructor marked them not completed).`);
     }
   }
 
