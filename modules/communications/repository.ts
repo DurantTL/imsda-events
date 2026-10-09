@@ -17,6 +17,7 @@ function toAnnouncementRecord(row: AnnouncementRow, attachments: MessageFileReco
     publishedAt: row.publishedAt?.toISOString() ?? null,
     pinnedAt: row.pinnedAt?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
+    isEssential: row.isEssential,
     attachments,
   };
 }

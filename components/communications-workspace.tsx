@@ -52,6 +52,7 @@ import {
 import type {
   AnnouncementBroadcastPreview,
   AnnouncementRecord,
+  EventAnnouncementOptOutRow,
   BalanceReminderPreview,
   CommunicationsView,
   MessageOutboxRecord,
@@ -75,6 +76,10 @@ type CommunicationsWorkspaceProps = {
   initialAnnouncements: AnnouncementRecord[];
   initialMessaging: MessagingWorkspaceData | null;
   canManage: boolean;
+  /** Event manager and above: may mark an announcement essential, so it reaches people who opted out (#838). */
+  canMarkEssential?: boolean;
+  /** Registrations whose contact address opted out of announcements (#838). */
+  announcementOptOuts?: EventAnnouncementOptOutRow[];
   initialView: CommunicationsView;
   openNew?: boolean;
 };
@@ -97,6 +102,7 @@ type ApiResult = {
   };
   messageCount?: number;
   skippedCount?: number;
+  optedOutCount?: number;
   deliveryMode?: MessagingWorkspaceData["settings"]["deliveryMode"];
   error?: string;
   message?: string;
@@ -255,6 +261,8 @@ export function CommunicationsWorkspace({
   initialAnnouncements,
   initialMessaging,
   canManage,
+  canMarkEssential = false,
+  announcementOptOuts = [],
   initialView,
   openNew = false,
 }: CommunicationsWorkspaceProps) {
@@ -665,6 +673,30 @@ export function CommunicationsWorkspace({
     }
   }
 
+  /** Marks an announcement essential, or clears it (#838): an event manager's call, audited on the server. */
+  async function setAnnouncementEssential(announcement: AnnouncementRecord, essential: boolean) {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(`/api/events/${eventId}/announcements/${announcement.id}/essential`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ essential }),
+      });
+      const result = await response.json().catch(() => ({})) as ApiResult;
+      if (!response.ok) throw new Error(result.message ?? "Unable to update the essential mark.");
+      setAnnouncements((current) => current.map((row) => row.id === announcement.id ? { ...row, isEssential: essential } : row));
+      setNotice(essential
+        ? "Marked essential: the next email send reaches people who opted out of announcements."
+        : "No longer essential: people who opted out are skipped.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to update the essential mark.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   /**
    * Opens the review step (#472) rather than sending anything: the dialog
    * loads a fresh preview — recipient count, audience, subject, delivery
@@ -754,7 +786,7 @@ export function CommunicationsWorkspace({
         throw new Error(result.message ?? "Unable to prepare the announcement email.");
       }
       const skipped = result.skippedCount
-        ? ` ${result.skippedCount} registration${result.skippedCount === 1 ? " was" : "s were"} skipped.`
+        ? ` ${result.skippedCount} registration${result.skippedCount === 1 ? " was" : "s were"} skipped${result.optedOutCount ? ` (${result.optedOutCount} opted out of announcements)` : ""}.`
         : "";
       if (result.deliveryMode === "EXTERNAL_EMAIL") {
         setNotice(`${result.messageCount} announcement email${result.messageCount === 1 ? " was" : "s were"} processed.${skipped}`);
@@ -1315,6 +1347,9 @@ export function CommunicationsWorkspace({
                 <div className="announcement-head">
                   <span className="announcement-icon"><Megaphone aria-hidden="true" size={18} /></span>
                   <span className={`status-chip ${announcement.status === "PUBLISHED" ? "green" : "gold"}`}>{friendlyStatus(announcement.status)}</span>
+                  {announcement.isEssential && (
+                    <span className="status-chip coral" title="Sent to people who opted out of announcements">Essential</span>
+                  )}
                 </div>
                 <h3>{announcement.title}</h3>
                 <p>{announcement.body}</p>
@@ -1343,6 +1378,11 @@ export function CommunicationsWorkspace({
                     <button className="secondary-button publish-button" type="button" disabled={saving || broadcastReviewLoading} onClick={() => void broadcastAnnouncement(announcement)}>
                       <Mail aria-hidden="true" size={16} /> Email active registrations
                     </button>
+                    {canMarkEssential && (
+                      <button className="text-button" type="button" disabled={saving} onClick={() => void setAnnouncementEssential(announcement, !announcement.isEssential)}>
+                        {announcement.isEssential ? "Clear essential mark" : "Mark essential (reaches people who opted out)"}
+                      </button>
+                    )}
                     <button className="text-button" type="button" disabled={saving} onClick={() => startCorrection(announcement)}>
                       Send a correction
                     </button>
@@ -1361,6 +1401,23 @@ export function CommunicationsWorkspace({
             <h2>Publish first, email deliberately</h2>
             <p>Publishing updates the event page and attendee hub. A separate confirmed action emails active registration contacts using the event’s current delivery settings.</p>
             <ul><li>Staff-reviewed drafts</li><li>No automatic email on publish</li><li>Audited, event-scoped broadcasts</li></ul>
+            {canManage && (
+              <section aria-label="Opted out of announcements">
+                <p className="eyebrow">Opted out of announcements</p>
+                {announcementOptOuts.length === 0
+                  ? <p className="quiet-copy">Nobody in this event has opted out. Announcement emails carry an unsubscribe link; other messages (confirmations, receipts, reminders) are never affected.</p>
+                  : (
+                    <ul>
+                      {announcementOptOuts.map((row) => (
+                        <li key={row.registrationId}>
+                          <strong>{row.contactName || row.confirmationCode}</strong> · {row.confirmationCode} · {row.email}
+                          {" "}— {row.scope === "ALL" ? "all IMSDA Events announcements" : "this event's announcements"}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+              </section>
+            )}
           </aside>
         </div>
       )}

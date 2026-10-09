@@ -350,6 +350,12 @@ enum AnnouncementPriority {
   URGENT
 }
 
+/// What an announcement opt-out covers (#838): one event's announcements, or every IMSDA Events announcement.
+enum EmailAnnouncementOptOutScope {
+  EVENT
+  ALL
+}
+
 enum CommunityPostStatus {
   PUBLISHED
   HIDDEN
@@ -1486,6 +1492,7 @@ model Event {
   refunds                             Refund[]
   checkIns                            CheckIn[]
   announcements                       Announcement[]
+  announcementOptOuts                 EmailAnnouncementOptOut[]
   auditLogs                           AuditLog[]
   importRuns                          ImportRun[]
   awardItems                          EventAwardItem[]
@@ -3252,6 +3259,8 @@ model Announcement {
   publishedAt     DateTime?
   pinnedAt        DateTime?
   pinnedByUserId  String?
+  /// Reaches people who opted out of announcements (#838). Set by an event manager or above, audited.
+  isEssential     Boolean              @default(false)
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
 
@@ -3262,6 +3271,28 @@ model Announcement {
 
   @@index([eventId, status, publishedAt])
   @@index([eventId, status, pinnedAt, publishedAt])
+}
+
+/// An email address that opted out of event announcements (#838). The preference lives on the normalised address,
+/// not on a registration or person, so it follows the address across registrations. Only announcements can be opted
+/// out of; confirmations, receipts, waitlist and transfer notices, balance reminders and safety notices always go.
+/// `scopeKey` is the event id for an EVENT row and "ALL" for a global one, so one row per address and scope is unique
+/// (a nullable event id would not be).
+model EmailAnnouncementOptOut {
+  id              String                       @id @default(cuid())
+  normalizedEmail String
+  scope           EmailAnnouncementOptOutScope
+  eventId         String?
+  scopeKey        String
+  /// How it was recorded: the unsubscribe page, or the one-click POST a mail client sends.
+  source          String
+  createdAt       DateTime                     @default(now())
+
+  event Event? @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([normalizedEmail, scopeKey])
+  @@index([eventId, createdAt])
+  @@index([normalizedEmail])
 }
 
 /// Event-level controls keep attendee discussion off until staff publish the

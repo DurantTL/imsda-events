@@ -217,6 +217,8 @@ export type AnnouncementRecord = {
   publishedAt: string | null;
   pinnedAt: string | null;
   updatedAt: string;
+  /** Reaches people who opted out of announcements (#838). */
+  isEssential: boolean;
   /** Files attached to the announcement (#824), sent with its email. */
   attachments: MessageFileRecord[];
 };
@@ -237,6 +239,16 @@ export type AnnouncementBroadcastPreview = {
   recipientCount: number;
   /** Active registrations with no contact email, which the send skips. */
   skippedNoEmailCount: number;
+  /** Active registrations whose contact address opted out of announcements (#838), which the send skips. */
+  skippedOptedOutCount: number;
+  /** Of those, how many opted out of this event's announcements only. */
+  skippedOptedOutEventCount: number;
+  /** And how many opted out of all IMSDA Events announcements. */
+  skippedOptedOutAllCount: number;
+  /** Marked essential by an event manager: it is sent to people who opted out, and none are skipped for that. */
+  essential: boolean;
+  /** For an essential announcement: how many opted-out contacts it will still reach. */
+  essentialOptedOutReachedCount: number;
   deliveryMode: MessagingSettingsRecord["deliveryMode"];
   /** False when the EVENT_ANNOUNCEMENT template is switched off. */
   templateEnabled: boolean;
@@ -252,6 +264,17 @@ export type AnnouncementBroadcastPreview = {
   fingerprint: string;
   sendTiming: "IMMEDIATE";
   generatedAt: string;
+};
+
+/** One registration whose contact address opted out of announcements (#838), for staff. */
+export type EventAnnouncementOptOutRow = {
+  registrationId: string;
+  confirmationCode: string;
+  registrationStatus: string;
+  contactName: string;
+  email: string;
+  scope: "EVENT" | "ALL";
+  optedOutAt: string;
 };
 
 export type CommunicationsView =

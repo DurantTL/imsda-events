@@ -42,6 +42,7 @@
     "test:invoices": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-invoices.ts",
     "test:announcement-email": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-announcement-email.ts",
     "test:announcement-attachments": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-announcement-attachments.ts",
+    "test:announcement-unsubscribe": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-announcement-unsubscribe.ts",
     "test:retry-failed": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-retry-failed-messages.ts",
     "test:custom-message": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-custom-message.ts",
     "test:ses-delivery": "tsx --require ./scripts/support/allow-server-only.cjs scripts/verify-ses-delivery.ts",

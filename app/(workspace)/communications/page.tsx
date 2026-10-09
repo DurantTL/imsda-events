@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { CommunicationsWorkspace } from "@/components/communications-workspace";
 import { getMessagingWorkspace } from "@/modules/communications/messaging-repository";
+import { listEventAnnouncementOptOuts } from "@/modules/communications/email-preferences-repository";
 import { listAnnouncements } from "@/modules/communications/repository";
 import type { CommunicationsView, MessagingWorkspaceData } from "@/modules/communications/types";
 import { resolveEventContext } from "@/modules/events/selection";
@@ -83,9 +84,10 @@ export default async function CommunicationsPage({
   const { event: requested, new: openNew, view: requestedView } = await searchParams;
   const { event, permissions } = await resolveEventContext(requested);
   const canManage = permissions.includes("MANAGE_COMMUNICATIONS");
-  const [announcements, messaging] = await Promise.all([
+  const [announcements, messaging, optOuts] = await Promise.all([
     listAnnouncements(event.id),
     canManage ? getMessagingWorkspace(event.id) : Promise.resolve(emptyMessaging),
+    canManage ? listEventAnnouncementOptOuts(event.id) : Promise.resolve([]),
   ]);
   const initialView = canManage && communicationViews.has(requestedView as CommunicationsView)
     ? requestedView as CommunicationsView
@@ -99,6 +101,8 @@ export default async function CommunicationsPage({
       initialAnnouncements={announcements}
       initialMessaging={messaging}
       canManage={canManage}
+      canMarkEssential={permissions.includes("CONFIGURE_EVENT")}
+      announcementOptOuts={optOuts}
       initialView={initialView}
       openNew={openNew === "1"}
     />

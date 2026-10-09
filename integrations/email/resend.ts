@@ -4,6 +4,7 @@ import {
   EmailProviderConfigurationError,
   EmailProviderRequestError,
   cleanHeaderText,
+  listUnsubscribeHeaders,
   type EmailDeliveryInput,
   type EmailDeliveryResult,
 } from "./types";
@@ -76,6 +77,7 @@ export async function sendEmailWithResend(
         ...(input.replyToEmail?.trim()
           ? { reply_to: input.replyToEmail.trim().toLowerCase() }
           : {}),
+        ...(input.listUnsubscribe ? { headers: listUnsubscribeHeaders(input.listUnsubscribe) } : {}),
         ...(input.attachments && input.attachments.length > 0
           ? {
               attachments: input.attachments.map((attachment) => ({

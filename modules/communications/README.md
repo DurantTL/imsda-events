@@ -91,4 +91,17 @@ The action requires a client UUID. Repeating that UUID returns the previously st
 
 ## Current boundary
 
-Resend is the only external provider adapter and remains disabled until credentials and an event sender address are configured. SMS, push, targeted/scheduled announcement delivery, preferences, and unsubscribe handling remain future work.
+Resend is the only external provider adapter and remains disabled until credentials and an event sender address are configured. SMS, push, and targeted/scheduled announcement delivery remain future work.
+
+## Announcement unsubscribe and preferences (#838)
+
+Only event announcements (`EVENT_ANNOUNCEMENT`) can be opted out of. Confirmations, receipts, waitlist and transfer notices, balance reminders, and safety or schedule-change notices always go; nothing in the opt-out path looks at any other template.
+
+- **Where the preference lives.** `EmailAnnouncementOptOut`, keyed on the normalised email address, so it follows the address across registrations and events. A row covers one event (`EVENT`) or every IMSDA Events announcement (`ALL`). Recording is idempotent and audited with the scope and source, never the address.
+- **The link.** Each announcement carries a signed token (`email-preferences.ts`, HMAC-SHA256 under its own domain prefix, keyed from `MANAGE_LINK_DERIVATION_SECRET`, with `_PREVIOUS` accepted for rotation). It names an address and an event and nothing else, and is minted at delivery, so it is never stored in an outbox row. The public page `/unsubscribe/[token]` shows the address masked and offers "this event", "all announcements", and re-subscribe; each is a button that POSTs, because a GET (link scanners, previews) never changes anything.
+- **One click.** `POST /api/public/unsubscribe/[token]` with `List-Unsubscribe=One-Click` (RFC 8058) needs no login and no CSRF token: the signed token is the authorisation, and it opts that address out of that event only. An altered or unknown token is a bare 404.
+- **Headers.** Both providers (`integrations/email`, Resend and SES over SMTP) send `List-Unsubscribe` and `List-Unsubscribe-Post` when the message input carries `listUnsubscribe`.
+- **Applying it.** The broadcast review and the send read the same opt-outs, skip opted-out contacts and count them by kind, and the fingerprint covers them, so a review made before someone opted out is refused as stale. Delivery checks again immediately before the provider call, so an address that opted out while a message waited is skipped: the row ends `SUPPRESSED` with a reason and an audit row (ids and scope only).
+- **Essential.** An event manager or above (`CONFIGURE_EVENT`) can mark an announcement essential so it reaches people who opted out; the review says how many opted-out contacts it will still reach. Marking and clearing are audited with the actor.
+- **Staff visibility.** The Emails page lists who opted out of the event, the People page marks the registration, and the review shows how many will be skipped and why.
+

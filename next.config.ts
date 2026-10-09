@@ -204,6 +204,15 @@ const nextConfig: NextConfig = {
         headers: privateRegistrationHeaders,
       },
       {
+        // An announcement's unsubscribe link (#838) names one address: never cached, never indexed, no referrer.
+        source: "/unsubscribe/:path*",
+        headers: privateRegistrationHeaders,
+      },
+      {
+        source: "/api/public/unsubscribe/:path*",
+        headers: privateRegistrationHeaders,
+      },
+      {
         // A club form's single-use private link (#610): never cached, never indexed, no referrer.
         source: "/club-forms/:path*",
         headers: privateRegistrationHeaders,

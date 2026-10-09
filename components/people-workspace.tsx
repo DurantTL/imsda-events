@@ -250,6 +250,7 @@ export function PeopleWorkspace({
   initialFilter = "ALL",
   initialRegistrationId,
   backgroundFlaggedAttendeeIds = [],
+  announcementOptOuts = {},
   responsibleAdults = {},
   locationId = null,
   matchingPersonFilter = false,
@@ -265,6 +266,8 @@ export function PeopleWorkspace({
   initialRegistrationId?: string;
   /** Adults at a youth or children's event without a current check (#388). */
   backgroundFlaggedAttendeeIds?: string[];
+  /** Registrations whose contact address opted out of announcements (#838), by registration id. */
+  announcementOptOuts?: Record<string, "EVENT" | "ALL">;
   /** Minors by attendee id with who is responsible for them (#131): a name, "None of us", or not recorded. */
   responsibleAdults?: Record<string, { adultName: string | null; noneOfUs: boolean; ageUnknown: boolean }>;
   /** The location filter (#413) the CSV export follows; null exports every location. */
@@ -779,6 +782,11 @@ export function PeopleWorkspace({
             <span className={`person-avatar large ${statusTone(registration)}`}>{initials(registration)}</span>
             <span className="record-copy"><strong>{registration.accountHolder.firstName} {registration.accountHolder.lastName}</strong><small>{registration.confirmationCode} · {registration.attendeeCount} {registration.attendeeCount === 1 ? "person" : "people"}{registration.location ? ` · ${registration.location.name}` : ""}</small><small>{registration.attendeeCount > 1 ? registration.attendees.slice(0, 2).map((attendee) => `${attendee.firstName} ${attendee.lastName}`).join(", ") + (registration.attendeeCount > 2 ? ` +${registration.attendeeCount - 2} more` : "") : registration.accountHolder.email || "No email on file"} · {submittedDateTime(registration.submittedAt, eventTimezone)}</small></span>
             {registration.attendees.some((attendee) => backgroundFlaggedAttendeeIds.includes(attendee.id)) && <BackgroundCheckBadge />}
+            {announcementOptOuts[registration.id] && (
+              <span className="status-chip gold" title={announcementOptOuts[registration.id] === "ALL" ? "Opted out of all IMSDA Events announcements. Confirmations, receipts and reminders still go." : "Opted out of this event's announcements. Confirmations, receipts and reminders still go."}>
+                Announcements off
+              </span>
+            )}
             <span className={`status-chip ${statusTone(registration)}`}>{statusLabel(registration)}</span>
           </button>
           </div>
@@ -928,7 +936,7 @@ export function PeopleWorkspace({
                 ) : (
                   <>
                 <div className="detail-grid"><span><small>Confirmation</small><strong>{selected.confirmationCode}</strong></span>{selected.location && <span><small>Location</small><strong>{selected.location.name}</strong></span>}<span><small>Status</small><strong>{selected.status.toLowerCase()}</strong></span><span><small>Submitted</small><strong>{submittedDateTime(selected.submittedAt, eventTimezone)}</strong></span><span><small>Last updated</small><strong>{dateTime(selected.updatedAt, eventTimezone)}</strong></span><span><small>Total</small><strong>{money(selected.totalAmountCents)}</strong></span><span><small>Balance</small><strong>{money(selected.balanceCents)}</strong></span></div>
-                <div className="contact-card"><strong>Contact</strong><p>{selected.accountHolder.email || "No email"}</p><p>{selected.accountHolder.phone || "No phone"}</p></div>
+                <div className="contact-card"><strong>Contact</strong><p>{selected.accountHolder.email || "No email"}</p><p>{selected.accountHolder.phone || "No phone"}</p>{announcementOptOuts[selected.id] && <p>{announcementOptOuts[selected.id] === "ALL" ? "Opted out of all IMSDA Events announcements." : "Opted out of this event's announcements."} Confirmations, receipts and reminders still go.</p>}</div>
                 {selected.publicSubmission && <div className="public-submission-detail">
                   <div><span className="status-chip green">Public form</span><strong>{selected.publicSubmission.formName}</strong><small>Version {selected.publicSubmission.versionNumber} · original submission retained{selected.publicSubmission.amendedAt ? ` · last amended ${dateTime(selected.publicSubmission.amendedAt, eventTimezone)}` : ""}</small></div>
                   {selectedPricing && <details open>
