@@ -5,6 +5,10 @@ directors enter birth dates** (H2, #356), as required by ADR 0005 Addendum A.
 Several items are also WR26 go-live items (`docs/WR26-GO-LIVE-REVIEW.md`, Block 1),
 so doing them once covers both.
 
+**In the app:** system administrators can also tick these items, with their name and date, on the
+**System readiness** page (`/admin/readiness`), which also shows the checks the app can do itself (#870).
+Ticking only records that someone did the work. This sheet remains the full instructions.
+
 **How to use this sheet**
 
 - Each item has an **owner**, a **how**, and a **proof**. It is only done when the

@@ -7175,3 +7175,15 @@ model NewClubApplicationInvite {
 
   @@index([email])
 }
+
+/// A person's confirmation that one manual item on the System readiness page is done (#870). One row per item key
+/// while it is ticked; unticking deletes the row, and the audit log keeps who ticked, who unticked and why.
+/// Ticking never performs the action it records. The name is a snapshot so the page still reads correctly if the
+/// account is later renamed or removed.
+model SystemReadinessTick {
+  itemKey          String   @id
+  tickedByUserId   String?
+  tickedByName     String
+  tickedAt         DateTime @default(now())
+  note             String?
+}
