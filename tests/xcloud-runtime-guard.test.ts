@@ -270,6 +270,64 @@ describe("xCloud runtime guard", () => {
       expect(run.dockerLog()).not.toContain(" up ");
     });
 
+    const withFile = `${loadsDburl}    environment:\n      SECRET_ENCRYPTION_KEY_FILE: /run/secrets/encryption-key\n`;
+    const bareEnv = { FAKE_ENV: "NODE_ENV=production", FAKE_NETWORKS: "other" };
+    const keyValue = "SECRET_ENCRYPTION_KEY=synthetic-key-value-0123456789-abcdefghij";
+
+    it("refuses to recreate when the key is still in .env and the override also sets the file", () => {
+      const run = setup({
+        ...composeFiles,
+        ".env": `RESEND_API_KEY=x\n${keyValue}\n`,
+        "docker-compose.env.yml": withFile,
+      });
+      const result = run(bareEnv);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("Finish the move");
+      expect(`${result.stdout}${result.stderr}`).not.toContain("synthetic-key-value");
+      expect(run.dockerLog()).not.toContain(" up ");
+    });
+
+    it("treats a blank key line in .env as no key", () => {
+      const run = setup({
+        ...composeFiles,
+        ".env": "RESEND_API_KEY=x\nSECRET_ENCRYPTION_KEY=\n",
+        "docker-compose.env.yml": withFile,
+      });
+      run(bareEnv);
+      expect(run.dockerLog()).toContain(" up ");
+    });
+
+    it("ignores a commented-out key file in the override", () => {
+      const run = setup({
+        ...composeFiles,
+        "docker-compose.env.yml": `${loadsDburl}    environment:\n      # SECRET_ENCRYPTION_KEY_FILE: /run/secrets/encryption-key\n`,
+      });
+      const result = run(bareEnv);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("add the key file mount");
+    });
+
+    it("ignores a commented-out key in .env", () => {
+      const run = setup({
+        ...composeFiles,
+        ".env": `RESEND_API_KEY=x\n# ${keyValue}\n`,
+        "docker-compose.env.yml": withFile,
+      });
+      run(bareEnv);
+      expect(run.dockerLog()).toContain(" up ");
+    });
+
+    it("does not count blank key variables on a running container", () => {
+      const run = setup(manualFiles);
+      const result = run({
+        FAKE_CONTAINERS: "xcloud-site-239298-app-1 running\n",
+        FAKE_ENV: `${fakeDatabaseUrl}\nSECRET_ENCRYPTION_KEY=\nSECRET_ENCRYPTION_KEY_FILE=`,
+        FAKE_NETWORKS: network,
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("WARNING");
+    });
+
     it("recreates when the override sets SECRET_ENCRYPTION_KEY_FILE", () => {
       const run = setup({
         ...composeFiles,

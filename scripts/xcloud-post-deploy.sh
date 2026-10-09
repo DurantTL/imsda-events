@@ -47,7 +47,7 @@ container_has_database_url() {
 # variable NAMES are inspected here, never a value.
 container_has_encryption_key() {
   docker inspect "$1" --format '{{range .Config.Env}}{{println .}}{{end}}' |
-    grep -Eq '^SECRET_ENCRYPTION_KEY(_FILE)?='
+    grep -Eq '^SECRET_ENCRYPTION_KEY(_FILE)?=[^[:space:]]'
 }
 
 warn_if_no_encryption_key() {
@@ -198,9 +198,21 @@ fi
 # Likewise the key: once it has left .env (#876) the override has to supply it
 # through SECRET_ENCRYPTION_KEY_FILE and a read-only mount, or the recreated app
 # cannot start.
-if ! grep -q '^SECRET_ENCRYPTION_KEY=' "$IMSDA_XCLOUD_ENV_FILE" \
-  && ! grep -q 'SECRET_ENCRYPTION_KEY_FILE' "$IMSDA_XCLOUD_OVERRIDE_COMPOSE"
-then
+# A blank or commented line is not a key; only a real value, or an uncommented
+# override entry, counts.
+IMSDA_XCLOUD_KEY_IN_ENV=false
+if grep -q '^SECRET_ENCRYPTION_KEY=[^[:space:]]' "$IMSDA_XCLOUD_ENV_FILE"; then
+  IMSDA_XCLOUD_KEY_IN_ENV=true
+fi
+IMSDA_XCLOUD_KEY_FILE_IN_OVERRIDE=false
+if grep -Eq '^[[:space:]]*(-[[:space:]]*)?SECRET_ENCRYPTION_KEY_FILE[:=][[:space:]]*[^[:space:]#]' "$IMSDA_XCLOUD_OVERRIDE_COMPOSE"; then
+  IMSDA_XCLOUD_KEY_FILE_IN_OVERRIDE=true
+fi
+if [ "$IMSDA_XCLOUD_KEY_IN_ENV" = true ] && [ "$IMSDA_XCLOUD_KEY_FILE_IN_OVERRIDE" = true ]; then
+  echo "[xcloud-post-deploy] SECRET_ENCRYPTION_KEY is still set in $IMSDA_XCLOUD_ENV_FILE and $IMSDA_XCLOUD_OVERRIDE_COMPOSE also sets SECRET_ENCRYPTION_KEY_FILE; the app refuses to start with both. Finish the move: remove the key line from the env file (docs/DEPLOY-DOCKER.md)." >&2
+  exit 1
+fi
+if [ "$IMSDA_XCLOUD_KEY_IN_ENV" = false ] && [ "$IMSDA_XCLOUD_KEY_FILE_IN_OVERRIDE" = false ]; then
   echo "[xcloud-post-deploy] SECRET_ENCRYPTION_KEY is not in $IMSDA_XCLOUD_ENV_FILE and $IMSDA_XCLOUD_OVERRIDE_COMPOSE does not set SECRET_ENCRYPTION_KEY_FILE; add the key file mount (docs/DEPLOY-DOCKER.md)." >&2
   exit 1
 fi

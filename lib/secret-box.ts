@@ -26,8 +26,7 @@ export class SecretBoxError extends Error {
   }
 }
 
-function derivedKey(purpose: string, explicitKey?: string) {
-  const configured = explicitKey ?? getServerEnv().SECRET_ENCRYPTION_KEY;
+function deriveKey(configured: string | undefined, purpose: string) {
   if (!configured) {
     throw new SecretBoxError(
       "SECRET_ENCRYPTION_KEY (or SECRET_ENCRYPTION_KEY_FILE) must be set before encrypted values can be read or written.",
@@ -42,16 +41,13 @@ function derivedKey(purpose: string, explicitKey?: string) {
   ));
 }
 
-/**
- * `explicitKey` lets an operator tool (`scripts/backup/verify-key-restore.ts`)
- * use a key it resolved itself, without loading the whole server environment.
- * Application code never passes it.
- */
+function derivedKey(purpose: string) {
+  return deriveKey(getServerEnv().SECRET_ENCRYPTION_KEY, purpose);
+}
 
-/** Returns `v1.<nonce>.<tag>.<ciphertext>`, all base64url. */
-export function sealSecret(plaintext: string, purpose: string, explicitKey?: string) {
+function sealWith(key: Buffer, plaintext: string) {
   const nonce = randomBytes(NONCE_BYTES);
-  const cipher = createCipheriv("aes-256-gcm", derivedKey(purpose, explicitKey), nonce);
+  const cipher = createCipheriv("aes-256-gcm", key, nonce);
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   return [
     FORMAT,
@@ -61,17 +57,13 @@ export function sealSecret(plaintext: string, purpose: string, explicitKey?: str
   ].join(".");
 }
 
-export function openSecret(sealed: string, purpose: string, explicitKey?: string) {
+function openWith(getKey: () => Buffer, sealed: string) {
   const [format, nonce, tag, ciphertext] = sealed.split(".");
   if (format !== FORMAT || !nonce || !tag || !ciphertext) {
     throw new SecretBoxError("The stored value is not in the expected sealed format.");
   }
   try {
-    const decipher = createDecipheriv(
-      "aes-256-gcm",
-      derivedKey(purpose, explicitKey),
-      Buffer.from(nonce, "base64url"),
-    );
+    const decipher = createDecipheriv("aes-256-gcm", getKey(), Buffer.from(nonce, "base64url"));
     decipher.setAuthTag(Buffer.from(tag, "base64url"));
     return Buffer.concat([
       decipher.update(Buffer.from(ciphertext, "base64url")),
@@ -85,6 +77,43 @@ export function openSecret(sealed: string, purpose: string, explicitKey?: string
       "The stored value could not be decrypted. The encryption key may have changed.",
     );
   }
+}
+
+/** Returns `v1.<nonce>.<tag>.<ciphertext>`, all base64url. */
+export function sealSecret(plaintext: string, purpose: string) {
+  return sealWith(derivedKey(purpose), plaintext);
+}
+
+export function openSecret(sealed: string, purpose: string) {
+  return openWith(() => derivedKey(purpose), sealed);
+}
+
+/** The shortest key the production environment accepts. */
+export const MIN_SECRET_KEY_LENGTH = 32;
+
+function operatorKey(key: string, purpose: string) {
+  if (key.length < MIN_SECRET_KEY_LENGTH) {
+    throw new SecretBoxError(`The key must contain at least ${MIN_SECRET_KEY_LENGTH} characters.`);
+  }
+  return deriveKey(key, purpose);
+}
+
+/**
+ * Operator-tool only (`scripts/backup/verify-key-restore.ts`): like
+ * `sealSecret`, but with a key the caller resolved itself, so a tool can run
+ * without loading the whole server environment. Enforces the production
+ * minimum key length. Application code must use `sealSecret`.
+ */
+export function sealSecretWithKey(plaintext: string, purpose: string, key: string) {
+  return sealWith(operatorKey(key, purpose), plaintext);
+}
+
+/**
+ * Operator-tool only: like `openSecret`, with an explicit key of at least the
+ * production minimum length. Application code must use `openSecret`.
+ */
+export function openSecretWithKey(sealed: string, purpose: string, key: string) {
+  return openWith(() => operatorKey(key, purpose), sealed);
 }
 
 /**

@@ -844,9 +844,13 @@ docker exec xcloud-site-<id>-app-1 printenv SECRET_ENCRYPTION_KEY | tr -d '\n' |
    **If the site is deployed through the xCloud Compose path** (the
    `docker-compose.env.yml` override and `scripts/xcloud-post-deploy.sh` /
    the runtime guard, "Permanent xCloud Dockerfile-only runtime override" above),
-   that path recreates the app with only `.env` and `.env.dburl`, so add the same
-   thing to the `app` service in `/home/u_events/.xcloud/docker-compose.env.yml`
-   before removing the key from `.env`:
+   that path recreates the app with only `.env` and `.env.dburl`, so the same
+   mount has to go into the `app` service in
+   `/home/u_events/.xcloud/docker-compose.env.yml`. **Do not add it ahead of time:**
+   with the key still in `.env` and the file variable in the override, an xCloud
+   recreate in between would start the app with both and it would refuse to start.
+   Make this edit and the `.env` removal in step 4 together, with the guard paused
+   (see "Compose path" under step 4):
 
 ```yaml
 services:
@@ -863,10 +867,12 @@ services:
 ```
 
    (Merge this into the existing `app:` entry; keep its `env_file`, `APP_RELEASE_SHA`
-   and `networks`.) The guard now refuses to recreate the app when the key is gone
-   from `.env` and the override has no `SECRET_ENCRYPTION_KEY_FILE`, fails a
-   recreated container that has neither key variable, and warns when a running
-   container has neither. It checks variable names only, never values.
+   and `networks`.) The guard (`scripts/xcloud-post-deploy.sh`) refuses to recreate
+   the app when the key is gone from `.env` and the override has no
+   `SECRET_ENCRYPTION_KEY_FILE`, and also when **both** are present ("finish the
+   move"). It fails a recreated container that has neither key variable and warns
+   when a running container has neither. Blank and commented-out lines do not
+   count as a key. It checks variable names only, never values.
 
 4. Remove the key line from the env file, keeping a private copy of the old file
    until the deploy is confirmed:
@@ -880,7 +886,30 @@ grep -c '^SECRET_ENCRYPTION_KEY' /home/u_events/.xcloud/.env   # expect 0
    Also remove the variable from the hosting panel if it is stored there, or the
    container will have both and refuse to start.
 
-5. Deploy with `/root/manual-deploy.sh` as usual (the rollback steps above still
+   **Compose path (xCloud override).** Do the override edit from step 3 and the
+   `.env` removal above as one change, with automatic redeploys stopped so nothing
+   recreates the app halfway:
+
+```bash
+systemctl stop imsda-xcloud-runtime-guard.timer      # if the server-level guard is installed
+# Also do not trigger an xCloud deploy until this block is finished.
+cp -p /home/u_events/.xcloud/docker-compose.env.yml /root/docker-compose.env.before-876.bak
+# 1. edit docker-compose.env.yml: add the environment + bind volume from step 3
+# 2. remove the key line from .env (the cp / sed lines above)
+docker compose -f /home/u_events/.xcloud/docker-compose.yml -f /home/u_events/.xcloud/docker-compose.env.yml config --quiet && echo config-ok
+docker compose -f /home/u_events/.xcloud/docker-compose.yml -f /home/u_events/.xcloud/docker-compose.env.yml up -d --force-recreate app
+systemctl start imsda-xcloud-runtime-guard.timer
+```
+
+   Then do step 6 (the `docker inspect` line there uses the compose container's
+   name from `docker ps`). If the app does not come up healthy, roll back: stop the
+   timer again, `cp -p /root/docker-compose.env.before-876.bak
+   /home/u_events/.xcloud/docker-compose.env.yml`, restore the key line in `.env`
+   from `/root/env.before-876.bak`, run the same `up -d --force-recreate app`
+   command, and start the timer. The `--mount`-style failure for a missing file
+   shows up here, in the `up` output, rather than as a restart loop.
+
+5. Manual-deploy path: deploy with `/root/manual-deploy.sh` as usual (the rollback steps above still
    apply; the `-old` container still has the key in its own environment, so
    remove it once the new one is confirmed).
 
@@ -937,7 +966,7 @@ chmod 0400 /root/keytest/backup-key
    container (compose) or anywhere with `pg_restore` and the dump:
 
 ```bash
-docker compose exec -e RESTORE_KEEP_SCRATCH=true -e RESTORE_SCRATCH_DB=imsda_events_restore_check \
+docker compose exec -e RESTORE_KEEP_SCRATCH=true -e RESTORE_SCRATCH_DB=imsda_events_keytest_restore_check \
   backup sh /usr/local/bin/pg-restore-verify.sh
 ```
 
@@ -945,9 +974,9 @@ docker compose exec -e RESTORE_KEEP_SCRATCH=true -e RESTORE_SCRATCH_DB=imsda_eve
    failed rehearsal always drops its scratch database; a successful one prints
    the command to drop it). If
    this server's backups are not made by the compose `backup` service, create the
-   scratch database by hand (`createdb imsda_events_restore_check`) and restore
+   scratch database by hand (`createdb imsda_events_keytest_restore_check`) and restore
    the dump into it with `pg_restore --no-owner --no-privileges --exit-on-error
-   --dbname=imsda_events_restore_check <dump>`; the next step is the same.
+   --dbname=imsda_events_keytest_restore_check <dump>`; the next step is the same.
 
 3. Run the key check from a one-off container of the app image, using the backup
    key and the scratch database. Build a temporary owner-only env file from
@@ -955,9 +984,9 @@ docker compose exec -e RESTORE_KEEP_SCRATCH=true -e RESTORE_SCRATCH_DB=imsda_eve
    command line or in `docker inspect`):
 
 ```bash
-( umask 077; sed -E 's#^(DATABASE_URL=postgres(ql)?://[^/]+/)[^?]*#\1imsda_events_restore_check#' \
+( umask 077; sed -E 's#^(DATABASE_URL=postgres(ql)?://[^/]+/)[^?]*#\1imsda_events_keytest_restore_check#' \
     /home/u_events/.xcloud/.env.dburl > /root/keytest/db.env )
-grep -c 'imsda_events_restore_check' /root/keytest/db.env     # expect 1
+grep -c 'imsda_events_keytest_restore_check' /root/keytest/db.env     # expect 1
 
 docker run --rm \
   --network postgresql_9kgaw_239292_xcloud-network \
@@ -980,7 +1009,7 @@ docker run --rm \
 4. Clean up, then record the date:
 
 ```bash
-docker compose exec backup psql --dbname=postgres -c 'DROP DATABASE IF EXISTS imsda_events_restore_check;'
+docker compose exec backup psql --dbname=postgres -c 'DROP DATABASE IF EXISTS imsda_events_keytest_restore_check;'
 shred -u /root/keytest/backup-key /root/keytest/db.env && rmdir /root/keytest
 ```
 

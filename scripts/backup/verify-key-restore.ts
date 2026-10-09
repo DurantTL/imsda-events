@@ -24,13 +24,12 @@
  *   npm run key:restore-check -- --canary-only    # no database needed
  */
 import { resolveEncryptionKey } from "../../lib/env";
-import { openSecret, sealSecret } from "../../lib/secret-box";
+import { MIN_SECRET_KEY_LENGTH, openSecretWithKey, sealSecretWithKey } from "../../lib/secret-box";
 
 // Must match SECRET_PURPOSE in modules/access/mfa-service.ts.
 const MFA_PURPOSE = "mfa-totp-secret";
 const CANARY = "synthetic-canary-not-a-secret";
 const CANARY_PURPOSE = "key-restore-canary";
-const MIN_KEY_LENGTH = 32;
 
 export type KeyRestoreCheckOptions = {
   env: Record<string, string | undefined>;
@@ -59,13 +58,13 @@ export async function runKeyRestoreCheck(options: KeyRestoreCheckOptions): Promi
   if (!key) {
     return fail("no encryption key is configured. Set SECRET_ENCRYPTION_KEY_FILE to the backup copy of the key.");
   }
-  if (key.length < MIN_KEY_LENGTH) {
-    return fail(`the key is shorter than ${MIN_KEY_LENGTH} characters, so it cannot be the production key.`);
+  if (key.length < MIN_SECRET_KEY_LENGTH) {
+    return fail(`the key is shorter than ${MIN_SECRET_KEY_LENGTH} characters, so it cannot be the production key.`);
   }
   log(`[key-restore-check] key loaded from ${resolved.source === "file" ? "a file" : "the environment"}`);
 
   try {
-    if (openSecret(sealSecret(CANARY, CANARY_PURPOSE, key), CANARY_PURPOSE, key) !== CANARY) {
+    if (openSecretWithKey(sealSecretWithKey(CANARY, CANARY_PURPOSE, key), CANARY_PURPOSE, key) !== CANARY) {
       return fail("the canary value did not round-trip");
     }
   } catch {
@@ -100,7 +99,7 @@ export async function runKeyRestoreCheck(options: KeyRestoreCheckOptions): Promi
     return fail("the restored database has no authenticator enrolment to read. Use a dump taken after an administrator enrolled.");
   }
   try {
-    openSecret(sealed, MFA_PURPOSE, key);
+    openSecretWithKey(sealed, MFA_PURPOSE, key);
   } catch {
     return fail("the key could NOT open a sealed value from the restored database. This is not the key that sealed it.");
   }

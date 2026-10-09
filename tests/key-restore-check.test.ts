@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isScratchDatabaseName, runKeyRestoreCheck } from "../scripts/backup/verify-key-restore";
-import { sealSecret } from "@/lib/secret-box";
+import { SecretBoxError, sealSecretWithKey } from "@/lib/secret-box";
 
 const key = "synthetic-backup-key-0123456789-abcdefghijklmn";
 const otherKey = "synthetic-different-key-0123456789-abcdefghijk";
@@ -72,7 +72,7 @@ describe("key restore check", () => {
   });
 
   it("opens a sealed value from the scratch database with the right key", async () => {
-    const sealed = sealSecret("synthetic-totp-secret", "mfa-totp-secret", key);
+    const sealed = sealSecretWithKey("synthetic-totp-secret", "mfa-totp-secret", key);
     const h = harness({ SECRET_ENCRYPTION_KEY_FILE: keyFile(key), DATABASE_URL: scratchUrl }, { sealed });
     await expect(h.run()).resolves.toBe(0);
     expect(h.text()).toContain("opened one sealed value");
@@ -82,7 +82,7 @@ describe("key restore check", () => {
   });
 
   it("fails with the wrong key and prints nothing secret", async () => {
-    const sealed = sealSecret("synthetic-totp-secret", "mfa-totp-secret", otherKey);
+    const sealed = sealSecretWithKey("synthetic-totp-secret", "mfa-totp-secret", otherKey);
     const h = harness({ SECRET_ENCRYPTION_KEY_FILE: keyFile(key), DATABASE_URL: scratchUrl }, { sealed });
     await expect(h.run()).resolves.toBe(1);
     expect(h.text()).toContain("could NOT open");
@@ -99,6 +99,10 @@ describe("key restore check", () => {
     const short = harness({ SECRET_ENCRYPTION_KEY_FILE: keyFile("short-key") }, { canaryOnly: true });
     await expect(short.run()).resolves.toBe(1);
     expect(short.text()).not.toContain("short-key");
+  });
+
+  it("refuses a key shorter than the production minimum in the operator helpers", () => {
+    expect(() => sealSecretWithKey("x", "p", "short")).toThrow(SecretBoxError);
   });
 
   it("withholds details when the database cannot be read", async () => {
