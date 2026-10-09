@@ -993,6 +993,7 @@ model AttendeeAccount {
   createdAt          DateTime              @default(now())
   updatedAt          DateTime              @updatedAt
 
+  honorInstructorRoles         HonorInstructor[]
   credential                   AttendeeCredential?
   identities                   AttendeeIdentity[]
   sessions                     AttendeeSession[]
@@ -1506,6 +1507,7 @@ model Event {
   programAssignmentRuns               ProgramAssignmentRun[]
   honorSessions                       HonorSession[]
   honorOfferings                      HonorOffering[]
+  honorInstructors                    HonorInstructor[]
   clubRegistrations                   ClubEventRegistration[]
   teamSettings                        EventTeamSettings?
   groupRegistrations                  GroupEventRegistration[]
@@ -1898,6 +1900,7 @@ model Person {
   matchCandidatesAsA   PersonMatchCandidate[] @relation("PersonMatchCandidateAsA")
   matchCandidatesAsB   PersonMatchCandidate[] @relation("PersonMatchCandidateAsB")
   clubRosterMemberships ClubRosterMember[]
+  honorInstructorRoles  HonorInstructor[]
   backgroundCheckMatch  BackgroundCheckMatch?
   backgroundChecksPre527 BackgroundCheckPre527[] @ignore
   driverVerification    DriverVerification?
@@ -4325,6 +4328,7 @@ model HonorOffering {
   site        EventLocation?    @relation(fields: [locationId], references: [id], onDelete: Restrict)
   enrollments HonorEnrollment[]
   honors      HonorOfferingHonor[]
+  instructorClasses HonorInstructorClass[]
 
   // "No honor twice in a session" and the all-sessions rules now live on
   // `HonorOfferingHonor`, one row per honor taught (#812).
@@ -4849,6 +4853,8 @@ model HonorEnrollment {
   organization         Organization?        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   /// One per honor the class teaches (#812), once written back.
   weekendCompletions   HonorWeekendCompletionLink[]
+  /// The class instructor's attendance and completion mark (#833), if any.
+  instructorMark       HonorEnrollmentMark?
 
   @@unique([registrationAttendeeId, offeringId])
   @@index([offeringId, consumesSeat])
@@ -7174,4 +7180,73 @@ model NewClubApplicationInvite {
   application NewClubApplication?
 
   @@index([email])
+}
+
+/// An Honors Weekend class instructor (#833): a person staff invited to teach
+/// one or more classes at one event. Instructors are attendee-account people,
+/// like club directors: staff invite by email, and the invited person accepts
+/// from their own signed-in account, whose verified email must be the invite's
+/// (no secret in the email). Accepting sets `attendeeAccountId`. Nothing else
+/// grants a roster: not the class's free-text teacher name, not a club role.
+/// One row per (event, email); the classes they teach are `HonorInstructorClass`.
+/// `personId` is the durable person the Sterling Volunteers check is matched to.
+model HonorInstructor {
+  id                String    @id @default(cuid())
+  eventId           String
+  personId          String
+  /// Lower-cased; the address the invite went to and the account must verify.
+  email             String
+  name              String
+  attendeeAccountId String?
+  createdByUserId   String?
+  sentAt            DateTime?
+  sentCount         Int       @default(0)
+  acceptedAt        DateTime?
+  revokedAt         DateTime?
+  revokedByUserId   String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  event           Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  person          Person           @relation(fields: [personId], references: [id], onDelete: Restrict)
+  attendeeAccount AttendeeAccount? @relation(fields: [attendeeAccountId], references: [id], onDelete: SetNull)
+  classes         HonorInstructorClass[]
+  marks           HonorEnrollmentMark[]
+
+  @@unique([eventId, email])
+  @@index([attendeeAccountId])
+  @@index([email])
+}
+
+/// One class an instructor teaches (#833). A class may have several instructors.
+model HonorInstructorClass {
+  id           String   @id @default(cuid())
+  instructorId String
+  offeringId   String
+  createdAt    DateTime @default(now())
+
+  instructor HonorInstructor @relation(fields: [instructorId], references: [id], onDelete: Cascade)
+  offering   HonorOffering   @relation(fields: [offeringId], references: [id], onDelete: Cascade)
+
+  @@unique([instructorId, offeringId])
+  @@index([offeringId])
+}
+
+/// An instructor's mark on one class enrollment (#833): attended, and
+/// completed (which always includes attended; the migration's CHECK says so).
+/// Completed is what feeds the Honors Weekend write-back. Absence of a row
+/// means the instructor has made no decision for that person.
+model HonorEnrollmentMark {
+  id                   String   @id @default(cuid())
+  enrollmentId         String   @unique
+  attended             Boolean
+  completed            Boolean
+  markedByInstructorId String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  enrollment         HonorEnrollment  @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  markedByInstructor HonorInstructor? @relation(fields: [markedByInstructorId], references: [id], onDelete: SetNull)
+
+  @@index([markedByInstructorId])
 }

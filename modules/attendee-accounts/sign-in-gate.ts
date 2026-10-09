@@ -6,7 +6,8 @@ import { listDirectedClubs } from "@/modules/organizations/director-access";
 
 /**
  * Who must pass a second step before any account page (decision 2026-09-23):
- * anyone holding a club role, and Area Coordinators (#387).
+ * anyone holding a club role, Area Coordinators (#387), and accepted Honors Weekend
+ * instructors (#833).
  * Ordinary attendees keep password-only sign-in; they hold the least personal
  * information and edits already need an emailed code.
  *
@@ -27,12 +28,14 @@ export type SignInGate = "OK" | "VERIFY" | "SETUP";
  */
 export async function accountHasSecondStepAccess(accountId: string, now = new Date()): Promise<boolean> {
   const prisma = getPrisma();
-  const [clubs, areaGrant] = await Promise.all([
+  const [clubs, areaGrant, instructorRoles] = await Promise.all([
     listDirectedClubs(accountId, now),
     prisma.areaCoordinatorGrant.findUnique({ where: { attendeeAccountId: accountId }, select: { revokedAt: true, expiresAt: true } }),
+    // An accepted Honors Weekend instructor (#833) reaches young people's rosters, so the same second step applies.
+    prisma.honorInstructor.count({ where: { attendeeAccountId: accountId, acceptedAt: { not: null }, revokedAt: null, classes: { some: {} } } }),
   ]);
   const areaCoordinator = Boolean(areaGrant && !areaGrant.revokedAt && (!areaGrant.expiresAt || areaGrant.expiresAt > now));
-  return clubs.length > 0 || areaCoordinator;
+  return clubs.length > 0 || areaCoordinator || instructorRoles > 0;
 }
 
 export async function accountNeedsSecondStep(accountId: string, sessionId: string | null, now = new Date()): Promise<SignInGate> {

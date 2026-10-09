@@ -31,7 +31,7 @@ export class HonorsWeekendWriteBackError extends Error {
   }
 }
 
-const WRITE_BACK_TRANSACTION = { timeout: 60_000, maxWait: 10_000 };
+export const WRITE_BACK_TRANSACTION = { timeout: 60_000, maxWait: 10_000 };
 
 export type HonorsWeekendWriteBackResult = {
   /** New COMPLETED entries appended to members' honor records (one per honor a class teaches). */
@@ -63,28 +63,55 @@ function isUniqueViolation(error: unknown) {
  * enrollments as already recorded rather than failing.
  */
 export async function writeBackHonorsWeekendCompletions(eventId: string, actorUserId: string): Promise<HonorsWeekendWriteBackResult> {
+  return runWriteBack(eventId, { userId: actorUserId });
+}
+
+/**
+ * An instructor's completions (#833): writes back just these enrollments, only
+ * those the instructor marked completed, attributed to the instructor's own
+ * attendee account. The same transaction, locks, links and rules as the staff
+ * run, so a pair already linked is never written twice and a member whose
+ * latest entry is already COMPLETED gets no second one. The caller has already
+ * checked the instructor teaches each enrollment's class.
+ */
+export async function writeBackInstructorCompletions(
+  eventId: string,
+  enrollmentIds: readonly string[],
+  actorAccountId: string,
+): Promise<HonorsWeekendWriteBackResult> {
+  if (enrollmentIds.length === 0) return { written: 0, alreadyRecorded: 0, skipped: 0 };
+  return runWriteBack(eventId, { accountId: actorAccountId }, { enrollmentIds: [...enrollmentIds] });
+}
+
+type WriteBackActor = { userId: string } | { accountId: string };
+type WriteBackScope = { enrollmentIds: string[] };
+
+async function runWriteBack(eventId: string, actor: WriteBackActor, scope?: WriteBackScope): Promise<HonorsWeekendWriteBackResult> {
   const event = await getPrisma().event.findUnique({ where: { id: eventId }, select: { id: true, startsAt: true } });
   if (!event) throw new HonorsWeekendWriteBackError("EVENT_NOT_FOUND", "That event could not be found.");
   const completionDate = eventCompletionDate(event.startsAt);
   try {
-    return await writeBackOnce(eventId, completionDate, actorUserId);
+    return await writeBackOnce(eventId, completionDate, actor, scope);
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
-    return writeBackOnce(eventId, completionDate, actorUserId);
+    return writeBackOnce(eventId, completionDate, actor, scope);
   }
 }
 
 type WriteRow = { enrollmentId: string; organizationId: string; honorId: string; personId: string };
 
-async function writeBackOnce(eventId: string, completionDate: string, actorUserId: string): Promise<HonorsWeekendWriteBackResult> {
+async function writeBackOnce(eventId: string, completionDate: string, actor: WriteBackActor, scope?: WriteBackScope): Promise<HonorsWeekendWriteBackResult> {
+  const actorUserId = "userId" in actor ? actor.userId : undefined;
+  const actorAccountId = "accountId" in actor ? actor.accountId : undefined;
   return getPrisma().$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`honors-weekend-write-back:${eventId}`}))`;
     const enrollments = await tx.honorEnrollment.findMany({
-      where: { eventId, registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } },
+      where: { eventId, ...(scope ? { id: { in: scope.enrollmentIds } } : {}), registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } },
       select: {
         id: true,
         organizationId: true,
         weekendCompletions: { select: { honorId: true } },
+        instructorMark: { select: { completed: true } },
         offering: { select: { honors: { select: { honorId: true }, orderBy: { position: "asc" } } } },
         registrationAttendee: {
           select: { profileSnapshot: true, checkIns: { where: { undoneAt: null }, select: { id: true }, take: 1 } },
@@ -100,7 +127,13 @@ async function writeBackOnce(eventId: string, completionDate: string, actorUserI
     const candidates = pairs
       .filter((pair) => !pair.linked)
       .map((pair) => ({ ...pair.enrollment, honorId: pair.honorId }));
-    const eligible = candidates.filter((candidate) => candidate.registrationAttendee.checkIns.length > 0);
+    // An instructor's mark (#833) is a decision and governs: completed writes, anything else doesn't, whatever
+    // the check-in says. With no mark, checking in to the event completes the honor, as it always has. An
+    // instructor's own run (a scope) writes only what that instructor marked completed.
+    const eligible = candidates.filter((candidate) => {
+      if (scope) return candidate.instructorMark?.completed === true;
+      return candidate.instructorMark ? candidate.instructorMark.completed : candidate.registrationAttendee.checkIns.length > 0;
+    });
     const memberIds = eligible
       .map((candidate) => (candidate.registrationAttendee.profileSnapshot as Snapshot).clubRosterMemberId)
       .filter((id): id is string => Boolean(id));
@@ -151,7 +184,7 @@ async function writeBackOnce(eventId: string, completionDate: string, actorUserI
           status: "COMPLETED",
           completionDate,
           organizationId: row.organizationId,
-          recordedByUserId: actorUserId,
+          ...(actorUserId ? { recordedByUserId: actorUserId } : { recordedByAccountId: actorAccountId }),
         },
         select: { id: true },
       });
@@ -162,7 +195,7 @@ async function writeBackOnce(eventId: string, completionDate: string, actorUserI
         entityType: "MemberHonorEntry",
         entityId: entry.id,
         summary: "Wrote an Honors Weekend class completion into a member's year-round honor record.",
-        metadata: { eventId, organizationId: row.organizationId, honorId: row.honorId, enrollmentId: row.enrollmentId },
+        metadata: { eventId, organizationId: row.organizationId, honorId: row.honorId, enrollmentId: row.enrollmentId, ...(actorAccountId ? { actorAttendeeAccountId: actorAccountId, byInstructor: true } : {}) },
       }, tx);
       written += 1;
     }
@@ -173,7 +206,7 @@ async function writeBackOnce(eventId: string, completionDate: string, actorUserI
         entityType: "Event",
         entityId: eventId,
         summary: `Linked ${linkedToExisting} Honors Weekend class completion${linkedToExisting === 1 ? "" : "s"} to honors already recorded as completed.`,
-        metadata: { eventId, enrollmentCount: linkedToExisting },
+        metadata: { eventId, enrollmentCount: linkedToExisting, ...(actorAccountId ? { actorAttendeeAccountId: actorAccountId, byInstructor: true } : {}) },
       }, tx);
     }
     return { written, alreadyRecorded: linkedAlready + linkedToExisting, skipped: candidates.length - toWrite.length };

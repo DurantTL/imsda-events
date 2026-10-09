@@ -20,6 +20,7 @@ vi.mock("@/lib/request-context", () => ({ withRequestContext: (handler: unknown)
 vi.mock("@/lib/prisma", () => ({
   getPrisma: () => ({
     areaCoordinatorGrant: { findUnique: mocks.areaGrant },
+    honorInstructor: { count: async () => 0 },
     attendeeSession: { findUnique: mocks.session },
     attendeeMfaEnrollment: { findUnique: mocks.enrollment },
     attendeePasskey: { count: mocks.passkeyCount },

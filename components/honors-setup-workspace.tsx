@@ -3,7 +3,7 @@
 import { staffPageTitles } from "@/components/staff-navigation";
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, TriangleAlert, X } from "lucide-react";
+import { Award, CalendarRange, ClipboardList, Copy, Pencil, Plus, Power, Save, Trash2, TriangleAlert, UsersRound, X } from "lucide-react";
 import { honorOfferingSpanLabels, offeringPlacementPatch, sessionEditPatch } from "@/modules/honors/domain";
 import { honorSetChange, honorsNeedConfirmationMessage } from "@/modules/honors/offering-honors";
 import { HonorMultiSelect } from "@/components/honor-multi-select";
@@ -330,7 +330,7 @@ export function HonorsSetupWorkspace({
   async function writeBackCompletions() {
     const result = await call(`${base}/completions`, "POST", undefined, "") as (ApiResult & { written?: number; alreadyRecorded?: number; skipped?: number }) | null;
     if (result && typeof result.written === "number") {
-      setNotice(`Wrote ${result.written} completion${result.written === 1 ? "" : "s"} into members' honor records. ${result.alreadyRecorded ?? 0} already recorded. ${result.skipped ?? 0} skipped (not checked in, or not on the enrolling club's roster).`);
+      setNotice(`Wrote ${result.written} completion${result.written === 1 ? "" : "s"} into members' honor records. ${result.alreadyRecorded ?? 0} already recorded. ${result.skipped ?? 0} skipped (not checked in, not on the enrolling club's roster, or an instructor marked them not completed).`);
     }
   }
 
@@ -350,6 +350,9 @@ export function HonorsSetupWorkspace({
           <span className="count-badge">{totalSeats} youth seats</span>
           <Link className="secondary-button" href={`/more/honors/rosters?event=${encodeURIComponent(eventId)}`}>
             <ClipboardList aria-hidden="true" size={15} /> Rosters
+          </Link>
+          <Link className="secondary-button" href={`/more/honors/instructors?event=${encodeURIComponent(eventId)}`}>
+            <UsersRound aria-hidden="true" size={15} /> Instructors
           </Link>
         </div>
       </div>
