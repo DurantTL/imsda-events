@@ -512,6 +512,9 @@ human can accept, change or reject them before any real record is stored.
 - **Refused attempts:** refused attempts by signed-in staff are audited too.
 - **Training:** everyone who holds health access completes short training
   before it is granted.
+- **Consent wording:** the three statements are the verbatim text from the 2026
+  Pathfinder Health Record (`HEALTH_CONSENT_TEXT`, version
+  `pathfinder-health-record-2026`).
 
 ### Still open (blocking production use)
 
@@ -522,9 +525,6 @@ questions this build raised.
   member can only be an attendee after registering). Confirm.
 - **Backup retention and legal hold.** How long off-site backup copies are
   kept (#875 suggests 90 days), and who can pause deletion under a legal hold.
-- **Consent wording.** The three consent statements (emergency treatment,
-  attendance and activity permission, photocopying) are placeholders in the code
-  and must be replaced with the verbatim 2026 text before use.
 - **Typed signature versus signature evidence** (#150) when it ships.
 - **Coordinator entry point.** #611 adds the coordinator and staff pages but
   no links to them; #658's event sheet is the natural place to link from.
