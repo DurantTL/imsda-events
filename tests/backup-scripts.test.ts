@@ -288,9 +288,9 @@ describe("restore rehearsal", () => {
 
     expect(result.status).toBe(0);
     const log = t.log();
-    expect(log).toContain("initdb -D");
-    expect(log).toMatch(/pg_ctl -D \S+ -w -s -l \S+ -o .*unix_socket_directories=.* start/);
-    expect(log).toMatch(/pg_ctl -D \S+ -m immediate -w -s stop/);
+    expect(log).toMatch(/initdb .*-D \S+/);
+    expect(log).toMatch(/pg_ctl .*-D \S+ -w -s -l \S+ -o .*unix_socket_directories=.* start/);
+    expect(log).toMatch(/pg_ctl .*-D \S+ -m immediate -w -s stop/);
     const rehearsalPsql = log
       .split("\n")
       .filter((l) => l.startsWith("psql") && /CREATE DATABASE|DROP DATABASE|count\(\*\)/.test(l));
