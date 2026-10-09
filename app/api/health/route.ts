@@ -5,6 +5,8 @@ import { dispatchUnsuppressedAlert } from "@/modules/operations/alerting";
 import { withRequestContext } from "@/lib/request-context";
 import { getReleaseIdentity } from "@/lib/release";
 import { getSweepHeartbeat } from "@/modules/operations/sweep-heartbeat-repository";
+import { getBackupStatus } from "@/modules/operations/backup-status-repository";
+import { backupStatusDegradesHealth } from "@/modules/operations/backup-status";
 
 /**
  * Liveness and readiness in one response.
@@ -62,8 +64,22 @@ async function getHandler() {
   }
   const sweepDegraded = outboxSweep?.status === "stale" || outboxSweep?.status === "failing";
 
+  // Backups: a stale, failing or unrehearsed backup is `degraded`, never 503,
+  // so the app stays in rotation. A backup that has never reported is shown as
+  // `never` without degrading, like the sweep. Times, sizes and flags only.
+  let backups: Awaited<ReturnType<typeof getBackupStatus>> | null = null;
+  try {
+    backups = await getBackupStatus();
+  } catch (error) {
+    logError("Backup status check failed", error);
+  }
+  const backupsDegraded = backupStatusDegradesHealth(backups);
+
   return Response.json({
-    status: (outbox && outbox.status !== "ok") || sweepDegraded ? "degraded" : "ok",
+    status:
+      (outbox && outbox.status !== "ok") || sweepDegraded || backupsDegraded
+        ? "degraded"
+        : "ok",
     checkedAt,
     release,
     services: {
@@ -71,8 +87,10 @@ async function getHandler() {
       database: "ok",
       messageOutbox: outbox?.status ?? "unknown",
       outboxSweep: outboxSweep?.status ?? "unknown",
+      backups: backups?.status ?? "unknown",
     },
     outboxSweep,
+    backups,
     messageOutbox: outbox
       ? {
           status: outbox.status,

@@ -1241,6 +1241,26 @@ model SystemJobHeartbeat {
   updatedAt       DateTime  @updatedAt
 }
 
+/**
+ * One row per backup run or restore rehearsal, written by the backup container
+ * (scripts/backup/record-status.sh) and read by `/api/health`. Holds times,
+ * sizes and pass/fail only: no file names, paths, row contents or credentials.
+ * `kind` is BACKUP or REHEARSAL; `offsiteOk` is null when no off-site copy is
+ * configured (or for a rehearsal).
+ */
+model BackupRun {
+  id          Int       @id @default(autoincrement())
+  kind        String
+  startedAt   DateTime
+  finishedAt  DateTime
+  ok          Boolean
+  dumpBytes   BigInt?
+  assetsBytes BigInt?
+  offsiteOk   Boolean?
+
+  @@index([kind, finishedAt])
+}
+
 model RateLimitBucket {
   id              String   @id @default(cuid())
   policy          String

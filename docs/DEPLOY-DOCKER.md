@@ -748,6 +748,11 @@ plainly. Add the named variable and deploy again.
 
 ## Backups and restore rehearsals
 
+> Production (the manually started container) runs the backup scheduler as its
+> own `imsda-backup` container with an off-site copy to Cloudflare R2 and status
+> in `/api/health`: see `docs/BACKUPS.md`. The rest of this section describes
+> the Compose `backup` service.
+
 The `backup` service writes PostgreSQL custom-format dumps and
 `imsda-assets-*.tar.gz` upload archives to the `imsda_events_backups` volume,
 checks that each asset archive is readable, prunes both sets after
