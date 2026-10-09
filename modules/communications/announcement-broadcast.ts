@@ -293,8 +293,7 @@ export async function broadcastPublishedAnnouncement(input: {
           trigger: "STAFF_EVENT_ANNOUNCEMENT_BROADCAST",
           announcementId: announcement.id,
           batchId: input.batchId,
-          // Delivery re-checks opt-outs right before sending, and honours this flag (#838).
-          essential: announcement.isEssential,
+          // Delivery re-checks opt-outs right before sending and reads the announcement's essential mark then (#838).
         },
       });
       deliveryMode = queued.deliveryMode;

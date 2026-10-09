@@ -34,3 +34,23 @@ CREATE INDEX "EmailAnnouncementOptOut_normalizedEmail_idx" ON "EmailAnnouncement
 
 -- AddForeignKey
 ALTER TABLE "EmailAnnouncementOptOut" ADD CONSTRAINT "EmailAnnouncementOptOut_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- CreateTable
+CREATE TABLE "EmailUnsubscribeToken" (
+    "id" TEXT NOT NULL,
+    "tokenHash" TEXT NOT NULL,
+    "normalizedEmail" TEXT NOT NULL,
+    "eventId" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "EmailUnsubscribeToken_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "EmailUnsubscribeToken_tokenHash_key" ON "EmailUnsubscribeToken"("tokenHash");
+
+-- CreateIndex
+CREATE INDEX "EmailUnsubscribeToken_eventId_idx" ON "EmailUnsubscribeToken"("eventId");
+
+-- AddForeignKey
+ALTER TABLE "EmailUnsubscribeToken" ADD CONSTRAINT "EmailUnsubscribeToken_eventId_fkey" FOREIGN KEY ("eventId") REFERENCES "Event"("id") ON DELETE CASCADE ON UPDATE CASCADE;

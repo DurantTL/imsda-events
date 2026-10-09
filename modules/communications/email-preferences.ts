@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 
 /**
  * Announcement opt-outs (#838), the pure half.
@@ -9,10 +9,11 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * The preference lives on the normalised email address, so it follows the address across registrations and events.
  * An opt-out covers either one event's announcements or all IMSDA Events announcements.
  *
- * The unsubscribe link carries a signed token (HMAC-SHA256, keyed from the same secret as private registration
- * links but under its own domain prefix, so a token for one purpose is never valid for the other). It names an
- * address and an event and nothing else: no registration id, confirmation code, name, or amount. The address is in
- * the payload because it is the recipient's own and the page needs it to apply the choice; the page shows it masked.
+ * The unsubscribe link carries an opaque token: 32 bytes of HMAC-SHA256 output (keyed from the same secret as private
+ * registration links, under its own domain prefix) and nothing readable. It holds no address, event, registration id or
+ * name, so nothing sensitive reaches a request log, a path or a header. Which address and event it is for is recorded in
+ * `EmailUnsubscribeToken`, by the token's hash, when the announcement is delivered; the link is looked up, so it also
+ * keeps working after the signing secret is rotated. The page shows the address masked.
  */
 
 export type AnnouncementOptOutScope = "EVENT" | "ALL";
@@ -76,65 +77,40 @@ export function announcementOptOutSkipMessage(scope: AnnouncementOptOutScope) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Signed tokens
+// Opaque tokens
 // ---------------------------------------------------------------------------------------------------------------
 
-const TOKEN_VERSION = "v1";
-const MAX_TOKEN_LENGTH = 1024;
+const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
-/** The secrets a token may be signed with, current first. The previous one only verifies, so a rotation is graceful. */
-export function unsubscribeSigningSecrets(env: Record<string, string | undefined> = process.env): string[] {
+/** The current signing secret. Rotating it only changes the tokens issued from then on; issued ones are looked up. */
+export function unsubscribeSigningSecret(env: Record<string, string | undefined> = process.env): string {
   const configured = env.MANAGE_LINK_DERIVATION_SECRET?.trim();
-  let current: string;
-  if (configured && configured.length >= 32) {
-    current = configured;
-  } else if (env.NODE_ENV === "production") {
+  if (configured && configured.length >= 32) return configured;
+  if (env.NODE_ENV === "production") {
     throw new Error("MANAGE_LINK_DERIVATION_SECRET must contain at least 32 characters before unsubscribe links can be issued.");
-  } else {
-    current = "imsda-events-local-registration-link-secret-2026";
   }
-  const previous = env.MANAGE_LINK_DERIVATION_SECRET_PREVIOUS?.trim();
-  if (previous && previous.length < 32) {
-    throw new Error("MANAGE_LINK_DERIVATION_SECRET_PREVIOUS must contain at least 32 characters when configured.");
-  }
-  return [...new Set([current, previous].filter((value): value is string => Boolean(value)))];
-}
-
-function sign(secret: string, payload: string) {
-  return createHmac("sha256", secret).update(`imsda:announcement-unsubscribe:${TOKEN_VERSION}:${payload}`).digest("base64url");
+  return "imsda-events-local-registration-link-secret-2026";
 }
 
 export type UnsubscribeTokenSubject = { email: string; eventId: string };
 
-export function createUnsubscribeToken(subject: UnsubscribeTokenSubject, secret = unsubscribeSigningSecrets()[0]) {
-  const payload = Buffer.from(JSON.stringify({ e: normalizeEmailAddress(subject.email), v: subject.eventId }), "utf8").toString("base64url");
-  return `${TOKEN_VERSION}.${payload}.${sign(secret, payload)}`;
+/**
+ * The token for an address and an event: the same inputs always give the same token (so a retried delivery reuses its
+ * row), and it cannot be computed without the secret. It is opaque; see `EmailUnsubscribeToken` for what it means.
+ */
+export function deriveUnsubscribeToken(subject: UnsubscribeTokenSubject, secret = unsubscribeSigningSecret()) {
+  return createHmac("sha256", secret)
+    .update(`imsda:announcement-unsubscribe:v2:${normalizeEmailAddress(subject.email)}\u0000${subject.eventId}`)
+    .digest("base64url");
 }
 
-/** The subject of a genuine token, or null for anything malformed, altered, or signed with an unknown secret. */
-export function verifyUnsubscribeToken(
-  token: string,
-  secrets: readonly string[] = unsubscribeSigningSecrets(),
-): UnsubscribeTokenSubject | null {
-  if (typeof token !== "string" || token.length === 0 || token.length > MAX_TOKEN_LENGTH) return null;
-  const parts = token.split(".");
-  if (parts.length !== 3 || parts[0] !== TOKEN_VERSION) return null;
-  const [, payload, signature] = parts;
-  if (!/^[A-Za-z0-9_-]+$/.test(payload) || !/^[A-Za-z0-9_-]+$/.test(signature)) return null;
-  const given = Buffer.from(signature);
-  const genuine = secrets.some((secret) => {
-    const expected = Buffer.from(sign(secret, payload));
-    return expected.length === given.length && timingSafeEqual(expected, given);
-  });
-  if (!genuine) return null;
-  try {
-    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { e?: unknown; v?: unknown };
-    if (typeof decoded.e !== "string" || typeof decoded.v !== "string" || !decoded.e || !decoded.v) return null;
-    if (decoded.e !== normalizeEmailAddress(decoded.e)) return null;
-    return { email: decoded.e, eventId: decoded.v };
-  } catch {
-    return null;
-  }
+export function isWellFormedUnsubscribeToken(token: unknown): token is string {
+  return typeof token === "string" && TOKEN_PATTERN.test(token);
+}
+
+/** What is stored in place of a token. */
+export function hashUnsubscribeToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
 }
 
 export function unsubscribePagePath(token: string) {
@@ -144,4 +120,13 @@ export function unsubscribePagePath(token: string) {
 /** The RFC 8058 endpoint: the List-Unsubscribe header's URL. A GET sends a person on to the page. */
 export function unsubscribeApiPath(token: string) {
   return `/api/public/unsubscribe/${token}`;
+}
+
+/**
+ * Gmail and Yahoo only honour an https one-click URL. In production a base URL that is not https therefore sends no
+ * List-Unsubscribe headers (the body link still works); elsewhere, such as local development, they are sent anyway so
+ * the headers can be seen.
+ */
+export function unsubscribeHeadersAllowed(baseUrl: string, nodeEnv: string | undefined) {
+  return new URL(baseUrl).protocol === "https:" || nodeEnv !== "production";
 }

@@ -16,10 +16,13 @@ describe("private-link tokens never reach a logged path (#610)", () => {
     expect(redactTokenPath("/api/public/club-forms/AbC_123-secretTokenValue")).toBe("/api/public/club-forms/[redacted]");
     expect(redactTokenPath("/manage/AbC_123-secretTokenValue")).toBe("/manage/[redacted]");
     expect(redactTokenPath("/api/public/manage/AbC_123-secretTokenValue/attendee-passes/a1/qr")).toBe("/api/public/manage/[redacted]/attendee-passes/a1/qr");
+    // An announcement's unsubscribe link (#838), in the page and the one-click API.
+    expect(redactTokenPath("/unsubscribe/AbC_123-secretTokenValue")).toBe("/unsubscribe/[redacted]");
+    expect(redactTokenPath("/api/public/unsubscribe/AbC_123-secretTokenValue")).toBe("/api/public/unsubscribe/[redacted]");
   });
 
   it("leaves other paths alone", () => {
-    for (const path of ["/", "/api/attendee/clubs/club-1/forms/links", "/more/club-forms", "/more/club-forms/sub-1", "/events/spring/register"]) {
+    for (const path of ["/", "/api/attendee/clubs/club-1/forms/links", "/more/club-forms", "/more/club-forms/sub-1", "/events/spring/register", "/more/unsubscribe", "/api/events/e1/unsubscribe/x"]) {
       expect(redactTokenPath(path)).toBe(path);
     }
   });

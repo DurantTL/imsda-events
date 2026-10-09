@@ -688,8 +688,8 @@ export function CommunicationsWorkspace({
       if (!response.ok) throw new Error(result.message ?? "Unable to update the essential mark.");
       setAnnouncements((current) => current.map((row) => row.id === announcement.id ? { ...row, isEssential: essential } : row));
       setNotice(essential
-        ? "Marked essential: the next email send reaches people who opted out of announcements."
-        : "No longer essential: people who opted out are skipped.");
+        ? "Marked essential: this announcement reaches people who opted out, including emails already queued but not yet sent."
+        : "No longer essential: people who opted out are skipped, including emails already queued but not yet sent.");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to update the essential mark.");
     } finally {

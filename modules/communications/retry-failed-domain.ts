@@ -233,3 +233,11 @@ export function messageBatchKey(message: {
   if (typeof metadata.sourceBatchId === "string" && metadata.sourceBatchId) return metadata.sourceBatchId;
   return null;
 }
+
+/** The announcement a message was sent for (#838), which its retry copies keep so delivery reads its current essential mark. */
+export function metadataAnnouncementId(message: { metadata: unknown }): string | null {
+  const metadata = message.metadata && typeof message.metadata === "object" && !Array.isArray(message.metadata)
+    ? message.metadata as Record<string, unknown>
+    : {};
+  return typeof metadata.announcementId === "string" && metadata.announcementId ? metadata.announcementId : null;
+}

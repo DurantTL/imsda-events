@@ -5,7 +5,7 @@ vi.mock("@/modules/lodging/message-currency", () => ({ lodgingMessageStaleReason
 
 import { resetServerEnvCache } from "@/lib/env";
 import { processExternalEmailQueue } from "@/modules/communications/email-delivery";
-import { verifyUnsubscribeToken } from "@/modules/communications/email-preferences";
+import { deriveUnsubscribeToken } from "@/modules/communications/email-preferences";
 
 /**
  * Announcement opt-outs at the delivery step (#838). A synthetic outbox row goes through the real delivery loop with a
@@ -32,7 +32,7 @@ function store(overrides: Partial<Row> = {}) {
     subjectSnapshot: "Friday arrival information",
     bodyTextSnapshot: "Doors open at 5 p.m.",
     bodyHtmlSnapshot: "<p>Doors open at 5 p.m.</p>",
-    metadata: { essential: false },
+    metadata: { announcementId: "announcement-1" },
     status: "PENDING",
     attemptCount: 0,
     availableAt: new Date("2026-07-23T12:00:00.000Z"),
@@ -76,24 +76,31 @@ function store(overrides: Partial<Row> = {}) {
 
 
 
-function run(
-  state: ReturnType<typeof store>,
-  optOut: "EVENT" | "ALL" | null,
-  sendEmail = vi.fn(async (...args: [Record<string, unknown>]) => (void args, { provider: "RESEND" as const, providerMessageId: "provider-1" })),
-) {
+type Options = {
+  optOut?: "EVENT" | "ALL" | null;
+  essential?: boolean;
+  lookup?: "missing" | "throws";
+  sendEmail?: ReturnType<typeof vi.fn>;
+};
+
+function dependenciesFor(state: ReturnType<typeof store>, options: Options, sendEmail: ReturnType<typeof vi.fn>) {
   return {
-    sendEmail,
-    done: processExternalEmailQueue("event-1", {
-      dependencies: {
-        configuration,
-        now,
-        prisma: state.prisma as never,
-        sendEmail: sendEmail as never,
-        findAnnouncementOptOut: vi.fn(async () => optOut),
-        prepareBodyText: async (input) => ({ bodyText: input.bodyText, bodyHtml: input.bodyHtml ?? null }),
-      },
-    }),
+    configuration,
+    now,
+    prisma: state.prisma as never,
+    sendEmail: sendEmail as never,
+    ...(options.lookup === "missing"
+      ? {}
+      : { findAnnouncementOptOut: options.lookup === "throws" ? vi.fn(async () => { throw new Error("database unavailable"); }) : vi.fn(async () => options.optOut ?? null) }),
+    isAnnouncementEssential: vi.fn(async () => options.essential === true),
+    issueUnsubscribeToken: vi.fn(async (email: string, eventId: string) => deriveUnsubscribeToken({ email, eventId })),
+    prepareBodyText: async (input: { bodyText: string; bodyHtml?: string | null }) => ({ bodyText: input.bodyText, bodyHtml: input.bodyHtml ?? null }),
   };
+}
+
+function run(state: ReturnType<typeof store>, options: Options = {}) {
+  const sendEmail = options.sendEmail ?? vi.fn(async (...args: [Record<string, unknown>]) => (void args, { provider: "RESEND" as const, providerMessageId: "provider-1" }));
+  return { sendEmail, done: processExternalEmailQueue("event-1", { dependencies: dependenciesFor(state, options, sendEmail) }) };
 }
 
 afterEach(() => {
@@ -104,7 +111,7 @@ afterEach(() => {
 describe("announcement opt-outs at delivery (#838)", () => {
   it.each(["EVENT", "ALL"] as const)("does not send to an address that opted out for %s, and records why", async (scope) => {
     const state = store();
-    const { sendEmail, done } = run(state, scope);
+    const { sendEmail, done } = run(state, { optOut: scope });
     const result = await done;
     expect(sendEmail).not.toHaveBeenCalled();
     expect(result.sentIds).toEqual([]);
@@ -117,11 +124,36 @@ describe("announcement opt-outs at delivery (#838)", () => {
     expect(JSON.stringify(state.auditRows)).not.toContain("attendee@example.test");
   });
 
-  it("still sends an announcement an event manager marked essential, to an address that opted out", async () => {
-    const state = store({ metadata: { essential: true } });
-    const { sendEmail, done } = run(state, "ALL");
+  it("sends an opted-out address the announcement while it is marked essential, decided at delivery from the announcement", async () => {
+    const state = store();
+    const { sendEmail, done } = run(state, { optOut: "ALL", essential: true });
     expect((await done).sentIds).toEqual(["message-1"]);
     expect(sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies a cleared essential mark to a message already queued", async () => {
+    const queued = store();
+    const stillEssential = run(queued, { optOut: "EVENT", essential: false });
+    await stillEssential.done;
+    expect(queued.message.status).toBe("SUPPRESSED");
+  });
+
+  it("treats a message with no announcement behind it (a staff-chosen batch) as never essential", async () => {
+    const state = store({ metadata: { trigger: "STAFF_SELECTED_AUDIENCE" } });
+    const { sendEmail, done } = run(state, { optOut: "ALL", essential: true });
+    await done;
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(state.message.status).toBe("SUPPRESSED");
+  });
+
+  it("delivers a retry copy of an essential announcement to an opted-out address, because the copy keeps its announcement id", async () => {
+    // A retry copy's metadata, as `createMessageRetryCopy` writes it: the source's announcement id carried over.
+    const copy = store({ metadata: { trigger: "STAFF_MESSAGE_RETRY", sourceMessageId: "message-0", announcementId: "announcement-1" } });
+    const { done } = run(copy, { optOut: "ALL", essential: true });
+    expect((await done).sentIds).toEqual(["message-1"]);
+    const lost = store({ metadata: { trigger: "STAFF_MESSAGE_RETRY", sourceMessageId: "message-0" } });
+    await run(lost, { optOut: "ALL", essential: true }).done;
+    expect(lost.message.status).toBe("SUPPRESSED");
   });
 
   it.each([
@@ -135,55 +167,46 @@ describe("announcement opt-outs at delivery (#838)", () => {
     "CUSTOM_MESSAGE",
   ])("never applies an opt-out to a %s message", async (templateKey) => {
     const state = store({ templateKey, metadata: {} });
-    const lookup = vi.fn(async () => "ALL" as const);
-    const sendEmail = vi.fn(async (...args: [Record<string, unknown>]) => (void args, { provider: "RESEND" as const, providerMessageId: "provider-1" }));
-    const result = await processExternalEmailQueue("event-1", {
-      dependencies: {
-        configuration,
-        now,
-        prisma: state.prisma as never,
-        sendEmail: sendEmail as never,
-        findAnnouncementOptOut: lookup,
-        prepareBodyText: async (input) => ({ bodyText: input.bodyText, bodyHtml: input.bodyHtml ?? null }),
-      },
-    });
+    const deps = dependenciesFor(state, { optOut: "ALL" }, vi.fn(async (...args: [Record<string, unknown>]) => (void args, { provider: "RESEND" as const, providerMessageId: "provider-1" })));
+    const result = await processExternalEmailQueue("event-1", { dependencies: deps });
     expect(result.sentIds).toEqual(["message-1"]);
-    expect(lookup).not.toHaveBeenCalled();
+    expect(deps.findAnnouncementOptOut).not.toHaveBeenCalled();
+    expect(deps.issueUnsubscribeToken).not.toHaveBeenCalled();
     // Only announcements carry the unsubscribe link and headers.
-    const sent = sendEmail.mock.calls[0][0] as { listUnsubscribe?: unknown; bodyText: string };
+    const sent = (deps.sendEmail as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as { listUnsubscribe?: unknown; bodyText: string };
     expect(sent.listUnsubscribe ?? null).toBeNull();
     expect(sent.bodyText).not.toMatch(/unsubscribe|announcements/i);
   });
 
-  it("sends an announcement with a signed unsubscribe link, in the body and as one-click headers", async () => {
+  it("sends an announcement with an opaque unsubscribe link, in the body and as one-click headers", async () => {
     vi.stubEnv("APP_BASE_URL", "https://events.imsda.test");
     resetServerEnvCache();
     const state = store();
-    const { sendEmail, done } = run(state, null);
+    const { sendEmail, done } = run(state);
     expect((await done).sentIds).toEqual(["message-1"]);
     const sent = sendEmail.mock.calls[0][0] as { listUnsubscribe: { url: string }; bodyText: string; bodyHtml: string };
-    expect(sent.listUnsubscribe.url).toMatch(/^https:\/\/events\.imsda\.test\/api\/public\/unsubscribe\/v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
-    const token = sent.listUnsubscribe.url.split("/").pop() as string;
-    expect(verifyUnsubscribeToken(token)).toEqual({ email: "attendee@example.test", eventId: "event-1" });
+    const token = deriveUnsubscribeToken({ email: "attendee@example.test", eventId: "event-1" });
+    expect(sent.listUnsubscribe.url).toBe(`https://events.imsda.test/api/public/unsubscribe/${token}`);
+    expect(sent.listUnsubscribe.url).not.toMatch(/attendee|example\.test\/|event-1/);
     expect(sent.bodyText).toContain(`https://events.imsda.test/unsubscribe/${token}`);
     expect(sent.bodyHtml).toContain(`/unsubscribe/${token}`);
     // The stored snapshot never holds the link.
     expect(state.message.bodyTextSnapshot).toBe("Doors open at 5 p.m.");
   });
 
-  it("does not send when the opt-out check itself fails, and retries later", async () => {
+  it("fails closed when the opt-out check fails: nothing is sent and the message is retried", async () => {
     const state = store();
-    const sendEmail = vi.fn();
-    await processExternalEmailQueue("event-1", {
-      dependencies: {
-        configuration,
-        now,
-        prisma: state.prisma as never,
-        sendEmail: sendEmail as never,
-        findAnnouncementOptOut: vi.fn(async () => { throw new Error("database unavailable"); }),
-        prepareBodyText: async (input) => ({ bodyText: input.bodyText, bodyHtml: input.bodyHtml ?? null }),
-      },
-    });
+    const { sendEmail, done } = run(state, { lookup: "throws" });
+    await done;
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(state.message.status).toBe("PENDING");
+    expect(state.message.attemptCount).toBe(1);
+  });
+
+  it("fails closed when no opt-out lookup is available at all", async () => {
+    const state = store();
+    const { sendEmail, done } = run(state, { lookup: "missing" });
+    await done;
     expect(sendEmail).not.toHaveBeenCalled();
     expect(state.message.status).toBe("PENDING");
     expect(state.message.attemptCount).toBe(1);

@@ -2,11 +2,10 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
 import { getPrisma } from "@/lib/prisma";
-import { getAnnouncementOptOutState } from "@/modules/communications/email-preferences-repository";
+import { getAnnouncementOptOutState, resolveUnsubscribeToken } from "@/modules/communications/email-preferences-repository";
 import {
   maskEmailAddress,
   unsubscribeApiPath,
-  verifyUnsubscribeToken,
 } from "@/modules/communications/email-preferences";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +36,7 @@ export default async function UnsubscribePage({
   searchParams: Promise<{ done?: string | string[] }>;
 }) {
   const { token } = await params;
-  const subject = verifyUnsubscribeToken(token);
+  const subject = await resolveUnsubscribeToken(token);
   if (!subject) notFound();
   const event = await getPrisma().event.findUnique({ where: { id: subject.eventId }, select: { name: true } });
   if (!event) notFound();

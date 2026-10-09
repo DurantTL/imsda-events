@@ -8,72 +8,82 @@ import { buildSesMailOptions, type SesEmailConfiguration } from "@/integrations/
 import { listUnsubscribeHeaders } from "@/integrations/email/types";
 import {
   announcementOptOutFor,
-  createUnsubscribeToken,
+  deriveUnsubscribeToken,
+  hashUnsubscribeToken,
   isOptOutEligibleTemplate,
+  isWellFormedUnsubscribeToken,
   maskEmailAddress,
   normalizeEmailAddress,
-  unsubscribeSigningSecrets,
-  verifyUnsubscribeToken,
+  unsubscribeHeadersAllowed,
+  unsubscribeSigningSecret,
 } from "@/modules/communications/email-preferences";
 
 const SECRET = "synthetic-signing-secret-at-least-32-chars-long";
 const OTHER_SECRET = "another-synthetic-secret-at-least-32-chars";
 
-describe("unsubscribe tokens (#838)", () => {
-  it("round-trips an address and an event, normalising the address", () => {
-    const token = createUnsubscribeToken({ email: "  Avery@Example.TEST ", eventId: "event-1" }, SECRET);
-    expect(verifyUnsubscribeToken(token, [SECRET])).toEqual({ email: "avery@example.test", eventId: "event-1" });
+describe("opaque unsubscribe tokens (#838)", () => {
+  const subject = { email: "  Avery@Example.TEST ", eventId: "event-1" };
+
+  it("is 43 URL-safe characters that reveal nothing: no address, event, or readable payload", () => {
+    const token = deriveUnsubscribeToken(subject, SECRET);
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(isWellFormedUnsubscribeToken(token)).toBe(true);
+    const decoded = Buffer.from(token, "base64url").toString("latin1");
+    expect(token.toLowerCase()).not.toContain("avery");
+    expect(token).not.toContain("event-1");
+    expect(token).not.toContain(".");
+    expect(decoded).not.toMatch(/avery|event-1|example/i);
   });
 
-  it("is URL-safe and carries no registration data", () => {
-    const token = createUnsubscribeToken({ email: "avery@example.test", eventId: "event-1" }, SECRET);
-    expect(token).toMatch(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
-    const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
-    expect(Object.keys(payload).sort()).toEqual(["e", "v"]);
+  it("is stable for an address and event (normalised), and different for every other pair", () => {
+    const token = deriveUnsubscribeToken(subject, SECRET);
+    expect(deriveUnsubscribeToken({ email: "avery@example.test", eventId: "event-1" }, SECRET)).toBe(token);
+    expect(new Set([
+      token,
+      deriveUnsubscribeToken({ email: "b@example.test", eventId: "event-1" }, SECRET),
+      deriveUnsubscribeToken({ email: "avery@example.test", eventId: "event-2" }, SECRET),
+      deriveUnsubscribeToken(subject, OTHER_SECRET),
+    ]).size).toBe(4);
   });
 
-  it("is different for every address and event", () => {
-    const tokens = new Set([
-      createUnsubscribeToken({ email: "a@example.test", eventId: "event-1" }, SECRET),
-      createUnsubscribeToken({ email: "b@example.test", eventId: "event-1" }, SECRET),
-      createUnsubscribeToken({ email: "a@example.test", eventId: "event-2" }, SECRET),
-    ]);
-    expect(tokens.size).toBe(3);
+  it("cannot be confused across the address and event boundary", () => {
+    expect(deriveUnsubscribeToken({ email: "a@b.test", eventId: "cde" }, SECRET))
+      .not.toBe(deriveUnsubscribeToken({ email: "a@b.testc", eventId: "de" }, SECRET));
   });
 
-  it("refuses a tampered payload, a swapped signature, another secret, and malformed input", () => {
-    const token = createUnsubscribeToken({ email: "avery@example.test", eventId: "event-1" }, SECRET);
-    const [version, payload, signature] = token.split(".");
-    const forgedPayload = Buffer.from(JSON.stringify({ e: "someone-else@example.test", v: "event-1" })).toString("base64url");
-    expect(verifyUnsubscribeToken(`${version}.${forgedPayload}.${signature}`, [SECRET])).toBeNull();
-    const other = createUnsubscribeToken({ email: "avery@example.test", eventId: "event-2" }, SECRET);
-    expect(verifyUnsubscribeToken(`${version}.${payload}.${other.split(".")[2]}`, [SECRET])).toBeNull();
-    expect(verifyUnsubscribeToken(token, [OTHER_SECRET])).toBeNull();
-    expect(verifyUnsubscribeToken(`${token}x`, [SECRET])).toBeNull();
-    expect(verifyUnsubscribeToken(`v2.${payload}.${signature}`, [SECRET])).toBeNull();
-    expect(verifyUnsubscribeToken("", [SECRET])).toBeNull();
-    expect(verifyUnsubscribeToken("not-a-token", [SECRET])).toBeNull();
-    expect(verifyUnsubscribeToken(`${version}.${payload}`, [SECRET])).toBeNull();
-    expect(verifyUnsubscribeToken("a".repeat(5000), [SECRET])).toBeNull();
-  });
-
-  it("is not interchangeable with a registration link derived from the same secret", async () => {
+  it("is not a registration link derived from the same secret", async () => {
     const { createHmac } = await import("node:crypto");
-    const payload = Buffer.from(JSON.stringify({ e: "avery@example.test", v: "event-1" })).toString("base64url");
-    const registrationStyle = createHmac("sha256", SECRET).update(`imsda:manage-link:v1:${payload}`).digest("base64url");
-    expect(verifyUnsubscribeToken(`v1.${payload}.${registrationStyle}`, [SECRET])).toBeNull();
+    const registrationStyle = createHmac("sha256", SECRET).update("imsda:manage-link:v1:avery@example.test").digest("base64url");
+    expect(deriveUnsubscribeToken(subject, SECRET)).not.toBe(registrationStyle);
   });
 
-  it("verifies against the previous secret during a rotation, and signs with the current one", () => {
-    const secrets = unsubscribeSigningSecrets({ MANAGE_LINK_DERIVATION_SECRET: SECRET, MANAGE_LINK_DERIVATION_SECRET_PREVIOUS: OTHER_SECRET });
-    expect(secrets).toEqual([SECRET, OTHER_SECRET]);
-    const oldToken = createUnsubscribeToken({ email: "avery@example.test", eventId: "event-1" }, OTHER_SECRET);
-    expect(verifyUnsubscribeToken(oldToken, secrets)).not.toBeNull();
+  it("rejects anything that is not the shape of a token before any lookup", () => {
+    for (const bad of ["", "not-a-token", "a".repeat(42), "a".repeat(44), `${"a".repeat(42)}.`, `${"a".repeat(42)}=`, "v1.abc.def", undefined, 5]) {
+      expect(isWellFormedUnsubscribeToken(bad)).toBe(false);
+    }
   });
 
-  it("refuses to sign in production without a long enough secret", () => {
-    expect(() => unsubscribeSigningSecrets({ NODE_ENV: "production", MANAGE_LINK_DERIVATION_SECRET: "short" })).toThrow(/32 characters/);
-    expect(unsubscribeSigningSecrets({ NODE_ENV: "development" })).toHaveLength(1);
+  it("stores only a hash, so a copy of the table cannot unsubscribe anyone", () => {
+    const token = deriveUnsubscribeToken(subject, SECRET);
+    const hash = hashUnsubscribeToken(token);
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(hash).not.toContain(token);
+    expect(isWellFormedUnsubscribeToken(hash)).toBe(false);
+  });
+
+  it("reads the current secret, and refuses to issue in production without a long enough one", () => {
+    expect(unsubscribeSigningSecret({ MANAGE_LINK_DERIVATION_SECRET: SECRET })).toBe(SECRET);
+    expect(() => unsubscribeSigningSecret({ NODE_ENV: "production", MANAGE_LINK_DERIVATION_SECRET: "short" })).toThrow(/32 characters/);
+    expect(unsubscribeSigningSecret({ NODE_ENV: "development" })).toBeTruthy();
+  });
+});
+
+describe("one-click headers need https in production (#838)", () => {
+  it("omits them only for a non-https base URL in production", () => {
+    expect(unsubscribeHeadersAllowed("https://events.imsda.org", "production")).toBe(true);
+    expect(unsubscribeHeadersAllowed("http://events.imsda.org", "production")).toBe(false);
+    expect(unsubscribeHeadersAllowed("http://localhost:3000", "development")).toBe(true);
+    expect(unsubscribeHeadersAllowed("http://localhost:3000", undefined)).toBe(true);
   });
 });
 

@@ -2,11 +2,9 @@ import { withRequestContext } from "@/lib/request-context";
 import {
   removeAnnouncementOptOuts,
   recordAnnouncementOptOut,
+  resolveUnsubscribeToken,
 } from "@/modules/communications/email-preferences-repository";
-import {
-  unsubscribePagePath,
-  verifyUnsubscribeToken,
-} from "@/modules/communications/email-preferences";
+import { unsubscribePagePath } from "@/modules/communications/email-preferences";
 
 /**
  * The unsubscribe endpoint (#838), used two ways:
@@ -17,8 +15,10 @@ import {
  *   announcements and nothing else.
  * - The confirmation page's buttons POST `action=event|all|resubscribe`, then are sent back to the page.
  *
- * A GET never changes anything (link scanners and previews fetch URLs): it only sends a person on to the page. An
- * altered or unknown token is a 404 with no detail, so the endpoint cannot be used to learn anything.
+ * A GET never changes anything (link scanners and previews fetch URLs): it checks the token and sends a person on to the
+ * page. The token is opaque and looked up (it holds no address); an unknown or altered one is a 404 with no detail, so
+ * the endpoint cannot be used to learn anything. The body is read with `formData()`, so urlencoded and multipart
+ * submissions both work, as RFC 8058 allows either.
  */
 
 const privateHeaders = {
@@ -41,21 +41,23 @@ function redirectToPage(token: string, done?: string) {
 
 async function getHandler(_request: Request, context: Context) {
   const { token } = await context.params;
+  if (!(await resolveUnsubscribeToken(token))) return notFound();
   return redirectToPage(token);
 }
 
 async function postHandler(request: Request, context: Context) {
   const { token } = await context.params;
-  const subject = verifyUnsubscribeToken(token);
+  const subject = await resolveUnsubscribeToken(token);
   if (!subject) return notFound();
 
-  let form: URLSearchParams;
+  let form: FormData;
   try {
-    form = new URLSearchParams(await request.text());
+    form = await request.formData();
   } catch {
-    return new Response("Bad request", { status: 400, headers: privateHeaders });
+    return new Response("Bad request", { status: 400, headers: { ...privateHeaders, "Content-Type": "text/plain; charset=utf-8" } });
   }
-  const action = form.get("action");
+  const rawAction = form.get("action");
+  const action = typeof rawAction === "string" ? rawAction : null;
 
   if (action === null) {
     // RFC 8058: the body is exactly `List-Unsubscribe=One-Click`.

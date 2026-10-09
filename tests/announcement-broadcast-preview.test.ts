@@ -395,7 +395,7 @@ describe("announcement opt-outs in the review and the send (#838)", () => {
       actorUserId: "staff-1",
     });
     expect(mocks.enqueueEventAnnouncementMessage.mock.calls.map(([, call]) => call.registrationId)).toEqual(["reg-3"]);
-    expect(mocks.enqueueEventAnnouncementMessage.mock.calls[0][1].metadata).toMatchObject({ essential: false });
+    expect(mocks.enqueueEventAnnouncementMessage.mock.calls[0][1].metadata).toMatchObject({ announcementId: "announcement-1" });
     expect(result).toMatchObject({ messageCount: 1, skippedCount: 2, optedOutCount: 2 });
     expect(prisma.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
@@ -417,7 +417,7 @@ describe("announcement opt-outs in the review and the send (#838)", () => {
     })).rejects.toMatchObject({ code: "PREVIEW_CHANGED" });
   });
 
-  it("marks essential messages so delivery sends them to opted-out contacts", async () => {
+  it("ties every message to its announcement, so delivery reads the current essential mark", async () => {
     const prisma = prismaFor({ optOuts, essential: true });
     mocks.getPrisma.mockReturnValue(prisma);
     const preview = await previewAnnouncementBroadcast({ eventId: "event-1", announcementId: "announcement-1" });
@@ -430,7 +430,9 @@ describe("announcement opt-outs in the review and the send (#838)", () => {
     });
     expect(mocks.enqueueEventAnnouncementMessage).toHaveBeenCalledTimes(3);
     for (const [, call] of mocks.enqueueEventAnnouncementMessage.mock.calls) {
-      expect(call.metadata).toMatchObject({ essential: true });
+      expect(call.metadata).toMatchObject({ announcementId: "announcement-1" });
+      // The decision is not frozen into the message: clearing the mark later must affect it.
+      expect(call.metadata).not.toHaveProperty("essential");
     }
   });
 });

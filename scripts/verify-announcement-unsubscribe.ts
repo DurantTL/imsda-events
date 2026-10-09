@@ -110,8 +110,9 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>) {
   const { broadcastPublishedAnnouncement, previewAnnouncementBroadcast } = await import("@/modules/communications/announcement-broadcast");
   const { setAnnouncementEssential } = await import("@/modules/communications/announcement-essential");
   const { processExternalEmailQueue } = await import("@/modules/communications/email-delivery");
-  const { listEventAnnouncementOptOuts } = await import("@/modules/communications/email-preferences-repository");
-  const { createUnsubscribeToken, verifyUnsubscribeToken } = await import("@/modules/communications/email-preferences");
+  const { issueUnsubscribeToken, listEventAnnouncementOptOuts, resolveUnsubscribeToken } = await import("@/modules/communications/email-preferences-repository");
+  const { createMessageRetryCopy } = await import("@/modules/communications/messaging-repository");
+  const { deriveUnsubscribeToken } = await import("@/modules/communications/email-preferences");
   const { ensureEventMessagingDefaults } = await import("@/modules/communications/messaging-repository");
   const { enqueuePaymentReceiptMessage } = await import("@/modules/communications/transactional-messages");
   const route = await import("@/app/api/public/unsubscribe/[token]/route");
@@ -171,31 +172,44 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>) {
     }),
     { params: Promise.resolve({ token }) },
   );
-  const tokenFor = (email: string, eventId = ids.event) => createUnsubscribeToken({ email, eventId });
+  // An issued token, as delivery issues one: opaque, and recorded so it can be looked up.
+  const tokenFor = (email: string, eventId = ids.event) => issueUnsubscribeToken(prisma, { email, eventId });
   const optOutCount = () => prisma.emailAnnouncementOptOut.count({ where: { normalizedEmail: { in: people.map((person) => person.email) } } });
 
   // 1. Opt-outs through the public endpoint, with no login. A: one-click (this event). B: the page's "all" button.
   // D: one-click for ANOTHER event, which must not affect this one.
-  const oneClick = await call(tokenFor(A.email), "List-Unsubscribe=One-Click");
+  const oneClick = await call(await tokenFor(A.email), "List-Unsubscribe=One-Click");
   assert(oneClick.status === 200, `one-click POST is accepted without a login: ${oneClick.status}`);
-  const all = await call(tokenFor(B.email), "action=all");
+  const all = await call(await tokenFor(B.email), "action=all");
   assert(all.status === 303, "the page's all-announcements button redirects back to the page");
-  await call(tokenFor(D.email, ids.other), "List-Unsubscribe=One-Click");
+  await call(await tokenFor(D.email, ids.other), "List-Unsubscribe=One-Click");
   assert((await optOutCount()) === 3, "three opt-outs recorded");
   const rows = await prisma.emailAnnouncementOptOut.findMany({ where: { normalizedEmail: A.email }, select: { scope: true, eventId: true, source: true } });
   assert(rows.length === 1 && rows[0].scope === "EVENT" && rows[0].eventId === ids.event && rows[0].source === "ONE_CLICK", `A's opt-out is for this event: ${JSON.stringify(rows)}`);
 
-  // An altered token and a GET record nothing.
-  const [version, payload, signature] = tokenFor(C.email).split(".");
-  // C's signature on a payload naming another address.
-  const forged = Buffer.from(JSON.stringify({ e: `${P}.someone-else@example.test`, v: ids.event })).toString("base64url");
-  for (const bad of [`${version}.${forged}.${signature}`, `${version}.${payload}.${signature.slice(1)}x`, "garbage"]) {
+  // An unknown or altered token and a GET record nothing. C's token has not been issued yet (no mail has gone to C).
+  const issuedForA = await tokenFor(A.email);
+  const neverIssued = deriveUnsubscribeToken({ email: C.email, eventId: ids.event });
+  const flipped = `${issuedForA.slice(0, 42)}${issuedForA.endsWith("A") ? "B" : "A"}`;
+  for (const bad of [neverIssued, flipped, "garbage", issuedForA.slice(1)]) {
     const refused = await call(bad, "List-Unsubscribe=One-Click");
-    assert(refused.status === 404, `an altered token is refused: ${refused.status}`);
+    assert(refused.status === 404, `an unknown or altered token is refused: ${refused.status}`);
   }
-  const got = await route.GET(new Request("https://events.example.test/x"), { params: Promise.resolve({ token: tokenFor(C.email) }) });
-  assert(got.status === 303, "a GET only redirects to the page");
-  assert((await optOutCount()) === 3, "an altered token and a GET recorded nothing");
+  assert(!issuedForA.includes(A.email) && !issuedForA.includes(ids.event) && !issuedForA.includes("."), "the token is opaque");
+  assert((await prisma.emailUnsubscribeToken.count({ where: { tokenHash: issuedForA } })) === 0, "the stored value is a hash, never the token");
+  const got = await route.GET(new Request("https://events.example.test/x"), { params: Promise.resolve({ token: issuedForA }) });
+  assert(got.status === 303, "a GET on a valid link only redirects to the page");
+  const gotBad = await route.GET(new Request("https://events.example.test/x"), { params: Promise.resolve({ token: neverIssued }) });
+  assert(gotBad.status === 404, "a GET on an unknown token is a 404");
+  // RFC 8058 allows multipart/form-data as well as urlencoded.
+  const multipart = new FormData();
+  multipart.set("List-Unsubscribe", "One-Click");
+  const viaMultipart = await route.POST(
+    new Request(`https://events.example.test/api/public/unsubscribe/${issuedForA}`, { method: "POST", body: multipart }),
+    { params: Promise.resolve({ token: issuedForA }) },
+  );
+  assert(viaMultipart.status === 200, `a multipart one-click POST is accepted: ${viaMultipart.status}`);
+  assert((await optOutCount()) === 3, "an unknown token and a GET recorded nothing, and the repeat for A added nothing");
 
   // 2. The review counts who is skipped and why; D (another event's opt-out) is still a recipient.
   const preview = await previewAnnouncementBroadcast({ eventId: ids.event, announcementId: ids.announcement });
@@ -252,7 +266,7 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>) {
     },
     select: { id: true },
   });
-  await call(tokenFor(D.email), "List-Unsubscribe=One-Click");
+  await call(await tokenFor(D.email), "List-Unsubscribe=One-Click");
   const run1 = await processExternalEmailQueue(ids.event, { messageIds: [waiting.id] });
   assert(run1.sentIds.length === 0 && stub.received.length === 2, `nothing was sent to D: ${JSON.stringify(run1)}`);
   const skippedRow = await prisma.messageOutbox.findUniqueOrThrow({ where: { id: waiting.id }, select: { id: true, status: true, lastError: true } });
@@ -267,8 +281,9 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>) {
   const listUnsubscribe = first.headers?.["List-Unsubscribe"] ?? "";
   const urlMatch = /^<(https:\/\/events\.example\.test\/api\/public\/unsubscribe\/([^>]+))>$/.exec(listUnsubscribe);
   assert(urlMatch, `List-Unsubscribe header carries the signed https URL: ${listUnsubscribe}`);
-  assert(JSON.stringify(verifyUnsubscribeToken(urlMatch[2])) === JSON.stringify({ email: C.email, eventId: ids.event }), "the token names C and this event");
-  assert(!urlMatch[2].includes(C.code) && !urlMatch[2].includes(registrationIds.c), "the token carries no registration data");
+  assert(JSON.stringify(await resolveUnsubscribeToken(urlMatch[2])) === JSON.stringify({ email: C.email, eventId: ids.event }), "the issued token resolves to C and this event");
+  assert(/^[A-Za-z0-9_-]{43}$/.test(urlMatch[2]) && !urlMatch[2].includes(C.email) && !urlMatch[2].includes(ids.event) && !urlMatch[2].includes(registrationIds.c), "the token is opaque: no address, event or registration data");
+  assert(!first.headers?.["List-Unsubscribe"]?.includes("@"), "no address in the header");
   assert(first.text.includes(`https://events.example.test/unsubscribe/${urlMatch[2]}`), "the text body links to the unsubscribe page");
   assert((first.html ?? "").includes(`/unsubscribe/${urlMatch[2]}`), "the HTML body links to the unsubscribe page");
   const stored = await prisma.messageOutbox.findFirstOrThrow({ where: { recipientEmail: C.email, templateKey: "EVENT_ANNOUNCEMENT" }, select: { bodyTextSnapshot: true, bodyHtmlSnapshot: true } });
@@ -301,6 +316,29 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>) {
   assert(essentialTo === people.map((person) => person.email).sort().join(), `essential reached everyone: ${essentialTo}`);
   assert(stub.received.slice(before).every((payload) => payload.headers?.["List-Unsubscribe"]), "essential announcements still carry the unsubscribe headers");
 
+  // 6b. The decision is made at delivery from the announcement as it is now, and a retry copy keeps its announcement id.
+  const sentToD = await prisma.messageOutbox.findFirstOrThrow({ where: { eventId: ids.event, correlationId: batch2, recipientEmail: D.email } });
+  assert((sentToD.metadata as Record<string, unknown>).announcementId === ids.announcement, "the message is tied to its announcement");
+  const settings = { deliveryMode: "EXTERNAL_EMAIL", senderName: "Synthetic Events", senderEmail: "events@example.test", replyToEmail: null };
+  const copyOf = (key: string) => prisma.$transaction((tx) => createMessageRetryCopy(tx, {
+    eventId: ids.event, source: sentToD, settings, repairMissingSenderSnapshot: false,
+    idempotencyKey: `${P}-${key}`, correlationId: randomUUID(), requestFingerprint: `${P}-${key}`,
+  }));
+  const copy1 = await copyOf("copy1");
+  assert(
+    ((await prisma.messageOutbox.findUniqueOrThrow({ where: { id: copy1.id }, select: { metadata: true } })).metadata as Record<string, unknown>).announcementId === ids.announcement,
+    "the retry copy keeps the announcement id",
+  );
+  const beforeCopies = stub.received.length;
+  await setAnnouncementEssential(ids.event, ids.announcement, ids.manager, false);
+  await processExternalEmailQueue(ids.event, { messageIds: [copy1.id] });
+  const cleared = await prisma.messageOutbox.findUniqueOrThrow({ where: { id: copy1.id }, select: { status: true } });
+  assert(cleared.status === "SUPPRESSED" && stub.received.length === beforeCopies, `clearing the mark applies to a message already queued: ${cleared.status}`);
+  await setAnnouncementEssential(ids.event, ids.announcement, ids.manager, true);
+  const copy2 = await copyOf("copy2");
+  const run2b = await processExternalEmailQueue(ids.event, { messageIds: [copy2.id] });
+  assert(run2b.sentIds.includes(copy2.id) && stub.received.length === beforeCopies + 1 && stub.received[beforeCopies].to[0] === D.email, "a retry of an essential announcement reaches the opted-out address");
+
   // 7. Registration messages are never affected: a payment receipt to B, who opted out of everything.
   await prisma.$transaction(async (tx) => {
     await enqueuePaymentReceiptMessage(tx, {
@@ -315,7 +353,7 @@ async function runChecks(stub: Awaited<ReturnType<typeof startProviderStub>>) {
   assert(!receiptPayload.headers?.["List-Unsubscribe"] && !receiptPayload.text.includes("/unsubscribe/") && !(receiptPayload.html ?? "").includes("/unsubscribe/"), `a receipt carries no unsubscribe link or header: ${JSON.stringify(receiptPayload).slice(0, 600)}`);
 
   // 8. Re-subscribe from the page clears the opt-outs; a later review counts them as recipients again.
-  const resub = await call(tokenFor(B.email), "action=resubscribe");
+  const resub = await call(await tokenFor(B.email), "action=resubscribe");
   assert(resub.status === 303, "re-subscribing redirects back to the page");
   assert((await prisma.emailAnnouncementOptOut.count({ where: { normalizedEmail: B.email } })) === 0, "B's opt-out is gone");
   await setAnnouncementEssential(ids.event, ids.announcement, ids.manager, false);

@@ -1493,6 +1493,7 @@ model Event {
   checkIns                            CheckIn[]
   announcements                       Announcement[]
   announcementOptOuts                 EmailAnnouncementOptOut[]
+  unsubscribeTokens                   EmailUnsubscribeToken[]
   auditLogs                           AuditLog[]
   importRuns                          ImportRun[]
   awardItems                          EventAwardItem[]
@@ -3293,6 +3294,22 @@ model EmailAnnouncementOptOut {
   @@unique([normalizedEmail, scopeKey])
   @@index([eventId, createdAt])
   @@index([normalizedEmail])
+}
+
+/// The opaque unsubscribe link an announcement carries (#838). The link holds only a random-looking token; this row is
+/// what says which address and event it is for, so the address never appears in a URL, a request log or a header. Only
+/// the SHA-256 of the token is stored, so a copy of this table cannot be used to unsubscribe anyone. A token stays valid
+/// after the signing secret is rotated, because it is looked up, not re-derived.
+model EmailUnsubscribeToken {
+  id              String   @id @default(cuid())
+  tokenHash       String   @unique
+  normalizedEmail String
+  eventId         String
+  createdAt       DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId])
 }
 
 /// Event-level controls keep attendee discussion off until staff publish the

@@ -56,7 +56,8 @@ import {
   type ClubAssignmentSendSelection,
 } from "@/modules/communications/club-assignment-audience";
 import { emptyClubAssignmentFields } from "@/modules/club-registrations/assignments";
-import { messageBatchKey } from "@/modules/communications/retry-failed-domain";
+import { loadAnnouncementOptOuts } from "@/modules/communications/email-preferences-repository";
+import { messageBatchKey, metadataAnnouncementId } from "@/modules/communications/retry-failed-domain";
 import {
   messageRetryIdempotencyKey,
   messageRetryRequestFingerprint,
@@ -2970,6 +2971,8 @@ export async function createMessageRetryCopy(
         realDelivery: settings.deliveryMode === "EXTERNAL_EMAIL",
         // Every copy stays in its source's send batch, so "Retry failed" can still find it there (#860).
         ...(messageBatchKey(source) ? { sourceBatchId: messageBatchKey(source)! } : {}),
+        // An announcement's copy stays tied to it, so delivery sees its current essential mark (#838).
+        ...(metadataAnnouncementId(source) ? { announcementId: metadataAnnouncementId(source)! } : {}),
         ...(input.extraMetadata ?? {}),
       },
       idempotencyKey: input.idempotencyKey,
@@ -3786,9 +3789,14 @@ async function loadSelectedAudienceState(
       : inlineImageSetIssue(pictures)?.message ?? null;
   }
 
+  // Announcements honour opt-outs (#838): read here so the review and the send count the same people.
+  const optOuts = templateKey === "EVENT_ANNOUNCEMENT"
+    ? await loadAnnouncementOptOuts(client, candidates.map((candidate) => candidate.recipientEmail), eventId)
+    : [];
   const preview = computeSelectedAudiencePreview(uniqueIds, candidates, {
     eventId,
     templateKey,
+    optOuts,
     isDeferredOrganizationBilling:
       event.billingMode === "DEFERRED_ORGANIZATION_INVOICE",
     deliveryMode: settings.deliveryMode,

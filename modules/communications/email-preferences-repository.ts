@@ -7,6 +7,10 @@ import type { EventAnnouncementOptOutRow } from "@/modules/communications/types"
 import { announcementRecipientEmail } from "@/modules/communications/announcement-broadcast-preview";
 import {
   announcementOptOutFor,
+  deriveUnsubscribeToken,
+  hashUnsubscribeToken,
+  isWellFormedUnsubscribeToken,
+  type UnsubscribeTokenSubject,
   normalizeEmailAddress,
   optOutScopeKey,
   type AnnouncementOptOutRow,
@@ -43,6 +47,35 @@ export async function findAnnouncementOptOut(
   eventId: string,
 ): Promise<AnnouncementOptOutScope | null> {
   return announcementOptOutFor(await loadAnnouncementOptOuts(client, [email], eventId), email, eventId);
+}
+
+/**
+ * The opaque link token for an address and an event, recorded so the link can be resolved. Idempotent: a retried or
+ * repeated delivery gets the same token and writes nothing new.
+ */
+export async function issueUnsubscribeToken(
+  client: Pick<PrismaClient, "emailUnsubscribeToken"> | Prisma.TransactionClient,
+  subject: UnsubscribeTokenSubject,
+): Promise<string> {
+  const normalizedEmail = normalizeEmailAddress(subject.email);
+  const token = deriveUnsubscribeToken({ email: normalizedEmail, eventId: subject.eventId });
+  const tokenHash = hashUnsubscribeToken(token);
+  await client.emailUnsubscribeToken.upsert({
+    where: { tokenHash },
+    update: {},
+    create: { tokenHash, normalizedEmail, eventId: subject.eventId },
+  });
+  return token;
+}
+
+/** The address and event a link was issued for, or null for anything not issued by us. */
+export async function resolveUnsubscribeToken(token: string): Promise<UnsubscribeTokenSubject | null> {
+  if (!isWellFormedUnsubscribeToken(token)) return null;
+  const row = await getPrisma().emailUnsubscribeToken.findUnique({
+    where: { tokenHash: hashUnsubscribeToken(token) },
+    select: { normalizedEmail: true, eventId: true },
+  });
+  return row ? { email: row.normalizedEmail, eventId: row.eventId } : null;
 }
 
 export type OptOutSource = "UNSUBSCRIBE_PAGE" | "ONE_CLICK";

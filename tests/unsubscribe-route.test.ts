@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
   return {
     AccessDeniedError: MockAccessDeniedError,
     recordAnnouncementOptOut: vi.fn(),
+    resolveUnsubscribeToken: vi.fn(),
     removeAnnouncementOptOuts: vi.fn(),
     requirePermission: vi.fn(),
     getCurrentSession: vi.fn(),
@@ -22,6 +23,7 @@ const mocks = vi.hoisted(() => {
 vi.mock("@/modules/communications/email-preferences-repository", () => ({
   recordAnnouncementOptOut: mocks.recordAnnouncementOptOut,
   removeAnnouncementOptOuts: mocks.removeAnnouncementOptOuts,
+  resolveUnsubscribeToken: mocks.resolveUnsubscribeToken,
 }));
 vi.mock("@/modules/access/authorization", () => ({
   AccessDeniedError: mocks.AccessDeniedError,
@@ -34,9 +36,10 @@ vi.mock("@/modules/communications/announcement-essential", () => ({ setAnnouncem
 
 import { GET, POST } from "@/app/api/public/unsubscribe/[token]/route";
 import { PATCH } from "@/app/api/events/[eventId]/announcements/[announcementId]/essential/route";
-import { createUnsubscribeToken } from "@/modules/communications/email-preferences";
+import { deriveUnsubscribeToken } from "@/modules/communications/email-preferences";
 
-const token = createUnsubscribeToken({ email: "avery@example.test", eventId: "event-1" });
+// An opaque token: it holds no address; the lookup (mocked here, real in the database script) says who it is for.
+const token = deriveUnsubscribeToken({ email: "avery@example.test", eventId: "event-1" });
 const context = (value = token) => ({ params: Promise.resolve({ token: value }) });
 
 function post(body: string, value = token, headers: Record<string, string> = {}) {
@@ -53,6 +56,9 @@ function post(body: string, value = token, headers: Record<string, string> = {})
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.resolveUnsubscribeToken.mockImplementation(async (value: string) => (
+    value === token ? { email: "avery@example.test", eventId: "event-1" } : null
+  ));
   mocks.recordAnnouncementOptOut.mockResolvedValue({ recorded: true, id: "optout-1" });
   mocks.removeAnnouncementOptOuts.mockResolvedValue({ removedCount: 1 });
 });
@@ -72,16 +78,34 @@ describe("public unsubscribe endpoint (#838)", () => {
     expect(response.headers.get("cache-control")).toMatch(/no-store/);
   });
 
-  it("refuses an altered or unknown token without touching anything", async () => {
-    const [version, payload, signature] = token.split(".");
-    const forged = Buffer.from(JSON.stringify({ e: "someone-else@example.test", v: "event-1" })).toString("base64url");
-    for (const bad of [`${version}.${forged}.${signature}`, `${token}x`, "garbage", `${version}.${payload}.`]) {
+  it("accepts the one-click POST as multipart/form-data too, as RFC 8058 allows", async () => {
+    const form = new FormData();
+    form.set("List-Unsubscribe", "One-Click");
+    const response = await POST(
+      new Request(`https://events.imsda.test/api/public/unsubscribe/${token}`, { method: "POST", body: form }),
+      context(),
+    );
+    expect(response.status).toBe(200);
+    expect(mocks.recordAnnouncementOptOut).toHaveBeenCalledWith(expect.objectContaining({ email: "avery@example.test", scope: "EVENT", source: "ONE_CLICK" }));
+  });
+
+  it("refuses an unknown or malformed token without touching anything", async () => {
+    for (const bad of [`${token.slice(0, 42)}x`, "garbage", "", "a".repeat(5000)]) {
       const response = await post("List-Unsubscribe=One-Click", bad);
       expect(response.status).toBe(404);
       expect(await response.text()).toBe("Not found");
     }
     expect(mocks.recordAnnouncementOptOut).not.toHaveBeenCalled();
     expect(mocks.removeAnnouncementOptOuts).not.toHaveBeenCalled();
+  });
+
+  it("answers a body that is not a form with 400, never an unhandled error", async () => {
+    const response = await POST(
+      new Request(`https://events.imsda.test/api/public/unsubscribe/${token}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{\"a\":1}" }),
+      context(),
+    );
+    expect(response.status).toBe(400);
+    expect(mocks.recordAnnouncementOptOut).not.toHaveBeenCalled();
   });
 
   it("refuses a POST that is neither one-click nor a page choice", async () => {
@@ -108,11 +132,18 @@ describe("public unsubscribe endpoint (#838)", () => {
     expect(mocks.removeAnnouncementOptOuts).toHaveBeenCalledWith({ email: "avery@example.test", eventId: "event-1" });
   });
 
-  it("never changes anything on a GET, which link scanners fetch; it sends the person to the page", async () => {
+  it("never changes anything on a GET, which link scanners fetch; it sends a valid link to the page", async () => {
     const response = await GET(new Request(`https://events.imsda.test/api/public/unsubscribe/${token}`), context());
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe(`/unsubscribe/${token}`);
     expect(mocks.recordAnnouncementOptOut).not.toHaveBeenCalled();
+  });
+
+  it("answers a GET for an invalid token with 404, not a redirect, and does not throw", async () => {
+    for (const bad of ["garbage", "", `${token.slice(0, 42)}x`]) {
+      const response = await GET(new Request(`https://events.imsda.test/api/public/unsubscribe/${bad}`), context(bad));
+      expect(response.status).toBe(404);
+    }
   });
 });
 

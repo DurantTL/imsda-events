@@ -299,3 +299,46 @@ describe("selected-audience batch input", () => {
     }).success).toBe(false);
   });
 });
+
+describe("announcement opt-outs in a staff-chosen batch (#838)", () => {
+  const optOuts = [
+    { normalizedEmail: "one@example.test", scope: "EVENT" as const, eventId: "event-1" },
+    { normalizedEmail: "two@example.test", scope: "ALL" as const, eventId: null },
+    { normalizedEmail: "four@example.test", scope: "EVENT" as const, eventId: "event-2" },
+  ];
+  const candidates = ["one", "two", "three", "four"].map((name) => candidate({
+    registrationId: `reg-${name}`,
+    confirmationCode: `C-${name}`,
+    recipientEmail: `${name}@example.test`,
+  }));
+  const ids = candidates.map((entry) => entry.registrationId);
+
+  it("skips opted-out contacts of an announcement, naming the reason for each, and leaves other events' opt-outs alone", () => {
+    const preview = computeSelectedAudiencePreview(ids, candidates, { ...context(), templateKey: "EVENT_ANNOUNCEMENT", optOuts }, now);
+    expect(preview.recipients.map((entry) => entry.registrationId).sort()).toEqual(["reg-four", "reg-three"]);
+    expect(preview.skipped.map((entry) => [entry.registrationId, entry.code]).sort()).toEqual([
+      ["reg-one", "ANNOUNCEMENT_OPTED_OUT_EVENT"],
+      ["reg-two", "ANNOUNCEMENT_OPTED_OUT_ALL"],
+    ]);
+    expect(preview.skipped.every((entry) => /opted out/i.test(entry.label))).toBe(true);
+  });
+
+  it("changes the fingerprint when someone opts out, so a stale review is refused", () => {
+    const before = computeSelectedAudiencePreview(ids, candidates, { ...context(), templateKey: "EVENT_ANNOUNCEMENT", optOuts: [] }, now);
+    const after = computeSelectedAudiencePreview(ids, candidates, { ...context(), templateKey: "EVENT_ANNOUNCEMENT", optOuts }, now);
+    expect(after.fingerprint).not.toBe(before.fingerprint);
+  });
+
+  it("never applies an opt-out to any other template", () => {
+    for (const templateKey of ["BALANCE_REMINDER", "CUSTOM_MESSAGE", "REGISTRATION_CONFIRMATION"] as const) {
+      const preview = computeSelectedAudiencePreview(
+        ids,
+        candidates.map((entry) => ({ ...entry, totalCents: 10_000, netPaidCents: 0 })),
+        { ...context(), templateKey, optOuts },
+        now,
+      );
+      expect(preview.skipped.filter((entry) => entry.code.startsWith("ANNOUNCEMENT_OPTED_OUT"))).toEqual([]);
+      expect(preview.recipients).toHaveLength(4);
+    }
+  });
+});

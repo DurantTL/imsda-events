@@ -87,7 +87,7 @@ export function withRequestContext<Arguments extends unknown[]>(
  * is a private bearer token, so it is replaced before it can reach a log.
  */
 export function redactTokenPath(pathname: string) {
-  return pathname.replace(/^(\/(?:api\/public\/)?(?:club-forms|manage)\/)[^/]+/, "$1[redacted]");
+  return pathname.replace(/^(\/(?:api\/public\/)?(?:club-forms|manage|unsubscribe)\/)[^/]+/, "$1[redacted]");
 }
 
 function safePath(url: string) {
