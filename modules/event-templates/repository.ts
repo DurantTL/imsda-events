@@ -404,6 +404,7 @@ export async function applyEventTemplate(
             : false,
           collectsShirtSizes: payload.moduleEnablement.collectsShirtSizes,
           checksAdultBackgrounds: payload.moduleEnablement.checksAdultBackgrounds,
+          hostedPaymentLinkEnabled: payload.moduleEnablement.hostedPaymentLinkEnabled,
           attendeeEditPolicy: platform.defaultAttendeeEditPolicy,
           audience: payload.audience,
           billingMode: templateBillingMode(payload),

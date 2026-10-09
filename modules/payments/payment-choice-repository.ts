@@ -13,6 +13,10 @@ import {
   type PaymentChoiceResult,
 } from "@/modules/payments/payment-choice-domain";
 import { moneyToCents } from "@/modules/payments/square-domain";
+import {
+  flushHostedDeletionsAfterResponse,
+  invalidateHostedCheckoutsInTransaction,
+} from "@/modules/payments/square-hosted-invalidation";
 import { authorizeRegistrationAccessToken } from "@/modules/public-access/repository";
 import { adjustmentTotalCents } from "@/modules/registrations/adjustments";
 
@@ -57,6 +61,9 @@ const choiceRegistrationSelect = {
   paymentAttempts: {
     where: {
       status: { in: ["PROCESSING", "PENDING", "SUCCEEDED"] as const },
+      // An unpaid Pay on Square link is an offer, not a started payment (#327); it is withdrawn
+      // below when the choice changes.
+      NOT: { channel: "HOSTED_LINK" as const, providerPaymentId: null },
     },
     take: 1,
     select: { id: true, status: true },
@@ -274,6 +281,11 @@ async function choosePromotedWaitlistPaymentInTransaction(
     where: { id: registration.id },
     data: { totalAmount: centsAsDecimal(Math.max(result.totalCents + adjustmentsCents, 0)) },
   });
+  await invalidateHostedCheckoutsInTransaction(tx, {
+    registrationId: registration.id,
+    reason: "BALANCE_CHANGED",
+    now,
+  });
   await tx.registrationPaymentChoiceOperation.create({
     data: {
       id: operationId,
@@ -313,13 +325,14 @@ async function choosePromotedWaitlistPaymentInTransaction(
   return result;
 }
 
-export function choosePublicPromotedWaitlistPayment(
+export async function choosePublicPromotedWaitlistPayment(
   token: string,
   input: PaymentChoiceInput,
   options: { now?: Date } = {},
 ) {
   const now = options.now ?? new Date();
-  return runSerializable(async (tx) => {
+  let registrationId: string | null = null;
+  const result = await runSerializable(async (tx) => {
     const access = await authorizeRegistrationAccessToken(token, {
       now,
       client: tx,
@@ -330,20 +343,26 @@ export function choosePublicPromotedWaitlistPayment(
         "This private registration link is invalid or no longer active.",
       );
     }
+    registrationId = access.registrationId;
     return choosePromotedWaitlistPaymentInTransaction(tx, access, input, now);
   });
+  // Links the change withdrew are deleted at Square without holding the answer up.
+  if (registrationId) await flushHostedDeletionsAfterResponse({ registrationId });
+  return result;
 }
 
-export function chooseAttendeePromotedWaitlistPayment(
+export async function chooseAttendeePromotedWaitlistPayment(
   access: { registrationId: string; eventId: string },
   input: PaymentChoiceInput,
   options: { now?: Date } = {},
 ) {
   const now = options.now ?? new Date();
-  return runSerializable((tx) => choosePromotedWaitlistPaymentInTransaction(
+  const result = await runSerializable((tx) => choosePromotedWaitlistPaymentInTransaction(
     tx,
     { ...access, accessTokenId: null },
     input,
     now,
   ));
+  await flushHostedDeletionsAfterResponse({ registrationId: access.registrationId });
+  return result;
 }

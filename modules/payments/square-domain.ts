@@ -18,6 +18,36 @@ export const squarePaymentInputSchema = z.strictObject({
 
 export type SquarePaymentInput = z.infer<typeof squarePaymentInputSchema>;
 
+/** Asking for a "Pay on Square" link (#327): only a request key, never an amount. */
+export const squarePaymentLinkInputSchema = z.strictObject({
+  idempotencyKey: z.uuid(),
+  /**
+   * An opaque id the browser makes up (32 random bytes, base64url) and keeps. Square sends the payer
+   * back to `/pay/square/return/<returnId>`, so Square never holds the private manage token. Only its
+   * hash is stored. It grants a status view and nothing else.
+   */
+  returnId: z.string().regex(/^[A-Za-z0-9_-]{43}$/, "The return id is invalid."),
+});
+
+export type SquarePaymentLinkInput = z.infer<typeof squarePaymentLinkInputSchema>;
+
+/**
+ * How long a hosted link stays payable. Square's payment link has no expiry setting, so this app
+ * enforces it: a link older than this is refused on replay and deleted at Square by the sweep.
+ */
+export const hostedLinkLifetimeMs = 24 * 60 * 60 * 1000;
+/** The return id outlives the link by this long, so a payer who pays at the last minute still lands on a status page. */
+export const hostedLinkReturnGraceMs = 7 * 24 * 60 * 60 * 1000;
+
+export type SquareHostedLinkView = {
+  url: string;
+  amountCents: number;
+  balanceCents: number;
+  surchargeCents: number;
+  currency: "USD";
+  expiresAt: string;
+};
+
 export type SquareCheckoutState =
   | "READY"
   | "CHOICE_REQUIRED"
@@ -55,6 +85,11 @@ export type SquarePayableCheckoutView = {
   surchargeCents: number;
   currency: "USD";
   cardSelected: boolean;
+  /**
+   * Whether the event offers "Pay on Square" (#327) and this registration can use it right now.
+   * Carries no address: a link is created on request, for the amount quoted at that moment.
+   */
+  hostedLink: boolean;
   paymentChoice: PromotedWaitlistPaymentChoiceView | null;
   square: {
     environment: "sandbox" | "production";
@@ -163,6 +198,75 @@ export function providerIdempotencyKey(
   return `imsda_${digest.slice(0, 39)}`;
 }
 
+/** A separate key space from embedded payments, so one client key can never name both. */
+export function providerHostedLinkIdempotencyKey(
+  registrationId: string,
+  clientIdempotencyKey: string,
+) {
+  const digest = createHash("sha256")
+    .update(`hosted-link:${registrationId}:${clientIdempotencyKey}`)
+    .digest("hex");
+  return `imsdalink_${digest.slice(0, 39)}`;
+}
+
+export type HostedLinkStaleReason =
+  | "REGISTRATION_NOT_PAYABLE"
+  | "BALANCE_ALREADY_PAID"
+  | "BALANCE_CHANGED";
+
+/**
+ * Whether a payment quoted for `quotedBalanceCents` can still be applied to the registration.
+ *
+ * "First successfully recorded payment wins": once the outstanding balance has fallen below what
+ * the attempt was quoted for (another card payment, a cheque staff recorded, an adjustment), the
+ * attempt's money no longer fits. A balance that has grown still accepts the payment; it is a
+ * partial payment of something larger, and the processor has already taken it.
+ */
+export function hostedPaymentStaleReason(input: {
+  registrationStatus: string;
+  balanceCents: number;
+  quotedBalanceCents: number;
+}): HostedLinkStaleReason | null {
+  if (
+    input.registrationStatus !== "SUBMITTED"
+    && input.registrationStatus !== "CONFIRMED"
+  ) {
+    return "REGISTRATION_NOT_PAYABLE";
+  }
+  if (input.balanceCents <= 0) return "BALANCE_ALREADY_PAID";
+  if (input.balanceCents < input.quotedBalanceCents) return "BALANCE_CHANGED";
+  return null;
+}
+
+/**
+ * What a duplicate-charge record keeps of Square's payment: ids, status, amount, and timestamps.
+ * Deliberately not the card details, receipt URL, or buyer fields Square's payment also carries.
+ */
+export function duplicateChargeEvidence(payment: {
+  id: string;
+  status: string;
+  amount_money: { amount: number; currency: string };
+  order_id?: string | undefined;
+  location_id?: string | undefined;
+  reference_id?: string | undefined;
+  created_at?: string | undefined;
+  updated_at?: string | undefined;
+}) {
+  return {
+    id: payment.id,
+    status: payment.status,
+    amount_money: {
+      amount: payment.amount_money.amount,
+      currency: payment.amount_money.currency,
+    },
+    order_id: payment.order_id ?? null,
+    location_id: payment.location_id ?? null,
+    reference_id: payment.reference_id ?? null,
+    created_at: payment.created_at ?? null,
+    updated_at: payment.updated_at ?? null,
+  };
+}
+
 export function squareWebhookPayloadHash(rawBody: string) {
   return createHash("sha256").update(rawBody).digest("hex");
 }
@@ -200,6 +304,8 @@ const squarePaymentObjectSchema = z.object({
   amount_money: squareMoneySchema,
   location_id: z.string().trim().min(1).max(255).optional(),
   reference_id: z.string().trim().min(1).max(255).optional(),
+  /** Set on a payment made through a hosted checkout link (#327), which has no `reference_id`. */
+  order_id: z.string().trim().min(1).max(255).optional(),
   note: z.string().trim().max(500).optional(),
   created_at: z.string().datetime({ offset: true }).optional(),
   updated_at: z.string().datetime({ offset: true }).optional(),

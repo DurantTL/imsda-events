@@ -100,6 +100,7 @@ function promotedRegistration(billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATI
 
 function useRegistration(billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE") {
   const tx = {
+    squareHostedCheckout: { findMany: vi.fn().mockResolvedValue([]) },
     registrationAdjustment: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
     registrationPaymentChoiceOperation: { findUnique: vi.fn().mockResolvedValue(null), create: vi.fn().mockResolvedValue({}) },
     registration: {

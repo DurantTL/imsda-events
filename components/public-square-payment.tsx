@@ -1,6 +1,7 @@
 "use client";
 
 import Script from "next/script";
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -8,10 +9,17 @@ import {
   useRef,
   useState,
 } from "react";
-import { CreditCard, LoaderCircle, ShieldCheck, TriangleAlert } from "lucide-react";
+import { CreditCard, ExternalLink, LoaderCircle, ShieldCheck, TriangleAlert } from "lucide-react";
 import {
   paymentChoiceOptionPresentations,
 } from "@/modules/payments/payment-choice-presentation";
+import { startHostedReturnPolling } from "@/modules/payments/hosted-return-polling";
+import {
+  hostedReturnMessage,
+  hostedReturnStorageKey,
+  isHostedReturnId,
+  type HostedReturnState,
+} from "@/modules/payments/hosted-return-presentation";
 import { squareTestModeNotice } from "@/modules/payments/square-sandbox-notice";
 
 type SquareCheckout = {
@@ -28,6 +36,8 @@ type SquareCheckout = {
   surchargeCents: number;
   currency: "USD";
   cardSelected: boolean;
+  /** The event offers "Pay on Square" and this registration can use it right now (#327). */
+  hostedLink?: boolean;
   paymentChoice: {
     available: boolean;
     locked: boolean;
@@ -170,10 +180,40 @@ function unavailableCheckout(error: unknown): SquareCheckout {
     surchargeCents: 0,
     currency: "USD",
     cardSelected: false,
+    hostedLink: false,
     paymentChoice: null,
     square: null,
     billingContact: null,
   };
+}
+
+/**
+ * After Square, the return page sends the payer back here with `?ret=<returnId>`. That is a
+ * courtesy, never proof: the banner reports what the server's own status for that return id says,
+ * which is written only from the verified webhook. The parameter is removed from the address once
+ * read, so a refresh or a shared screenshot does not carry it.
+ */
+function readReturnId() {
+  try {
+    const url = new URL(window.location.href);
+    const value = url.searchParams.get("ret");
+    if (value === null) return null;
+    url.searchParams.delete("ret");
+    url.searchParams.delete("pay");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    return isHostedReturnId(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** An opaque id Square will send the payer back to: 32 random bytes, base64url. */
+function newReturnId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 }
 
 export function PublicSquarePayment({
@@ -190,6 +230,7 @@ export function PublicSquarePayment({
     ?? `/api/public/manage/${encodeURIComponent(token ?? "")}`;
   const paymentEndpoint = `${manageEndpoint}/payment`;
   const choiceEndpoint = `${manageEndpoint}/payment-choice`;
+  const router = useRouter();
   const instanceId = useId().replace(/[^A-Za-z0-9_-]/g, "");
   const cardContainerId = `square-card-${instanceId}`;
   const googlePayContainerId = `square-google-pay-${instanceId}`;
@@ -219,6 +260,11 @@ export function PublicSquarePayment({
   const [pendingChoice, setPendingChoice] = useState<
     "CARD" | "PAY_LATER" | null
   >(null);
+  const hostedKeyRef = useRef<string | null>(null);
+  const [hostedSubmitting, setHostedSubmitting] = useState(false);
+  const hostedReturnRef = useRef<string | null>(null);
+  const [returnId, setReturnId] = useState<string | null>(null);
+  const [returnState, setReturnState] = useState<HostedReturnState | null>(null);
   const [notice, setNotice] = useState<{
     tone: "success" | "error" | "pending";
     message: string;
@@ -239,11 +285,13 @@ export function PublicSquarePayment({
     void fetchCheckout(paymentEndpoint).then(
       (nextCheckout) => {
         if (!active) return;
+        setReturnId(readReturnId());
         setCheckout(nextCheckout);
         setLoading(false);
       },
       (error: unknown) => {
         if (!active) return;
+        setReturnId(readReturnId());
         setCheckout(unavailableCheckout(error));
         setLoading(false);
       },
@@ -252,6 +300,17 @@ export function PublicSquarePayment({
       active = false;
     };
   }, [paymentEndpoint]);
+
+  useEffect(() => {
+    if (!returnId) return;
+    return startHostedReturnPolling(returnId, async (status) => {
+      setReturnState(status.state);
+      if (status.state !== "CONFIRMING") {
+        await loadCheckout();
+        router.refresh();
+      }
+    }, { immediate: true });
+  }, [loadCheckout, returnId, router]);
 
   useEffect(() => {
     if (
@@ -461,6 +520,62 @@ export function PublicSquarePayment({
     }
   }
 
+  async function payOnSquare() {
+    if (!checkout || checkout.state !== "READY" || submittingMethod || hostedSubmitting) return;
+    setHostedSubmitting(true);
+    setNotice(null);
+    try {
+      hostedKeyRef.current ??= crypto.randomUUID();
+      hostedReturnRef.current ??= newReturnId();
+      const response = await fetch(`${manageEndpoint}/payment-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idempotencyKey: hostedKeyRef.current,
+          returnId: hostedReturnRef.current,
+        }),
+      });
+      const body = await response.json() as {
+        link?: { url: string };
+        message?: string;
+        retryable?: boolean;
+      };
+      if (!response.ok || !body.link?.url) {
+        if (!body.retryable) {
+          hostedKeyRef.current = null;
+          hostedReturnRef.current = null;
+        }
+        setNotice({
+          tone: body.retryable ? "pending" : "error",
+          message: body.message ?? "The Pay on Square link could not be created. Try again.",
+        });
+        if (response.status === 409 || response.status === 422) await loadCheckout();
+        return;
+      }
+      // Square returns the payer to an opaque status page, so remember where they started: their
+      // private page, when they came from one. An account page has no secret in its address and
+      // is reached from the return page's own link.
+      if (!explicitManageEndpoint) {
+        try {
+          window.sessionStorage.setItem(
+            hostedReturnStorageKey(hostedReturnRef.current),
+            window.location.pathname,
+          );
+        } catch {
+          // Storage is blocked; the return page then points to the confirmation email.
+        }
+      }
+      window.location.assign(body.link.url);
+    } catch {
+      setNotice({
+        tone: "pending",
+        message: "The Pay on Square link was not confirmed. It is safe to try again; no second link is made for the same balance.",
+      });
+    } finally {
+      setHostedSubmitting(false);
+    }
+  }
+
   function submitCardPayment() {
     if (!checkout || !cardRef.current) return;
     beginPayment("CARD", () => cardRef.current!.tokenize({
@@ -597,6 +712,19 @@ export function PublicSquarePayment({
       <span>{notice.message}</span>
     </div>
   );
+  const returnElement = returnId && (
+    <div
+      className={`public-square-notice is-${returnState === "CONFIRMED" ? "success" : returnState === "HELD" ? "error" : "pending"}`}
+      role={returnState === "HELD" ? "alert" : "status"}
+    >
+      {returnState === "CONFIRMED"
+        ? <ShieldCheck size={18} aria-hidden="true" />
+        : returnState === "HELD"
+          ? <TriangleAlert size={18} aria-hidden="true" />
+          : <LoaderCircle size={18} className="is-spinning" aria-hidden="true" />}
+      <span>{hostedReturnMessage(returnState ?? "CONFIRMING")}</span>
+    </div>
+  );
   const paymentChoicePanel = paymentChoice && (
     <section className="public-payment-choice" aria-labelledby="public-payment-choice-heading">
       <div className="public-payment-choice-heading">
@@ -680,6 +808,7 @@ export function PublicSquarePayment({
   if (checkout.state !== "READY" || !checkout.square) {
     return (
       <div className="public-payment-stack">
+        {returnElement}
         {paymentChoicePanel}
         <div className={`public-square-state is-${checkout.state.toLowerCase().replaceAll("_", "-")}`}>
           {checkout.state === "NO_BALANCE" ? (
@@ -708,6 +837,7 @@ export function PublicSquarePayment({
   const testModeNotice = squareTestModeNotice({ environment: checkout.square.environment, staffPreview });
   return (
     <div className="public-payment-stack">
+      {returnElement}
       {paymentChoicePanel}
       <div className="public-square-checkout">
       <Script
@@ -768,6 +898,28 @@ export function PublicSquarePayment({
           <><ShieldCheck size={17} /> Pay <span translate="no">{money(checkout.amountCents)}</span></>
         )}
       </button>
+      {checkout.hostedLink && (
+        <div className="public-square-hosted">
+          <div className="public-square-divider"><span>or</span></div>
+          <button
+            type="button"
+            className="public-square-hosted-button"
+            disabled={Boolean(submittingMethod) || hostedSubmitting}
+            onClick={() => void payOnSquare()}
+          >
+            {hostedSubmitting ? (
+              <><LoaderCircle size={17} className="is-spinning" /> Opening Square…</>
+            ) : (
+              <><ExternalLink size={17} /> Pay on Square</>
+            )}
+          </button>
+          <p className="public-square-hosted-note">
+            Opens Square&rsquo;s own secure payment page for <span translate="no">{money(checkout.amountCents)}</span>,
+            the same amount. Use it if the form above does not work for you. After you pay, Square brings you back
+            here, and your payment shows once Square confirms it.
+          </p>
+        </div>
+      )}
       {!paymentChoice && noticeElement}
       </div>
     </div>

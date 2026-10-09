@@ -75,6 +75,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
       hotelName: true, hotelBookingUrl: true, hotelPhone: true, hotelGroupName: true, hotelRate: true, hotelInstructions: true,
       audience: true, billingMode: true,
       waitlistEnabled: true, autoPromoteWaitlist: true, collectsShirtSizes: true, checksAdultBackgrounds: true,
+      hostedPaymentLinkEnabled: true,
     },
   });
   if (!event) return null;
@@ -141,6 +142,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     moduleToggles: {
       waitlistEnabled: event.waitlistEnabled, autoPromoteWaitlist: event.autoPromoteWaitlist,
       collectsShirtSizes: event.collectsShirtSizes, checksAdultBackgrounds: event.checksAdultBackgrounds,
+      hostedPaymentLinkEnabled: event.hostedPaymentLinkEnabled,
       community: community
         ? { isEnabled: community.isEnabled, allowNewPosts: community.allowNewPosts, allowReplies: community.allowReplies, conductText: community.conductText, retentionDays: community.retentionDays }
         : null,
@@ -348,6 +350,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
           autoPromoteWaitlist: toggles?.waitlistEnabled ? toggles.autoPromoteWaitlist : false,
           collectsShirtSizes: toggles?.collectsShirtSizes ?? false,
           checksAdultBackgrounds: toggles?.checksAdultBackgrounds ?? false,
+          hostedPaymentLinkEnabled: toggles?.hostedPaymentLinkEnabled ?? false,
         },
       });
       await tx.eventMembership.create({ data: { eventId: event.id, userId: actorUserId, role: "EVENT_ADMIN", status: "ACTIVE" } });

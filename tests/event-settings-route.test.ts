@@ -77,6 +77,7 @@ void _clientSentIsPublished;
 const normalizedEventPayload = {
   ...eventPayloadWithoutPublish,
   checksAdultBackgrounds: false,
+  hostedPaymentLinkEnabled: false,
   hotelName: undefined,
   hotelBookingUrl: undefined,
   hotelPhone: undefined,

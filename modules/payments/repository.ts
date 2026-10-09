@@ -3,6 +3,10 @@ import { getRegistrationById } from "@/modules/registrations/repository";
 import { enqueueRefundNoticeMessage } from "@/modules/communications/transactional-messages";
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
 import { logError } from "@/lib/logger";
+import {
+  flushHostedDeletionsAfterResponse,
+  invalidateHostedCheckoutsInTransaction,
+} from "@/modules/payments/square-hosted-invalidation";
 
 export class PaymentOperationError extends Error {
   constructor(public readonly code: "REGISTRATION_NOT_FOUND" | "REGISTRATION_NOT_PAYABLE" | "PAYMENT_NOT_FOUND" | "PAYMENT_EXCEEDS_BALANCE" | "REFUND_EXCEEDS_AVAILABLE" | "CARD_REFUND_REQUIRES_SQUARE" | "REFUND_IDEMPOTENCY_KEY_REUSED") {
@@ -69,7 +73,15 @@ export async function recordManualPayment(
         metadata: { amountCents: input.amountCents },
       },
     });
+    // The balance moved, so a Pay on Square link quoted against the old one must not stay payable (#327).
+    await invalidateHostedCheckoutsInTransaction(tx, {
+      registrationId,
+      reason: "ANOTHER_PAYMENT_RECORDED",
+      now: new Date(),
+    });
   });
+  // Deleted at Square without holding the answer up; the sweep catches what this misses.
+  await flushHostedDeletionsAfterResponse({ registrationId });
 
   return getRegistrationById(eventId, registrationId);
 }

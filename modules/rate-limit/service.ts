@@ -647,6 +647,41 @@ export function publicRequestClientHash(request: Request) {
   return requestIdentities(request, getRateLimitConfiguration()).client;
 }
 
+/**
+ * The read-only payment status poll behind Square's return page (#327). It has its own buckets, so
+ * a page that polls every few seconds never spends the budget the payment-writing routes share,
+ * and a payer waiting on Square cannot be locked out of paying by their own status checks. A page
+ * polls about 24 times in its two minutes; the budgets leave room for several pages and reloads.
+ */
+export const publicPaymentStatusBudgets = { client: 300, clientId: 120 } as const;
+
+export async function checkPublicPaymentStatusRateLimit(
+  request: Request,
+  statusId: string,
+) {
+  const configuration = getRateLimitConfiguration();
+  const { client } = requestIdentities(request, configuration);
+  const idHash = hashRateLimitIdentifier(
+    "square-return-id",
+    statusId,
+    configuration,
+  );
+  return evaluate([
+    {
+      policy: "public.payment-status.client",
+      limit: publicPaymentStatusBudgets.client,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [client],
+    },
+    {
+      policy: "public.payment-status.client-id",
+      limit: publicPaymentStatusBudgets.clientId,
+      windowSeconds: fifteenMinutes,
+      identifierHashes: [client, idHash],
+    },
+  ], configuration);
+}
+
 export async function checkPublicPaymentRateLimit(
   request: Request,
   token: string,

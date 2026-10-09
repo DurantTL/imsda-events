@@ -47,6 +47,7 @@ const baseEventFields = {
   waitlistEnabled: false,
   collectsShirtSizes: false,
   checksAdultBackgrounds: false,
+  hostedPaymentLinkEnabled: false,
   attendeeEditPolicy: "VERIFY_EVERY_EDIT" as const,
   billingMode: "ATTENDEE_PAY" as const,
   audience: "GENERAL" as const,

@@ -7,6 +7,7 @@ import { refreshDueCalendarFeeds } from "@/modules/calendar/feeds";
 import { sendDueLocationWaitlistDigests } from "@/modules/event-locations/waitlist-digest";
 import { pruneExpiredCommunityContent } from "@/modules/community/repository";
 import { runAlertScan } from "@/modules/operations/alert-scan";
+import { sweepHostedCheckouts } from "@/modules/payments/square-hosted-invalidation";
 import { recordSweepHeartbeat } from "@/modules/operations/sweep-heartbeat-repository";
 import { withRequestContext } from "@/lib/request-context";
 
@@ -60,6 +61,13 @@ async function postHandler(request: Request) {
       logError("The calendar feed refresh failed after a successful outbox sweep", error);
       return null;
     });
+    // Pay on Square links (#327): withdraw expired or stale ones and retry any deletion Square has
+    // not confirmed. Square has no link expiry of its own, so this is what makes expiry real.
+    // Its failure must not make a successful sweep look failed.
+    const hostedLinks = await sweepHostedCheckouts().catch((error) => {
+      logError("The Pay on Square link sweep failed after a successful outbox sweep", error);
+      return null;
+    });
     return Response.json({
       sweptEventCount: result.sweptEventIds.length,
       sweptAccountMessages: result.sweptAccountMessages,
@@ -73,6 +81,7 @@ async function postHandler(request: Request) {
       },
       communityRetention,
       calendarFeeds,
+      hostedLinks,
       locationWaitlistDigest: locationWaitlistDigest && {
         status: locationWaitlistDigest.status,
         changesCovered: locationWaitlistDigest.changesCovered,

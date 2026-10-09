@@ -8,6 +8,11 @@ import {
   type RefundStatus,
 } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { dispatchAlerts, type Alert } from "@/modules/operations/alerting";
+import {
+  flushHostedDeletionsAfterResponse,
+  invalidateHostedCheckoutsInTransaction,
+} from "@/modules/payments/square-hosted-invalidation";
 import {
   createSquarePayment,
   SquareAdapterError,
@@ -24,6 +29,8 @@ import {
 } from "@/modules/payments/payment-choice-domain";
 import {
   cardSurchargeForBalance,
+  duplicateChargeEvidence,
+  hostedPaymentStaleReason,
   internalPaymentState,
   internalRefundStatus,
   moneyToCents,
@@ -43,13 +50,13 @@ import {
 import { authorizeRegistrationAccessToken } from "@/modules/public-access/repository";
 import { logError } from "@/lib/logger";
 
-type PaymentClient = Prisma.TransactionClient | PrismaClient;
-type PaymentAccess = {
+export type PaymentClient = Prisma.TransactionClient | PrismaClient;
+export type PaymentAccess = {
   accessTokenId: string | null;
   registrationId: string;
   eventId: string;
 };
-type PaymentAuthorization =
+export type PaymentAuthorization =
   | { kind: "private-link"; token: string }
   | { kind: "attendee-account"; access: PaymentAccess };
 
@@ -87,7 +94,7 @@ const checkoutRegistrationSelect = {
   totalAmount: true,
   contactSnapshot: true,
   event: {
-    select: { billingMode: true },
+    select: { billingMode: true, hostedPaymentLinkEnabled: true },
   },
   accountHolderPerson: {
     select: {
@@ -110,6 +117,9 @@ const checkoutRegistrationSelect = {
   paymentAttempts: {
     where: {
       status: { in: ["PROCESSING", "PENDING", "SUCCEEDED"] as const },
+      // A Pay on Square link nobody has paid through yet is an offer, not a started payment: it
+      // must not lock the payment choice. It is withdrawn when the choice changes.
+      NOT: { channel: "HOSTED_LINK" as const, providerPaymentId: null },
     },
     take: 1,
     select: { id: true, status: true },
@@ -143,11 +153,11 @@ const checkoutRegistrationSelect = {
   },
 } satisfies Prisma.RegistrationSelect;
 
-type CheckoutRegistration = Prisma.RegistrationGetPayload<{
+export type CheckoutRegistration = Prisma.RegistrationGetPayload<{
   select: typeof checkoutRegistrationSelect;
 }>;
 
-const attemptInclude = {
+export const attemptInclude = {
   payment: true,
   registration: {
     select: {
@@ -156,13 +166,15 @@ const attemptInclude = {
   },
 } satisfies Prisma.PaymentAttemptInclude;
 
-type AttemptRecord = Prisma.PaymentAttemptGetPayload<{
+export type AttemptRecord = Prisma.PaymentAttemptGetPayload<{
   include: typeof attemptInclude;
 }>;
 
 type AppliedProviderPayment = {
   attempt: AttemptRecord;
   pendingMessageIds: string[];
+  /** Raised after the transaction commits: a duplicate charge pages staff. */
+  alerts?: Alert[];
 };
 
 function record(value: unknown): Record<string, unknown> {
@@ -192,7 +204,7 @@ function billingContact(registration: CheckoutRegistration) {
   };
 }
 
-function checkoutFromRegistration(
+export function checkoutFromRegistration(
   registration: CheckoutRegistration,
   configuration: SquareRuntimeConfiguration,
 ): SquareCheckoutView {
@@ -286,6 +298,7 @@ function checkoutFromRegistration(
     surchargeCents,
     currency: "USD" as const,
     cardSelected: paymentSelection.cardSelected,
+    hostedLink: false,
     paymentChoice,
     square: null,
     billingContact: billingContact(registration),
@@ -342,6 +355,9 @@ function checkoutFromRegistration(
   return {
     ...base,
     state: "READY",
+    // "Pay on Square" (#327) is a per-event setting, off unless staff turn it on, and is offered
+    // exactly when the embedded form is: same state, same amount.
+    hostedLink: registration.event.hostedPaymentLinkEnabled,
     // Choosing pay-later at registration decides how the total was priced —
     // it never decided whether a card may be used afterwards. A balance
     // reminder that says "pay now" has to land on a page that can take the
@@ -354,7 +370,7 @@ function checkoutFromRegistration(
   };
 }
 
-async function loadCheckoutRegistration(
+export async function loadCheckoutRegistration(
   client: PaymentClient,
   registrationId: string,
 ) {
@@ -434,11 +450,20 @@ function operationErrorForCheckout(checkout: SquareCheckoutView): never {
 }
 
 function retryableTransactionError(error: unknown) {
-  return error instanceof Prisma.PrismaClientKnownRequestError
-    && (error.code === "P2034" || error.code === "P2002");
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError
+    && (error.code === "P2034" || error.code === "P2002")
+  )
+    // Two payment paths settling one balance can lock the same rows in opposite orders; the
+    // loser is rolled back by PostgreSQL (deadlock 40P01, serialization failure 40001) and runs
+    // again against what the winner committed.
+    || (
+      error instanceof Prisma.PrismaClientUnknownRequestError
+      && /40P01|40001|deadlock detected/.test(error.message)
+    );
 }
 
-async function runSerializable<T>(
+export async function runSerializable<T>(
   operation: (tx: Prisma.TransactionClient) => Promise<T>,
 ) {
   const prisma = getPrisma();
@@ -463,7 +488,7 @@ type PreparedPaymentAttempt = {
   attempt: AttemptRecord;
 };
 
-function resultFromAttempt(attempt: AttemptRecord) {
+export function resultFromAttempt(attempt: AttemptRecord) {
   const status = attempt.status === "SUCCEEDED"
     ? "SUCCEEDED" as const
     : attempt.status === "FAILED"
@@ -475,7 +500,9 @@ function resultFromAttempt(attempt: AttemptRecord) {
     status,
     amountCents: attempt.amountCents,
     currency: "USD" as const,
-    message: status === "SUCCEEDED"
+    message: attempt.duplicateReason
+      ? "This registration's balance was already paid, so this extra payment is not counted. The event team has been alerted and will refund it."
+      : status === "SUCCEEDED"
       ? "Square confirmed the card payment."
       : status === "PENDING"
         ? "Square is still confirming the payment. Do not submit a second payment."
@@ -565,6 +592,14 @@ async function preparePaymentAttempt(
     );
   }
 
+  // A hosted "Pay on Square" link already handed out must not stay payable beside this attempt:
+  // two paths charging one balance is the failure the first-payment-wins rule exists to prevent.
+  await invalidateHostedCheckoutsInTransaction(tx, {
+    registrationId: registration.id,
+    reason: "EMBEDDED_ATTEMPT_STARTED",
+    now,
+  });
+
   const providerKey = providerIdempotencyKey(
     registration.id,
     input.idempotencyKey
@@ -623,14 +658,200 @@ function auditActionForAttemptStatus(status: PaymentAttemptStatus) {
   return "SQUARE_PAYMENT_PENDING";
 }
 
-async function applyProviderPayment(
+/**
+ * Whether the money in this attempt still fits the registration. The first payment recorded for a
+ * balance wins; an attempt that succeeds after another payment settled that balance (or after the
+ * registration stopped being payable) is a duplicate. Read inside the transaction that would record
+ * the payment, so two simultaneous successes cannot both pass.
+ */
+async function successConflict(
   tx: Prisma.TransactionClient,
   attempt: AttemptRecord,
-  provider: SquarePaymentResult,
+) {
+  const registration = await tx.registration.findUnique({
+    where: { id: attempt.registrationId },
+    select: {
+      status: true,
+      totalAmount: true,
+      payments: {
+        where: { status: "SUCCEEDED" },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          amount: true,
+          refunds: {
+            where: { status: "SUCCEEDED" },
+            select: { amount: true },
+          },
+        },
+      },
+    },
+  });
+  if (!registration) return null;
+  const reason = hostedPaymentStaleReason({
+    registrationStatus: registration.status,
+    balanceCents: registrationBalanceCents(registration),
+    quotedBalanceCents: attempt.amountCents - attempt.surchargeCents,
+  });
+  return reason
+    ? { reason, winningPaymentId: registration.payments[0]?.id ?? null }
+    : null;
+}
+
+const duplicateReasonText: Record<string, string> = {
+  BALANCE_ALREADY_PAID: "the balance had already been paid",
+  BALANCE_CHANGED: "the balance had fallen below the amount charged",
+  REGISTRATION_NOT_PAYABLE: "the registration was no longer payable",
+  SECOND_PAYMENT_ON_ORDER: "a payment had already been recorded through the same link",
+  AMOUNT_MISMATCH: "its amount was not the amount quoted for the link",
+};
+
+/** The webhook row's reason for a payment the hosted page declined; read back to order late updates. */
+const hostedDeclineReason = "A payment on the hosted page did not complete; the link stays payable.";
+
+/**
+ * Keeps the evidence of a processor-level exception and stops it counting as a valid payment: the
+ * payment row stays PENDING (so the balance ignores it, no receipt is sent, no fee joins the
+ * total), a `SquareDuplicateCharge` holds Square's identifiers, and staff are paged. Refunding it
+ * stays a human action in Square; the refund webhook then resolves the record.
+ *
+ * `holdOnAttempt` is the usual case: the attempt itself is the late payment, so it carries the
+ * payment. Without it (a second or split payment through an order whose attempt is already
+ * settled, or still open) the winner's attempt is left exactly as it is and the new payment gets
+ * its own row.
+ */
+async function recordDuplicateCharge(
+  tx: Prisma.TransactionClient,
+  attempt: AttemptRecord,
+  provider: SquarePaymentResult & { orderId?: string | null },
   providerStatusAt: Date,
   now: Date,
   source: "CREATE_PAYMENT" | "WEBHOOK",
-) {
+  conflict: { reason: string; winningPaymentId: string | null },
+  options: { holdOnAttempt: boolean } = { holdOnAttempt: true },
+): Promise<AppliedProviderPayment> {
+  // A repeat of the same payment never records it twice.
+  const alreadyRecorded = await tx.squareDuplicateCharge.findUnique({
+    where: { providerPaymentId: provider.id },
+    select: { id: true },
+  });
+  if (alreadyRecorded) return { attempt, pendingMessageIds: [] };
+
+  const paymentData = {
+    amount: provider.amountCents / 100,
+    status: "PENDING" as const,
+    method: "CARD_REFERENCE" as const,
+    externalReference: provider.id,
+    receivedAt: providerStatusAt,
+  };
+  const reusePayment = options.holdOnAttempt ? attempt.payment : null;
+  const payment = reusePayment
+    ? await tx.payment.update({ where: { id: reusePayment.id }, data: paymentData })
+    : await tx.payment.create({
+        data: {
+          eventId: attempt.eventId,
+          registrationId: attempt.registrationId,
+          ...paymentData,
+        },
+      });
+  let updated = attempt;
+  if (options.holdOnAttempt) {
+    updated = await tx.paymentAttempt.update({
+      where: { id: attempt.id },
+      data: {
+        paymentId: payment.id,
+        providerPaymentId: provider.id,
+        providerStatus: provider.status,
+        providerStatusAt,
+        status: "SUCCEEDED",
+        activeRegistrationKey: null,
+        duplicateReason: conflict.reason,
+        failureCode: "DUPLICATE_CHARGE",
+        failureMessage: "Square took this payment after the balance had already been paid.",
+        completedAt: now,
+      },
+      include: attemptInclude,
+    });
+    await tx.squareHostedCheckout.updateMany({
+      where: { paymentAttemptId: attempt.id },
+      data: { status: "PAID" },
+    });
+  }
+  const evidence = duplicateChargeEvidence({
+    id: provider.id,
+    status: provider.status,
+    amount_money: { amount: provider.amountCents, currency: provider.currency },
+    order_id: provider.orderId ?? undefined,
+    created_at: provider.createdAt ?? undefined,
+    updated_at: provider.updatedAt ?? undefined,
+  });
+  await tx.squareDuplicateCharge.create({
+    data: {
+      eventId: attempt.eventId,
+      registrationId: attempt.registrationId,
+      paymentAttemptId: attempt.id,
+      paymentId: payment.id,
+      providerPaymentId: provider.id,
+      providerOrderId: provider.orderId ?? null,
+      environment: attempt.environment,
+      reason: conflict.reason,
+      amountCents: provider.amountCents,
+      currency: provider.currency,
+      winningPaymentId: conflict.winningPaymentId,
+      evidence,
+    },
+  });
+  const why = duplicateReasonText[conflict.reason] ?? conflict.reason;
+  await tx.auditLog.create({
+    data: {
+      eventId: attempt.eventId,
+      action: "SQUARE_DUPLICATE_CHARGE_DETECTED",
+      entityType: "Payment",
+      entityId: payment.id,
+      correlationId: randomUUID(),
+      summary: `Square took a ${attempt.channel === "HOSTED_LINK" ? "Pay on Square" : "card"} payment for registration ${attempt.registration.confirmationCode} that cannot be counted: ${why}. It needs a refund in Square.`,
+      metadata: {
+        priority: "HIGH",
+        provider: "SQUARE",
+        environment: attempt.environment,
+        providerPaymentId: provider.id,
+        providerOrderId: provider.orderId ?? null,
+        paymentAttemptId: attempt.id,
+        channel: attempt.channel,
+        amountCents: provider.amountCents,
+        quotedAmountCents: attempt.amountCents,
+        reason: conflict.reason,
+        winningPaymentId: conflict.winningPaymentId,
+        source,
+      },
+    },
+  });
+  return {
+    attempt: updated,
+    pendingMessageIds: [],
+    alerts: [{
+      key: `payments.duplicate-charge.${provider.id}`,
+      severity: "URGENT",
+      summary: `Square took a payment for registration ${attempt.registration.confirmationCode} that cannot be counted`,
+      detail: `Square payment ${provider.id} for ${(provider.amountCents / 100).toFixed(2)} USD: ${why}. It is not counted toward the balance. Review it and refund what is not owed in Square (a human action); IMSDA Events updates when Square confirms the refund.`,
+      context: {
+        registrationId: attempt.registrationId,
+        providerPaymentId: provider.id,
+        amountCents: provider.amountCents,
+        reason: conflict.reason,
+      },
+    }],
+  };
+}
+
+async function applyProviderPayment(
+  tx: Prisma.TransactionClient,
+  attempt: AttemptRecord,
+  provider: SquarePaymentResult & { orderId?: string | null },
+  providerStatusAt: Date,
+  now: Date,
+  source: "CREATE_PAYMENT" | "WEBHOOK",
+): Promise<AppliedProviderPayment> {
   const state = internalPaymentState(provider.status);
   const stale = Boolean(
     attempt.providerStatusAt
@@ -638,11 +859,38 @@ async function applyProviderPayment(
   );
   const terminalRegression = attempt.status === "SUCCEEDED"
     && state.attemptStatus !== "SUCCEEDED";
-  if (stale || terminalRegression) {
-    return {
-      attempt,
-      pendingMessageIds: [],
-    } satisfies AppliedProviderPayment;
+  // A duplicate charge keeps its evidence and is never re-applied by a replayed webhook.
+  if (stale || terminalRegression || attempt.duplicateReason) {
+    return { attempt, pendingMessageIds: [] };
+  }
+
+  if (state.attemptStatus === "SUCCEEDED" && attempt.status !== "SUCCEEDED") {
+    const conflict = await successConflict(tx, attempt);
+    if (conflict) {
+      return recordDuplicateCharge(
+        tx,
+        attempt,
+        provider,
+        providerStatusAt,
+        now,
+        source,
+        conflict,
+      );
+    }
+  }
+
+  // An approved-but-unsettled hosted payment holds the registration's single in-flight slot only
+  // when it is free; if an embedded attempt has it, the settled result decides who wins.
+  let activeRegistrationKey: string | null = null;
+  if (!state.terminal) {
+    activeRegistrationKey = attempt.registrationId;
+    if (attempt.channel === "HOSTED_LINK") {
+      const holder = await tx.paymentAttempt.findUnique({
+        where: { activeRegistrationKey: attempt.registrationId },
+        select: { id: true },
+      });
+      if (holder && holder.id !== attempt.id) activeRegistrationKey = null;
+    }
   }
 
   const priorStatus = attempt.status;
@@ -680,7 +928,7 @@ async function applyProviderPayment(
       providerStatus: provider.status,
       providerStatusAt,
       status: state.attemptStatus,
-      activeRegistrationKey: state.terminal ? null : attempt.registrationId,
+      activeRegistrationKey,
       failureCode: state.attemptStatus === "FAILED"
         ? "SQUARE_PAYMENT_FAILED"
         : null,
@@ -719,6 +967,19 @@ async function applyProviderPayment(
   }
   const becameSuccessful = priorStatus !== "SUCCEEDED"
     && state.attemptStatus === "SUCCEEDED";
+  if (becameSuccessful) {
+    await tx.squareHostedCheckout.updateMany({
+      where: { paymentAttemptId: attempt.id },
+      data: { status: "PAID" },
+    });
+    // The balance just moved: every other open Pay on Square link was quoted against the old one.
+    await invalidateHostedCheckoutsInTransaction(tx, {
+      registrationId: attempt.registrationId,
+      reason: "ANOTHER_PAYMENT_RECORDED",
+      now,
+      exceptPaymentAttemptId: attempt.id,
+    });
+  }
 
   // The surcharge joins the registration total only now, on the transition to
   // succeeded, which is also what makes it idempotent: a webhook repeating a
@@ -766,7 +1027,7 @@ async function applyProviderPayment(
   return {
     attempt: updated,
     pendingMessageIds: receipt?.pendingMessageIds ?? [],
-  } satisfies AppliedProviderPayment;
+  };
 }
 
 async function processPaymentMessagesAfterCommit(messageIds: string[]) {
@@ -775,6 +1036,15 @@ async function processPaymentMessagesAfterCommit(messageIds: string[]) {
     await processQueuedMessageIdsAfterCommit(messageIds);
   } catch (error) {
     logError("Payment receipt processing failed after payment commit", error);
+  }
+}
+
+async function dispatchPaymentAlerts(alerts: Alert[] | undefined) {
+  if (!alerts || alerts.length === 0) return;
+  try {
+    await dispatchAlerts(alerts);
+  } catch (error) {
+    logError("Payment alert dispatch failed after payment commit", error);
   }
 }
 
@@ -916,6 +1186,11 @@ async function createSquarePaymentWithAuthorization(
   if (prepared.operation === "RETURN_EXISTING") {
     return resultFromAttempt(prepared.attempt);
   }
+  // Links withdrawn by starting this attempt are deleted at Square without holding the payment up.
+  await flushHostedDeletionsAfterResponse({
+    registrationId: prepared.attempt.registrationId,
+    configuration,
+  });
 
   let provider: SquarePaymentResult;
   try {
@@ -975,6 +1250,13 @@ async function createSquarePaymentWithAuthorization(
     );
   });
   await processPaymentMessagesAfterCommit(applied.pendingMessageIds);
+  await dispatchPaymentAlerts(applied.alerts);
+  if (applied.attempt.status === "SUCCEEDED") {
+    await flushHostedDeletionsAfterResponse({
+      registrationId: applied.attempt.registrationId,
+      configuration,
+    });
+  }
   const result = resultFromAttempt(applied.attempt);
   if (result.status === "FAILED" || result.status === "CANCELED") {
     throw new SquarePaymentOperationError(
@@ -1236,6 +1518,14 @@ async function applyPaymentWebhook(
       payment.id
     );
   }
+  // A payment made through a hosted "Pay on Square" link has an `order_id` and no `reference_id`;
+  // the order id stored when the link was created is how it finds its attempt (#327).
+  const hosted = payment.order_id
+    ? await tx.squareHostedCheckout.findUnique({
+        where: { providerOrderId: payment.order_id },
+        select: { paymentAttemptId: true },
+      })
+    : null;
   const attempt = await tx.paymentAttempt.findFirst({
     where: {
       provider: "SQUARE",
@@ -1243,6 +1533,7 @@ async function applyPaymentWebhook(
       OR: [
         { providerPaymentId: payment.id },
         ...(payment.reference_id ? [{ id: payment.reference_id }] : []),
+        ...(hosted ? [{ id: hosted.paymentAttemptId }] : []),
       ],
     },
     include: attemptInclude,
@@ -1255,10 +1546,66 @@ async function applyPaymentWebhook(
       receivedAt,
     );
   }
+  const provider = {
+    id: payment.id,
+    status: payment.status,
+    amountCents: payment.amount_money.amount,
+    currency: payment.amount_money.currency,
+    createdAt: payment.created_at ?? null,
+    updatedAt: payment.updated_at ?? null,
+    orderId: payment.order_id ?? null,
+  };
+  const amountMismatch = payment.amount_money.amount !== attempt.amountCents
+    || payment.amount_money.currency !== attempt.currency;
   if (
-    payment.amount_money.amount !== attempt.amountCents
-    || payment.amount_money.currency !== attempt.currency
+    attempt.channel === "HOSTED_LINK"
+    && internalPaymentState(payment.status).attemptStatus === "SUCCEEDED"
   ) {
+    // Money Square has taken through a hosted order that does not fit the one quote this link
+    // stands for: a second payment on an order that already has one, or an amount other than the
+    // quote (a split payment). Neither is a valid payment of this balance; both are held as
+    // evidence for staff, and the winner's attempt is left exactly as it is.
+    const secondPayment = attempt.status === "SUCCEEDED"
+      && attempt.providerPaymentId !== null
+      && attempt.providerPaymentId !== payment.id;
+    if (secondPayment || amountMismatch) {
+      const reason = secondPayment ? "SECOND_PAYMENT_ON_ORDER" : "AMOUNT_MISMATCH";
+      const held = await recordDuplicateCharge(
+        tx,
+        attempt,
+        provider,
+        providerTimestamp(payment.updated_at ?? payment.created_at ?? null, event.occurredAt),
+        receivedAt,
+        "WEBHOOK",
+        { reason, winningPaymentId: attempt.paymentId },
+        { holdOnAttempt: false },
+      );
+      await tx.squareWebhookEvent.create({
+        data: {
+          eventId: attempt.eventId,
+          paymentAttemptId: attempt.id,
+          providerEventId: event.providerEventId,
+          eventType: event.eventType,
+          objectId: payment.id,
+          payloadHash,
+          status: "PROCESSED",
+          reason: `Held for review: ${duplicateReasonText[reason]}.`,
+          occurredAt: event.occurredAt,
+          receivedAt,
+          processedAt: receivedAt,
+        },
+      });
+      return {
+        status: "PROCESSED" as const,
+        duplicate: false,
+        paymentStatus: attempt.status,
+        pendingMessageIds: held.pendingMessageIds,
+        alerts: held.alerts ?? [],
+        registrationId: attempt.registrationId,
+      };
+    }
+  }
+  if (amountMismatch) {
     await tx.auditLog.create({
       data: {
         eventId: attempt.eventId,
@@ -1293,14 +1640,81 @@ async function applyPaymentWebhook(
     });
     return { status: "IGNORED" as const, duplicate: false };
   }
-  const provider: SquarePaymentResult = {
-    id: payment.id,
-    status: payment.status,
-    amountCents: payment.amount_money.amount,
-    currency: payment.amount_money.currency,
-    createdAt: payment.created_at ?? null,
-    updatedAt: payment.updated_at ?? null,
-  };
+  if (attempt.channel === "HOSTED_LINK") {
+    const incoming = internalPaymentState(payment.status).attemptStatus;
+    if (incoming === "PENDING") {
+      // Square does not promise delivery in order: an approval that arrives after the decline of
+      // the same payment is older news and must not put the attempt back in flight.
+      const declined = await tx.squareWebhookEvent.findFirst({
+        where: {
+          paymentAttemptId: attempt.id,
+          objectId: payment.id,
+          reason: hostedDeclineReason,
+          occurredAt: { gte: event.occurredAt },
+        },
+        select: { id: true },
+      });
+      if (declined) {
+        await tx.squareWebhookEvent.create({
+          data: {
+            eventId: attempt.eventId,
+            paymentAttemptId: attempt.id,
+            providerEventId: event.providerEventId,
+            eventType: event.eventType,
+            objectId: payment.id,
+            payloadHash,
+            status: "IGNORED",
+            reason: "Older than a decline already recorded for this payment.",
+            occurredAt: event.occurredAt,
+            receivedAt,
+            processedAt: receivedAt,
+          },
+        });
+        return { status: "IGNORED" as const, duplicate: false };
+      }
+    }
+    if (incoming === "FAILED" || incoming === "CANCELED") {
+      // A declined card on Square's hosted page is not the end of the link: the payer can try
+      // again on the same page. Only an attempt already tracking this very payment steps back.
+      if (attempt.providerPaymentId === payment.id && attempt.status === "PENDING") {
+        await tx.paymentAttempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: "PROCESSING",
+            providerPaymentId: null,
+            providerStatus: payment.status,
+            providerStatusAt: providerTimestamp(
+              payment.updated_at ?? payment.created_at ?? null,
+              event.occurredAt,
+            ),
+            activeRegistrationKey: null,
+          },
+        });
+        if (attempt.payment) {
+          await tx.payment.update({
+            where: { id: attempt.payment.id },
+            data: { status: "FAILED" },
+          });
+        }
+      }
+      await tx.squareWebhookEvent.create({
+        data: {
+          eventId: attempt.eventId,
+          paymentAttemptId: attempt.id,
+          providerEventId: event.providerEventId,
+          eventType: event.eventType,
+          objectId: payment.id,
+          payloadHash,
+          status: "PROCESSED",
+          reason: hostedDeclineReason,
+          occurredAt: event.occurredAt,
+          receivedAt,
+          processedAt: receivedAt,
+        },
+      });
+      return { status: "PROCESSED" as const, duplicate: false };
+    }
+  }
   const applied = await applyProviderPayment(
     tx,
     attempt,
@@ -1321,6 +1735,9 @@ async function applyPaymentWebhook(
       objectId: payment.id,
       payloadHash,
       status: "PROCESSED",
+      reason: applied.attempt.duplicateReason
+        ? `Duplicate charge: ${duplicateReasonText[applied.attempt.duplicateReason] ?? applied.attempt.duplicateReason}.`
+        : null,
       occurredAt: event.occurredAt,
       receivedAt,
       processedAt: receivedAt,
@@ -1331,6 +1748,8 @@ async function applyPaymentWebhook(
     duplicate: false,
     paymentStatus: applied.attempt.status,
     pendingMessageIds: applied.pendingMessageIds,
+    alerts: applied.alerts ?? [],
+    registrationId: attempt.registrationId,
   };
 }
 
@@ -1373,7 +1792,21 @@ async function applyRefundWebhook(
       providerRefund.id
     );
   }
-  const payment = await tx.payment.findFirst({
+  const refundedPaymentInclude = {
+    paymentAttempt: true,
+    refunds: true,
+    registration: { select: { confirmationCode: true } },
+  } satisfies Prisma.PaymentInclude;
+  // A payment held as evidence (#327) may sit beside the attempt rather than on it.
+  const heldCandidate = await tx.squareDuplicateCharge.findUnique({
+    where: { providerPaymentId: providerRefund.payment_id },
+    select: { paymentId: true, reason: true, environment: true },
+  });
+  // Only this environment's records: a Sandbox refund never resolves a Production exception.
+  const heldRecord = heldCandidate?.environment === configuration.environment
+    ? heldCandidate
+    : null;
+  const payment = (await tx.payment.findFirst({
     where: {
       externalReference: providerRefund.payment_id,
       method: "CARD_REFERENCE",
@@ -1385,12 +1818,13 @@ async function applyRefundWebhook(
         },
       },
     },
-    include: {
-      paymentAttempt: true,
-      refunds: true,
-      registration: { select: { confirmationCode: true } },
-    },
-  });
+    include: refundedPaymentInclude,
+  })) ?? (heldRecord?.paymentId
+    ? await tx.payment.findFirst({
+        where: { id: heldRecord.paymentId, method: "CARD_REFERENCE" },
+        include: refundedPaymentInclude,
+      })
+    : null);
   if (!payment) {
     return storeIgnoredWebhook(
       tx,
@@ -1454,7 +1888,13 @@ async function applyRefundWebhook(
   // Only on a full reversal, and only on the transition into SUCCEEDED: a
   // partial refund leaves the fee, because the card transaction it paid for
   // did happen.
-  const surchargeCents = payment.paymentAttempt?.surchargeCents ?? 0;
+  const duplicateReason = heldRecord?.reason
+    ?? payment.paymentAttempt?.duplicateReason
+    ?? null;
+  // A duplicate charge never added its surcharge to the total, so refunding it gives none back.
+  const surchargeCents = duplicateReason
+    ? 0
+    : payment.paymentAttempt?.surchargeCents ?? 0;
   if (
     surchargeCents > 0
     && effectiveStatus === "SUCCEEDED"
@@ -1489,6 +1929,48 @@ async function applyRefundWebhook(
             surchargeCents,
             refundedCents,
             resultingTotalCents: moneyToCents(registration.totalAmount),
+            source: "WEBHOOK",
+          },
+        },
+      });
+    }
+  }
+
+  if (
+    duplicateReason
+    && effectiveStatus === "SUCCEEDED"
+    && existing?.status !== "SUCCEEDED"
+  ) {
+    const paymentAmountCents = Math.round(Number(payment.amount) * 100);
+    const refundedCents = payment.refunds.reduce(
+      (total, priorRefund) => total + (
+        priorRefund.id !== refund.id && priorRefund.status === "SUCCEEDED"
+          ? Math.round(Number(priorRefund.amount) * 100)
+          : 0
+      ),
+      amountCents,
+    );
+    if (refundedCents >= paymentAmountCents) {
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: { status: "VOIDED" },
+      });
+      await tx.squareDuplicateCharge.updateMany({
+        where: { providerPaymentId: providerRefund.payment_id, status: "OPEN" },
+        data: { status: "RESOLVED", resolvedAt: receivedAt },
+      });
+      await tx.auditLog.create({
+        data: {
+          eventId: payment.eventId,
+          action: "SQUARE_DUPLICATE_CHARGE_RESOLVED",
+          entityType: "Payment",
+          entityId: payment.id,
+          correlationId: randomUUID(),
+          summary: `The duplicate Square payment for registration ${payment.registration.confirmationCode} was fully refunded.`,
+          metadata: {
+            providerPaymentId: providerRefund.payment_id,
+            providerRefundId: providerRefund.id,
+            refundedCents,
             source: "WEBHOOK",
           },
         },
@@ -1611,6 +2093,19 @@ export async function processSquareWebhook(
     ? result.pendingMessageIds
     : [];
   await processPaymentMessagesAfterCommit(pendingMessageIds);
+  if ("alerts" in result) await dispatchPaymentAlerts(result.alerts);
+  if (
+    "paymentStatus" in result
+    && result.paymentStatus === "SUCCEEDED"
+    && "registrationId" in result
+  ) {
+    // The balance moved, so withdraw this registration's other open links at Square. Best effort
+    // and not waited for: whatever it misses, the sweep deletes.
+    await flushHostedDeletionsAfterResponse({
+      configuration,
+      registrationId: result.registrationId,
+    });
+  }
   if ("pendingMessageIds" in result && "paymentStatus" in result) {
     return {
       status: result.status,
