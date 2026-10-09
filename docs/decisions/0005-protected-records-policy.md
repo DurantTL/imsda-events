@@ -506,14 +506,18 @@ human can accept, change or reject them before any real record is stored.
 - **Youth Director and UltraCamp:** not in the first version. Revisit later.
 - **Encryption key:** moved out of the env file into a protected file, with a
   separate tested backup (#876). Database backups go to Cloudflare R2 (#875).
+- **Event health staff:** the health permission stays event-scoped (given on
+  an event membership), not conference-wide.
+- **Registrar entry:** Registrars get no health access, to enter or to read.
+- **Refused attempts:** refused attempts by signed-in staff are audited too.
+- **Training:** everyone who holds health access completes short training
+  before it is granted.
 
 ### Still open (blocking production use)
 
 These are the remaining decisions from section 6 of the options report plus
 questions this build raised.
-- **Event staff scope.** The health role is event-scoped here because the
-  permission lives on an event membership. Confirm that is wanted, rather than
-  a conference-wide health role.
+
 - **Coordinator window start.** The window has no start bound of its own (a
   member can only be an attendee after registering). Confirm.
 - **Backup retention and legal hold.** How long off-site backup copies are
@@ -522,13 +526,8 @@ questions this build raised.
   attendance and activity permission, photocopying) are placeholders in the code
   and must be replaced with the verbatim 2026 text before use.
 - **Typed signature versus signature evidence** (#150) when it ships.
-- **Registrar entry.** The options report lets a Registrar enter but not read.
-  #611 grants no Registrar access; confirm.
 - **Coordinator entry point.** #611 adds the coordinator and staff pages but
   no links to them; #658's event sheet is the natural place to link from.
-- **Denied-attempt auditing.** Whether refused attempts by signed-in staff
-  should also be audited (the options report asks for it).
-- **Training** for everyone who holds access.
 
 ### Prerequisites before real records
 
