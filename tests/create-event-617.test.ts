@@ -256,7 +256,7 @@ describe("Copy from a previous event with a realistic source (#617)", () => {
     })));
     const offerings = sessions.flatMap((session) => honorRows.slice(0, 20).map((row, index) => ({
       id: `offering_${session.id}_${index}`, honorId: `honor_${row.honor + index}`, honors: [{ honor: { id: `honor_${row.honor + index}`, code: `H${row.honor + index}`, name: `Honor ${row.honor + index}`, isActive: true } }],
-      sessionId: session.id, session: { name: session.name }, span: "SINGLE_SESSION", capacity: 30, minimumAge: null, perClubLimit: null,
+      sessionId: session.id, session: { name: session.name }, span: "SINGLE_SESSION", capacity: 30, minimumAge: null, minimumClassLevel: null, prerequisites: [], perClubLimit: null,
       teacherName: "Synthetic Teacher", location: "", additionalCostCents: null, requirementNote: "", isActive: true, site: null,
     })));
     return { locations, sessions, offerings };

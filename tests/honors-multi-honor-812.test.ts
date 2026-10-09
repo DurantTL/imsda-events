@@ -222,6 +222,20 @@ describe("the honor multi-select on the class form", () => {
     expect(html).toContain('placeholder="Type to search honors"');
   });
 
+  it("names the prerequisite widget apart from the honors-taught one (#832)", () => {
+    const taught = render();
+    const prerequisite = render({ kind: "prerequisite" });
+    expect(taught).toContain('aria-label="Chosen honors (2)"');
+    expect(taught).toContain('data-testid="honor-multi-taught"');
+    expect(taught).toContain('data-testid="honor-multi-options"');
+    expect(prerequisite).toContain('aria-label="Chosen prerequisite honors (2)"');
+    expect(prerequisite).toContain('placeholder="Type to search prerequisite honors"');
+    expect(prerequisite).toContain('data-testid="honor-multi-prerequisite"');
+    expect(prerequisite).toContain('data-testid="honor-multi-prerequisite-options"');
+    expect(prerequisite).not.toContain('aria-label="Chosen honors');
+    expect(render({ kind: "prerequisite", value: [] })).toContain("No prerequisite honor chosen.");
+  });
+
   it("says when nothing is chosen yet", () => {
     expect(render({ value: [] })).toContain("No honor chosen yet.");
   });

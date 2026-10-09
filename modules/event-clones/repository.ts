@@ -107,7 +107,7 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
     }),
     await db.honorOffering.findMany({
       where: { eventId }, orderBy: [{ sessionId: "asc" }, { honorId: "asc" }],
-      include: { honors: offeringHonorsSelect, session: { select: { name: true } }, site: { select: { name: true, normalizedName: true } } },
+      include: { honors: offeringHonorsSelect, prerequisites: { select: { honorId: true } }, session: { select: { name: true } }, site: { select: { name: true, normalizedName: true } } },
     }),
     await db.merchandiseProduct.count({ where: { eventId } }),
     await db.eventPaymentInstructionVersion.count({ where: { eventId } }),
@@ -199,6 +199,8 @@ async function loadSourceConfiguration(db: Db, eventId: string): Promise<SourceC
       honorName: summarizeOfferingHonors(offering.honors).honorName, sessionId: offering.sessionId,
       sessionName: offering.session?.name ?? null, span: offering.span, capacity: offering.capacity,
       minimumAge: offering.minimumAge, perClubLimit: offering.perClubLimit, teacherName: offering.teacherName,
+      // The minimum class level and prerequisite honors (#832) are carried over as they are; the catalog is shared by every event.
+      minimumClassLevel: offering.minimumClassLevel, prerequisiteHonorIds: offering.prerequisites.map((row) => row.honorId).sort(),
       location: offering.location, isActive: offering.isActive,
       additionalCostCents: offering.additionalCostCents, requirementNote: offering.requirementNote,
       // An all-sessions class's own site (#589), matched by name in the new event.
@@ -541,6 +543,7 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
         const offeringRows: Prisma.HonorOfferingCreateManyInput[] = [];
         // A class that teaches several honors (#812) keeps them all; the primary's row comes from the trigger.
         const extraHonorRows: Prisma.HonorOfferingHonorCreateManyInput[] = [];
+        const prerequisiteRows: Prisma.HonorOfferingPrerequisiteCreateManyInput[] = [];
         let offeringsCopied = 0;
         let offeringsSkipped = 0;
         for (const offering of config.honorOfferings) {
@@ -571,12 +574,15 @@ export async function cloneEvent(actorUserId: string, rawInput: unknown) {
             perClubLimit: reviewedOfferings.get(offering.id)!.perClubLimit,
             // Carried over as it is; shown in the preview.
             minimumAge: offering.minimumAge,
+            minimumClassLevel: offering.minimumClassLevel ?? null,
             teacherName: offering.teacherName, location: offering.location, isActive: offering.isActive,
             additionalCostCents: offering.additionalCostCents, requirementNote: offering.requirementNote,
           });
+          for (const honorId of offering.prerequisiteHonorIds ?? []) prerequisiteRows.push({ offeringId: newOfferingId, honorId });
           offeringsCopied += 1;
         }
         if (offeringRows.length > 0) await tx.honorOffering.createMany({ data: offeringRows });
+        if (prerequisiteRows.length > 0) await tx.honorOfferingPrerequisite.createMany({ data: prerequisiteRows });
         if (extraHonorRows.length > 0) await tx.honorOfferingHonor.createMany({ data: extraHonorRows });
         if (sessionsWithoutSite > 0) skipped.honorSessionsWithoutSite = sessionsWithoutSite;
         if (offeringsSkipped > 0) skipped.honorOfferingsDuplicate = offeringsSkipped;

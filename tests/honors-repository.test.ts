@@ -32,6 +32,8 @@ function fakeDatabase() {
     offerings: [] as Row[],
     /** One row per honor a class teaches (#812); the database trigger writes the primary's. */
     offeringHonors: [] as Row[],
+    /** One row per prerequisite honor of a class (#832). */
+    offeringPrerequisites: [] as Row[],
     locations: [] as Row[],
     /** Enrollments by offering, for the "clubs already picked" guard (#589). */
     pickedOfferingIds: [] as string[],
@@ -64,6 +66,7 @@ function fakeDatabase() {
   const withOfferingRelations = (offering: Row) => ({
     ...offering,
     honors: honorRowsOf(offering.id),
+    prerequisites: db.offeringPrerequisites.filter((row) => row.offeringId === offering.id).map((row) => ({ ...row, honor: db.honors.find((honor) => honor.id === row.honorId) })),
     honor: db.honors.find((honor) => honor.id === offering.honorId),
     session: db.sessions.find((session) => session.id === offering.sessionId) ?? null,
     site: db.locations.find((location) => location.id === offering.locationId) ?? null,
@@ -192,6 +195,17 @@ function fakeDatabase() {
       deleteMany: async ({ where }: { where: { id: { in: string[] } } }) => {
         db.offerings = db.offerings.filter((offering) => !where.id.in.includes(offering.id));
         db.offeringHonors = db.offeringHonors.filter((row) => db.offerings.some((offering) => offering.id === row.offeringId));
+        db.offeringPrerequisites = db.offeringPrerequisites.filter((row) => db.offerings.some((offering) => offering.id === row.offeringId));
+      },
+    },
+    honorOfferingPrerequisite: {
+      findMany: async ({ where }: { where: { offeringId: string } }) => db.offeringPrerequisites.filter((row) => row.offeringId === where.offeringId),
+      createMany: async ({ data }: { data: Row[] }) => {
+        for (const row of data) db.offeringPrerequisites.push({ ...row, id: id("prereq") });
+        return { count: data.length };
+      },
+      deleteMany: async ({ where }: { where: { offeringId: string; honorId: { notIn: string[] } } }) => {
+        db.offeringPrerequisites = db.offeringPrerequisites.filter((row) => !(row.offeringId === where.offeringId && !where.honorId.notIn.includes(row.honorId as string)));
       },
     },
     honorOfferingHonor: {
@@ -452,6 +466,52 @@ describe("honor offerings", () => {
   });
 });
 
+describe("class level and prerequisite honors (#832)", () => {
+  const prerequisitesOf = (offeringId: string) => fake.db.offeringPrerequisites.filter((row) => row.offeringId === offeringId).map((row) => row.honorId).sort();
+
+  it("saves the minimum level and prerequisites with a new class, and returns them in the setup", async () => {
+    const setup = await createHonorOffering("site-a", offeringInput({ minimumClassLevel: "GUIDE", prerequisiteHonorIds: ["honor-birds"] }), "staff-1");
+    expect(fake.db.offerings[0]).toMatchObject({ minimumClassLevel: "GUIDE" });
+    expect(prerequisitesOf(fake.db.offerings[0].id)).toEqual(["honor-birds"]);
+    expect(setup.offerings[0]).toMatchObject({ minimumClassLevel: "GUIDE", prerequisiteHonorIds: ["honor-birds"] });
+    expect(setup.offerings[0].prerequisiteHonors.map((honor) => honor.name)).toEqual(["Birds"]);
+    expect(mocks.writeAuditLog.mock.calls.at(-1)![0].metadata).toMatchObject({ minimumClassLevel: "GUIDE", prerequisiteHonorIds: ["honor-birds"] });
+  });
+
+  it("makes a class without either as before", async () => {
+    await createHonorOffering("site-a", offeringInput(), "staff-1");
+    expect(fake.db.offerings[0].minimumClassLevel ?? null).toBeNull();
+    expect(prerequisitesOf(fake.db.offerings[0].id)).toEqual([]);
+  });
+
+  it("refuses a prerequisite the class teaches, one that doesn't exist, and a new inactive one", async () => {
+    await expect(createHonorOffering("site-a", offeringInput({ prerequisiteHonorIds: ["honor-knots"] }), "staff-1"))
+      .rejects.toMatchObject({ code: "OFFERING_CONFLICT", message: expect.stringContaining("can't also be a prerequisite") });
+    await expect(createHonorOffering("site-a", offeringInput({ prerequisiteHonorIds: ["honor-missing"] }), "staff-1"))
+      .rejects.toMatchObject({ code: "HONOR_NOT_FOUND" });
+    await expect(createHonorOffering("site-a", offeringInput({ prerequisiteHonorIds: ["honor-old"] }), "staff-1"))
+      .rejects.toMatchObject({ code: "HONOR_INACTIVE" });
+    expect(fake.db.offerings).toHaveLength(0);
+  });
+
+  it("replaces the set on an edit, and leaves it alone when the edit names neither", async () => {
+    await createHonorOffering("site-a", offeringInput({ prerequisiteHonorIds: ["honor-birds"], minimumClassLevel: "RANGER" }), "staff-1");
+    const offeringId = fake.db.offerings[0].id;
+    await updateHonorOffering("site-a", offeringId, { capacity: 3 }, "staff-1");
+    expect(prerequisitesOf(offeringId)).toEqual(["honor-birds"]);
+    expect(fake.db.offerings[0]).toMatchObject({ minimumClassLevel: "RANGER" });
+    await updateHonorOffering("site-a", offeringId, { prerequisiteHonorIds: [], minimumClassLevel: null }, "staff-1");
+    expect(prerequisitesOf(offeringId)).toEqual([]);
+    expect(fake.db.offerings[0]).toMatchObject({ minimumClassLevel: null });
+  });
+
+  it("won't let an edit make the class teach a honor it requires", async () => {
+    await createHonorOffering("site-a", offeringInput({ prerequisiteHonorIds: ["honor-birds"] }), "staff-1");
+    await expect(updateHonorOffering("site-a", fake.db.offerings[0].id, { honorIds: ["honor-birds"] }, "staff-1"))
+      .rejects.toMatchObject({ code: "OFFERING_CONFLICT" });
+  });
+});
+
 describe("copying a site's classes", () => {
   beforeEach(async () => {
     await createHonorOffering("site-a", offeringInput(), "staff-1");
@@ -482,6 +542,17 @@ describe("copying a site's classes", () => {
       expect.objectContaining({ honorId: "honor-birds", sessionId: null, span: "ALL_SESSIONS" }),
     ]));
     expect(mocks.writeAuditLog.mock.calls[0][0]).toMatchObject({ action: "HONOR_OFFERINGS_COPIED", eventId: "site-b" });
+  });
+
+  it("copies a class's minimum level and prerequisite honors with it (#832)", async () => {
+    const knots = fake.db.offerings.find((offering) => offering.honorId === "honor-knots")!;
+    knots.minimumClassLevel = "GUIDE";
+    fake.db.offeringPrerequisites.push({ id: "prereq-seed", offeringId: knots.id, honorId: "honor-birds" });
+    const plan = await previewHonorCopy("site-b", "site-a");
+    await applyHonorCopy("site-b", "site-a", plan.fingerprint, "staff-1");
+    const copied = fake.db.offerings.find((offering) => offering.eventId === "site-b" && offering.honorId === "honor-knots")!;
+    expect(copied).toMatchObject({ minimumClassLevel: "GUIDE" });
+    expect(fake.db.offeringPrerequisites.filter((row) => row.offeringId === copied.id).map((row) => row.honorId)).toEqual(["honor-birds"]);
   });
 
   it("never replaces what the target already has", async () => {

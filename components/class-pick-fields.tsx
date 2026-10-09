@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import { ClassRequirementNotes } from "@/components/class-requirement-notes";
 import { seatsNote, unavailableReason, type PublicSeatView, type SeatOwnerNoun } from "@/modules/honors/class-picker-view";
 import type { PickingAttendee } from "@/modules/honors/registration-picks";
 import { sortHonorSessions } from "@/modules/honors/session-order";
@@ -20,16 +21,21 @@ type Offering = RegistrationHonorsCatalog["offerings"][number] | PublicSeatView<
  */
 export function ClassPickFields({
   attendee,
+  confirmed = [],
   noun = "club",
   offerings,
   onChange,
+  onConfirmedChange,
   picks,
   sessions,
 }: {
   attendee: PickingAttendee;
+  /** Classes the director confirmed this person meets (#832); a group has no one to confirm and passes none. */
+  confirmed?: readonly string[];
   noun?: SeatOwnerNoun;
   offerings: readonly Offering[];
   onChange: (offeringIds: string[]) => void;
+  onConfirmedChange?: (offeringIds: string[]) => void;
   picks: readonly string[];
   sessions: RegistrationHonorsCatalog["sessions"];
 }) {
@@ -59,13 +65,14 @@ export function ClassPickFields({
   }
 
   const option = (offering: Offering) => {
-    const reason = unavailableReason(offering, false, attendee);
+    const reason = unavailableReason(offering, false, attendee, { canConfirm: noun === "club" });
     return (
       <option disabled={Boolean(reason)} key={offering.id} value={offering.id}>
         {offering.honorName} ({reason ?? seatsNote(offering, false, attendee, noun)})
       </option>
     );
   };
+  const picked = picks.map((id) => offeringById.get(id)).filter((offering): offering is Offering => Boolean(offering));
 
   if (offerings.length === 0) return null;
   return (
@@ -97,6 +104,17 @@ export function ClassPickFields({
           </label>
         );
       })}
+      <ClassRequirementNotes
+        canConfirm={noun === "club"}
+        canOverride={false}
+        confirmed={confirmed}
+        heldIds={[]}
+        offerings={picked}
+        onConfirmedChange={(offeringId, checked) => onConfirmedChange?.(checked ? [...new Set([...confirmed, offeringId])] : confirmed.filter((id) => id !== offeringId))}
+        onReasonChange={() => undefined}
+        person={attendee}
+        reasons={{}}
+      />
     </>
   );
 }

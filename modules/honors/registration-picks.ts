@@ -6,12 +6,19 @@
  */
 import { z } from "zod";
 import { clubAttendeeClientId, clubGuestClientId, guestIsAdult } from "@/modules/club-registrations/domain";
+import type { ClubClassLevel } from "@/modules/club-rosters/domain";
 import { consumesClassSeat, selectionProblem, type SelectableOffering } from "@/modules/honors/enrollment-domain";
 import { sessionVisibleAtLocation } from "@/modules/honors/locations";
 
 /** The picks as sent by the browser: client id to class ids, for at most 60 people (the same cap as the class save). */
 export const honorSelectionsSchema = z.record(z.string().min(1).max(80), z.array(z.string().min(1).max(64)).max(6))
   .refine((picks) => Object.keys(picks).length <= 60, "Too many people in one save.");
+
+/**
+ * The classes the director confirmed each person meets (#832): client id to class ids, the same shape as the picks.
+ * Only for a class level missing from the roster or a prerequisite honor with no completed record.
+ */
+export const honorConfirmationsSchema = honorSelectionsSchema;
 
 /** Where the "your honors weren't saved" note waits across the refresh after submitting; per club and event. */
 export function honorsNoteKey(organizationId: string, eventId: string) {
@@ -26,6 +33,9 @@ export type PickingAttendee = {
   ageOnEventDate: number | null;
   attendeeType: "YOUTH" | "STAFF" | "ADULT" | "UNDERAGE" | null;
   consumesSeat: boolean;
+  /** The roster's class level and the prerequisite honors the member has completed (#832); empty for an extra person. */
+  classLevel?: ClubClassLevel | null;
+  completedHonorIds?: readonly string[];
 };
 
 export function pickingAttendees(input: {
@@ -34,6 +44,8 @@ export function pickingAttendees(input: {
   guests: ReadonlyArray<{ id: string; firstName: string; lastName: string; age: number }>;
   /** Ages typed in for roster people with no birth date (#639), by roster member id. */
   rosterAges?: Readonly<Record<string, number>>;
+  /** Roster class levels and completed prerequisite honors, by roster member id (#832). */
+  memberRequirements?: Readonly<Record<string, { classLevel: ClubClassLevel | null; completedHonorIds: readonly string[] }>>;
 }): PickingAttendee[] {
   const selected = new Set(input.selectedMemberIds);
   const people = input.roster.filter((person) => selected.has(person.memberId)).map((person) => ({
@@ -44,6 +56,8 @@ export function pickingAttendees(input: {
     ageOnEventDate: person.ageOnEventDate ?? input.rosterAges?.[person.memberId] ?? null,
     attendeeType: person.attendeeType,
     consumesSeat: consumesClassSeat(person.attendeeType),
+    classLevel: input.memberRequirements?.[person.memberId]?.classLevel ?? null,
+    completedHonorIds: input.memberRequirements?.[person.memberId]?.completedHonorIds ?? [],
   }));
   // Extra people count as adults from 18, as the registration itself decides.
   const guests = input.guests.map((guest) => {
@@ -55,6 +69,8 @@ export function pickingAttendees(input: {
       ageOnEventDate: guest.age,
       attendeeType,
       consumesSeat: consumesClassSeat(attendeeType),
+      classLevel: null,
+      completedHonorIds: [],
     };
   });
   return [...people, ...guests];
@@ -65,6 +81,19 @@ type PickableOffering = SelectableOffering & { siteId: string | null };
 /** The classes this registration's site offers: the same visibility rule the server applies on save (#589). */
 export function offeringsAtLocation<T extends { siteId: string | null; isActive: boolean }>(offerings: readonly T[], locationId: string | null) {
   return offerings.filter((offering) => offering.isActive && sessionVisibleAtLocation(offering.siteId, locationId));
+}
+
+/** Drops confirmations for classes no longer picked, so a stale tick is never sent or recorded (#832). */
+export function pruneConfirmations(
+  confirmations: Readonly<Record<string, readonly string[]>>,
+  picks: Readonly<Record<string, readonly string[]>>,
+) {
+  const next: Record<string, string[]> = {};
+  for (const [clientId, ids] of Object.entries(confirmations)) {
+    const kept = ids.filter((id) => (picks[clientId] ?? []).includes(id));
+    if (kept.length > 0) next[clientId] = kept;
+  }
+  return next;
 }
 
 /** Drops picks for people no longer going and classes not offered here, so a stale draft never blocks the form. */
@@ -89,10 +118,12 @@ export function firstPickProblem(
   picks: Readonly<Record<string, readonly string[]>>,
   attendees: readonly PickingAttendee[],
   offerings: readonly PickableOffering[],
+  /** What the director confirmed, by client id (#832). A "Group" registration has no one to confirm and sends none. */
+  confirmations: Readonly<Record<string, readonly string[]>> = {},
 ) {
   const byId = new Map(offerings.map((offering) => [offering.id, offering]));
   for (const attendee of attendees) {
-    const problem = selectionProblem(attendee, picks[attendee.clientId] ?? [], byId);
+    const problem = selectionProblem(attendee, picks[attendee.clientId] ?? [], byId, new Set(), { confirmed: new Set(confirmations[attendee.clientId] ?? []) });
     if (problem) return `${attendee.firstName} ${attendee.lastName}: ${problem}`.trim();
   }
   return null;

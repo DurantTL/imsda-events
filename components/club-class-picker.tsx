@@ -5,6 +5,7 @@ import { Award, Save } from "lucide-react";
 import { formatCalendarDate } from "@/modules/club-registrations/domain";
 import { NeedsAttention, StatusComplete } from "@/components/needs-attention";
 import { ClassStatus } from "@/components/class-status";
+import { ClassRequirementNotes } from "@/components/class-requirement-notes";
 import { classChoiceReadiness, readinessSummaryText } from "@/modules/honors/class-readiness";
 import { attendeeTypeLabel as typeLabel, seatsNote, unavailableReason } from "@/modules/honors/class-picker-view";
 import { honorsNoteKey } from "@/modules/honors/registration-picks";
@@ -19,12 +20,15 @@ type Attendee = ClassSelectionWorkspace["attendees"][number];
  * These checks only guide the director; the server enforces every rule.
  */
 export function ClubClassPicker({
+  canOverrideRequirements = false,
   endpoint,
   eventId,
   initialWorkspace,
   noun = "club",
   organizationId,
 }: {
+  /** True for staff acting as the club's director (#832): they may place someone below a class's level or prerequisites, with a reason. */
+  canOverrideRequirements?: boolean;
   /** Where picks are saved. A club's own route by default; a "Group" contact's private link passes its own (#650). */
   endpoint?: string;
   eventId?: string;
@@ -36,6 +40,9 @@ export function ClubClassPicker({
   const saveUrl = endpoint ?? `/api/attendee/clubs/${encodeURIComponent(organizationId ?? "")}/events/${encodeURIComponent(eventId ?? "")}/classes`;
   const [workspace, setWorkspace] = useState(initialWorkspace);
   const [selections, setSelections] = useState<Record<string, string[]>>(initialWorkspace.selections);
+  // Confirmations of a missing class level or honor record, and staff's reasons for placing someone anyway (#832), by attendee id.
+  const [confirmations, setConfirmations] = useState<Record<string, string[]>>({});
+  const [overrides, setOverrides] = useState<Record<string, Record<string, string>>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -98,14 +105,32 @@ export function ClubClassPicker({
     setError("");
     setNotice("");
     try {
+      // Only what still applies: a tick or reason for a class that is no longer picked is dropped (#832).
+      const pickedNow = (attendeeId: string) => new Set(selections[attendeeId] ?? []);
+      const sentConfirmations = Object.fromEntries(Object.entries(confirmations)
+        .map(([attendeeId, ids]) => [attendeeId, ids.filter((id) => pickedNow(attendeeId).has(id))] as const)
+        .filter(([, ids]) => ids.length > 0));
+      const sentOverrides = Object.fromEntries(Object.entries(overrides)
+        .map(([attendeeId, byClass]) => [attendeeId, Object.fromEntries(Object.entries(byClass).filter(([id, reason]) => pickedNow(attendeeId).has(id) && reason.trim()))] as const)
+        .filter(([, byClass]) => Object.keys(byClass).length > 0));
       const response = await fetch(
         saveUrl,
-        { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selections }) },
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            selections,
+            ...(Object.keys(sentConfirmations).length > 0 ? { confirmations: sentConfirmations } : {}),
+            ...(Object.keys(sentOverrides).length > 0 ? { overrides: sentOverrides } : {}),
+          }),
+        },
       );
       const result = await response.json().catch(() => ({})) as { workspace?: ClassSelectionWorkspace; message?: string };
       if (!response.ok || !result.workspace) throw new Error(result.message ?? "Class choices could not be saved.");
       setWorkspace(result.workspace);
       setSelections(result.workspace.selections);
+      setConfirmations({});
+      setOverrides({});
       // The earlier "your honors weren't saved" note is settled now (#618).
       if (organizationId && eventId) {
         try { sessionStorage.removeItem(honorsNoteKey(organizationId, eventId)); } catch { /* storage is optional */ }
@@ -120,7 +145,7 @@ export function ClubClassPicker({
 
   const option = (offering: Offering, attendee: Attendee) => {
     const heldHere = held(attendee.id, offering.id);
-    const reason = unavailableReason(offering, heldHere, attendee);
+    const reason = unavailableReason(offering, heldHere, attendee, { canOverride: canOverrideRequirements, canConfirm: noun === "club" });
     return (
       <option disabled={Boolean(reason)} key={offering.id} value={offering.id}>
         {offering.honorName} ({reason ?? seatsNote(offering, heldHere, attendee, noun)})
@@ -193,6 +218,20 @@ export function ClubClassPicker({
                   </label>
                 );
               })}
+              <ClassRequirementNotes
+                canConfirm={noun === "club"}
+                canOverride={canOverrideRequirements}
+                confirmed={confirmations[attendee.id] ?? []}
+                heldIds={workspace.selections[attendee.id] ?? []}
+                offerings={chosen.map((id) => offeringById.get(id)).filter((offering): offering is Offering => Boolean(offering))}
+                onConfirmedChange={(offeringId, checked) => setConfirmations((current) => {
+                  const ids = current[attendee.id] ?? [];
+                  return { ...current, [attendee.id]: checked ? [...new Set([...ids, offeringId])] : ids.filter((id) => id !== offeringId) };
+                })}
+                onReasonChange={(offeringId, reason) => setOverrides((current) => ({ ...current, [attendee.id]: { ...(current[attendee.id] ?? {}), [offeringId]: reason } }))}
+                person={attendee}
+                reasons={overrides[attendee.id] ?? {}}
+              />
             </fieldset>
           );
         })}

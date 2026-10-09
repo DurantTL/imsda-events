@@ -1,5 +1,6 @@
 import "server-only";
 
+import { clubClassLevelLabels } from "@/modules/club-rosters/domain";
 import { cache } from "react";
 import { getPrisma } from "@/lib/prisma";
 import { logWarn } from "@/lib/logger";
@@ -58,6 +59,8 @@ async function loadAutoEventInfoCards(eventSlug: string): Promise<EventInfoCards
           locationId: true,
           capacity: true,
           minimumAge: true,
+          minimumClassLevel: true,
+          prerequisites: { select: { honor: { select: { name: true } } } },
           perClubLimit: true,
           teacherName: true,
           additionalCostCents: true,
@@ -119,6 +122,8 @@ async function loadAutoEventInfoCards(eventSlug: string): Promise<EventInfoCards
       teacherName: offering.teacherName,
       capacity: offering.capacity,
       minimumAge: offering.minimumAge,
+      minimumClassLevelLabel: offering.minimumClassLevel ? clubClassLevelLabels[offering.minimumClassLevel] : null,
+      prerequisiteNames: offering.prerequisites.map((row) => row.honor.name).sort((a, b) => a.localeCompare(b)),
       perClubLimit: offering.perClubLimit,
       additionalCostCents: offering.additionalCostCents,
       requirementNote: offering.requirementNote,

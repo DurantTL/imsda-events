@@ -7,7 +7,7 @@ import { clubRegistrationEditInputSchema } from "@/modules/club-registrations/do
 import { amendClubRegistration, submitClubRegistration } from "@/modules/club-registrations/repository";
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
 import { ClassSelectionError, saveRegistrationHonorPicks } from "@/modules/honors/enrollment-repository";
-import { honorSelectionsSchema } from "@/modules/honors/registration-picks";
+import { honorConfirmationsSchema, honorSelectionsSchema } from "@/modules/honors/registration-picks";
 import { publicRegistrationInputSchema } from "@/modules/forms/public-domain";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
@@ -30,9 +30,10 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
     }
     // The picked location travels beside the form answers, never inside them (#413).
     // So do the team's name and the draft it replaces (#809), on an event that lets a club register several teams.
-    const { locationId, honorSelections, teamName, draftKey, ...answers } = z.object({
+    const { locationId, honorSelections, honorConfirmations, teamName, draftKey, ...answers } = z.object({
       locationId: z.string().trim().min(1).max(100).nullish(),
       honorSelections: honorSelectionsSchema.optional(),
+      honorConfirmations: honorConfirmationsSchema.optional(),
       teamName: z.string().max(200).nullish(),
       draftKey: z.string().max(64).optional(),
     }).loose().parse(JSON.parse(body));
@@ -58,7 +59,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
         honors = { error: waitlistedHonorsMessage };
       } else {
         try {
-          honors = await saveRegistrationHonorPicks(organizationId, eventId, actorAttribution(access.actor), honorSelections);
+          honors = await saveRegistrationHonorPicks(organizationId, eventId, actorAttribution(access.actor), honorSelections, new Date(), honorConfirmations ?? {});
         } catch (error) {
           if (!(error instanceof ClassSelectionError)) logError("Saving honors picked during club registration failed", error);
           honors = {

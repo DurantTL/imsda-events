@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ClubClassLevel } from "@/modules/club-rosters/domain";
 import { registrationFormDefinitionSchema } from "@/modules/forms/definition";
 import { isEventMessageTemplateKey, validateMessageTemplate } from "@/modules/communications/templates";
 import { calendarDateSchema, eventNameSchema, eventSlugSchema } from "@/modules/events/schemas";
@@ -263,6 +264,9 @@ export type SourceConfiguration = {
     span: "SINGLE_SESSION" | "ALL_SESSIONS";
     capacity: number;
     minimumAge: number | null;
+    /** Class level and prerequisite honors (#832), copied as they are. */
+    minimumClassLevel?: ClubClassLevel | null;
+    prerequisiteHonorIds?: string[];
     perClubLimit: number | null;
     teacherName: string;
     location: string;

@@ -38,6 +38,9 @@ export type InfoCardOffering = {
   teacherName: string;
   capacity: number;
   minimumAge: number | null;
+  /** The class level label ("Guide") the class starts at, and the names of honors it needs first (#832). */
+  minimumClassLevelLabel?: string | null;
+  prerequisiteNames?: readonly string[];
   perClubLimit: number | null;
   additionalCostCents: number | null;
   requirementNote: string;
@@ -204,6 +207,12 @@ function classEntry(offering: InfoCardOffering, standard: number | null): ClassC
   }
   if (offering.minimumAge !== null) {
     badges.push({ kind: "AGE", text: `Ages ${offering.minimumAge} and up` });
+  }
+  if (offering.minimumClassLevelLabel) {
+    badges.push({ kind: "AGE", text: `Class level ${offering.minimumClassLevelLabel} and up` });
+  }
+  if (offering.prerequisiteNames && offering.prerequisiteNames.length > 0) {
+    badges.push({ kind: "SPECIAL", text: `Needs first: ${offering.prerequisiteNames.join(", ")}` });
   }
   if (offering.additionalCostCents) {
     badges.push({ kind: "COST", text: `Additional cost (paid separately): ${formatCardMoney(offering.additionalCostCents)}` });

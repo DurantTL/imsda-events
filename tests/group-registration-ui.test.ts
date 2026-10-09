@@ -49,7 +49,7 @@ const form = { slug: "club:group", versionId: "v1", versionNumber: 1, definition
 
 const offering = (id: string, honorName: string, extra: Record<string, unknown> = {}) => ({
   id, honorName, honorCode: id, span: "SINGLE_SESSION" as const, sessionId: "s1", sessionName: "Sabbath", sessionOrder: 0,
-  siteId: null, siteName: null, capacity: 10, minimumAge: null, perClubLimit: null, teacherName: "", location: "", isActive: true,
+  siteId: null, siteName: null, capacity: 10, minimumAge: null, minimumClassLevel: null, prerequisiteHonors: [], perClubLimit: null, teacherName: "", location: "", isActive: true,
   seatsTaken: 0, clubSeatsTaken: 0, ...extra,
 });
 
