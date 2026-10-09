@@ -25,6 +25,8 @@ export type StarterEventTemplate = {
   billingMode: "ATTENDEE_PAY" | "DEFERRED_ORGANIZATION_INVOICE";
   collectsShirtSizes: boolean;
   checksAdultBackgrounds: boolean;
+  /** Offers "Pay on Square" beside the card form (#327): the attendee-paid events. */
+  hostedPaymentLink?: boolean;
   /** Locations created on the new event (#593); dates are day offsets from its first day. */
   locations?: readonly TemplateLocation[];
   /** Extra sentence for the starter's description: what staff must check on the draft (#606). */
@@ -75,11 +77,11 @@ const pbeTeamSettings: TeamSettingsInputValues = {
 export const starterEventTemplates: readonly StarterEventTemplate[] = [
   { starterKey: "blank_event", name: "Blank event", formTemplateKey: "blank_form", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: false, checksAdultBackgrounds: false },
   { starterKey: "blank_club_event", name: "Blank club event", formTemplateKey: "blank_club_form", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true },
-  { starterKey: "womens_retreat", name: "Women's Retreat", formTemplateKey: "womens_retreat_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: true, checksAdultBackgrounds: false },
-  { starterKey: "man_camp", name: "Man Camp", formTemplateKey: "man_camp_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: true, checksAdultBackgrounds: false },
+  { starterKey: "womens_retreat", name: "Women's Retreat", formTemplateKey: "womens_retreat_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: true, checksAdultBackgrounds: false, hostedPaymentLink: true },
+  { starterKey: "man_camp", name: "Man Camp", formTemplateKey: "man_camp_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: true, checksAdultBackgrounds: false, hostedPaymentLink: true },
   { starterKey: "spring_camporee", name: "Spring Camporee", formTemplateKey: "spring_camporee_export", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true },
   { starterKey: "fall_camporee", name: "Fall Camporee", formTemplateKey: "fall_camporee", audience: "CLUB", billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true, locations: fallCamporeeLocations },
-  { starterKey: "camp_meeting", name: "Camp Meeting", formTemplateKey: "camp_meeting_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: false, checksAdultBackgrounds: false },
+  { starterKey: "camp_meeting", name: "Camp Meeting", formTemplateKey: "camp_meeting_export", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: false, checksAdultBackgrounds: false, hostedPaymentLink: true },
   {
     starterKey: "pathfinder_bible_experience", name: "Pathfinder Bible Experience", formTemplateKey: "pbe_registration", audience: "CLUB",
     billingMode: "DEFERRED_ORGANIZATION_INVOICE", collectsShirtSizes: false, checksAdultBackgrounds: true,
@@ -102,7 +104,7 @@ export const starterEventTemplates: readonly StarterEventTemplate[] = [
     note: "A school registers its students and is billed after the event, so nothing is paid online.",
   },
   {
-    starterKey: "hispanic_institute", name: "Hispanic Institute of Evangelism", formTemplateKey: "hispanic_institute", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: false, checksAdultBackgrounds: false,
+    starterKey: "hispanic_institute", name: "Hispanic Institute of Evangelism", formTemplateKey: "hispanic_institute", audience: "GENERAL", billingMode: "ATTENDEE_PAY", collectsShirtSizes: false, checksAdultBackgrounds: false, hostedPaymentLink: true,
     note: "The $50 semester registration is the 2026 price. Card payments use the platform's card-fee setting.",
   },
 ];
@@ -160,6 +162,7 @@ export function starterPayload(starter: StarterEventTemplate): EventTemplatePayl
     moduleEnablement: {
       collectsShirtSizes: starter.collectsShirtSizes,
       checksAdultBackgrounds: starter.checksAdultBackgrounds,
+      hostedPaymentLinkEnabled: starter.hostedPaymentLink ?? false,
     },
     ...(starter.locations ? { locations: starter.locations.map((location) => ({ ...location })) } : {}),
     ...(starter.teamSettings ? { teamSettings: starter.teamSettings } : {}),

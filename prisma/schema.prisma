@@ -178,6 +178,30 @@ enum PaymentAttemptStatus {
   CANCELED
 }
 
+/// How the payer reaches Square for an attempt (#327): the embedded Web Payments form, or Square's
+/// own hosted checkout page ("Pay on Square"). Both write the same payment, receipt, and surcharge path.
+enum PaymentAttemptChannel {
+  EMBEDDED
+  HOSTED_LINK
+}
+
+/// CREATING: the attempt exists but Square has not confirmed the link yet. ACTIVE: payable. PAID: a
+/// payment arrived through it (a duplicate is still PAID; the money was taken). INVALIDATED: this
+/// app has withdrawn it; `providerDeletedAt` says whether Square has been told. FAILED: Square
+/// refused to create it.
+enum SquareHostedCheckoutStatus {
+  CREATING
+  ACTIVE
+  PAID
+  INVALIDATED
+  FAILED
+}
+
+enum SquareDuplicateChargeStatus {
+  OPEN
+  RESOLVED
+}
+
 enum RegistrationPaymentChoice {
   CARD
   PAY_LATER
@@ -1431,6 +1455,9 @@ model Event {
   /// Every adult registered is flagged until they have a current Sterling
   /// Volunteers background check on file. Flags only: nothing is blocked.
   checksAdultBackgrounds Boolean          @default(false)
+  /// Offers "Pay on Square" (Square's hosted checkout page) next to the embedded card form (#327).
+  /// Off by default; staff turn it on for attendee-paid events.
+  hostedPaymentLinkEnabled Boolean        @default(false)
   /// A person is a minor at this event when their age on the event's start date is below this (#131).
   ageOfMajority        Int                @default(18)
   attendeeEditPolicy   AttendeeEditPolicy @default(VERIFY_EVERY_EDIT)
@@ -1500,6 +1527,8 @@ model Event {
   waitlistEntries                     RegistrationWaitlistEntry[]
   paymentAttempts                     PaymentAttempt[]
   squareWebhookEvents                 SquareWebhookEvent[]
+  squareHostedCheckouts               SquareHostedCheckout[]
+  squareDuplicateCharges              SquareDuplicateCharge[]
   promoCodes                          PromoCode[]
   promoCodeRedemptions                PromoCodeRedemption[]
   churchSponsorFinanceReviews           ChurchSponsorFinanceReview[]
@@ -2595,6 +2624,8 @@ model Registration {
   waitlistEntry           RegistrationWaitlistEntry?
   accessTokens            RegistrationAccessToken[]
   paymentAttempts         PaymentAttempt[]
+  squareHostedCheckouts   SquareHostedCheckout[]
+  squareDuplicateCharges  SquareDuplicateCharge[]
   promoCodeRedemption     PromoCodeRedemption?
   churchSponsorFinanceReviews ChurchSponsorFinanceReview[]
   operations              RegistrationOperation[]
@@ -2951,6 +2982,13 @@ model PaymentAttempt {
   clientIdempotencyKey      String               @unique
   providerIdempotencyKey    String               @unique
   activeRegistrationKey     String?              @unique
+  /// EMBEDDED unless the payer is using Square's hosted checkout page (#327).
+  channel                   PaymentAttemptChannel @default(EMBEDDED)
+  /// Set when this attempt's payment arrived after another payment had already settled the balance
+  /// it was quoted for (first recorded payment wins). The money was taken, so the payment row is
+  /// kept as PENDING and a `SquareDuplicateCharge` holds the evidence; it never counts toward the
+  /// balance and sends no receipt.
+  duplicateReason           String?
   amountCents               Int
   /// The card processing surcharge inside `amountCents`, for a registration
   /// whose total did not already price one in — a pay-later registrant
@@ -2976,9 +3014,73 @@ model PaymentAttempt {
   registrationAccessToken RegistrationAccessToken? @relation(fields: [registrationAccessTokenId], references: [id], onDelete: SetNull)
   payment                 Payment?                 @relation(fields: [paymentId], references: [id], onDelete: SetNull)
   webhookEvents           SquareWebhookEvent[]
+  hostedCheckout          SquareHostedCheckout?
+  duplicateCharge         SquareDuplicateCharge?
 
   @@index([eventId, status, createdAt])
   @@index([registrationId, createdAt])
+}
+
+/// The server-owned mapping between one hosted "Pay on Square" link and the payment attempt that
+/// owns its amount (#327). The attempt's `amountCents` and `surchargeCents` are the immutable quote;
+/// nothing here restates an amount. Square's order id is how a webhook finds the attempt, because a
+/// payment-link payment carries `order_id` and no `reference_id`.
+model SquareHostedCheckout {
+  id                    String                     @id @default(cuid())
+  eventId               String
+  registrationId        String
+  paymentAttemptId      String                     @unique
+  environment           String
+  status                SquareHostedCheckoutStatus @default(CREATING)
+  providerPaymentLinkId String?                    @unique
+  providerOrderId       String?                    @unique
+  /// Square's hosted page address. Anyone holding it can pay the quoted amount and nothing else,
+  /// so it is not a credential; it is still only ever returned to the registrant who asked.
+  checkoutUrl           String?
+  expiresAt             DateTime
+  invalidationReason    String?
+  invalidatedAt         DateTime?
+  /// Set once Square has deleted the link (which cancels its order), or reported it already gone.
+  providerDeletedAt     DateTime?
+  providerDeleteError   String?
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
+
+  event          Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration   Registration   @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  paymentAttempt PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Cascade)
+
+  @@index([registrationId, status])
+  @@index([status, expiresAt])
+}
+
+/// A processor-level duplicate charge (#327): a second Square payment for a balance another payment
+/// had already settled. Evidence only; refunds stay a human action through the normal audited flow.
+/// `evidence` holds a whitelisted copy of Square's payment (ids, status, amount, order, timestamps),
+/// never card or payer details.
+model SquareDuplicateCharge {
+  id                String                      @id @default(cuid())
+  eventId           String
+  registrationId    String
+  paymentAttemptId  String                      @unique
+  paymentId         String?
+  providerPaymentId String                      @unique
+  providerOrderId   String?
+  reason            String
+  amountCents       Int
+  currency          String                      @default("USD")
+  winningPaymentId  String?
+  evidence          Json
+  status            SquareDuplicateChargeStatus @default(OPEN)
+  detectedAt        DateTime                    @default(now())
+  resolvedAt        DateTime?
+
+  event          Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  registration   Registration   @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  paymentAttempt PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, status])
+  @@index([registrationId])
 }
 
 model Refund {

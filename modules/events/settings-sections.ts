@@ -63,6 +63,8 @@ export const eventSettingsSections = {
   "shirt-sizes": "both",
   // Applies to every event that registers adults, general youth events too.
   "adult-background-checks": "both",
+  // Square checkout only exists where attendees pay online (#327).
+  "hosted-payment-link": "attendee-pay",
   // Public page link and support contact: shown for every event.
   "public-information": "both",
   // Club registrations get `hotel_information` in their messages too.
@@ -85,6 +87,7 @@ type SettingsValues = {
   seminarPreferenceSelfServiceLocked?: boolean | null;
   collectsShirtSizes?: boolean | null;
   checksAdultBackgrounds?: boolean | null;
+  hostedPaymentLinkEnabled?: boolean | null;
   hotelName?: string | null;
   hotelBookingUrl?: string | null;
   hotelPhone?: string | null;
@@ -103,6 +106,7 @@ export function sectionsWithNonDefaultValues(values: SettingsValues): Set<EventS
   if (filled(values.seminarPreferenceClosesOn) || values.seminarPreferenceSelfServiceLocked) set.add("seminar-preferences");
   if (values.collectsShirtSizes) set.add("shirt-sizes");
   if (values.checksAdultBackgrounds) set.add("adult-background-checks");
+  if (values.hostedPaymentLinkEnabled) set.add("hosted-payment-link");
   if ([
     values.hotelName,
     values.hotelBookingUrl,

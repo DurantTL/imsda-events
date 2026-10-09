@@ -178,6 +178,9 @@ jobs:
       # Real-database check of deferred-organization invoices: drafts only from a current approved reconciliation, numbers assigned exactly once under parallel and retried finalization (per event, code and year), immutable finalized versions with one receivable each, contact-only and amount revisions with the Finalize invoices rule, and no audit row holding a contact name or email (#167).
       - run: npm run test:invoices
 
+      # Real-database check of the hosted "Pay on Square" link (#327) against a fake Square at the HTTP boundary (no network, no credentials): the link is quoted by the same checkout as the embedded form (fee parity for pay-later, card-priced, fee-absorbed and promoted-waitlist registrations, nothing added on creation), creation is idempotent, only the verified webhook confirms payment and a replay changes nothing, the first recorded payment wins across the embedded and hosted paths (a later one is held as a duplicate-charge record with an urgent alert and never counts), stale links after a staff payment, cancellation, refund or expiry are withdrawn and deleted at Square (a failed deletion is retried), and the setting is off unless staff turn it on.
+      - run: npm run test:square-hosted-link
+
       # Real-database check of invoice delivery (#168): one stored, hash-checked PDF per finalized version, sends with the exact recipients and the same attachment on every resend, superseded versions refused, bounce and suppression recorded, append-only AR postings and payments (partial, void, overpaid, carried across a revision), statements scoped to the event, a formula-safe treasurer CSV, and no audit row holding an address or a contact name.
       - run: npm run test:invoice-delivery
 

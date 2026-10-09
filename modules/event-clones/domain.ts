@@ -159,6 +159,8 @@ export type SourceConfiguration = {
     autoPromoteWaitlist: boolean;
     collectsShirtSizes: boolean;
     checksAdultBackgrounds: boolean;
+    /** Carried to a copy so a repeat event keeps its backup payment link (#327). */
+    hostedPaymentLinkEnabled?: boolean;
     community: SourceCommunitySettings | null;
     /**
      * The event's team rules (#809), when it has any. Optional so a source without them reads as before. The age date

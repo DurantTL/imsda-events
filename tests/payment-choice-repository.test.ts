@@ -93,6 +93,7 @@ function promotedRegistration(overrides: Record<string, unknown> = {}) {
 function transactionClient() {
   const registrationRecord = promotedRegistration();
   return {
+    squareHostedCheckout: { findMany: vi.fn().mockResolvedValue([]) },
     registrationAdjustment: { aggregate: vi.fn().mockResolvedValue({ _sum: { amountCents: null } }) },
     registrationPaymentChoiceOperation: {
       findUnique: vi.fn().mockResolvedValue(null),

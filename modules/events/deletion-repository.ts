@@ -60,9 +60,18 @@ async function loadDeletionFacts(db: Db, eventId: string) {
     db.registrationAttendee.count({ where: inEvent }),
     db.payment.count({ where: inEvent }),
     // Sandbox card payments are test money. Everything else that succeeded
-    // (cash, checks, manual entries, production card payments) is real.
+    // (cash, checks, manual entries, production card payments) is real. So is a production
+    // duplicate Square charge awaiting its refund (#327): the money was taken, and the record
+    // holding the evidence must not be deleted with the event.
     db.payment.count({
-      where: { eventId, status: "SUCCEEDED", NOT: { paymentAttempt: { is: { environment: "sandbox" } } } },
+      where: {
+        eventId,
+        OR: [
+          { status: "SUCCEEDED" },
+          { status: "PENDING", paymentAttempt: { is: { duplicateReason: { not: null } } } },
+        ],
+        NOT: { paymentAttempt: { is: { environment: "sandbox" } } },
+      },
     }),
     // Organization-billed events invoice each club's submitted registration later.
     event.billingMode === "DEFERRED_ORGANIZATION_INVOICE"

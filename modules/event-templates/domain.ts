@@ -18,6 +18,8 @@ export const moduleEnablementSchema = z.object({
   autoPromoteWaitlist: z.boolean().default(false),
   collectsShirtSizes: z.boolean().default(false),
   checksAdultBackgrounds: z.boolean().default(false),
+  /** "Pay on Square" beside the embedded card form (#327); off unless a starter or staff turn it on. */
+  hostedPaymentLinkEnabled: z.boolean().default(false),
 }).strict();
 
 export type ModuleEnablement = z.infer<typeof moduleEnablementSchema>;
@@ -115,6 +117,7 @@ export const eventTemplatePayloadSchema = z.object({
     autoPromoteWaitlist: false,
     collectsShirtSizes: false,
     checksAdultBackgrounds: false,
+    hostedPaymentLinkEnabled: false,
   }),
   /** Snapshot-only in this slice (#152): no reporting domain consumes a
    * per-event report selection yet, so applying a template records these in

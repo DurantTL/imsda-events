@@ -1,6 +1,7 @@
 "use client";
 
 import Script from "next/script";
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -8,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { CreditCard, LoaderCircle, ShieldCheck, TriangleAlert } from "lucide-react";
+import { CreditCard, ExternalLink, LoaderCircle, ShieldCheck, TriangleAlert } from "lucide-react";
 import {
   paymentChoiceOptionPresentations,
 } from "@/modules/payments/payment-choice-presentation";
@@ -28,6 +29,8 @@ type SquareCheckout = {
   surchargeCents: number;
   currency: "USD";
   cardSelected: boolean;
+  /** The event offers "Pay on Square" and this registration can use it right now (#327). */
+  hostedLink?: boolean;
   paymentChoice: {
     available: boolean;
     locked: boolean;
@@ -170,11 +173,28 @@ function unavailableCheckout(error: unknown): SquareCheckout {
     surchargeCents: 0,
     currency: "USD",
     cardSelected: false,
+    hostedLink: false,
     paymentChoice: null,
     square: null,
     billingContact: null,
   };
 }
+
+/**
+ * Square sends the payer back with ?pay=square. That is a courtesy, never proof: the page only
+ * reports a payment once the server's own record (written from the verified webhook) shows it.
+ */
+function cameBackFromSquare() {
+  try {
+    return new URLSearchParams(window.location.search).get("pay") === "square";
+  } catch {
+    return false;
+  }
+}
+
+/** How many times, and how often, the page re-checks after Square sends the payer back (#327). */
+const returnPollIntervalMs = 5_000;
+const returnPollLimit = 24;
 
 export function PublicSquarePayment({
   token,
@@ -190,6 +210,7 @@ export function PublicSquarePayment({
     ?? `/api/public/manage/${encodeURIComponent(token ?? "")}`;
   const paymentEndpoint = `${manageEndpoint}/payment`;
   const choiceEndpoint = `${manageEndpoint}/payment-choice`;
+  const router = useRouter();
   const instanceId = useId().replace(/[^A-Za-z0-9_-]/g, "");
   const cardContainerId = `square-card-${instanceId}`;
   const googlePayContainerId = `square-google-pay-${instanceId}`;
@@ -219,6 +240,9 @@ export function PublicSquarePayment({
   const [pendingChoice, setPendingChoice] = useState<
     "CARD" | "PAY_LATER" | null
   >(null);
+  const hostedKeyRef = useRef<string | null>(null);
+  const [hostedSubmitting, setHostedSubmitting] = useState(false);
+  const [returnedFromSquare, setReturnedFromSquare] = useState(false);
   const [notice, setNotice] = useState<{
     tone: "success" | "error" | "pending";
     message: string;
@@ -239,11 +263,13 @@ export function PublicSquarePayment({
     void fetchCheckout(paymentEndpoint).then(
       (nextCheckout) => {
         if (!active) return;
+        setReturnedFromSquare(cameBackFromSquare());
         setCheckout(nextCheckout);
         setLoading(false);
       },
       (error: unknown) => {
         if (!active) return;
+        setReturnedFromSquare(cameBackFromSquare());
         setCheckout(unavailableCheckout(error));
         setLoading(false);
       },
@@ -252,6 +278,26 @@ export function PublicSquarePayment({
       active = false;
     };
   }, [paymentEndpoint]);
+
+  const awaitingConfirmation = returnedFromSquare
+    && checkout?.state !== "NO_BALANCE";
+  useEffect(() => {
+    if (!returnedFromSquare) return;
+    if (checkout?.state === "NO_BALANCE") {
+      router.refresh();
+      return;
+    }
+    let polls = 0;
+    const timer = window.setInterval(() => {
+      polls += 1;
+      if (polls > returnPollLimit) {
+        window.clearInterval(timer);
+        return;
+      }
+      void loadCheckout();
+    }, returnPollIntervalMs);
+    return () => window.clearInterval(timer);
+  }, [checkout?.state, loadCheckout, returnedFromSquare, router]);
 
   useEffect(() => {
     if (
@@ -461,6 +507,42 @@ export function PublicSquarePayment({
     }
   }
 
+  async function payOnSquare() {
+    if (!checkout || checkout.state !== "READY" || submittingMethod || hostedSubmitting) return;
+    setHostedSubmitting(true);
+    setNotice(null);
+    try {
+      hostedKeyRef.current ??= crypto.randomUUID();
+      const response = await fetch(`${manageEndpoint}/payment-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idempotencyKey: hostedKeyRef.current }),
+      });
+      const body = await response.json() as {
+        link?: { url: string };
+        message?: string;
+        retryable?: boolean;
+      };
+      if (!response.ok || !body.link?.url) {
+        if (!body.retryable) hostedKeyRef.current = null;
+        setNotice({
+          tone: body.retryable ? "pending" : "error",
+          message: body.message ?? "The Pay on Square link could not be created. Try again.",
+        });
+        if (response.status === 409 || response.status === 422) await loadCheckout();
+        return;
+      }
+      window.location.assign(body.link.url);
+    } catch {
+      setNotice({
+        tone: "pending",
+        message: "The Pay on Square link was not confirmed. It is safe to try again; no second link is made for the same balance.",
+      });
+    } finally {
+      setHostedSubmitting(false);
+    }
+  }
+
   function submitCardPayment() {
     if (!checkout || !cardRef.current) return;
     beginPayment("CARD", () => cardRef.current!.tokenize({
@@ -597,6 +679,21 @@ export function PublicSquarePayment({
       <span>{notice.message}</span>
     </div>
   );
+  const returnElement = returnedFromSquare && (
+    <div
+      className={`public-square-notice is-${awaitingConfirmation ? "pending" : "success"}`}
+      role="status"
+    >
+      {awaitingConfirmation
+        ? <LoaderCircle size={18} className="is-spinning" aria-hidden="true" />
+        : <ShieldCheck size={18} aria-hidden="true" />}
+      <span>
+        {awaitingConfirmation
+          ? "Welcome back from Square. We count a payment only after Square confirms it to us, which usually takes under a minute. This page checks automatically; there is no need to pay again."
+          : "Square has confirmed your payment. Thank you."}
+      </span>
+    </div>
+  );
   const paymentChoicePanel = paymentChoice && (
     <section className="public-payment-choice" aria-labelledby="public-payment-choice-heading">
       <div className="public-payment-choice-heading">
@@ -680,6 +777,7 @@ export function PublicSquarePayment({
   if (checkout.state !== "READY" || !checkout.square) {
     return (
       <div className="public-payment-stack">
+        {returnElement}
         {paymentChoicePanel}
         <div className={`public-square-state is-${checkout.state.toLowerCase().replaceAll("_", "-")}`}>
           {checkout.state === "NO_BALANCE" ? (
@@ -708,6 +806,7 @@ export function PublicSquarePayment({
   const testModeNotice = squareTestModeNotice({ environment: checkout.square.environment, staffPreview });
   return (
     <div className="public-payment-stack">
+      {returnElement}
       {paymentChoicePanel}
       <div className="public-square-checkout">
       <Script
@@ -768,6 +867,28 @@ export function PublicSquarePayment({
           <><ShieldCheck size={17} /> Pay <span translate="no">{money(checkout.amountCents)}</span></>
         )}
       </button>
+      {checkout.hostedLink && (
+        <div className="public-square-hosted">
+          <div className="public-square-divider"><span>or</span></div>
+          <button
+            type="button"
+            className="public-square-hosted-button"
+            disabled={Boolean(submittingMethod) || hostedSubmitting}
+            onClick={() => void payOnSquare()}
+          >
+            {hostedSubmitting ? (
+              <><LoaderCircle size={17} className="is-spinning" /> Opening Square…</>
+            ) : (
+              <><ExternalLink size={17} /> Pay on Square</>
+            )}
+          </button>
+          <p className="public-square-hosted-note">
+            Opens Square&rsquo;s own secure payment page for <span translate="no">{money(checkout.amountCents)}</span>,
+            the same amount. Use it if the form above does not work for you. After you pay, Square brings you back
+            here, and your payment shows once Square confirms it.
+          </p>
+        </div>
+      )}
       {!paymentChoice && noticeElement}
       </div>
     </div>

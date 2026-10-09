@@ -5055,6 +5055,33 @@ select:focus-visible {
 }
 .public-square-pay-button:hover:not(:disabled) { background: var(--imsda-navy-deep); }
 .public-square-pay-button:disabled { cursor: wait; opacity: 0.62; }
+.public-square-hosted {
+  display: grid;
+  gap: 10px;
+}
+.public-square-hosted-button {
+  display: inline-flex;
+  min-height: 47px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid var(--imsda-navy);
+  border-radius: 11px;
+  background: transparent;
+  color: var(--imsda-navy);
+  cursor: pointer;
+  padding: 11px 14px;
+  font: inherit;
+  font-size: max(var(--type-body-floor, 0px), 0.76rem);
+  font-weight: 900;
+}
+.public-square-hosted-button:hover:not(:disabled) { background: #eef4f7; }
+.public-square-hosted-button:disabled { cursor: wait; opacity: 0.62; }
+.public-square-hosted-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: max(var(--type-body-floor, 0px), 0.72rem);
+}
 .public-square-state {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

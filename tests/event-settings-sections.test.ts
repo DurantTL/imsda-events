@@ -211,6 +211,7 @@ const baseFields = {
   waitlistEnabled: false,
   collectsShirtSizes: false,
   checksAdultBackgrounds: false,
+  hostedPaymentLinkEnabled: false,
   attendeeEditPolicy: "VERIFY_EVERY_EDIT" as const,
   billingMode: "DEFERRED_ORGANIZATION_INVOICE" as const,
   audience: "CLUB" as const,

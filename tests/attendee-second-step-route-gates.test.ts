@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// #744: the QR pass, registration contact, payment and payment-choice routes
+// #744: the QR pass, registration contact, payment, payment-link (#327) and payment-choice routes
 // use the shared second-step gate. Only the gate's own lookup is faked.
 const mocks = vi.hoisted(() => ({
   getCurrentAttendee: vi.fn(),
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   authorize: vi.fn(),
   getCheckout: vi.fn(),
   createPayment: vi.fn(),
+  createPaymentLink: vi.fn(),
   rateLimit: vi.fn(),
   choosePayment: vi.fn(),
   bodyRead: vi.fn(),
@@ -32,6 +33,9 @@ vi.mock("@/modules/payments/square-repository", () => ({
   getAttendeeSquareCheckout: mocks.getCheckout,
   SquarePaymentOperationError: class extends Error {},
 }));
+vi.mock("@/modules/payments/square-hosted-repository", () => ({
+  createAttendeeSquarePaymentLink: mocks.createPaymentLink,
+}));
 vi.mock("@/modules/rate-limit/service", () => ({ checkPublicPaymentRateLimit: mocks.rateLimit }));
 vi.mock("@/modules/payments/payment-choice-repository", () => ({
   chooseAttendeePromotedWaitlistPayment: mocks.choosePayment,
@@ -41,6 +45,7 @@ vi.mock("@/modules/payments/payment-choice-repository", () => ({
 import { GET as QR_GET } from "@/app/api/attendee/registrations/[registrationId]/attendee-passes/[attendeeId]/qr/route";
 import { PATCH as CONTACT_PATCH } from "@/app/api/attendee/registrations/[registrationId]/route";
 import { GET as PAYMENT_GET, POST as PAYMENT_POST } from "@/app/api/attendee/registrations/[registrationId]/payment/route";
+import { POST as LINK_POST } from "@/app/api/attendee/registrations/[registrationId]/payment-link/route";
 import { POST as CHOICE_POST } from "@/app/api/attendee/registrations/[registrationId]/payment-choice/route";
 
 type Handler = (request: Request, context: unknown) => Promise<Response>;
@@ -83,6 +88,7 @@ const gated: Array<[string, () => Promise<Response>, () => unknown[]]> = [
   ["contact PATCH", () => (CONTACT_PATCH as unknown as Handler)(watched("", "PATCH"), context), () => [mocks.updateContact]],
   ["payment GET", paymentGet, () => [mocks.authorize, mocks.getCheckout]],
   ["payment POST", () => (PAYMENT_POST as unknown as Handler)(watched("/payment", "POST"), context), () => [mocks.authorize, mocks.rateLimit, mocks.createPayment]],
+  ["payment-link POST", () => (LINK_POST as unknown as Handler)(watched("/payment-link", "POST"), context), () => [mocks.authorize, mocks.rateLimit, mocks.createPaymentLink]],
   ["payment-choice POST", () => (CHOICE_POST as unknown as Handler)(watched("/payment-choice", "POST"), context), () => [mocks.authorize, mocks.choosePayment]],
 ];
 
@@ -102,6 +108,7 @@ beforeEach(() => {
   mocks.getCheckout.mockResolvedValue({ totalCents: 100 });
   mocks.rateLimit.mockResolvedValue({ allowed: true, decisions: [] });
   mocks.createPayment.mockResolvedValue({ status: "COMPLETED" });
+  mocks.createPaymentLink.mockResolvedValue({ url: "https://sandbox.square.link/u/synthetic" });
   mocks.choosePayment.mockResolvedValue({ choice: "CARD" });
 });
 
@@ -126,6 +133,9 @@ describe("attendee routes behind the second-step gate (#744)", () => {
     const pay = await (PAYMENT_POST as unknown as Handler)(send("/payment", "POST", paymentBody), context);
     expect(pay.status).toBe(200);
     expect(mocks.createPayment).toHaveBeenCalledTimes(1);
+    const link = await (LINK_POST as unknown as Handler)(send("/payment-link", "POST", { idempotencyKey: paymentBody.idempotencyKey }), context);
+    expect(link.status).toBe(200);
+    expect(mocks.createPaymentLink).toHaveBeenCalledTimes(1);
     const choice = await (CHOICE_POST as unknown as Handler)(send("/payment-choice", "POST", choiceBody), context);
     expect(choice.status).toBe(200);
     expect(mocks.choosePayment).toHaveBeenCalledTimes(1);

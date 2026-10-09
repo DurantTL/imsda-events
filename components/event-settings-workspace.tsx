@@ -124,6 +124,7 @@ function draftFromEvent(event: EventSettingsRecord | null): EventSettingsInput {
     registrationClosesOn: event?.registrationClosesOn ?? null,
     collectsShirtSizes: event?.collectsShirtSizes ?? false,
     checksAdultBackgrounds: event?.checksAdultBackgrounds ?? false,
+    hostedPaymentLinkEnabled: event?.hostedPaymentLinkEnabled ?? false,
     attendeeEditPolicy: event?.attendeeEditPolicy ?? "VERIFY_EVERY_EDIT",
     billingMode: event?.billingMode ?? "ATTENDEE_PAY",
     audience: event?.audience ?? "GENERAL",
@@ -549,6 +550,23 @@ export function EventSettingsWorkspace({
       {fieldNote("collectsShirtSizes")}</span>
     </label>
   );
+  const hostedPaymentLinkField = (
+    <label className="event-setting-toggle">
+      <input id={settingsFieldDomId("hostedPaymentLinkEnabled")} {...fieldAria("hostedPaymentLinkEnabled")}
+        type="checkbox"
+        checked={draft.hostedPaymentLinkEnabled}
+        onChange={(event) => update("hostedPaymentLinkEnabled", event.target.checked)}
+      />
+      <span>
+        <strong>Offer &ldquo;Pay on Square&rdquo; as a backup</strong>
+        <small>
+          Adds a secondary button beside the card form that opens Square&rsquo;s own payment page for the
+          same balance, with the same card fee. A payment counts only after Square confirms it, and the
+          first payment recorded wins. Meant for events where attendees pay online.
+        </small>
+      {fieldNote("hostedPaymentLinkEnabled")}</span>
+    </label>
+  );
   const backgroundField = (
     <label className="event-setting-toggle">
       <input id={settingsFieldDomId("checksAdultBackgrounds")} {...fieldAria("checksAdultBackgrounds")}
@@ -625,6 +643,7 @@ export function EventSettingsWorkspace({
     { id: "seminar-preferences", node: seminarField },
     { id: "shirt-sizes", node: shirtField },
     { id: "adult-background-checks", node: backgroundField },
+    { id: "hosted-payment-link", node: hostedPaymentLinkField },
   ];
   const optionalFields = {
     primary: optionFields.filter((field) => placementOf(field.id) === "primary"),

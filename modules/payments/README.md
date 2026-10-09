@@ -39,6 +39,87 @@ Sandbox is the default. Production requires both
 the official production origins, and must not be enabled without an approved
 cutover.
 
+## Pay on Square: the hosted checkout link (#327)
+
+A second way to pay the same balance, shown beside the embedded form when staff
+turn on the event's "Offer Pay on Square as a backup" setting (off by default;
+the Women's Retreat, Man Camp, Camp Meeting and Hispanic Institute starters turn
+it on). It is Square's own hosted page, so it does not depend on the browser SDK
+rendering a wallet or a card field.
+
+**Contract (Caleb, Sept 21 and Oct 8, 2026)**
+
+- **Always there, never detected.** The link is offered whenever the embedded form
+  is, not only when the SDK fails. Church-billed events and events with the setting
+  off never offer it, and the endpoint refuses them.
+- **One owner of the amount.** Asking for a link sends only a request key. The server
+  quotes it with the same `checkoutFromRegistration` the embedded form uses, so the
+  fee policy is Pay Later to Pay Now (#317): a pay-later registration is grossed up on
+  its outstanding balance, a registration already priced for card or a promoted
+  waitlist one gets no second fee, and an event that absorbs the fee gets none. The
+  quote lives on the `PaymentAttempt` (channel `HOSTED_LINK`); `SquareHostedCheckout`
+  only maps it to Square's link and order. Creating a link, or replaying one, never
+  changes the registration total. The surcharge joins the total only when the payment
+  is recorded, once, exactly as for the embedded path.
+- **Idempotent.** The same request key returns the same link. A new key for the same
+  open, unexpired link at the same quote returns it too, and Square's own idempotency
+  key is stable per attempt, so an unconfirmed creation is retried without a second
+  order. An unpaid link is an offer, not a payment in flight: it holds no
+  `activeRegistrationKey` and does not lock the promoted-waitlist payment choice.
+- **Only the verified webhook is proof.** Square returns the registrant to their own
+  private page (`/manage/<token>?pay=square`, or `/account/registrations?pay=square`
+  from the account portal). That page says the payment is being confirmed and checks
+  again for two minutes; it reports success only when the server's own record shows
+  the balance paid. A payment through the link is a normal Square payment that carries
+  `order_id` and no `reference_id`, so `payment.created` / `payment.updated` find the
+  attempt through the stored order id and go through the same `applyProviderPayment`
+  (payment row, surcharge, receipt) as every other payment. The redirect URL carries
+  the registrant's private token to Square, the processor they are already paying; it
+  is not stored here.
+- **First recorded payment wins.** Starting an embedded payment, recording any
+  payment, or changing the payment choice withdraws open links (marked `INVALIDATED`
+  in the same transaction, deleted at Square after commit). A payment whose webhook
+  arrives while it no longer fits (`hostedPaymentStaleReason`: the registration is not
+  payable, the balance is already paid, or it fell below the quoted balance) is not
+  applied. A balance that grew still accepts it, as a partial payment.
+- **A processor-level duplicate is evidence, not a second payment.** The payment row is
+  kept `PENDING` (so the balance ignores it, no receipt, no fee), a
+  `SquareDuplicateCharge` holds Square's ids, status, amount and timestamps (never
+  card or payer details), a `SQUARE_DUPLICATE_CHARGE_DETECTED` audit entry is marked
+  `priority: HIGH`, and an `URGENT` alert `payments.duplicate-charge.<providerPaymentId>`
+  pages staff. Refunding it stays a human action in Square. The refund webhook
+  records the refund, voids the held payment and resolves the record, and never
+  reverses a fee the duplicate never added. An event with an unresolved production
+  duplicate counts it as a real payment, so it cannot be deleted.
+- **A declined card on the hosted page does not end the link.** `FAILED` payments are
+  recorded on the webhook row only; the payer can try again on the same page.
+
+**Square Checkout API semantics this uses** (no Square SDK is vendored here, so these
+are from Square's published Checkout API and must be confirmed in Sandbox under #306
+before Production is enabled):
+
+- `POST /v2/online-checkout/payment-links` with `idempotency_key`, an `order`
+  (`location_id`, `reference_id` = our attempt id, one line item for the exact amount),
+  `checkout_options.redirect_url` and `payment_note`; the response gives
+  `payment_link.id`, `order_id` and `url`. Nothing about the payer is sent.
+- A payment link has **no expiry setting**. Expiry is this app's: a link lives 24 hours
+  (`hostedLinkLifetimeMs`); an older one is refused on replay and withdrawn by the sweep.
+- `DELETE /v2/online-checkout/payment-links/{id}` deletes the link and cancels its
+  order, which is how a withdrawn link stops being payable at Square. A 404 counts as
+  done. The delete is tried after commit and retried from the stored
+  `INVALIDATED` + no `providerDeletedAt` state, so a Square outage never blocks recording
+  a payment; a link that survives is still judged against the live balance when paid.
+- No new webhook subscription: payment links produce ordinary `payment.*` events.
+
+**Operations.** The scheduled outbox sweep (`/api/internal/outbox/sweep`, every few
+minutes) also withdraws links that expired or went stale (a cancellation, a staff-recorded
+payment, an adjustment) and retries deletions Square has not confirmed;
+`npm run payments:hosted-sweep` runs the same housekeeping by hand. Sandbox evidence for #306: create a link on
+a Sandbox registration, pay it with a Sandbox test card, confirm the webhook records it
+once; create another, start an embedded payment, confirm the link is deleted; pay the
+withdrawn page if Square still serves it and confirm the duplicate record and alert.
+`npm run test:square-hosted-link` proves the same rules against a fake Square.
+
 ## Payments taken outside the app
 
 Money is regularly taken in Square without going through this app — a Square

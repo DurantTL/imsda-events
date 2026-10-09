@@ -55,6 +55,7 @@ export const settingsFieldBlock: Record<string, SettingsBlockId> = {
   seminarPreferenceSelfServiceLocked: "options",
   collectsShirtSizes: "options",
   checksAdultBackgrounds: "options",
+  hostedPaymentLinkEnabled: "options",
   publicInfoUrl: "public-info",
   supportContact: "public-info",
   tagline: "public-info",
@@ -206,6 +207,7 @@ export const optionFieldSection = {
   seminarPreferenceSelfServiceLocked: "seminar-preferences",
   collectsShirtSizes: "shirt-sizes",
   checksAdultBackgrounds: "adult-background-checks",
+  hostedPaymentLinkEnabled: "hosted-payment-link",
 } as const;
 
 /** Returns the id to focus once, and clears it: a later change to the errors never moves focus. */

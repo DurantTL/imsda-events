@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   sendDueLocationWaitlistDigests: vi.fn(),
   logError: vi.fn(),
   refreshDueCalendarFeeds: vi.fn(),
+  sweepHostedCheckouts: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -23,6 +24,7 @@ vi.mock("@/modules/communications/outbox-sweep", () => ({
 vi.mock("@/modules/community/repository", () => ({ pruneExpiredCommunityContent: mocks.pruneExpiredCommunityContent }));
 vi.mock("@/modules/operations/alert-scan", () => ({ runAlertScan: mocks.runAlertScan }));
 vi.mock("@/modules/operations/sweep-heartbeat-repository", () => ({ recordSweepHeartbeat: mocks.recordSweepHeartbeat }));
+vi.mock("@/modules/payments/square-hosted-invalidation", () => ({ sweepHostedCheckouts: mocks.sweepHostedCheckouts }));
 vi.mock("@/modules/calendar/feeds", () => ({ refreshDueCalendarFeeds: mocks.refreshDueCalendarFeeds }));
 vi.mock("@/modules/event-locations/waitlist-digest", () => ({ sendDueLocationWaitlistDigests: mocks.sendDueLocationWaitlistDigests }));
 
@@ -42,6 +44,7 @@ beforeEach(() => {
   mocks.runAlertScan.mockResolvedValue({ sent: [], suppressed: [], undelivered: [], cleared: [] });
   mocks.pruneExpiredCommunityContent.mockResolvedValue({ removed: 0 });
   mocks.refreshDueCalendarFeeds.mockResolvedValue({ due: 0, refreshed: 0, failed: 0 });
+  mocks.sweepHostedCheckouts.mockResolvedValue({ withdrawn: 0, deleted: 0, failed: 0 });
   mocks.sendDueLocationWaitlistDigests.mockResolvedValue({ status: "QUEUED", dateKey: "2026-10-06", changesCovered: 4, recipients: 2, messageIds: ["m1", "m2"], delivered: 2 });
 });
 
@@ -81,6 +84,19 @@ describe("the sweep and the daily waitlist digest", () => {
     expect(response.status).toBe(200);
     expect((await response.json()).calendarFeeds).toBeNull();
     expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining("calendar feed refresh failed"), expect.any(Error));
+  });
+
+  it("sweeps Pay on Square links (#327), and a fault there never fails the sweep", async () => {
+    mocks.sweepHostedCheckouts.mockResolvedValueOnce({ withdrawn: 2, deleted: 1, failed: 1 });
+    const ok = await POST(request());
+    expect((await ok.json()).hostedLinks).toEqual({ withdrawn: 2, deleted: 1, failed: 1 });
+
+    mocks.sweepHostedCheckouts.mockRejectedValueOnce(new Error("synthetic link fault"));
+    const response = await POST(request());
+    expect(response.status).toBe(200);
+    expect((await response.json()).hostedLinks).toBeNull();
+    expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining("Pay on Square link sweep failed"), expect.any(Error));
+    expect(mocks.recordSweepHeartbeat).toHaveBeenCalledWith("SUCCEEDED");
   });
 
   it("does not send the digest when the sweep itself fails", async () => {
