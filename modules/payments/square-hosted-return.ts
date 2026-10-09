@@ -32,15 +32,18 @@ export async function getHostedReturnStatus(
         select: {
           status: true,
           duplicateReason: true,
-          _count: { select: { duplicateCharges: true } },
+          _count: {
+            select: { duplicateCharges: { where: { status: "OPEN" } } },
+          },
         },
       },
     },
   });
   if (!hosted || !hosted.returnExpiresAt || hosted.returnExpiresAt <= now) return null;
   const attempt = hosted.paymentAttempt;
-  const held = attempt.duplicateReason !== null
-    || (attempt.status !== "SUCCEEDED" && attempt._count.duplicateCharges > 0);
+  // Held whenever staff still have an exception open for this link (a duplicate, a second payment
+  // on the order, a split payment), and for good once the attempt itself was the held payment.
+  const held = attempt.duplicateReason !== null || attempt._count.duplicateCharges > 0;
   return {
     state: held ? "HELD" : attempt.status === "SUCCEEDED" ? "CONFIRMED" : "CONFIRMING",
     maskedConfirmationCode: maskConfirmationCode(hosted.registration.confirmationCode),

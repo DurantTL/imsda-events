@@ -47,6 +47,7 @@ CREATE TABLE "SquareDuplicateCharge" (
     "paymentId" TEXT,
     "providerPaymentId" TEXT NOT NULL,
     "providerOrderId" TEXT,
+    "environment" TEXT NOT NULL,
     "reason" TEXT NOT NULL,
     "amountCents" INTEGER NOT NULL,
     "currency" TEXT NOT NULL DEFAULT 'USD',

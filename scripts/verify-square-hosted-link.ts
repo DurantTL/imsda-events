@@ -50,6 +50,7 @@ import {
 import { createAttendeeSquarePaymentLink, createPublicSquarePaymentLink } from "../modules/payments/square-hosted-repository";
 import { getHostedReturnStatus } from "../modules/payments/square-hosted-return";
 import { sweepHostedCheckouts } from "../modules/payments/square-hosted-invalidation";
+import { getEventDeletionPreview } from "../modules/events/deletion-repository";
 import { recordManualPayment, recordRefund } from "../modules/payments/repository";
 
 loadEnvConfig(process.cwd());
@@ -861,10 +862,24 @@ async function main() {
     assert(await totalCents(fixture.registrationId) === 10_000 && await balanceCents(fixture.registrationId) === 10_000, "the registration is unchanged by the refund");
   }
 
+  // ---- 13b. A production exception still open counts as real money when an event is deleted. ----
+  {
+    const actor = { userId: adminId, globalRole: "SYSTEM_ADMIN" as const };
+    const before = (await getEventDeletionPreview(events.on, actor))!.counts.realPayments;
+    const open = await prisma.squareDuplicateCharge.findFirstOrThrow({ where: { eventId: events.on, status: "OPEN" } });
+    await prisma.squareDuplicateCharge.update({ where: { id: open.id }, data: { environment: "production" } });
+    const during = (await getEventDeletionPreview(events.on, actor))!.counts.realPayments;
+    assert(during === before + 1, "an open production exception counts toward the real money the event holds");
+    await prisma.squareDuplicateCharge.update({ where: { id: open.id }, data: { status: "RESOLVED" } });
+    const resolved = (await getEventDeletionPreview(events.on, actor))!.counts.realPayments;
+    assert(resolved === before, "a resolved one does not");
+    await prisma.squareDuplicateCharge.update({ where: { id: open.id }, data: { environment: "sandbox", status: "OPEN" } });
+  }
+
   // ---- 14. A second successful payment on an already-settled link is held beside the winner. ----
   {
     const fixture = await createRegistration(events.on, { totalCents: 10_000, method: "Pay later" });
-    const { orderId } = await openLinkFor(fixture);
+    const { orderId, returnId } = await openLinkFor(fixture);
     const winner = `${P}-PAY-WINNER`;
     const extra = `${P}-PAY-EXTRA`;
     await sendWebhook(paymentEvent({ orderId, paymentId: winner, status: "COMPLETED", amountCents: 10_330 }));
@@ -878,12 +893,15 @@ async function main() {
     assert(row!.paymentAttempt.paymentId === winnerPayment.id, "the attempt still points at the winner's payment");
     const record = await prisma.squareDuplicateCharge.findUniqueOrThrow({ where: { providerPaymentId: extra } });
     assert(record.reason === "SECOND_PAYMENT_ON_ORDER" && record.winningPaymentId === winnerPayment.id && record.paymentId === extraPayment.id, "the exception names the payment it duplicates");
+    assert(record.environment === "sandbox", "the exception records its Square environment");
+    assert((await getHostedReturnStatus(returnId))?.state === "HELD", "the status is held while the exception is open, though the winner is valid");
     assert(await balanceCents(fixture.registrationId) === 0 && await totalCents(fixture.registrationId) === 10_330 && await receiptCount(fixture.registrationId) === 1, "paid once, fee once, one receipt");
     await sendWebhook(paymentEvent({ orderId, paymentId: extra, status: "COMPLETED", amountCents: 10_330 }));
     await sendWebhook(paymentEvent({ orderId, paymentId: winner, status: "COMPLETED", amountCents: 10_330 }));
     assert((await cardPayments(fixture.registrationId)).length === 2 && (await prisma.squareDuplicateCharge.count({ where: { registrationId: fixture.registrationId } })) === 1, "replays of either payment change nothing");
     await sendWebhook(refundEvent({ paymentId: extra, refundId: `${P}-REFUND-EXTRA`, amountCents: 10_330 }));
     assert((await prisma.squareDuplicateCharge.findUniqueOrThrow({ where: { providerPaymentId: extra } })).status === "RESOLVED", "refunding the extra payment resolves it");
+    assert((await getHostedReturnStatus(returnId))?.state === "CONFIRMED", "and the status is confirmed again once nothing is open");
     assert(await totalCents(fixture.registrationId) === 10_330 && await balanceCents(fixture.registrationId) === 0, "and leaves the winner and its fee alone");
   }
 

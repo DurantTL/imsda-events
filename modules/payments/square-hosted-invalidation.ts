@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { after } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
 import { logError, logWarn } from "@/lib/logger";
@@ -108,6 +109,21 @@ export async function invalidateHostedCheckoutsInTransaction(
     });
   }
   return open.length;
+}
+
+/**
+ * Deletes withdrawn links at Square once the response has gone out (`after`), so a request never
+ * waits on Square. Outside a request (the sweep, a script, a test) there is no response to wait
+ * behind, so it simply runs to completion. Either way it never throws.
+ */
+export async function flushHostedDeletionsAfterResponse(
+  options: Parameters<typeof flushHostedProviderDeletions>[0] = {},
+) {
+  try {
+    after(() => flushHostedProviderDeletions(options));
+  } catch {
+    await flushHostedProviderDeletions(options);
+  }
 }
 
 export type HostedProviderDeletion = (

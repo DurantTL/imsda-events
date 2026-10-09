@@ -10,7 +10,7 @@ vi.mock("@/lib/request-context", () => ({ withRequestContext: (handler: unknown)
 vi.mock("@/lib/prisma", () => ({
   getPrisma: () => ({ squareHostedCheckout: { findUnique: mocks.findUnique } }),
 }));
-vi.mock("@/modules/rate-limit/service", () => ({ checkPublicPaymentRateLimit: mocks.rateLimit }));
+vi.mock("@/modules/rate-limit/service", () => ({ checkPublicPaymentStatusRateLimit: mocks.rateLimit }));
 
 import { hashOpaqueToken } from "@/modules/access/tokens";
 import {
@@ -59,6 +59,15 @@ describe("Square return status (#327)", () => {
     expect((await getHostedReturnStatus(returnId, { now }))?.state).toBe("HELD");
     mocks.findUnique.mockResolvedValue(row({ paymentAttempt: { status: "PROCESSING", duplicateReason: null, _count: { duplicateCharges: 2 } } }));
     expect((await getHostedReturnStatus(returnId, { now }))?.state).toBe("HELD");
+  });
+
+  it("is held whenever an exception is still open for the link, including a second payment on the order", async () => {
+    // A settled, valid attempt with an open SECOND_PAYMENT_ON_ORDER record beside it.
+    mocks.findUnique.mockResolvedValue(row({ paymentAttempt: { status: "SUCCEEDED", duplicateReason: null, _count: { duplicateCharges: 1 } } }));
+    expect((await getHostedReturnStatus(returnId, { now }))?.state).toBe("HELD");
+    // Only OPEN records are counted, so a resolved one does not hold the status.
+    const select = JSON.stringify(mocks.findUnique.mock.calls.at(-1)![0].select);
+    expect(select).toContain('"duplicateCharges":{"where":{"status":"OPEN"}}');
   });
 
   it("answers null for an unknown, expired or malformed id alike", async () => {

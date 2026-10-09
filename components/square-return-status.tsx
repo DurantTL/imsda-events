@@ -3,14 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { LoaderCircle, ShieldCheck, TriangleAlert } from "lucide-react";
+import { startHostedReturnPolling } from "@/modules/payments/hosted-return-polling";
 import {
   hostedReturnMessage,
   hostedReturnStorageKey,
   type HostedReturnStatus,
 } from "@/modules/payments/hosted-return-presentation";
-
-const pollIntervalMs = 5_000;
-const pollLimit = 24;
 
 /** A path this app wrote itself: same-origin, never a protocol-relative or absolute address. */
 function safeStoredPath(value: string | null) {
@@ -45,25 +43,7 @@ export function SquareReturnStatus({
 
   useEffect(() => {
     if (status.state !== "CONFIRMING") return;
-    let active = true;
-    let polls = 0;
-    const timer = window.setInterval(() => {
-      polls += 1;
-      if (polls > pollLimit) {
-        window.clearInterval(timer);
-        return;
-      }
-      void fetch(`/api/public/square-return/${encodeURIComponent(returnId)}`, { cache: "no-store" })
-        .then((response) => (response.ok ? response.json() as Promise<HostedReturnStatus> : null))
-        .then((next) => {
-          if (active && next) setStatus(next);
-        })
-        .catch(() => undefined);
-    }, pollIntervalMs);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
+    return startHostedReturnPolling(returnId, (next) => setStatus(next));
   }, [returnId, status.state]);
 
   const tone = status.state === "CONFIRMED" ? "success" : status.state === "HELD" ? "error" : "pending";

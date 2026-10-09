@@ -3073,6 +3073,7 @@ model SquareDuplicateCharge {
   paymentId         String?
   providerPaymentId String                      @unique
   providerOrderId   String?
+  environment       String
   reason            String
   amountCents       Int
   currency          String                      @default("USD")

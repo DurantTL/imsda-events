@@ -13,6 +13,7 @@ import { CreditCard, ExternalLink, LoaderCircle, ShieldCheck, TriangleAlert } fr
 import {
   paymentChoiceOptionPresentations,
 } from "@/modules/payments/payment-choice-presentation";
+import { startHostedReturnPolling } from "@/modules/payments/hosted-return-polling";
 import {
   hostedReturnMessage,
   hostedReturnStorageKey,
@@ -215,23 +216,6 @@ function newReturnId() {
     .replace(/=+$/, "");
 }
 
-async function fetchReturnState(returnId: string): Promise<HostedReturnState | null> {
-  try {
-    const response = await fetch(`/api/public/square-return/${encodeURIComponent(returnId)}`, {
-      cache: "no-store",
-    });
-    if (!response.ok) return null;
-    const body = await response.json() as { state?: HostedReturnState };
-    return body.state ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** How many times, and how often, the page re-checks after Square sends the payer back (#327). */
-const returnPollIntervalMs = 5_000;
-const returnPollLimit = 24;
-
 export function PublicSquarePayment({
   token,
   manageEndpoint: explicitManageEndpoint,
@@ -319,31 +303,13 @@ export function PublicSquarePayment({
 
   useEffect(() => {
     if (!returnId) return;
-    let active = true;
-    let polls = 0;
-    const check = async () => {
-      const state = await fetchReturnState(returnId);
-      if (!active || !state) return;
-      setReturnState(state);
-      if (state !== "CONFIRMING") {
-        window.clearInterval(timer);
+    return startHostedReturnPolling(returnId, async (status) => {
+      setReturnState(status.state);
+      if (status.state !== "CONFIRMING") {
         await loadCheckout();
         router.refresh();
       }
-    };
-    const timer = window.setInterval(() => {
-      polls += 1;
-      if (polls > returnPollLimit) {
-        window.clearInterval(timer);
-        return;
-      }
-      void check();
-    }, returnPollIntervalMs);
-    void check();
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
+    }, { immediate: true });
   }, [loadCheckout, returnId, router]);
 
   useEffect(() => {

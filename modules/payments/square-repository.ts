@@ -10,7 +10,7 @@ import {
 import { getPrisma } from "@/lib/prisma";
 import { dispatchAlerts, type Alert } from "@/modules/operations/alerting";
 import {
-  flushHostedProviderDeletions,
+  flushHostedDeletionsAfterResponse,
   invalidateHostedCheckoutsInTransaction,
 } from "@/modules/payments/square-hosted-invalidation";
 import {
@@ -793,6 +793,7 @@ async function recordDuplicateCharge(
       paymentId: payment.id,
       providerPaymentId: provider.id,
       providerOrderId: provider.orderId ?? null,
+      environment: attempt.environment,
       reason: conflict.reason,
       amountCents: provider.amountCents,
       currency: provider.currency,
@@ -1186,7 +1187,7 @@ async function createSquarePaymentWithAuthorization(
     return resultFromAttempt(prepared.attempt);
   }
   // Links withdrawn by starting this attempt are deleted at Square without holding the payment up.
-  void flushHostedProviderDeletions({
+  await flushHostedDeletionsAfterResponse({
     registrationId: prepared.attempt.registrationId,
     configuration,
   });
@@ -1251,7 +1252,7 @@ async function createSquarePaymentWithAuthorization(
   await processPaymentMessagesAfterCommit(applied.pendingMessageIds);
   await dispatchPaymentAlerts(applied.alerts);
   if (applied.attempt.status === "SUCCEEDED") {
-    void flushHostedProviderDeletions({
+    await flushHostedDeletionsAfterResponse({
       registrationId: applied.attempt.registrationId,
       configuration,
     });
@@ -1797,10 +1798,14 @@ async function applyRefundWebhook(
     registration: { select: { confirmationCode: true } },
   } satisfies Prisma.PaymentInclude;
   // A payment held as evidence (#327) may sit beside the attempt rather than on it.
-  const heldRecord = await tx.squareDuplicateCharge.findUnique({
+  const heldCandidate = await tx.squareDuplicateCharge.findUnique({
     where: { providerPaymentId: providerRefund.payment_id },
-    select: { paymentId: true, reason: true },
+    select: { paymentId: true, reason: true, environment: true },
   });
+  // Only this environment's records: a Sandbox refund never resolves a Production exception.
+  const heldRecord = heldCandidate?.environment === configuration.environment
+    ? heldCandidate
+    : null;
   const payment = (await tx.payment.findFirst({
     where: {
       externalReference: providerRefund.payment_id,
@@ -2096,7 +2101,7 @@ export async function processSquareWebhook(
   ) {
     // The balance moved, so withdraw this registration's other open links at Square. Best effort
     // and not waited for: whatever it misses, the sweep deletes.
-    void flushHostedProviderDeletions({
+    await flushHostedDeletionsAfterResponse({
       configuration,
       registrationId: result.registrationId,
     });

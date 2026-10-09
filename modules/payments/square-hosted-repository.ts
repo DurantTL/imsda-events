@@ -16,7 +16,7 @@ import {
   type SquarePaymentLinkResult,
 } from "@/modules/payments/square-payment-link-adapter";
 import {
-  flushHostedProviderDeletions,
+  flushHostedDeletionsAfterResponse,
   invalidateHostedCheckoutsInTransaction,
 } from "@/modules/payments/square-hosted-invalidation";
 import {
@@ -461,7 +461,7 @@ async function createHostedLinkWithAuthorization(
   if (prepared.operation === "UNAVAILABLE") {
     // Anything withdrawn while deciding this is deleted at Square without holding the answer up;
     // what is missed is left to the sweep.
-    void flushHostedProviderDeletions({
+    await flushHostedDeletionsAfterResponse({
       registrationId: prepared.registrationId,
       configuration,
     });
@@ -472,7 +472,7 @@ async function createHostedLinkWithAuthorization(
     );
   }
   // Withdrawn-by-this-request links are deleted without making the registrant wait.
-  void flushHostedProviderDeletions({
+  await flushHostedDeletionsAfterResponse({
     registrationId: prepared.attempt.registrationId,
     configuration,
   });
@@ -507,7 +507,7 @@ async function createHostedLinkWithAuthorization(
 
   const stored = await storeCreatedLink(prepared.attempt.id, link);
   if (stored.hostedCheckout?.status !== "ACTIVE") {
-    void flushHostedProviderDeletions({
+    await flushHostedDeletionsAfterResponse({
       registrationId: stored.registrationId,
       configuration,
     });

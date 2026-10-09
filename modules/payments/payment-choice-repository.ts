@@ -14,7 +14,7 @@ import {
 } from "@/modules/payments/payment-choice-domain";
 import { moneyToCents } from "@/modules/payments/square-domain";
 import {
-  flushHostedProviderDeletions,
+  flushHostedDeletionsAfterResponse,
   invalidateHostedCheckoutsInTransaction,
 } from "@/modules/payments/square-hosted-invalidation";
 import { authorizeRegistrationAccessToken } from "@/modules/public-access/repository";
@@ -347,7 +347,7 @@ export async function choosePublicPromotedWaitlistPayment(
     return choosePromotedWaitlistPaymentInTransaction(tx, access, input, now);
   });
   // Links the change withdrew are deleted at Square without holding the answer up.
-  if (registrationId) void flushHostedProviderDeletions({ registrationId });
+  if (registrationId) await flushHostedDeletionsAfterResponse({ registrationId });
   return result;
 }
 
@@ -363,6 +363,6 @@ export async function chooseAttendeePromotedWaitlistPayment(
     input,
     now,
   ));
-  void flushHostedProviderDeletions({ registrationId: access.registrationId });
+  await flushHostedDeletionsAfterResponse({ registrationId: access.registrationId });
   return result;
 }

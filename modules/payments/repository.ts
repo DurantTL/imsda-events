@@ -4,7 +4,7 @@ import { enqueueRefundNoticeMessage } from "@/modules/communications/transaction
 import { processQueuedMessageIdsAfterCommit } from "@/modules/communications/messaging-repository";
 import { logError } from "@/lib/logger";
 import {
-  flushHostedProviderDeletions,
+  flushHostedDeletionsAfterResponse,
   invalidateHostedCheckoutsInTransaction,
 } from "@/modules/payments/square-hosted-invalidation";
 
@@ -81,7 +81,7 @@ export async function recordManualPayment(
     });
   });
   // Deleted at Square without holding the answer up; the sweep catches what this misses.
-  void flushHostedProviderDeletions({ registrationId });
+  await flushHostedDeletionsAfterResponse({ registrationId });
 
   return getRegistrationById(eventId, registrationId);
 }

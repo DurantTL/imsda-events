@@ -1,6 +1,6 @@
 import { getHostedReturnStatus } from "@/modules/payments/square-hosted-return";
 import { applyRateLimitHeaders } from "@/modules/rate-limit/domain";
-import { checkPublicPaymentRateLimit } from "@/modules/rate-limit/service";
+import { checkPublicPaymentStatusRateLimit } from "@/modules/rate-limit/service";
 import { logError } from "@/lib/logger";
 import { withRequestContext } from "@/lib/request-context";
 
@@ -20,7 +20,7 @@ type RouteContext = { params: Promise<{ returnId: string }> };
 async function getHandler(request: Request, context: RouteContext) {
   try {
     const { returnId } = await context.params;
-    const rateLimit = await checkPublicPaymentRateLimit(request, `square-return:${returnId}`);
+    const rateLimit = await checkPublicPaymentStatusRateLimit(request, returnId);
     if (!rateLimit.allowed) {
       return applyRateLimitHeaders(
         Response.json({ error: "RATE_LIMITED" }, { status: 429, headers: privateHeaders }),
