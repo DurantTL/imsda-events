@@ -10,18 +10,20 @@ import { calendarDateInEventTimeZone } from "@/modules/events/lifecycle";
  */
 
 /** Stored on every record so a later change to the wording is visible. */
-export const HEALTH_CONSENT_VERSION = "draft-2026-10-synthetic";
+export const HEALTH_CONSENT_VERSION = "pathfinder-health-record-2026";
 
 /**
- * PLACEHOLDER WORDING. The three consent statements must be the verbatim text
- * of the 2026 Pathfinder Health Record before this is switched on. They are
- * kept here, in one place, so that swap is a one-file change. See ADR 0005
- * Addendum B (open question) and the pull request notes.
+ * The three consent statements, verbatim from the bottom of the 2026 Pathfinder
+ * Health Record, just above the signature (supplied by the Communication
+ * Director on 2026-10-09). Kept here, in one place, so a later wording change is
+ * a one-file change together with a new `HEALTH_CONSENT_VERSION`.
  */
 export const HEALTH_CONSENT_TEXT = {
-  emergencyTreatment: "[Placeholder: emergency treatment authorization, verbatim text to be supplied.]",
-  activities: "[Placeholder: attendance, health-history accuracy and activity permission statement, verbatim text to be supplied.]",
-  photocopy: "[Placeholder: permission for photocopying, verbatim text to be supplied.]",
+  emergencyTreatment:
+    "In case of emergency, I hereby give permission to the physician selected by the club directors or conference leadership to hospitalize, secure proper treatment for and to order injection, anesthesia or surgery for my child.",
+  activities:
+    "As parent or legal guardian of the applicant, I am in favor of him/her attending club functions and accept the conditions named. The health history stated is correct so far as I know, and the person herein described has permission to engage in all prescribed club activities except as noted. In addition, I have read and understand the Emergency Authorization statement and give my full consent to the terms found therein.",
+  photocopy: "Permission for photo copying of this health record is granted.",
 } as const;
 
 export const HEALTH_RECORD_LINK_DEFAULT_DAYS = 14;
