@@ -482,27 +482,42 @@ human can accept, change or reject them before any real record is stored.
    routes (every one answers 404), no Health tab, no page, and nothing is
    written. Deployment configuration does not pass the variable on.
 
+### Decided 2026-10-09 (Communication Director, #389)
+
+- **System administrator access: break-glass only.** This replaces the
+  2026-10-01 view rule. A system administrator who needs to read a health record
+  must:
+  - type a reason;
+  - accept that access lasts 24 hours;
+  - know that every use is logged.
+
+  The Communication Director reviews each use monthly.
+- **Retention: re-confirm every club year.** At the start of each club year,
+  last year's health records are marked "needs updating". A record the director
+  doesn't re-confirm within 60 days is deleted:
+  - **Deleted:** the health fields, insurance details and emergency contacts.
+  - **Kept:** the member, their name, honors, classes and roster history.
+
+  If the member becomes active again, the health form must be filled in again.
+  Removing someone from a roster still deletes their health record at once.
+- **Breach response:** `docs/HEALTH-RECORDS-BREACH-RESPONSE.md`. It names the
+  Communication Director (incident lead), the conference president, the
+  executive secretary, the treasurer and the system administrators.
+- **Youth Director and UltraCamp:** not in the first version. Revisit later.
+- **Encryption key:** moved out of the env file into a protected file, with a
+  separate tested backup (#876). Database backups go to Cloudflare R2 (#875).
+
 ### Still open (blocking production use)
 
 These are the remaining decisions from section 6 of the options report plus
 questions this build raised.
-
-- **System administrator access.** The director's 2026-10-01 rule gives system
-  administrators view access. The options report instead proposed break-glass
-  only (a stated reason, time-limited, reviewed monthly). Confirm which, and
-  who reviews use each month.
 - **Event staff scope.** The health role is event-scoped here because the
   permission lives on an event membership. Confirm that is wanted, rather than
   a conference-wide health role.
 - **Coordinator window start.** The window has no start bound of its own (a
   member can only be an attendee after registering). Confirm.
-- **Retention.** Whether stale records are removed after a grace period (the
-  report suggests 60 days), how long backups and off-site copies are kept, and
-  who owns a legal hold.
-- **Breach response.** Who decides a breach happened, who notifies families and
-  who contacts counsel.
-- **Youth Director scope.** Whether the Youth Director holds the explicit
-  permission, for all clubs or only campers, and whether exports are wanted.
+- **Backup retention and legal hold.** How long off-site backup copies are
+  kept (#875 suggests 90 days), and who can pause deletion under a legal hold.
 - **Consent wording.** The three consent statements (emergency treatment,
   attendance and activity permission, photocopying) are placeholders in the code
   and must be replaced with the verbatim 2026 text before use.
