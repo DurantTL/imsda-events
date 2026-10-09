@@ -2,14 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { ArrowRight, CalendarDays, CircleDollarSign, ShieldAlert, ShieldCheck, UserRound, UsersRound } from "lucide-react";
+import { ArrowRight, CalendarDays, CircleDollarSign, GraduationCap, ShieldAlert, ShieldCheck, UserRound, UsersRound } from "lucide-react";
 import { AreaCoordinatorCardSection, AreaCoordinatorCardSkeleton } from "@/components/area-coordinator-card";
 import { ClubInviteAccept } from "@/components/club-invite-accept";
+import { InstructorInviteAccept } from "@/components/instructor-invite-accept";
 import { getCurrentAttendee } from "@/modules/attendee-accounts/current-attendee";
 import { requireAttendeeSecondStep } from "@/modules/attendee-accounts/portal-second-step";
 import { getAttendeeMfaStatus } from "@/modules/attendee-accounts/mfa-service";
 import { listRegistrationsForVerifiedEmail, type AttendeeRegistrationSummary } from "@/modules/attendee-accounts/registrations-repository";
 import { listInvitesForAccount } from "@/modules/club-imports/invites";
+import { accountIsInstructor, listInstructorInvitesForAccount } from "@/modules/honors/instructor-repository";
 import { currentAreaCoordinator } from "@/modules/organizations/area-coordinators";
 import { listDirectedClubs } from "@/modules/organizations/director-access";
 import { clubDirectorRoleLabels } from "@/modules/organizations/director-grants-domain";
@@ -41,7 +43,7 @@ export default async function AttendeeAccountOverviewPage() {
   const { account, via } = await getCurrentAttendee();
   if (!account) redirect("/account/sign-in");
 
-  const [registrations, mfaStatus, clubs, invites, areaCoordinator] = await Promise.all([
+  const [registrations, mfaStatus, clubs, invites, areaCoordinator, instructorInvites, isInstructor] = await Promise.all([
     listRegistrationsForVerifiedEmail(account.verifiedEmail),
     getAttendeeMfaStatus(account.id),
     listDirectedClubs(account.id),
@@ -49,6 +51,9 @@ export default async function AttendeeAccountOverviewPage() {
     via === "attendee" ? listInvitesForAccount(account.verifiedEmail) : Promise.resolve([]),
     // Null unless this is the person's own session with an active Area Coordinator grant and second step (#656).
     currentAreaCoordinator(),
+    // Honors Weekend instructor invites (#833): like club invites, only the person themselves may accept.
+    via === "attendee" ? listInstructorInvitesForAccount(account.verifiedEmail) : Promise.resolve([]),
+    via === "attendee" ? accountIsInstructor(account.id) : Promise.resolve(false),
   ]);
   const upcoming = upcomingOnly(registrations);
   const next = upcoming[0];
@@ -66,6 +71,7 @@ export default async function AttendeeAccountOverviewPage() {
       </section>
 
       {invites.length > 0 && <ClubInviteAccept invites={invites} />}
+      {instructorInvites.length > 0 && <InstructorInviteAccept invites={instructorInvites} />}
 
       <div className="account-overview-grid">
         <section className="public-manage-card account-overview-card">
@@ -115,6 +121,17 @@ export default async function AttendeeAccountOverviewPage() {
               ))}
             </ul>
             <p className="field-help">Roster, club event registration, and class choices.</p>
+          </section>
+        )}
+
+        {isInstructor && (
+          <section className="public-manage-card account-overview-card">
+            <p className="public-registration-eyebrow"><GraduationCap size={15} aria-hidden="true" /> Honors Weekend</p>
+            <h2>Your classes</h2>
+            <p className="field-help">Class rosters and marking attendance and completion for the classes you teach.</p>
+            <Link className="secondary-button account-overview-link" href="/account/instructor">
+              Open your classes <ArrowRight size={14} aria-hidden="true" />
+            </Link>
           </section>
         )}
 

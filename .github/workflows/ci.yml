@@ -116,6 +116,14 @@ jobs:
       # write-back never re-creating a voided completion (#591).
       - run: npm run test:honor-entry-void
 
+      # Real-database check of Honors Weekend class instructors (#833): staff invite and assign, only the invited
+      # verified email accepts, an instructor reads and marks only their own classes and gets name and club only
+      # (planted contact, health, guardian and birth-date data never reaches them), every other class looks alike,
+      # a Sterling Volunteers check that isn't current blocks a roster and its marks, Completed also marks attended
+      # and writes the honor record once through the existing write-back (even under races), staff can void, marks
+      # close 14 days after the event ends, and removing an instructor ends their access.
+      - run: npm run test:honor-instructors
+
       # Real-database check of event templates: apply, revision isolation, save/publish
       # races, parallel same-key applies, key reuse, and sticky archive (#152).
       - run: npm run test:event-templates
@@ -272,6 +280,11 @@ jobs:
       - run: npm run test:public-roster
       # Lodging assignment through the built app (#200): the private page shows a published room and roommates by first name only, nothing before publishing, the registrant waitlist route needs a private link and the same origin, and every staff route refuses a signed-out caller.
       - run: npm run test:lodging-assignment-http
+      # Honors Weekend instructors (#833) by URL and API: an instructor opens only their own class (name and club only, no
+      # planted contact, health, guardian or birth-date data in the JSON or the page), any other class, a missing class and
+      # a non-instructor all get the same 404 for reading and marking, no current Sterling Volunteers check shows the message
+      # and no names, signed-out and cross-origin calls and every staff route without a staff session are refused.
+      - run: npm run test:honor-instructors-http
       # One staff account on four devices (#825): four cookie jars sign in at once
       # (password and second step), then scan in parallel with no 401, 403, 429 or
       # 500, an address change mid-session, re-sent scans, check-in racing undo,
