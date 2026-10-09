@@ -87,6 +87,21 @@ describe("honors picked during club registration (#618)", () => {
     expect(mocks.saveRegistrationHonorPicks).toHaveBeenCalledWith("club-a", "event-1", { accountId: "director-1" }, { "member:m1": ["knots"] }, expect.any(Date), {});
   });
 
+  it("passes the director's confirmations to the honors save, keyed like the picks (#832)", async () => {
+    const response = await SUBMIT(request("POST", {
+      ...submission, honorSelections: { "member:m1": ["advanced"] }, honorConfirmations: { "member:m1": ["advanced"] },
+    }), ctx);
+    expect(response.status).toBe(201);
+    expect(mocks.submitClubRegistration.mock.calls.at(-1)![3]).not.toHaveProperty("honorConfirmations");
+    expect(mocks.saveRegistrationHonorPicks).toHaveBeenCalledWith("club-a", "event-1", { accountId: "director-1" }, { "member:m1": ["advanced"] }, expect.any(Date), { "member:m1": ["advanced"] });
+  });
+
+  it("refuses malformed confirmations before anything is submitted (#832)", async () => {
+    const response = await SUBMIT(request("POST", { ...submission, honorSelections: { "member:m1": ["advanced"] }, honorConfirmations: { "member:m1": "advanced" } }), ctx);
+    expect(response.status).toBe(400);
+    expect(mocks.submitClubRegistration).not.toHaveBeenCalled();
+  });
+
   it("does not look at honors when none were picked", async () => {
     const response = await SUBMIT(request("POST", submission), ctx);
     expect(response.status).toBe(201);

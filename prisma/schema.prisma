@@ -750,6 +750,7 @@ model User {
   createdRosterExportFormats         ClubRosterExportFormat[]     @relation("ClubRosterExportFormatCreatedByUser")
 
   recordedMemberHonorEntries         MemberHonorEntry[]           @relation("MemberHonorEntryRecordedByUser")
+  honorEnrollmentOverrides           HonorEnrollment[]            @relation("HonorEnrollmentRequirementOverriddenBy")
   voidedMemberHonorEntries           MemberHonorEntryVoid[]       @relation("MemberHonorEntryVoidedByUser")
   initiatedMemberTransfers           MemberTransfer[]             @relation("MemberTransferInitiatedByUser")
   resolvedMemberTransfers            MemberTransfer[]             @relation("MemberTransferResolvedByUser")
@@ -4863,12 +4864,15 @@ model HonorEnrollment {
   organizationId         String?
   consumesSeat           Boolean
   /// The director confirmed the youth meets the class's minimum level when the roster had no level (#832).
+  /// "ByDirector" also covers staff acting as the director (#442), who set it through the same screen.
   levelConfirmedByDirector Boolean @default(false)
-  /// The director confirmed the youth completed the class's prerequisite honors when the honor record showed none (#832).
+  /// The director (or staff acting as the director) confirmed the youth completed the class's prerequisite honors when the honor record showed none (#832).
   prerequisitesConfirmedByDirector Boolean @default(false)
   /// Why staff placed the youth although a level or prerequisite rule was not met (#832). Null when no override was used.
   requirementOverrideReason String?
+  /// The staff user who overrode; cleared if that user is deleted (the audit log keeps the entry).
   requirementOverriddenByUserId String?
+  requirementOverriddenByUser User? @relation("HonorEnrollmentRequirementOverriddenBy", fields: [requirementOverriddenByUserId], references: [id], onDelete: SetNull)
   createdAt              DateTime @default(now())
 
   event                Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)

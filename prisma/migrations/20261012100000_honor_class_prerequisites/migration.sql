@@ -12,6 +12,9 @@ ALTER TABLE "HonorEnrollment"
   ADD COLUMN "requirementOverrideReason" TEXT,
   ADD COLUMN "requirementOverriddenByUserId" TEXT;
 
+-- AddForeignKey
+ALTER TABLE "HonorEnrollment" ADD CONSTRAINT "HonorEnrollment_requirementOverriddenByUserId_fkey" FOREIGN KEY ("requirementOverriddenByUserId") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
 -- CreateTable
 CREATE TABLE "HonorOfferingPrerequisite" (
     "id" TEXT NOT NULL,

@@ -42,6 +42,28 @@ describe("class selection route", () => {
     expect(mocks.setClassSelections).toHaveBeenCalledWith("club-a", "event-1", { accountId: "director-1" }, { "attendee-1": ["knots"] }, expect.any(Date), { confirmations: undefined, overrides: undefined });
   });
 
+  it("passes the director's confirmations and staff's override reasons through (#832)", async () => {
+    const body = {
+      selections: { "attendee-1": ["advanced"] },
+      confirmations: { "attendee-1": ["advanced"] },
+      overrides: { "attendee-2": { advanced: "  Approved by the Area Coordinator  " } },
+    };
+    expect((await PUT(request(body), ctx)).status).toBe(200);
+    expect(mocks.setClassSelections).toHaveBeenCalledWith("club-a", "event-1", { accountId: "director-1" }, body.selections, expect.any(Date), {
+      confirmations: body.confirmations,
+      overrides: { "attendee-2": { advanced: "Approved by the Area Coordinator" } },
+    });
+  });
+
+  it("refuses an override without a real reason, and too long a reason, before saving (#832)", async () => {
+    for (const reason of ["", "  ", "no", "x".repeat(301)]) {
+      const response = await PUT(request({ selections: {}, overrides: { a: { c: reason } } }), ctx);
+      expect(response.status).toBe(400);
+    }
+    expect((await PUT(request({ selections: {}, confirmations: { a: ["1", "2", "3", "4", "5", "6", "7"] } }), ctx)).status).toBe(400);
+    expect(mocks.setClassSelections).not.toHaveBeenCalled();
+  });
+
   it("maps full classes, club limits, bad picks, and the deadline to clear statuses", async () => {
     const cases: Array<[ClassSelectionError["code"], number]> = [
       ["CLASS_FULL", 409], ["CLUB_LIMIT_REACHED", 409], ["SELECTION_INVALID", 422], ["DEADLINE_PASSED", 410], ["NOT_REGISTERED", 404],

@@ -149,7 +149,8 @@ async function buildPopulatedSource(): Promise<Fixture> {
   const session = await prisma.honorSession.create({ data: { eventId, name: "Friday", normalizedName: "friday" } });
   // Tied sortOrder (both 0); Friday was created first but "Afternoon" sorts first by name (#570).
   await prisma.honorSession.create({ data: { eventId, name: "Afternoon", normalizedName: "afternoon", createdAt: new Date(Date.now() + 60_000) } });
-  const offeringA = await prisma.honorOffering.create({ data: { eventId, honorId: honor.id, sessionId: session.id, span: "SINGLE_SESSION", capacity: 30, perClubLimit: 4, minimumAge: 10, teacherName: "Synthetic Teacher" } });
+  const offeringA = await prisma.honorOffering.create({ data: { eventId, honorId: honor.id, sessionId: session.id, span: "SINGLE_SESSION", capacity: 30, perClubLimit: 4, minimumAge: 10, minimumClassLevel: "GUIDE", teacherName: "Synthetic Teacher" } });
+  await prisma.honorOfferingPrerequisite.create({ data: { offeringId: offeringA.id, honorId: honor2.id } });
   const offeringB = await prisma.honorOffering.create({ data: { eventId, honorId: honor2.id, span: "ALL_SESSIONS", capacity: 20, isActive: false } });
 
   // Forms: one with late pricing, one with capacity limits, one never published.
@@ -399,6 +400,10 @@ async function run() {
   assert(offerings.length === 2 && offerings.every((offering) => offering.capacity === 12) && offerings.some((offering) => offering.session?.name === "Friday") && offerings.some((offering) => offering.sessionId === null), "honor offerings are copied with the reviewed capacity and their own sessions");
   assert(offerings.every((offering) => offering.perClubLimit === 3), "per-club limits are the reviewed values, not the source's");
   assert(offerings.some((offering) => offering.minimumAge === 10), "minimum age carries over");
+  const sourcePrerequisite = await prisma.honorOfferingPrerequisite.findFirst({ where: { offeringId: source.offeringIds[0] } });
+  const clonedLevelClass = offerings.find((offering) => offering.minimumClassLevel === "GUIDE");
+  assert(clonedLevelClass && (await prisma.honorOfferingPrerequisite.findMany({ where: { offeringId: clonedLevelClass.id } })).map((row) => row.honorId).join() === sourcePrerequisite?.honorId, "the minimum class level and prerequisite honors carry over (#832)");
+  assert((await prisma.honorOfferingPrerequisite.count({ where: { offering: { eventId: cloneId } } })) === 1, "only the class that had prerequisites has them in the clone");
 
   const dump = await cloneDump(cloneId);
   assert(!dump.includes(marker) && !dump.includes(`/api/events/${sourceId}/`) && !dump.includes(`/api/public/events/${P}-source-2027/assets/`) && !dump.includes(`${appOrigin()}/manage/`), "no private-link marker reached the clone's event, sections, links, forms, or messages");

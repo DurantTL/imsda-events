@@ -208,3 +208,20 @@ describe("the staff catalog form (#832)", () => {
     expect(honorOfferingUpdateSchema.parse({ minimumClassLevel: null, prerequisiteHonorIds: [] })).toEqual({ minimumClassLevel: null, prerequisiteHonorIds: [] });
   });
 });
+
+describe("which honors count as completed (#486, #832)", () => {
+  it("counts only the latest non-voided entry per person and honor", async () => {
+    const { completedFromLatestEntries } = await import("@/modules/honors/completed-honors");
+    // Newest first, as the repository reads them.
+    const completed = completedFromLatestEntries([
+      { personId: "p1", honorId: "knots", status: "IN_PROGRESS" },
+      { personId: "p1", honorId: "knots", status: "COMPLETED" },
+      { personId: "p1", honorId: "birds", status: "COMPLETED" },
+      { personId: "p2", honorId: "knots", status: "COMPLETED" },
+      { personId: "p2", honorId: "knots", status: "IN_PROGRESS" },
+    ]);
+    // A completion later corrected to in progress doesn't count; a re-completion after it would.
+    expect([...(completed.get("p1") ?? [])]).toEqual(["birds"]);
+    expect([...(completed.get("p2") ?? [])]).toEqual(["knots"]);
+  });
+});

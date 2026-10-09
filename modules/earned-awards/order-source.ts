@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { getPrisma } from "@/lib/prisma";
+import { completedHonorsByPerson } from "@/modules/honors/completed-honors";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { CONFERENCE_TIME_ZONE } from "@/modules/calendar/domain";
 import {
@@ -629,32 +630,6 @@ async function activeRules(db: Db, only?: { ruleId: string }): Promise<LoadedRul
     itemId: rule.itemId,
     groups: rule.groups.map((group) => ({ minimum: group.minimum, honorIds: group.honors.map((honor) => honor.honorId) })),
   }));
-}
-
-/**
- * Each person's completed honors (#486): only a person-and-honor's *latest*
- * entry counts, same as the Honors page and the honor order source, so an
- * honor corrected back to in progress no longer counts.
- */
-async function completedHonorsByPerson(db: Db, personIds: readonly string[], honorIds: readonly string[]) {
-  const completed = new Map<string, Set<string>>();
-  if (personIds.length === 0 || honorIds.length === 0) return completed;
-  const entries = await db.memberHonorEntry.findMany({
-    where: { personId: { in: [...personIds] }, honorId: { in: [...honorIds] }, void: null },
-    orderBy: { seq: "desc" },
-    select: { personId: true, honorId: true, status: true },
-  });
-  const seen = new Set<string>();
-  for (const entry of entries) {
-    const key = `${entry.personId}\u0000${entry.honorId}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    if (entry.status !== "COMPLETED") continue;
-    const set = completed.get(entry.personId) ?? new Set<string>();
-    set.add(entry.honorId);
-    completed.set(entry.personId, set);
-  }
-  return completed;
 }
 
 export type MasterAwardPerson = { personId: string; firstName: string; lastName: string };

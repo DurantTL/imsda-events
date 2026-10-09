@@ -89,6 +89,7 @@ export function ClassRequirementNotes({
                   type="text"
                   value={reasons[offering.id] ?? ""}
                 />
+                <small className="field-help">Don&apos;t include medical or personal details.</small>
               </label>
             )}
           </div>

@@ -21,6 +21,8 @@ type ApiResult = Partial<EventHonorSetup> & {
   plan?: HonorCopyPlan;
   setup?: EventHonorSetup;
   message?: string;
+  /** After adding or raising a class level or prerequisite: how many enrolled youth don't meet it (#832). */
+  requirementImpact?: { offeringId: string; unmet: number };
   issues?: Array<{ message?: string }>;
 };
 
@@ -124,7 +126,10 @@ export function HonorsSetupWorkspace({
       }
       const next = result.setup ?? (result.sessions && result.offerings ? result as EventHonorSetup : null);
       if (next) setSetup({ locations: next.locations, sessions: next.sessions, offerings: next.offerings });
-      if (success) setNotice(success);
+      const unmet = result.requirementImpact?.unmet ?? 0;
+      if (success) {
+        setNotice(unmet > 0 ? `${success} ${unmet} enrolled youth don't meet this; they keep their seats.` : success);
+      }
       return result;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The change could not be saved.");

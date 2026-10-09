@@ -21,6 +21,7 @@ import {
   type SelectableOffering,
 } from "@/modules/honors/enrollment-domain";
 import type { ClubClassLevel } from "@/modules/club-rosters/domain";
+import { completedHonorsByPerson } from "@/modules/honors/completed-honors";
 import { compareOfferingRows, offeringHonorsSelect, summarizeOfferingHonors } from "@/modules/honors/offering-honors";
 import { picksByAttendeeId } from "@/modules/honors/registration-picks";
 
@@ -60,7 +61,7 @@ export type SeatOwner = { kind: "club"; organizationId: string } | { kind: "grou
 /**
  * What the class rules need to know about roster members (#832): the director-set
  * class level on the roster and which of `honorIds` (the event's prerequisite
- * honors) the member's honor record shows completed. A voided entry doesn't count.
+ * honors) the member's honor record shows completed. Only the latest non-voided entry per honor counts (a completion later corrected to in progress doesn't).
  * Nothing else from the record is read.
  */
 async function loadMemberRequirements(client: Prisma.TransactionClient, memberIds: readonly string[], honorIds: readonly string[]) {
@@ -71,17 +72,41 @@ async function loadMemberRequirements(client: Prisma.TransactionClient, memberId
     select: { id: true, classLevel: true, personId: true },
   });
   const personIds = members.map((member) => member.personId).filter((id): id is string => Boolean(id));
-  const entries = honorIds.length > 0 && personIds.length > 0
-    ? await client.memberHonorEntry.findMany({
-      where: { personId: { in: personIds }, honorId: { in: [...honorIds] }, status: "COMPLETED", void: null },
-      select: { personId: true, honorId: true },
-    })
-    : [];
+  const completedByPerson = await completedHonorsByPerson(client, personIds, honorIds);
   for (const member of members) {
-    const completed = member.personId ? entries.filter((entry) => entry.personId === member.personId).map((entry) => entry.honorId) : [];
-    result.set(member.id, { classLevel: member.classLevel, completedHonorIds: [...new Set(completed)] });
+    result.set(member.id, { classLevel: member.classLevel, completedHonorIds: member.personId ? [...(completedByPerson.get(member.personId) ?? [])] : [] });
   }
   return result;
+}
+
+/**
+ * How many youth currently holding a seat in the class don't meet the given rule (#832), for staff who add or raise a
+ * requirement: they keep their seats. A count only, never names. A guest or group person has no level or record, so
+ * counts as not meeting it.
+ */
+export async function countEnrolledYouthNotMeeting(
+  client: Prisma.TransactionClient,
+  offeringId: string,
+  eventId: string,
+  rule: { minimumClassLevel: ClubClassLevel | null; prerequisiteHonorIds: readonly string[] },
+) {
+  const enrollments = await client.honorEnrollment.findMany({
+    where: { offeringId, consumesSeat: true, registration: { status: { in: ["SUBMITTED", "CONFIRMED"] } } },
+    select: { registrationAttendee: { select: { profileSnapshot: true } } },
+  });
+  const memberIds = enrollments
+    .map((row) => (row.registrationAttendee.profileSnapshot as Snapshot).clubRosterMemberId)
+    .filter((id): id is string => Boolean(id));
+  const byMember = await loadMemberRequirements(client, memberIds, rule.prerequisiteHonorIds);
+  const checked = { honorName: "", minimumClassLevel: rule.minimumClassLevel, prerequisiteHonors: rule.prerequisiteHonorIds.map((id) => ({ id, name: "" })) };
+  let unmet = 0;
+  for (const row of enrollments) {
+    const memberId = (row.registrationAttendee.profileSnapshot as Snapshot).clubRosterMemberId;
+    const known = memberId ? byMember.get(memberId) : undefined;
+    const person = { consumesSeat: true, classLevel: known?.classLevel ?? null, completedHonorIds: known?.completedHonorIds ?? [] };
+    if (requirementGaps(person, checked).length > 0) unmet += 1;
+  }
+  return unmet;
 }
 
 /** Honors any class of the event requires first (#832). */
@@ -329,8 +354,8 @@ export async function setGroupClassSelections(
   now = new Date(),
 ) {
   // No director or roster stands behind a group's people, so nobody can confirm a level or honor record for them:
-  // a class with a level or prerequisite is open to a group only when the person is shown to meet it (never today),
-  // and staff place them from the staff side (#832).
+  // a class with a level or prerequisite is open to a group only when the person is shown to meet it (never today).
+  // Staff override works only when acting as a club director, so there is no placement path for a group person yet (#832).
   return setOwnerClassSelections({ kind: "group", registrationId }, eventId, actor, selections, now, {});
 }
 
@@ -486,7 +511,7 @@ async function setOwnerClassSelections(
             action: "HONOR_CLASS_REQUIREMENT_OVERRIDDEN",
             entityType: "Registration",
             entityId: registration.registrationId,
-            summary: `Staff placed someone in ${offeringsById.get(row.offeringId)!.honorName} without meeting its class level or prerequisite honors: ${row.overrideReason}`,
+            summary: "Staff placed someone in a class without meeting its class level or prerequisite honors.",
             metadata: {
               ...(owner.kind === "club" ? { organizationId: owner.organizationId } : { group: true }),
               ...("actAsId" in actor ? { actAsId: actor.actAsId } : {}),

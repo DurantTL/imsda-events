@@ -139,6 +139,10 @@ async function main() {
   await record("gina", knots, "COMPLETED");
   await record("gina", birds, "COMPLETED");
   await record("rory", knots, "IN_PROGRESS");
+  // Corrected later: a completion followed by an in-progress entry is current status IN_PROGRESS, so it doesn't count (#486).
+  await addPerson("ellis", "GUIDE");
+  await record("ellis", knots, "COMPLETED");
+  await record("ellis", knots, "IN_PROGRESS");
   const voided = await record("vera", knots, "COMPLETED");
   await prisma.memberHonorEntryVoid.create({ data: { entryId: voided.id, reason: "Entered by mistake" } });
   const id = (key: string) => people[key]!.attendeeId;
@@ -158,6 +162,13 @@ async function main() {
   assert(vera.completedHonorIds.length === 0, "a voided entry is not a completed honor");
   const rory = workspace.attendees.find((attendee) => attendee.id === id("rory"))!;
   assert(rory.completedHonorIds.length === 0, "an in-progress entry is not a completed honor");
+  const ellis = workspace.attendees.find((attendee) => attendee.id === id("ellis"))!;
+  assert(ellis.completedHonorIds.length === 0, "a completion later corrected to in progress is not a completed honor");
+  await refusal(save("ellis", [classB.id]), /needs .*Knots.* completed first/, "a completion corrected to in progress");
+  // ...and a later re-completion counts again.
+  await record("ellis", knots, "COMPLETED");
+  await save("ellis", [classB.id]);
+  assert(!(await enrollment("ellis", classB.id))!.prerequisitesConfirmedByDirector, "a re-completed honor meets the prerequisite with nothing recorded");
   assert(workspace.offerings.find((offering) => offering.id === classC.id)!.prerequisiteHonors[0]?.id === birds, "the workspace names a class's prerequisites");
   console.log("ok  workspace: levels and completed honors reach the picker; voided and in-progress entries don't count");
 
@@ -182,7 +193,7 @@ async function main() {
   const placed = await enrollment("fay", classA.id);
   assert(placed?.requirementOverrideReason === "Approved by the Area Coordinator" && placed.requirementOverriddenByUserId === adminId, "the override and who made it are recorded");
   const audit = await prisma.auditLog.findFirst({ where: { eventId, action: "HONOR_CLASS_REQUIREMENT_OVERRIDDEN" } });
-  assert(audit && audit.actorUserId === adminId && /Approved by the Area Coordinator/.test(audit.summary), "the override is in the audit log with its reason");
+  assert(audit && audit.actorUserId === adminId && !/Area Coordinator/.test(audit.summary) && JSON.stringify(audit.metadata).includes("Approved by the Area Coordinator"), "the override is in the audit log with a fixed summary and its reason in metadata");
   // Once placed she keeps the class on later saves without asking again.
   await save("fay", [classA.id]);
   assert((await prisma.honorEnrollment.count({ where: { registrationAttendeeId: id("fay"), offeringId: classA.id } })) === 1, "an existing placement isn't re-checked or duplicated");
@@ -225,6 +236,17 @@ async function main() {
   const setupAfter = await getEventHonorSetup(eventId);
   assert(setupAfter.offerings.length === 3, "the setup still lists three classes");
   console.log("ok  one person who doesn't qualify refuses the whole save, and nothing is kept");
+
+  // Raising a requirement keeps seats and tells staff how many enrolled youth do not meet it: a count, no names (#832).
+  const seatsBefore = await prisma.honorEnrollment.count({ where: { offeringId: classA.id } });
+  const raised = await updateHonorOffering(eventId, classA.id, { minimumClassLevel: "TLT" }, adminId) as { requirementImpact?: { unmet: number } };
+  assert(raised.requirementImpact?.unmet === 3, `Gina, Fay and Nolan do not meet TLT (staff are not counted), got ${raised.requirementImpact?.unmet}`);
+  assert(await prisma.honorEnrollment.count({ where: { offeringId: classA.id } }) === seatsBefore, "raising a requirement removes nobody");
+  const impactAudit = await prisma.auditLog.findFirst({ where: { eventId, action: "HONOR_OFFERING_UPDATED" }, orderBy: { createdAt: "desc" } });
+  assert(impactAudit && JSON.stringify(impactAudit.metadata).includes('"enrolledYouthNotMeetingRequirement":3'), "the audit entry has the count");
+  const lowered = await updateHonorOffering(eventId, classA.id, { minimumClassLevel: "FRIEND" }, adminId) as { requirementImpact?: unknown };
+  assert(lowered.requirementImpact === undefined, "lowering a requirement reports no impact");
+  console.log("ok  raising a requirement keeps seats and reports (and audits) a count of enrolled youth who do not meet it");
 
   await cleanup();
   console.log("Honor class requirement checks passed.");

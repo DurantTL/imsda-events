@@ -5,6 +5,8 @@ import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import type { HonorImportStep } from "@/modules/honors/catalog-csv";
 import { eventHasActiveLocations, offeringSiteId } from "@/modules/honors/locations";
+import { countEnrolledYouthNotMeeting } from "@/modules/honors/enrollment-repository";
+import { clubClassLevels } from "@/modules/club-rosters/domain";
 import {
   classSlotConflict,
   normalizeHonorCode,
@@ -726,11 +728,12 @@ export async function updateHonorOffering(
   actorUserId: string,
 ) {
   // Serializable, so a class pick saved at the same moment can't slip past the pick count on a site move (#589).
+  let unmetCount: number | null = null;
   try {
     await serializable(async (tx) => {
       const existing = await tx.honorOffering.findFirst({
         where: { id: offeringId, eventId },
-        select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, honors: offeringHonorsSelect, prerequisites: { select: { honorId: true } } },
+        select: { id: true, honorId: true, sessionId: true, span: true, locationId: true, minimumClassLevel: true, honors: offeringHonorsSelect, prerequisites: { select: { honorId: true } } },
       });
       if (!existing) throw new HonorConfigurationError("OFFERING_NOT_FOUND", "That honor offering could not be found.");
       const current = summarizeOfferingHonors(existing.honors);
@@ -846,6 +849,13 @@ export async function updateHonorOffering(
       });
       if (honorsChanged) await writeHonorRows(tx, offeringId, eventId, honorIds);
       if (nextPrerequisiteIds !== undefined) await writePrerequisiteRows(tx, offeringId, prerequisiteIds);
+      // Adding or raising a requirement doesn't remove anyone: they keep their seats. Staff are told how many don't meet it (#832).
+      const newLevel = details.minimumClassLevel !== undefined ? details.minimumClassLevel : existing.minimumClassLevel;
+      const levelRaised = newLevel !== null && (existing.minimumClassLevel === null || clubClassLevels.indexOf(newLevel) > clubClassLevels.indexOf(existing.minimumClassLevel));
+      const prerequisiteAdded = prerequisiteIds.some((honorId) => !currentPrerequisiteIds.includes(honorId));
+      if (levelRaised || prerequisiteAdded) {
+        unmetCount = await countEnrolledYouthNotMeeting(tx, offeringId, eventId, { minimumClassLevel: newLevel, prerequisiteHonorIds: prerequisiteIds });
+      }
       await writeAuditLog({
         eventId,
         actorUserId,
@@ -855,7 +865,7 @@ export async function updateHonorOffering(
         summary: honorsChanged
           ? `Updated the ${current.honorName} offering and changed its honors to ${joinHonorNames(honors.map((honor) => honor.name))}.`
           : `Updated the ${current.honorName} offering.`,
-        metadata: { changes: input },
+        metadata: { changes: input, ...(unmetCount === null ? {} : { enrolledYouthNotMeetingRequirement: unmetCount }) },
       }, tx);
     });
   } catch (error) {
@@ -865,7 +875,9 @@ export async function updateHonorOffering(
     }
     throw error;
   }
-  return getEventHonorSetup(eventId);
+  const setup = await getEventHonorSetup(eventId);
+  // Only when a requirement was added or raised on a class people hold seats in: how many of them don't meet it (#832).
+  return unmetCount === null ? setup : { ...setup, requirementImpact: { offeringId, unmet: unmetCount } };
 }
 
 /**
