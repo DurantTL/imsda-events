@@ -1,6 +1,7 @@
 import "server-only";
 
 import { getPrisma } from "@/lib/prisma";
+import { logWarn } from "@/lib/logger";
 import {
   BACKUP_KIND,
   BACKUP_MIGRATION_NAME,
@@ -44,8 +45,19 @@ async function readMigrationFinishedAt(): Promise<Date | null> {
     const rows = await getPrisma().$queryRaw<{ finished_at: Date | null }[]>`
       SELECT finished_at FROM _prisma_migrations
       WHERE migration_name = ${BACKUP_MIGRATION_NAME} LIMIT 1`;
-    return rows[0]?.finished_at ?? null;
-  } catch {
+    const finishedAt = rows[0]?.finished_at ?? null;
+    if (!finishedAt) {
+      logWarn("Backup status anchor unavailable: migration time not found", {
+        migration: BACKUP_MIGRATION_NAME,
+      });
+    }
+    return finishedAt;
+  } catch (error) {
+    // Without the anchor, "never ran" cannot go stale; say so loudly.
+    logWarn("Backup status anchor unavailable: could not read migration time", {
+      migration: BACKUP_MIGRATION_NAME,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }

@@ -21,6 +21,8 @@
 # pg.state either way so the scheduler can record it.
 set -eu
 
+. "$(dirname "$0")/prune-lib.sh"
+
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -33,9 +35,9 @@ rm -f "${STATE_DIR}/pg.state"
 
 # Prune first so a full disk is not what stops tonight's dump, and clear any
 # half-written file a killed run left behind.
-echo "[backup] pruning dumps older than ${RETENTION_DAYS} days (and stale partials)"
+echo "[backup] pruning dumps older than ${RETENTION_DAYS} days (keeping the newest ${BACKUP_KEEP_MIN:-3}, and clearing stale partials)"
 find "${BACKUP_DIR}" -name 'imsda-events-*.dump.partial' -type f -print -delete
-find "${BACKUP_DIR}" -name 'imsda-events-*.dump' -type f -mtime "+${RETENTION_DAYS}" -print -delete
+prune_backups "${BACKUP_DIR}" 'imsda-events-*.dump' "${RETENTION_DAYS}"
 
 # A crash or a failed pg_dump must not leave a truncated file behind.
 trap 'rm -f "${TARGET}.partial"' EXIT
@@ -74,7 +76,7 @@ else
 fi
 
 echo "[backup] pruning dumps older than ${RETENTION_DAYS} days"
-find "${BACKUP_DIR}" -name 'imsda-events-*.dump' -type f -mtime "+${RETENTION_DAYS}" -print -delete
+prune_backups "${BACKUP_DIR}" 'imsda-events-*.dump' "${RETENTION_DAYS}"
 
 if [ "${OFFSITE_FAILED}" -ne 0 ]; then
   exit 1

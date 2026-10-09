@@ -21,6 +21,8 @@ for that hour rather than running when the container starts) it:
    to R2. It fails if the volume is not mounted, or is empty
    (`BACKUP_REQUIRE_ASSETS=true`, the image default), instead of "backing up
    nothing".
+   Retention always keeps the newest 3 dumps and 3 archives (`BACKUP_KEEP_MIN`),
+   however old, so a long outage cannot delete the last good backups.
 3. `record-status.sh`: writes one status row (see below). With
    `BACKUP_REQUIRE_OFFSITE=true` (the image default) a run whose off-site copy
    was skipped or failed is recorded as off-site failed.
@@ -33,8 +35,22 @@ for that hour rather than running when the container starts) it:
    database server is not touched: no `CREATEDB` privilege is needed and no
    load or disk is added there. While it runs, the backup container uses
    temporary disk of about the restored (uncompressed) database size under
-   `/tmp`, and roughly 100-200 MB of RAM; both are released afterwards. If
-   `/tmp` is small, mount a roomier path and set `RESTORE_TMP_DIR` to it.
+   `/tmp`, and roughly 100-200 MB of RAM; both are released afterwards.
+   **Shared-disk risk:** `/tmp` inside the container lives on the same disk as
+   Docker's other data (and the backup volume). Before starting, the script
+   checks free space against about 6 times the dump size plus 512 MB
+   (`RESTORE_HEADROOM_MB`) and refuses with a clear message instead of filling
+   the disk; that failure is recorded as a failed rehearsal. If the disk is
+   tight, mount a roomier path and set `RESTORE_TMP_DIR` to it. Leftover
+   `restore-check.*` directories from an interrupted run are removed at the
+   next start. It also fails the rehearsal if the restored `Registration` or
+   `Person` table has 0 rows (`REHEARSAL_ALLOW_EMPTY=true` only for a fresh
+   development database). Every `PG*` variable (host, hostaddr, port, service,
+   password file and so on) is cleared before the private server starts, so it
+   cannot be pointed at production by accident; a non-public `search_path` from
+   `PGOPTIONS` is kept for the restore checks. The server runs as the
+   `postgres` user via `gosu` or `su-exec`; if the container is root and
+   neither exists, the rehearsal fails with an explicit error.
    (`RESTORE_MODE=server` keeps the old create-a-scratch-database-on-the-server
    behavior for the Compose development stack only.)
 
@@ -189,7 +205,7 @@ SHA=<commit sha>
 docker pull ghcr.io/duranttl/imsda-events-backup:$SHA
 docker volume create imsda_events_backups
 
-docker rm -f imsda-backup 2>/dev/null
+docker rm -f -v imsda-backup 2>/dev/null
 docker run -d --name imsda-backup --restart unless-stopped \
   --network postgresql_9kgaw_239292_xcloud-network \
   --env-file /home/u_events/.xcloud/.env.backup \
@@ -205,7 +221,8 @@ Upgrading the backup image is the same two lines with a new `$SHA`; the
 volume (and its history) is untouched.
 
 To back up right now instead of waiting for the scheduled hour, run a one-off
-container (no `--name`, no `--restart`; it exits when done). **It also runs a
+container (no `--name`, no `--restart`; it exits when done, with a non-zero
+status if the backup, the off-site copy or the rehearsal failed). **It also runs a
 restore rehearsal**, so allow a few minutes and the temporary disk described
 above:
 

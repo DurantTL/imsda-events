@@ -31,6 +31,11 @@ BACKUP_DIR="${BACKUP_DIR:-/backups}"
 STATE_DIR="${BACKUP_STATE_DIR:-${BACKUP_DIR}/.status}"
 export BACKUP_DIR BACKUP_STATE_DIR="${STATE_DIR}"
 RUN=0
+CYCLE_FAILED=0
+
+case "${VERIFY_EVERY}" in
+  "" | *[!0-9]* | 0) echo "[backup-scheduler] BACKUP_VERIFY_EVERY must be a positive integer" >&2; exit 2 ;;
+esac
 
 case "${AT_HOUR}" in
   [0-9] | [0-9][0-9]) [ "${AT_HOUR}" -le 23 ] || { echo "[backup-scheduler] BACKUP_AT_HOUR must be 0-23" >&2; exit 2; } ;;
@@ -39,9 +44,11 @@ esac
 
 # Seconds from now until the next AT_HOUR:00:00 UTC (0 when it is exactly then).
 seconds_until_run() {
-  H="$(expr "$(date -u +%H)" + 0)"
-  M="$(expr "$(date -u +%M)" + 0)"
-  S="$(expr "$(date -u +%S)" + 0)"
+  # One date call, so the three fields cannot straddle a minute boundary.
+  set -- $(date -u '+%H %M %S')
+  H="$(expr "$1" + 0)"
+  M="$(expr "$2" + 0)"
+  S="$(expr "$3" + 0)"
   SINCE=$((H * 3600 + M * 60 + S))
   echo $(((AT_HOUR * 3600 - SINCE + 86400) % 86400))
 }
@@ -99,8 +106,10 @@ run_cycle() {
 
   record BACKUP "${OK}" "${STARTED}" "$(now)" "${DUMP_BYTES}" "${ASSETS_BYTES}" "${OFFSITE}"
   if [ "${OK}" != "true" ]; then
-    echo "[backup-scheduler] backup failed; retrying at the next interval." >&2
+    echo "[backup-scheduler] backup failed; retrying at the next run." >&2
+    CYCLE_FAILED=1
   fi
+  if [ "${OFFSITE}" = "false" ]; then CYCLE_FAILED=1; fi
 
   if [ -n "${DUMP_BYTES}" ] && \
      { [ "$((RUN % VERIFY_EVERY))" -eq 1 ] || [ "${VERIFY_EVERY}" -eq 1 ]; }; then
@@ -111,6 +120,7 @@ run_cycle() {
     else
       echo "[backup-scheduler] RESTORE REHEARSAL FAILED — the backups are not proven restorable." >&2
       record REHEARSAL false "${R_STARTED}" "$(now)"
+      CYCLE_FAILED=1
     fi
   fi
 }
@@ -124,9 +134,11 @@ while true; do
     sleep "${WAIT}"
   fi
   RUN=$((RUN + 1))
+  CYCLE_FAILED=0
   run_cycle
   if [ "${BACKUP_RUN_ONCE:-0}" = "1" ]; then
-    exit 0
+    # A manual run reports failure to whoever ran it.
+    exit "${CYCLE_FAILED}"
   fi
   # Step past the scheduled second so a fast run is not repeated.
   sleep 61

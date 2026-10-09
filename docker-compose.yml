@@ -147,15 +147,18 @@ services:
       ASSET_DIR: /assets
       BACKUP_DIR: /backups
       BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      # Development stack: scratch database on the compose Postgres.
+      RESTORE_MODE: server
       BACKUP_AT_HOUR: ${BACKUP_AT_HOUR:-8}
       BACKUP_VERIFY_EVERY: ${BACKUP_VERIFY_EVERY:-7}
       # Optional. Receives the dump path as $$1, e.g. "rclone copy $$1 remote:imsda".
       BACKUP_OFFSITE_COMMAND: ${BACKUP_OFFSITE_COMMAND:-}
     volumes:
-      - ./scripts/backup:/usr/local/bin:ro
+      # Not /usr/local/bin: that would hide pg_dump, psql and pg_restore.
+      - ./scripts/backup:/opt/backup:ro
       - imsda_events_backups:/backups
       - imsda_events_assets:/assets
-    entrypoint: ["sh", "/usr/local/bin/backup-scheduler.sh"]
+    entrypoint: ["sh", "/opt/backup/backup-scheduler.sh"]
     restart: unless-stopped
 
 volumes:

@@ -81,6 +81,9 @@ describe("portable Docker deployment contract", () => {
   it("backs up the upload volume alongside PostgreSQL", () => {
     expect(compose).toContain("imsda_events_assets:/assets");
     expect(compose).toContain("ASSET_DIR: /assets");
-    expect(compose).toContain("./scripts/backup:/usr/local/bin:ro");
+    // Not /usr/local/bin: that would hide pg_dump, psql and pg_restore.
+    expect(compose).toContain("./scripts/backup:/opt/backup:ro");
+    expect(compose).not.toContain("./scripts/backup:/usr/local/bin");
+    expect(compose).toContain("RESTORE_MODE: server");
   });
 });

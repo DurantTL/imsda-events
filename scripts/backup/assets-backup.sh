@@ -6,6 +6,8 @@
 # restore rows that point to files which no longer exist after a server loss.
 set -eu
 
+. "$(dirname "$0")/prune-lib.sh"
+
 ASSET_DIR="${ASSET_DIR:-/assets}"
 BACKUP_DIR="${BACKUP_DIR:-/backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
@@ -29,9 +31,9 @@ if [ "${BACKUP_REQUIRE_ASSETS:-false}" = "true" ] && [ -z "$(ls -A "${ASSET_DIR}
   exit 1
 fi
 
-echo "[asset-backup] pruning archives older than ${RETENTION_DAYS} days (and stale partials)"
+echo "[asset-backup] pruning archives older than ${RETENTION_DAYS} days (keeping the newest ${BACKUP_KEEP_MIN:-3}, and clearing stale partials)"
 find "${BACKUP_DIR}" -name 'imsda-assets-*.tar.gz.partial' -type f -print -delete
-find "${BACKUP_DIR}" -name 'imsda-assets-*.tar.gz' -type f -mtime "+${RETENTION_DAYS}" -print -delete
+prune_backups "${BACKUP_DIR}" 'imsda-assets-*.tar.gz' "${RETENTION_DAYS}"
 
 trap 'rm -f "${TARGET}.partial"' EXIT
 
@@ -62,8 +64,7 @@ else
 fi
 
 echo "[asset-backup] pruning archives older than ${RETENTION_DAYS} days"
-find "${BACKUP_DIR}" -name 'imsda-assets-*.tar.gz' -type f \
-  -mtime "+${RETENTION_DAYS}" -print -delete
+prune_backups "${BACKUP_DIR}" 'imsda-assets-*.tar.gz' "${RETENTION_DAYS}"
 
 if [ "${OFFSITE_FAILED}" -ne 0 ]; then
   exit 1

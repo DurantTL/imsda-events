@@ -24,6 +24,8 @@
 #   BACKUP_DIR            where dumps are read from (default /backups)
 #   RESTORE_MODE          private or server (default: private if initdb exists)
 #   RESTORE_TMP_DIR       where the private server lives (default /tmp)
+#   RESTORE_HEADROOM_MB   free space required beyond 6x the dump (default 512)
+#   REHEARSAL_ALLOW_EMPTY true to accept empty Registration/Person (development)
 #   RESTORE_SCRATCH_DB    scratch database name (default imsda_events_restore_check)
 #   BACKUP_FILE           restore this dump instead of the newest one
 set -eu
@@ -52,14 +54,22 @@ fi
 echo "[restore-verify] $(date -u +%FT%TZ) restoring ${DUMP} into ${SCRATCH_DB} (${MODE} mode)"
 
 # PostgreSQL refuses to run as root; the image runs as root to write the
-# volumes, so the private server itself runs as the postgres user.
-as_postgres() {
-  if [ "$(id -u)" = "0" ] && command -v su-exec >/dev/null 2>&1; then
-    su-exec postgres "$@"
+# volumes, so the private server itself runs as the postgres user (gosu, or
+# su-exec as a fallback). Root with neither available is an error, not a
+# silent attempt that fails obscurely.
+RUN_AS=""
+if [ "${MODE}" = "private" ] && [ "$(id -u)" = "0" ]; then
+  if command -v gosu >/dev/null 2>&1; then
+    RUN_AS="gosu postgres"
+  elif command -v su-exec >/dev/null 2>&1; then
+    RUN_AS="su-exec postgres"
   else
-    "$@"
+    echo "[restore-verify] running as root but neither gosu nor su-exec exists to drop to the postgres user." >&2
+    exit 1
   fi
-}
+fi
+# shellcheck disable=SC2086
+as_postgres() { ${RUN_AS} "$@"; }
 
 WORK=""
 STARTED=0
@@ -74,18 +84,46 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+# A stopped container sends TERM; exit so the EXIT trap still cleans up.
+trap 'exit 143' INT TERM
 
 if [ "${MODE}" = "private" ]; then
-  WORK="$(mktemp -d "${RESTORE_TMP_DIR:-/tmp}/restore-check.XXXXXX")"
-  if [ "$(id -u)" = "0" ] && command -v su-exec >/dev/null 2>&1; then chown postgres "${WORK}"; fi
+  TMP_BASE="${RESTORE_TMP_DIR:-/tmp}"
+  mkdir -p "${TMP_BASE}"
+  # Leftovers from a run that was killed before it could clean up.
+  rm -rf "${TMP_BASE}"/restore-check.*
+
+  # The private server holds the whole restored database (uncompressed, plus
+  # indexes and WAL), so refuse clearly rather than fill a disk that other
+  # things, such as the backup volume itself, may share.
+  DUMP_BYTES="$(wc -c < "${DUMP}")"
+  NEED_KB=$((DUMP_BYTES * 6 / 1024 + ${RESTORE_HEADROOM_MB:-512} * 1024))
+  AVAIL_KB="$(df -Pk "${TMP_BASE}" | awk 'NR==2 {print $4}')"
+  if [ -n "${AVAIL_KB}" ] && [ "${AVAIL_KB}" -lt "${NEED_KB}" ]; then
+    echo "[restore-verify] only ${AVAIL_KB} KB free in ${TMP_BASE}; need about ${NEED_KB} KB (6x the dump plus headroom). Free space or set RESTORE_TMP_DIR." >&2
+    exit 1
+  fi
+
+  WORK="$(mktemp -d "${TMP_BASE}/restore-check.XXXXXX")"
+  if [ -n "${RUN_AS}" ]; then chown postgres "${WORK}"; fi
   chmod 700 "${WORK}"
+
+  # Keep only the search_path (for a non-public Prisma schema), then scrub every
+  # PG* variable so nothing about the production connection (host, hostaddr,
+  # port, service, password file, ...) can reach the private server or its
+  # clients. This happens before initdb and pg_ctl.
+  SAVED_SEARCH_PATH="$(printf '%s' "${PGOPTIONS:-}" | grep -o -E -e '-c[ =]?search_path=[^ ]+' | head -n 1 || true)"
+  for name in $(env | sed -n 's/^\(PG[A-Z0-9_]*\)=.*/\1/p'); do unset "${name}"; done
+
   as_postgres initdb -D "${WORK}/data" -U postgres --auth=trust --encoding=UTF8 >/dev/null
-  as_postgres pg_ctl -D "${WORK}/data" -w -s -l "${WORK}/server.log" \
-    -o "-c listen_addresses= -c unix_socket_directories=${WORK} -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c wal_level=minimal -c max_wal_senders=0 -c shared_buffers=64MB -c max_connections=10" start
+  # Set before starting: if start fails half way, cleanup must still stop it.
   STARTED=1
+  as_postgres pg_ctl -D "${WORK}/data" -w -s -l "${WORK}/server.log" \
+    -o "-c port=5432 -c listen_addresses= -c unix_socket_directories=${WORK} -c fsync=off -c synchronous_commit=off -c full_page_writes=off -c wal_level=minimal -c max_wal_senders=0 -c shared_buffers=64MB -c max_wal_size=256MB -c maintenance_work_mem=64MB -c max_connections=10" start
+
   # Point every client below at the private server, never at production.
-  unset PGPASSWORD PGOPTIONS PGPORT PGSERVICE PGSSLMODE
-  export PGHOST="${WORK}" PGUSER=postgres
+  export PGHOST="${WORK}" PGPORT=5432 PGUSER=postgres
+  if [ -n "${SAVED_SEARCH_PATH}" ]; then export PGOPTIONS="${SAVED_SEARCH_PATH}"; fi
 fi
 
 psql --dbname=postgres --quiet --command "DROP DATABASE IF EXISTS \"${SCRATCH_DB}\";"
@@ -107,8 +145,16 @@ psql --dbname="${SCRATCH_DB}" --tuples-only --no-align --field-separator=' ' --c
 # comes back with an empty Registration table has failed, however clean the
 # pg_restore exit code was.
 for table in Registration RegistrationAttendee Payment Person; do
-  COUNT="$(psql --dbname="${SCRATCH_DB}" --tuples-only --no-align --command "SELECT count(*) FROM \"${table}\";")"
+  COUNT="$(psql --dbname="${SCRATCH_DB}" --tuples-only --no-align --command "SELECT count(*) FROM \"${table}\";" | tr -d ' ')"
   echo "[restore-verify]   verified ${table}=${COUNT}"
+  # Registrations and people are what the system exists to hold; a restore with
+  # none of either is a failed rehearsal. REHEARSAL_ALLOW_EMPTY=true is for a
+  # fresh development database.
+  if { [ "${table}" = "Registration" ] || [ "${table}" = "Person" ]; } \
+     && [ "${COUNT}" = "0" ] && [ "${REHEARSAL_ALLOW_EMPTY:-false}" != "true" ]; then
+    echo "[restore-verify] ${table} has 0 rows in the restored copy; treating the restore as failed." >&2
+    exit 1
+  fi
 done
 
 echo "[restore-verify] $(date -u +%FT%TZ) restore rehearsal succeeded for ${DUMP}"
