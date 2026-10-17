@@ -307,7 +307,7 @@ export function TeamDirectoryWorkspace({
                 <h2 id="team-profile-title">Edit {profileMember.displayName}</h2>
               </div>
               <button
-                className="icon-button"
+                className="icon-button modal-close-button"
                 type="button"
                 onClick={closeProfile}
                 aria-label="Close team profile"

@@ -601,7 +601,7 @@ export function CheckInScanner({
               </div>
               <button
                 aria-label="Close attendee pass scanner"
-                className="icon-button"
+                className="icon-button modal-close-button"
                 disabled={Boolean(checkingInId) || bulkBusy}
                 onClick={closeScanner}
                 type="button"

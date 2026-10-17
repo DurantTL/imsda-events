@@ -867,7 +867,7 @@ export function PeopleWorkspace({
           <section className="modal-card" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="registration-modal-title" tabIndex={-1}>
             <div className="modal-head">
               <div><p className="eyebrow">Registration</p><h2 id="registration-modal-title">{modal === "edit" ? "Edit contact details" : `${selected?.accountHolder.firstName} ${selected?.accountHolder.lastName}`}</h2></div>
-              <button className="icon-button" type="button" onClick={closeModal} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button>
+              <button className="icon-button modal-close-button" type="button" onClick={closeModal} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button>
             </div>
 
             {modal === "detail" && selected ? (

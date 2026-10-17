@@ -433,7 +433,7 @@ export function PromoCodeWorkspace({
                 <h2 id="promo-code-editor-title">{editedPromo ? `Edit ${editedPromo.code}` : "Create promo code"}</h2>
               </div>
               <button
-                className="icon-button"
+                className="icon-button modal-close-button"
                 type="button"
                 aria-label="Close promo-code editor"
                 disabled={saving}

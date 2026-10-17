@@ -338,7 +338,7 @@ export function SquarePaymentMatching({
                 <h2 id="square-match-title">Attach this Square payment</h2>
               </div>
               <button
-                className="icon-button"
+                className="icon-button modal-close-button"
                 type="button"
                 onClick={close}
                 aria-label="Close dialog"

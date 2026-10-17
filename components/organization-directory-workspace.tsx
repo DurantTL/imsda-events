@@ -505,7 +505,7 @@ export function OrganizationDirectoryWorkspace({
               </div>
               <button
                 aria-label="Close"
-                className="icon-button"
+                className="icon-button modal-close-button"
                 disabled={saving}
                 onClick={closeEditor}
                 type="button"

@@ -230,7 +230,7 @@ export function DuplicateMatchReviewWorkspace({
                 <p className="eyebrow">Not the same person</p>
                 <h2 id="dismiss-match-title">Dismiss this candidate</h2>
               </div>
-              <button className="icon-button" type="button" aria-label="Close dialog" onClick={closeDismiss}>
+              <button className="icon-button modal-close-button" type="button" aria-label="Close dialog" onClick={closeDismiss}>
                 <X size={18} aria-hidden="true" />
               </button>
             </div>

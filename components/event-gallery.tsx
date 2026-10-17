@@ -72,7 +72,7 @@ export function EventGallery({
           >
             <div className="event-gallery-dialog-bar">
               <p aria-live="polite">Photo {openIndex + 1} of {images.length}</p>
-              <button type="button" onClick={close} aria-label="Close larger view">
+              <button className="icon-button modal-close-button" type="button" onClick={close} aria-label="Close larger view">
                 <X size={20} aria-hidden="true" />
               </button>
             </div>

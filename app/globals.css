@@ -5902,7 +5902,7 @@ input:is([type="date"], [type="time"], [type="datetime-local"], [type="month"], 
   .message-editor-email-body { padding: 20px; }
   .message-editor-placeholder { top: 20px; left: 20px; }
   .message-editor-footer { align-items: flex-start; flex-direction: column; }
-  .modal-card .modal-close-button { display: inline-flex !important; }
+  .modal-card .modal-close-button { display: inline-grid !important; place-items: center; }
 }
 
 .roster-builder-settings { display: grid; gap: 13px; border-top: 4px solid var(--imsda-purple); }
@@ -11520,3 +11520,17 @@ details.honor-seat-override > summary { cursor: pointer; font-weight: 700; displ
 @media (min-width: 721px) {
   .roster-card-table td.roster-card-name { min-width: 9.5rem; }
 }
+
+/* Popup close buttons: one look everywhere (Caleb, Oct 17). The × is navy on white; the button edge is at least
+   3:1 against the dialog (WCAG 1.4.11), it never shrinks beside a long title, it is a 44px target on phones, and it
+   answers hover and keyboard focus. The gallery's larger view uses the same button. */
+.modal-close-button { flex: 0 0 auto; border-color: #6f8794; }
+.modal-close-button:hover:not(:disabled) { border-color: var(--imsda-navy); background: var(--imsda-navy-soft); }
+.modal-close-button:focus-visible { outline: 3px solid var(--imsda-navy); outline-offset: 2px; }
+@media (max-width: 700px) {
+  .modal-close-button { min-width: 44px; min-height: 44px; }
+}
+/* The gallery's larger view follows the public page theme (dark mode too). Same shape and edge as every other close
+   button (#6f8794 is 3.8:1 on white and 4.3:1 on the dark dialog), with the theme's own fill and X colour. */
+.event-gallery-dialog .modal-close-button { border-color: #6f8794; border-radius: 12px; background: var(--block-bg); color: var(--block-accent); }
+.event-gallery-dialog .modal-close-button:hover:not(:disabled) { border-color: var(--block-accent); background: var(--block-soft); }

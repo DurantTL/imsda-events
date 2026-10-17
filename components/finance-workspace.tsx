@@ -260,7 +260,7 @@ export function FinanceWorkspace({
       {modal && selected && (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeModal(); }}>
           <section className="modal-card" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="finance-modal-title" tabIndex={-1}>
-            <div className="modal-head"><div><p className="eyebrow">{selected.confirmationCode}</p><h2 id="finance-modal-title">{modal === "payment" ? "Record a payment" : modal === "refund" ? "Record a refund" : modal === "adjust" ? wording.title : modal === "reverse" ? "Reverse adjustment" : `${selected.accountHolder.firstName} ${selected.accountHolder.lastName}`}</h2></div><button className="icon-button" type="button" onClick={closeModal} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button></div>
+            <div className="modal-head"><div><p className="eyebrow">{selected.confirmationCode}</p><h2 id="finance-modal-title">{modal === "payment" ? "Record a payment" : modal === "refund" ? "Record a refund" : modal === "adjust" ? wording.title : modal === "reverse" ? "Reverse adjustment" : `${selected.accountHolder.firstName} ${selected.accountHolder.lastName}`}</h2></div><button className="icon-button modal-close-button" type="button" onClick={closeModal} aria-label="Close dialog"><X aria-hidden="true" size={18} /></button></div>
             {modal === "detail" ? (
               <div className="detail-stack">
                 {selected.isDeferredOrganizationBilling && !selected.isGroup && (
