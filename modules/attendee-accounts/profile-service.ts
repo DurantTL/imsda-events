@@ -1,6 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
+import { phoneToStore } from "@/lib/field-validation";
 import { getPrisma } from "@/lib/prisma";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 
@@ -103,15 +104,25 @@ export async function updateAttendeeProfile(
   accountId: string,
   input: AttendeeProfilePatch,
 ) {
-  const profile = attendeeProfileSchema.parse(input);
-  // Omitted means unchanged (undefined is skipped by Prisma); "" clears.
-  const optional = Object.fromEntries(
-    optionalKeys.map((key) => [key, profile[key] === undefined ? undefined : (profile[key] || null)]),
-  ) as Record<(typeof optionalKeys)[number], string | null | undefined>;
+  const parsed = attendeeProfileSchema.parse(input);
   return getPrisma().$transaction(async (tx) => {
     const before = serializeProfile(
       await tx.attendeeAccount.findUniqueOrThrow({ where: { id: accountId }, select: profileSelect }),
     );
+    // Phones go through the shared check (#871) so what new registrations prefill from is clean. A changed phone
+    // must pass and is stored normalised; the stored one, even an old unusable one, may stay as it is. The stored
+    // value is read here, never taken from the request.
+    const profile = {
+      ...parsed,
+      phone: phoneToStore(["phone"], parsed.phone, before.phone),
+      ...(parsed.emergencyContactPhone === undefined
+        ? {}
+        : { emergencyContactPhone: phoneToStore(["emergencyContactPhone"], parsed.emergencyContactPhone, before.emergencyContactPhone) }),
+    };
+    // Omitted means unchanged (undefined is skipped by Prisma); "" clears.
+    const optional = Object.fromEntries(
+      optionalKeys.map((key) => [key, profile[key] === undefined ? undefined : (profile[key] || null)]),
+    ) as Record<(typeof optionalKeys)[number], string | null | undefined>;
     const updated = await tx.attendeeAccount.update({
       where: { id: accountId },
       data: {

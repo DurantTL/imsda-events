@@ -20,7 +20,7 @@ export function ClubFormAlertRecipients({ templateKey, initialEmails }: { templa
     event.preventDefault();
     setError("");
     setNotice("");
-    const checked = parseAlertRecipients(text);
+    const checked = parseAlertRecipients(text, initialEmails);
     if (!checked.ok) {
       setError(checked.message);
       return;
@@ -59,7 +59,12 @@ export function ClubFormAlertRecipients({ templateKey, initialEmails }: { templa
             autoComplete="off"
             maxLength={2000}
             name="alertRecipients"
-            onChange={(event) => setText(event.target.value)}
+            onBlur={() => {
+              // The same check as the server, once the person leaves the box; an address already saved is not held against them.
+              const checked = parseAlertRecipients(text, initialEmails);
+              if (!checked.ok) setError(checked.message);
+            }}
+            onChange={(event) => { setText(event.target.value); setError(""); }}
             rows={4}
             spellCheck={false}
             value={text}

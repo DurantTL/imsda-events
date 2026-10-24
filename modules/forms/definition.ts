@@ -1880,6 +1880,19 @@ export function typedAnswerProblem(field: RegistrationFormField, value: unknown,
 }
 
 /**
+ * The inline note under a phone, email, number or date answer (#855, #1193), shared by the public registration form and any
+ * other editor that shows one. `flagged` is an old saved answer left alone that fails today's rules: it always reads
+ * "This saved answer needs correcting." and never blocks. A changed answer that fails is `invalid` and its message shows
+ * once `shown` (after the person leaves the field). The message never carries the value.
+ */
+export function typedFieldNote(field: RegistrationFormField, value: unknown, stored: unknown, shown: boolean): { message: string; flagged: boolean; invalid: boolean } {
+  const raw = typedAnswerProblem(field, value);
+  if (raw === null) return { message: "", flagged: false, invalid: false };
+  if (typedAnswerProblem(field, value, stored) === null) return { message: `${raw} This saved answer needs correcting.`, flagged: true, invalid: false };
+  return { message: shown ? raw : "", flagged: false, invalid: shown };
+}
+
+/**
  * Stores phone answers in one form, "(515) 555-0134" (#855). A phone that does
  * not pass is left as it was, for the validator to report or, for an old
  * answer, to keep. Returns a copy.

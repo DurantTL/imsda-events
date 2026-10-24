@@ -1,6 +1,8 @@
 "use client";
 
-import { isFieldRequired, isFieldVisible, type RegistrationFormField } from "@/modules/forms/definition";
+import { useState } from "react";
+import { inputAttributesFor, valueTypeForFieldType } from "@/lib/field-validation";
+import { isFieldRequired, isFieldVisible, typedAnswerProblem, type RegistrationFormField } from "@/modules/forms/definition";
 import type { StaffQuestion } from "@/modules/staff-invitations/event-questions";
 
 export type StaffAnswers = Record<string, unknown>;
@@ -29,6 +31,9 @@ function optionLabel(question: StaffQuestion, option: string) {
  * are required and what is accepted are the server's decisions. A conditional question appears when its answer matches.
  */
 export function StaffInvitationQuestions({ idPrefix, personLabel, questions, answers, onChange }: Props) {
+  // Phone, email, number and date answers get the server's check inline once the person leaves the field (#855, #1193). These
+  // answers start empty, so any value typed here is new and has to pass.
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
   if (questions.length === 0) return null;
   const set = (key: string, value: unknown) => onChange({ ...answers, [key]: value });
   return (
@@ -110,16 +115,23 @@ export function StaffInvitationQuestions({ idPrefix, personLabel, questions, ans
             </div>
           );
         }
-        const inputType = question.type === "EMAIL" ? "email" : question.type === "PHONE" ? "tel" : question.type === "DATE" ? "date" : question.type === "NUMBER" ? "number" : "text";
+        const valueType = valueTypeForFieldType(question.type);
+        const attributes = valueType ? inputAttributesFor(valueType) : null;
+        const inputType = attributes?.type ?? "text";
+        const problem = valueType && touched[id] ? typedAnswerProblem(field, value) ?? "" : "";
+        const describedByWithProblem = [describedBy, problem ? `${id}-error` : ""].filter(Boolean).join(" ") || undefined;
         return (
           <div key={question.key}>
           <label htmlFor={id}>
             {label}{required ? " (required)" : ""}
             <input
-              aria-describedby={describedBy}
+              aria-describedby={describedByWithProblem}
+              aria-invalid={problem ? true : undefined}
+              autoComplete={attributes?.autoComplete}
               id={id}
-              inputMode={question.type === "NUMBER" ? "numeric" : undefined}
+              inputMode={attributes?.inputMode}
               maxLength={question.type === "TEXT" ? 500 : undefined}
+              onBlur={() => setTouched((current) => (current[id] ? current : { ...current, [id]: true }))}
               onChange={(changeEvent) => {
                 const raw = changeEvent.target.value;
                 set(question.key, question.type === "NUMBER" && raw.trim() !== "" && Number.isFinite(Number(raw)) ? Number(raw) : raw);
@@ -130,6 +142,7 @@ export function StaffInvitationQuestions({ idPrefix, personLabel, questions, ans
               value={value === undefined || value === null ? "" : String(value)}
             />
           </label>
+          {problem && <small className="field-error" id={`${id}-error`} role="alert">{problem}</small>}
           {help}
           </div>
         );

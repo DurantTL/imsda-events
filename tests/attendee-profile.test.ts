@@ -57,7 +57,7 @@ const withDetails = {
   mailingCountry: "United States",
   emergencyContactName: "Casey Contact",
   emergencyContactRelationship: "Sibling",
-  emergencyContactPhone: "555-0101",
+  emergencyContactPhone: "(515) 555-0101",
 };
 
 const attendeeAccount = {
@@ -181,7 +181,7 @@ describe("registration prefill", () => {
   it("maps the emergency contact onto the Women's Retreat form keys", () => {
     expect(attendeeProfilePrefill(withDetails)).toMatchObject({
       emergency_contact_name: "Casey Contact",
-      emergency_contact_phone: "555-0101",
+      emergency_contact_phone: "(515) 555-0101",
     });
   });
 

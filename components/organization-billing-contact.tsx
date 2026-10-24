@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useId, useState } from "react";
+import { PhoneInput, phoneBlocks } from "@/components/phone-input";
 import type { BillingContactAdminEntry } from "@/modules/billing-responsibility/repository";
 
 function date(value: string) {
@@ -29,6 +30,7 @@ export function OrganizationBillingContact({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [roleLabel, setRoleLabel] = useState("Treasurer");
+  const [attempted, setAttempted] = useState(false);
   const base = useId();
 
   async function send(body: Record<string, unknown>) {
@@ -73,6 +75,12 @@ export function OrganizationBillingContact({
         className="billing-contact-form"
         onSubmit={(event) => {
           event.preventDefault();
+          setAttempted(true);
+          // A saved contact is never edited in place, so its phone is always a new value (#871).
+          if (phoneBlocks("Phone", phone)) {
+            setError("Fix the highlighted phone number and save again.");
+            return;
+          }
           void send({ action: "set", contact: { name, email, phone: phone || undefined, roleLabel } }).then((ok) => {
             if (ok) { setName(""); setEmail(""); setPhone(""); }
           });
@@ -84,9 +92,9 @@ export function OrganizationBillingContact({
         <label htmlFor={`${base}-role`}>Role</label>
         <input id={`${base}-role`} maxLength={80} onChange={(event) => setRoleLabel(event.target.value)} required value={roleLabel} />
         <label htmlFor={`${base}-email`}>Email</label>
-        <input autoComplete="off" id={`${base}-email`} maxLength={254} onChange={(event) => setEmail(event.target.value)} required type="email" value={email} />
+        <input autoComplete="off" id={`${base}-email`} maxLength={160} onChange={(event) => setEmail(event.target.value)} required type="email" value={email} />
         <label htmlFor={`${base}-phone`}>Phone (optional)</label>
-        <input autoComplete="off" id={`${base}-phone`} maxLength={40} onChange={(event) => setPhone(event.target.value)} type="tel" value={phone} />
+        <PhoneInput autoComplete="off" id={`${base}-phone`} label="Phone" onValueChange={setPhone} showNow={attempted} value={phone} />
         {active && <small>The current contact is ended and kept in the history. The new one starts unverified.</small>}
         <button className="primary-button" disabled={busy} type="submit">{busy ? "Saving…" : "Save contact"}</button>
       </form>

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { CheckCircle2, ListChecks, Save } from "lucide-react";
 import { AddressFieldGroup } from "@/components/address-field-group";
 import { SearchableSelect } from "@/components/searchable-select";
-import { inlineFieldProblem } from "@/lib/field-validation";
+import { inlineFieldProblem, inputAttributesFor, valueTypeForFieldType } from "@/lib/field-validation";
 import type { EditableAttendeeField } from "@/modules/attendee-accounts/registration-answer-policy";
 import { formatAddressDisplay, isPlainAddressObject, type AddressValue } from "@/modules/forms/address";
 import { evaluateVisibilityRule, fieldVisibilityRule, type RuleCondition } from "@/modules/forms/visibility-rule";
@@ -83,14 +83,20 @@ export function AttendeeRegistrationAnswersForm({
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const numberRules = { min: 0, max: 100000 };
   const storedAnswer = (attendeeId: string, key: string) => saved.find((attendee) => attendee.attendeeId === attendeeId)?.responses[key];
-  const numberProblem = (field: EditableAttendeeField, attendee: EditableAttendee) => inlineFieldProblem(
-    field.label,
-    "number",
-    attendee.responses[field.key],
-    storedAnswer(attendee.attendeeId, field.key),
-    attempted || Boolean(touched[`${attendee.attendeeId}:${field.key}`]),
-    numberRules,
-  );
+  // Phone, email, number and date answers share one check (#855, #1193): a changed value must pass, and an old stored
+  // value that fails is flagged "needs correcting" without blocking the save. The server compares with what it stored.
+  const typedProblem = (field: EditableAttendeeField, attendee: EditableAttendee) => {
+    const type = valueTypeForFieldType(field.type);
+    if (!type) return { message: "", blocking: false };
+    return inlineFieldProblem(
+      field.label,
+      type,
+      attendee.responses[field.key],
+      storedAnswer(attendee.attendeeId, field.key),
+      attempted || Boolean(touched[`${attendee.attendeeId}:${field.key}`]),
+      type === "number" ? numberRules : {},
+    );
+  };
   const dirty = useMemo(() => !valuesEqual(saved, attendees), [attendees, saved]);
   const endpoint = answerEndpoint
     ?? `/api/attendee/registrations/${encodeURIComponent(registrationId ?? "")}/answers`;
@@ -112,9 +118,9 @@ export function AttendeeRegistrationAnswersForm({
     event.preventDefault();
     setAttempted(true);
     const blocked = attendees.some((attendee) => fields.some((field) => (
-      field.type === "NUMBER"
+      valueTypeForFieldType(field.type) !== null
       && !(attendee.lockedFieldKeys ?? []).includes(field.key)
-      && numberProblem(field, attendee).blocking
+      && typedProblem(field, attendee).blocking
     )));
     if (blocked) {
       setError("Check the highlighted answers and try again.");
@@ -127,7 +133,7 @@ export function AttendeeRegistrationAnswersForm({
         && !readOnly
         && !(attendee.lockedFieldKeys ?? []).includes(field.key)
         && fieldIsVisible(field, attendee.responses)
-        && !["CHECKBOX", "MULTISELECT", "RANKED_CHOICE", "NUMBER", "ADDRESS"].includes(field.type)
+        && !["CHECKBOX", "MULTISELECT", "RANKED_CHOICE", "NUMBER", "ADDRESS", "PHONE", "EMAIL", "DATE"].includes(field.type)
         && (typeof attendee.responses[field.key] !== "string" || attendee.responses[field.key] === "")
       ))
       .map((field) => `${attendee.attendeeId}_${field.id}`));
@@ -277,24 +283,29 @@ export function AttendeeRegistrationAnswersForm({
                   </fieldset>
                 );
               }
-              if (field.type === "NUMBER") {
+              if (field.type === "NUMBER" || field.type === "PHONE" || field.type === "EMAIL" || field.type === "DATE") {
+                const problem = typedProblem(field, attendee);
+                const valueType = valueTypeForFieldType(field.type)!;
+                const attributes = inputAttributesFor(valueType);
                 return (
                   <label key={field.id}>
                     {field.label}
                     <input
-                      type="number"
-                      min="0"
-                      max="100000"
+                      type={attributes.type}
+                      min={field.type === "NUMBER" ? "0" : undefined}
+                      max={field.type === "NUMBER" ? "100000" : undefined}
                       disabled={locked}
                       required={field.required}
                       value={typeof value === "number" || typeof value === "string" ? value : ""}
-                      aria-invalid={numberProblem(field, attendee).message ? true : undefined}
-                      inputMode="numeric"
+                      aria-describedby={problem.message ? `${attendee.attendeeId}_${field.id}_error` : undefined}
+                      aria-invalid={problem.message ? true : undefined}
+                      inputMode={attributes.inputMode}
+                      autoComplete={attributes.autoComplete}
                       onBlur={() => setTouched((current) => ({ ...current, [`${attendee.attendeeId}:${field.key}`]: true }))}
                       onChange={(event) => updateAnswer(attendee.attendeeId, field.key, event.target.value)}
                     />
                     {field.helpText && <small>{field.helpText}</small>}
-                    {numberProblem(field, attendee).message && <small className="field-error" role="alert">{numberProblem(field, attendee).message}</small>}
+                    {problem.message && <small className="field-error" id={`${attendee.attendeeId}_${field.id}_error`} role="alert">{problem.message}</small>}
                   </label>
                 );
               }

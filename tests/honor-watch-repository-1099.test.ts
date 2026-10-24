@@ -103,6 +103,17 @@ describe("saving honor watches (#1099)", () => {
     expect(w.watches.some((row) => row.id === "w-theirs")).toBe(true);
   });
 
+  it("lets an old saved recipient through on a re-save, but not the same text on a new watch or a new bad one (#1193)", async () => {
+    const w = world();
+    w.watches.find((row) => row.id === "w-mine")!.recipients = ["old@odd-domain"];
+    await replaceHonorWatches("event-1", "admin-1", { watches: [{ ...mine, recipients: ["old@odd-domain", "b@example.test"] }] }, now);
+    for (const watch of [{ name: "Fresh", recipients: ["old@odd-domain"], honorIds: ["h2"], offeringIds: [] }, { ...mine, recipients: ["not an email"] }]) {
+      const error = await replaceHonorWatches("event-1", "admin-1", { watches: [watch] }, now).catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code: "INVALID_WATCHES", message: expect.stringContaining("Address 1: Enter a valid email address") });
+      expect((error as Error).message).not.toMatch(/odd-domain|not an email/);
+    }
+  });
+
   it("audits ids and counts only: never an address or a name", async () => {
     world();
     await replaceHonorWatches("event-1", "admin-1", { watches: [mine] }, now);

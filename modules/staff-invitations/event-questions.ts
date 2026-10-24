@@ -1,4 +1,4 @@
-import { isBirthDateField, isFieldVisible, validateTestResponses, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
+import { isBirthDateField, isFieldVisible, normalizeTypedAnswers, validateTestResponses, type RegistrationFormDefinition, type RegistrationFormField } from "@/modules/forms/definition";
 import { isLinkedToBlockedField } from "@/modules/forms/field-dependency-walk";
 import { isFieldSensitive, isHealthTypeField, sectionTitleLookup } from "@/modules/forms/field-flags";
 import { mealTicketBinding } from "@/modules/meals/domain";
@@ -159,7 +159,7 @@ export function checkPartyAnswers(
       if (value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0)) continue;
       visible[field.key] = value;
     }
-    answers.push(visible);
+    answers.push(normalizeTypedAnswers(definition, visible));
   }
   return { answers, problems };
 }

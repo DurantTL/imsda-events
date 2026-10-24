@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { isUnchangedPhone, MAX_PHONE_LENGTH, resolvePhoneChange } from "@/lib/field-validation";
 import { embedProviders, isValidEmbedId } from "@/modules/events/content-embeds";
 
 /**
@@ -271,13 +272,17 @@ export const speakersDataSchema = z.object({
   speakers: z.array(speakerSchema).min(1, "Add at least one speaker.").max(40),
 }).strict();
 
-const phoneSchema = z.string().trim().max(30)
-  .refine((value) => value === "" || /^\+?[0-9(][0-9 ().-]{5,24}[0-9]$/.test(value), "Enter a phone number such as (555) 010-0100.");
+/**
+ * Reading a contact's phone is lenient on purpose (#1193): `parseBlockData` uses this schema too, and a phone saved before the
+ * shared check existed must not hide the block on the public page. The phone is judged when the page is saved, against what
+ * is stored: see `checkContactBlockData`.
+ */
+const phoneSchema = z.string().trim().max(MAX_PHONE_LENGTH);
 export const contactDataSchema = z.object({
   contacts: z.array(z.object({
     name: requiredText(80, "Give each contact a name."),
     role: plainText(100),
-    email: z.union([z.literal(""), z.email().max(200)]).default(""),
+    email: z.union([z.literal(""), z.email("Enter a valid email address.").max(200)]).default(""),
     phone: phoneSchema.default(""),
   }).strict().superRefine((contact, context) => {
     if (!contact.email && !contact.phone) {
@@ -289,6 +294,43 @@ export const contactDataSchema = z.object({
     }
   })).min(1, "Add at least one contact.").max(12),
 }).strict();
+
+/**
+ * The save-time check for a CONTACT block's phones (#855, #1193). A phone must pass the shared check unless the event already
+ * stores that same phone for the same contact, so re-saving the page never fails on an old contact it did not touch. "The
+ * same contact" is the one in the same position of the matching stored block (the nth contact block of the page pairs with
+ * the nth stored one), so renaming a contact keeps its phone; or, when contacts were reordered, one with the same name
+ * anywhere. Compared with what is stored, never with anything the browser says. Valid phones come back in the stored form,
+ * "(515) 555-0134". The message names the contact's position, not the value.
+ */
+export function checkContactBlockData(
+  data: ContactData,
+  storedBlocks: readonly unknown[],
+  blockOrdinal = 0,
+): { ok: true; data: ContactData } | { ok: false; message: string } {
+  const key = (name: string) => name.trim().toLowerCase();
+  const contactsOf = (block: unknown) => {
+    const parsed = contactDataSchema.safeParse(block ?? {});
+    return parsed.success ? parsed.data.contacts : [];
+  };
+  const byName = new Map<string, string[]>();
+  for (const block of storedBlocks) {
+    for (const contact of contactsOf(block)) {
+      if (contact.phone === "") continue;
+      byName.set(key(contact.name), [...(byName.get(key(contact.name)) ?? []), contact.phone]);
+    }
+  }
+  const paired = contactsOf(storedBlocks[blockOrdinal]);
+  const contacts: ContactData["contacts"] = [];
+  for (const [index, contact] of data.contacts.entries()) {
+    // The stored phone this one is judged against: the one in the same position of the paired block, else one saved under the same name.
+    const stored = [paired[index]?.phone, ...(byName.get(key(contact.name)) ?? [])].find((candidate) => isUnchangedPhone(contact.phone, candidate));
+    const check = resolvePhoneChange(contact.phone, stored);
+    if (!check.ok) return { ok: false, message: `Contact ${index + 1}: ${check.message}` };
+    contacts.push({ ...contact, phone: check.value });
+  }
+  return { ok: true, data: { contacts } };
+}
 
 export const countdownDataSchema = z.object({
   target: z.enum(["EVENT_START", "CUSTOM"]).default("EVENT_START"),

@@ -240,6 +240,23 @@ describe("club roster storage", () => {
         .rejects.toMatchObject({ code: "GUARDIAN_PHONE_INVALID" });
     });
 
+    it("lets a saved guardian email through unchanged, but not a new bad one, per slot (#1193)", async () => {
+      const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [{ ...first, phone: "515-555-0134" }] }, actor, { now });
+      // An email saved under the old pattern, which the shared check refuses today.
+      const legacyEmail = "legacy..mail@example.test";
+      db.guardians.find((row) => row.rosterMemberId === memberId && row.position === 1)!.email = legacyEmail;
+      const slot1 = { ...first, phone: "515-555-0134", email: legacyEmail };
+      // Another change to the member, and the guardian resent as stored: it goes through.
+      await expect(updateRosterMember("club-1", memberId, { role: "TLT", guardians: [slot1] }, actor, now)).resolves.toBeDefined();
+      // The same text in the other slot is a new value there; so is a different bad one.
+      for (const guardians of [[slot1, { ...second, phone: "", email: legacyEmail }], [{ ...slot1, email: "not an email" }]]) {
+        const error = await updateRosterMember("club-1", memberId, { guardians }, actor, now).catch((caught: unknown) => caught);
+        expect(error).toMatchObject({ code: "GUARDIAN_EMAIL_INVALID" });
+        expect(JSON.stringify(error)).not.toContain("not an email");
+        expect((error as Error).message).not.toContain(legacyEmail);
+      }
+    });
+
     it("deletes every guardian when the member is removed, and only that member's", async () => {
       const { memberId } = await addRosterMember("club-1", "2026-27", { ...youth, guardians: [first, second] }, actor, { now });
       const { memberId: other } = await addRosterMember("club-1", "2026-27", { ...youth, firstName: "Other", guardians: [first] }, actor, { now });

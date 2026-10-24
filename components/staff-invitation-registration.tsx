@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { CheckCircle2, Plus, Trash2 } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
+import { inlinePhoneProblem } from "@/lib/field-validation";
 import { StaffInvitationQuestions, type StaffAnswers } from "@/components/staff-invitation-questions";
 import type { StaffQuestion } from "@/modules/staff-invitations/event-questions";
 import { COVERAGE_SENTENCE, FAMILY_MAX_DEPENDANT_AGE, FAMILY_MAX_DEPENDANTS, NAME_MAX } from "@/modules/staff-invitations/domain";
@@ -27,6 +28,9 @@ export function StaffInvitationRegistration({ token, event, person, questions }:
   const [firstName, setFirstName] = useState(person.firstName);
   const [lastName, setLastName] = useState(person.lastName);
   const [phone, setPhone] = useState("");
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  // The same phone check the server runs (#1193); the field starts blank, so a typed phone is always a new value.
+  const phoneProblem = inlinePhoneProblem("Phone", phone, undefined, phoneTouched);
   const [hasSpouse, setHasSpouse] = useState(false);
   const [spouseFirst, setSpouseFirst] = useState("");
   const [spouseLast, setSpouseLast] = useState("");
@@ -54,6 +58,11 @@ export function StaffInvitationRegistration({ token, event, person, questions }:
   async function submit(submitEvent: FormEvent<HTMLFormElement>) {
     submitEvent.preventDefault();
     setError("");
+    setPhoneTouched(true);
+    if (phoneProblem.blocking) {
+      setError("Check the highlighted answers and try again.");
+      return;
+    }
     const dependants = [];
     const answers: StaffAnswers[] = questions.length > 0 ? [primaryAnswers] : [];
     if (questions.length > 0 && hasSpouse) answers.push(spouseAnswers);
@@ -144,7 +153,10 @@ export function StaffInvitationRegistration({ token, event, person, questions }:
           </div>
           <div className="form-grid two-column">
             <label>Email<input disabled readOnly type="email" value={person.email} /></label>
-            <label>Phone (optional)<input autoComplete="tel" maxLength={40} onChange={(changeEvent) => setPhone(changeEvent.target.value)} type="tel" value={phone} /></label>
+            <label>Phone (optional)
+              <input aria-describedby={phoneProblem.message ? "staff-invitation-phone-error" : undefined} aria-invalid={phoneProblem.message ? true : undefined} autoComplete="tel" inputMode="tel" maxLength={40} onBlur={() => setPhoneTouched(true)} onChange={(changeEvent) => setPhone(changeEvent.target.value)} type="tel" value={phone} />
+              {phoneProblem.message && <small className="field-error" id="staff-invitation-phone-error" role="alert">{phoneProblem.message}</small>}
+            </label>
           </div>
           {questions.length > 0 && (
             <StaffInvitationQuestions answers={primaryAnswers} idPrefix="you" personLabel="you" onChange={setPrimaryAnswers} questions={questions} />

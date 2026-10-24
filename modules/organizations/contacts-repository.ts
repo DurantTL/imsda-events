@@ -1,6 +1,7 @@
 import "server-only";
 
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { resolvePhoneChange } from "@/lib/field-validation";
 import { getPrisma } from "@/lib/prisma";
 import { AccessDeniedError } from "@/modules/access/authorization";
 import { writeAuditLog } from "@/modules/audit/audit-service";
@@ -13,7 +14,7 @@ import type { PastorContactInput } from "@/modules/organizations/contacts-schema
  * nothing here is read by invoice resolution and nothing is ever sent to a pastor. Rows are
  * ended, never deleted. Audit rows hold ids only, never a name, email or phone.
  */
-export type OrganizationContactErrorCode = "ORGANIZATION_NOT_ELIGIBLE" | "CONTACT_NOT_FOUND" | "CONCURRENT_CHANGE";
+export type OrganizationContactErrorCode = "ORGANIZATION_NOT_ELIGIBLE" | "CONTACT_NOT_FOUND" | "CONCURRENT_CHANGE" | "INVALID_CONTACT";
 
 export class OrganizationContactError extends Error {
   constructor(message: string, public readonly code: OrganizationContactErrorCode) {
@@ -53,7 +54,14 @@ export async function setPastorContact(input: { organizationId: string; contact:
         where: { organizationId: input.organizationId, kind: "PASTOR", effectiveTo: null },
         select: { id: true, name: true, email: true, phone: true },
       });
-      if (current && current.name === input.contact.name && current.email === input.contact.email && current.phone === input.contact.phone) {
+      // The phone must pass the shared check unless it is the active contact's own saved phone (#1193); the decision is made here
+      // from the stored value. The message never carries the phone.
+      const phone = resolvePhoneChange(input.contact.phone ?? "", current?.phone);
+      if (!phone.ok) throw new OrganizationContactError(phone.message, "INVALID_CONTACT");
+      const contact = { ...input.contact, phone: phone.value || null };
+      // An unchanged phone comes back exactly as stored, so re-sending an old-format phone is a retry, not a replacement that
+      // ends the contact and writes a duplicate history row (#1193).
+      if (current && current.name === contact.name && current.email === contact.email && current.phone === contact.phone) {
         return { id: current.id, replaced: false };
       }
       const now = new Date();
@@ -65,9 +73,9 @@ export async function setPastorContact(input: { organizationId: string; contact:
         data: {
           organizationId: input.organizationId,
           kind: "PASTOR",
-          name: input.contact.name,
-          email: input.contact.email,
-          phone: input.contact.phone,
+          name: contact.name,
+          email: contact.email,
+          phone: contact.phone,
           effectiveFrom: now,
           createdByUserId: input.actor.id,
         },

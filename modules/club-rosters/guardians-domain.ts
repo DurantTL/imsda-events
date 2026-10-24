@@ -1,7 +1,6 @@
 import { z } from "zod";
-import { normalizePhoneAnswer, validatePhone } from "@/lib/field-validation";
+import { EMAIL_FIELD_MESSAGE, isUnchangedEmail, isUnchangedPhone, normalizePhoneAnswer, PHONE_FIELD_MESSAGE, validateEmail, validatePhone } from "@/lib/field-validation";
 
-const GUARDIAN_PHONE_MESSAGE = "Enter a phone number like (515) 555-0134.";
 
 /**
  * Guardian contacts on club roster members (#510). Pure rules: the shape, light
@@ -44,13 +43,12 @@ export type GuardianRecord = GuardianValues & { position: number };
 
 export const EMPTY_GUARDIAN: GuardianValues = { name: "", relationship: "", email: "", phone: "" };
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-/** Light check, not a deliverability test: something@something.tld. */
-export function guardianEmailProblem(value: string): string | null {
+/** The shared email check (#855, #1193); not a deliverability test. An old saved email left alone is not held against the edit. */
+export function guardianEmailProblem(value: string, stored?: string): string | null {
   const email = value.trim();
   if (!email) return null;
-  return EMAIL_PATTERN.test(email) && email.length <= 254 ? null : "Enter an email like name@example.com.";
+  if (isUnchangedEmail(email, stored)) return null;
+  return validateEmail(email).ok ? null : EMAIL_FIELD_MESSAGE;
 }
 
 /** The shared phone check (#855): a US number or an international one starting with +, optional extension. */
@@ -58,8 +56,8 @@ export function guardianPhoneProblem(value: string, stored?: string): string | n
   const phone = value.trim();
   if (!phone) return null;
   // An old saved phone left alone is not held against the edit (#855).
-  if (stored !== undefined && stored.trim() !== "" && stored.trim() === phone) return null;
-  return validatePhone(phone).ok ? null : GUARDIAN_PHONE_MESSAGE;
+  if (isUnchangedPhone(phone, stored)) return null;
+  return validatePhone(phone).ok ? null : PHONE_FIELD_MESSAGE;
 }
 
 /** The first problem with a guardian set's phones, slot by slot against what is stored in that slot, or null. */
@@ -74,21 +72,33 @@ export function guardianSetPhoneProblem(
   return null;
 }
 
+/** The same for emails (#1193): an old saved email in the same slot is left alone, a changed one must pass. */
+export function guardianSetEmailProblem(
+  guardians: readonly Pick<GuardianValues, "email">[],
+  stored: ReadonlyArray<{ position: number; email: string }>,
+): string | null {
+  for (const [index, guardian] of guardians.slice(0, GUARDIAN_SLOTS).entries()) {
+    const problem = guardianEmailProblem(guardian.email, stored.find((record) => record.position === index + 1)?.email);
+    if (problem) return problem;
+  }
+  return null;
+}
+
 const text = (max: number) => z.string().trim().max(max, `Keep this under ${max} characters.`).default("");
 
 export const guardianInputSchema = z.object({
   name: text(120),
   relationship: text(60),
-  email: text(254).refine((value) => guardianEmailProblem(value) === null, { message: "Enter an email like name@example.com." }),
-  phone: text(40).refine((value) => guardianPhoneProblem(value) === null, { message: GUARDIAN_PHONE_MESSAGE }),
+  email: text(254).refine((value) => guardianEmailProblem(value) === null, { message: EMAIL_FIELD_MESSAGE }),
+  phone: text(40).refine((value) => guardianPhoneProblem(value) === null, { message: PHONE_FIELD_MESSAGE }),
 }).strict();
 
 /**
  * A guardian in a roster edit: the phone is checked against the stored one for
- * that slot where the member is loaded (#855), not here, so an old saved phone
+ * that slot where the member is loaded (#855, #1193), not here, so an old saved phone or email
  * does not block the edit.
  */
-export const guardianUpdateInputSchema = guardianInputSchema.extend({ phone: text(40) });
+export const guardianUpdateInputSchema = guardianInputSchema.extend({ phone: text(40), email: text(254) });
 export const guardiansUpdateSchema = z.array(guardianUpdateInputSchema).max(GUARDIAN_SLOTS, "A member can have two emergency contacts at most.");
 
 /**
@@ -124,13 +134,14 @@ export type GuardianFormErrors = Partial<Record<`g${1 | 2}${"Email" | "Phone"}`,
 
 export function validateGuardianForm(
   guardians: readonly Pick<GuardianValues, "email" | "phone">[],
-  stored: ReadonlyArray<{ position: number; phone: string }> = [],
+  stored: ReadonlyArray<{ position: number; phone: string; email?: string }> = [],
 ): GuardianFormErrors {
   const errors: GuardianFormErrors = {};
   guardians.slice(0, GUARDIAN_SLOTS).forEach((guardian, index) => {
     const slot = (index + 1) as 1 | 2;
-    const email = guardianEmailProblem(guardian.email);
-    const phone = guardianPhoneProblem(guardian.phone, stored.find((record) => record.position === slot)?.phone);
+    const storedSlot = stored.find((record) => record.position === slot);
+    const email = guardianEmailProblem(guardian.email, storedSlot?.email);
+    const phone = guardianPhoneProblem(guardian.phone, storedSlot?.phone);
     if (email) errors[`g${slot}Email`] = email;
     if (phone) errors[`g${slot}Phone`] = phone;
   });

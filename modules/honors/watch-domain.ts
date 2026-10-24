@@ -42,8 +42,9 @@ export type HonorWatchConfig = {
   offeringIds: string[];
 };
 
-export function checkWatchRecipients(raw: readonly string[]): { ok: true; emails: string[] } | { ok: false; message: string } {
-  const result = parseAlertRecipients([...raw]);
+export function checkWatchRecipients(raw: readonly string[], stored: readonly string[] = []): { ok: true; emails: string[] } | { ok: false; message: string } {
+  // `stored` is the addresses already saved on this watch (#1193): an old one left alone passes.
+  const result = parseAlertRecipients([...raw], stored);
   if (!result.ok) return result;
   if (result.emails.length === 0) return { ok: false, message: "Add at least one email address." };
   if (result.emails.length > HONOR_WATCH_MAX_RECIPIENTS) return { ok: false, message: `Add at most ${HONOR_WATCH_MAX_RECIPIENTS} addresses.` };

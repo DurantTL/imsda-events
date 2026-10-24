@@ -133,7 +133,7 @@ async function main() {
     throw new Error(`FAILED: a bad save was accepted (${fragment})`);
   };
   await bad({ watches: [{ name: "No addresses", recipients: [], honorIds: [honors[0]], offeringIds: [] }] }, "at least one email");
-  await bad({ watches: [{ name: "Bad address", recipients: ["nobody"], honorIds: [honors[0]], offeringIds: [] }] }, "not a valid email");
+  await bad({ watches: [{ name: "Bad address", recipients: ["nobody"], honorIds: [honors[0]], offeringIds: [] }] }, "Enter a valid email address");
   await bad({ watches: [{ name: "Nothing watched", recipients: addr.none, honorIds: [], offeringIds: [] }] }, "at least one honor or class");
   await bad({ watches: [{ name: "Unknown honor", recipients: addr.none, honorIds: ["nope"], offeringIds: [] }] }, "from the catalog");
   await bad({ watches: [{ name: "Another event's class", recipients: addr.none, honorIds: [], offeringIds: [foreign] }] }, "from this event");

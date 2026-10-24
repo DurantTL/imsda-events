@@ -44,7 +44,7 @@ export function rosterApiError(error: unknown, action: string) {
       ? 404
       : error.code === "CARRY_FORWARD_BUSY"
         ? 503
-      : error.code === "BIRTH_DATE_INVALID" || error.code === "GENDER_REQUIRED" || error.code === "GUARDIAN_PHONE_INVALID"
+      : error.code === "BIRTH_DATE_INVALID" || error.code === "GENDER_REQUIRED" || error.code === "GUARDIAN_PHONE_INVALID" || error.code === "GUARDIAN_EMAIL_INVALID"
         ? 400
         : 409;
     return Response.json({ error: error.code, message: error.message }, { status });

@@ -209,9 +209,12 @@ describe("saving the list (#1017)", () => {
     expect(JSON.stringify(audit)).not.toContain("imsda-events.test");
   });
 
-  it("refuses a bad list without touching the form, and writes nothing when nothing changed", async () => {
+  it("refuses a bad list and writes nothing, and writes nothing when nothing changed", async () => {
+    // A bad address is judged against the stored list (#1193), so the form is read, but nothing is written.
+    mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", submissionNotifyEmails: [] });
     await expect(setClubFormAlertRecipients("off_premises_permission_slip", ["nope"], "admin-1")).rejects.toMatchObject({ code: "VALIDATION_FAILED" });
-    expect(mocks.templateFindUnique).not.toHaveBeenCalled();
+    expect(mocks.templateUpdate).not.toHaveBeenCalled();
+    expect(mocks.writeAuditLog).not.toHaveBeenCalled();
     mocks.templateFindUnique.mockResolvedValue({ id: "template-slip", submissionNotifyEmails: ["a@imsda-events.test"] });
     await setClubFormAlertRecipients("off_premises_permission_slip", ["a@imsda-events.test"], "admin-1");
     expect(mocks.templateUpdate).not.toHaveBeenCalled();

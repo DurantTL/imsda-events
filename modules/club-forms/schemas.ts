@@ -24,6 +24,7 @@ export const createLinkSchema = z.object({
 
 export const publicSubmitSchema = z.object({ answers }).strict();
 
+/** The addresses are judged by `setClubFormAlertRecipients` against the stored list (#1193), so an old saved one is not held against a save. */
 export const templateAlertRecipientsSchema = z.object({ emails: z.array(z.string().max(200)).max(50) }).strict();
 
 export const templateEnabledSchema = z.object({ enabled: z.boolean() }).strict();

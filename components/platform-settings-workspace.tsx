@@ -5,6 +5,7 @@ import { StaffPageHeader } from "@/components/staff-page-header";
 import { useState } from "react";
 import { useConfirm } from "@/components/use-confirm";
 import { Building2, FileText, KeyRound, Mail, Save } from "lucide-react";
+import { inlinePhoneProblem } from "@/lib/field-validation";
 import type { PlatformSettingsRecord } from "@/modules/system-admin/platform-settings";
 
 type Draft = {
@@ -116,6 +117,9 @@ export function PlatformSettingsWorkspace({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
+  // The invoice phone gets the shared check inline (#1193); the saved phone is the one already stored, which is flagged but never blocks.
+  const [phoneTouched, setPhoneTouched] = useState(false);
+  const phoneProblem = inlinePhoneProblem("Phone", draft.invoiceHeaderPhone, settings.invoiceHeaderPhone, phoneTouched);
   const dirty = JSON.stringify(draft) !== JSON.stringify(draftFrom(settings));
 
   function field(key: keyof Draft) {
@@ -129,6 +133,11 @@ export function PlatformSettingsWorkspace({
 
   async function save(submitEvent: React.FormEvent<HTMLFormElement>) {
     submitEvent.preventDefault();
+    setPhoneTouched(true);
+    if (phoneProblem.blocking) {
+      setError("Check the highlighted answers and try again.");
+      return;
+    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -269,7 +278,10 @@ export function PlatformSettingsWorkspace({
             />
             <small>One line per row, up to four.</small>
           </label>
-          <label>Phone<input maxLength={40} {...field("invoiceHeaderPhone")} /></label>
+          <label>Phone
+            <input aria-describedby={phoneProblem.message ? "invoice-phone-error" : undefined} aria-invalid={phoneProblem.message ? true : undefined} autoComplete="off" inputMode="tel" maxLength={40} onBlur={() => setPhoneTouched(true)} type="tel" {...field("invoiceHeaderPhone")} />
+            {phoneProblem.message && <small className="field-error" id="invoice-phone-error" role="alert">{phoneProblem.message}</small>}
+          </label>
         </section>
 
         <section className="panel">

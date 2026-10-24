@@ -105,7 +105,7 @@ async function main() {
       { kind: "FAQ", title: "Questions", placement: "BOTH", isPublished: true, data: { entries: [{ question: "Parking?", answer: "North lot." }] } },
       { kind: "SCHEDULE", title: "Agenda", isPublished: true, data: { rows: [{ day: "Friday", time: "7:00 PM", title: "Worship", location: "Chapel", description: "" }] } },
       { kind: "SPEAKERS", title: "Speakers", isPublished: true, data: { speakers: [{ name: "Pat Example", role: "Pastor", bio: "Synthetic.", assetId: image2.id, alt: "Pat" }, { name: "Sam Example" }] } },
-      { kind: "CONTACT", title: "Contact", placement: "BOTH", isPublished: true, data: { contacts: [{ name: "Sam Example", email: "sam@example.org", phone: "(555) 010-0100" }] } },
+      { kind: "CONTACT", title: "Contact", placement: "BOTH", isPublished: true, data: { contacts: [{ name: "Sam Example", email: "sam@example.org", phone: "(515) 555-0100" }] } },
       { kind: "COUNTDOWN", title: "Starts in", isPublished: true, data: { target: "EVENT_START" } },
       { kind: "CUSTOM_HTML", title: "Welcome banner", body: `<p onclick="x()">Hello</p><script>alert(1)</script><a href="javascript:alert(1)">go</a>`, isPublished: true },
       { kind: "FAQ", title: "Draft questions", isPublished: false, data: { entries: [{ question: "Draft?", answer: "Yes." }] } },

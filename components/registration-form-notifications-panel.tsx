@@ -37,6 +37,8 @@ type Draft = {
   id?: string;
   name: string;
   recipientsText: string;
+  /** The addresses saved for this notification: an old one left alone is not held against a re-save (#1193). */
+  savedRecipients: string[];
   /** "" means always send. */
   conditionFieldKey: string;
   conditionOperator: "EQUALS" | "NOT_EQUALS";
@@ -62,6 +64,7 @@ function toDraft(row: PanelData["notifications"][number]): Draft {
     id: row.id,
     name: row.name,
     recipientsText: row.recipients.join("\n"),
+    savedRecipients: row.recipients,
     conditionFieldKey: row.condition?.fieldKey ?? "",
     conditionOperator: row.condition?.operator ?? "EQUALS",
     conditionValue: row.condition?.value ?? "",
@@ -74,7 +77,7 @@ function toDraft(row: PanelData["notifications"][number]): Draft {
 }
 
 function blankDraft(): Draft {
-  return { localKey: nextKey(), name: "", recipientsText: "", conditionFieldKey: "", conditionOperator: "EQUALS", conditionValue: "", onlyTheseSections: false, sectionIds: [], warnings: [], clubRemoved: false, clubSearch: "" };
+  return { localKey: nextKey(), name: "", recipientsText: "", savedRecipients: [], conditionFieldKey: "", conditionOperator: "EQUALS", conditionValue: "", onlyTheseSections: false, sectionIds: [], warnings: [], clubRemoved: false, clubSearch: "" };
 }
 
 export function RegistrationFormNotificationsPanel({ eventId, formId }: { eventId: string; formId: string }) {
@@ -125,7 +128,7 @@ export function RegistrationFormNotificationsPanel({ eventId, formId }: { eventI
     for (const [index, draft] of drafts.entries()) {
       const label = draft.name.trim() || `Notification ${index + 1}`;
       if (draft.name.trim().length < 2) return setError(`Notification ${index + 1}: give it a name.`);
-      const checked = parseAlertRecipients(draft.recipientsText);
+      const checked = parseAlertRecipients(draft.recipientsText, draft.savedRecipients);
       if (!checked.ok) return setError(`${label}: ${checked.message}`);
       if (checked.emails.length === 0) return setError(`${label}: add at least one email address.`);
       if (draft.conditionFieldKey && !draft.conditionValue.trim()) return setError(`${label}: choose the value the condition looks for, or turn the condition off.`);

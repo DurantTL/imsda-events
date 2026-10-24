@@ -62,7 +62,7 @@ describe("guardian validation (#510)", () => {
     expect(guardianPhoneProblem("555-0134", "515-555-0134")).not.toBeNull();
     expect(guardianPhoneProblem("555-0134", "")).not.toBeNull();
     expect(validateGuardianForm([{ email: "", phone: "555-0134" }, { email: "", phone: "555-0134" }], [{ position: 1, phone: "555-0134" }]))
-      .toEqual({ g2Phone: "Enter a phone number like (515) 555-0134." });
+      .toEqual({ g2Phone: "Enter a 10-digit US number, like (515) 555-0134, or an international number starting with +." });
     expect(guardianSetPhoneProblem([{ phone: "555-0134" }], [{ position: 1, phone: "555-0134" }])).toBeNull();
     expect(guardianSetPhoneProblem([{ phone: "555-0134" }], [{ position: 2, phone: "555-0134" }])).not.toBeNull();
   });
@@ -103,8 +103,8 @@ describe("guardian validation (#510)", () => {
 
   it("reports dialog errors per slot and field", () => {
     expect(validateGuardianForm([{ email: "bad", phone: "" }, { email: "", phone: "bad" }])).toEqual({
-      g1Email: "Enter an email like name@example.com.",
-      g2Phone: "Enter a phone number like (515) 555-0134.",
+      g1Email: "Enter a valid email address.",
+      g2Phone: "Enter a 10-digit US number, like (515) 555-0134, or an international number starting with +.",
     });
     expect(validateGuardianForm([{ email: "", phone: "" }, { email: "", phone: "" }])).toEqual({});
   });

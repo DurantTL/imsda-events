@@ -108,9 +108,11 @@ export async function replaceHonorWatches(eventId: string, actorUserId: string, 
   const honorSet = new Set(realHonors.map((row) => row.id));
   const classSet = new Set(realClasses.map((row) => row.id));
 
+  // The recipients each watch of this event has stored now: an old address left alone passes, a new one must be valid (#1193).
+  const storedWatches = namedIds.length === 0 ? [] : await prisma.honorWatch.findMany({ where: { eventId, id: { in: namedIds } }, select: { id: true, recipients: true } });
   const checked = parsed.data.watches.map((input, index) => {
     const label = `Watch ${index + 1}`;
-    const recipients = checkWatchRecipients(input.recipients);
+    const recipients = checkWatchRecipients(input.recipients, storedWatches.find((row) => row.id === input.id)?.recipients ?? []);
     if (!recipients.ok) throw new HonorWatchError(`${label}: ${recipients.message}`, "INVALID_WATCHES");
     const honorIds = [...new Set(input.honorIds)];
     const offeringIds = [...new Set(input.offeringIds)];

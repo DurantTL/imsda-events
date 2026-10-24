@@ -477,11 +477,16 @@ export async function withLiveDirectory(definition: RegistrationFormDefinition, 
  * who changed it, never the addresses.
  */
 export async function setClubFormAlertRecipients(key: string, raw: string | string[], actorUserId: string) {
-  const parsed = parseAlertRecipients(raw);
-  if (!parsed.ok) throw new ClubFormError("VALIDATION_FAILED", parsed.message, [{ key: "submissionNotifyEmails", message: parsed.message }]);
+  // A list that is too long is refused before the form is read. An address that fails may be an old saved one, so that is
+  // judged below against the stored list (#1193).
+  const first = parseAlertRecipients(raw);
+  if (!first.ok && first.reason === "COUNT") throw new ClubFormError("VALIDATION_FAILED", first.message, [{ key: "submissionNotifyEmails", message: first.message }]);
   return getPrisma().$transaction(async (tx) => {
     const template = await tx.clubFormTemplate.findUnique({ where: { key }, select: { id: true, submissionNotifyEmails: true } });
     if (!template) throw new ClubFormError("TEMPLATE_NOT_FOUND", "That form could not be found.");
+    // Judged against the addresses stored now (#1193): an old saved address passes, a new one must be valid.
+    const parsed = parseAlertRecipients(raw, template.submissionNotifyEmails);
+    if (!parsed.ok) throw new ClubFormError("VALIDATION_FAILED", parsed.message, [{ key: "submissionNotifyEmails", message: parsed.message }]);
     const same = template.submissionNotifyEmails.length === parsed.emails.length
       && template.submissionNotifyEmails.every((email, index) => email === parsed.emails[index]);
     if (!same) {

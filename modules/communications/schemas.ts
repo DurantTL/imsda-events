@@ -1,10 +1,9 @@
 import { z } from "zod";
+import { EMAIL_FIELD_MESSAGE, emailAddressSchema } from "@/lib/field-validation";
 import { validateMessageTemplate } from "@/modules/communications/templates";
 
-const optionalEmail = z.string().trim().max(254).refine(
-  (value) => value === "" || z.email().safeParse(value).success,
-  "Enter a valid email address or leave this blank.",
-);
+// The shared email check, lower-cased (#855, #871, #1193); blank is none. The message never echoes the address.
+const optionalEmail = emailAddressSchema;
 
 /**
  * The event's own email settings (#1043): display name, reply-to and staff alert addresses. There is no delivery mode
@@ -14,7 +13,7 @@ const optionalEmail = z.string().trim().max(254).refine(
 export const messagingSettingsInputSchema = z.object({
   senderName: z.string().trim().min(2).max(120),
   replyToEmail: optionalEmail,
-  internalNotificationEmails: z.array(z.email().transform((value) => value.trim().toLowerCase())).max(20),
+  internalNotificationEmails: z.array(emailAddressSchema.refine((value) => value !== "", EMAIL_FIELD_MESSAGE)).max(20),
 }).strict().transform((input) => ({
   ...input,
   internalNotificationEmails: [...new Set(input.internalNotificationEmails)],

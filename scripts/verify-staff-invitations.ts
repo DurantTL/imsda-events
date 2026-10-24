@@ -188,7 +188,7 @@ async function main() {
 
   // ---- Registering through a link ----------------------------------------------------------------------------------------
   const family = {
-    firstName: "Ada", lastName: surname, phone: "5550100", needsHousing: true, housingNote: "Ground floor if possible.",
+    firstName: "Ada", lastName: surname, phone: "(515) 555-0100", needsHousing: true, housingNote: "Ground floor if possible.",
     spouse: { firstName: "Alex", lastName: surname },
     dependants: [{ firstName: "Kit", lastName: surname, age: 9 }, { firstName: "Lou", lastName: surname, age: 18 }],
   };

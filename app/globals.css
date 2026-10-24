@@ -12796,6 +12796,19 @@ details.honor-seat-override > summary { cursor: pointer; font-weight: 700; displ
 .coordinator-event-head .field-help { margin: 4px 0 0; }
 .coordinator-event-head .secondary-button { min-height: 44px; }
 
+/* Shared phone input message (#871): the inline fix-it text under a phone field. 14px or larger, never colour alone. */
+.phone-input-message,
+.public-registration-field > small.phone-input-message,
+.app-shell .form-stack label > small.phone-input-message { display: block; margin: 4px 0 0; font-size: max(var(--type-body-floor, 0px), 0.875rem); line-height: 1.4; }
+/* A blocking problem reads as an error: danger colour, bold. These selectors beat the generic label help-text rules. */
+.phone-input-message.is-error,
+.public-registration-field > small.phone-input-message.is-error,
+.app-shell .form-stack label > small.phone-input-message.is-error { color: var(--danger, #8f3a30); font-weight: 700; }
+/* An old saved number left alone only needs correcting: calm, with a rule on the left so it is not mistaken for help text. */
+.phone-input-message.is-notice,
+.public-registration-field > small.phone-input-message.is-notice,
+.app-shell .form-stack label > small.phone-input-message.is-notice { color: var(--muted); font-weight: 600; padding-left: 8px; border-left: 3px solid var(--line, #c9c9c9); }
+
 /* Registration form builder editor shell (#1132): a top bar, the live form canvas and one sidebar with tabs.
    Tablets and desktops only; the component renders it from 768px up and phones keep the earlier layout.
    Every rule is new and prefixed fb-; no existing rule or font size is changed. Small text is 0.875rem or larger. */

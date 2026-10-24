@@ -3,6 +3,7 @@
 import { ActionsMenu } from "@/components/actions-menu";
 import { useConfirm } from "@/components/use-confirm";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { EMAIL_PROBLEM, inlineFieldProblem, problemMessage, validateEmail } from "@/lib/field-validation";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -433,6 +434,12 @@ export function CommunicationsWorkspace({
     || templateAttachments.map((file) => file.id).join(",")
       !== (selectedTemplate.activeVersion?.attachments ?? []).map((file) => file.id).join(",")
   ));
+  // Inline email checks for the event's email settings (#1193), the same validator the server runs. An old saved reply-to is
+  // flagged but never blocks; the address list names the line that fails, never the address.
+  const [settingsTouched, setSettingsTouched] = useState({ replyTo: false, recipients: false });
+  const replyToProblem = inlineFieldProblem("Reply-to email", "email", settingsDraft.replyToEmail, messaging?.settings.replyToEmail, settingsTouched.replyTo);
+  const badRecipientLine = settingsDraft.internalNotificationEmails.split(/[\n,;]+/).map((email) => email.trim()).filter(Boolean).findIndex((email) => !validateEmail(email).ok);
+  const recipientsProblem = badRecipientLine >= 0 && settingsTouched.recipients ? problemMessage(`Recipient ${badRecipientLine + 1}`, EMAIL_PROBLEM) : "";
   const savedSettingsDraft = settingsDraftFromMessaging(messaging);
   const settingsDirty = JSON.stringify(settingsDraft) !== JSON.stringify(savedSettingsDraft);
   const reminderDirty = reminderConfirmed;
@@ -946,6 +953,11 @@ export function CommunicationsWorkspace({
 
   async function saveSettings(submitEvent: React.FormEvent<HTMLFormElement>) {
     submitEvent.preventDefault();
+    setSettingsTouched({ replyTo: true, recipients: true });
+    if (replyToProblem.blocking || badRecipientLine >= 0) {
+      setError("Check the highlighted email addresses and try again.");
+      return;
+    }
     const recipients = settingsDraft.internalNotificationEmails
       .split(/[\n,;]+/)
       .map((email) => email.trim().toLowerCase())
@@ -2293,9 +2305,9 @@ export function CommunicationsWorkspace({
             </p>
             <div className="form-grid two-column">
               <label>Display name<input name="senderName" value={settingsDraft.senderName} minLength={2} maxLength={120} required onChange={(event) => setSettingsDraft((current) => ({ ...current, senderName: event.target.value }))} /><small>Shown as the sender, for example &quot;IMSDA Women&apos;s Retreat&quot;. The platform name is {messaging.settings.centralSenderName}.</small></label>
-              <label>Reply-to email<input name="replyToEmail" type="email" value={settingsDraft.replyToEmail} placeholder={messaging.settings.centralReplyToEmail || "registration@example.test"} onChange={(event) => setSettingsDraft((current) => ({ ...current, replyToEmail: event.target.value }))} /><small>Leave blank to use the platform reply-to{messaging.settings.centralReplyToEmail ? ` (${messaging.settings.centralReplyToEmail})` : ""}.</small></label>
+              <label>Reply-to email<input name="replyToEmail" type="email" inputMode="email" autoComplete="off" aria-invalid={replyToProblem.message ? true : undefined} aria-describedby={replyToProblem.message ? "reply-to-error" : undefined} onBlur={() => setSettingsTouched((current) => ({ ...current, replyTo: true }))} value={settingsDraft.replyToEmail} placeholder={messaging.settings.centralReplyToEmail || "registration@example.test"} onChange={(event) => setSettingsDraft((current) => ({ ...current, replyToEmail: event.target.value }))} /><small>Leave blank to use the platform reply-to{messaging.settings.centralReplyToEmail ? ` (${messaging.settings.centralReplyToEmail})` : ""}.</small>{replyToProblem.message && <small className="field-error" id="reply-to-error" role="alert">{replyToProblem.message}</small>}</label>
             </div>
-            <label>Internal registration recipients<textarea name="internalNotificationEmails" value={settingsDraft.internalNotificationEmails} rows={5} placeholder={"registration@example.test\nfinance@example.test"} onChange={(event) => setSettingsDraft((current) => ({ ...current, internalNotificationEmails: event.target.value }))} /><small>One email per line. Every new public registration creates one internal-notice row per recipient.</small></label>
+            <label>Internal registration recipients<textarea name="internalNotificationEmails" aria-invalid={recipientsProblem ? true : undefined} aria-describedby={recipientsProblem ? "internal-recipients-error" : undefined} onBlur={() => setSettingsTouched((current) => ({ ...current, recipients: true }))} value={settingsDraft.internalNotificationEmails} rows={5} placeholder={"registration@example.test\nfinance@example.test"} onChange={(event) => setSettingsDraft((current) => ({ ...current, internalNotificationEmails: event.target.value }))} /><small>One email per line. Every new public registration creates one internal-notice row per recipient.</small>{recipientsProblem && <small className="field-error" id="internal-recipients-error" role="alert">{recipientsProblem}</small>}</label>
             <div className="builder-actions">{settingsDirty && <span className="unsaved-dot" role="status">Unsaved changes</span>}<button className="primary-button" type="submit" disabled={saving || !settingsDirty}><Save size={16} aria-hidden="true" /> {saving ? "Saving…" : "Save settings"}</button></div>
           </form>
           <aside className="panel message-boundary-card">

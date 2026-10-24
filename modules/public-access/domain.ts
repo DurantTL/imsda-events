@@ -1,22 +1,18 @@
 import type { RegistrationStatus } from "@prisma/client";
 import { z } from "zod";
+import { emailAddressSchema } from "@/lib/field-validation";
 
 const millisecondsPerDay = 24 * 60 * 60 * 1_000;
 const recoveryAccessLifetimeMilliseconds = 30 * 60 * 1_000;
 const opaqueTokenPattern = /^[A-Za-z0-9_-]{43}$/;
 
-const publicEmailSchema = z
-  .string()
-  .trim()
-  .min(1, "Email is required.")
-  .max(160, "Email must be 160 characters or fewer.")
-  .transform((value) => value.toLowerCase())
-  .refine((value) => z.email().safeParse(value).success, "Enter a valid email address.");
+const publicEmailSchema = emailAddressSchema.refine((value) => value !== "", "Email is required.");
 
 export const publicContactUpdateSchema = z.strictObject({
   firstName: z.string().trim().min(1, "First name is required.").max(80),
   lastName: z.string().trim().min(1, "Last name is required.").max(80),
   email: publicEmailSchema,
+  /** Judged against the stored phone where the registration is loaded (#871), so an old saved number does not block the edit. */
   phone: z.string().trim().max(40),
 });
 

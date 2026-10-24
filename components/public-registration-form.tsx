@@ -84,6 +84,7 @@ import {
   resolveResponsibleOrganization,
   isLatePricingActive,
   numberFieldBounds,
+  typedFieldNote,
   validateTestResponses,
   type ChoiceUsage,
   type FormCalculation,
@@ -1002,6 +1003,8 @@ export function PublicRegistrationForm({
   const [serverIssues, setServerIssues] = useState<FormIssue[]>([]);
   // Steps where a failed Continue or Submit showed errors; only these show client-issue markers.
   const [attemptedStepIds, setAttemptedStepIds] = useState<string[]>([]);
+  // Inline phone, email, number and date checks (#855, #1193): shown once a person leaves the field.
+  const [typedTouched, setTypedTouched] = useState<Record<string, boolean>>({});
   const currentStepKey = currentStep.id;
   useEffect(() => {
     setVisitedStepIds((visited) => withVisitedStep(visited, currentStepKey));
@@ -2227,6 +2230,13 @@ export function PublicRegistrationForm({
     }
 
     const value = typeof context.values[field.key] === "string" ? context.values[field.key] as string : "";
+    // The same inline check as club forms (#855, #1193). A saved answer left alone that fails today's rules is flagged
+    // for correcting but never blocks; a changed one shows its message once the person leaves the field. The server
+    // decides on its own by comparing with what is stored; this only guides. The message never carries the value.
+    const storedAnswer = context.attendeeIndex !== null ? club?.previousResponses?.[attendees[context.attendeeIndex]?.clientId ?? ""]?.[field.key] : undefined;
+    const typed = issue ? { message: "", flagged: false, invalid: false } : typedFieldNote(field, context.values[field.key], storedAnswer, Boolean(typedTouched[id]));
+    const typedNote = typed.message;
+    const typedNoteId = `${id}_typed`;
     const autoCompletePurpose = rosterEnabled && field.key === "first_name"
       ? "given-name"
       : rosterEnabled && field.key === "last_name"
@@ -2267,8 +2277,9 @@ export function PublicRegistrationForm({
             required={field.required && !excused}
             readOnly={context.attendeeIndex !== null && lockedAttendeeFieldKeys.has(field.key)}
             placeholder={field.placeholder ?? ""}
-            aria-invalid={Boolean(issue)}
-            aria-describedby={field.type === "DATE" ? [description, `${id}_date_guidance`].filter(Boolean).join(" ") : description}
+            aria-invalid={Boolean(issue) || typed.invalid}
+            aria-describedby={[description, field.type === "DATE" ? `${id}_date_guidance` : "", typedNote ? typedNoteId : ""].filter(Boolean).join(" ") || undefined}
+            onBlur={() => setTypedTouched((current) => (current[id] ? current : { ...current, [id]: true }))}
             onChange={(inputEvent) => context.setValue(field.key, inputEvent.target.value)}
             onPaste={field.type === "DATE" ? (pasteEvent) => {
               if (context.attendeeIndex !== null && lockedAttendeeFieldKeys.has(field.key)) return;
@@ -2282,6 +2293,7 @@ export function PublicRegistrationForm({
         )}
         {field.type === "DATE" && <DateGuidance className="public-registration-date-guidance" id={`${id}_date_guidance`} typed={PUBLIC_DATE_GUIDANCE} />}
         {fieldSupport(field, context)}
+        {typedNote && <FieldError className="public-registration-field-error" id={typedNoteId}>{typedNote}</FieldError>}
       </label>
     );
   }

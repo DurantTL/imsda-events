@@ -3,6 +3,7 @@ import "server-only";
 import { isNotificationEnabled } from "@/modules/notifications/settings";
 import { createHmac, randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { phoneToStore } from "@/lib/field-validation";
 import { getPrisma } from "@/lib/prisma";
 import { declareResponsibleAdultsForRegistration, getRegistrationResponsibleAdultView, GuardianAuthorityError } from "@/modules/guardian-authority/repository";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
@@ -982,12 +983,18 @@ async function updateRegistrationContactWithClient(
   const access = await loadActiveAccessRecord(client, token, now);
   if (!access) return null;
   const existingSnapshot = jsonRecord(access.registration.contactSnapshot);
+  // The phone is checked against the one stored for this registration (#871): a changed phone must pass the shared
+  // check, the stored one may stay even if it is an old unusable number. Done before anything is written.
+  const storedPhone = typeof existingSnapshot.phone === "string"
+    ? existingSnapshot.phone
+    : access.registration.accountHolderPerson.phone ?? "";
+  const phone = phoneToStore(["phone"], input.phone, storedPhone);
   const contactSnapshot: Prisma.InputJsonObject = {
     ...existingSnapshot,
     firstName: input.firstName,
     lastName: input.lastName,
     email: input.email,
-    phone: input.phone,
+    phone,
   };
 
   await client.registration.update({
@@ -1024,7 +1031,7 @@ async function updateRegistrationContactWithClient(
   return {
     registration: {
       ...serializeRegistrationAccess(access, now),
-      contact: input,
+      contact: { ...input, phone },
     },
     pendingMessageIds: queued.pendingMessageIds,
   };

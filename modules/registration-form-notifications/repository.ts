@@ -180,7 +180,8 @@ export async function replaceFormNotifications(eventId: string, formId: string, 
   }
   const checked = parsed.data.notifications.map((input: NotificationInput, index) => {
     const label = `Notification ${index + 1}`;
-    const recipients = checkNotificationRecipients(input.recipients);
+    // Judged against what this notification has stored now, never against anything the browser says (#1193).
+    const recipients = checkNotificationRecipients(input.recipients, form.notifications.find((row) => row.id === input.id)?.recipients ?? []);
     if (!recipients.ok) throw new FormNotificationError(`${label}: ${recipients.message}`, "INVALID_NOTIFICATIONS");
     if (input.id && !existingIds.has(input.id)) throw new FormNotificationError(`${label} no longer exists. Reload the page and try again.`, "INVALID_NOTIFICATIONS");
     if (input.condition) {

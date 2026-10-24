@@ -3,6 +3,7 @@ import "server-only";
 import { isNotificationEnabled } from "@/modules/notifications/settings";
 import { randomUUID } from "node:crypto";
 import { Prisma } from "@prisma/client";
+import { phoneToStore } from "@/lib/field-validation";
 import { getPrisma } from "@/lib/prisma";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import {
@@ -114,9 +115,11 @@ export async function updateAttendeeRegistrationContact(input: {
       eventId: string;
       confirmationCode: string;
       contactSnapshot: Prisma.JsonValue;
+      personPhone: string | null;
     }>>(Prisma.sql`
       SELECT registration."id", registration."eventId",
-        registration."confirmationCode", registration."contactSnapshot"
+        registration."confirmationCode", registration."contactSnapshot",
+        person."phone" AS "personPhone"
       FROM "Registration" registration
       JOIN "Person" person ON person."id" = registration."accountHolderPersonId"
       WHERE registration."id" = ${input.registrationId}
@@ -126,6 +129,17 @@ export async function updateAttendeeRegistrationContact(input: {
     `);
     const registration = owned[0];
     if (!registration) return null;
+    const stored = registration.contactSnapshot
+      && typeof registration.contactSnapshot === "object"
+      && !Array.isArray(registration.contactSnapshot)
+      ? registration.contactSnapshot as Prisma.JsonObject
+      : {};
+    // Checked against the stored phone (#871) before the edit code is spent, so a fixable phone does not cost one.
+    const phone = phoneToStore(
+      ["contact", "phone"],
+      input.contact.phone,
+      typeof stored.phone === "string" ? stored.phone : registration.personPhone ?? "",
+    );
     const authorized = await consumeAttendeeEditStepUp({
       accountId: input.accountId,
       sessionId: input.sessionId,
@@ -146,6 +160,7 @@ export async function updateAttendeeRegistrationContact(input: {
         contactSnapshot: {
           ...existing,
           ...input.contact,
+          phone,
         } satisfies Prisma.InputJsonObject,
       },
     });
@@ -180,7 +195,7 @@ export async function updateAttendeeRegistrationContact(input: {
     });
     return {
       codeAccepted: true as const,
-      contact: input.contact,
+      contact: { ...input.contact, phone },
       pendingMessageIds: queued.pendingMessageIds,
     };
   });

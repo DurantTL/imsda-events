@@ -1,6 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
+import { MAX_PHONE_LENGTH, resolvePhoneChange } from "@/lib/field-validation";
 import { getPrisma } from "@/lib/prisma";
 import { isValidRelyingPartyId } from "@/modules/attendee-accounts/passkey-domain";
 
@@ -54,7 +55,8 @@ export const platformSettingsInputSchema = z.object({
   invoiceHeaderAddress: optionalField(
     z.string().max(400).refine((value) => value.split(/\r?\n/).length <= 4, "Use at most four address lines."),
   ),
-  invoiceHeaderPhone: optionalField(z.string().max(40)),
+  // Judged in `updatePlatformSettings` against the stored phone (#1193), so an old saved one is not held against a save.
+  invoiceHeaderPhone: optionalField(z.string().max(MAX_PHONE_LENGTH)),
 }).strict();
 
 export type PlatformSettingsInput = z.infer<typeof platformSettingsInputSchema>;
@@ -126,7 +128,7 @@ export async function getPlatformSettings(): Promise<PlatformSettingsRecord> {
 
 export class PlatformSettingsError extends Error {
   constructor(
-    public readonly code: "PASSKEY_ONLY_STAFF_WOULD_BE_LOCKED_OUT",
+    public readonly code: "PASSKEY_ONLY_STAFF_WOULD_BE_LOCKED_OUT" | "INVALID_SETTING",
     message: string,
   ) {
     super(message);
@@ -158,14 +160,22 @@ async function countPasskeyOnlyStaff(tx: Pick<ReturnType<typeof getPrisma>, "use
 }
 
 export async function updatePlatformSettings(
-  input: PlatformSettingsInput,
+  rawInput: PlatformSettingsInput,
   actorUserId: string,
 ): Promise<PlatformSettingsRecord> {
   const prisma = getPrisma();
+  let input = rawInput;
   await prisma.$transaction(async (tx) => {
     const before = await tx.platformSettings.findUnique({
       where: { id: PLATFORM_SETTINGS_ID },
     });
+    // The invoice phone must pass the shared check unless it is the phone already stored (#1193), decided here from the
+    // stored row. Valid phones are stored in one form. The message never carries the phone.
+    if (input.invoiceHeaderPhone) {
+      const phone = resolvePhoneChange(input.invoiceHeaderPhone, before?.invoiceHeaderPhone);
+      if (!phone.ok) throw new PlatformSettingsError("INVALID_SETTING", `Invoice phone: ${phone.message}`);
+      input = { ...input, invoiceHeaderPhone: phone.value };
+    }
     // Any change, not only clearing: a passkey is bound to the domain it was
     // made for, so a new domain strands existing passkeys just the same.
     if (before?.passkeyRpId && before.passkeyRpId !== (input.passkeyRpId ?? null)) {

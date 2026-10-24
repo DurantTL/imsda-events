@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { AlertCircle, CheckCircle2, KeyRound, Save } from "lucide-react";
+import { PhoneInput, phoneBlocks } from "@/components/phone-input";
 
 type Contact = {
   firstName: string;
@@ -21,6 +22,7 @@ export function AttendeeRegistrationContactForm({
   // The summary shows the last saved contact, not what is being typed.
   const [savedContact, setSavedContact] = useState(initialContact);
   const [code, setCode] = useState("");
+  const [attempted, setAttempted] = useState(false);
   const [requesting, setRequesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ tone: "idle" | "error" | "saved"; message: string }>({
@@ -61,6 +63,12 @@ export function AttendeeRegistrationContactForm({
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setAttempted(true);
+    // The saved phone is the one the server compares with (#871); the same number never blocks.
+    if (phoneBlocks("Phone", contact.phone, savedContact.phone)) {
+      setNotice({ tone: "error", message: "Fix the highlighted phone number and save again." });
+      return;
+    }
     setSaving(true);
     setNotice({ tone: "idle", message: "Saving contact details…" });
     try {
@@ -118,7 +126,7 @@ export function AttendeeRegistrationContactForm({
           </label>
           <label className="public-registration-field public-manage-contact-wide">
             <span className="public-registration-field-label">Phone</span>
-            <input maxLength={40} value={contact.phone} onChange={(event) => field("phone", event.target.value)} />
+            <PhoneInput label="Phone" showNow={attempted} stored={savedContact.phone} value={contact.phone} onValueChange={(value) => field("phone", value)} />
           </label>
           <label className="public-registration-field public-manage-contact-wide">
             <span className="public-registration-field-label">Six-digit edit code</span>

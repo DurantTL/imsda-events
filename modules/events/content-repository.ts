@@ -8,8 +8,10 @@ import {
   blockAssetIds,
   hasBlockData,
   parseBlockData,
+  checkContactBlockData,
   parseEventContentItems,
   registrationFormKinds,
+  type ContactData,
   type EventContentInput,
   type EventContentItem,
   type EventContentKind,
@@ -20,7 +22,7 @@ import {
 /** Thrown when a content save cannot be honored as written. */
 export class EventContentError extends Error {
   constructor(
-    public readonly code: "ASSET_NOT_IN_EVENT" | "ASSET_NOT_AN_IMAGE" | "CUSTOM_HTML_FORBIDDEN",
+    public readonly code: "ASSET_NOT_IN_EVENT" | "ASSET_NOT_AN_IMAGE" | "CUSTOM_HTML_FORBIDDEN" | "INVALID_CONTACT",
     message: string,
   ) {
     super(message);
@@ -200,6 +202,21 @@ export async function replaceEventContent(
             "CUSTOM_HTML_FORBIDDEN",
             "Only a system administrator can add, change, or remove custom HTML blocks.",
           );
+        }
+      }
+
+      // A contact's phone must pass the shared check unless the event already stores that same phone for that contact
+      // (#1193), so saving the page never fails on an old contact nobody touched. Judged against the stored rows, here, inside
+      // the transaction; the browser's own check only guides. Valid phones are stored in one form. No message carries a value.
+      if (prepared.some((entry) => entry.section.kind === "CONTACT")) {
+        const storedContacts = await tx.eventContentSection.findMany({ where: { eventId, kind: "CONTACT" }, orderBy: { position: "asc" }, select: { data: true } });
+        let ordinal = 0;
+        for (const entry of prepared) {
+          if (entry.section.kind !== "CONTACT" || !entry.data) continue;
+          const checked = checkContactBlockData(entry.data as ContactData, storedContacts.map((row) => row.data), ordinal);
+          ordinal += 1;
+          if (!checked.ok) throw new EventContentError("INVALID_CONTACT", checked.message);
+          entry.data = checked.data;
         }
       }
 

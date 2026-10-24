@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent } from "react";
 import { AlertCircle, CheckCircle2, Save } from "lucide-react";
+import { PhoneInput, phoneBlocks } from "@/components/phone-input";
 
 type Contact = {
   firstName: string;
@@ -26,6 +27,9 @@ export function PublicRegistrationContactForm({
   initialContact,
 }: PublicRegistrationContactFormProps) {
   const [contact, setContact] = useState(initialContact);
+  // The saved phone (#871): the same number is an old one left alone and never blocks the save.
+  const [savedPhone, setSavedPhone] = useState(initialContact.phone);
+  const [attempted, setAttempted] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>({
     kind: "idle",
     message: "",
@@ -40,6 +44,11 @@ export function PublicRegistrationContactForm({
 
   async function saveContact(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setAttempted(true);
+    if (phoneBlocks("Phone", contact.phone, savedPhone)) {
+      setSaveState({ kind: "error", message: "Fix the highlighted phone number and save again." });
+      return;
+    }
     setSaveState({ kind: "saving", message: "Saving contact details…" });
 
     try {
@@ -65,6 +74,7 @@ export function PublicRegistrationContactForm({
       }
       if (payload?.registration?.contact) {
         setContact(payload.registration.contact);
+        setSavedPhone(payload.registration.contact.phone);
       }
       setSaveState({ kind: "saved", message: "Contact details saved." });
     } catch (error) {
@@ -135,13 +145,12 @@ export function PublicRegistrationContactForm({
         </label>
         <label className="public-registration-field public-manage-contact-wide">
           <span className="public-registration-field-label">Phone</span>
-          <input
-            autoComplete="tel"
-            inputMode="tel"
-            maxLength={40}
+          <PhoneInput
+            label="Phone"
             name="phone"
-            onChange={(event) => updateField("phone", event.target.value)}
-            type="tel"
+            onValueChange={(value) => updateField("phone", value)}
+            showNow={attempted}
+            stored={savedPhone}
             value={contact.phone}
           />
         </label>

@@ -1,3 +1,4 @@
+import { phoneToStore } from "@/lib/field-validation";
 import { getPrisma } from "@/lib/prisma";
 import { refreshBackgroundCheckMatchesForRegistrations } from "@/modules/background-checks/refresh-after-write";
 import { decideEventCapacity } from "@/modules/events/lifecycle";
@@ -567,9 +568,9 @@ export async function updateRegistration(
     const nextEmail = input.email === undefined
       ? currentContactValue("email", existing.accountHolderPerson.normalizedEmail ?? "")
       : input.email;
-    const nextPhone = input.phone === undefined
-      ? currentContactValue("phone", existing.accountHolderPerson.phone ?? "")
-      : input.phone;
+    const storedPhone = currentContactValue("phone", existing.accountHolderPerson.phone ?? "");
+    // A changed phone must pass the shared check; the stored one, even an old unusable one, may stay (#871).
+    const nextPhone = input.phone === undefined ? storedPhone : phoneToStore(["phone"], input.phone, storedPhone);
 
     if (!existing.publicFormSubmission) {
       await tx.person.update({

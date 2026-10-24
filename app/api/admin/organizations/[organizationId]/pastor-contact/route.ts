@@ -28,7 +28,7 @@ async function postHandler(request: Request, context: { params: Promise<{ organi
     }
     if (error instanceof AccessDeniedError) return Response.json({ error: error.code, message: error.message }, { status: error.status });
     if (error instanceof OrganizationContactError) {
-      return Response.json({ error: error.code, message: error.message }, { status: error.code === "CONCURRENT_CHANGE" ? 409 : 404 });
+      return Response.json({ error: error.code, message: error.message }, { status: error.code === "CONCURRENT_CHANGE" ? 409 : error.code === "INVALID_CONTACT" ? 400 : 404 });
     }
     logError("Pastor contact request failed", error);
     return Response.json({ error: "PASTOR_CONTACT_FAILED", message: "The change could not be saved." }, { status: 500 });

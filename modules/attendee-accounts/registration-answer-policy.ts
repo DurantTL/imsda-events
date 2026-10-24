@@ -40,7 +40,8 @@ export type EditableAttendeeField = {
   key: string;
   label: string;
   helpText: string;
-  type: "SELECT" | "RADIO" | "MULTISELECT" | "RANKED_CHOICE" | "CHECKBOX" | "NUMBER" | "ADDRESS";
+  /** PHONE, EMAIL and DATE are not self-service editable today (see `editableFieldTypes`); the form checks them if they ever are. */
+  type: "SELECT" | "RADIO" | "MULTISELECT" | "RANKED_CHOICE" | "CHECKBOX" | "NUMBER" | "ADDRESS" | "PHONE" | "EMAIL" | "DATE";
   required: boolean;
   options: string[];
   minSelections: number | null;

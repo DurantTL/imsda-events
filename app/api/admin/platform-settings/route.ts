@@ -58,7 +58,7 @@ async function patchHandler(request: Request) {
       );
     }
     if (error instanceof PlatformSettingsError) {
-      return Response.json({ error: error.code, message: error.message }, { status: 409 });
+      return Response.json({ error: error.code, message: error.message }, { status: error.code === "INVALID_SETTING" ? 400 : 409 });
     }
     if (error instanceof SyntaxError) {
       return Response.json(

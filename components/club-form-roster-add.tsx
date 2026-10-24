@@ -220,11 +220,11 @@ export function ClubFormRosterAdd({ review, formHref }: { review: RosterAddRevie
                       <input autoComplete="off" defaultValue={value.relationship} maxLength={60} name={`g${slot}Relationship`} placeholder="e.g. Spouse or parent" />
                     </label>
                     <label>{guardianFieldLabels.email}
-                      <input aria-invalid={guardianErrors[`g${slot}Email`] ? true : undefined} autoComplete="off" defaultValue={value.email} inputMode="email" maxLength={254} name={`g${slot}Email`} type="text" />
+                      <input aria-invalid={guardianErrors[`g${slot}Email`] ? true : undefined} autoComplete="email" defaultValue={value.email} inputMode="email" maxLength={160} name={`g${slot}Email`} type="email" />
                       {guardianErrors[`g${slot}Email`] && <span className="roster-field-error" role="alert">{guardianErrors[`g${slot}Email`]}</span>}
                     </label>
                     <label>{guardianFieldLabels.phone}
-                      <input aria-invalid={guardianErrors[`g${slot}Phone`] ? true : undefined} autoComplete="off" defaultValue={value.phone} inputMode="tel" maxLength={40} name={`g${slot}Phone`} type="text" />
+                      <input aria-invalid={guardianErrors[`g${slot}Phone`] ? true : undefined} autoComplete="tel" defaultValue={value.phone} inputMode="tel" maxLength={40} name={`g${slot}Phone`} type="tel" />
                       {guardianErrors[`g${slot}Phone`] && <span className="roster-field-error" role="alert">{guardianErrors[`g${slot}Phone`]}</span>}
                     </label>
                   </div>

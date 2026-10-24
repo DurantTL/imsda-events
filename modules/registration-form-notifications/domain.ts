@@ -52,8 +52,9 @@ export const notificationsPutSchema = z.object({
 export type NotificationInput = z.infer<typeof notificationInputSchema>;
 
 /** The addresses of one notification, checked: at least one, at most ten, each valid. */
-export function checkNotificationRecipients(raw: readonly string[]): { ok: true; emails: string[] } | { ok: false; message: string } {
-  const result = parseAlertRecipients([...raw]);
+export function checkNotificationRecipients(raw: readonly string[], stored: readonly string[] = []): { ok: true; emails: string[] } | { ok: false; message: string } {
+  // `stored` is the addresses already saved on this notification (#1193): an old one left alone passes.
+  const result = parseAlertRecipients([...raw], stored);
   if (!result.ok) return result;
   if (result.emails.length === 0) return { ok: false, message: "Add at least one email address to every notification." };
   return result;

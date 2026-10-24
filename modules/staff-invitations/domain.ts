@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { newPhoneSchema } from "@/lib/field-validation";
 
 /**
  * Personal staff invitations (#804). Pure rules, shared by the server, the pages and the tests.
@@ -190,7 +191,8 @@ const nameField = z.string().transform(cleanName).pipe(z.string().min(1, "Enter 
 export const invitationRegistrationSchema = z.object({
   firstName: nameField,
   lastName: nameField,
-  phone: z.string().trim().max(40).default(""),
+  /** Optional, and always a new value: the link form starts blank, so there is no stored phone to keep (#1193). Stored normalised. */
+  phone: newPhoneSchema.default(""),
   spouse: z.object({ firstName: nameField, lastName: nameField }).strict().nullable().default(null),
   dependants: z.array(z.object({
     firstName: nameField,

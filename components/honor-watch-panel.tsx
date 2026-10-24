@@ -21,6 +21,8 @@ type Draft = {
   id?: string;
   name: string;
   recipientsText: string;
+  /** The addresses saved for this watch: an old one left alone is not held against a re-save (#1193). */
+  savedRecipients: string[];
   honorIds: string[];
   offeringIds: string[];
   warnings: string[];
@@ -34,11 +36,11 @@ function nextKey() {
 }
 
 function toDraft(row: Watch): Draft {
-  return { localKey: row.id, id: row.id, name: row.name, recipientsText: row.recipients.join("\n"), honorIds: row.honorIds, offeringIds: row.offeringIds, warnings: row.warnings, honorSearch: "" };
+  return { localKey: row.id, id: row.id, name: row.name, recipientsText: row.recipients.join("\n"), savedRecipients: row.recipients, honorIds: row.honorIds, offeringIds: row.offeringIds, warnings: row.warnings, honorSearch: "" };
 }
 
 function blankDraft(): Draft {
-  return { localKey: nextKey(), name: "", recipientsText: "", honorIds: [], offeringIds: [], warnings: [], honorSearch: "" };
+  return { localKey: nextKey(), name: "", recipientsText: "", savedRecipients: [], honorIds: [], offeringIds: [], warnings: [], honorSearch: "" };
 }
 
 const SEARCH_RESULTS = 8;
@@ -65,7 +67,7 @@ export function HonorWatchPanel({ eventId, catalog, initial }: { eventId: string
     for (const [index, draft] of drafts.entries()) {
       const label = draft.name.trim() || `Watch ${index + 1}`;
       if (draft.name.trim().length < 2) return setError(`Watch ${index + 1}: give it a name.`);
-      const checked = parseAlertRecipients(draft.recipientsText);
+      const checked = parseAlertRecipients(draft.recipientsText, draft.savedRecipients);
       if (!checked.ok) return setError(`${label}: ${checked.message}`);
       if (checked.emails.length === 0) return setError(`${label}: add at least one email address.`);
       if (draft.honorIds.length + draft.offeringIds.length === 0) return setError(`${label}: choose at least one honor or class to watch.`);
