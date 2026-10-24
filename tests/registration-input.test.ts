@@ -7,7 +7,7 @@ describe("registration input validation", () => {
       firstName: "  Alicia ",
       lastName: " Smith  ",
       email: " ALICIA@EXAMPLE.TEST ",
-      phone: " 555-0101 ",
+      phone: " 515-555-0101 ",
       attendeeType: "ATTENDEE",
       status: "SUBMITTED",
       totalAmountCents: 17500,
@@ -17,7 +17,7 @@ describe("registration input validation", () => {
       firstName: "Alicia",
       lastName: "Smith",
       email: "alicia@example.test",
-      phone: "555-0101",
+      phone: "(515) 555-0101",
     });
   });
 

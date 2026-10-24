@@ -13,14 +13,17 @@ const valuesShape = Object.fromEntries(yearEndFieldKeys.map((key) => [key, count
  */
 export const yearEndReportInputSchema = z.object({
   contactName: z.string().trim().max(120).default(""),
+  // The three phones are judged against the saved report's phones by `saveYearEndReport` (#871), so an old saved
+  // number does not block a save that did not touch it.
   contactWorkPhone: z.string().trim().max(40).default(""),
   contactHomePhone: z.string().trim().max(40).default(""),
   contactCellPhone: z.string().trim().max(40).default(""),
+  // The email's format is checked here; its length against the shared cap, and the saved one's grandfathering, in `saveYearEndReport` (#871).
   contactEmail: z.string().trim().max(200).default(""),
   values: z.object(valuesShape).strict(),
   status: z.enum(["DRAFT", "SUBMITTED"]),
 }).strict().superRefine((report, context) => {
-  if (report.contactEmail && !z.string().email().safeParse(report.contactEmail).success) {
+  if (report.contactEmail && !z.email().safeParse(report.contactEmail).success) {
     context.addIssue({ code: "custom", path: ["contactEmail"], message: "Enter a valid email address." });
   }
   if (report.status !== "SUBMITTED") return;

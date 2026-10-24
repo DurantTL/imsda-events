@@ -137,6 +137,114 @@ export function isUnchangedFromStored(submitted: unknown, stored: unknown) {
   return typeof submitted === typeof stored && String(submitted).trim() === String(stored).trim();
 }
 
+/** The shared phone message for a fixed phone field (#871), worded for a field with its own label. */
+export const PHONE_FIELD_MESSAGE = "Enter a 10-digit US number, like (515) 555-0134, or an international number starting with +.";
+export const EMAIL_FIELD_MESSAGE = "Enter a valid email address.";
+
+/** A phone with its formatting taken away, for comparing an old unusable value with its re-typed self. */
+function phoneSkeleton(value: string) {
+  return value.trim().toLowerCase().replace(/[\s().\-–—/]+/g, "");
+}
+
+/**
+ * Whether a submitted phone is the stored one (#871), decided by the server from the persisted value and never by a
+ * client flag. Equal after the shared normalisation counts, so "515.555.0134" is the same number as "(515) 555-0134".
+ * An old value that does not pass is also unchanged when only its spacing, dashes, dots or brackets differ, so
+ * re-formatting it is not a change. A blank stored value is never "unchanged".
+ */
+export function isUnchangedPhone(submitted: unknown, stored: unknown): boolean {
+  if (typeof submitted !== "string" || typeof stored !== "string") return false;
+  const was = stored.trim();
+  const now = submitted.trim();
+  if (was === "" || now === "") return false;
+  if (was === now) return true;
+  const before = validatePhone(was);
+  const after = validatePhone(now);
+  if (before.ok && after.ok) return before.value === after.value;
+  if (before.ok !== after.ok) return false;
+  return phoneSkeleton(was) === phoneSkeleton(now);
+}
+
+/**
+ * The phone to store for a submitted one, and the check that goes with it (#871). Blank is allowed (a "required"
+ * rule is the caller's) and stores as "". A changed phone has to pass and is stored normalised. A phone that is the
+ * stored one (see `isUnchangedPhone`) is kept exactly as stored, valid or not, so saving a record never fails on a number
+ * nobody touched. `stored` must come from the database, never from the request.
+ */
+export function resolvePhoneChange(submitted: string, stored: string | null | undefined): { ok: true; value: string } | { ok: false; message: string } {
+  const text = submitted.trim();
+  if (text === "") return { ok: true, value: "" };
+  if (isUnchangedPhone(text, stored)) {
+    // Kept exactly as stored, valid or not, so an untouched number is never rewritten and never recorded as a change.
+    return { ok: true, value: (stored ?? "").trim() };
+  }
+  const check = validatePhone(text);
+  return check.ok ? { ok: true, value: check.value } : { ok: false, message: PHONE_FIELD_MESSAGE };
+}
+
+/** `resolvePhoneChange` for server code: the value to store, or a ZodError at `path` that never carries the number. */
+export function phoneToStore(path: Array<string | number>, submitted: string, stored: string | null | undefined): string {
+  const result = resolvePhoneChange(submitted, stored);
+  if (!result.ok) throw new z.ZodError([{ code: "custom", path, message: result.message }]);
+  return result.value;
+}
+
+/** Whether a submitted email is the stored one (#871): the same address, ignoring case and surrounding spaces. Decided from the stored value. */
+export function isUnchangedEmail(submitted: unknown, stored: unknown): boolean {
+  if (typeof submitted !== "string" || typeof stored !== "string") return false;
+  const was = stored.trim().toLowerCase();
+  return was !== "" && was === submitted.trim().toLowerCase();
+}
+
+/**
+ * The email to store for a submitted one (#871), for a field that keeps the address as typed. Blank stores as "".
+ * A changed email has to pass the shared check. The stored one, even an old one over the shared length cap, may stay,
+ * exactly as stored. The ZodError never carries the address.
+ */
+export function emailToStore(path: Array<string | number>, submitted: string, stored: string | null | undefined): string {
+  const text = submitted.trim();
+  if (text === "") return "";
+  if (isUnchangedEmail(text, stored)) return (stored ?? "").trim();
+  const check = validateEmail(text);
+  if (!check.ok) throw new z.ZodError([{ code: "custom", path, message: EMAIL_FIELD_MESSAGE }]);
+  return check.value;
+}
+
+/** The browser message for a phone field (#871): a changed bad phone blocks once `shown`; an old one left alone only warns. */
+export function inlinePhoneProblem(
+  label: string,
+  value: string,
+  stored: string | null | undefined,
+  shown: boolean,
+): { message: string; blocking: boolean } {
+  if (value.trim() === "") return { message: "", blocking: false };
+  const check = validatePhone(value);
+  if (check.ok) return { message: "", blocking: false };
+  const text = problemMessage(label, check.problem);
+  if (isUnchangedPhone(value, stored)) return { message: `${text} This saved number needs correcting.`, blocking: false };
+  return { message: shown ? text : "", blocking: true };
+}
+
+/** A new phone (nothing stored to compare with): blank passes, anything else must be valid. Stored normalised. */
+export const newPhoneSchema = z.string().trim().max(MAX_PHONE_LENGTH, PHONE_FIELD_MESSAGE).transform((value, context) => {
+  const check = validateByType("phone", value);
+  if (!check.ok) {
+    context.addIssue({ code: "custom", message: PHONE_FIELD_MESSAGE });
+    return z.NEVER;
+  }
+  return check.value;
+});
+
+/** An email through the shared check, lower-cased. Blank passes; a caller that requires one says so itself. */
+export const emailAddressSchema = z.string().trim().max(MAX_EMAIL_LENGTH, `Email must be ${MAX_EMAIL_LENGTH} characters or fewer.`).transform((value, context) => {
+  const check = validateByType("email", value);
+  if (!check.ok) {
+    context.addIssue({ code: "custom", message: EMAIL_FIELD_MESSAGE });
+    return z.NEVER;
+  }
+  return check.value.toLowerCase();
+});
+
 /** The value type a form field type is checked as, or null for text and choice fields. */
 export function valueTypeForFieldType(fieldType: string): FieldValueType | null {
   switch (fieldType) {

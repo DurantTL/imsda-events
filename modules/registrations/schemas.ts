@@ -1,17 +1,15 @@
 import { z } from "zod";
+import { emailAddressSchema, newPhoneSchema } from "@/lib/field-validation";
 
-const emailField = z
-  .string()
-  .trim()
-  .max(160)
-  .transform((value) => value.toLowerCase())
-  .refine((value) => value === "" || z.email().safeParse(value).success, "Enter a valid email address.");
+// Email and phone go through the shared validators (#855, #871). A new phone must pass; an edit of an existing
+// registration's phone is compared with the stored one in the repository, so an old saved number does not block it.
+const emailField = emailAddressSchema;
 
 const registrationFields = {
   firstName: z.string().trim().min(1, "First name is required.").max(80),
   lastName: z.string().trim().min(1, "Last name is required.").max(80),
   email: emailField,
-  phone: z.string().trim().max(40),
+  phone: newPhoneSchema,
   attendeeType: z.enum(["ATTENDEE", "WORKER", "CHILD"]),
   status: z.enum(["DRAFT", "SUBMITTED", "CONFIRMED", "WAITLISTED", "CANCELLED"]),
   totalAmountCents: z.number().int().min(0).max(10_000_000),
@@ -29,7 +27,8 @@ const registrationEditableFields = {
   firstName: registrationFields.firstName,
   lastName: registrationFields.lastName,
   email: registrationFields.email,
-  phone: registrationFields.phone,
+  /** Judged against the stored phone by `updateRegistration`, not here (#871). */
+  phone: z.string().trim().max(40),
   attendeeType: registrationFields.attendeeType,
   totalAmountCents: registrationFields.totalAmountCents,
 };
@@ -52,7 +51,7 @@ export const attendeeInputSchema = z.object({
   firstName: z.string().trim().min(1, "First name is required.").max(80),
   lastName: z.string().trim().min(1, "Last name is required.").max(80),
   email: emailField.default(""),
-  phone: z.string().trim().max(40).default(""),
+  phone: newPhoneSchema.default(""),
   attendeeType: z.enum(["ATTENDEE", "WORKER", "CHILD"]).default("ATTENDEE"),
 });
 
@@ -68,16 +67,14 @@ const operationIdentityFields = {
   firstName: z.string().trim().min(1, "First name is required.").max(80),
   lastName: z.string().trim().min(1, "Last name is required.").max(80),
   email: emailField,
-  phone: z.string().trim().max(40),
+  phone: newPhoneSchema,
   reason: z.string().trim().max(500),
   clientRequestId: z.uuid(),
 };
 
 export const registrationTransferInputSchema = z.strictObject({
   ...operationIdentityFields,
-  email: z.email("Enter the new contact's email address.")
-    .max(160)
-    .transform((value) => value.trim().toLowerCase()),
+  email: emailAddressSchema.refine((value) => value !== "", "Enter the new contact's email address."),
   phone: operationIdentityFields.phone.default(""),
   reason: operationIdentityFields.reason.default(""),
 });

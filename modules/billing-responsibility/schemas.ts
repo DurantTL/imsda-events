@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { emailAddressSchema, newPhoneSchema } from "@/lib/field-validation";
 import { INVOICE_GROUPINGS } from "@/modules/billing-responsibility/domain";
 
 export const REASON_MAX = 500;
@@ -8,8 +9,10 @@ const id = z.string().trim().min(1).max(64);
 
 export const billingContactInputSchema = z.object({
   name: z.string().trim().min(1, "Enter the contact's name.").max(120),
-  email: z.string().trim().toLowerCase().min(1, "Enter the contact's email.").max(254).email("Enter a valid email address."),
-  phone: z.string().trim().max(40).optional().transform((value) => value || null),
+  // A saved billing contact is never edited in place: "set" always writes a new record, so its phone is a new value
+  // and has to pass the shared check (#871). The message never carries the number.
+  email: emailAddressSchema.refine((value) => value !== "", "Enter the contact's email."),
+  phone: newPhoneSchema.optional().transform((value) => value || null),
   roleLabel: z.string().trim().min(1, "Enter a role such as Treasurer.").max(80),
 });
 

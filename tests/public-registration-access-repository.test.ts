@@ -776,6 +776,56 @@ describe("private registration access repository", () => {
     expect(persistedAudit).not.toContain("private@example.test");
   });
 
+  describe("the contact phone uses the shared validator (#871)", () => {
+    function contactTx(contactSnapshot: Record<string, unknown>) {
+      const record = accessRecord();
+      record.registration.contactSnapshot = contactSnapshot;
+      const tx = {
+        registrationAccessToken: { findUnique: vi.fn().mockResolvedValue(record) },
+        registration: { update: vi.fn().mockResolvedValue({ id: "registration-1" }) },
+        auditLog: { create: vi.fn().mockResolvedValue({ id: "audit-1" }) },
+      };
+      dependencies.getPrisma.mockReturnValue({
+        $transaction: vi.fn(async (operation: (client: typeof tx) => unknown) => operation(tx)),
+      });
+      return tx;
+    }
+    const contact = (phone: string) => ({ firstName: "Updated", lastName: "Contact", email: "updated@example.test", phone });
+    const now = new Date("2026-08-01T12:00:00.000Z");
+
+    it("stores a changed phone normalised and returns it that way", async () => {
+      const tx = contactTx({ phone: "555-0100" });
+      const updated = await updatePublicRegistrationContact(createOpaqueToken(), contact("515.555.0134"), now);
+      expect(tx.registration.update.mock.calls[0]![0].data.contactSnapshot.phone).toBe("(515) 555-0134");
+      expect(updated?.contact.phone).toBe("(515) 555-0134");
+    });
+
+    it("refuses a changed bad phone before writing anything, without echoing it", async () => {
+      const tx = contactTx({ phone: "(515) 555-0134" });
+      const error = await updatePublicRegistrationContact(createOpaqueToken(), contact("idk 911"), now).catch((caught: unknown) => caught) as { issues: Array<{ path: string[]; message: string }> };
+      expect(error.issues[0]!.path).toEqual(["phone"]);
+      expect(JSON.stringify(error.issues)).not.toContain("idk 911");
+      expect(tx.registration.update).not.toHaveBeenCalled();
+      expect(tx.auditLog.create).not.toHaveBeenCalled();
+      expect(dependencies.enqueueRegistrationContactUpdatedMessage).not.toHaveBeenCalled();
+    });
+
+    it("lets an old unusable phone stay when untouched, or only re-formatted, and judges against the saved snapshot", async () => {
+      const tx = contactTx({ phone: "555-0100" });
+      await updatePublicRegistrationContact(createOpaqueToken(), contact("555-0100"), now);
+      await updatePublicRegistrationContact(createOpaqueToken(), contact("555 0100"), now);
+      expect(tx.registration.update.mock.calls.map((call) => call[0].data.contactSnapshot.phone)).toEqual(["555-0100", "555-0100"]);
+      await expect(updatePublicRegistrationContact(createOpaqueToken(), contact("555-0199"), now)).rejects.toThrow();
+    });
+
+    it("falls back to the contact person's phone when the snapshot has none", async () => {
+      const tx = contactTx({});
+      await updatePublicRegistrationContact(createOpaqueToken(), contact("555-0101"), now);
+      expect(tx.registration.update.mock.calls[0]![0].data.contactSnapshot.phone).toBe("555-0101");
+      await expect(updatePublicRegistrationContact(createOpaqueToken(), contact("555-0102"), now)).rejects.toThrow();
+    });
+  });
+
   it("updates only the registration-scoped contact snapshot and writes a non-secret audit record", async () => {
     const token = createOpaqueToken();
     const record = accessRecord();

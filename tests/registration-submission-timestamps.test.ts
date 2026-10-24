@@ -158,7 +158,7 @@ describe("registration submission timestamps", () => {
     const secondEdit = await updateRegistration(
       "event-1",
       "registration-1",
-      { phone: "555-0100" },
+      { phone: "(515) 555-0100" },
       "user-1",
     );
 

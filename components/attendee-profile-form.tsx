@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { AlertCircle, CheckCircle2, Save } from "lucide-react";
+import { PhoneInput, phoneBlocks } from "@/components/phone-input";
 import type { AttendeeProfileInput } from "@/modules/attendee-accounts/profile-service";
 
 export function AttendeeProfileForm({
@@ -13,6 +14,9 @@ export function AttendeeProfileForm({
   initialProfile: AttendeeProfileInput;
 }) {
   const [profile, setProfile] = useState(initialProfile);
+  // The phones as last saved (#871): a number equal to one of these is an old one left alone and never blocks.
+  const [savedProfile, setSavedProfile] = useState(initialProfile);
+  const [attempted, setAttempted] = useState(false);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [message, setMessage] = useState("");
   const [needsSecondStep, setNeedsSecondStep] = useState(false);
@@ -25,6 +29,12 @@ export function AttendeeProfileForm({
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setAttempted(true);
+    if (phoneBlocks("Phone", profile.phone, savedProfile.phone) || phoneBlocks("Emergency contact phone", profile.emergencyContactPhone, savedProfile.emergencyContactPhone)) {
+      setState("error");
+      setMessage("Fix the highlighted phone number and save again.");
+      return;
+    }
     setState("saving");
     setMessage("Saving profile…");
     setNeedsSecondStep(false);
@@ -45,6 +55,7 @@ export function AttendeeProfileForm({
         throw new Error(payload?.message ?? "Your profile could not be saved.");
       }
       setProfile(payload.profile);
+      setSavedProfile(payload.profile);
       setState("saved");
       setMessage("Profile saved. New registration forms can use these details.");
     } catch (error) {
@@ -80,7 +91,7 @@ export function AttendeeProfileForm({
         </label>
         <label className="public-registration-field public-manage-contact-wide">
           <span className="public-registration-field-label">Phone</span>
-          <input autoComplete="tel" inputMode="tel" maxLength={40} value={profile.phone} onChange={(event) => field("phone", event.target.value)} />
+          <PhoneInput label="Phone" showNow={attempted} stored={savedProfile.phone} value={profile.phone} onValueChange={(value) => field("phone", value)} />
         </label>
         </div>
       </fieldset>
@@ -128,7 +139,7 @@ export function AttendeeProfileForm({
         </label>
         <label className="public-registration-field public-manage-contact-wide">
           <span className="public-registration-field-label">Phone</span>
-          <input autoComplete="section-emergency tel" inputMode="tel" maxLength={40} value={profile.emergencyContactPhone} onChange={(event) => field("emergencyContactPhone", event.target.value)} />
+          <PhoneInput autoComplete="section-emergency tel" label="Emergency contact phone" showNow={attempted} stored={savedProfile.emergencyContactPhone} value={profile.emergencyContactPhone} onValueChange={(value) => field("emergencyContactPhone", value)} />
         </label>
         </div>
       </fieldset>
