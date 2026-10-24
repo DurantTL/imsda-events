@@ -1,3 +1,4 @@
+import { SendCheckPanel } from "@/components/send-check-panel";
 import { formatFileSize } from "@/modules/communications/message-file-rules";
 import type { AnnouncementBroadcastPreview } from "@/modules/communications/types";
 
@@ -20,6 +21,8 @@ export type AnnouncementBroadcastReviewState = {
   loading: boolean;
   error: string;
   preview: AnnouncementBroadcastPreview | null;
+  /** Staff ticked the box that acknowledges the send check's warnings (#836). */
+  warningsAcknowledged?: boolean;
 };
 
 /**
@@ -41,6 +44,13 @@ export function announcementBroadcastConfirmState(
   }
   if (review.preview.attachmentProblem) {
     return { canConfirm: false, reason: review.preview.attachmentProblem };
+  }
+  // The send check (#836): an error can never be sent through, and a warning needs the acknowledgement.
+  if (review.preview.sendCheck.hasErrors) {
+    return { canConfirm: false, reason: "Fix the errors in the send check before sending. Send a correction to change the text." };
+  }
+  if (review.preview.sendCheck.hasWarnings && !review.warningsAcknowledged) {
+    return { canConfirm: false, reason: "Acknowledge the warnings in the send check, or send a correction that fixes them." };
   }
   if (review.preview.recipientCount === 0) {
     return {
@@ -64,8 +74,12 @@ export function announcementBroadcastConfirmState(
  */
 export function AnnouncementBroadcastReviewFacts({
   preview,
+  warningsAcknowledged = false,
+  onWarningsAcknowledgedChange,
 }: {
   preview: AnnouncementBroadcastPreview;
+  warningsAcknowledged?: boolean;
+  onWarningsAcknowledgedChange?: (acknowledged: boolean) => void;
 }) {
   return (
     <>
@@ -111,6 +125,10 @@ export function AnnouncementBroadcastReviewFacts({
           </dd>
         </div>
         <div>
+          <dt>Preview line</dt>
+          <dd>{preview.preheader ?? "None. Inboxes will show “IMSDA Events” under the subject."}</dd>
+        </div>
+        <div>
           <dt>Attachments</dt>
           <dd>
             {preview.attachments.length === 0
@@ -119,6 +137,17 @@ export function AnnouncementBroadcastReviewFacts({
           </dd>
         </div>
       </dl>
+      <SendCheckPanel result={preview.sendCheck} idPrefix="broadcast" />
+      {preview.sendCheck.hasWarnings && !preview.sendCheck.hasErrors && (
+        <label className="send-check-acknowledge">
+          <input
+            type="checkbox"
+            checked={warningsAcknowledged}
+            onChange={(event) => onWarningsAcknowledgedChange?.(event.target.checked)}
+          />
+          <span>I have read the warnings and want to send this announcement anyway.</span>
+        </label>
+      )}
       {!preview.templateEnabled && (
         <p className="form-error">
           The event announcement email template is turned off, so every message will be recorded as suppressed and nobody will receive an email.

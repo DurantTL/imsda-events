@@ -404,7 +404,24 @@ export type EmailHtmlDocumentInput = {
   bodyHtml?: string;
   /** Small line under the body, used for the sender identity. */
   footer?: string | null;
+  /**
+   * The inbox preview line (#836): plain text, shown by Gmail, Outlook and phones under the subject, and hidden in
+   * the opened email. Escaped here, never parsed. Absent or blank, the document is exactly what it always was.
+   */
+  preheader?: string | null;
 };
+
+/** The longest preview line staff can write; clients show roughly 40 to 130 characters of it. */
+export const PREHEADER_MAX_LENGTH = 150;
+/** Invisible filler after the line, so the body's first words do not fill what is left of the preview. */
+const PREHEADER_PADDING = "&#847;&zwnj;&nbsp;".repeat(60);
+
+/** The hidden block that carries the preview line, or "" when there is none. */
+export function renderPreheaderHtml(preheader: string | null | undefined) {
+  const text = preheader?.replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  return `<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;visibility:hidden;">${escapeHtml(text)}${PREHEADER_PADDING}</div>`;
+}
 
 /**
  * Wrap a rendered body in the email layout. Table-based and inline-styled
@@ -416,6 +433,7 @@ export function renderEmailHtmlDocument(input: EmailHtmlDocumentInput) {
   const footer = input.footer?.trim()
     ? `<p style="margin:18px 0 0;font-size:12px;line-height:1.5;color:#6b7c85;">${renderInline(escapeHtml(input.footer.trim()))}</p>`
     : "";
+  const preheaderHtml = renderPreheaderHtml(input.preheader);
   return [
     "<!DOCTYPE html>",
     '<html lang="en">',
@@ -427,6 +445,7 @@ export function renderEmailHtmlDocument(input: EmailHtmlDocumentInput) {
     `<title>${title}</title>`,
     "</head>",
     '<body style="margin:0;padding:0;background:#eef2f4;-webkit-font-smoothing:antialiased;">',
+    ...(preheaderHtml ? [preheaderHtml] : []),
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#eef2f4;padding:24px 12px;">',
     "<tr><td align=\"center\">",
     '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #d9e2e6;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;">',

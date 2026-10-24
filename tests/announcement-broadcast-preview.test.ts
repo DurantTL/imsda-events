@@ -97,6 +97,7 @@ function prismaFor(overrides: {
     },
     messageTemplateVersionFile: { findMany: vi.fn().mockResolvedValue([]) },
     messageFile: { findMany: vi.fn().mockResolvedValue([]) },
+    event: { findUnique: vi.fn().mockResolvedValue({ name: "Women's Retreat" }) },
     $queryRaw: vi.fn().mockResolvedValue([{ id: "announcement-1" }]),
   };
   return {

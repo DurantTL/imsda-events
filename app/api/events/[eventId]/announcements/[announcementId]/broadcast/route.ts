@@ -16,6 +16,8 @@ const inputSchema = z.strictObject({
   // Optional at the schema so a missing fingerprint gets the review-specific
   // 409 below rather than a generic 400.
   previewFingerprint: z.string().trim().max(128).optional(),
+  // The send check's warnings staff acknowledged in the review (#836).
+  acknowledgedWarningIds: z.array(z.string().trim().min(1).max(64)).max(200).optional(),
 });
 type Context = {
   params: Promise<{ eventId: string; announcementId: string }>;
@@ -60,6 +62,7 @@ async function postHandler(request: Request, context: Context) {
       announcementId,
       batchId: input.batchId,
       previewFingerprint: input.previewFingerprint,
+      acknowledgedWarningIds: input.acknowledgedWarningIds,
       actorUserId: session.user.id,
     });
     return Response.json(result);

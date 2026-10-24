@@ -8,6 +8,8 @@ import {
   type EffectiveDeliveryMode,
 } from "@/modules/communications/effective-delivery";
 import { withPlainLeadNote } from "@/modules/communications/email-html";
+import { assertAnnouncementTextSendable } from "@/modules/communications/announcement-send-check";
+import { describeSendCheckErrors, runSendCheck } from "@/modules/communications/send-check";
 import { MessagingError } from "@/modules/communications/messaging-error";
 import { recordAlertFeedItem } from "@/modules/notifications/feed";
 
@@ -84,7 +86,6 @@ import {
   renderMessageTemplate,
   selectRegistrationMessageTemplate,
   showsPerAttendeeQrs,
-  validateMessageTemplate,
   CUSTOM_MESSAGE_TOKEN_KEYS,
   type MessageTemplateContext,
   type MessageTemplateKey,
@@ -349,6 +350,7 @@ function serializeTemplate(
       status: MessageTemplateStatus;
       subjectTemplate: string;
       bodyTemplate: string;
+      preheaderTemplate: string | null;
       publishedAt: Date | null;
       createdAt: Date;
       createdBy: { displayName: string } | null;
@@ -362,6 +364,7 @@ function serializeTemplate(
     status: version.status,
     subjectTemplate: version.subjectTemplate,
     bodyTemplate: version.bodyTemplate,
+    preheaderTemplate: version.preheaderTemplate,
     publishedAt: version.publishedAt?.toISOString() ?? null,
     createdAt: version.createdAt.toISOString(),
     createdBy: version.createdBy?.displayName ?? null,
@@ -394,6 +397,7 @@ function serializeMessage(message: {
   subjectSnapshot: string;
   bodyTextSnapshot: string;
   bodyHtmlSnapshot: string | null;
+  preheaderSnapshot: string | null;
   status: MessageOutboxStatus;
   attemptCount: number;
   capturedAt: Date | null;
@@ -434,6 +438,7 @@ function serializeMessage(message: {
     subject: message.subjectSnapshot,
     bodyText: message.bodyTextSnapshot,
     bodyHtml: message.bodyHtmlSnapshot,
+    preheader: message.preheaderSnapshot,
     status: message.status,
     attemptCount: message.attemptCount,
     capturedAt: message.capturedAt?.toISOString() ?? null,
@@ -982,18 +987,20 @@ export async function publishMessageTemplateVersion(
       include: { versions: { select: { versionNumber: true } } },
     });
     if (!template) throw new MessagingError("TEMPLATE_NOT_FOUND", "That message template does not exist for this event.");
+    // The send check (#836), run on the server whatever the browser showed: its errors (an empty subject or body,
+    // a link or picture an email cannot carry) stop the publish. Its warnings and suggestions never do.
     // The custom message offers a shorter token list. A token outside it (a refund amount, a club block) would
     // render stock text or fail the send, so it is refused here, naming the token.
-    if (template.key === "CUSTOM_MESSAGE") {
-      const validation = validateMessageTemplate({
-        subject: input.subjectTemplate,
-        body: input.bodyTemplate,
-        allowedTokens: new Set<string>(CUSTOM_MESSAGE_TOKEN_KEYS),
+    const check = runSendCheck({
+      subject: input.subjectTemplate,
+      body: input.bodyTemplate,
+      preheader: input.preheaderTemplate,
+      ...(template.key === "CUSTOM_MESSAGE" ? { allowedTokens: new Set<string>(CUSTOM_MESSAGE_TOKEN_KEYS) } : {}),
+    });
+    if (check.hasErrors) {
+      throw new MessagingError("INVALID_TEMPLATE", describeSendCheckErrors(check), {
+        findings: check.errors.map((finding) => ({ id: finding.id, code: finding.code, field: finding.field, message: finding.message })),
       });
-      const issue = validation.issues.find((candidate) => candidate.code === "UNKNOWN_TOKEN");
-      if (issue) {
-        throw new MessagingError("INVALID_TEMPLATE", issue.message, { field: issue.field, token: issue.token });
-      }
     }
     const nextVersion = Math.max(0, ...template.versions.map((version) => version.versionNumber)) + 1;
     // Attachments carry forward unless the author sent a list, which then is the whole set (#824).
@@ -1012,6 +1019,7 @@ export async function publishMessageTemplateVersion(
         status: "PUBLISHED",
         subjectTemplate: unescapeTokenUnderscores(input.subjectTemplate),
         bodyTemplate: unescapeTokenUnderscores(input.bodyTemplate),
+        preheaderTemplate: input.preheaderTemplate ? unescapeTokenUnderscores(input.preheaderTemplate) : null,
         publishedAt: new Date(),
       },
     });
@@ -1569,6 +1577,7 @@ export async function sendTestMessage(
   const rendered = renderMessageTemplate(
     {
       subject: version.subjectTemplate,
+      preheader: version.preheaderTemplate,
       body: withPerAttendeeQrImages(
         withChurchBilledLinkWording(
           version.bodyTemplate,
@@ -1600,6 +1609,7 @@ export async function sendTestMessage(
         subjectSnapshot: rendered.subject,
         bodyTextSnapshot: rendered.body,
         bodyHtmlSnapshot: rendered.bodyHtml,
+        ...(rendered.preheader ? { preheaderSnapshot: rendered.preheader } : {}),
         metadata: {
           trigger: input.realDelivery ? "REAL_TEST" : "LOCAL_TEST",
           realDelivery: input.realDelivery,
@@ -1782,6 +1792,7 @@ export async function enqueueBalanceReminderBatch(
         const source = {
           isEnabled: state.template?.isEnabled ?? true,
           templateVersionId: state.version?.id ?? null,
+          preheader: state.version?.preheaderTemplate ?? null,
           subject: state.version?.subjectTemplate
             ?? DEFAULT_MESSAGE_TEMPLATES.BALANCE_REMINDER.subject,
           body: state.version?.bodyTemplate
@@ -1796,7 +1807,7 @@ export async function enqueueBalanceReminderBatch(
 
         for (const recipient of state.preview.recipients) {
           const rendered = renderMessageTemplate(
-            { subject: source.subject, body: source.body },
+            { subject: source.subject, preheader: source.preheader, body: source.body },
             {
               recipient_name: recipient.recipientName,
               registrant_name: recipient.recipientName,
@@ -1860,6 +1871,7 @@ export async function enqueueBalanceReminderBatch(
               subjectSnapshot: rendered.subject,
               bodyTextSnapshot: rendered.body,
               bodyHtmlSnapshot: rendered.bodyHtml,
+              ...(rendered.preheader ? { preheaderSnapshot: rendered.preheader } : {}),
               metadata: {
                 trigger: "STAFF_BALANCE_REMINDER_BATCH",
                 batchId: input.batchId,
@@ -2086,6 +2098,7 @@ export async function enqueueShirtSizeRequestBatch(
         const source = {
           isEnabled: state.template?.isEnabled ?? true,
           templateVersionId: state.version?.id ?? null,
+          preheader: state.version?.preheaderTemplate ?? null,
           subject: state.version?.subjectTemplate
             ?? DEFAULT_MESSAGE_TEMPLATES.SHIRT_SIZE_REQUEST.subject,
           body: state.version?.bodyTemplate
@@ -2100,7 +2113,7 @@ export async function enqueueShirtSizeRequestBatch(
 
         for (const recipient of state.preview.recipients) {
           const rendered = renderMessageTemplate(
-            { subject: source.subject, body: source.body },
+            { subject: source.subject, preheader: source.preheader, body: source.body },
             {
               recipient_name: recipient.recipientName,
               registrant_name: recipient.recipientName,
@@ -2156,6 +2169,7 @@ export async function enqueueShirtSizeRequestBatch(
               subjectSnapshot: rendered.subject,
               bodyTextSnapshot: rendered.body,
               bodyHtmlSnapshot: rendered.bodyHtml,
+              ...(rendered.preheader ? { preheaderSnapshot: rendered.preheader } : {}),
               metadata: {
                 trigger: "STAFF_SHIRT_SIZE_REQUEST_BATCH",
                 batchId: input.batchId,
@@ -2346,6 +2360,7 @@ async function loadClubAssignmentState(
   const source = {
     isEnabled: template?.isEnabled ?? true,
     templateVersionId: version?.id ?? null,
+    preheader: version?.preheaderTemplate ?? null,
     subject: version?.subjectTemplate ?? DEFAULT_MESSAGE_TEMPLATES.CLUB_ASSIGNMENTS.subject,
     body: version?.bodyTemplate ?? DEFAULT_MESSAGE_TEMPLATES.CLUB_ASSIGNMENTS.body,
   };
@@ -2388,13 +2403,13 @@ function clubEventPortalUrl(eventId: string, organizationId: string, teamKey?: s
  * batch itself so the wording staff review is the wording that is queued.
  */
 function renderClubAssignmentMessage(
-  source: { subject: string; body: string },
+  source: { subject: string; body: string; preheader?: string | null },
   event: { id: string; name: string; supportContact: string | null },
   settings: { replyToEmail: string | null; senderEmail: string | null },
   recipient: Pick<ClubAssignmentRecipient, "organizationId" | "teamKey" | "recipientName" | "confirmationCode" | "assignmentBlock">,
 ) {
   return renderMessageTemplate(
-    { subject: source.subject, body: source.body },
+    { subject: source.subject, preheader: source.preheader, body: source.body },
     {
       recipient_name: recipient.recipientName,
       registrant_name: recipient.recipientName,
@@ -2553,6 +2568,7 @@ export async function enqueueClubAssignmentBatch(
               subjectSnapshot: rendered.subject,
               bodyTextSnapshot: rendered.body,
               bodyHtmlSnapshot: rendered.bodyHtml,
+              ...(rendered.preheader ? { preheaderSnapshot: rendered.preheader } : {}),
               metadata: {
                 trigger: "STAFF_CLUB_ASSIGNMENTS_BATCH",
                 batchId: input.batchId,
@@ -2820,6 +2836,7 @@ export async function resendRegistrationConfirmation(
           subjectSnapshot: source.subjectSnapshot,
           bodyTextSnapshot: source.bodyTextSnapshot,
           bodyHtmlSnapshot: source.bodyHtmlSnapshot,
+          preheaderSnapshot: source.preheaderSnapshot,
           metadata: {
             trigger: "STAFF_CONFIRMATION_RESEND",
             sourceMessageId: source.id,
@@ -3007,6 +3024,7 @@ export async function createMessageRetryCopy(
       bodyTextSnapshot: source.bodyTextSnapshot,
       // The formatted part is carried over too, or a retry of a message with pictures and buttons would go out as plain text (#824).
       bodyHtmlSnapshot: source.bodyHtmlSnapshot,
+      preheaderSnapshot: source.preheaderSnapshot,
       // A retry carries the same stored file as its source (an invoice PDF, #168), never a copy without it.
       attachmentId: source.attachmentId,
       metadata: {
@@ -3439,7 +3457,7 @@ function publishedTemplateSource(
   templates: Array<{
     key: PrismaMessageTemplateKey;
     isEnabled: boolean;
-    versions: Array<{ id: string; subjectTemplate: string; bodyTemplate: string }>;
+    versions: Array<{ id: string; subjectTemplate: string; bodyTemplate: string; preheaderTemplate?: string | null }>;
   }>,
   key: MessageTemplateKey,
 ) {
@@ -3449,6 +3467,7 @@ function publishedTemplateSource(
   return {
     isEnabled: configured?.isEnabled ?? true,
     templateVersionId: version?.id ?? null,
+    preheader: version?.preheaderTemplate ?? null,
     subject: version?.subjectTemplate ?? fallback.subject,
     body: version?.bodyTemplate ?? fallback.body,
   };
@@ -3480,7 +3499,7 @@ export async function enqueuePublicRegistrationMessages(
           where: { status: "PUBLISHED" },
           orderBy: { versionNumber: "desc" },
           take: 1,
-          select: { id: true, subjectTemplate: true, bodyTemplate: true },
+          select: { id: true, subjectTemplate: true, bodyTemplate: true, preheaderTemplate: true },
         },
       },
     }),
@@ -3637,6 +3656,7 @@ export async function enqueuePublicRegistrationMessages(
     const rendered = renderMessageTemplate(
       {
         subject: source.subject,
+        preheader: source.preheader,
         body: withGroupBilledWording(
           withChurchBilledPriceWording(
             withChurchBilledLinkWording(source.body, isDeferredOrganizationBilling),
@@ -3677,6 +3697,7 @@ export async function enqueuePublicRegistrationMessages(
         subjectSnapshot: rendered.subject,
         bodyTextSnapshot: shown.body,
         bodyHtmlSnapshot: shown.bodyHtml,
+        ...(rendered.preheader ? { preheaderSnapshot: rendered.preheader } : {}),
         // Held until the registration PDF is attached after the commit (#1082); a suppressed row is never sent, so never held.
         ...(input.holdForRegistrationPdf && !suppressed ? { availableAt: registrationPdfHoldUntil() } : {}),
         metadata: {
@@ -4031,6 +4052,11 @@ export async function enqueueSelectedAudienceBatch(
             state.preview.attachmentProblem,
             { selectedAudiencePreview: state.preview },
           );
+        }
+
+        // The typed announcement text gets the send check's errors (#836), as the broadcast review does.
+        if (input.templateKey === "EVENT_ANNOUNCEMENT") {
+          await assertAnnouncementTextSendable(tx, eventId, { title: input.announcementTitle, body: input.announcementBody });
         }
 
         // Seminar choices for every recipient in a few queries, and only when a template that will be sent uses the

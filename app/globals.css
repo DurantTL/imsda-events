@@ -5945,6 +5945,8 @@ body:has(.auth-page) { padding-bottom: 0; }
 
 .message-template-editor { display: grid; gap: 13px; border-top: 4px solid var(--imsda-navy); }
 .message-template-editor .section-heading { align-items: flex-start; }
+/* Help under a field in the template editor sits below it, clear of the field's focus outline (#836). */
+.message-template-editor > label > .field-help { margin: 2px 0 0; }
 .message-template-editor .section-heading p:not(.eyebrow) { max-width: 570px; margin: 4px 0 0; color: var(--muted); font-size: max(var(--type-body-floor, 0px), 0.62rem); line-height: 1.5; }
 .message-template-editor > label,
 .message-test-form label,
@@ -12795,6 +12797,23 @@ details.honor-seat-override > summary { cursor: pointer; font-weight: 700; displ
 /* The shared field-help pulls itself up 9px under a label; under this heading it must sit below it. */
 .coordinator-event-head .field-help { margin: 4px 0 0; }
 .coordinator-event-head .secondary-button { min-height: 44px; }
+
+/* Send check (#836): errors, warnings and suggestions for an event email, each with a jump to its field. */
+.send-check { display: grid; gap: 10px; min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 12px 14px; }
+.send-check h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0; font-size: 1rem; line-height: 1.3; color: var(--ink); }
+.send-check-summary { color: var(--muted); font-size: 0.875rem; font-weight: 600; }
+.send-check-group { display: grid; gap: 6px; min-width: 0; border-left: 4px solid var(--field-border); border-radius: 4px; padding: 2px 0 2px 10px; }
+.send-check-group.error { border-left-color: var(--danger, #8f3a30); }
+.send-check-group.warning { border-left-color: var(--imsda-gold); }
+.send-check-group.suggestion { border-left-color: var(--imsda-navy); }
+.send-check-group-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; font-size: 0.875rem; line-height: 1.4; color: var(--ink); }
+.send-check-group-title span { color: var(--muted); }
+.send-check-group ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.send-check-group li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; font-size: 0.875rem; line-height: 1.5; color: var(--ink); }
+.send-check-message { flex: 1 1 18rem; min-width: 0; overflow-wrap: anywhere; }
+.send-check-jump { flex: 0 0 auto; min-height: 44px; border: 1px solid var(--field-border); border-radius: 10px; background: var(--card); color: var(--imsda-navy); padding: 0 12px; font: inherit; font-size: 0.875rem; font-weight: 700; cursor: pointer; }
+.send-check-acknowledge { display: flex; align-items: center; min-height: 44px; gap: 10px; margin-top: 10px; border: 1px solid var(--imsda-gold); border-radius: 10px; background: var(--imsda-gold-soft); padding: 10px 12px; font-size: 0.875rem; line-height: 1.5; color: var(--ink); }
+.send-check-acknowledge input { flex: 0 0 auto; width: 20px; height: 20px; margin-top: 2px; }
 
 /* Registration form builder editor shell (#1132): a top bar, the live form canvas and one sidebar with tabs.
    Tablets and desktops only; the component renders it from 768px up and phones keep the earlier layout.

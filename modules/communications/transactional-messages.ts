@@ -92,6 +92,8 @@ type TransactionalMessageInput = {
   newPersonName?: string;
   announcementTitle?: string;
   announcementBody?: string;
+  /** The announcement's own inbox preview line (#836); replaces the template version's when given. */
+  announcementPreheader?: string | null;
   changeCategory?: RegistrationUpdateCategory;
   /**
    * The pricing snapshot to show a church-billed registrant when it is not stored yet: an amendment
@@ -320,6 +322,7 @@ async function enqueueTransactionalMessage(
           select: {
             id: true,
             subjectTemplate: true,
+            preheaderTemplate: true,
             bodyTemplate: true,
             files: { select: { fileId: true } },
           },
@@ -625,6 +628,10 @@ async function enqueueTransactionalMessage(
   const rendered = renderMessageTemplate(
     {
       subject: unescapeTokenUnderscores(source?.subjectTemplate ?? fallback.subject),
+      // The announcement's own line wins over its template version's (#836).
+      preheader: input.announcementPreheader?.trim()
+        ? unescapeTokenUnderscores(input.announcementPreheader)
+        : source?.preheaderTemplate ? unescapeTokenUnderscores(source.preheaderTemplate) : null,
       body: bodyTemplate,
     },
     context,
@@ -670,6 +677,8 @@ async function enqueueTransactionalMessage(
       subjectSnapshot,
       bodyTextSnapshot: shown.body,
       bodyHtmlSnapshot: shown.bodyHtml,
+      // Only written when there is a line, so a message without one is stored exactly as before (#836).
+      ...(rendered.preheader ? { preheaderSnapshot: rendered.preheader } : {}),
       ...(input.attachmentId ? { attachmentId: input.attachmentId } : {}),
       ...(input.holdUntil && !suppressed ? { availableAt: input.holdUntil } : {}),
       metadata: {

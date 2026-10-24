@@ -53,6 +53,7 @@ import {
   type ScheduledEmailStatus,
   type ScheduledEmailTemplateKey,
 } from "@/modules/communications/scheduled-email-domain";
+import { assertAnnouncementTextSendable } from "@/modules/communications/announcement-send-check";
 import { enqueueSelectedAudienceMessage } from "@/modules/communications/transactional-messages";
 
 /**
@@ -290,6 +291,10 @@ export async function buildScheduledEmailReview(
   const now = options.now ?? new Date();
   const prisma = getPrisma();
   await ensureEventMessagingDefaults(eventId);
+  // The typed announcement text gets the send check's errors (#836), whether the schedule is created, edited or approved.
+  if (content.templateKey === "EVENT_ANNOUNCEMENT") {
+    await assertAnnouncementTextSendable(prisma, eventId, { title: content.announcementTitle, body: content.announcementBody });
+  }
   const event = await loadEventFacts(prisma, eventId);
   let projection: ScheduleProjection;
   try {

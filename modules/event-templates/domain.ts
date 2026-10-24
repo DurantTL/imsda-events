@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { getFormTemplate } from "@/modules/forms/definition";
 import { isEventMessageTemplateKey, validateMessageTemplate, type MessageTemplateKey } from "@/modules/communications/templates";
+import { runSendCheck } from "@/modules/communications/send-check";
 import { calendarDateSchema, eventNameSchema, eventSlugSchema } from "@/modules/events/schemas";
 import { operationalReportKinds } from "@/modules/reporting/operational-reports";
 import { attendeeClassificationInputSchema, attendeeTypeInputSchema } from "@/modules/attendee-types/domain";
@@ -54,6 +55,13 @@ export const templateMessageDefaultSchema = z.object({
       path: [issue.field === "subject" ? "subjectTemplate" : "bodyTemplate"],
       message: issue.message,
     });
+  }
+  // The send check's errors (#836) too: a link or picture an email cannot carry would be published as it is. Its
+  // empty, line-break and token findings were reported above, so only the content rules are added here.
+  const check = runSendCheck({ subject: input.subjectTemplate, body: input.bodyTemplate });
+  for (const finding of check.errors) {
+    if (finding.code !== "LINK_SCHEME" && finding.code !== "IMAGE_SOURCE") continue;
+    context.addIssue({ code: "custom", path: ["bodyTemplate"], message: finding.message });
   }
 });
 

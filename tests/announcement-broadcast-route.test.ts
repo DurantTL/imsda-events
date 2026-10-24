@@ -134,6 +134,27 @@ describe("announcement broadcast route", () => {
     });
   });
 
+  it("passes the warnings staff acknowledged through to the send, and refuses a malformed list (#836)", async () => {
+    const response = await POST(request({ batchId, previewFingerprint, acknowledgedWarningIds: ["SUBJECT_LONG:0"] }), context);
+
+    expect(response.status).toBe(200);
+    expect(mocks.broadcastPublishedAnnouncement).toHaveBeenCalledWith(expect.objectContaining({ acknowledgedWarningIds: ["SUBJECT_LONG:0"] }));
+    const bad = await POST(request({ batchId, previewFingerprint, acknowledgedWarningIds: "SUBJECT_LONG:0" }), context);
+    expect(bad.status).toBe(400);
+  });
+
+  it("answers a send the check refuses with a 409 and its message (#836)", async () => {
+    mocks.broadcastPublishedAnnouncement.mockRejectedValueOnce(
+      new mocks.AnnouncementBroadcastError("SEND_CHECK_FAILED" as never, "Fix this before sending: the link does not start with https://."),
+    );
+
+    const response = await POST(request(), context);
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toMatchObject({ error: "SEND_CHECK_FAILED", message: expect.stringContaining("Fix this before sending") });
+  });
+
   it("rejects cross-origin requests before authorization or delivery", async () => {
     mocks.rejectCrossOriginRequest.mockReturnValue(
       Response.json({ error: "CROSS_ORIGIN_REQUEST" }, { status: 403 }),

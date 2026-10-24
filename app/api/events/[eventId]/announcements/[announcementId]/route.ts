@@ -2,6 +2,7 @@ import { AccessDeniedError, requirePermission } from "@/modules/access/authoriza
 import { getCurrentSession } from "@/modules/access/current-session";
 import { rejectCrossOriginRequest } from "@/modules/access/request-security";
 import { z } from "zod";
+import { announcementPreheaderField } from "@/modules/communications/schemas";
 import { MessageFileError } from "@/modules/communications/message-files";
 import { discardAnnouncementDraft, publishAnnouncement, updateAnnouncementDraft } from "@/modules/communications/repository";
 import { findActiveMembership } from "@/modules/events/repository";
@@ -11,6 +12,7 @@ import { withRequestContext } from "@/lib/request-context";
 const draftSchema = z.object({
   title: z.string().trim().min(3).max(120),
   body: z.string().trim().min(5).max(2000),
+  preheader: announcementPreheaderField,
   priority: z.enum(["NORMAL", "IMPORTANT", "URGENT"]).default("NORMAL"),
   attachmentFileIds: z.array(z.string().trim().min(1).max(64)).max(10).optional(),
 });

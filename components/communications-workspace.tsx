@@ -47,7 +47,14 @@ import {
 } from "@/components/announcement-draft-dirty";
 import { useUnsavedChangesGuard } from "@/components/use-unsaved-changes-guard";
 import { messageRetryRequestPayload } from "@/modules/communications/message-retry-client";
-import { renderEmailHtmlDocument } from "@/modules/communications/email-html";
+import { PREHEADER_MAX_LENGTH, renderEmailHtmlDocument } from "@/modules/communications/email-html";
+import { SendCheckPanel, jumpToSendCheckField } from "@/components/send-check-panel";
+import {
+  ANNOUNCEMENT_CHECK_ANCHORS,
+  TEMPLATE_CHECK_ANCHORS,
+  announcementSendCheckInput,
+  runSendCheck,
+} from "@/modules/communications/send-check";
 import { formatFileSize, type MessageFileRecord } from "@/modules/communications/message-file-rules";
 import {
   REGISTRATION_MANAGE_API_SENTINEL,
@@ -55,6 +62,7 @@ import {
 } from "@/modules/communications/manage-link";
 import {
   CUSTOM_MESSAGE_TOKEN_KEYS,
+  DEFAULT_MESSAGE_TEMPLATES,
   MESSAGE_TEMPLATE_TOKEN_KEYS,
   MESSAGE_TEMPLATE_TOKEN_OPTIONS,
   renderMessageTemplate,
@@ -205,13 +213,14 @@ const templateLabels: Record<string, string> = {
  * send is escaped here too, so staff never see formatting the real message
  * cannot produce.
  */
-function renderPreview(subject: string, body: string, eventName: string, isChurchBilled: boolean) {
+function renderPreview(subject: string, body: string, eventName: string, isChurchBilled: boolean, preheader = "") {
   const rendered = renderMessageTemplate(
-    { subject, body: withChurchBilledLinkWording(body, isChurchBilled) },
+    { subject, preheader, body: withChurchBilledLinkWording(body, isChurchBilled) },
     { ...SAMPLE_MESSAGE_TEMPLATE_CONTEXT, event_name: eventName },
   );
   return {
     subject: withPreviewLinks(rendered.subject),
+    preheader: rendered.preheader ? withPreviewLinks(rendered.preheader) : null,
     body: withPreviewLinks(rendered.body),
     bodyHtml: withPreviewLinks(rendered.bodyHtml),
   };
@@ -285,7 +294,7 @@ export function CommunicationsWorkspace({
   const [uploadedImages, setUploadedImages] = useState<MessageFileRecord[]>([]);
   const [imageData, setImageData] = useState<Record<string, string>>({});
   const [draftOpen, setDraftOpen] = useState(openNew && canManage);
-  const [draftPrefill, setDraftPrefill] = useState<{ title: string; body: string; priority: string; editId?: string } | null>(null);
+  const [draftPrefill, setDraftPrefill] = useState<{ title: string; body: string; priority: string; preheader?: string; editId?: string } | null>(null);
   const [discardTarget, setDiscardTarget] = useState<AnnouncementRecord | null>(null);
   const [discarding, setDiscarding] = useState(false);
   const [discardError, setDiscardError] = useState("");
@@ -355,6 +364,7 @@ export function CommunicationsWorkspace({
   );
   const [templateSubject, setTemplateSubject] = useState(selectedTemplate?.activeVersion?.subjectTemplate ?? "");
   const [templateBody, setTemplateBody] = useState(selectedTemplate?.activeVersion?.bodyTemplate ?? "");
+  const [templatePreheader, setTemplatePreheader] = useState(selectedTemplate?.activeVersion?.preheaderTemplate ?? "");
   const [templateEnabled, setTemplateEnabled] = useState(selectedTemplate?.isEnabled ?? true);
   const [templateAttachments, setTemplateAttachments] = useState<MessageFileRecord[]>(
     selectedTemplate?.activeVersion?.attachments ?? [],
@@ -375,9 +385,33 @@ export function CommunicationsWorkspace({
   const [retryRequestId, setRetryRequestId] = useState("");
 
   const preview = useMemo(
-    () => renderPreview(templateSubject, templateBody, eventName, isChurchBilled),
-    [templateSubject, templateBody, eventName, isChurchBilled],
+    () => renderPreview(templateSubject, templateBody, eventName, isChurchBilled, templatePreheader),
+    [templateSubject, templateBody, eventName, isChurchBilled, templatePreheader],
   );
+  // The send check (#836): the very function the server runs when the version is published.
+  const isCustomTemplate = selectedTemplate?.key === "CUSTOM_MESSAGE";
+  const templateCheck = useMemo(() => runSendCheck({
+    subject: templateSubject,
+    body: templateBody,
+    preheader: templatePreheader,
+    anchors: TEMPLATE_CHECK_ANCHORS,
+    context: { event_name: eventName },
+    ...(isCustomTemplate ? { allowedTokens: new Set<string>(CUSTOM_MESSAGE_TOKEN_KEYS) } : {}),
+  }), [templateSubject, templateBody, templatePreheader, isCustomTemplate, eventName]);
+  // The announcement composer's check runs on the email as it will go out: the event announcement template around this text.
+  const announcementTemplateVersion = messaging?.templates.find((template) => template.key === "EVENT_ANNOUNCEMENT")?.activeVersion ?? null;
+  const [broadcastWarningsAcknowledged, setBroadcastWarningsAcknowledged] = useState(false);
+  const announcementCheck = useMemo(() => {
+    const fallback = DEFAULT_MESSAGE_TEMPLATES.EVENT_ANNOUNCEMENT;
+    return runSendCheck(announcementSendCheckInput({
+      templateSubject: announcementTemplateVersion?.subjectTemplate ?? fallback.subject,
+      templateBody: announcementTemplateVersion?.bodyTemplate ?? fallback.body,
+      templatePreheader: announcementTemplateVersion?.preheaderTemplate ?? null,
+      announcement: { title: draftValues.title, body: draftValues.body, preheader: draftValues.preheader },
+      anchors: ANNOUNCEMENT_CHECK_ANCHORS,
+      eventName,
+    }));
+  }, [announcementTemplateVersion, draftValues.title, draftValues.body, draftValues.preheader, eventName]);
   const libraryImages = useMemo(() => {
     const known = new Set<string>();
     return [...uploadedImages, ...(messaging?.inlineImages ?? [])].filter((image) => {
@@ -429,6 +463,7 @@ export function CommunicationsWorkspace({
   const templateDirty = Boolean(selectedTemplate && (
     templateSubject !== (selectedTemplate.activeVersion?.subjectTemplate ?? "")
     || templateBody !== (selectedTemplate.activeVersion?.bodyTemplate ?? "")
+    || templatePreheader !== (selectedTemplate.activeVersion?.preheaderTemplate ?? "")
     || templateEnabled !== selectedTemplate.isEnabled
     || templateAttachments.map((file) => file.id).join(",")
       !== (selectedTemplate.activeVersion?.attachments ?? []).map((file) => file.id).join(",")
@@ -504,7 +539,7 @@ export function CommunicationsWorkspace({
   function openDraftEditor(
     values: AnnouncementDraftValues,
     attachments: MessageFileRecord[],
-    prefill: { title: string; body: string; priority: string; editId?: string } | null,
+    prefill: { title: string; body: string; priority: string; preheader?: string; editId?: string } | null,
   ) {
     setError("");
     setNotice("");
@@ -545,6 +580,7 @@ export function CommunicationsWorkspace({
   function resetEditorDrafts() {
     setTemplateSubject(selectedTemplate?.activeVersion?.subjectTemplate ?? "");
     setTemplateBody(selectedTemplate?.activeVersion?.bodyTemplate ?? "");
+    setTemplatePreheader(selectedTemplate?.activeVersion?.preheaderTemplate ?? "");
     setTemplateEnabled(selectedTemplate?.isEnabled ?? true);
     setTemplateAttachments(selectedTemplate?.activeVersion?.attachments ?? []);
     setSettingsDraft(settingsDraftFromMessaging(messaging));
@@ -643,6 +679,7 @@ export function CommunicationsWorkspace({
         body: JSON.stringify({
           title: form.get("title"),
           body: form.get("body"),
+          preheader: (draftValues.preheader ?? "").trim() || null,
           priority: form.get("priority"),
           attachmentFileIds: draftAttachments.map((file) => file.id),
         }),
@@ -671,9 +708,9 @@ export function CommunicationsWorkspace({
    */
   function startDraftEdit(announcement: AnnouncementRecord) {
     openDraftEditor(
-      { title: announcement.title, body: announcement.body, priority: announcement.priority },
+      { title: announcement.title, body: announcement.body, priority: announcement.priority, preheader: announcement.preheader ?? "" },
       announcement.attachments ?? [],
-      { title: announcement.title, body: announcement.body, priority: announcement.priority, editId: announcement.id },
+      { title: announcement.title, body: announcement.body, priority: announcement.priority, preheader: announcement.preheader ?? "", editId: announcement.id },
     );
   }
 
@@ -780,6 +817,7 @@ export function CommunicationsWorkspace({
     broadcastReviewRequestRef.current = requestId;
     const batchId = unsettledBroadcastBatchRef.current[announcement.id] ?? crypto.randomUUID();
     setBroadcastReview({ announcement, preview: null, batchId });
+    setBroadcastWarningsAcknowledged(false);
     setBroadcastReviewError("");
     setBroadcastReviewLoading(true);
     try {
@@ -821,6 +859,7 @@ export function CommunicationsWorkspace({
       loading: broadcastReviewLoading,
       error: broadcastReviewError,
       preview: broadcastReview.preview,
+      warningsAcknowledged: broadcastWarningsAcknowledged,
     }).canConfirm) return;
     const { announcement, preview, batchId } = broadcastReview;
     setBroadcasting(true);
@@ -835,6 +874,8 @@ export function CommunicationsWorkspace({
           body: JSON.stringify({
             batchId,
             previewFingerprint: preview.fingerprint,
+            // The warnings staff ticked the acknowledgement for (#836); the server checks every current one is here.
+            acknowledgedWarningIds: broadcastWarningsAcknowledged ? preview.sendCheck.warnings.map((warning) => warning.id) : [],
           }),
         },
       );
@@ -886,8 +927,9 @@ export function CommunicationsWorkspace({
       title: `Correction: ${announcement.title}`,
       body: announcement.body,
       priority: announcement.priority,
+      preheader: announcement.preheader ?? "",
     };
-    openDraftEditor({ title: prefill.title, body: prefill.body, priority: prefill.priority }, [], prefill);
+    openDraftEditor({ title: prefill.title, body: prefill.body, priority: prefill.priority, preheader: prefill.preheader }, [], prefill);
   }
 
   async function publishTemplate(submitEvent: React.FormEvent<HTMLFormElement>) {
@@ -901,6 +943,7 @@ export function CommunicationsWorkspace({
         body: JSON.stringify({
           subjectTemplate: templateSubject,
           bodyTemplate: templateBody,
+          preheaderTemplate: templatePreheader.trim() || null,
           isEnabled: templateEnabled,
           attachmentFileIds: templateAttachments.map((file) => file.id),
         }),
@@ -913,6 +956,7 @@ export function CommunicationsWorkspace({
         setSelectedTemplateId(refreshed.id);
         setTemplateSubject(refreshed.activeVersion?.subjectTemplate ?? "");
         setTemplateBody(refreshed.activeVersion?.bodyTemplate ?? "");
+        setTemplatePreheader(refreshed.activeVersion?.preheaderTemplate ?? "");
         setTemplateEnabled(refreshed.isEnabled);
         setTemplateAttachments(refreshed.activeVersion?.attachments ?? []);
       }
@@ -1332,6 +1376,7 @@ export function CommunicationsWorkspace({
     setSelectedTemplateId(id);
     setTemplateSubject(template?.activeVersion?.subjectTemplate ?? "");
     setTemplateBody(template?.activeVersion?.bodyTemplate ?? "");
+    setTemplatePreheader(template?.activeVersion?.preheaderTemplate ?? "");
     setTemplateEnabled(template?.isEnabled ?? true);
     setTemplateAttachments(template?.activeVersion?.attachments ?? []);
     setQuery("templates", { template: id });
@@ -1366,7 +1411,7 @@ export function CommunicationsWorkspace({
   ];
 
   const broadcastConfirm = announcementBroadcastConfirmState(broadcastReview
-    ? { loading: broadcastReviewLoading, error: broadcastReviewError, preview: broadcastReview.preview }
+    ? { loading: broadcastReviewLoading, error: broadcastReviewError, preview: broadcastReview.preview, warningsAcknowledged: broadcastWarningsAcknowledged }
     : null);
 
   return (
@@ -1843,8 +1888,13 @@ export function CommunicationsWorkspace({
                   This starts blank. Write the subject and message, add pictures, links, and attachments, then publish. Email selected sends it, with each person&apos;s own check-in QR codes and seminar choices where you add them from the token list.
                 </p>
               )}
-              <label>Subject<input value={templateSubject} maxLength={180} required onChange={(event) => setTemplateSubject(event.target.value)} /></label>
-              <div className="message-body-field">
+              <label>Subject<input id="template-subject" value={templateSubject} maxLength={180} required onChange={(event) => setTemplateSubject(event.target.value)} /></label>
+              <label>
+                Inbox preview line (optional)
+                <input id="template-preheader" value={templatePreheader} maxLength={PREHEADER_MAX_LENGTH} onChange={(event) => setTemplatePreheader(event.target.value)} aria-describedby="template-preheader-help" />
+                <small id="template-preheader-help" className="field-help">Shown under the subject in Gmail, Outlook and on phones, instead of &ldquo;IMSDA Events&rdquo;. Plain text on one line; the same {"{{tokens}}"} as the subject.</small>
+              </label>
+              <div className="message-body-field" id="template-body">
                 <strong>Message body</strong>
                 <MessageBodyEditor
                   key={selectedTemplate.id}
@@ -1870,9 +1920,10 @@ export function CommunicationsWorkspace({
                 <input type="checkbox" checked={templateEnabled} onChange={(event) => setTemplateEnabled(event.target.checked)} />
                 <span><strong>Queue this message type</strong><small>When disabled, registrations retain a suppressed audit row instead of a pending message.</small></span>
               </label>
+              <SendCheckPanel result={templateCheck} idPrefix="template" onJump={(finding) => jumpToSendCheckField(finding.anchor)} />
               <div className="builder-actions">
                 {templateDirty && <span className="unsaved-dot" role="status">Unpublished changes</span>}
-                <button className="primary-button" type="submit" disabled={saving || !templateDirty}><Save size={16} aria-hidden="true" /> {saving ? "Publishing…" : "Publish new version"}</button>
+                <button className="primary-button" type="submit" disabled={saving || !templateDirty || templateCheck.hasErrors}><Save size={16} aria-hidden="true" /> {saving ? "Publishing…" : "Publish new version"}</button>
               </div>
               <div className="message-version-history">
                 <p className="eyebrow">Immutable history</p>
@@ -1894,6 +1945,7 @@ export function CommunicationsWorkspace({
                   <div><dt>From</dt><dd>{messaging.settings.senderName}{messaging.settings.senderEmail ? ` <${messaging.settings.senderEmail}>` : ""}</dd></div>
                   <div><dt>Reply to</dt><dd>{messaging.settings.replyToEmail || "Not configured"}</dd></div>
                   <div><dt>Subject</dt><dd>{preview.subject || "No subject"}</dd></div>
+                  <div><dt>Preview</dt><dd>{preview.preheader ?? "None. Inboxes show “IMSDA Events”."}</dd></div>
                 </dl>
                 <iframe
                   className="message-body-html"
@@ -1901,6 +1953,7 @@ export function CommunicationsWorkspace({
                   sandbox=""
                   srcDoc={renderEmailHtmlDocument({
                     title: preview.subject || "Template preview",
+                    preheader: preview.preheader,
                     bodyHtml: withPreviewImages(preview.bodyHtml),
                     footer: messaging.settings.senderName,
                   })}
@@ -2114,6 +2167,7 @@ export function CommunicationsWorkspace({
                     </div>
                     <dl className="message-detail-meta">
                       <div><dt>Recipient</dt><dd>{selectedMessage.recipientEmail}</dd></div>
+                      <div><dt>Preview line</dt><dd>{selectedMessage.preheader ?? "None"}</dd></div>
                       <div><dt>Sender snapshot</dt><dd>{selectedMessage.senderName}{selectedMessage.senderEmail ? ` <${selectedMessage.senderEmail}>` : ""}</dd></div>
                       <div><dt>Registration</dt><dd>{selectedMessage.registration?.confirmationCode ?? "Test / detached message"}</dd></div>
                       <div><dt>Template</dt><dd>{selectedMessage.templateVersion ? `Version ${selectedMessage.templateVersion.versionNumber}` : "System fallback snapshot"}</dd></div>
@@ -2140,6 +2194,7 @@ export function CommunicationsWorkspace({
                         sandbox=""
                         srcDoc={renderEmailHtmlDocument({
                           title: selectedMessage.subject,
+                          preheader: selectedMessage.preheader ? withPreviewLinks(selectedMessage.preheader) : null,
                           // The fragment stored at enqueue, shown as-is. Re-rendering
                           // the text here would re-parse registrant values as Markdown
                           // long after the safe render already decided they were not.
@@ -2326,8 +2381,13 @@ export function CommunicationsWorkspace({
             )}
             {error && <div className="inline-notice error" role="alert"><AlertTriangle size={17} aria-hidden="true" /> {error} Your edits are still here.</div>}
             <form className="form-stack" onSubmit={createDraft} key={draftPrefill?.editId ? `edit-${draftPrefill.editId}` : draftPrefill ? "correction" : "new"}>
-              <label>Title<input name="title" minLength={3} maxLength={120} required placeholder="Friday arrival information" value={draftValues.title} onChange={(event) => setDraftField("title", event.target.value)} /></label>
-              <label>Message<textarea name="body" minLength={5} maxLength={2000} required rows={6} placeholder="Share the details attendees need…" value={draftValues.body} onChange={(event) => setDraftField("body", event.target.value)} /></label>
+              <label>Title<input id="announcement-title" name="title" minLength={3} maxLength={120} required placeholder="Friday arrival information" value={draftValues.title} onChange={(event) => setDraftField("title", event.target.value)} /></label>
+              <label>Message<textarea id="announcement-body" name="body" minLength={5} maxLength={2000} required rows={6} placeholder="Share the details attendees need…" value={draftValues.body} onChange={(event) => setDraftField("body", event.target.value)} /></label>
+              <label>
+                Inbox preview line for the email (optional)
+                <input id="announcement-preheader" name="preheader" maxLength={PREHEADER_MAX_LENGTH} value={draftValues.preheader ?? ""} onChange={(event) => setDraftField("preheader", event.target.value)} aria-describedby="announcement-preheader-help" />
+                <small id="announcement-preheader-help" className="field-help">Shown under the subject in the inbox. Leave it blank to use the template&apos;s line, if it has one. Not shown in the attendee feed.</small>
+              </label>
               <label>Priority<select name="priority" value={draftValues.priority} onChange={(event) => setDraftField("priority", event.target.value)}><option value="NORMAL">Normal</option><option value="IMPORTANT">Important</option><option value="URGENT">Urgent</option></select></label>
               <MessageAttachmentsField
                 eventId={eventId}
@@ -2337,6 +2397,12 @@ export function CommunicationsWorkspace({
                 dropLateUploads
                 disabled={saving}
                 help="Attached to the email when this announcement is sent. They are not shown in the attendee feed."
+              />
+              <SendCheckPanel
+                result={announcementCheck}
+                idPrefix="announcement"
+                onJump={(finding) => jumpToSendCheckField(finding.anchor)}
+                fieldLabels={{ subject: "title", body: "message", preheader: "preview line" }}
               />
               <p className="field-help">Shown on the event page and as a banner on attendees&apos; accounts.</p>
               <div className="form-actions"><button className="secondary-button" type="button" onClick={() => void requestDraftClose()} disabled={saving}>Cancel</button><button className="primary-button" type="submit" disabled={saving || draftUploading}>{saving ? "Saving…" : draftPrefill?.editId ? "Save changes" : "Save draft"}</button></div>
@@ -2376,7 +2442,11 @@ export function CommunicationsWorkspace({
         {broadcastReviewLoading ? (
           <p className="quiet-copy">Loading the recipient review…</p>
         ) : broadcastReview?.preview ? (
-          <AnnouncementBroadcastReviewFacts preview={broadcastReview.preview} />
+          <AnnouncementBroadcastReviewFacts
+            preview={broadcastReview.preview}
+            warningsAcknowledged={broadcastWarningsAcknowledged}
+            onWarningsAcknowledgedChange={setBroadcastWarningsAcknowledged}
+          />
         ) : null}
         {broadcastConfirm.reason && <p className="quiet-copy">{broadcastConfirm.reason}</p>}
       </ConfirmDialog>

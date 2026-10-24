@@ -1130,8 +1130,8 @@ export function extractMessageTemplateTokens(value: string) {
 }
 
 export type MessageTemplateValidationIssue = {
-  field: "subject" | "body";
-  code: "REQUIRED" | "SUBJECT_LINE_BREAK" | "UNKNOWN_TOKEN";
+  field: "subject" | "body" | "preheader";
+  code: "REQUIRED" | "SUBJECT_LINE_BREAK" | "PREHEADER_LINE_BREAK" | "UNKNOWN_TOKEN";
   message: string;
   token?: string;
 };
@@ -1145,6 +1145,8 @@ export type MessageTemplateValidationResult = {
 export function validateMessageTemplate(input: {
   subject: string;
   body: string;
+  /** The inbox preview line (#836): optional, one line, and the subject's token allow-list. */
+  preheader?: string | null;
   /** When given, only these tokens are allowed (the custom message offers a shorter list than the rest). */
   allowedTokens?: ReadonlySet<string>;
 }): MessageTemplateValidationResult {
@@ -1175,14 +1177,32 @@ export function validateMessageTemplate(input: {
     });
   }
 
-  for (const field of ["subject", "body"] as const) {
-    for (const token of extractMessageTemplateTokens(input[field])) {
+  if (input.preheader && subjectLineBreakPattern.test(input.preheader)) {
+    issues.push({
+      field: "preheader",
+      code: "PREHEADER_LINE_BREAK",
+      message: "The inbox preview line must stay on one line.",
+    });
+  }
+
+  for (const field of ["subject", "body", "preheader"] as const) {
+    const text = field === "preheader" ? input.preheader ?? "" : input[field];
+    for (const token of extractMessageTemplateTokens(text)) {
       if (!ALLOWED_MESSAGE_TEMPLATE_TOKENS.has(token as MessageTemplateToken)) {
         unknownTokens.push(token);
         issues.push({
           field,
           code: "UNKNOWN_TOKEN",
           message: `{{${token}}} is not an allowed message token.`,
+          token,
+        });
+      } else if (field === "preheader" && MARKDOWN_MESSAGE_TEMPLATE_TOKENS.has(token as MessageTemplateToken)) {
+        // A link, a picture or a generated block is internal placeholder text or Markdown in an inbox preview.
+        unknownTokens.push(token);
+        issues.push({
+          field,
+          code: "UNKNOWN_TOKEN",
+          message: `{{${token}}} cannot be used in the inbox preview line, which is plain text. Use a name, date or place token.`,
           token,
         });
       } else if (input.allowedTokens && !input.allowedTokens.has(token)) {
@@ -1289,6 +1309,11 @@ export function renderTemplateText(
 
 export type RenderedMessageTemplate = {
   subject: string;
+  /**
+   * The inbox preview line (#836), rendered as plain text exactly as the subject is: the same token allow-list, no
+   * Markdown, one line. Null when the template has none. It is HTML-escaped where the document is built.
+   */
+  preheader: string | null;
   body: string;
   /**
    * The formatted body, rendered from the same template and context as `body`
@@ -1352,17 +1377,24 @@ export function withGroupBilledWording(body: string, isGroup: boolean) {
   return isGroup ? body.replaceAll(DEFAULT_ORGANIZATION_BILLED_SENTENCE, GROUP_BILLED_SENTENCE) : body;
 }
 
+/** One line of plain text: runs of whitespace (a stray line break included) become one space. */
+function singleLine(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 export function renderMessageTemplate(
-  template: Pick<MessageTemplateDefinition, "subject" | "body">,
+  template: Pick<MessageTemplateDefinition, "subject" | "body"> & { preheader?: string | null },
   context: MessageTemplateContext,
 ): RenderedMessageTemplate {
   const subject = renderTemplateText(template.subject, context);
+  const preheader = template.preheader?.trim() ? renderTemplateText(template.preheader, context) : null;
   // The text part has no use for the image and button markers (see `plainTextFromMessageSource`); only the
   // template's own source is touched, never a token value.
   const body = renderTemplateText(plainTextFromMessageSource(template.body), context);
-  const missingTokens = uniqueInOrder([...subject.missingTokens, ...body.missingTokens]);
+  const missingTokens = uniqueInOrder([...subject.missingTokens, ...(preheader?.missingTokens ?? []), ...body.missingTokens]);
   const unresolvedTokens = uniqueInOrder([
     ...subject.unresolvedTokens,
+    ...(preheader?.unresolvedTokens ?? []),
     ...body.unresolvedTokens,
   ]);
 
@@ -1372,6 +1404,7 @@ export function renderMessageTemplate(
 
   return {
     subject: subject.text,
+    preheader: preheader ? singleLine(preheader.text) || null : null,
     body: collapseBlankLines(body.text),
     bodyHtml: renderEmailBodyHtml(collapseBlankLines(htmlSource.text)),
     isComplete: unresolvedTokens.length === 0,

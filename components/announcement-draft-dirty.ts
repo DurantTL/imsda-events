@@ -11,14 +11,14 @@
  * approval and the emails it queues.
  */
 
-export type AnnouncementDraftValues = { title: string; body: string; priority: string };
+export type AnnouncementDraftValues = { title: string; body: string; priority: string; /** The email's inbox preview line (#836). */ preheader?: string };
 
 export type AnnouncementDraftBaseline = AnnouncementDraftValues & { attachmentIds: string[] };
 
-export const blankAnnouncementValues: AnnouncementDraftValues = { title: "", body: "", priority: "NORMAL" };
+export const blankAnnouncementValues: AnnouncementDraftValues = { title: "", body: "", priority: "NORMAL", preheader: "" };
 
 function key(values: AnnouncementDraftValues, attachmentIds: readonly string[]) {
-  return JSON.stringify([values.title, values.body, values.priority, [...attachmentIds]]);
+  return JSON.stringify([values.title, values.body, values.priority, [...attachmentIds], values.preheader ?? ""]);
 }
 
 export function announcementDraftBaseline(

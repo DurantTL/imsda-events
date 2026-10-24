@@ -4059,6 +4059,9 @@ model Announcement {
   pinnedByUserId  String?
   /// Reaches people who opted out of announcements (#838). Set by an event manager or above, audited.
   isEssential     Boolean              @default(false)
+  /// The inbox preview line (preheader) of the announcement's email (#836). Plain text, tokens allowed like the subject.
+  /// Null when none was written; the email then uses the template version's own line, if it has one.
+  preheader       String?
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
 
@@ -4669,6 +4672,8 @@ model MessageTemplateVersion {
   status          MessageTemplateStatus @default(DRAFT)
   subjectTemplate String
   bodyTemplate    String
+  /// The inbox preview line (#836), immutable with the version. Null for versions published before it existed.
+  preheaderTemplate String?
   publishedAt     DateTime?
   createdAt       DateTime              @default(now())
   updatedAt       DateTime              @updatedAt
@@ -4802,6 +4807,9 @@ model MessageOutbox {
   /// bodies existed; those are delivered as text only, because the untrusted
   /// spans a safe HTML render depends on cannot be recovered from the text.
   bodyHtmlSnapshot       String?
+  /// The inbox preview line as rendered at enqueue (#836), shown as the hidden preheader. Null for rows queued before
+  /// it existed, and for messages with no line; those render exactly as they always did.
+  preheaderSnapshot      String?
   metadata               Json?
   idempotencyKey         String                         @unique
   correlationId          String

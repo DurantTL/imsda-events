@@ -149,6 +149,8 @@ type ClaimedMessage = {
   subjectSnapshot: string;
   bodyTextSnapshot: string;
   bodyHtmlSnapshot: string | null;
+  /** The inbox preview line rendered at enqueue (#836); null when there was none, and for rows queued before it existed. */
+  preheaderSnapshot?: string | null;
   /** The row's metadata; an announcement carries `essential` here (#838). */
   metadata?: unknown;
   /** The one file sent with the message, when it has one (#168: an invoice PDF), read from the shared attachment row. */
@@ -762,6 +764,7 @@ async function claimNextMessage(
           subjectSnapshot: true,
           bodyTextSnapshot: true,
           bodyHtmlSnapshot: true,
+          preheaderSnapshot: true,
           metadata: true,
           attachment: { select: { filename: true, contentType: true, sha256: true, content: true } },
           files: {
@@ -1223,6 +1226,7 @@ async function runDeliveryLoop(
           ? renderEmailHtmlDocument({
             title: message.subjectSnapshot,
             bodyHtml: parts.bodyHtml,
+            preheader: message.preheaderSnapshot,
             footer: unsubscribe
               ? `${message.senderNameSnapshot}\n\n[Unsubscribe or change your email preferences](${unsubscribe.pageUrl})`
               : message.senderNameSnapshot,

@@ -20,6 +20,14 @@ import { BATCH_TRANSACTION_MAX_WAIT_MS, BATCH_TRANSACTION_TIMEOUT_MS } from "@/m
 import { loadAnnouncementOptOuts } from "@/modules/communications/email-preferences-repository";
 import { linkQueuedMessageFiles } from "@/modules/communications/message-files";
 import { inlineImageSetIssue, messageFileIdsInMarkdown } from "@/modules/communications/message-file-rules";
+import {
+  ANNOUNCEMENT_CHECK_ANCHORS,
+  announcementSendCheckInput,
+  describeSendCheckErrors,
+  runSendCheck,
+  unacknowledgedWarnings,
+} from "@/modules/communications/send-check";
+import { DEFAULT_MESSAGE_TEMPLATES } from "@/modules/communications/templates";
 import type { AnnouncementBroadcastPreview } from "@/modules/communications/types";
 
 export class AnnouncementBroadcastError extends Error {
@@ -30,7 +38,9 @@ export class AnnouncementBroadcastError extends Error {
       | "NO_ACTIVE_REGISTRATIONS"
       | "PREVIEW_REQUIRED"
       | "PREVIEW_CHANGED"
-      | "ATTACHMENTS_INVALID",
+      | "ATTACHMENTS_INVALID"
+      | "SEND_CHECK_FAILED"
+      | "WARNINGS_NOT_ACKNOWLEDGED",
     message: string,
   ) {
     super(message);
@@ -51,7 +61,7 @@ async function loadAnnouncementBroadcastState(
 ) {
   const announcement = await client.announcement.findFirst({
     where: { id: input.announcementId, eventId: input.eventId },
-    select: { id: true, title: true, body: true, status: true, publishedAt: true, isEssential: true },
+    select: { id: true, title: true, body: true, preheader: true, status: true, publishedAt: true, isEssential: true },
   });
   if (!announcement) {
     throw new AnnouncementBroadcastError(
@@ -65,7 +75,7 @@ async function loadAnnouncementBroadcastState(
       "Publish the announcement to the attendee feed before emailing it.",
     );
   }
-  const [registrations, settings, template, announcementFiles] = await Promise.all([
+  const [registrations, settings, template, announcementFiles, eventRow] = await Promise.all([
     client.registration.findMany({
       where: { eventId: input.eventId, status: { in: ["SUBMITTED", "CONFIRMED"] } },
       orderBy: [{ submittedAt: "asc" }, { id: "asc" }],
@@ -86,7 +96,9 @@ async function loadAnnouncementBroadcastState(
           take: 1,
           select: {
             id: true,
+            subjectTemplate: true,
             bodyTemplate: true,
+            preheaderTemplate: true,
             files: { orderBy: { position: "asc" }, select: { file: { select: { id: true, filename: true, sizeBytes: true } } } },
           },
         },
@@ -97,6 +109,7 @@ async function loadAnnouncementBroadcastState(
       orderBy: { position: "asc" },
       select: { file: { select: { id: true, filename: true, sizeBytes: true } } },
     }),
+    client.event.findUnique({ where: { id: input.eventId }, select: { name: true } }),
   ]);
   // The announcement's own files first, then the template version's, each once.
   const attachments: Array<{ id: string; filename: string; sizeBytes: number }> = [];
@@ -119,6 +132,19 @@ async function loadAnnouncementBroadcastState(
       ? "A picture in this announcement or its template is no longer available. Edit it and insert the picture again."
       : inlineImageSetIssue(pictures)?.message ?? null;
   }
+  // The send check (#836) on the email as it will go out: the template's subject and body around this announcement's
+  // title and text, and its preview line. The send runs the same call, so what staff reviewed is what is enforced.
+  const publishedVersion = template?.versions[0];
+  const fallbackTemplate = DEFAULT_MESSAGE_TEMPLATES.EVENT_ANNOUNCEMENT;
+  const effectivePreheader = announcement.preheader?.trim() ? announcement.preheader : publishedVersion?.preheaderTemplate ?? null;
+  const sendCheck = runSendCheck(announcementSendCheckInput({
+    templateSubject: publishedVersion?.subjectTemplate ?? fallbackTemplate.subject,
+    templateBody: publishedVersion?.bodyTemplate ?? fallbackTemplate.body,
+    templatePreheader: publishedVersion?.preheaderTemplate ?? null,
+    announcement,
+    anchors: ANNOUNCEMENT_CHECK_ANCHORS,
+    eventName: eventRow?.name,
+  }));
   const candidates = registrations.map((registration) => ({
     registrationId: registration.id,
     contactSnapshot: registration.contactSnapshot,
@@ -140,6 +166,8 @@ async function loadAnnouncementBroadcastState(
     {
       eventId: input.eventId,
       announcement: { id: announcement.id, title: announcement.title, body: announcement.body },
+      preheader: effectivePreheader,
+      sendCheck,
       deliveryMode: settings?.deliveryMode ?? "LOCAL_CAPTURE",
       // Matches the send: a missing template row is not suppressed.
       templateEnabled: template?.isEnabled !== false,
@@ -176,6 +204,8 @@ export async function broadcastPublishedAnnouncement(input: {
   announcementId: string;
   batchId: string;
   previewFingerprint: string;
+  /** The ids of the review's warnings staff acknowledged (#836). Every current warning must be in it. */
+  acknowledgedWarningIds?: readonly string[];
   actorUserId: string;
 }) {
   await ensureEventMessagingDefaults(input.eventId);
@@ -237,6 +267,14 @@ export async function broadcastPublishedAnnouncement(input: {
     if (preview.attachmentProblem) {
       throw new AnnouncementBroadcastError("ATTACHMENTS_INVALID", preview.attachmentProblem);
     }
+    // The send check (#836), enforced here and not only in the browser: an error stops the send, and a warning needs
+    // the explicit acknowledgement the review asks for.
+    if (preview.sendCheck.hasErrors) {
+      throw new AnnouncementBroadcastError("SEND_CHECK_FAILED", `Fix this before sending: ${describeSendCheckErrors(preview.sendCheck)}`);
+    }
+    if (unacknowledgedWarnings(preview.sendCheck, input.acknowledgedWarningIds).length > 0) {
+      throw new AnnouncementBroadcastError("WARNINGS_NOT_ACKNOWLEDGED", "Acknowledge the warnings in the review before sending, or fix them.");
+    }
     if (preview.recipientCount === 0) {
       throw new AnnouncementBroadcastError(
         "NO_ACTIVE_REGISTRATIONS",
@@ -284,6 +322,7 @@ export async function broadcastPublishedAnnouncement(input: {
         deferFileLinking: true,
         announcementTitle: announcement.title,
         announcementBody: announcement.body,
+        announcementPreheader: announcement.preheader,
         ...(seminarBlocks
           ? { seminarPreferencesBlock: seminarBlocks.get(recipient.registrationId) ?? "" }
           : {}),

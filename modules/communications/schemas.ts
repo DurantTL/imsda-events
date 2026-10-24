@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { PREHEADER_MAX_LENGTH } from "@/modules/communications/email-html";
 import { validateMessageTemplate } from "@/modules/communications/templates";
 
 const optionalEmail = z.string().trim().max(254).refine(
@@ -20,9 +21,29 @@ export const messagingSettingsInputSchema = z.object({
   internalNotificationEmails: [...new Set(input.internalNotificationEmails)],
 }));
 
+/** The inbox preview line (#836): one line of plain text, at most `PREHEADER_MAX_LENGTH` characters, or none. */
+export const preheaderField = z.string().trim().max(PREHEADER_MAX_LENGTH).nullish()
+  .transform((value) => (value ? value : null));
+
+/**
+ * An announcement's own inbox preview line (#836). Absent leaves what is saved alone; blank clears it. The same
+ * one-line and token rules as a template's.
+ */
+export const announcementPreheaderField = z.string().trim().max(PREHEADER_MAX_LENGTH).nullish()
+  .transform((value) => (value === undefined ? undefined : value || null))
+  .superRefine((value, context) => {
+    if (!value) return;
+    const validation = validateMessageTemplate({ subject: "-", body: "-", preheader: value });
+    for (const issue of validation.issues) {
+      context.addIssue({ code: "custom", message: issue.message });
+    }
+  });
+
 export const messageTemplateInputSchema = z.object({
   subjectTemplate: z.string().trim().min(1).max(180),
   bodyTemplate: z.string().trim().min(1).max(12_000),
+  /** The inbox preview line (#836). Optional; a blank one is stored as none. */
+  preheaderTemplate: preheaderField.optional(),
   isEnabled: z.boolean(),
   /**
    * The attachments the new version carries (#824). Omitted, the version carries the previous version's forward;
@@ -33,11 +54,12 @@ export const messageTemplateInputSchema = z.object({
   const validation = validateMessageTemplate({
     subject: input.subjectTemplate,
     body: input.bodyTemplate,
+    preheader: input.preheaderTemplate,
   });
   for (const issue of validation.issues) {
     context.addIssue({
       code: "custom",
-      path: [issue.field === "subject" ? "subjectTemplate" : "bodyTemplate"],
+      path: [issue.field === "subject" ? "subjectTemplate" : issue.field === "preheader" ? "preheaderTemplate" : "bodyTemplate"],
       message: issue.message,
     });
   }

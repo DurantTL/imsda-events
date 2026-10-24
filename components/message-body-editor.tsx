@@ -84,6 +84,7 @@ import {
   messageFileUrl,
   type MessageFileRecord,
 } from "@/modules/communications/message-file-rules";
+import { hasStandaloneCheckinQrUrl } from "@/modules/communications/checkin-qr-rule";
 
 type SerializedMessageTokenNode = Spread<
   { type: "message-token"; version: 1 },
@@ -440,17 +441,7 @@ export function $exportEmailMarkdown() {
     .join("\n\n");
 }
 
-const MARKDOWN_LINK_PATTERN = /!?\[[^\]]*\]\([^)]*\)/g;
-
-/**
- * True when `{{checkin_qr_url}}` appears outside a Markdown link. The token is
- * a page link, so on its own it prints the web address in the email instead of
- * showing a QR code. Written as [text]({{checkin_qr_url}}) it is a button, and
- * the QR code itself is the `checkin_qr_image` token.
- */
-export function hasStandaloneCheckinQrUrl(source: string) {
-  return /\{\{\s*checkin_qr_url\s*\}\}/.test(source.replace(MARKDOWN_LINK_PATTERN, ""));
-}
+export { hasStandaloneCheckinQrUrl };
 
 /** What the editor needs to place uploaded pictures in a body: where they live and how to add one. */
 export type MessageImageLibrary = {

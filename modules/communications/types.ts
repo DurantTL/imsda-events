@@ -1,4 +1,5 @@
 import type { MessageFileRecord } from "@/modules/communications/message-file-rules";
+import type { SendCheckResult } from "@/modules/communications/send-check";
 
 export type MessageTemplateKeyValue =
   | "REGISTRATION_CONFIRMATION_PAID"
@@ -42,6 +43,8 @@ export type MessageTemplateVersionRecord = {
   status: "DRAFT" | "PUBLISHED" | "ARCHIVED";
   subjectTemplate: string;
   bodyTemplate: string;
+  /** The inbox preview line (#836); null when the version has none, including every version from before it existed. */
+  preheaderTemplate: string | null;
   publishedAt: string | null;
   createdAt: string;
   createdBy: string | null;
@@ -89,6 +92,8 @@ export type MessageOutboxRecord = {
    * long after the safe render already happened.
    */
   bodyHtml: string | null;
+  /** The inbox preview line rendered at enqueue (#836); null when there was none. */
+  preheader: string | null;
   status: MessageOutboxStatusValue;
   attemptCount: number;
   capturedAt: string | null;
@@ -230,6 +235,8 @@ export type AnnouncementRecord = {
   updatedAt: string;
   /** Reaches people who opted out of announcements (#838). */
   isEssential: boolean;
+  /** The inbox preview line of its email (#836); null when none. */
+  preheader: string | null;
   /** Files attached to the announcement (#824), sent with its email. */
   attachments: MessageFileRecord[];
 };
@@ -271,6 +278,10 @@ export type AnnouncementBroadcastPreview = {
   attachmentProblem: string | null;
   /** True when any message carries an attachment or an embedded picture; real email then goes out through the background worker. */
   carriesFiles: boolean;
+  /** The inbox preview line the emails will carry (#836): the announcement's own, else the template's; as written, tokens unexpanded. */
+  preheader: string | null;
+  /** The send check (#836) run on the email as it will go out. Errors block the send; warnings need acknowledging. */
+  sendCheck: SendCheckResult;
   /** Echoed back by the send so the server can refuse a stale review. */
   fingerprint: string;
   sendTiming: "IMMEDIATE";

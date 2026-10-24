@@ -67,6 +67,32 @@ Staff can attach files to a template version or a draft announcement, put an upl
 - **Previews.** The template preview and the delivery log list the files, and a test send carries the same ones a real message would. Pictures in a sandboxed preview load as data from the staff-only file route.
 - **Not done here.** A file uploaded and never saved on a template or announcement stays in storage until the event is deleted; there is no scheduled sweep of such orphans and no storage quota beyond the per-event file count (follow-up issue #845).
 
+## Send check and the inbox preview line (#836)
+
+`send-check.ts` is one pure function, `runSendCheck`, that the template editor, template publish, the announcement composer and the announcement send review all call on the same text. It returns **errors**, **warnings** and **suggestions**, each with a `code`, a stable `id` (`CODE:n`), a `field` (`subject`, `body` or `preheader`) and an `anchor`, the id of the form field the screen jumps to (`TEMPLATE_CHECK_ANCHORS`, `ANNOUNCEMENT_CHECK_ANCHORS`).
+
+- **Errors** (stop a publish or a send): an empty subject or body; a subject or preview line with a line break; a preview line holding a link, picture or generated-block token (`portal_url`, `checkin_qr_*`, `announcement_body`, `seminar_preferences` and the other blocks); a token off the allow-list; a link or button that is not `http`, `https`, `mailto`, `tel` or one of the two link tokens (it would render as plain text); a picture that is not a public `https://` address, an uploaded `msgfile:` picture or `{{checkin_qr_image}}`. Template publish (`publishMessageTemplateVersion`) refuses with `INVALID_TEMPLATE` and the findings, and the announcement send (`broadcastPublishedAnnouncement`) refuses with `SEND_CHECK_FAILED`. The browser only shows them early.
+- **Warnings** (a send needs them acknowledged; a template publish is never held up by them): a subject over about 70 characters (measured with the token values the reader will see), a picture with no alt text, a bare `{{checkin_qr_url}}` (the rule is `checkin-qr-rule.ts`, shared with the body editor, not copied), and a link or button whose text is a web address. The review dialog's checkbox sends the ids it covers as `acknowledgedWarningIds`, and the server refuses with `WARNINGS_NOT_ACKNOWLEDGED` unless every warning it finds now is in the list.
+- **Suggestions** (never block): no preview line; a very short body.
+
+Which path runs which check:
+
+| Path | Check |
+| --- | --- |
+| Template publish (`publishMessageTemplateVersion`) | errors block; warnings and suggestions shown only |
+| Applying an event template (`templateMessageDefaultSchema`) | errors block |
+| Announcement broadcast review and send | errors block; warnings need acknowledging |
+| Scheduled announcement emails (`buildScheduledEmailReview`, used by create, edit and approve) | errors block |
+| "Email selected" announcement (selected-audience send in `messaging-repository`) | errors block |
+
+The last two use `assertAnnouncementTextSendable` (`announcement-send-check.ts`) and refuse with `INVALID_TEMPLATE` and the findings. Warnings are acknowledged only in the broadcast review. Event clones copy versions that already passed publish.
+
+The announcement's title and text are token values at send time, so a `{{token}}` typed inside them is printed as written and never expanded. They are checked that way: no allow-list error for `{{favorite}}`, and a link whose target is a token is a link error because it would send as plain text.
+
+An announcement is checked as the email it will become (`announcementSendCheckInput`): the event announcement template's subject and body, with the announcement's title and text where the tokens stand, and the announcement's own preview line, or the template's.
+
+The **preview line** (preheader) is plain text of at most 150 characters on one line. It is stored on the immutable `MessageTemplateVersion.preheaderTemplate` and on `Announcement.preheader`, rendered at enqueue by `renderMessageTemplate` under the subject's rules (the same token allow-list, no Markdown, values not escaped), snapshotted as `MessageOutbox.preheaderSnapshot`, and written by `renderEmailHtmlDocument` as a hidden block right after `<body>` (HTML-escaped there, followed by filler so the body's first words do not fill the preview). It appears in the template preview, the delivery log, the review dialog and test sends. A message with no line has a null snapshot, writes no column, and its document is byte for byte what it was before; `tests/email-preview-line-836.test.ts` pins that against the output of the earlier renderer. Event clones and event templates do not copy the line yet.
+
 ## Balance-reminder workflow
 
 The Reminders tab is a two-step staff workflow. Its read-only preview considers every event registration, but includes a recipient only when all three rules are true:

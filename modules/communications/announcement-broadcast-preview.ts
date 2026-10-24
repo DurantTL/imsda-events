@@ -5,7 +5,10 @@ import {
   type AnnouncementOptOutRow,
   type AnnouncementOptOutScope,
 } from "@/modules/communications/email-preferences";
+import type { SendCheckResult } from "@/modules/communications/send-check";
 import type { AnnouncementBroadcastPreview, MessagingSettingsRecord } from "@/modules/communications/types";
+
+const NO_FINDINGS: SendCheckResult = { errors: [], warnings: [], suggestions: [], hasErrors: false, hasWarnings: false };
 
 /**
  * The pure half of the announcement broadcast review (#472).
@@ -32,6 +35,10 @@ export type AnnouncementBroadcastCandidate = {
 export type AnnouncementBroadcastPreviewContext = {
   eventId: string;
   announcement: { id: string; title: string; body: string };
+  /** The preview line the emails carry (#836): the announcement's own, else the template version's. */
+  preheader?: string | null;
+  /** The send check on the email as it will go out (#836). */
+  sendCheck?: SendCheckResult;
   deliveryMode: MessagingSettingsRecord["deliveryMode"];
   templateEnabled: boolean;
   templateVersionId: string | null;
@@ -135,6 +142,8 @@ export function computeAnnouncementBroadcastPreview(
     announcementId: context.announcement.id,
     announcementTitle: context.announcement.title,
     announcementBody: context.announcement.body,
+    // Only present when there is a line, so a review of an announcement without one fingerprints as it always did.
+    ...(context.preheader ? { preheader: context.preheader } : {}),
     deliveryMode: context.deliveryMode,
     templateEnabled: context.templateEnabled,
     templateVersionId: context.templateVersionId,
@@ -166,6 +175,8 @@ export function computeAnnouncementBroadcastPreview(
     attachmentProblem: attachmentSetIssue(attachments)?.message ?? context.pictureProblem ?? null,
     // The one answer to "does this send carry files?", for the dialog and the delivery rule alike: attachments or pictures.
     carriesFiles: attachments.length > 0 || (context.pictureIds ?? []).length > 0,
+    preheader: context.preheader ?? null,
+    sendCheck: context.sendCheck ?? NO_FINDINGS,
     fingerprint,
     sendTiming: "IMMEDIATE",
     generatedAt: now.toISOString(),

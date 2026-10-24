@@ -7,7 +7,7 @@ vi.mock("server-only", () => ({}));
 const lodgingStale = vi.hoisted(() => vi.fn());
 vi.mock("@/modules/lodging/message-currency", () => ({ lodgingMessageStaleReason: lodgingStale }));
 
-import { renderEmailBodyHtml } from "@/modules/communications/email-html";
+import { renderEmailBodyHtml, renderEmailHtmlDocument } from "@/modules/communications/email-html";
 import { MessageFileDeliveryError } from "@/modules/communications/message-file-rules";
 import { resetServerEnvCache } from "@/lib/env";
 import { EmailProviderRequestError } from "@/integrations/email/resend";
@@ -94,6 +94,8 @@ function fakeDeliveryStore(overrides: Partial<MutableMessage> = {}) {
             subjectSnapshot: message.subjectSnapshot,
             bodyTextSnapshot: message.bodyTextSnapshot,
             bodyHtmlSnapshot: message.bodyHtmlSnapshot,
+            // Absent on a row queued before the preview line existed (#836).
+            ...("preheaderSnapshot" in message ? { preheaderSnapshot: message.preheaderSnapshot } : {}),
             attachment: message.attachment ?? null,
             files: message.files ?? [],
             attemptCount: message.attemptCount,
@@ -248,6 +250,41 @@ describe("external email queue", () => {
     expect(payload!.bodyHtml).toContain("<strong>Avery</strong>");
     // Nothing new is written back: the row keeps only what it was captured with.
     expect(store.message.bodyTextSnapshot).toBe("# Registration confirmed\n\nHello **Avery**.");
+  });
+
+  /**
+   * The inbox preview line (#836) is snapshotted on the row at enqueue and wrapped here as the hidden preheader. A row
+   * queued before the column existed has none, and goes out byte for byte as it always did.
+   */
+  describe("inbox preview line (#836)", () => {
+    async function deliver(overrides: Partial<MutableMessage>) {
+      const store = fakeDeliveryStore({ bodyHtmlSnapshot: "<p>Hello <strong>Avery</strong>.</p>", ...overrides });
+      let html: string | null | undefined;
+      const sendEmail = vi.fn(async (input: { bodyHtml?: string | null }) => {
+        html = input.bodyHtml;
+        return { provider: "RESEND" as const, providerMessageId: "email-provider-preheader" };
+      });
+      await processExternalEmailQueue("event-1", {
+        dependencies: { ...dependencies, prisma: store.prisma as never, sendEmail: sendEmail as never },
+      });
+      return html ?? "";
+    }
+
+    it("sends a row queued before the column existed exactly as before", async () => {
+      const legacy = await deliver({});
+      expect(legacy).not.toContain("display:none");
+      expect(legacy).toBe(renderEmailHtmlDocument({ title: "Registration received", bodyHtml: "<p>Hello <strong>Avery</strong>.</p>", footer: "IMSDA Events" }));
+      // A null snapshot (a message queued with no line) is the same document.
+      expect(await deliver({ preheaderSnapshot: null })).toBe(legacy);
+    });
+
+    it("shows the snapshotted line as the hidden preheader, escaped, at the top of the email", async () => {
+      const html = await deliver({ preheaderSnapshot: `Doors open at <b>four</b> & parking is free` });
+      expect(html).toContain("display:none");
+      expect(html).toContain("Doors open at &lt;b&gt;four&lt;/b&gt; &amp; parking is free");
+      expect(html).not.toContain("<b>four</b>");
+      expect(html.indexOf("Doors open")).toBeLessThan(html.indexOf("IMSDA Events</span>"));
+    });
   });
 
   /** An invoice PDF (#168) rides along as a stored attachment, byte for byte, and only when its hash still matches. */

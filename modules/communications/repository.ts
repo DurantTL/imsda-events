@@ -10,6 +10,7 @@ function toAnnouncementRecord(row: AnnouncementRow, attachments: MessageFileReco
     id: row.id,
     title: row.title,
     body: row.body,
+    preheader: row.preheader,
     status: row.status,
     priority: row.priority,
     placement: row.placement,
@@ -35,7 +36,7 @@ export async function listAnnouncements(eventId: string) {
 export async function createAnnouncement(
   eventId: string,
   createdByUserId: string,
-  input: { title: string; body: string; priority: "NORMAL" | "IMPORTANT" | "URGENT"; attachmentFileIds?: string[] },
+  input: { title: string; body: string; preheader?: string | null; priority: "NORMAL" | "IMPORTANT" | "URGENT"; attachmentFileIds?: string[] },
 ) {
   return getPrisma().$transaction(async (tx) => {
     const announcement = await tx.announcement.create({
@@ -44,6 +45,7 @@ export async function createAnnouncement(
         createdByUserId,
         title: input.title,
         body: input.body,
+        preheader: input.preheader ?? null,
         priority: input.priority,
         audience: { type: "ALL_ATTENDEES" },
         placement: "HOME_BANNER",
@@ -112,7 +114,7 @@ export async function updateAnnouncementDraft(
   eventId: string,
   announcementId: string,
   actorUserId: string,
-  input: { title: string; body: string; priority: "NORMAL" | "IMPORTANT" | "URGENT"; attachmentFileIds?: string[] },
+  input: { title: string; body: string; preheader?: string | null; priority: "NORMAL" | "IMPORTANT" | "URGENT"; attachmentFileIds?: string[] },
 ) {
   return getPrisma().$transaction(async (tx) => {
     const existing = await tx.announcement.findFirst({
@@ -122,7 +124,13 @@ export async function updateAnnouncementDraft(
     if (!existing) return null;
     const updated = await tx.announcement.updateMany({
       where: { id: existing.id, eventId, status: "DRAFT" },
-      data: { title: input.title, body: input.body, priority: input.priority },
+      data: {
+        title: input.title,
+        body: input.body,
+        priority: input.priority,
+        // Left alone when the request does not mention it; blank clears it.
+        ...(input.preheader !== undefined ? { preheader: input.preheader } : {}),
+      },
     });
     if (updated.count === 0) return null;
     const announcement = await tx.announcement.findFirst({ where: { id: existing.id, eventId } });

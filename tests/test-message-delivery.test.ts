@@ -237,6 +237,31 @@ describe("test message delivery", () => {
     }));
   });
 
+  /** The inbox preview line (#836) rides along on a test, so the test shows what the inbox will show. */
+  it("snapshots the version's inbox preview line on a test, and nothing on a version without one", async () => {
+    const withLine = baseTransaction(settingsWith({ deliveryMode: "LOCAL_CAPTURE" }));
+    withLine.eventMessageTemplate.findFirst.mockResolvedValue({
+      id: "template-shirt",
+      key: "SHIRT_SIZE_REQUEST",
+      isEnabled: true,
+      versions: [{
+        id: "version-shirt-2",
+        versionNumber: 2,
+        subjectTemplate: DEFAULT_MESSAGE_TEMPLATES.SHIRT_SIZE_REQUEST.subject,
+        preheaderTemplate: "A quick question for {{event_name}}",
+        bodyTemplate: DEFAULT_MESSAGE_TEMPLATES.SHIRT_SIZE_REQUEST.body,
+      }],
+    });
+    mocks.getPrisma.mockReturnValue(prismaFor(withLine));
+    await sendTestMessage("event-1", "template-shirt", testInput({ realDelivery: false }), "user-1");
+    expect(withLine.messageOutbox.create.mock.calls[0]?.[0].data.preheaderSnapshot).toBe("A quick question for Women’s Retreat");
+
+    const without = baseTransaction(settingsWith({ deliveryMode: "LOCAL_CAPTURE" }));
+    mocks.getPrisma.mockReturnValue(prismaFor(without));
+    await sendTestMessage("event-1", "template-shirt", testInput({ realDelivery: false }), "user-1");
+    expect("preheaderSnapshot" in without.messageOutbox.create.mock.calls[0]?.[0].data).toBe(false);
+  });
+
   it("refuses a real test while the event is still capturing locally", async () => {
     const tx = baseTransaction(settingsWith({ deliveryMode: "LOCAL_CAPTURE" }));
     mocks.getPrisma.mockReturnValue(prismaFor(tx));
